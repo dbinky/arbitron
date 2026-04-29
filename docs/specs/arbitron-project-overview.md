@@ -1,4 +1,4 @@
-# The Arbitron — Product Specification
+# The Arbitron — Project Overview
 
 ## 1. Product Overview & Core Concepts
 
