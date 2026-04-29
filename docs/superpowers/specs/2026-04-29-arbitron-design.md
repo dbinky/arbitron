@@ -12,7 +12,7 @@ The Arbitron ultimately replaces both ralph-o-matic (the refinement engine) and 
 
 - **Workflow Instance** — a single execution of a workflow. Has its own variable state, execution trace, and lifecycle (queued, running, waiting, completed, failed, cancelled, paused). Instances snapshot the workflow definition at creation time — later edits to the workflow don't affect running instances.
 
-- **Node** — a step in the workflow. Nine types across three categories:
+- **Node** — a step in the workflow. Ten types across three categories:
 
   **Execution Nodes** (do work, produce output):
   1. **LLM Call** — sends a markdown template (with `{{variable}}` substitution) to an LLM and collects structured JSON output. Model is selectable per node.
@@ -23,11 +23,12 @@ The Arbitron ultimately replaces both ralph-o-matic (the refinement engine) and 
   **Flow Control Nodes** (route and shape execution):
   5. **Conditional (If)** — evaluates conditions against the current instance state (including upstream node output) and routes to one of multiple outputs. One input, two or more outputs based on configurable conditions. Includes a default/fallback output.
   6. **Transform** — lightweight variable manipulation (increment, concatenate, set, conditional assign) with no external execution environment.
-  7. **Fan-out / Fan-in** — fan-out splits execution into parallel branches; fan-in waits for all parallel branches to complete and collects their outputs as an ordered array.
+  7. **Fan-out** — splits execution into parallel branches. All outgoing edges activate simultaneously.
+  8. **Fan-in** — waits for all incoming parallel branches to complete and collects their outputs as an ordered array. Used as a pair with fan-out.
 
   **Wait Nodes** (pause execution):
-  8. **Timer Delay** — pauses execution for a configured duration.
-  9. **Webhook Wait** — pauses execution until a specific webhook endpoint is hit by an external system.
+  9. **Timer Delay** — pauses execution for a configured duration.
+  10. **Webhook Wait** — pauses execution until a specific webhook endpoint is hit by an external system.
 
 - **Edge** — a simple, unconditional connection between two nodes. Edges carry no logic — they are just wires that define the graph topology. All routing decisions, branching, and conditional logic happen inside nodes.
 
@@ -124,7 +125,7 @@ When a fan-out node activates, all downstream branches execute simultaneously. E
   - Retry N times before failing
   - Skip and continue with a default output
   - Halt (same as default)
-  - Route to a specific error-handling node (the node has a designated "error" output edge in addition to its "success" output edge)
+  - Route to a specific error-handling node (the node has a designated error output port, connected to an error-handling node via a regular edge)
 
 ### Instance Operations
 
