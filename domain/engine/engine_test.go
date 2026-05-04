@@ -1177,3 +1177,134 @@ func TestEngine_NodeExecutionRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, execs, 3)
 }
+
+func TestEngine_NodeExecutionHasCorrectTiming(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	before := time.Now()
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	after := time.Now()
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+
+	exec := execs[0]
+	assert.True(t, exec.StartedAt.After(before) || exec.StartedAt.Equal(before), "StartedAt should be after trigger time")
+	require.NotNil(t, exec.CompletedAt, "CompletedAt should be set")
+	assert.True(t, exec.CompletedAt.Before(after) || exec.CompletedAt.Equal(after), "CompletedAt should be before now")
+	assert.True(t, !exec.CompletedAt.Before(exec.StartedAt), "CompletedAt should not be before StartedAt")
+}
+
+func TestEngine_RetryCreatesPerAttemptRecords(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{
+		Type:              "retry",
+		Retries:           2,
+		RetryDelaySeconds: 0,
+	})
+	f.workflowRepo.add(wf)
+
+	callCount := 0
+	var mu sync.Mutex
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		mu.Lock()
+		callCount++
+		c := callCount
+		mu.Unlock()
+		if c < 3 {
+			return nil, fmt.Errorf("attempt %d failed", c)
+		}
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+
+	// Count records for node B — should be 3 (attempt 1, 2, 3).
+	var bExecs []instance.NodeExecution
+	for _, e := range execs {
+		if e.NodeID == "B" {
+			bExecs = append(bExecs, e)
+		}
+	}
+	require.Len(t, bExecs, 3, "expect one record per attempt")
+
+	// Sort by attempt number to verify ordering.
+	for i, e := range bExecs {
+		assert.Equal(t, i+1, e.Attempt, "attempt number should match record index")
+	}
+
+	// First two attempts should be failed, last should be succeeded.
+	assert.Equal(t, instance.NodeStatusFailed, bExecs[0].Status)
+	assert.Equal(t, instance.NodeStatusFailed, bExecs[1].Status)
+	assert.Equal(t, instance.NodeStatusSucceeded, bExecs[2].Status)
+}
+
+func TestEngine_RetryExhaustedAttemptNumbers(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{
+		Type:              "retry",
+		Retries:           2,
+		RetryDelaySeconds: 0,
+	})
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("always fails")
+	})
+
+	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+
+	var bExecs []instance.NodeExecution
+	for _, e := range execs {
+		if e.NodeID == "B" {
+			bExecs = append(bExecs, e)
+		}
+	}
+	require.Len(t, bExecs, 3, "expect three records: initial + 2 retries")
+
+	for i, e := range bExecs {
+		assert.Equal(t, i+1, e.Attempt)
+		assert.Equal(t, instance.NodeStatusFailed, e.Status)
+		assert.NotNil(t, e.CompletedAt)
+	}
+}
+
+func TestEngine_SkipStatusPersistedAsSkipped(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "skip"})
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+
+	var bExec *instance.NodeExecution
+	for i := range execs {
+		if execs[i].NodeID == "B" {
+			bExec = &execs[i]
+		}
+	}
+	require.NotNil(t, bExec, "should have a record for node B")
+	assert.Equal(t, instance.NodeStatusSkipped, bExec.Status, "skipped node should be recorded as skipped, not failed")
+}

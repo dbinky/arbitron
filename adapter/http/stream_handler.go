@@ -40,7 +40,14 @@ func isTerminalState(state instance.State) bool {
 }
 
 // isTerminalEvent returns true if the event represents a transition to a terminal state.
+// Recognises both the engine's domain events (instance.completed, instance.failed,
+// instance.cancelled) and the generic state_changed event shape.
 func isTerminalEvent(evt engine.Event) bool {
+	switch evt.Type {
+	case "instance.completed", "instance.failed", "instance.cancelled":
+		return true
+	}
+
 	if evt.Type != "state_changed" {
 		return false
 	}

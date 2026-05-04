@@ -105,15 +105,32 @@ func (s *VariableStore) Snapshot() map[string]any {
 // FromSnapshot reconstructs a VariableStore from a snapshot map.
 // Map values are placed in nodeOutputs; all other values go to inputs.
 func FromSnapshot(data map[string]any) *VariableStore {
+	return FromSnapshotWithNodeIDs(data, nil)
+}
+
+// FromSnapshotWithNodeIDs reconstructs a VariableStore from a snapshot map using
+// the workflow's node IDs to distinguish node outputs from input variables.
+// Keys that match a node ID are placed in nodeOutputs; all other keys go to inputs.
+// When nodeIDs is nil, falls back to the map-value heuristic (map → nodeOutputs).
+func FromSnapshotWithNodeIDs(data map[string]any, nodeIDs map[string]bool) *VariableStore {
 	store := NewStore()
 	if data == nil {
 		return store
 	}
 	for k, v := range data {
-		if _, isMap := v.(map[string]any); isMap {
-			store.nodeOutputs[k] = v
+		if nodeIDs != nil {
+			if nodeIDs[k] {
+				store.nodeOutputs[k] = v
+			} else {
+				store.inputs[k] = v
+			}
 		} else {
-			store.inputs[k] = v
+			// Heuristic fallback: map values treated as node outputs.
+			if _, isMap := v.(map[string]any); isMap {
+				store.nodeOutputs[k] = v
+			} else {
+				store.inputs[k] = v
+			}
 		}
 	}
 	return store

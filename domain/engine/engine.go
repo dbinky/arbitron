@@ -203,8 +203,13 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		return
 	}
 
-	// Reconstruct variable store from instance variables.
-	vars := variable.FromSnapshot(inst.Variables)
+	// Reconstruct variable store using node IDs so object-valued inputs are not
+	// misclassified as node outputs.
+	nodeIDs := make(map[string]bool, len(nodeMap))
+	for id := range nodeMap {
+		nodeIDs[id] = true
+	}
+	vars := variable.FromSnapshotWithNodeIDs(inst.Variables, nodeIDs)
 
 	for currentNodeID != "" {
 		// Check for pause/cancel by re-reading instance state.
@@ -248,57 +253,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		// Update current node.
 		_ = e.instances.UpdateCurrentNode(instanceID, currentNodeID)
 
-		// Execute the node with retry logic.
-		result, execErr := e.executeWithRetry(ctx, instanceID, node, vars, wf)
-
-		// Record execution.
-		execStatus := instance.NodeStatusSucceeded
-		var execError map[string]any
-		if execErr != nil {
-			execStatus = instance.NodeStatusFailed
-			execError = map[string]any{"error": execErr.Error()}
-		}
-
-		var execOutput map[string]any
-		if result != nil && result.Output != nil {
-			if m, ok := result.Output.(map[string]any); ok {
-				execOutput = m
-			} else {
-				execOutput = map[string]any{"value": result.Output}
-			}
-		}
-
-		nodeExec := &instance.NodeExecution{
-			ID:         uuid.New(),
-			InstanceID: instanceID,
-			NodeID:     currentNodeID,
-			Attempt:    1,
-			Status:     execStatus,
-			Output:     execOutput,
-			Error:      execError,
-			StartedAt:  time.Now(),
-		}
-		if result != nil {
-			if result.LLMModel != "" {
-				nodeExec.LLMModel = &result.LLMModel
-			}
-			if result.LLMTokensIn > 0 {
-				nodeExec.LLMTokensIn = &result.LLMTokensIn
-			}
-			if result.LLMTokensOut > 0 {
-				nodeExec.LLMTokensOut = &result.LLMTokensOut
-			}
-			if result.ScriptStdout != "" {
-				nodeExec.ScriptStdout = &result.ScriptStdout
-			}
-			if result.ScriptStderr != "" {
-				nodeExec.ScriptStderr = &result.ScriptStderr
-			}
-			if result.ScriptExitCode != 0 {
-				nodeExec.ScriptExitCode = &result.ScriptExitCode
-			}
-		}
-		_ = e.nodeExecutions.Create(nodeExec)
+		// Execute the node with retry logic. Each attempt is individually recorded.
+		result, nodeExec, execErr := e.executeWithRetry(ctx, instanceID, node, vars, wf)
 
 		if execErr != nil {
 			// Handle error behavior.
@@ -306,9 +262,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 			switch eb.Type {
 			case "skip":
-				// Continue with default output as node result.
-				if execStatus == instance.NodeStatusFailed {
+				// Persist the skipped status.
+				if nodeExec != nil {
 					nodeExec.Status = instance.NodeStatusSkipped
+					_ = e.nodeExecutions.Update(nodeExec)
 				}
 				if eb.DefaultOutput != nil {
 					vars.SetNodeOutput(currentNodeID, eb.DefaultOutput)
@@ -359,10 +316,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 }
 
 // executeWithRetry executes a node, applying retry logic from the error behavior.
-func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, error) {
+// A NodeExecution record is created for each attempt. The final record is returned
+// so the caller can update it (e.g., marking it skipped).
+func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, error) {
 	executor, ok := e.executors[node.Type]
 	if !ok {
-		return nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
+		return nil, nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
 	}
 
 	eb := resolveErrorBehavior(node, wf)
@@ -372,23 +331,78 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 && eb.RetryDelaySeconds > 0 {
+	var lastExec *instance.NodeExecution
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 && eb.RetryDelaySeconds > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, lastExec, ctx.Err()
 			case <-time.After(time.Duration(eb.RetryDelaySeconds) * time.Second):
 			}
 		}
 
+		startedAt := time.Now()
 		result, err := executor.Execute(ctx, node, vars, "")
+		completedAt := time.Now()
+
+		execStatus := instance.NodeStatusSucceeded
+		var execError map[string]any
+		if err != nil {
+			execStatus = instance.NodeStatusFailed
+			execError = map[string]any{"error": err.Error()}
+		}
+
+		var execOutput map[string]any
+		if result != nil && result.Output != nil {
+			if m, ok := result.Output.(map[string]any); ok {
+				execOutput = m
+			} else {
+				execOutput = map[string]any{"value": result.Output}
+			}
+		}
+
+		nodeExec := &instance.NodeExecution{
+			ID:          uuid.New(),
+			InstanceID:  instanceID,
+			NodeID:      node.ID,
+			Attempt:     attempt,
+			Status:      execStatus,
+			Output:      execOutput,
+			Error:       execError,
+			StartedAt:   startedAt,
+			CompletedAt: &completedAt,
+		}
+		if result != nil {
+			if result.LLMModel != "" {
+				nodeExec.LLMModel = &result.LLMModel
+			}
+			if result.LLMTokensIn > 0 {
+				nodeExec.LLMTokensIn = &result.LLMTokensIn
+			}
+			if result.LLMTokensOut > 0 {
+				nodeExec.LLMTokensOut = &result.LLMTokensOut
+			}
+			if result.ScriptStdout != "" {
+				nodeExec.ScriptStdout = &result.ScriptStdout
+			}
+			if result.ScriptStderr != "" {
+				nodeExec.ScriptStderr = &result.ScriptStderr
+			}
+			if result.ScriptExitCode != 0 {
+				nodeExec.ScriptExitCode = &result.ScriptExitCode
+			}
+		}
+		_ = e.nodeExecutions.Create(nodeExec)
+		lastExec = nodeExec
+
 		if err == nil {
-			return result, nil
+			return result, nodeExec, nil
 		}
 		lastErr = err
 	}
 
-	return nil, lastErr
+	return nil, lastExec, lastErr
 }
 
 // resolveErrorBehavior returns the effective error behavior for a node,

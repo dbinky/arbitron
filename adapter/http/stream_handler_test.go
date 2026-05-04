@@ -333,6 +333,118 @@ func TestStreamHandler_TerminalEventDuringStreaming(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Tests: Engine domain event types close the connection
+// ---------------------------------------------------------------------------
+
+func TestStreamHandler_EngineCompletedEventClosesConnection(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish the engine's real completed event type.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "instance.completed",
+		Timestamp: time.Now(),
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "instance.completed", received.Type)
+
+	// Connection should close after the terminal event.
+	_, _, err = conn.Read(ctx)
+	assert.Error(t, err, "connection should be closed after instance.completed")
+}
+
+func TestStreamHandler_EngineFailedEventClosesConnection(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "instance.failed",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"failedNodeId": "B", "error": "node B exploded"},
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "instance.failed", received.Type)
+
+	_, _, err = conn.Read(ctx)
+	assert.Error(t, err, "connection should be closed after instance.failed")
+}
+
+func TestStreamHandler_EngineCancelledEventClosesConnection(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "instance.cancelled",
+		Timestamp: time.Now(),
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "instance.cancelled", received.Type)
+
+	_, _, err = conn.Read(ctx)
+	assert.Error(t, err, "connection should be closed after instance.cancelled")
+}
+
+// ---------------------------------------------------------------------------
 // Tests: Multiple events received in order
 // ---------------------------------------------------------------------------
 

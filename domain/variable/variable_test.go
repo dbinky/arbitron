@@ -278,3 +278,53 @@ func TestFromSnapshotReconstructsCorrectly(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 200, val)
 }
+
+func TestFromSnapshotWithNodeIDs_ObjectInputNotMisclassified(t *testing.T) {
+	// "config" is an object-valued workflow input, NOT a node output.
+	// "validate" is a node ID whose output happens to be a map.
+	data := map[string]any{
+		"name":     "Alice",
+		"config":   map[string]any{"retries": 3},
+		"validate": map[string]any{"score": 85},
+	}
+	nodeIDs := map[string]bool{"validate": true}
+
+	store := FromSnapshotWithNodeIDs(data, nodeIDs)
+
+	// "name" is a plain input.
+	val, ok := store.Get("name")
+	require.True(t, ok)
+	assert.Equal(t, "Alice", val)
+
+	// "config" is an object input — must land in inputs so DeleteInput works.
+	val, ok = store.Get("config")
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"retries": 3}, val)
+
+	store.DeleteInput("config")
+	_, ok = store.Get("config")
+	assert.False(t, ok, "DeleteInput should remove object-valued input")
+
+	// "validate" is a node output — accessible via dot-path.
+	val, ok = store.Get("validate.score")
+	require.True(t, ok)
+	assert.Equal(t, 85, val)
+}
+
+func TestFromSnapshotWithNodeIDs_NilNodeIDsFallsBackToHeuristic(t *testing.T) {
+	data := map[string]any{
+		"scalar": "hello",
+		"mapped": map[string]any{"key": "val"},
+	}
+
+	store := FromSnapshotWithNodeIDs(data, nil)
+
+	// Same behaviour as FromSnapshot: map → nodeOutputs heuristic.
+	val, ok := store.Get("scalar")
+	require.True(t, ok)
+	assert.Equal(t, "hello", val)
+
+	val, ok = store.Get("mapped.key")
+	require.True(t, ok)
+	assert.Equal(t, "val", val)
+}
