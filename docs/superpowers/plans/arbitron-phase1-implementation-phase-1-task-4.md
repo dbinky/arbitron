@@ -125,7 +125,7 @@ type ListFilters struct {
 go get github.com/google/uuid
 ```
 
-- [ ] **Step 3: Define port interfaces**
+- [ ] **Step 3: Define port interfaces (including UserRepository)**
 
 Create `domain/instance/ports.go`:
 
@@ -158,6 +158,10 @@ type NodeExecutionRepository interface {
 type VariableSnapshotRepository interface {
 	Create(snapshot *VariableSnapshot) error
 	ListByInstance(instanceID uuid.UUID) ([]VariableSnapshot, error)
+}
+
+type UserRepository interface {
+	GetDefaultUser() (uuid.UUID, error)
 }
 ```
 

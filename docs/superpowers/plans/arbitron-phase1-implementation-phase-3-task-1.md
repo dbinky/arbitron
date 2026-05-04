@@ -272,6 +272,21 @@ func NewRouter(
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, 200, map[string]string{"status": "ok"})
 }
+
+func configHandler(cfg *domainconfig.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Return config with API key redacted
+		safe := map[string]any{
+			"server":    map[string]any{"host": cfg.Server.Host, "port": cfg.Server.Port},
+			"database":  map[string]any{"url": cfg.Database.URL},
+			"workspace": map[string]any{"path": cfg.Workspace.Path},
+			"llm":       map[string]any{"provider": cfg.LLM.Provider},
+			"logging":   map[string]any{"level": cfg.Logging.Level, "file": cfg.Logging.File},
+			"tracing":   map[string]any{"enabled": cfg.Tracing.Enabled, "exportDir": cfg.Tracing.ExportDir},
+		}
+		WriteJSON(w, 200, safe)
+	}
+}
 ```
 
 - [ ] **Step 14: Commit**

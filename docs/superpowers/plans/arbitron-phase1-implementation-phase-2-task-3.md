@@ -197,6 +197,7 @@ type Engine struct {
 	instances      instance.InstanceRepository
 	nodeExecutions instance.NodeExecutionRepository
 	snapshots      instance.VariableSnapshotRepository
+	users          instance.UserRepository
 	executors      map[workflow.NodeType]NodeExecutor
 	eventBus       EventBus
 
@@ -209,6 +210,7 @@ func NewEngine(
 	instances instance.InstanceRepository,
 	nodeExecutions instance.NodeExecutionRepository,
 	snapshots instance.VariableSnapshotRepository,
+	users instance.UserRepository,
 	eventBus EventBus,
 	executors map[workflow.NodeType]NodeExecutor,
 ) *Engine {
@@ -217,6 +219,7 @@ func NewEngine(
 		instances:      instances,
 		nodeExecutions: nodeExecutions,
 		snapshots:      snapshots,
+		users:          users,
 		eventBus:       eventBus,
 		executors:      executors,
 		contexts:       make(map[uuid.UUID]context.CancelFunc),
@@ -254,8 +257,14 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 	var snapshotMap map[string]any
 	json.Unmarshal(snapshotData, &snapshotMap)
 
+	ownerID, err := e.users.GetDefaultUser()
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("getting default user: %w", err)
+	}
+
 	inst := &instance.Instance{
 		ID:                uuid.New(),
+		OwnerID:           ownerID,
 		WorkflowName:      workflowName,
 		WorkflowSnapshot:  snapshotMap,
 		State:             instance.StateRunning,

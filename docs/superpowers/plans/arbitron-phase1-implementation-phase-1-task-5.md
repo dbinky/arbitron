@@ -98,12 +98,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	slog.Info("migrations complete")
 
-	// TODO: Initialize sqlc querier and adapters
-	// TODO: Crash recovery — list running instances, set to failed
-	// TODO: Initialize LLM provider
-	// TODO: Initialize OTel tracer
-	// TODO: Create engine with all adapters
-	// TODO: Create HTTP handlers and router
+	// These TODOs are resolved as each component is built:
+	// Phase 1 Task 4: Initialize sqlc querier and Postgres adapters
+	// Phase 2 Task 2: Initialize LLM provider (Anthropic adapter)
+	// Phase 2 Task 3: Create engine, call engine.RecoverCrashedInstances()
+	// Phase 3 Task 1: Create HTTP handlers and router
+	// Phase 3 Task 3: Initialize OTel tracer, wire logging middleware
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
