@@ -78,7 +78,7 @@ func TestWorkflowRepo_Load_MissingManifest(t *testing.T) {
 	wf, err := repo.Load("empty-dir")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "workflow.json")
+	assert.Contains(t, err.Error(), "empty-dir")
 }
 
 func TestWorkflowRepo_Load_MalformedJSON(t *testing.T) {

@@ -1110,6 +1110,36 @@ func TestEngine_RerunCompleted(t *testing.T) {
 	assert.Equal(t, "Alice", inst.Variables["name"])
 }
 
+func TestEngine_RerunNonTerminalFails(t *testing.T) {
+	f := newTestFixtures()
+	wf := workflowWithInputs()
+	f.workflowRepo.add(wf)
+
+	// Pause the instance so it's non-terminal (running→paused).
+	// Use a workflow that pauses mid-execution.
+	pauseCh := make(chan struct{})
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		<-pauseCh // block until we pause
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	require.NoError(t, err)
+
+	// Wait for it to be running, then pause it.
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, f.engine.Pause(id))
+	close(pauseCh)
+
+	// Rerun should fail because the instance is paused (non-terminal).
+	_, err = f.engine.Rerun(id)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be rerun")
+
+	// Clean up: cancel to release the goroutine.
+	_ = f.engine.Cancel(id)
+}
+
 func TestEngine_RecoverCrashedInstances(t *testing.T) {
 	f := newTestFixtures()
 
@@ -1498,6 +1528,202 @@ func TestEngine_UnregisteredNodeType(t *testing.T) {
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 	assert.Equal(t, instance.StateFailed, inst.State)
+}
+
+func TestEngine_NodeOutputAccessibleByLaterNode(t *testing.T) {
+	f := newTestFixtures()
+	wf := linearWorkflow() // A → B → C
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{Output: map[string]any{"result": "hello"}}, nil
+	})
+
+	var aResultInB any
+	var aResultFound bool
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, vars *variable.VariableStore) (*engine.NodeResult, error) {
+		aResultInB, aResultFound = vars.Get("A.result")
+		return &engine.NodeResult{Output: map[string]any{"result": "world"}}, nil
+	})
+
+	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	assert.True(t, aResultFound, "A.result should be accessible from node B's variable store")
+	assert.Equal(t, "hello", aResultInB)
+}
+
+func TestEngine_RetryPreservesUneditedNodeOutputs(t *testing.T) {
+	f := newTestFixtures()
+	wf := linearWorkflow() // A → B → C
+	f.workflowRepo.add(wf)
+
+	var once sync.Once
+	var bRunCount int
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		var err error
+		once.Do(func() {
+			bRunCount++
+			err = fmt.Errorf("B exploded on first run")
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, err := f.engine.Trigger("linear-wf", map[string]any{"name": "Alice"}, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	// Retry with only "name" changed.
+	err = f.engine.Retry(id, map[string]any{"name": "Bob"})
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	// Edited variable should be updated.
+	assert.Equal(t, "Bob", inst.Variables["name"])
+	// Node A's output should be preserved (A does not re-run on retry).
+	aOutput, ok := inst.Variables["A"]
+	assert.True(t, ok, "node A output key should still be in variables after retry")
+	if aOut, isMap := aOutput.(map[string]any); isMap {
+		assert.Equal(t, "ok", aOut["result"])
+	}
+}
+
+func TestEngine_UpdateCurrentNodeFiresBeforeExecution(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	var currentNodeIDAtExecTime *string
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		// At this point the engine should have already called UpdateCurrentNode("A").
+		running, _ := f.instanceRepo.ListRunning()
+		if len(running) == 1 {
+			cid := running[0].CurrentNodeID
+			currentNodeIDAtExecTime = cid
+		}
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	require.NotNil(t, currentNodeIDAtExecTime, "CurrentNodeID should be set before executor runs")
+	assert.Equal(t, "A", *currentNodeIDAtExecTime)
+}
+
+func TestEngine_VariableSnapshotCapturedPreExecution(t *testing.T) {
+	f := newTestFixtures()
+	wf := workflowWithInputs() // nodes: A; inputs: name(required), count(default 10)
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{Output: map[string]any{"transformed": "yes"}}, nil
+	})
+
+	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	snaps, err := f.snapshotRepo.ListByInstance(id)
+	require.NoError(t, err)
+	require.Len(t, snaps, 1, "one snapshot per node execution")
+
+	snap := snaps[0]
+	assert.Equal(t, "A", snap.NodeID)
+
+	// The snapshot captures pre-execution variables: inputs are present.
+	assert.Equal(t, "Alice", snap.Variables["name"])
+	// The snapshot does NOT yet contain node "A"s output (that's written after execution).
+	assert.Nil(t, snap.Variables["A"], "snapshot should not contain node A output (captured pre-execution)")
+}
+
+func TestEngine_NodeResultTelemetryFieldsPersistedToNodeExecution(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	model := "claude-sonnet-4-6"
+	tokIn := 500
+	tokOut := 200
+	stdout := "node stdout"
+	stderr := "node stderr"
+	exitCode := 0
+
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{
+			Output:         map[string]any{"ok": true},
+			LLMModel:       model,
+			LLMTokensIn:    tokIn,
+			LLMTokensOut:   tokOut,
+			ScriptStdout:   stdout,
+			ScriptStderr:   stderr,
+			ScriptExitCode: exitCode,
+		}, nil
+	})
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+
+	exec := execs[0]
+	require.NotNil(t, exec.LLMModel)
+	assert.Equal(t, model, *exec.LLMModel)
+	require.NotNil(t, exec.LLMTokensIn)
+	assert.Equal(t, tokIn, *exec.LLMTokensIn)
+	require.NotNil(t, exec.LLMTokensOut)
+	assert.Equal(t, tokOut, *exec.LLMTokensOut)
+	require.NotNil(t, exec.ScriptStdout)
+	assert.Equal(t, stdout, *exec.ScriptStdout)
+	require.NotNil(t, exec.ScriptStderr)
+	assert.Equal(t, stderr, *exec.ScriptStderr)
+	// ScriptExitCode=0 is the zero value, so the engine does NOT set it (the condition is != 0)
+	assert.Nil(t, exec.ScriptExitCode)
+}
+
+func TestEngine_NonZeroScriptExitCodePersisted(t *testing.T) {
+	// ScriptExitCode is only written when != 0; verify a non-zero code is stored.
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	wf.Nodes[0].ErrorBehavior = workflow.ErrorBehavior{Type: "skip"}
+	f.workflowRepo.add(wf)
+
+	exitCode := 2
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{
+			ScriptExitCode: exitCode,
+		}, fmt.Errorf("exit status 2")
+	})
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	// Skip error behavior makes the instance complete even if the node fails
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+	require.NotEmpty(t, execs)
+
+	// Find the skipped execution
+	var skipped *instance.NodeExecution
+	for i := range execs {
+		if execs[i].NodeID == "A" {
+			skipped = &execs[i]
+			break
+		}
+	}
+	require.NotNil(t, skipped)
+	require.NotNil(t, skipped.ScriptExitCode)
+	assert.Equal(t, exitCode, *skipped.ScriptExitCode)
 }
 
 func TestEngine_RetryWithVariableEdits(t *testing.T) {

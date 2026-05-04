@@ -360,6 +360,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 			}
 		}
 
+		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
 		result, err := executor.Execute(ctx, node, vars, "")
 		completedAt := time.Now()
@@ -381,15 +382,16 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		}
 
 		nodeExec := &instance.NodeExecution{
-			ID:          uuid.New(),
-			InstanceID:  instanceID,
-			NodeID:      node.ID,
-			Attempt:     attempt,
-			Status:      execStatus,
-			Output:      execOutput,
-			Error:       execError,
-			StartedAt:   startedAt,
-			CompletedAt: &completedAt,
+			ID:             uuid.New(),
+			InstanceID:     instanceID,
+			NodeID:         node.ID,
+			Attempt:        attempt,
+			Status:         execStatus,
+			ResolvedInputs: resolvedInputs,
+			Output:         execOutput,
+			Error:          execError,
+			StartedAt:      startedAt,
+			CompletedAt:    &completedAt,
 		}
 		if result != nil {
 			if result.LLMModel != "" {
@@ -588,11 +590,19 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 }
 
 // Rerun creates a new instance from a completed instance's original variables
-// and triggers it.
+// and triggers it. Only terminal instances (completed, failed, cancelled) can
+// be rerun.
 func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 	inst, err := e.instances.Get(instanceID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to get instance: %w", err)
+	}
+
+	switch inst.State {
+	case instance.StateCompleted, instance.StateFailed, instance.StateCancelled:
+		// ok
+	default:
+		return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: %s)", instanceID, inst.State)
 	}
 
 	return e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))

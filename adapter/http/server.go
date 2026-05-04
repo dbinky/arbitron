@@ -19,6 +19,9 @@ type EngineService interface {
 	InstanceService
 }
 
+// Compile-time assertion that *engine.Engine satisfies EngineService.
+var _ EngineService = (*engine.Engine)(nil)
+
 // NewRouter creates the chi router with all API routes wired up.
 func NewRouter(
 	svc EngineService,

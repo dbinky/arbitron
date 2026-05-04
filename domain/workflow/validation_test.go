@@ -289,6 +289,33 @@ func TestValidate_ComplexValidWorkflow(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
+func TestValidate_FileCheckerReceivesWorkflowName(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Name = "my-workflow"
+	wf.Nodes[0].Config.TemplateFile = "prompt.hbs"
+
+	var capturedName, capturedPath string
+	checker := &captureFileChecker{captureFunc: func(name, path string) bool {
+		capturedName = name
+		capturedPath = path
+		return true
+	}}
+
+	errs := workflow.Validate(wf, checker)
+	assert.Empty(t, errs)
+	assert.Equal(t, "my-workflow", capturedName, "workflowName must be forwarded to FileChecker")
+	assert.Equal(t, "prompt.hbs", capturedPath)
+}
+
+// captureFileChecker records the arguments passed to FileExists.
+type captureFileChecker struct {
+	captureFunc func(workflowName, path string) bool
+}
+
+func (c *captureFileChecker) FileExists(workflowName, path string) bool {
+	return c.captureFunc(workflowName, path)
+}
+
 // extractCodes returns just the Code field from a slice of ValidationErrors.
 func extractCodes(errs []workflow.ValidationError) []string {
 	codes := make([]string, len(errs))

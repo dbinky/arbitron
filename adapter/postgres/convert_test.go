@@ -36,6 +36,23 @@ func TestToPgTimestamptz(t *testing.T) {
 	assert.Equal(t, now, pg.Time)
 }
 
+func TestFromPgTimestamptz(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		now := time.Now()
+		pg := pgtype.Timestamptz{Time: now, Valid: true}
+		assert.Equal(t, now, fromPgTimestamptz(pg))
+	})
+	t.Run("invalid returns zero time", func(t *testing.T) {
+		pg := pgtype.Timestamptz{Valid: false}
+		assert.Equal(t, time.Time{}, fromPgTimestamptz(pg))
+	})
+}
+
+func TestTimestamptzRoundTrip(t *testing.T) {
+	now := time.Now().Truncate(time.Microsecond)
+	assert.Equal(t, now, fromPgTimestamptz(toPgTimestamptz(now)))
+}
+
 func TestToPgTimestamptzPtr(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
 		pg := toPgTimestamptzPtr(nil)

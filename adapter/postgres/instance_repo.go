@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/arbitron/arbitron/adapter/postgres/generated"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,6 +62,9 @@ func (r *InstanceRepo) Create(inst *instance.Instance) error {
 func (r *InstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
 	row, err := r.queries.GetInstance(context.Background(), toPgUUID(id))
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("instance not found: %s", id)
+		}
 		return nil, fmt.Errorf("getting instance: %w", err)
 	}
 	return r.rowToInstance(row)

@@ -1131,7 +1131,35 @@ func TestInstanceHandler_GetTrace_NodeExecsError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := newMockInstanceRepo()
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace/A", nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	req = withChiURLParam(req, "nodeId", "A")
+	w := httptest.NewRecorder()
+	h.GetNodeTrace(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_GetNodeTrace_InstanceNotFound(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
+	req = withChiURLParam(req, "id", id.String())
+	req = withChiURLParam(req, "nodeId", "A")
+	w := httptest.NewRecorder()
+	h.GetNodeTrace(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestInstanceHandler_GetNodeTrace_InstanceRepoError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)

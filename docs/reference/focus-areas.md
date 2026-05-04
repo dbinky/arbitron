@@ -15,20 +15,20 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Domain Workflow Types & Validation (`domain/workflow/` — type definitions, JSON tags, graph validation, BFS connectivity, input schema validation, file reference checking) | [ ] | [ ] | |
-| 2 | Domain Instance Types & Ports (`domain/instance/` — state enums, instance/execution/snapshot types, repository interface contracts, filter types) | [ ] | [ ] | |
-| 3 | Variable Store & Substitution (`domain/variable/` — dot-path resolution, input/nodeOutput scoping, snapshot round-tripping, `{{}}` pattern matching, value formatting) | [ ] | [ ] | |
-| 4 | Node Executors: Conditional & Transform (`domain/engine/executor_conditional.go`, `executor_transform.go` — condition evaluation, operator semantics, type coercion, variable mutation, operation ordering) | [ ] | [ ] | |
-| 5 | Node Executors: Script, Tool Call & LLM (`domain/engine/executor_script.go`, `executor_toolcall.go`, `executor_llm.go` — subprocess management, timeout handling, stdin/stdout, JSON parsing, template substitution, provider delegation) | [ ] | [ ] | |
-| 6 | Engine Graph Walker & Lifecycle (`domain/engine/engine.go` — adjacency map, execution loop, error behavior resolution, retry logic, pause/cancel/resume/retry/rerun, crash recovery, goroutine management) | [ ] | [ ] | |
-| 7 | Configuration & Config Loader (`domain/config/`, `adapter/config/` — config struct, koanf loading, YAML/env var precedence, ANTHROPIC_API_KEY mapping, default file creation) | [ ] | [ ] | |
-| 8 | Filesystem Adapters (`adapter/filesystem/` — workflow repo loading/listing, file reader read/resolve/exists, error handling for missing files, testdata fixtures) | [ ] | [ ] | |
-| 9 | Database Migrations & Postgres Adapters (`adapter/postgres/` — migration SQL, enum types, FK constraints, indexes, sqlc queries, type conversion helpers, repo implementations) | [ ] | [ ] | |
-| 10 | REST API: Workflow Handlers (`adapter/http/workflow_handler.go`, `errors.go` — list/get/validate/trigger endpoints, error response format, input validation, status codes) | [ ] | [ ] | |
-| 11 | REST API: Instance Handlers (`adapter/http/instance_handler.go` — CRUD, lifecycle operations, trace/variables/history endpoints, UUID parsing, state conflict handling) | [ ] | [ ] | |
-| 12 | Event Bus & WebSocket Streaming (`adapter/eventbus/eventbus.go`, `adapter/http/stream_handler.go` — publish/subscribe, buffer overflow, client lifecycle, terminal state handling, WebSocket upgrade) | [ ] | [ ] | |
-| 13 | Observability: Logging & Tracing (`adapter/observability/` — MultiHandler, JSON+text fan-out, level filtering, OTel tracer provider, file exporter, span attributes, request logging middleware) | [ ] | [ ] | |
-| 14 | Bootstrap & CLI (`cmd/arbitron/main.go` — cobra setup, dependency wiring, startup sequence, graceful shutdown, crash recovery invocation) | [ ] | [ ] | |
+| 1 | Domain Workflow Types & Validation (`domain/workflow/` — type definitions, JSON tags, graph validation, BFS connectivity, input schema validation, file reference checking) | [x] | [ ] | |
+| 2 | Domain Instance Types & Ports (`domain/instance/` — state enums, instance/execution/snapshot types, repository interface contracts, filter types) | [x] | [ ] | |
+| 3 | Variable Store & Substitution (`domain/variable/` — dot-path resolution, input/nodeOutput scoping, snapshot round-tripping, `{{}}` pattern matching, value formatting) | [x] | [ ] | |
+| 4 | Node Executors: Conditional & Transform (`domain/engine/executor_conditional.go`, `executor_transform.go` — condition evaluation, operator semantics, type coercion, variable mutation, operation ordering) | [x] | [ ] | |
+| 5 | Node Executors: Script, Tool Call & LLM (`domain/engine/executor_script.go`, `executor_toolcall.go`, `executor_llm.go` — subprocess management, timeout handling, stdin/stdout, JSON parsing, template substitution, provider delegation) | [x] | [ ] | |
+| 6 | Engine Graph Walker & Lifecycle (`domain/engine/engine.go` — adjacency map, execution loop, error behavior resolution, retry logic, pause/cancel/resume/retry/rerun, crash recovery, goroutine management) | [x] | [ ] | |
+| 7 | Configuration & Config Loader (`domain/config/`, `adapter/config/` — config struct, koanf loading, YAML/env var precedence, ANTHROPIC_API_KEY mapping, default file creation) | [x] | [ ] | |
+| 8 | Filesystem Adapters (`adapter/filesystem/` — workflow repo loading/listing, file reader read/resolve/exists, error handling for missing files, testdata fixtures) | [x] | [ ] | |
+| 9 | Database Migrations & Postgres Adapters (`adapter/postgres/` — migration SQL, enum types, FK constraints, indexes, sqlc queries, type conversion helpers, repo implementations) | [x] | [ ] | |
+| 10 | REST API: Workflow Handlers (`adapter/http/workflow_handler.go`, `errors.go` — list/get/validate/trigger endpoints, error response format, input validation, status codes) | [x] | [ ] | |
+| 11 | REST API: Instance Handlers (`adapter/http/instance_handler.go` — CRUD, lifecycle operations, trace/variables/history endpoints, UUID parsing, state conflict handling) | [x] | [ ] | |
+| 12 | Event Bus & WebSocket Streaming (`adapter/eventbus/eventbus.go`, `adapter/http/stream_handler.go` — publish/subscribe, buffer overflow, client lifecycle, terminal state handling, WebSocket upgrade) | [x] | [ ] | |
+| 13 | Observability: Logging & Tracing (`adapter/observability/` — MultiHandler, JSON+text fan-out, level filtering, OTel tracer provider, file exporter, span attributes, request logging middleware) | [x] | [ ] | |
+| 14 | Bootstrap & CLI (`cmd/arbitron/main.go` — cobra setup, dependency wiring, startup sequence, graceful shutdown, crash recovery invocation) | [x] | [ ] | |
 
 ---
 
@@ -36,15 +36,15 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 15 | Engine + Node Executors (executor map wiring, NodeResult handling, error propagation from executors to engine, output port routing) | [ ] | |
-| 16 | Engine + Instance Ports (state transitions match port interface, variable updates persisted correctly, node execution recording, snapshot timing) | [ ] | |
-| 17 | Engine + Variable Store (substitution called at correct points, node output namespacing, snapshot/fromSnapshot round-trip through engine lifecycle) | [ ] | |
-| 18 | REST API Handlers + Engine Service Interface (WorkflowService/InstanceService contracts match engine methods, error string mapping to HTTP codes, request/response shapes) | [ ] | |
-| 19 | REST API Handlers + Instance Repos (handler queries match repo interface, filter params wired correctly, UUID parsing before repo calls, 404 vs 409 distinction) | [ ] | |
-| 20 | WebSocket Handler + Event Bus (subscribe/unsubscribe lifecycle during connection, event serialization, terminal state detection and close, concurrent access safety) | [ ] | |
-| 21 | Workflow Validation + FileReader (FileChecker interface subset, validation calls FileExists correctly, nil checker skip path, error codes propagated) | [ ] | |
-| 22 | Postgres Adapters + Domain Types (type conversion correctness, JSONB marshaling/unmarshaling, nullable field handling, enum string mapping, original_variables preserved) | [ ] | |
-| 23 | Bootstrap + All Adapters (dependency injection order, nil checks, adapter interface satisfaction, graceful shutdown sequence covers all resources) | [ ] | |
+| 15 | Engine + Node Executors (executor map wiring, NodeResult handling, error propagation from executors to engine, output port routing) | [x] | |
+| 16 | Engine + Instance Ports (state transitions match port interface, variable updates persisted correctly, node execution recording, snapshot timing) | [x] | |
+| 17 | Engine + Variable Store (substitution called at correct points, node output namespacing, snapshot/fromSnapshot round-trip through engine lifecycle) | [x] | |
+| 18 | REST API Handlers + Engine Service Interface (WorkflowService/InstanceService contracts match engine methods, error string mapping to HTTP codes, request/response shapes) | [x] | |
+| 19 | REST API Handlers + Instance Repos (handler queries match repo interface, filter params wired correctly, UUID parsing before repo calls, 404 vs 409 distinction) | [x] | |
+| 20 | WebSocket Handler + Event Bus (subscribe/unsubscribe lifecycle during connection, event serialization, terminal state detection and close, concurrent access safety) | [x] | |
+| 21 | Workflow Validation + FileReader (FileChecker interface subset, validation calls FileExists correctly, nil checker skip path, error codes propagated) | [x] | |
+| 22 | Postgres Adapters + Domain Types (type conversion correctness, JSONB marshaling/unmarshaling, nullable field handling, enum string mapping, original_variables preserved) | [x] | |
+| 23 | Bootstrap + All Adapters (dependency injection order, nil checks, adapter interface satisfaction, graceful shutdown sequence covers all resources) | [x] | |
 
 ---
 

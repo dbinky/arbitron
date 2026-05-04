@@ -10,6 +10,9 @@ import (
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
+// Compile-time assertion: WorkflowRepo satisfies workflow.WorkflowRepository.
+var _ workflow.WorkflowRepository = (*WorkflowRepo)(nil)
+
 // WorkflowRepo implements workflow.WorkflowRepository by reading workflow
 // definitions from the local filesystem. Each workflow lives in its own
 // subdirectory under basePath and contains a workflow.json manifest.
@@ -28,6 +31,9 @@ func (r *WorkflowRepo) Load(name string) (*workflow.Workflow, error) {
 
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("workflow not found: %s", name)
+		}
 		return nil, fmt.Errorf("reading workflow %q: %w", name, err)
 	}
 

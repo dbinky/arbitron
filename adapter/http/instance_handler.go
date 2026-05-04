@@ -357,6 +357,15 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := h.instances.Get(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+
 	nodeID := chi.URLParam(r, "nodeId")
 	exec, err := h.nodeExecs.GetByInstanceAndNode(id, nodeID)
 	if err != nil {

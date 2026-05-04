@@ -173,6 +173,23 @@ func TestInstanceRepo_UpdateState(t *testing.T) {
 	assert.Equal(t, instance.StatePaused, got.State)
 }
 
+func TestInstanceRepo_UpdateState_Cancelled(t *testing.T) {
+	db := setupTestDB(t)
+	pool := db.Pool
+	userRepo := NewUserRepo(pool)
+	repo := NewInstanceRepo(pool)
+
+	ownerID, _ := userRepo.GetDefaultUser()
+	inst := newTestInstance(t, ownerID)
+	require.NoError(t, repo.Create(inst))
+
+	require.NoError(t, repo.UpdateState(inst.ID, instance.StateCancelled))
+
+	got, err := repo.Get(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateCancelled, got.State)
+}
+
 func TestInstanceRepo_UpdateVariables(t *testing.T) {
 	db := setupTestDB(t)
 	pool := db.Pool
@@ -190,6 +207,25 @@ func TestInstanceRepo_UpdateVariables(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "updated", got.Variables["key"])
 	assert.Equal(t, float64(42), got.Variables["extra"])
+}
+
+func TestInstanceRepo_UpdateVariables_PreservesOriginalVariables(t *testing.T) {
+	db := setupTestDB(t)
+	pool := db.Pool
+	userRepo := NewUserRepo(pool)
+	repo := NewInstanceRepo(pool)
+
+	ownerID, _ := userRepo.GetDefaultUser()
+	inst := newTestInstance(t, ownerID)
+	inst.OriginalVariables = map[string]any{"original": "yes"}
+	require.NoError(t, repo.Create(inst))
+
+	require.NoError(t, repo.UpdateVariables(inst.ID, map[string]any{"key": "changed"}))
+
+	got, err := repo.Get(inst.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "changed", got.Variables["key"])
+	assert.Equal(t, "yes", got.OriginalVariables["original"], "UpdateVariables must not overwrite original_variables")
 }
 
 func TestInstanceRepo_UpdateCurrentNode(t *testing.T) {
@@ -374,6 +410,116 @@ func TestNodeExecutionRepo_Update(t *testing.T) {
 // ---------------------------------------------------------------------------
 // VariableSnapshotRepo tests
 // ---------------------------------------------------------------------------
+
+func TestNodeExecutionRepo_FullyPopulated(t *testing.T) {
+	db := setupTestDB(t)
+	pool := db.Pool
+	userRepo := NewUserRepo(pool)
+	instRepo := NewInstanceRepo(pool)
+	repo := NewNodeExecutionRepo(pool)
+
+	ownerID, _ := userRepo.GetDefaultUser()
+	inst := newTestInstance(t, ownerID)
+	require.NoError(t, instRepo.Create(inst))
+
+	model := "claude-sonnet-4-6"
+	tokensIn := 512
+	tokensOut := 256
+	stdout := "hello\n"
+	stderr := "warn\n"
+	exitCode := 0
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	completed := now.Add(time.Second)
+
+	exec := &instance.NodeExecution{
+		ID:              uuid.New(),
+		InstanceID:      inst.ID,
+		NodeID:          "node-llm",
+		Attempt:         1,
+		Status:          instance.NodeStatusSucceeded,
+		ResolvedInputs:  map[string]any{"prompt": "hello"},
+		Output:          map[string]any{"result": "world"},
+		LLMModel:        &model,
+		LLMTokensIn:     &tokensIn,
+		LLMTokensOut:    &tokensOut,
+		ScriptStdout:    &stdout,
+		ScriptStderr:    &stderr,
+		ScriptExitCode:  &exitCode,
+		StartedAt:       now,
+		CompletedAt:     &completed,
+	}
+	require.NoError(t, repo.Create(exec))
+
+	execs, err := repo.ListByInstance(inst.ID)
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+	got := execs[0]
+
+	assert.Equal(t, "hello", got.ResolvedInputs["prompt"])
+	assert.Equal(t, "world", got.Output["result"])
+	require.NotNil(t, got.LLMModel)
+	assert.Equal(t, model, *got.LLMModel)
+	require.NotNil(t, got.LLMTokensIn)
+	assert.Equal(t, tokensIn, *got.LLMTokensIn)
+	require.NotNil(t, got.LLMTokensOut)
+	assert.Equal(t, tokensOut, *got.LLMTokensOut)
+	require.NotNil(t, got.ScriptStdout)
+	assert.Equal(t, stdout, *got.ScriptStdout)
+	require.NotNil(t, got.ScriptStderr)
+	assert.Equal(t, stderr, *got.ScriptStderr)
+	require.NotNil(t, got.ScriptExitCode)
+	assert.Equal(t, exitCode, *got.ScriptExitCode)
+	require.NotNil(t, got.CompletedAt)
+	assert.True(t, got.CompletedAt.Equal(completed), "CompletedAt mismatch: %v vs %v", got.CompletedAt, completed)
+}
+
+func TestNodeExecutionRepo_GetByInstanceAndNode_MultipleAttempts(t *testing.T) {
+	db := setupTestDB(t)
+	pool := db.Pool
+	userRepo := NewUserRepo(pool)
+	instRepo := NewInstanceRepo(pool)
+	repo := NewNodeExecutionRepo(pool)
+
+	ownerID, _ := userRepo.GetDefaultUser()
+	inst := newTestInstance(t, ownerID)
+	require.NoError(t, instRepo.Create(inst))
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// Create attempt 1 (failed) and attempt 2 (succeeded).
+	exec1 := &instance.NodeExecution{
+		ID: uuid.New(), InstanceID: inst.ID, NodeID: "node-a",
+		Attempt: 1, Status: instance.NodeStatusFailed, StartedAt: now,
+	}
+	exec2 := &instance.NodeExecution{
+		ID: uuid.New(), InstanceID: inst.ID, NodeID: "node-a",
+		Attempt: 2, Status: instance.NodeStatusSucceeded, StartedAt: now.Add(time.Second),
+	}
+	require.NoError(t, repo.Create(exec1))
+	require.NoError(t, repo.Create(exec2))
+
+	// GetByInstanceAndNode must return the latest attempt (attempt 2).
+	got, err := repo.GetByInstanceAndNode(inst.ID, "node-a")
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Attempt)
+	assert.Equal(t, instance.NodeStatusSucceeded, got.Status)
+}
+
+func TestNodeExecutionRepo_GetByInstanceAndNode_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	pool := db.Pool
+	userRepo := NewUserRepo(pool)
+	instRepo := NewInstanceRepo(pool)
+	repo := NewNodeExecutionRepo(pool)
+
+	ownerID, _ := userRepo.GetDefaultUser()
+	inst := newTestInstance(t, ownerID)
+	require.NoError(t, instRepo.Create(inst))
+
+	_, err := repo.GetByInstanceAndNode(inst.ID, "nonexistent-node")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
 
 func TestVariableSnapshotRepo_CreateAndListByInstance(t *testing.T) {
 	db := setupTestDB(t)

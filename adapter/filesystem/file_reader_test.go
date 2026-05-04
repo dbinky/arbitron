@@ -7,12 +7,15 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Compile-time check: FileReaderAdapter satisfies engine.FileReader.
+// Compile-time checks: FileReaderAdapter satisfies both engine.FileReader and
+// workflow.FileChecker (the domain-local narrowed subset used for validation).
 var _ engine.FileReader = (*filesystem.FileReaderAdapter)(nil)
+var _ workflow.FileChecker = (*filesystem.FileReaderAdapter)(nil)
 
 func setupFileReaderTestdata(t *testing.T) (string, func()) {
 	t.Helper()

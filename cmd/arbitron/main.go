@@ -130,16 +130,17 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		bus,
 	)
 
-	// 11. Recover any instances that were running when the process last crashed.
-	logger.Info("recovering crashed instances")
-	if err := eng.RecoverCrashedInstances(); err != nil {
-		return fmt.Errorf("recovering crashed instances: %w", err)
-	}
-
-	// 12. Set up OpenTelemetry tracing.
+	// 11. Set up OpenTelemetry tracing before crash recovery so that any spans
+	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
 	if err != nil {
 		return fmt.Errorf("setting up tracing: %w", err)
+	}
+
+	// 12. Recover any instances that were running when the process last crashed.
+	logger.Info("recovering crashed instances")
+	if err := eng.RecoverCrashedInstances(); err != nil {
+		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
 	// 13. Create the full API router.

@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/arbitron/arbitron/adapter/postgres/generated"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -127,6 +129,9 @@ func (r *NodeExecutionRepo) GetByInstanceAndNode(instanceID uuid.UUID, nodeID st
 		NodeID:     nodeID,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("node execution not found: instance=%s node=%s", instanceID, nodeID)
+		}
 		return nil, fmt.Errorf("getting node execution: %w", err)
 	}
 	return r.rowToNodeExecution(row)
