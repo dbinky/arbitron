@@ -1,7 +1,12 @@
 // Package engine defines the ports (interfaces) required by the workflow execution engine.
 package engine
 
-import "context"
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // FileReader provides access to workflow-associated files on disk.
 type FileReader interface {
@@ -39,4 +44,17 @@ type LLMStreamChunk struct {
 	Token string
 	Done  bool
 	Error error
+}
+
+// Event represents a domain event emitted during workflow execution.
+type Event struct {
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	Data      any       `json:"data"`
+}
+
+// EventBus defines the port for publishing and subscribing to workflow execution events.
+type EventBus interface {
+	Publish(instanceID uuid.UUID, event Event)
+	Subscribe(instanceID uuid.UUID) (<-chan Event, func())
 }
