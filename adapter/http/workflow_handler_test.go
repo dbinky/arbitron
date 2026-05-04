@@ -87,7 +87,10 @@ func (r *mockFileReader) FileExists(workflowName, relativePath string) bool {
 // ---------------------------------------------------------------------------
 
 func withChiURLParam(r *http.Request, key, value string) *http.Request {
-	rctx := chi.NewRouteContext()
+	rctx := chi.RouteContext(r.Context())
+	if rctx == nil {
+		rctx = chi.NewRouteContext()
+	}
 	rctx.URLParams.Add(key, value)
 	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
 	return r.WithContext(ctx)

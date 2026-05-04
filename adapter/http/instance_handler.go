@@ -1,0 +1,425 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/arbitron/arbitron/domain/instance"
+)
+
+// InstanceService defines the engine methods needed by instance handlers.
+type InstanceService interface {
+	Pause(id uuid.UUID) error
+	Resume(id uuid.UUID) error
+	Cancel(id uuid.UUID) error
+	Retry(id uuid.UUID, variableEdits map[string]any) error
+	Rerun(id uuid.UUID) (uuid.UUID, error)
+}
+
+// InstanceHandler handles REST API requests for instance operations.
+type InstanceHandler struct {
+	instances  instance.InstanceRepository
+	nodeExecs  instance.NodeExecutionRepository
+	snapshots  instance.VariableSnapshotRepository
+	service    InstanceService
+}
+
+// NewInstanceHandler creates a new InstanceHandler with its dependencies.
+func NewInstanceHandler(
+	instances instance.InstanceRepository,
+	nodeExecs instance.NodeExecutionRepository,
+	snapshots instance.VariableSnapshotRepository,
+	service InstanceService,
+) *InstanceHandler {
+	return &InstanceHandler{
+		instances: instances,
+		nodeExecs: nodeExecs,
+		snapshots: snapshots,
+		service:   service,
+	}
+}
+
+// instanceResponse is a JSON-friendly representation of an instance.
+type instanceResponse struct {
+	ID                string         `json:"id"`
+	OwnerID           string         `json:"ownerId"`
+	WorkflowName      string         `json:"workflowName"`
+	State             string         `json:"state"`
+	Priority          string         `json:"priority"`
+	Variables         map[string]any `json:"variables"`
+	OriginalVariables map[string]any `json:"originalVariables"`
+	CurrentNodeID     *string        `json:"currentNodeId,omitempty"`
+	FailedNodeID      *string        `json:"failedNodeId,omitempty"`
+	CreatedAt         string         `json:"createdAt"`
+	UpdatedAt         string         `json:"updatedAt"`
+	CompletedAt       *string        `json:"completedAt,omitempty"`
+}
+
+func toInstanceResponse(inst *instance.Instance) instanceResponse {
+	resp := instanceResponse{
+		ID:                inst.ID.String(),
+		OwnerID:           inst.OwnerID.String(),
+		WorkflowName:      inst.WorkflowName,
+		State:             string(inst.State),
+		Priority:          string(inst.Priority),
+		Variables:         inst.Variables,
+		OriginalVariables: inst.OriginalVariables,
+		CurrentNodeID:     inst.CurrentNodeID,
+		FailedNodeID:      inst.FailedNodeID,
+		CreatedAt:         inst.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:         inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if inst.CompletedAt != nil {
+		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		resp.CompletedAt = &s
+	}
+	return resp
+}
+
+// retryRequest is the optional JSON body for retrying an instance.
+type retryRequest struct {
+	Variables map[string]any `json:"variables"`
+}
+
+// parseInstanceID extracts and validates the instance UUID from the URL.
+func parseInstanceID(r *http.Request) (uuid.UUID, error) {
+	idStr := chi.URLParam(r, "id")
+	return uuid.Parse(idStr)
+}
+
+// mapEngineError maps an engine error to the appropriate HTTP status code.
+func mapEngineError(err error) int {
+	msg := err.Error()
+	if strings.Contains(msg, "not found") {
+		return http.StatusNotFound
+	}
+	if strings.Contains(msg, "is not running") ||
+		strings.Contains(msg, "is not paused") ||
+		strings.Contains(msg, "is not failed") ||
+		strings.Contains(msg, "cannot be cancelled") ||
+		strings.Contains(msg, "cannot be rerun") {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
+
+// mapEngineErrorCode maps an engine error to an error code string.
+func mapEngineErrorCode(err error) string {
+	status := mapEngineError(err)
+	switch status {
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusConflict:
+		return "CONFLICT"
+	default:
+		return "INTERNAL_ERROR"
+	}
+}
+
+// List handles GET /instances with optional query params for filtering.
+func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
+	filters := instance.ListFilters{
+		Limit: 50,
+	}
+
+	if s := r.URL.Query().Get("state"); s != "" {
+		state := instance.State(s)
+		filters.State = &state
+	}
+	if wn := r.URL.Query().Get("workflowName"); wn != "" {
+		filters.WorkflowName = &wn
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			filters.Limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			filters.Offset = parsed
+		}
+	}
+
+	summaries, err := h.instances.List(filters)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
+		return
+	}
+	if summaries == nil {
+		summaries = []instance.InstanceSummary{}
+	}
+	WriteJSON(w, http.StatusOK, summaries)
+}
+
+// Get handles GET /instances/{id} and returns the full instance.
+func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID: "+chi.URLParam(r, "id"))
+		return
+	}
+
+	inst, err := h.instances.Get(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, toInstanceResponse(inst))
+}
+
+// Pause handles POST /instances/{id}/pause.
+func (h *InstanceHandler) Pause(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	if err := h.service.Pause(id); err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+}
+
+// Resume handles POST /instances/{id}/resume.
+func (h *InstanceHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	if err := h.service.Resume(id); err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "resumed"})
+}
+
+// Cancel handles POST /instances/{id}/cancel.
+func (h *InstanceHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	if err := h.service.Cancel(id); err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// Retry handles POST /instances/{id}/retry with optional variable edits.
+func (h *InstanceHandler) Retry(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	var req retryRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+			return
+		}
+	}
+
+	if err := h.service.Retry(id, req.Variables); err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "retrying"})
+}
+
+// Rerun handles POST /instances/{id}/rerun.
+func (h *InstanceHandler) Rerun(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	newID, err := h.service.Rerun(id)
+	if err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, map[string]any{
+		"instanceId": newID.String(),
+		"state":      "running",
+	})
+}
+
+// nodeExecutionResponse is a JSON-friendly representation of a node execution.
+type nodeExecutionResponse struct {
+	ID              string         `json:"id"`
+	InstanceID      string         `json:"instanceId"`
+	NodeID          string         `json:"nodeId"`
+	Attempt         int            `json:"attempt"`
+	Status          string         `json:"status"`
+	ResolvedInputs  map[string]any `json:"resolvedInputs,omitempty"`
+	Output          map[string]any `json:"output,omitempty"`
+	Error           map[string]any `json:"error,omitempty"`
+	LLMModel        *string        `json:"llmModel,omitempty"`
+	LLMTokensIn     *int           `json:"llmTokensIn,omitempty"`
+	LLMTokensOut    *int           `json:"llmTokensOut,omitempty"`
+	ScriptStdout    *string        `json:"scriptStdout,omitempty"`
+	ScriptStderr    *string        `json:"scriptStderr,omitempty"`
+	ScriptExitCode  *int           `json:"scriptExitCode,omitempty"`
+	StartedAt       string         `json:"startedAt"`
+	CompletedAt     *string        `json:"completedAt,omitempty"`
+}
+
+func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse {
+	resp := nodeExecutionResponse{
+		ID:             exec.ID.String(),
+		InstanceID:     exec.InstanceID.String(),
+		NodeID:         exec.NodeID,
+		Attempt:        exec.Attempt,
+		Status:         string(exec.Status),
+		ResolvedInputs: exec.ResolvedInputs,
+		Output:         exec.Output,
+		Error:          exec.Error,
+		LLMModel:       exec.LLMModel,
+		LLMTokensIn:    exec.LLMTokensIn,
+		LLMTokensOut:   exec.LLMTokensOut,
+		ScriptStdout:   exec.ScriptStdout,
+		ScriptStderr:   exec.ScriptStderr,
+		ScriptExitCode: exec.ScriptExitCode,
+		StartedAt:      exec.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if exec.CompletedAt != nil {
+		s := exec.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		resp.CompletedAt = &s
+	}
+	return resp
+}
+
+// GetTrace handles GET /instances/{id}/trace and returns ordered execution records.
+func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	execs, err := h.nodeExecs.ListByInstance(id)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list trace records")
+		return
+	}
+
+	resp := make([]nodeExecutionResponse, len(execs))
+	for i, exec := range execs {
+		resp[i] = toNodeExecutionResponse(&exec)
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// GetNodeTrace handles GET /instances/{id}/trace/{nodeId} and returns a single node execution.
+func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	nodeID := chi.URLParam(r, "nodeId")
+	exec, err := h.nodeExecs.GetByInstanceAndNode(id, nodeID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get node execution")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, toNodeExecutionResponse(exec))
+}
+
+// variableSnapshotResponse is a JSON-friendly representation of a variable snapshot.
+type variableSnapshotResponse struct {
+	ID         string         `json:"id"`
+	InstanceID string         `json:"instanceId"`
+	NodeID     string         `json:"nodeId"`
+	Variables  map[string]any `json:"variables"`
+	CapturedAt string         `json:"capturedAt"`
+}
+
+func toVariableSnapshotResponse(snap *instance.VariableSnapshot) variableSnapshotResponse {
+	return variableSnapshotResponse{
+		ID:         snap.ID.String(),
+		InstanceID: snap.InstanceID.String(),
+		NodeID:     snap.NodeID,
+		Variables:  snap.Variables,
+		CapturedAt: snap.CapturedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+// GetVariables handles GET /instances/{id}/variables and returns current instance variables.
+func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	inst, err := h.instances.Get(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, inst.Variables)
+}
+
+// GetVariableHistory handles GET /instances/{id}/variables/history and returns
+// the ordered history of variable snapshots.
+func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	snaps, err := h.snapshots.ListByInstance(id)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list variable history")
+		return
+	}
+
+	resp := make([]variableSnapshotResponse, len(snaps))
+	for i, snap := range snaps {
+		resp[i] = toVariableSnapshotResponse(&snap)
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
