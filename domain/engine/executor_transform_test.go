@@ -278,3 +278,16 @@ func TestTransformExecutor_MultipleOpsSequential(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, float64(12), val)
 }
+
+
+func TestTransformExecutor_EmptyVariableNameReturnsError(t *testing.T) {
+	vars := variable.NewStore()
+	node := transformNode([]workflow.Operation{
+		{Variable: "", Operation: "set", Value: "value"},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "variable name is required")
+}

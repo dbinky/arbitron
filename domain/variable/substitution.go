@@ -44,8 +44,8 @@ func Resolve(input string, store *VariableStore) string {
 		// Write text before the opening marker.
 		b.WriteString(input[i:openAbs])
 
-		// Extract the path between {{ and }}.
-		path := input[openAbs+2 : closeAbs]
+		// Extract the path between {{ and }}, trimming any surrounding whitespace.
+		path := strings.TrimSpace(input[openAbs+2 : closeAbs])
 
 		// Resolve the path.
 		val, ok := store.Get(path)

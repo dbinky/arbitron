@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 	}
 
 	cmd := exec.Command(interpreter, cmdArgs...)
+	cmd.Dir = filepath.Dir(scriptPath) // run script from its own directory so relative paths work
 	setProcGroup(cmd)
 
 	// Pipe variables as JSON to stdin.

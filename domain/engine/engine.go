@@ -283,7 +283,13 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					vars.SetNodeOutput(currentNodeID, eb.DefaultOutput)
 				}
 				_ = e.instances.UpdateVariables(instanceID, vars.Snapshot())
-				currentNodeID = e.findNextNode(currentNodeID, "", adj)
+				// Conditional nodes route via their declared default output port so
+				// the skip path is deterministic rather than arbitrary-first-edge.
+				skipPort := ""
+				if node.Type == workflow.NodeTypeConditional {
+					skipPort = node.Config.DefaultOutput
+				}
+				currentNodeID = e.findNextNode(currentNodeID, skipPort, adj)
 
 			case "route":
 				// Jump to the error node.
@@ -362,7 +368,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 
 		resolvedInputs := vars.Snapshot()
 		startedAt := time.Now()
-		result, err := executor.Execute(ctx, node, vars, "")
+		result, err := executor.Execute(ctx, node, vars, wf.Name)
 		completedAt := time.Now()
 
 		execStatus := instance.NodeStatusSucceeded
@@ -394,6 +400,11 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 			CompletedAt:    &completedAt,
 		}
 		if result != nil {
+			if result.LLMConversation != nil {
+				if m, ok := result.LLMConversation.(map[string]any); ok {
+					nodeExec.LLMConversation = m
+				}
+			}
 			if result.LLMModel != "" {
 				nodeExec.LLMModel = &result.LLMModel
 			}
@@ -603,6 +614,10 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		// ok
 	default:
 		return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: %s)", instanceID, inst.State)
+	}
+
+	if inst.OriginalVariables == nil {
+		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
 	return e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))

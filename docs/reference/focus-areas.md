@@ -15,20 +15,20 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Domain Workflow Types & Validation (`domain/workflow/` — type definitions, JSON tags, graph validation, BFS connectivity, input schema validation, file reference checking) | [x] | [ ] | |
-| 2 | Domain Instance Types & Ports (`domain/instance/` — state enums, instance/execution/snapshot types, repository interface contracts, filter types) | [x] | [ ] | |
-| 3 | Variable Store & Substitution (`domain/variable/` — dot-path resolution, input/nodeOutput scoping, snapshot round-tripping, `{{}}` pattern matching, value formatting) | [x] | [ ] | |
-| 4 | Node Executors: Conditional & Transform (`domain/engine/executor_conditional.go`, `executor_transform.go` — condition evaluation, operator semantics, type coercion, variable mutation, operation ordering) | [x] | [ ] | |
-| 5 | Node Executors: Script, Tool Call & LLM (`domain/engine/executor_script.go`, `executor_toolcall.go`, `executor_llm.go` — subprocess management, timeout handling, stdin/stdout, JSON parsing, template substitution, provider delegation) | [x] | [ ] | |
-| 6 | Engine Graph Walker & Lifecycle (`domain/engine/engine.go` — adjacency map, execution loop, error behavior resolution, retry logic, pause/cancel/resume/retry/rerun, crash recovery, goroutine management) | [x] | [ ] | |
-| 7 | Configuration & Config Loader (`domain/config/`, `adapter/config/` — config struct, koanf loading, YAML/env var precedence, ANTHROPIC_API_KEY mapping, default file creation) | [x] | [ ] | |
-| 8 | Filesystem Adapters (`adapter/filesystem/` — workflow repo loading/listing, file reader read/resolve/exists, error handling for missing files, testdata fixtures) | [x] | [ ] | |
-| 9 | Database Migrations & Postgres Adapters (`adapter/postgres/` — migration SQL, enum types, FK constraints, indexes, sqlc queries, type conversion helpers, repo implementations) | [x] | [ ] | |
-| 10 | REST API: Workflow Handlers (`adapter/http/workflow_handler.go`, `errors.go` — list/get/validate/trigger endpoints, error response format, input validation, status codes) | [x] | [ ] | |
-| 11 | REST API: Instance Handlers (`adapter/http/instance_handler.go` — CRUD, lifecycle operations, trace/variables/history endpoints, UUID parsing, state conflict handling) | [x] | [ ] | |
-| 12 | Event Bus & WebSocket Streaming (`adapter/eventbus/eventbus.go`, `adapter/http/stream_handler.go` — publish/subscribe, buffer overflow, client lifecycle, terminal state handling, WebSocket upgrade) | [x] | [ ] | |
-| 13 | Observability: Logging & Tracing (`adapter/observability/` — MultiHandler, JSON+text fan-out, level filtering, OTel tracer provider, file exporter, span attributes, request logging middleware) | [x] | [ ] | |
-| 14 | Bootstrap & CLI (`cmd/arbitron/main.go` — cobra setup, dependency wiring, startup sequence, graceful shutdown, crash recovery invocation) | [x] | [ ] | |
+| 1 | Domain Workflow Types & Validation (`domain/workflow/` — type definitions, JSON tags, graph validation, BFS connectivity, input schema validation, file reference checking) | [x] | [x] | |
+| 2 | Domain Instance Types & Ports (`domain/instance/` — state enums, instance/execution/snapshot types, repository interface contracts, filter types) | [x] | [x] | |
+| 3 | Variable Store & Substitution (`domain/variable/` — dot-path resolution, input/nodeOutput scoping, snapshot round-tripping, `{{}}` pattern matching, value formatting) | [x] | [x] | |
+| 4 | Node Executors: Conditional & Transform (`domain/engine/executor_conditional.go`, `executor_transform.go` — condition evaluation, operator semantics, type coercion, variable mutation, operation ordering) | [x] | [x] | |
+| 5 | Node Executors: Script, Tool Call & LLM (`domain/engine/executor_script.go`, `executor_toolcall.go`, `executor_llm.go` — subprocess management, timeout handling, stdin/stdout, JSON parsing, template substitution, provider delegation) | [x] | [x] | |
+| 6 | Engine Graph Walker & Lifecycle (`domain/engine/engine.go` — adjacency map, execution loop, error behavior resolution, retry logic, pause/cancel/resume/retry/rerun, crash recovery, goroutine management) | [x] | [x] | |
+| 7 | Configuration & Config Loader (`domain/config/`, `adapter/config/` — config struct, koanf loading, YAML/env var precedence, ANTHROPIC_API_KEY mapping, default file creation) | [x] | [x] | |
+| 8 | Filesystem Adapters (`adapter/filesystem/` — workflow repo loading/listing, file reader read/resolve/exists, error handling for missing files, testdata fixtures) | [x] | [x] | |
+| 9 | Database Migrations & Postgres Adapters (`adapter/postgres/` — migration SQL, enum types, FK constraints, indexes, sqlc queries, type conversion helpers, repo implementations) | [x] | [x] | |
+| 10 | REST API: Workflow Handlers (`adapter/http/workflow_handler.go`, `errors.go` — list/get/validate/trigger endpoints, error response format, input validation, status codes) | [x] | [x] | |
+| 11 | REST API: Instance Handlers (`adapter/http/instance_handler.go` — CRUD, lifecycle operations, trace/variables/history endpoints, UUID parsing, state conflict handling) | [x] | [x] | |
+| 12 | Event Bus & WebSocket Streaming (`adapter/eventbus/eventbus.go`, `adapter/http/stream_handler.go` — publish/subscribe, buffer overflow, client lifecycle, terminal state handling, WebSocket upgrade) | [x] | [x] | |
+| 13 | Observability: Logging & Tracing (`adapter/observability/` — MultiHandler, JSON+text fan-out, level filtering, OTel tracer provider, file exporter, span attributes, request logging middleware) | [x] | [x] | |
+| 14 | Bootstrap & CLI (`cmd/arbitron/main.go` — cobra setup, dependency wiring, startup sequence, graceful shutdown, crash recovery invocation) | [x] | [x] | |
 
 ---
 

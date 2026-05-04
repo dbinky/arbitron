@@ -1759,3 +1759,117 @@ func TestEngine_RetryWithVariableEdits(t *testing.T) {
 	// Variable should be updated
 	assert.Equal(t, "Alice", inst.Variables["name"])
 }
+
+func TestEngine_WorkflowNamePassedToExecutor(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	calls := f.executor.getCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "single-wf", calls[0].WorkflowName, "executor must receive the workflow name, not empty string")
+}
+
+func TestEngine_LLMConversationPersistedToNodeExecution(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	conversation := map[string]any{
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hello"},
+			map[string]any{"role": "assistant", "content": "hi"},
+		},
+	}
+
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return &engine.NodeResult{
+			Output:          map[string]any{"ok": true},
+			LLMConversation: conversation,
+		}, nil
+	})
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	execs, err := f.nodeExecRepo.ListByInstance(id)
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+
+	assert.NotNil(t, execs[0].LLMConversation, "LLMConversation must be persisted to NodeExecution")
+	msgs, ok := execs[0].LLMConversation["messages"].([]any)
+	require.True(t, ok)
+	assert.Len(t, msgs, 2)
+}
+
+func TestEngine_RerunNilOriginalVariablesFails(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	id, err := f.engine.Trigger("single-wf", map[string]any{"x": 1}, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	// Manually nil out OriginalVariables to simulate corrupt/old DB row.
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id].OriginalVariables = nil
+	f.instanceRepo.mu.Unlock()
+
+	_, err = f.engine.Rerun(id)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no original variables recorded")
+}
+
+func TestEngine_SkipConditionalNodeRoutesViaDefaultOutput(t *testing.T) {
+	// When a conditional node fails with skip behavior, the engine must route
+	// via the node's Config.DefaultOutput port (not an arbitrary first edge).
+	f := newTestFixtures()
+
+	wf := &workflow.Workflow{
+		Name: "cond-skip-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "gate",
+				Type:       workflow.NodeTypeConditional,
+				Entrypoint: true,
+				ErrorBehavior: workflow.ErrorBehavior{Type: "skip"},
+				Config: workflow.NodeConfig{
+					Conditions:    []workflow.Condition{{Field: "x", Operator: "eq", Value: 1, Output: "branch-a"}},
+					DefaultOutput: "branch-default",
+				},
+			},
+			{ID: "good", Type: workflow.NodeTypeScript},
+			{ID: "bad", Type: workflow.NodeTypeScript},
+		},
+		Edges: []workflow.Edge{
+			{Source: "gate", Target: "good", Output: "branch-default"},
+			{Source: "gate", Target: "bad", Output: "branch-a"},
+		},
+	}
+	f.workflowRepo.add(wf)
+
+	// Force the conditional node to error (executor returns error).
+	f.executor.onNode("gate", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("conditional eval failed")
+	})
+
+	id, err := f.engine.Trigger("cond-skip-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	calls := f.executor.getCalls()
+	nodeIDs := make([]string, len(calls))
+	for i, c := range calls {
+		nodeIDs[i] = c.NodeID
+	}
+	// "gate" ran (and failed), then "good" ran via branch-default — "bad" must NOT run.
+	assert.Contains(t, nodeIDs, "gate")
+	assert.Contains(t, nodeIDs, "good")
+	assert.NotContains(t, nodeIDs, "bad", "skip on conditional must route through DefaultOutput, not arbitrary first edge")
+}

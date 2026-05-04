@@ -97,3 +97,40 @@ func TestFileReader_FileExists_False(t *testing.T) {
 
 	assert.False(t, reader.FileExists("my-workflow", "nonexistent.txt"))
 }
+
+func TestFileReader_PathTraversal_ReadFileRejected(t *testing.T) {
+	base, cleanup := setupFileReaderTestdata(t)
+	defer cleanup()
+
+	// Place a sensitive file one level above basePath.
+	secret := filepath.Join(filepath.Dir(base), "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o644))
+	defer os.Remove(secret)
+
+	reader := filesystem.NewFileReader(base)
+
+	_, err := reader.ReadFile("my-workflow", "../../secret.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes workspace root")
+}
+
+func TestFileReader_PathTraversal_ResolvePathRejected(t *testing.T) {
+	base, cleanup := setupFileReaderTestdata(t)
+	defer cleanup()
+
+	reader := filesystem.NewFileReader(base)
+
+	_, err := reader.ResolvePath("my-workflow", "../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes workspace root")
+}
+
+func TestFileReader_PathTraversal_FileExistsRejected(t *testing.T) {
+	base, cleanup := setupFileReaderTestdata(t)
+	defer cleanup()
+
+	reader := filesystem.NewFileReader(base)
+
+	assert.False(t, reader.FileExists("my-workflow", "../../secret.txt"),
+		"path traversal via FileExists must return false, not expose the file")
+}

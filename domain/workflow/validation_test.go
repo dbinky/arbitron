@@ -316,6 +316,105 @@ func (c *captureFileChecker) FileExists(workflowName, path string) bool {
 	return c.captureFunc(workflowName, path)
 }
 
+func TestValidate_EmptyNodeID(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].ID = ""
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "EMPTY_NODE_ID")
+}
+
+func TestValidate_EmptyInputName(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Inputs = []workflow.InputField{{Name: "", Type: "string"}}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "EMPTY_INPUT_NAME")
+}
+
+func TestValidate_LLMNodeMissingTemplateFile(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeLLMCall
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_LLMNodeWithTemplateFileIsValid(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeLLMCall
+	wf.Nodes[0].Config.TemplateFile = "prompt.hbs"
+
+	errs := workflow.Validate(wf, nil)
+	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_ScriptNodeMissingScriptFile(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeScript
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_ToolCallNodeMissingCommand(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeToolCall
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_ConditionalNodeNoConditionsNoDefault(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeConditional
+	wf.Nodes[0].Config.Conditions = nil
+	wf.Nodes[0].Config.DefaultOutput = ""
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_ConditionalNodeWithDefaultOnlyIsValid(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeConditional
+	wf.Nodes[0].Config.Conditions = nil
+	wf.Nodes[0].Config.DefaultOutput = "next"
+	// Add matching edge so MISSING_CONDITIONAL_EDGE doesn't fire.
+	wf.Edges = []workflow.Edge{{Source: wf.Nodes[0].ID, Target: wf.Nodes[0].ID, Output: "next"}}
+
+	errs := workflow.Validate(wf, nil)
+	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidate_InvalidErrorBehaviorType(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.DefaultErrorBehavior = workflow.ErrorBehavior{Type: "explode"}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR")
+}
+
+func TestValidate_NodeInvalidErrorBehaviorType(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].ErrorBehavior = workflow.ErrorBehavior{Type: "Halt"}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR")
+}
+
+func TestValidate_ValidErrorBehaviorTypes(t *testing.T) {
+	for _, typ := range []string{"", "halt", "retry", "skip", "route"} {
+		wf := minimalValidWorkflow()
+		wf.DefaultErrorBehavior = workflow.ErrorBehavior{Type: typ}
+		errs := workflow.Validate(wf, nil)
+		assert.NotContains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR", "type=%q should be valid", typ)
+	}
+}
+
 // extractCodes returns just the Code field from a slice of ValidationErrors.
 func extractCodes(errs []workflow.ValidationError) []string {
 	codes := make([]string, len(errs))

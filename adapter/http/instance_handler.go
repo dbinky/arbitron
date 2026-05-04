@@ -121,10 +121,15 @@ func mapEngineErrorCode(err error) string {
 	}
 }
 
+const (
+	defaultListLimit = 50
+	maxListLimit     = 500
+)
+
 // List handles GET /instances with optional query params for filtering.
 func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	filters := instance.ListFilters{
-		Limit: 50,
+		Limit: defaultListLimit,
 	}
 
 	if s := r.URL.Query().Get("state"); s != "" {
@@ -136,6 +141,9 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			if parsed > maxListLimit {
+				parsed = maxListLimit
+			}
 			filters.Limit = parsed
 		}
 	}
@@ -284,6 +292,7 @@ type nodeExecutionResponse struct {
 	ResolvedInputs  map[string]any `json:"resolvedInputs,omitempty"`
 	Output          map[string]any `json:"output,omitempty"`
 	Error           map[string]any `json:"error,omitempty"`
+	LLMConversation map[string]any `json:"llmConversation,omitempty"`
 	LLMModel        *string        `json:"llmModel,omitempty"`
 	LLMTokensIn     *int           `json:"llmTokensIn,omitempty"`
 	LLMTokensOut    *int           `json:"llmTokensOut,omitempty"`
@@ -296,21 +305,22 @@ type nodeExecutionResponse struct {
 
 func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse {
 	resp := nodeExecutionResponse{
-		ID:             exec.ID.String(),
-		InstanceID:     exec.InstanceID.String(),
-		NodeID:         exec.NodeID,
-		Attempt:        exec.Attempt,
-		Status:         string(exec.Status),
-		ResolvedInputs: exec.ResolvedInputs,
-		Output:         exec.Output,
-		Error:          exec.Error,
-		LLMModel:       exec.LLMModel,
-		LLMTokensIn:    exec.LLMTokensIn,
-		LLMTokensOut:   exec.LLMTokensOut,
-		ScriptStdout:   exec.ScriptStdout,
-		ScriptStderr:   exec.ScriptStderr,
-		ScriptExitCode: exec.ScriptExitCode,
-		StartedAt:      exec.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:              exec.ID.String(),
+		InstanceID:      exec.InstanceID.String(),
+		NodeID:          exec.NodeID,
+		Attempt:         exec.Attempt,
+		Status:          string(exec.Status),
+		ResolvedInputs:  exec.ResolvedInputs,
+		Output:          exec.Output,
+		Error:           exec.Error,
+		LLMConversation: exec.LLMConversation,
+		LLMModel:        exec.LLMModel,
+		LLMTokensIn:     exec.LLMTokensIn,
+		LLMTokensOut:    exec.LLMTokensOut,
+		ScriptStdout:    exec.ScriptStdout,
+		ScriptStderr:    exec.ScriptStderr,
+		ScriptExitCode:  exec.ScriptExitCode,
+		StartedAt:       exec.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if exec.CompletedAt != nil {
 		s := exec.CompletedAt.Format("2006-01-02T15:04:05Z07:00")

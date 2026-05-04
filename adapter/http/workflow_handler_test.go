@@ -115,8 +115,8 @@ func testWorkflow() *workflow.Workflow {
 			{Name: "count", Type: "number", Required: false, Default: float64(10)},
 		},
 		Nodes: []workflow.Node{
-			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
-			{ID: "B", Type: workflow.NodeTypeScript},
+			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true, Config: workflow.NodeConfig{ScriptFile: "a.sh"}},
+			{ID: "B", Type: workflow.NodeTypeScript, Config: workflow.NodeConfig{ScriptFile: "b.sh"}},
 		},
 		Edges: []workflow.Edge{
 			{Source: "A", Target: "B"},
@@ -214,7 +214,10 @@ func TestWorkflowHandler_Validate(t *testing.T) {
 	t.Run("returns valid for correct workflow", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		fr := newMockFileReader()
+		fr.existingFiles["test-wf/a.sh"] = true
+		fr.existingFiles["test-wf/b.sh"] = true
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, fr)
 
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/validate", nil)
 		req = withChiURLParam(req, "name", "test-wf")

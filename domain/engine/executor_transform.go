@@ -30,6 +30,9 @@ func (e *TransformExecutor) Execute(_ context.Context, node workflow.Node, vars 
 
 // applyOperation dispatches a single transform operation.
 func applyOperation(op workflow.Operation, vars *variable.VariableStore) error {
+	if op.Variable == "" {
+		return fmt.Errorf("variable name is required")
+	}
 	switch op.Operation {
 	case "set":
 		return applySet(op, vars)

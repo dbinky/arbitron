@@ -71,6 +71,9 @@ func (r *InstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
 }
 
 func (r *InstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if filters.Limit <= 0 {
+		filters.Limit = 50
+	}
 	params := generated.ListInstancesParams{
 		Limit:  int32(filters.Limit),
 		Offset: int32(filters.Offset),

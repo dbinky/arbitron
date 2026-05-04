@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -39,6 +40,19 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// redactDatabaseURL replaces the password in a database URL with "***".
+// Returns the original string on parse error so startup is never blocked.
+func redactDatabaseURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	if _, hasPassword := u.User.Password(); hasPassword {
+		u.User = url.UserPassword(u.User.Username(), "***")
+	}
+	return u.String()
 }
 
 func newServeCmd() *cobra.Command {
@@ -74,7 +88,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	defer logCloser.Close()
 
 	// 3. Connect to Postgres.
-	logger.Info("connecting to database", "url", cfg.Database.URL)
+	logger.Info("connecting to database", "url", redactDatabaseURL(cfg.Database.URL))
 	pool, err := pgxpool.New(ctx, cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("creating database pool: %w", err)

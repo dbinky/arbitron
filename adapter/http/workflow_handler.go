@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -39,6 +40,12 @@ type triggerRequest struct {
 	Priority  string         `json:"priority"`
 }
 
+// safeWorkflowName checks that a workflow name is a plain filename component
+// (no path separators, no dot-dot) to prevent directory traversal via the URL.
+func safeWorkflowName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, "/\\") && filepath.Clean(name) == name && name != ".."
+}
+
 // List handles GET /workflows and returns a JSON array of workflow summaries.
 func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
 	summaries, err := h.repo.List()
@@ -55,6 +62,10 @@ func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /workflows/{name} and returns the full workflow definition.
 func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
 	wf, err := h.repo.Load(name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -70,6 +81,10 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Validate handles POST /workflows/{name}/validate and returns validation results.
 func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
 	wf, err := h.repo.Load(name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -92,12 +107,19 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const maxTriggerBodyBytes = 1 << 20 // 1 MiB
+
 // Trigger handles POST /workflows/{name}/trigger and creates a new workflow instance.
 func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
 
 	var req triggerRequest
 	if r.Body != nil && r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
 			return

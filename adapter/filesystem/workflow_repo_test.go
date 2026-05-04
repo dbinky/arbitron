@@ -172,3 +172,12 @@ func TestWorkflowRepo_List_EmptyWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, summaries)
 }
+
+func TestWorkflowRepo_Load_PathTraversalRejected(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+
+	// A name like "../sibling" could escape the workspace root.
+	_, err := repo.Load("../sibling")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}

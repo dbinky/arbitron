@@ -216,3 +216,20 @@ func TestResolveNestedObjectInText(t *testing.T) {
 	result := Resolve("Result: {{resp.data}}", store)
 	assert.Equal(t, `Result: {"items":["a","b"]}`, result)
 }
+
+func TestResolveWhitespacePaddedPath(t *testing.T) {
+	store := NewStore()
+	store.SetInput("name", "alice")
+
+	// Leading and trailing spaces inside {{ }} should be trimmed.
+	assert.Equal(t, "alice", Resolve("{{ name }}", store))
+	assert.Equal(t, "alice", Resolve("{{  name  }}", store))
+	assert.Equal(t, "Hello alice!", Resolve("Hello {{  name  }}!", store))
+}
+
+func TestResolveWhitespacePaddedNodeOutput(t *testing.T) {
+	store := NewStore()
+	store.SetNodeOutput("check", map[string]any{"score": float64(99)})
+
+	assert.Equal(t, "99", Resolve("{{ check.score }}", store))
+}

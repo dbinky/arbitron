@@ -1,5 +1,12 @@
-CREATE TYPE instance_state AS ENUM ('queued', 'running', 'completed', 'failed', 'cancelled', 'paused');
-CREATE TYPE instance_priority AS ENUM ('high', 'normal', 'low');
+DO $$ BEGIN
+  CREATE TYPE instance_state AS ENUM ('queued', 'running', 'completed', 'failed', 'cancelled', 'paused');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE instance_priority AS ENUM ('high', 'normal', 'low');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE instances (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,4 +1,7 @@
-CREATE TYPE node_execution_status AS ENUM ('succeeded', 'failed', 'skipped');
+DO $$ BEGIN
+  CREATE TYPE node_execution_status AS ENUM ('succeeded', 'failed', 'skipped');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE node_executions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

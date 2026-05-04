@@ -24,6 +24,15 @@ var validInputTypes = map[string]bool{
 	"array":   true,
 }
 
+// validErrorBehaviorTypes is the set of recognized error behavior types.
+var validErrorBehaviorTypes = map[string]bool{
+	"":      true, // empty means "use workflow default"
+	"halt":  true,
+	"retry": true,
+	"skip":  true,
+	"route": true,
+}
+
 // Validate performs structural and semantic validation of a workflow definition.
 // Pass a non-nil FileChecker to validate file references (templateFile,
 // scriptFile); pass nil to skip file-existence checks.
@@ -31,6 +40,7 @@ func Validate(wf *Workflow, checker FileChecker) []ValidationError {
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
+	errs = append(errs, validateNodeIDs(wf)...)
 	errs = append(errs, validateDuplicateNodeIDs(wf)...)
 
 	nodeIDs := buildNodeIDSet(wf)
@@ -38,6 +48,9 @@ func Validate(wf *Workflow, checker FileChecker) []ValidationError {
 	errs = append(errs, validateConditionalEdges(wf)...)
 	errs = append(errs, validateConnectivity(wf, nodeIDs)...)
 	errs = append(errs, validateInputTypes(wf)...)
+	errs = append(errs, validateInputNames(wf)...)
+	errs = append(errs, validateNodeConfigs(wf)...)
+	errs = append(errs, validateErrorBehaviors(wf)...)
 
 	if checker != nil {
 		errs = append(errs, validateFileReferences(wf, checker)...)
@@ -264,6 +277,100 @@ func validateFileReferences(wf *Workflow, checker FileChecker) []ValidationError
 					NodeID:  n.ID,
 				})
 			}
+		}
+	}
+
+	return errs
+}
+
+// validateNodeIDs checks that no node has an empty ID.
+func validateNodeIDs(wf *Workflow) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		if n.ID == "" {
+			errs = append(errs, ValidationError{
+				Code:    "EMPTY_NODE_ID",
+				Message: "node has an empty ID; all nodes must have a non-empty unique ID",
+			})
+		}
+	}
+	return errs
+}
+
+// validateInputNames checks that no input field has an empty name.
+func validateInputNames(wf *Workflow) []ValidationError {
+	var errs []ValidationError
+	for _, inp := range wf.Inputs {
+		if inp.Name == "" {
+			errs = append(errs, ValidationError{
+				Code:    "EMPTY_INPUT_NAME",
+				Message: "workflow has an input field with an empty name",
+			})
+		}
+	}
+	return errs
+}
+
+// validateNodeConfigs checks per-type required configuration fields.
+func validateNodeConfigs(wf *Workflow) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		switch n.Type {
+		case NodeTypeLLMCall:
+			if n.Config.TemplateFile == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "llm_call node " + n.ID + " must have a templateFile",
+					NodeID:  n.ID,
+				})
+			}
+		case NodeTypeScript:
+			if n.Config.ScriptFile == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "script node " + n.ID + " must have a scriptFile",
+					NodeID:  n.ID,
+				})
+			}
+		case NodeTypeToolCall:
+			if n.Config.Command == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "tool_call node " + n.ID + " must have a command",
+					NodeID:  n.ID,
+				})
+			}
+		case NodeTypeConditional:
+			if len(n.Config.Conditions) == 0 && n.Config.DefaultOutput == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "conditional node " + n.ID + " must have at least one condition or a defaultOutput",
+					NodeID:  n.ID,
+				})
+			}
+		}
+	}
+	return errs
+}
+
+// validateErrorBehaviors checks that error behavior types are recognized values.
+func validateErrorBehaviors(wf *Workflow) []ValidationError {
+	var errs []ValidationError
+
+	if !validErrorBehaviorTypes[wf.DefaultErrorBehavior.Type] {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_ERROR_BEHAVIOR",
+			Message: "workflow defaultErrorBehavior has unknown type: " + wf.DefaultErrorBehavior.Type,
+		})
+	}
+
+	for _, n := range wf.Nodes {
+		if !validErrorBehaviorTypes[n.ErrorBehavior.Type] {
+			errs = append(errs, ValidationError{
+				Code:    "INVALID_ERROR_BEHAVIOR",
+				Message: "node " + n.ID + " has unknown errorBehavior type: " + n.ErrorBehavior.Type,
+				NodeID:  n.ID,
+			})
 		}
 	}
 

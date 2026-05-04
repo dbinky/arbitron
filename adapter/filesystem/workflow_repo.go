@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -27,7 +28,11 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 
 // Load reads and parses the workflow.json file from the named subdirectory.
 func (r *WorkflowRepo) Load(name string) (*workflow.Workflow, error) {
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
+	if !strings.HasPrefix(manifestPath, root) {
+		return nil, fmt.Errorf("workflow not found: %s", name)
+	}
 
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
