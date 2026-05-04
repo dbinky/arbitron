@@ -150,10 +150,13 @@ Execution:
 
 **`domain/engine/executor_toolcall.go`:**
 
-Same pattern as Script executor but simpler command construction:
+Same pattern as Script executor but simpler:
 1. Resolve `{{substitution}}` in command and args
 2. Build command: `exec.CommandContext(ctx, command, args...)`
-3. Same timeout, stdin, stdout/stderr capture, JSON parsing as Script
+3. Set up context with timeout
+4. No stdin — Tool Call does not pass variables on stdin (unlike Script, which does). Variables are available via substitution in command and args only.
+5. Capture stdout and stderr, parse stdout as JSON
+6. Same timeout and error handling as Script
 
 **Testing:** Same scenarios as Script executor, adapted for command+args construction.
 
@@ -231,11 +234,12 @@ Execution:
 
 ```go
 type Engine struct {
-    workflows  workflow.WorkflowRepository
-    instances  instance.InstanceRepository
-    snapshots  instance.VariableSnapshotRepository
-    executors  map[workflow.NodeType]NodeExecutor
-    eventBus   EventBus
+    workflows      workflow.WorkflowRepository
+    instances      instance.InstanceRepository
+    nodeExecutions instance.NodeExecutionRepository
+    snapshots      instance.VariableSnapshotRepository
+    executors      map[workflow.NodeType]NodeExecutor
+    eventBus       EventBus
 }
 ```
 
@@ -289,11 +293,15 @@ for currentNode != nil {
 
     // Record execution
     nodeExec = buildNodeExecution(currentNode, result, err)
-    instances.CreateNodeExecution(nodeExec)
+    nodeExecutions.Create(nodeExec)
 
     if err != nil {
-        // Apply error behavior
-        switch currentNode.ErrorBehavior.Type {
+        // Apply error behavior (node override → workflow default → halt)
+        errorBehavior := currentNode.ErrorBehavior
+        if errorBehavior.Type == "" {
+            errorBehavior = workflowDef.DefaultErrorBehavior
+        }
+        switch errorBehavior.Type {
         case "halt", "":
             instances.SetFailed(instanceID, currentNode.ID)
             eventBus.Publish(instanceID, NodeFailedEvent{...})
@@ -355,7 +363,7 @@ eventBus.Publish(instanceID, StateChangedEvent{...})
 3. Initialize variable store: schema defaults overlaid with provided variables
 4. Snapshot the workflow definition as JSON
 5. Get the default user ID
-6. Create instance record (state: `running`, since Phase 1 has no concurrency caps)
+6. Create instance record (state: `running`, since Phase 1 has no concurrency caps). Store the initialized variable store as both `variables` and `original_variables` (the latter is immutable, used by re-run).
 7. Launch `Run()` in a goroutine with a cancellable context stored in an in-memory map
 8. Return instance ID
 
@@ -384,9 +392,9 @@ eventBus.Publish(instanceID, StateChangedEvent{...})
 
 **`Rerun(instanceID uuid.UUID) (uuid.UUID, error)`:**
 1. Get instance, verify state is `completed`, `failed`, or `cancelled`
-2. Extract the original input variables from the workflow snapshot's input schema defaults overlaid with the instance's initial trigger variables
-3. Create a new instance with the same workflow snapshot and original inputs
-4. Trigger the new instance
+2. Read `original_variables` from the instance record (these are the immutable trigger-time inputs)
+3. Create a new instance with the same workflow snapshot and `original_variables` as both `variables` and `original_variables`
+4. Launch `Run()` in a goroutine
 5. Return the new instance ID
 
 ### Context and Goroutine Management

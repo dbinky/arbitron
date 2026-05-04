@@ -76,7 +76,7 @@ Four migrations run on startup via `golang-migrate`, embedded in the binary usin
 **`002_create_instances.up.sql`:**
 - Creates `instance_state` enum (`queued`, `running`, `completed`, `failed`, `cancelled`, `paused`)
 - Creates `instance_priority` enum (`high`, `normal`, `low`)
-- Creates `instances` table with all columns per the product spec
+- Creates `instances` table with all columns per the product spec (including `original_variables` JSONB for preserving trigger-time inputs)
 - FK constraint on `owner_id` referencing `users(id)`
 
 **`003_create_node_executions.up.sql`:**
@@ -102,7 +102,7 @@ Queries grouped by domain concept. sqlc generates Go code into `adapter/postgres
 - `GetDefaultUser` — find the user with username `local`
 
 **`queries/instances.sql`:**
-- `CreateInstance` — insert a new instance
+- `CreateInstance` — insert a new instance (stores both `variables` and `original_variables`)
 - `GetInstance` — get by ID
 - `ListInstances` — with optional filters (state, workflow_name) and pagination (limit, offset)
 - `UpdateInstanceState` — set state, updated_at
@@ -178,6 +178,34 @@ type TracingConfig struct {
 ---
 
 ## 5. Workflow Loading
+
+**`domain/instance/ports.go`** defines three repository interfaces:
+
+```go
+type InstanceRepository interface {
+    Create(instance *Instance) error
+    Get(id uuid.UUID) (*Instance, error)
+    List(filters ListFilters) ([]InstanceSummary, error)
+    UpdateState(id uuid.UUID, state State) error
+    UpdateVariables(id uuid.UUID, variables map[string]any) error
+    UpdateCurrentNode(id uuid.UUID, nodeID string) error
+    SetFailed(id uuid.UUID, failedNodeID string) error
+    SetCompleted(id uuid.UUID) error
+    ListRunning() ([]Instance, error)
+}
+
+type NodeExecutionRepository interface {
+    Create(exec *NodeExecution) error
+    Update(exec *NodeExecution) error
+    ListByInstance(instanceID uuid.UUID) ([]NodeExecution, error)
+    GetByInstanceAndNode(instanceID uuid.UUID, nodeID string) (*NodeExecution, error)
+}
+
+type VariableSnapshotRepository interface {
+    Create(snapshot *VariableSnapshot) error
+    ListByInstance(instanceID uuid.UUID) ([]VariableSnapshot, error)
+}
+```
 
 **`domain/workflow/ports.go`** defines:
 

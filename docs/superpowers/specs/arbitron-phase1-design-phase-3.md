@@ -13,7 +13,7 @@ All handlers live in `adapter/http/`. They are thin adapters that translate betw
 ### Router Setup (`server.go`)
 
 ```go
-func NewRouter(engine *engine.Engine, workflows workflow.WorkflowRepository, instances instance.InstanceRepository, snapshots instance.VariableSnapshotRepository) chi.Router {
+func NewRouter(engine *engine.Engine, workflows workflow.WorkflowRepository, instances instance.InstanceRepository, nodeExecs instance.NodeExecutionRepository, snapshots instance.VariableSnapshotRepository, eventBus engine.EventBus) chi.Router {
     r := chi.NewRouter()
 
     r.Use(middleware.Recoverer)
@@ -42,6 +42,7 @@ func NewRouter(engine *engine.Engine, workflows workflow.WorkflowRepository, ins
             r.Get("/{id}/trace/{nodeId}", getNodeTrace)
             r.Get("/{id}/variables", getVariables)
             r.Get("/{id}/variables/history", getVariableHistory)
+            r.Get("/{id}/ws", instanceWebSocket)
         })
     })
 

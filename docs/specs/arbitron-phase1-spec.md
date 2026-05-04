@@ -304,7 +304,7 @@ Workflows are authored as files on disk. The API reads them but does not create 
 A Go interface with two methods:
 
 - **Call** — send a prompt with model config (model name, max tokens, temperature, output schema) and return a complete structured JSON response plus metadata (model, token counts, duration).
-- **StreamCall** — same inputs, return a channel of streaming chunks for real-time output via the SSE endpoint.
+- **StreamCall** — same inputs, return a channel of streaming chunks for real-time output via the WebSocket endpoint.
 
 ### Anthropic Implementation (Phase 1)
 
@@ -377,6 +377,7 @@ Log rotation and retention are out of scope for Phase 1.
 | variables | JSONB | Current instance variable state |
 | current_node_id | text (nullable) | Node currently executing |
 | failed_node_id | text (nullable) | Node that failed (if in failed state) |
+| original_variables | JSONB | Input variables as provided at trigger time (immutable, used by re-run) |
 | created_at | timestamp | |
 | updated_at | timestamp | |
 | completed_at | timestamp (nullable) | |
