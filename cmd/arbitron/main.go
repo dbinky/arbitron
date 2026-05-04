@@ -16,8 +16,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
+	"github.com/arbitron/arbitron/adapter/anthropic"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
+	"github.com/arbitron/arbitron/adapter/eventbus"
+	"github.com/arbitron/arbitron/adapter/filesystem"
+	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 func main() {
@@ -46,7 +53,7 @@ func newServeCmd() *cobra.Command {
 func runServe(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	// Load configuration.
+	// 1. Load configuration.
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("determining home directory: %w", err)
@@ -59,8 +66,15 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Connect to Postgres.
-	slog.Info("connecting to database", "url", cfg.Database.URL)
+	// 2. Set up structured logging.
+	logger, logCloser, err := observability.SetupLogging(cfg.Logging)
+	if err != nil {
+		return fmt.Errorf("setting up logging: %w", err)
+	}
+	defer logCloser.Close()
+
+	// 3. Connect to Postgres.
+	logger.Info("connecting to database", "url", cfg.Database.URL)
 	pool, err := pgxpool.New(ctx, cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("creating database pool: %w", err)
@@ -71,46 +85,94 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("pinging database: %w", err)
 	}
-	slog.Info("database connection established")
+	logger.Info("database connection established")
 
-	// Run migrations.
-	slog.Info("running database migrations")
+	// 4. Run migrations.
+	logger.Info("running database migrations")
 	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
-	slog.Info("database migrations complete")
+	logger.Info("database migrations complete")
 
-	// TODO(P2T3): Create engine with all adapters and call RecoverCrashedInstances()
-	// TODO(P3T1): Wire full REST API router
-	// TODO(P3T3): Set up OTel tracing and logging middleware
+	// 5. Initialize adapters.
+	instanceRepo := postgres.NewInstanceRepo(pool)
+	nodeExecRepo := postgres.NewNodeExecutionRepo(pool)
+	snapshotRepo := postgres.NewVariableSnapshotRepo(pool)
+	userRepo := postgres.NewUserRepo(pool)
 
-	// Set up HTTP server with health endpoint.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
-			http.Error(w, "database unreachable", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `{"status":"ok"}`)
-	})
+	// 6. Create filesystem-based repos.
+	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
+	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
+
+	// 7. Create Anthropic LLM provider.
+	llmProvider := anthropic.New(cfg.LLM.APIKey)
+
+	// 8. Create in-process event bus.
+	bus := eventbus.New()
+
+	// 9. Create all node executors and build the executor map.
+	executors := map[workflow.NodeType]engine.NodeExecutor{
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider),
+		workflow.NodeTypeScript:      engine.NewScriptExecutor(fileReader),
+		workflow.NodeTypeToolCall:    engine.NewToolCallExecutor(),
+		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
+		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
+	}
+
+	// 10. Create the workflow engine.
+	eng := engine.NewEngine(
+		workflowRepo,
+		instanceRepo,
+		nodeExecRepo,
+		snapshotRepo,
+		userRepo,
+		executors,
+		bus,
+	)
+
+	// 11. Recover any instances that were running when the process last crashed.
+	logger.Info("recovering crashed instances")
+	if err := eng.RecoverCrashedInstances(); err != nil {
+		return fmt.Errorf("recovering crashed instances: %w", err)
+	}
+
+	// 12. Set up OpenTelemetry tracing.
+	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
+	if err != nil {
+		return fmt.Errorf("setting up tracing: %w", err)
+	}
+
+	// 13. Create the full API router.
+	router := adapthttp.NewRouter(
+		eng,
+		workflowRepo,
+		instanceRepo,
+		nodeExecRepo,
+		snapshotRepo,
+		fileReader,
+		bus,
+		cfg,
+	)
+
+	// 14. Add request logging middleware (wraps the entire router).
+	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown on SIGINT/SIGTERM.
+	// 15. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("server starting", "addr", addr)
+		logger.Info("server starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("server error: %w", err)
 		}
@@ -119,22 +181,27 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	select {
 	case sig := <-shutdownCh:
-		slog.Info("shutdown signal received", "signal", sig)
+		logger.Info("shutdown signal received", "signal", sig)
 	case err := <-errCh:
 		if err != nil {
 			return err
 		}
 	}
 
-	// Shutdown with a 15-second deadline.
+	// 16. Shutdown with a 15-second deadline.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	slog.Info("shutting down server")
+	logger.Info("shutting down server")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
-	slog.Info("server stopped gracefully")
+	// Flush OTel spans.
+	if err := tracingShutdown(shutdownCtx); err != nil {
+		logger.Error("tracing shutdown error", "error", err)
+	}
+
+	logger.Info("server stopped gracefully")
 	return nil
 }
