@@ -332,6 +332,18 @@ func (b *mockEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event, fun
 	return ch, func() {}
 }
 
+func (b *mockEventBus) eventsOfType(instanceID uuid.UUID, eventType string) []engine.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var result []engine.Event
+	for _, e := range b.events[instanceID] {
+		if e.Type == eventType {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // mockExecutor implements engine.NodeExecutor with configurable behavior
 type mockExecutor struct {
 	mu       sync.Mutex
@@ -1307,4 +1319,98 @@ func TestEngine_SkipStatusPersistedAsSkipped(t *testing.T) {
 	}
 	require.NotNil(t, bExec, "should have a record for node B")
 	assert.Equal(t, instance.NodeStatusSkipped, bExec.Status, "skipped node should be recorded as skipped, not failed")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Node-level events published to event bus
+// ---------------------------------------------------------------------------
+
+func TestEngine_PublishesNodeStartedEvents(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+
+	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	started := f.eventBus.eventsOfType(id, "node.started")
+	// A, B, C should each emit node.started
+	assert.Len(t, started, 3)
+	nodeIDs := make([]string, 0, 3)
+	for _, e := range started {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok, "node.started Data should be a map")
+		nodeID, _ := d["nodeId"].(string)
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	assert.ElementsMatch(t, []string{"A", "B", "C"}, nodeIDs)
+}
+
+func TestEngine_PublishesNodeCompletedEvents(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+
+	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	completed := f.eventBus.eventsOfType(id, "node.completed")
+	assert.Len(t, completed, 3)
+
+	for _, e := range completed {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok)
+		assert.NotEmpty(t, d["nodeId"])
+		assert.NotEmpty(t, d["nodeType"])
+	}
+}
+
+func TestEngine_PublishesNodeFailedEvent(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "halt"})
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	failed := f.eventBus.eventsOfType(id, "node.failed")
+	require.Len(t, failed, 1)
+	d, ok := failed[0].Data.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "B", d["nodeId"])
+	assert.Contains(t, d["error"], "node B exploded")
+}
+
+func TestEngine_PublishesNodeFailedEventOnSkip(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "skip"})
+	f.workflowRepo.add(wf)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	// node.failed is published even when behavior is skip, because the node DID fail
+	failed := f.eventBus.eventsOfType(id, "node.failed")
+	require.Len(t, failed, 1)
+	assert.Equal(t, "B", failed[0].Data.(map[string]any)["nodeId"])
+
+	// node.started and node.completed for A and C, but NOT node.completed for B (it failed)
+	completed := f.eventBus.eventsOfType(id, "node.completed")
+	completedIDs := make([]string, 0, len(completed))
+	for _, e := range completed {
+		completedIDs = append(completedIDs, e.Data.(map[string]any)["nodeId"].(string))
+	}
+	assert.Contains(t, completedIDs, "A")
+	assert.Contains(t, completedIDs, "C")
+	assert.NotContains(t, completedIDs, "B")
 }

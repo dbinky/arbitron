@@ -486,6 +486,30 @@ func TestInstanceHandler_Resume(t *testing.T) {
 
 		assert.Equal(t, http.StatusConflict, w.Code)
 	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodPost, "/instances/bad-uuid/resume", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		w := httptest.NewRecorder()
+		h.Resume(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 404 for unknown instance", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.resumeFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Resume(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +545,30 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		h.Cancel(w, req)
 
 		assert.Equal(t, http.StatusConflict, w.Code)
+	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodPost, "/instances/bad-uuid/cancel", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		w := httptest.NewRecorder()
+		h.Cancel(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 404 for unknown instance", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.cancelFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Cancel(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -576,6 +624,42 @@ func TestInstanceHandler_Retry(t *testing.T) {
 		h.Retry(w, req)
 
 		assert.Equal(t, http.StatusConflict, w.Code)
+	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodPost, "/instances/bad-uuid/retry", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 400 for malformed JSON body", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		id := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", strings.NewReader("{not-json}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = 10
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 404 for unknown instance", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.retryFn = func(gotID uuid.UUID, variableEdits map[string]any) error {
+			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -635,6 +719,15 @@ func TestInstanceHandler_Rerun(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodPost, "/instances/bad-uuid/rerun", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		w := httptest.NewRecorder()
+		h.Rerun(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +783,18 @@ func TestInstanceHandler_GetTrace(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+
+	t.Run("returns 404 for unknown instance", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+
+		id := uuid.New()
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetTrace(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -740,6 +845,16 @@ func TestInstanceHandler_GetNodeTrace(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodGet, "/instances/bad-uuid/trace/A", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		req = withChiURLParam(req, "nodeId", "A")
+		w := httptest.NewRecorder()
+		h.GetNodeTrace(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -777,6 +892,15 @@ func TestInstanceHandler_GetVariables(t *testing.T) {
 		h.GetVariables(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 400 for bad UUID", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+		req := httptest.NewRequest(http.MethodGet, "/instances/bad-uuid/variables", nil)
+		req = withChiURLParam(req, "id", "bad-uuid")
+		w := httptest.NewRecorder()
+		h.GetVariables(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
 
@@ -830,5 +954,17 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 		h.GetVariableHistory(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 404 for unknown instance", func(t *testing.T) {
+		h, _, _, _, _ := newInstanceHandler()
+
+		id := uuid.New()
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables/history", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetVariableHistory(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }

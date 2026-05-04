@@ -327,6 +327,15 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := h.instances.Get(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+
 	execs, err := h.nodeExecs.ListByInstance(id)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list trace records")
@@ -408,6 +417,15 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 	id, err := parseInstanceID(r)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	if _, err := h.instances.Get(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
 		return
 	}
 

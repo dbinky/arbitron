@@ -253,10 +253,22 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		// Update current node.
 		_ = e.instances.UpdateCurrentNode(instanceID, currentNodeID)
 
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "node.started",
+			Timestamp: time.Now(),
+			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+		})
+
 		// Execute the node with retry logic. Each attempt is individually recorded.
 		result, nodeExec, execErr := e.executeWithRetry(ctx, instanceID, node, vars, wf)
 
 		if execErr != nil {
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "node.failed",
+				Timestamp: time.Now(),
+				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
+			})
+
 			// Handle error behavior.
 			eb := resolveErrorBehavior(node, wf)
 
@@ -292,6 +304,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				return
 			}
 		} else {
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "node.completed",
+				Timestamp: time.Now(),
+				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+			})
+
 			// Success: update variables with node output.
 			if result != nil && result.Output != nil {
 				vars.SetNodeOutput(currentNodeID, result.Output)
