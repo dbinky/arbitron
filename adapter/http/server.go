@@ -27,6 +27,7 @@ func NewRouter(
 	nodeExecs instance.NodeExecutionRepository,
 	snapshots instance.VariableSnapshotRepository,
 	fileReader engine.FileReader,
+	eventBus engine.EventBus,
 	cfg *config.Config,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -38,6 +39,7 @@ func NewRouter(
 
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
+	streamHandler := NewStreamHandler(instances, eventBus)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// System endpoints
@@ -68,6 +70,7 @@ func NewRouter(
 			r.Get("/{id}/trace/{nodeId}", instHandler.GetNodeTrace)
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
+			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 		})
 	})
 

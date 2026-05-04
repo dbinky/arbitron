@@ -11,8 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/eventbus"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/config"
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -74,20 +76,21 @@ func (m *routerMockService) Rerun(id uuid.UUID) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
 
-func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, *config.Config) {
+func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config) {
 	wfRepo := newMockWorkflowRepo()
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &routerMockService{}
 	fileReader := newMockFileReader()
+	bus := eventbus.NewNoOp()
 	cfg := &config.Config{
 		Server:   config.ServerConfig{Host: "localhost", Port: 8080},
 		Database: config.DatabaseConfig{URL: "postgres://user:pass@localhost/arbitron"},
 		LLM:      config.LLMConfig{Provider: "anthropic", APIKey: "sk-secret-key-12345"},
 		Logging:  config.LoggingConfig{Level: "info"},
 	}
-	return wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg
+	return wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg
 }
 
 // ---------------------------------------------------------------------------
@@ -95,8 +98,8 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 // ---------------------------------------------------------------------------
 
 func TestRouter_Health(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -115,8 +118,8 @@ func TestRouter_Health(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_SystemConfig(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -145,7 +148,7 @@ func TestRouter_SystemConfig(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_WorkflowRoutes(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg := newRouterTestDeps()
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
 	wfRepo.workflows["my-wf"] = &workflow.Workflow{
 		Name:        "my-wf",
 		Description: "Test workflow",
@@ -153,7 +156,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, cfg)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
@@ -191,7 +194,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_InstanceRoutes(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg := newRouterTestDeps()
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
 	inst := &instance.Instance{
 		ID:                uuid.New(),
 		OwnerID:           uuid.New(),
@@ -204,7 +207,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 		UpdatedAt:         time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, cfg)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
 
 	t.Run("GET /api/v1/instances", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -299,8 +302,8 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_NotFound(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/nonexistent", nil)
 	w := httptest.NewRecorder()
