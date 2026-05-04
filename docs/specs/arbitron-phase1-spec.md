@@ -286,7 +286,7 @@ Workflows are authored as files on disk. The API reads them but does not create 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/instances/{id}/stream` | SSE stream: node started/completed/failed, variable updates, state changes, LLM token streaming |
+| GET | `/instances/{id}/ws` | WebSocket: node started/completed/failed, variable updates, state changes, LLM token streaming |
 
 ### System
 
@@ -488,7 +488,7 @@ The binary is invoked as `arbitron serve`. A single subcommand in Phase 1, with 
 - Instance lifecycle: queued, running, completed, failed, cancelled, paused
 - Instance operations: trigger, pause, resume, cancel, retry (with variable editing), re-run
 - REST API for all operations
-- SSE streaming for live instance output
+- WebSocket streaming for live instance output
 - Workflow validation endpoint
 - LLM provider interface with Anthropic-direct implementation
 - Per-node execution records in Postgres
