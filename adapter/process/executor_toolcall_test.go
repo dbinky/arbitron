@@ -1,4 +1,4 @@
-package engine_test
+package process_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +43,7 @@ echo '{"status": "done"}'
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ exit 2
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -97,7 +97,7 @@ echo '{"late": true}'
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -124,7 +124,7 @@ echo "plain text output"
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -152,7 +152,7 @@ echo "{\"name\": \"$1\"}"
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ fi
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestToolCallExecutor_CommandNotFound(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -228,7 +228,7 @@ echo '{"ok": true}'
 		},
 	}
 
-	exec := engine.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor()
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)

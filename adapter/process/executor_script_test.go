@@ -1,4 +1,4 @@
-package engine_test
+package process_test
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
@@ -83,7 +83,7 @@ echo '{"result": "ok"}'
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ exit 1
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -145,7 +145,7 @@ echo '{"result": "late"}'
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -176,7 +176,7 @@ echo "not json"
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -208,7 +208,7 @@ echo "{\"arg\": \"$1\"}"
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -243,7 +243,7 @@ echo "$INPUT"
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -266,7 +266,7 @@ func TestScriptExecutor_FileNotFound(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)

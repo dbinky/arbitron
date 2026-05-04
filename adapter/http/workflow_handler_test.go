@@ -30,7 +30,7 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 	return &mockWorkflowRepo{workflows: make(map[string]*workflow.Workflow)}
 }
 
-func (r *mockWorkflowRepo) Load(name string) (*workflow.Workflow, error) {
+func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
 	wf, ok := r.workflows[name]
 	if !ok {
 		return nil, fmt.Errorf("workflow not found: %s", name)
@@ -38,7 +38,7 @@ func (r *mockWorkflowRepo) Load(name string) (*workflow.Workflow, error) {
 	return wf, nil
 }
 
-func (r *mockWorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
+func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error) {
 	var summaries []workflow.WorkflowSummary
 	for _, wf := range r.workflows {
 		summaries = append(summaries, workflow.WorkflowSummary{
@@ -52,8 +52,8 @@ func (r *mockWorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
 
 type errWorkflowRepo struct{ err error }
 
-func (r *errWorkflowRepo) Load(_ string) (*workflow.Workflow, error)    { return nil, r.err }
-func (r *errWorkflowRepo) List() ([]workflow.WorkflowSummary, error)    { return nil, r.err }
+func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error)    { return nil, r.err }
+func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)    { return nil, r.err }
 
 type mockWorkflowService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error)

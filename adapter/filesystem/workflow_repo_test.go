@@ -1,6 +1,7 @@
 package filesystem_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func testdataPath(t *testing.T) string {
 func TestWorkflowRepo_Load_ValidWorkflow(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	wf, err := repo.Load("valid-workflow")
+	wf, err := repo.Load(context.Background(),"valid-workflow")
 	require.NoError(t, err)
 	require.NotNil(t, wf)
 
@@ -66,7 +67,7 @@ func TestWorkflowRepo_Load_ValidWorkflow(t *testing.T) {
 func TestWorkflowRepo_Load_MissingDirectory(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	wf, err := repo.Load("nonexistent-workflow")
+	wf, err := repo.Load(context.Background(),"nonexistent-workflow")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent-workflow")
@@ -75,7 +76,7 @@ func TestWorkflowRepo_Load_MissingDirectory(t *testing.T) {
 func TestWorkflowRepo_Load_MissingManifest(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	wf, err := repo.Load("empty-dir")
+	wf, err := repo.Load(context.Background(),"empty-dir")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "empty-dir")
@@ -84,7 +85,7 @@ func TestWorkflowRepo_Load_MissingManifest(t *testing.T) {
 func TestWorkflowRepo_Load_MalformedJSON(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	wf, err := repo.Load("malformed-json")
+	wf, err := repo.Load(context.Background(),"malformed-json")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 }
@@ -92,7 +93,7 @@ func TestWorkflowRepo_Load_MalformedJSON(t *testing.T) {
 func TestWorkflowRepo_List(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	summaries, err := repo.List()
+	summaries, err := repo.List(context.Background())
 	require.NoError(t, err)
 
 	// Should find all-node-types and valid-workflow; skip empty-dir and malformed-json.
@@ -109,7 +110,7 @@ func TestWorkflowRepo_List(t *testing.T) {
 func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
-	wf, err := repo.Load("all-node-types")
+	wf, err := repo.Load(context.Background(),"all-node-types")
 	require.NoError(t, err)
 	require.NotNil(t, wf)
 	require.Len(t, wf.Nodes, 5)
@@ -168,7 +169,7 @@ func TestWorkflowRepo_List_EmptyWorkspace(t *testing.T) {
 
 	repo := filesystem.NewWorkflowRepo(tmpDir)
 
-	summaries, err := repo.List()
+	summaries, err := repo.List(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, summaries)
 }
@@ -177,7 +178,7 @@ func TestWorkflowRepo_Load_PathTraversalRejected(t *testing.T) {
 	repo := filesystem.NewWorkflowRepo(testdataPath(t))
 
 	// A name like "../sibling" could escape the workspace root.
-	_, err := repo.Load("../sibling")
+	_, err := repo.Load(context.Background(),"../sibling")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }

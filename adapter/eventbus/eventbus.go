@@ -1,6 +1,7 @@
 package eventbus
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -51,6 +52,10 @@ func (b *InProcessEventBus) Publish(instanceID uuid.UUID, event engine.Event) {
 		select {
 		case s.ch <- event:
 		default:
+			slog.Warn("event bus dropped event for slow subscriber",
+				"instanceID", instanceID,
+				"eventType", event.Type,
+			)
 		}
 	}
 }

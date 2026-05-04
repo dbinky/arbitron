@@ -23,8 +23,8 @@ func NewUserRepo(pool *pgxpool.Pool) *UserRepo {
 	}
 }
 
-func (r *UserRepo) GetDefaultUser() (uuid.UUID, error) {
-	user, err := r.queries.GetDefaultUser(context.Background())
+func (r *UserRepo) GetDefaultUser(ctx context.Context) (uuid.UUID, error) {
+	user, err := r.queries.GetDefaultUser(ctx)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("getting default user: %w", err)
 	}

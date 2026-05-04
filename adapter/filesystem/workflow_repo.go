@@ -2,6 +2,7 @@
 package filesystem
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -27,7 +28,7 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 }
 
 // Load reads and parses the workflow.json file from the named subdirectory.
-func (r *WorkflowRepo) Load(name string) (*workflow.Workflow, error) {
+func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
 	if !strings.HasPrefix(manifestPath, root) {
@@ -53,7 +54,7 @@ func (r *WorkflowRepo) Load(name string) (*workflow.Workflow, error) {
 // List scans subdirectories of basePath and returns a summary for each valid
 // workflow (i.e. each directory that contains a parseable workflow.json).
 // Directories without a valid manifest are silently skipped.
-func (r *WorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
+func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, error) {
 	entries, err := os.ReadDir(r.basePath)
 	if err != nil {
 		return nil, fmt.Errorf("listing workflows: %w", err)
@@ -65,7 +66,7 @@ func (r *WorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
 			continue
 		}
 
-		wf, err := r.Load(entry.Name())
+		wf, err := r.Load(ctx, entry.Name())
 		if err != nil {
 			// Skip directories that don't contain a valid workflow
 			continue

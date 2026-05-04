@@ -19,18 +19,41 @@ type EngineService interface {
 	InstanceService
 }
 
-// Compile-time assertion that *engine.Engine satisfies EngineService.
-var _ EngineService = (*engine.Engine)(nil)
+// FileReader provides access to workflow-associated files on disk.
+type FileReader interface {
+	ReadFile(workflowName string, relativePath string) ([]byte, error)
+	ResolvePath(workflowName string, relativePath string) (string, error)
+	FileExists(workflowName string, relativePath string) bool
+}
+
+// The following type aliases are used as parameter types for NewRouter. They
+// allow callers within this package to reference the domain ports by short
+// names without each handler file importing the domain packages directly.
+
+// WorkflowRepo is a type alias for the domain workflow repository port.
+type WorkflowRepo = workflow.WorkflowRepository
+
+// InstanceRepo is a type alias for the domain instance repository port.
+type InstanceRepo = instance.InstanceRepository
+
+// NodeExecRepo is a type alias for the domain node execution repository port.
+type NodeExecRepo = instance.NodeExecutionRepository
+
+// SnapshotRepo is a type alias for the domain variable snapshot repository port.
+type SnapshotRepo = instance.VariableSnapshotRepository
+
+// EventBusPort is a type alias for the domain event bus port.
+type EventBusPort = engine.EventBus
 
 // NewRouter creates the chi router with all API routes wired up.
 func NewRouter(
 	svc EngineService,
-	workflows workflow.WorkflowRepository,
-	instances instance.InstanceRepository,
-	nodeExecs instance.NodeExecutionRepository,
-	snapshots instance.VariableSnapshotRepository,
-	fileReader engine.FileReader,
-	eventBus engine.EventBus,
+	workflows WorkflowRepo,
+	instances InstanceRepo,
+	nodeExecs NodeExecRepo,
+	snapshots SnapshotRepo,
+	fileReader FileReader,
+	eventBus EventBusPort,
 	cfg *config.Config,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -97,7 +120,7 @@ type serverConfigResponse struct {
 }
 
 type databaseConfigResponse struct {
-	URL string `json:"url"`
+	Connected bool `json:"connected"`
 }
 
 type workspaceConfigResponse struct {
@@ -127,7 +150,7 @@ func systemConfigHandler(cfg *config.Config) http.HandlerFunc {
 				Port: cfg.Server.Port,
 			},
 			Database: databaseConfigResponse{
-				URL: cfg.Database.URL,
+				Connected: cfg.Database.URL != "",
 			},
 			Workspace: workspaceConfigResponse{
 				Path: cfg.Workspace.Path,

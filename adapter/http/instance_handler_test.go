@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,37 +25,37 @@ import (
 // errInstanceRepo always returns the stored error from List and Get.
 type errInstanceRepo struct{ err error }
 
-func (r *errInstanceRepo) Create(_ *instance.Instance) error { return r.err }
-func (r *errInstanceRepo) Get(_ uuid.UUID) (*instance.Instance, error) {
+func (r *errInstanceRepo) Create(_ context.Context, _ *instance.Instance) error { return r.err }
+func (r *errInstanceRepo) Get(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
 	return nil, r.err
 }
-func (r *errInstanceRepo) List(_ instance.ListFilters) ([]instance.InstanceSummary, error) {
+func (r *errInstanceRepo) List(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
 	return nil, r.err
 }
-func (r *errInstanceRepo) UpdateState(_ uuid.UUID, _ instance.State) error    { return r.err }
-func (r *errInstanceRepo) UpdateVariables(_ uuid.UUID, _ map[string]any) error { return r.err }
-func (r *errInstanceRepo) UpdateCurrentNode(_ uuid.UUID, _ string) error       { return r.err }
-func (r *errInstanceRepo) SetFailed(_ uuid.UUID, _ string) error               { return r.err }
-func (r *errInstanceRepo) SetCompleted(_ uuid.UUID) error                       { return r.err }
-func (r *errInstanceRepo) ListRunning() ([]instance.Instance, error)            { return nil, r.err }
+func (r *errInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error    { return r.err }
+func (r *errInstanceRepo) UpdateVariables(_ context.Context, _ uuid.UUID, _ map[string]any) error { return r.err }
+func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error       { return r.err }
+func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error               { return r.err }
+func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error                       { return r.err }
+func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error)            { return nil, r.err }
 
 // errNodeExecRepo always returns the stored error.
 type errNodeExecRepo struct{ err error }
 
-func (r *errNodeExecRepo) Create(_ *instance.NodeExecution) error { return r.err }
-func (r *errNodeExecRepo) Update(_ *instance.NodeExecution) error { return r.err }
-func (r *errNodeExecRepo) ListByInstance(_ uuid.UUID) ([]instance.NodeExecution, error) {
+func (r *errNodeExecRepo) Create(_ context.Context, _ *instance.NodeExecution) error { return r.err }
+func (r *errNodeExecRepo) Update(_ context.Context, _ *instance.NodeExecution) error { return r.err }
+func (r *errNodeExecRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]instance.NodeExecution, error) {
 	return nil, r.err
 }
-func (r *errNodeExecRepo) GetByInstanceAndNode(_ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+func (r *errNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
 	return nil, r.err
 }
 
 // errSnapshotRepo always returns the stored error.
 type errSnapshotRepo struct{ err error }
 
-func (r *errSnapshotRepo) Create(_ *instance.VariableSnapshot) error { return r.err }
-func (r *errSnapshotRepo) ListByInstance(_ uuid.UUID) ([]instance.VariableSnapshot, error) {
+func (r *errSnapshotRepo) Create(_ context.Context, _ *instance.VariableSnapshot) error { return r.err }
+func (r *errSnapshotRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]instance.VariableSnapshot, error) {
 	return nil, r.err
 }
 
@@ -66,12 +67,12 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{instances: make(map[uuid.UUID]*instance.Instance)}
 }
 
-func (r *mockInstanceRepo) Create(inst *instance.Instance) error {
+func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) error {
 	r.instances[inst.ID] = inst
 	return nil
 }
 
-func (r *mockInstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
+func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
 	inst, ok := r.instances[id]
 	if !ok {
 		return nil, fmt.Errorf("instance not found: %s", id)
@@ -92,7 +93,7 @@ func (r *mockInstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
 	return &cp, nil
 }
 
-func (r *mockInstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	var summaries []instance.InstanceSummary
 	for _, inst := range r.instances {
 		if filters.State != nil && inst.State != *filters.State {
@@ -122,7 +123,7 @@ func (r *mockInstanceRepo) List(filters instance.ListFilters) ([]instance.Instan
 	return summaries, nil
 }
 
-func (r *mockInstanceRepo) UpdateState(id uuid.UUID, state instance.State) error {
+func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
 	inst, ok := r.instances[id]
 	if !ok {
 		return fmt.Errorf("instance not found: %s", id)
@@ -131,7 +132,7 @@ func (r *mockInstanceRepo) UpdateState(id uuid.UUID, state instance.State) error
 	return nil
 }
 
-func (r *mockInstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]any) error {
+func (r *mockInstanceRepo) UpdateVariables(_ context.Context, id uuid.UUID, variables map[string]any) error {
 	inst, ok := r.instances[id]
 	if !ok {
 		return fmt.Errorf("instance not found: %s", id)
@@ -140,19 +141,19 @@ func (r *mockInstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]an
 	return nil
 }
 
-func (r *mockInstanceRepo) UpdateCurrentNode(id uuid.UUID, nodeID string) error {
+func (r *mockInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
 
-func (r *mockInstanceRepo) SetFailed(id uuid.UUID, failedNodeID string) error {
+func (r *mockInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
 
-func (r *mockInstanceRepo) SetCompleted(id uuid.UUID) error {
+func (r *mockInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (r *mockInstanceRepo) ListRunning() ([]instance.Instance, error) {
+func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
 
@@ -165,16 +166,16 @@ func newMockNodeExecRepo() *mockNodeExecRepo {
 	return &mockNodeExecRepo{}
 }
 
-func (r *mockNodeExecRepo) Create(exec *instance.NodeExecution) error {
+func (r *mockNodeExecRepo) Create(_ context.Context, exec *instance.NodeExecution) error {
 	r.executions = append(r.executions, exec)
 	return nil
 }
 
-func (r *mockNodeExecRepo) Update(exec *instance.NodeExecution) error {
+func (r *mockNodeExecRepo) Update(_ context.Context, _ *instance.NodeExecution) error {
 	return nil
 }
 
-func (r *mockNodeExecRepo) ListByInstance(instanceID uuid.UUID) ([]instance.NodeExecution, error) {
+func (r *mockNodeExecRepo) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.NodeExecution, error) {
 	var result []instance.NodeExecution
 	for _, e := range r.executions {
 		if e.InstanceID == instanceID {
@@ -184,7 +185,7 @@ func (r *mockNodeExecRepo) ListByInstance(instanceID uuid.UUID) ([]instance.Node
 	return result, nil
 }
 
-func (r *mockNodeExecRepo) GetByInstanceAndNode(instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+func (r *mockNodeExecRepo) GetByInstanceAndNode(_ context.Context, instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
 	for _, e := range r.executions {
 		if e.InstanceID == instanceID && e.NodeID == nodeID {
 			return e, nil
@@ -202,12 +203,12 @@ func newMockSnapshotRepo() *mockSnapshotRepo {
 	return &mockSnapshotRepo{}
 }
 
-func (r *mockSnapshotRepo) Create(snap *instance.VariableSnapshot) error {
+func (r *mockSnapshotRepo) Create(_ context.Context, snap *instance.VariableSnapshot) error {
 	r.snapshots = append(r.snapshots, snap)
 	return nil
 }
 
-func (r *mockSnapshotRepo) ListByInstance(instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
+func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
 	var result []instance.VariableSnapshot
 	for _, s := range r.snapshots {
 		if s.InstanceID == instanceID {

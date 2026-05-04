@@ -31,7 +31,7 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 	return &mockWorkflowRepo{workflows: make(map[string]*workflow.Workflow)}
 }
 
-func (r *mockWorkflowRepo) Load(name string) (*workflow.Workflow, error) {
+func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	wf, ok := r.workflows[name]
@@ -41,7 +41,7 @@ func (r *mockWorkflowRepo) Load(name string) (*workflow.Workflow, error) {
 	return wf, nil
 }
 
-func (r *mockWorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
+func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var summaries []workflow.WorkflowSummary
@@ -70,14 +70,14 @@ func newMockInstanceRepo() *mockInstanceRepo {
 	return &mockInstanceRepo{instances: make(map[uuid.UUID]*instance.Instance)}
 }
 
-func (r *mockInstanceRepo) Create(inst *instance.Instance) error {
+func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.instances[inst.ID] = inst
 	return nil
 }
 
-func (r *mockInstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
+func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -115,7 +115,7 @@ func (r *mockInstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
 	return &cp, nil
 }
 
-func (r *mockInstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var summaries []instance.InstanceSummary
@@ -133,7 +133,7 @@ func (r *mockInstanceRepo) List(filters instance.ListFilters) ([]instance.Instan
 	return summaries, nil
 }
 
-func (r *mockInstanceRepo) UpdateState(id uuid.UUID, state instance.State) error {
+func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -145,7 +145,7 @@ func (r *mockInstanceRepo) UpdateState(id uuid.UUID, state instance.State) error
 	return nil
 }
 
-func (r *mockInstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]any) error {
+func (r *mockInstanceRepo) UpdateVariables(_ context.Context, id uuid.UUID, variables map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -157,7 +157,7 @@ func (r *mockInstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]an
 	return nil
 }
 
-func (r *mockInstanceRepo) UpdateCurrentNode(id uuid.UUID, nodeID string) error {
+func (r *mockInstanceRepo) UpdateCurrentNode(_ context.Context, id uuid.UUID, nodeID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -169,7 +169,7 @@ func (r *mockInstanceRepo) UpdateCurrentNode(id uuid.UUID, nodeID string) error 
 	return nil
 }
 
-func (r *mockInstanceRepo) SetFailed(id uuid.UUID, failedNodeID string) error {
+func (r *mockInstanceRepo) SetFailed(_ context.Context, id uuid.UUID, failedNodeID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -184,7 +184,7 @@ func (r *mockInstanceRepo) SetFailed(id uuid.UUID, failedNodeID string) error {
 	return nil
 }
 
-func (r *mockInstanceRepo) SetCompleted(id uuid.UUID) error {
+func (r *mockInstanceRepo) SetCompleted(_ context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
@@ -198,7 +198,7 @@ func (r *mockInstanceRepo) SetCompleted(id uuid.UUID) error {
 	return nil
 }
 
-func (r *mockInstanceRepo) ListRunning() ([]instance.Instance, error) {
+func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var running []instance.Instance
@@ -226,14 +226,14 @@ func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
 	return &mockNodeExecutionRepo{}
 }
 
-func (r *mockNodeExecutionRepo) Create(exec *instance.NodeExecution) error {
+func (r *mockNodeExecutionRepo) Create(_ context.Context, exec *instance.NodeExecution) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.executions = append(r.executions, exec)
 	return nil
 }
 
-func (r *mockNodeExecutionRepo) Update(exec *instance.NodeExecution) error {
+func (r *mockNodeExecutionRepo) Update(_ context.Context, exec *instance.NodeExecution) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, e := range r.executions {
@@ -245,7 +245,7 @@ func (r *mockNodeExecutionRepo) Update(exec *instance.NodeExecution) error {
 	return fmt.Errorf("execution not found: %s", exec.ID)
 }
 
-func (r *mockNodeExecutionRepo) ListByInstance(instanceID uuid.UUID) ([]instance.NodeExecution, error) {
+func (r *mockNodeExecutionRepo) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.NodeExecution, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []instance.NodeExecution
@@ -257,7 +257,7 @@ func (r *mockNodeExecutionRepo) ListByInstance(instanceID uuid.UUID) ([]instance
 	return result, nil
 }
 
-func (r *mockNodeExecutionRepo) GetByInstanceAndNode(instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+func (r *mockNodeExecutionRepo) GetByInstanceAndNode(_ context.Context, instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, e := range r.executions {
@@ -278,14 +278,14 @@ func newMockSnapshotRepo() *mockSnapshotRepo {
 	return &mockSnapshotRepo{}
 }
 
-func (r *mockSnapshotRepo) Create(snap *instance.VariableSnapshot) error {
+func (r *mockSnapshotRepo) Create(_ context.Context, snap *instance.VariableSnapshot) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.snapshots = append(r.snapshots, snap)
 	return nil
 }
 
-func (r *mockSnapshotRepo) ListByInstance(instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
+func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var result []instance.VariableSnapshot
@@ -306,7 +306,7 @@ func newMockUserRepo() *mockUserRepo {
 	return &mockUserRepo{defaultUserID: uuid.New()}
 }
 
-func (r *mockUserRepo) GetDefaultUser() (uuid.UUID, error) {
+func (r *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 	return r.defaultUserID, nil
 }
 
@@ -443,6 +443,7 @@ func newTestFixtures() *testFixtures {
 // waitForInstance waits until the instance reaches one of the given terminal states.
 func waitForInstance(t *testing.T, repo *mockInstanceRepo, id uuid.UUID, timeout time.Duration, states ...instance.State) *instance.Instance {
 	t.Helper()
+	ctx := context.Background()
 	deadline := time.After(timeout)
 	stateSet := make(map[instance.State]bool)
 	for _, s := range states {
@@ -451,13 +452,13 @@ func waitForInstance(t *testing.T, repo *mockInstanceRepo, id uuid.UUID, timeout
 	for {
 		select {
 		case <-deadline:
-			inst, _ := repo.Get(id)
+			inst, _ := repo.Get(ctx, id)
 			if inst != nil {
 				t.Fatalf("timed out waiting for instance %s to reach %v; current state: %s", id, states, inst.State)
 			}
 			t.Fatalf("timed out waiting for instance %s to reach %v; instance not found", id, states)
 		default:
-			inst, err := repo.Get(id)
+			inst, err := repo.Get(ctx, id)
 			if err == nil && stateSet[inst.State] {
 				return inst
 			}
@@ -1145,7 +1146,7 @@ func TestEngine_RecoverCrashedInstances(t *testing.T) {
 
 	// Directly create a "running" instance in the repo (simulating a crash)
 	crashedID := uuid.New()
-	err := f.instanceRepo.Create(&instance.Instance{
+	err := f.instanceRepo.Create(context.Background(), &instance.Instance{
 		ID:           crashedID,
 		WorkflowName: "some-wf",
 		State:        instance.StateRunning,
@@ -1158,7 +1159,7 @@ func TestEngine_RecoverCrashedInstances(t *testing.T) {
 	err = f.engine.RecoverCrashedInstances()
 	require.NoError(t, err)
 
-	inst, err := f.instanceRepo.Get(crashedID)
+	inst, err := f.instanceRepo.Get(context.Background(), crashedID)
 	require.NoError(t, err)
 	assert.Equal(t, instance.StateFailed, inst.State)
 }
@@ -1175,7 +1176,7 @@ func TestEngine_WorkflowSnapshotStored(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	inst, err := f.instanceRepo.Get(id)
+	inst, err := f.instanceRepo.Get(context.Background(), id)
 	require.NoError(t, err)
 	require.NotNil(t, inst.WorkflowSnapshot)
 
@@ -1197,7 +1198,7 @@ func TestEngine_VariableSnapshotsCreated(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	snaps, err := f.snapshotRepo.ListByInstance(id)
+	snaps, err := f.snapshotRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	// One snapshot per node (A, B, C)
 	assert.Len(t, snaps, 3)
@@ -1215,7 +1216,7 @@ func TestEngine_NodeExecutionRecords(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	assert.Len(t, execs, 3)
 }
@@ -1230,7 +1231,7 @@ func TestEngine_NodeExecutionHasCorrectTiming(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 	after := time.Now()
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, execs, 1)
 
@@ -1267,7 +1268,7 @@ func TestEngine_RetryCreatesPerAttemptRecords(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 
 	// Count records for node B — should be 3 (attempt 1, 2, 3).
@@ -1307,7 +1308,7 @@ func TestEngine_RetryExhaustedAttemptNumbers(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 
 	var bExecs []instance.NodeExecution
@@ -1338,7 +1339,7 @@ func TestEngine_SkipStatusPersistedAsSkipped(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 
 	var bExec *instance.NodeExecution
@@ -1601,7 +1602,7 @@ func TestEngine_UpdateCurrentNodeFiresBeforeExecution(t *testing.T) {
 	var currentNodeIDAtExecTime *string
 	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
 		// At this point the engine should have already called UpdateCurrentNode("A").
-		running, _ := f.instanceRepo.ListRunning()
+		running, _ := f.instanceRepo.ListRunning(context.Background())
 		if len(running) == 1 {
 			cid := running[0].CurrentNodeID
 			currentNodeIDAtExecTime = cid
@@ -1630,7 +1631,7 @@ func TestEngine_VariableSnapshotCapturedPreExecution(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	snaps, err := f.snapshotRepo.ListByInstance(id)
+	snaps, err := f.snapshotRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, snaps, 1, "one snapshot per node execution")
 
@@ -1671,7 +1672,7 @@ func TestEngine_NodeResultTelemetryFieldsPersistedToNodeExecution(t *testing.T) 
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, execs, 1)
 
@@ -1709,7 +1710,7 @@ func TestEngine_NonZeroScriptExitCodePersisted(t *testing.T) {
 	// Skip error behavior makes the instance complete even if the node fails
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	require.NotEmpty(t, execs)
 
@@ -1797,7 +1798,7 @@ func TestEngine_LLMConversationPersistedToNodeExecution(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	execs, err := f.nodeExecRepo.ListByInstance(id)
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, execs, 1)
 

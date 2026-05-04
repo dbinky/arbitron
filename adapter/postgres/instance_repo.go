@@ -26,7 +26,7 @@ func NewInstanceRepo(pool *pgxpool.Pool) *InstanceRepo {
 	}
 }
 
-func (r *InstanceRepo) Create(inst *instance.Instance) error {
+func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) error {
 	snapshotJSON, err := toJSON(inst.WorkflowSnapshot)
 	if err != nil {
 		return fmt.Errorf("marshalling workflow snapshot: %w", err)
@@ -40,7 +40,7 @@ func (r *InstanceRepo) Create(inst *instance.Instance) error {
 		return fmt.Errorf("marshalling original variables: %w", err)
 	}
 
-	row, err := r.queries.CreateInstance(context.Background(), generated.CreateInstanceParams{
+	row, err := r.queries.CreateInstance(ctx, generated.CreateInstanceParams{
 		ID:                toPgUUID(inst.ID),
 		OwnerID:           toPgUUID(inst.OwnerID),
 		WorkflowName:      inst.WorkflowName,
@@ -59,8 +59,8 @@ func (r *InstanceRepo) Create(inst *instance.Instance) error {
 	return nil
 }
 
-func (r *InstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
-	row, err := r.queries.GetInstance(context.Background(), toPgUUID(id))
+func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	row, err := r.queries.GetInstance(ctx, toPgUUID(id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("instance not found: %s", id)
@@ -70,7 +70,7 @@ func (r *InstanceRepo) Get(id uuid.UUID) (*instance.Instance, error) {
 	return r.rowToInstance(row)
 }
 
-func (r *InstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 50
 	}
@@ -88,7 +88,7 @@ func (r *InstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSu
 		params.WorkflowName = toPgText(*filters.WorkflowName)
 	}
 
-	rows, err := r.queries.ListInstances(context.Background(), params)
+	rows, err := r.queries.ListInstances(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("listing instances: %w", err)
 	}
@@ -109,8 +109,8 @@ func (r *InstanceRepo) List(filters instance.ListFilters) ([]instance.InstanceSu
 	return summaries, nil
 }
 
-func (r *InstanceRepo) UpdateState(id uuid.UUID, state instance.State) error {
-	err := r.queries.UpdateInstanceState(context.Background(), generated.UpdateInstanceStateParams{
+func (r *InstanceRepo) UpdateState(ctx context.Context, id uuid.UUID, state instance.State) error {
+	err := r.queries.UpdateInstanceState(ctx, generated.UpdateInstanceStateParams{
 		ID:    toPgUUID(id),
 		State: generated.InstanceState(state),
 	})
@@ -120,12 +120,12 @@ func (r *InstanceRepo) UpdateState(id uuid.UUID, state instance.State) error {
 	return nil
 }
 
-func (r *InstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]any) error {
+func (r *InstanceRepo) UpdateVariables(ctx context.Context, id uuid.UUID, variables map[string]any) error {
 	varsJSON, err := toJSON(variables)
 	if err != nil {
 		return fmt.Errorf("marshalling variables: %w", err)
 	}
-	err = r.queries.UpdateInstanceVariables(context.Background(), generated.UpdateInstanceVariablesParams{
+	err = r.queries.UpdateInstanceVariables(ctx, generated.UpdateInstanceVariablesParams{
 		ID:        toPgUUID(id),
 		Variables: varsJSON,
 	})
@@ -135,8 +135,8 @@ func (r *InstanceRepo) UpdateVariables(id uuid.UUID, variables map[string]any) e
 	return nil
 }
 
-func (r *InstanceRepo) UpdateCurrentNode(id uuid.UUID, nodeID string) error {
-	err := r.queries.UpdateInstanceCurrentNode(context.Background(), generated.UpdateInstanceCurrentNodeParams{
+func (r *InstanceRepo) UpdateCurrentNode(ctx context.Context, id uuid.UUID, nodeID string) error {
+	err := r.queries.UpdateInstanceCurrentNode(ctx, generated.UpdateInstanceCurrentNodeParams{
 		ID:            toPgUUID(id),
 		CurrentNodeID: toPgText(nodeID),
 	})
@@ -146,8 +146,8 @@ func (r *InstanceRepo) UpdateCurrentNode(id uuid.UUID, nodeID string) error {
 	return nil
 }
 
-func (r *InstanceRepo) SetFailed(id uuid.UUID, failedNodeID string) error {
-	err := r.queries.SetInstanceFailed(context.Background(), generated.SetInstanceFailedParams{
+func (r *InstanceRepo) SetFailed(ctx context.Context, id uuid.UUID, failedNodeID string) error {
+	err := r.queries.SetInstanceFailed(ctx, generated.SetInstanceFailedParams{
 		ID:           toPgUUID(id),
 		FailedNodeID: toPgText(failedNodeID),
 	})
@@ -157,16 +157,16 @@ func (r *InstanceRepo) SetFailed(id uuid.UUID, failedNodeID string) error {
 	return nil
 }
 
-func (r *InstanceRepo) SetCompleted(id uuid.UUID) error {
-	err := r.queries.SetInstanceCompleted(context.Background(), toPgUUID(id))
+func (r *InstanceRepo) SetCompleted(ctx context.Context, id uuid.UUID) error {
+	err := r.queries.SetInstanceCompleted(ctx, toPgUUID(id))
 	if err != nil {
 		return fmt.Errorf("setting instance completed: %w", err)
 	}
 	return nil
 }
 
-func (r *InstanceRepo) ListRunning() ([]instance.Instance, error) {
-	rows, err := r.queries.ListRunningInstances(context.Background())
+func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, error) {
+	rows, err := r.queries.ListRunningInstances(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing running instances: %w", err)
 	}

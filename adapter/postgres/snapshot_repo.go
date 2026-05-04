@@ -24,13 +24,13 @@ func NewVariableSnapshotRepo(pool *pgxpool.Pool) *VariableSnapshotRepo {
 	}
 }
 
-func (r *VariableSnapshotRepo) Create(snapshot *instance.VariableSnapshot) error {
+func (r *VariableSnapshotRepo) Create(ctx context.Context, snapshot *instance.VariableSnapshot) error {
 	varsJSON, err := toJSON(snapshot.Variables)
 	if err != nil {
 		return fmt.Errorf("marshalling variables: %w", err)
 	}
 
-	row, err := r.queries.CreateVariableSnapshot(context.Background(), generated.CreateVariableSnapshotParams{
+	row, err := r.queries.CreateVariableSnapshot(ctx, generated.CreateVariableSnapshotParams{
 		ID:         toPgUUID(snapshot.ID),
 		InstanceID: toPgUUID(snapshot.InstanceID),
 		NodeID:     snapshot.NodeID,
@@ -44,8 +44,8 @@ func (r *VariableSnapshotRepo) Create(snapshot *instance.VariableSnapshot) error
 	return nil
 }
 
-func (r *VariableSnapshotRepo) ListByInstance(instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
-	rows, err := r.queries.ListVariableSnapshotsByInstance(context.Background(), toPgUUID(instanceID))
+func (r *VariableSnapshotRepo) ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]instance.VariableSnapshot, error) {
+	rows, err := r.queries.ListVariableSnapshotsByInstance(ctx, toPgUUID(instanceID))
 	if err != nil {
 		return nil, fmt.Errorf("listing variable snapshots: %w", err)
 	}

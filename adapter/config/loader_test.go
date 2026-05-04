@@ -15,7 +15,7 @@ import (
 func expectedDefaults() domainconfig.Config {
 	return domainconfig.Config{
 		Server: domainconfig.ServerConfig{
-			Host: "0.0.0.0",
+			Host: "127.0.0.1",
 			Port: 8080,
 		},
 		Database: domainconfig.DatabaseConfig{
@@ -227,7 +227,7 @@ server:
 	// Overridden field.
 	assert.Equal(t, 9090, cfg.Server.Port)
 	// Non-overridden fields get defaults.
-	assert.Equal(t, "0.0.0.0", cfg.Server.Host)
+	assert.Equal(t, "127.0.0.1", cfg.Server.Host)
 	assert.Equal(t, "postgres://localhost:5432/arbitron?sslmode=disable", cfg.Database.URL)
 	assert.Equal(t, "info", cfg.Logging.Level)
 }

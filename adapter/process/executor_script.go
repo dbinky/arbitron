@@ -1,4 +1,7 @@
-package engine
+// Package process provides os/exec-based node executors that run external
+// processes. These live in the adapter layer because they perform I/O via
+// the operating system process interface.
+package process
 
 import (
 	"bytes"
@@ -10,25 +13,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
+// SECURITY: Phase 1 threat model assumes workflow authors are trusted administrators.
+// Scripts defined in workflow manifests execute with the same privileges as the Arbitron
+// process. There is no sandboxing, no allow-list of commands, and no filesystem isolation.
+// Before opening workflow authoring to untrusted users, a sandbox (e.g., container-based
+// execution, seccomp profiles, or a dedicated unprivileged user) must be implemented.
+
+// TODO(refactor): Extract a CommandRunner interface the moment this executor is
+// touched for any reason. Both ScriptExecutor and ToolCallExecutor share identical
+// process lifecycle logic (start, wait, kill-on-timeout, capture stdout/stderr).
+// A shared CommandRunner would eliminate this duplication and simplify testing by
+// allowing process execution to be mocked.
+//
+// Trigger condition: any modification to this file.
+
 // ScriptExecutor runs external scripts via os/exec, piping the variable
 // store as JSON to stdin and parsing stdout as JSON.
 type ScriptExecutor struct {
-	fileReader FileReader
+	fileReader engine.FileReader
 }
 
 // NewScriptExecutor creates a ScriptExecutor that uses the given FileReader
 // to resolve script paths.
-func NewScriptExecutor(fr FileReader) *ScriptExecutor {
+func NewScriptExecutor(fr engine.FileReader) *ScriptExecutor {
 	return &ScriptExecutor{fileReader: fr}
 }
 
 // Execute resolves the script path, runs it with the configured interpreter,
 // pipes the variable store as JSON to stdin, and parses stdout as JSON.
-func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
+func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*engine.NodeResult, error) {
 	// Resolve script path.
 	scriptPath, err := e.fileReader.ResolvePath(workflowName, node.Config.ScriptFile)
 	if err != nil {
@@ -68,10 +86,10 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 	}
 	cmd.Stdin = bytes.NewReader(stdinData)
 
-	// Capture stdout and stderr.
+	// Capture stdout and stderr with bounded writers to prevent unbounded memory use.
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
+	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
 
 	// Run with context-aware waiting.
 	if err := cmd.Start(); err != nil {
@@ -93,7 +111,7 @@ func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *
 	case runErr = <-doneCh:
 	}
 
-	result := &NodeResult{
+	result := &engine.NodeResult{
 		ScriptStdout: stdout.String(),
 		ScriptStderr: stderr.String(),
 	}

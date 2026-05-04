@@ -21,7 +21,7 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":      "0.0.0.0",
+		"server.host":      "127.0.0.1",
 		"server.port":      8080,
 		"database.url":     "postgres://localhost:5432/arbitron?sslmode=disable",
 		"workspace.path":   "./workspaces",
@@ -38,7 +38,7 @@ func defaults() map[string]interface{} {
 // that is written when no config file exists.
 func defaultYAMLContent() string {
 	return `server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8080
 database:
   url: "postgres://localhost:5432/arbitron?sslmode=disable"
@@ -74,12 +74,12 @@ func Load(configPath string) (*domainconfig.Config, error) {
 
 	// Layer 2: YAML file (if it exists).
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		// Create the default config file.
+		// Create the default config file with restrictive permissions.
 		dir := filepath.Dir(configPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, fmt.Errorf("creating config directory: %w", err)
 		}
-		if err := os.WriteFile(configPath, []byte(defaultYAMLContent()), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte(defaultYAMLContent()), 0600); err != nil {
 			return nil, fmt.Errorf("writing default config file: %w", err)
 		}
 	}

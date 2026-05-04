@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type Engine struct {
 	eventBus       EventBus
 	mu             sync.Mutex
 	contexts       map[uuid.UUID]context.CancelFunc
+	wg             sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -58,7 +60,9 @@ type edgeTarget struct {
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
 // and launches the graph walker in a goroutine.
 func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
-	wf, err := e.workflows.Load(workflowName)
+	ctx := context.Background()
+
+	wf, err := e.workflows.Load(ctx, workflowName)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to load workflow: %w", err)
 	}
@@ -97,7 +101,7 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 	}
 
 	// Get default user for OwnerID.
-	ownerID, err := e.users.GetDefaultUser()
+	ownerID, err := e.users.GetDefaultUser(ctx)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to get default user: %w", err)
 	}
@@ -122,7 +126,7 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		UpdatedAt:         now,
 	}
 
-	if err := e.instances.Create(inst); err != nil {
+	if err := e.instances.Create(ctx, inst); err != nil {
 		return uuid.Nil, fmt.Errorf("failed to create instance: %w", err)
 	}
 
@@ -132,12 +136,13 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		Data:      map[string]any{"workflowName": workflowName},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
 	e.contexts[inst.ID] = cancel
 	e.mu.Unlock()
 
-	go e.run(ctx, inst.ID)
+	e.wg.Add(1)
+	go e.run(runCtx, inst.ID)
 
 	return inst.ID, nil
 }
@@ -145,42 +150,35 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 // run is the graph walker loop. It executes nodes sequentially following
 // edges until there are no more nodes to execute.
 func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
+	defer e.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			// A panic in the run loop should not crash the process.
+			// Mark the instance as failed and log via event bus.
+			_ = e.instances.SetFailed(ctx, instanceID, "")
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "instance.failed",
+				Timestamp: time.Now(),
+				Data:      map[string]any{"error": fmt.Sprintf("panic: %v", r)},
+			})
+		}
+	}()
 	defer func() {
 		e.mu.Lock()
 		delete(e.contexts, instanceID)
 		e.mu.Unlock()
 	}()
 
-	inst, err := e.instances.Get(instanceID)
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return
 	}
 
 	// Parse the workflow from the snapshot.
-	wfBytes, err := json.Marshal(inst.WorkflowSnapshot)
-	if err != nil {
-		_ = e.instances.SetFailed(instanceID, "")
+	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
+	if parseErr != nil {
+		_ = e.instances.SetFailed(ctx, instanceID, "")
 		return
-	}
-	var wf workflow.Workflow
-	if err := json.Unmarshal(wfBytes, &wf); err != nil {
-		_ = e.instances.SetFailed(instanceID, "")
-		return
-	}
-
-	// Build node lookup map.
-	nodeMap := make(map[string]workflow.Node, len(wf.Nodes))
-	for _, n := range wf.Nodes {
-		nodeMap[n.ID] = n
-	}
-
-	// Build adjacency map: map[sourceNodeID][]edgeTarget
-	adj := make(map[string][]edgeTarget)
-	for _, edge := range wf.Edges {
-		adj[edge.Source] = append(adj[edge.Source], edgeTarget{
-			nodeID:     edge.Target,
-			outputPort: edge.Output,
-		})
 	}
 
 	// Find start node.
@@ -199,7 +197,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 
 	if currentNodeID == "" {
-		_ = e.instances.SetFailed(instanceID, "")
+		_ = e.instances.SetFailed(ctx, instanceID, "")
 		return
 	}
 
@@ -212,10 +210,18 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	vars := variable.FromSnapshotWithNodeIDs(inst.Variables, nodeIDs)
 
 	for currentNodeID != "" {
+		// TODO(race): There is a TOCTOU race between Pause() writing StatePaused
+		// and this loop reading the fresh state. If the pause arrives between Get()
+		// and the next node execution, one extra node may execute. Fix: use
+		// "UPDATE ... SET state = 'paused' WHERE state = 'running' RETURNING ..."
+		// and check the affected row count to detect concurrent state changes.
+
 		// Check for pause/cancel by re-reading instance state.
-		freshInst, err := e.instances.Get(instanceID)
+		freshInst, err := e.instances.Get(ctx, instanceID)
 		if err != nil {
-			_ = e.instances.SetFailed(instanceID, currentNodeID)
+			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+			}
 			return
 		}
 
@@ -237,21 +243,30 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		node, exists := nodeMap[currentNodeID]
 		if !exists {
-			_ = e.instances.SetFailed(instanceID, currentNodeID)
+			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+			}
 			return
 		}
 
-		// Snapshot variables before execution.
-		_ = e.snapshots.Create(&instance.VariableSnapshot{
+		// Snapshot variables before execution (diagnostic; log-only on error).
+		if err := e.snapshots.Create(ctx, &instance.VariableSnapshot{
 			ID:         uuid.New(),
 			InstanceID: instanceID,
 			NodeID:     currentNodeID,
 			Variables:  vars.Snapshot(),
 			CapturedAt: time.Now(),
-		})
+		}); err != nil {
+			slog.Warn("failed to create variable snapshot", "instanceID", instanceID, "nodeID", currentNodeID, "error", err)
+		}
 
 		// Update current node.
-		_ = e.instances.UpdateCurrentNode(instanceID, currentNodeID)
+		if err := e.instances.UpdateCurrentNode(ctx, instanceID, currentNodeID); err != nil {
+			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+			}
+			return
+		}
 
 		e.eventBus.Publish(instanceID, Event{
 			Type:      "node.started",
@@ -260,7 +275,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
-		result, nodeExec, execErr := e.executeWithRetry(ctx, instanceID, node, vars, wf)
+		result, nodeExec, execErr := e.executeWithRetry(ctx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
 			e.eventBus.Publish(instanceID, Event{
@@ -270,19 +285,24 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			})
 
 			// Handle error behavior.
-			eb := resolveErrorBehavior(node, wf)
+			eb := resolveErrorBehavior(node, *wf)
 
 			switch eb.Type {
 			case "skip":
 				// Persist the skipped status.
 				if nodeExec != nil {
 					nodeExec.Status = instance.NodeStatusSkipped
-					_ = e.nodeExecutions.Update(nodeExec)
+					_ = e.nodeExecutions.Update(ctx, nodeExec)
 				}
 				if eb.DefaultOutput != nil {
 					vars.SetNodeOutput(currentNodeID, eb.DefaultOutput)
 				}
-				_ = e.instances.UpdateVariables(instanceID, vars.Snapshot())
+				if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
+					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+					}
+					return
+				}
 				// Conditional nodes route via their declared default output port so
 				// the skip path is deterministic rather than arbitrary-first-edge.
 				skipPort := ""
@@ -296,12 +316,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if eb.ErrorNodeID != "" {
 					currentNodeID = eb.ErrorNodeID
 				} else {
-					_ = e.instances.SetFailed(instanceID, currentNodeID)
+					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+					}
 					return
 				}
 
 			default: // "halt" or unrecognized
-				_ = e.instances.SetFailed(instanceID, currentNodeID)
+				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+				}
 				e.eventBus.Publish(instanceID, Event{
 					Type:      "instance.failed",
 					Timestamp: time.Now(),
@@ -320,7 +344,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if result != nil && result.Output != nil {
 				vars.SetNodeOutput(currentNodeID, result.Output)
 			}
-			_ = e.instances.UpdateVariables(instanceID, vars.Snapshot())
+			if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
+				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
+					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+				}
+				return
+			}
 
 			// Find next node.
 			outputPort := ""
@@ -332,7 +361,9 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 
 	// All nodes executed successfully.
-	_ = e.instances.SetCompleted(instanceID)
+	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
+		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
+	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "instance.completed",
 		Timestamp: time.Now(),
@@ -424,7 +455,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 				nodeExec.ScriptExitCode = &result.ScriptExitCode
 			}
 		}
-		_ = e.nodeExecutions.Create(nodeExec)
+		_ = e.nodeExecutions.Create(ctx, nodeExec)
 		lastExec = nodeExec
 
 		if err == nil {
@@ -434,6 +465,35 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	return nil, lastExec, lastErr
+}
+
+// parseWorkflowGraph deserializes a workflow snapshot into its definition,
+// a node lookup map, and an adjacency list. This is a pure function with no
+// side effects, making it straightforward to test in isolation.
+func parseWorkflowGraph(snapshot map[string]any) (*workflow.Workflow, map[string]workflow.Node, map[string][]edgeTarget, error) {
+	wfBytes, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("marshalling workflow snapshot: %w", err)
+	}
+	var wf workflow.Workflow
+	if err := json.Unmarshal(wfBytes, &wf); err != nil {
+		return nil, nil, nil, fmt.Errorf("parsing workflow snapshot: %w", err)
+	}
+
+	nodeMap := make(map[string]workflow.Node, len(wf.Nodes))
+	for _, n := range wf.Nodes {
+		nodeMap[n.ID] = n
+	}
+
+	adj := make(map[string][]edgeTarget)
+	for _, edge := range wf.Edges {
+		adj[edge.Source] = append(adj[edge.Source], edgeTarget{
+			nodeID:     edge.Target,
+			outputPort: edge.Output,
+		})
+	}
+
+	return &wf, nodeMap, adj, nil
 }
 
 // resolveErrorBehavior returns the effective error behavior for a node,
@@ -481,14 +541,15 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 // Pause sets a running instance to paused state. The graph walker will
 // detect this on its next iteration and stop.
 func (e *Engine) Pause(instanceID uuid.UUID) error {
-	inst, err := e.instances.Get(instanceID)
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
 	if inst.State != instance.StateRunning {
-		return fmt.Errorf("instance %s is not running (state: %s)", instanceID, inst.State)
+		return fmt.Errorf("instance %s is not running (state: %s): %w", instanceID, inst.State, instance.ErrNotRunning)
 	}
-	if err := e.instances.UpdateState(instanceID, instance.StatePaused); err != nil {
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 	e.eventBus.Publish(instanceID, Event{
@@ -501,18 +562,19 @@ func (e *Engine) Pause(instanceID uuid.UUID) error {
 // Resume sets a paused instance back to running and re-launches the
 // graph walker from the current node.
 func (e *Engine) Resume(instanceID uuid.UUID) error {
-	inst, err := e.instances.Get(instanceID)
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
 	if inst.State != instance.StatePaused {
-		return fmt.Errorf("instance %s is not paused (state: %s)", instanceID, inst.State)
+		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
-	if err := e.instances.UpdateState(instanceID, instance.StateRunning); err != nil {
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
 	e.contexts[instanceID] = cancel
 	e.mu.Unlock()
@@ -522,21 +584,23 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 		Timestamp: time.Now(),
 	})
 
-	go e.run(ctx, instanceID)
+	e.wg.Add(1)
+	go e.run(runCtx, instanceID)
 	return nil
 }
 
 // Cancel sets a running instance to cancelled and cancels its context.
 func (e *Engine) Cancel(instanceID uuid.UUID) error {
-	inst, err := e.instances.Get(instanceID)
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
 	if inst.State != instance.StateRunning && inst.State != instance.StatePaused {
-		return fmt.Errorf("instance %s cannot be cancelled (state: %s)", instanceID, inst.State)
+		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
 
-	if err := e.instances.UpdateState(instanceID, instance.StateCancelled); err != nil {
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 
@@ -557,12 +621,13 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 // Retry resumes a failed instance from the failed node, optionally
 // applying variable edits.
 func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error {
-	inst, err := e.instances.Get(instanceID)
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
 	if inst.State != instance.StateFailed {
-		return fmt.Errorf("instance %s is not failed (state: %s)", instanceID, inst.State)
+		return fmt.Errorf("instance %s is not failed (state: %s): %w", instanceID, inst.State, instance.ErrNotFailed)
 	}
 
 	// Apply variable edits.
@@ -570,23 +635,23 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 		for k, v := range variableEdits {
 			inst.Variables[k] = v
 		}
-		if err := e.instances.UpdateVariables(instanceID, inst.Variables); err != nil {
+		if err := e.instances.UpdateVariables(ctx, instanceID, inst.Variables); err != nil {
 			return fmt.Errorf("failed to update variables: %w", err)
 		}
 	}
 
 	// Set the instance to running, keeping the current node as the failed node.
 	if inst.FailedNodeID != nil {
-		if err := e.instances.UpdateCurrentNode(instanceID, *inst.FailedNodeID); err != nil {
+		if err := e.instances.UpdateCurrentNode(ctx, instanceID, *inst.FailedNodeID); err != nil {
 			return fmt.Errorf("failed to update current node: %w", err)
 		}
 	}
 
-	if err := e.instances.UpdateState(instanceID, instance.StateRunning); err != nil {
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
 	e.contexts[instanceID] = cancel
 	e.mu.Unlock()
@@ -596,7 +661,8 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 		Timestamp: time.Now(),
 	})
 
-	go e.run(ctx, instanceID)
+	e.wg.Add(1)
+	go e.run(runCtx, instanceID)
 	return nil
 }
 
@@ -604,7 +670,8 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 // and triggers it. Only terminal instances (completed, failed, cancelled) can
 // be rerun.
 func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
-	inst, err := e.instances.Get(instanceID)
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to get instance: %w", err)
 	}
@@ -613,7 +680,7 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 	case instance.StateCompleted, instance.StateFailed, instance.StateCancelled:
 		// ok
 	default:
-		return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: %s)", instanceID, inst.State)
+		return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: %s): %w", instanceID, inst.State, instance.ErrCannotRerun)
 	}
 
 	if inst.OriginalVariables == nil {
@@ -623,10 +690,17 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 	return e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
 }
 
+// Shutdown gracefully waits for all in-flight workflow goroutines to finish.
+// It should be called before closing database connections or other resources.
+func (e *Engine) Shutdown() {
+	e.wg.Wait()
+}
+
 // RecoverCrashedInstances finds instances that are in running state
 // (from a previous crash) and sets them to failed.
 func (e *Engine) RecoverCrashedInstances() error {
-	running, err := e.instances.ListRunning()
+	ctx := context.Background()
+	running, err := e.instances.ListRunning(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list running instances: %w", err)
 	}
@@ -636,7 +710,7 @@ func (e *Engine) RecoverCrashedInstances() error {
 		if inst.CurrentNodeID != nil {
 			failedNode = *inst.CurrentNodeID
 		}
-		if err := e.instances.SetFailed(inst.ID, failedNode); err != nil {
+		if err := e.instances.SetFailed(ctx, inst.ID, failedNode); err != nil {
 			return fmt.Errorf("failed to set instance %s as failed: %w", inst.ID, err)
 		}
 		e.eventBus.Publish(inst.ID, Event{

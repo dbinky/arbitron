@@ -48,7 +48,7 @@ func safeWorkflowName(name string) bool {
 
 // List handles GET /workflows and returns a JSON array of workflow summaries.
 func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
-	summaries, err := h.repo.List()
+	summaries, err := h.repo.List(r.Context())
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list workflows")
 		return
@@ -66,7 +66,7 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(name)
+	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -85,7 +85,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(name)
+	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)

@@ -24,9 +24,13 @@ import (
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
+	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// Compile-time assertion that *engine.Engine satisfies the HTTP adapter's EngineService.
+var _ adapthttp.EngineService = (*engine.Engine)(nil)
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -127,8 +131,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider),
-		workflow.NodeTypeScript:      engine.NewScriptExecutor(fileReader),
-		workflow.NodeTypeToolCall:    engine.NewToolCallExecutor(),
+		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader),
+		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 	}
@@ -174,10 +178,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Addr:        addr,
+		Handler:     handler,
+		ReadTimeout: 10 * time.Second,
+		// WriteTimeout is intentionally 0 (no timeout) because WebSocket
+		// connections remain open for streaming and a fixed timeout would
+		// kill long-lived connections. Per-request deadlines are handled at
+		// the handler level instead.
+		WriteTimeout: 0,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -211,6 +219,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
+
+	// Wait for in-flight workflow goroutines to finish before closing the pool.
+	logger.Info("waiting for in-flight workflows to complete")
+	eng.Shutdown()
 
 	// Flush OTel spans.
 	if err := tracingShutdown(shutdownCtx); err != nil {

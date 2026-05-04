@@ -60,8 +60,14 @@ func TestWriteError(t *testing.T) {
 			var resp adapthttp.ErrorResponse
 			err := json.NewDecoder(w.Body).Decode(&resp)
 			require.NoError(t, err)
-			assert.Equal(t, tt.message, resp.Error)
 			assert.Equal(t, tt.code, resp.Code)
+
+			// 5xx errors are redacted to prevent leaking internal details.
+			if tt.status >= 500 {
+				assert.Equal(t, "internal server error", resp.Error)
+			} else {
+				assert.Equal(t, tt.message, resp.Error)
+			}
 		})
 	}
 }

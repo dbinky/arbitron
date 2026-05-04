@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,6 +95,18 @@ func parseInstanceID(r *http.Request) (uuid.UUID, error) {
 
 // mapEngineError maps an engine error to the appropriate HTTP status code.
 func mapEngineError(err error) int {
+	// Check sentinel errors first (preferred path).
+	if errors.Is(err, instance.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, instance.ErrNotRunning) ||
+		errors.Is(err, instance.ErrNotPaused) ||
+		errors.Is(err, instance.ErrNotFailed) ||
+		errors.Is(err, instance.ErrCannotCancel) ||
+		errors.Is(err, instance.ErrCannotRerun) {
+		return http.StatusConflict
+	}
+	// Fallback to string matching for errors that don't yet wrap sentinels.
 	msg := err.Error()
 	if strings.Contains(msg, "not found") {
 		return http.StatusNotFound
@@ -122,8 +135,9 @@ func mapEngineErrorCode(err error) string {
 }
 
 const (
-	defaultListLimit = 50
-	maxListLimit     = 500
+	defaultListLimit   = 50
+	maxListLimit       = 500
+	maxRetryBodyBytes  = 1 << 20 // 1 MiB
 )
 
 // List handles GET /instances with optional query params for filtering.
@@ -153,7 +167,7 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	summaries, err := h.instances.List(filters)
+	summaries, err := h.instances.List(r.Context(), filters)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return
@@ -172,7 +186,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(id)
+	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -246,6 +260,7 @@ func (h *InstanceHandler) Retry(w http.ResponseWriter, r *http.Request) {
 
 	var req retryRequest
 	if r.Body != nil && r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRetryBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
 			return
@@ -337,7 +352,7 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(id); err != nil {
+	if _, err := h.instances.Get(r.Context(), id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
@@ -346,7 +361,7 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	execs, err := h.nodeExecs.ListByInstance(id)
+	execs, err := h.nodeExecs.ListByInstance(r.Context(), id)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list trace records")
 		return
@@ -367,7 +382,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(id); err != nil {
+	if _, err := h.instances.Get(r.Context(), id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
@@ -377,7 +392,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := chi.URLParam(r, "nodeId")
-	exec, err := h.nodeExecs.GetByInstanceAndNode(id, nodeID)
+	exec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, nodeID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
@@ -417,7 +432,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(id)
+	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -439,7 +454,7 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := h.instances.Get(id); err != nil {
+	if _, err := h.instances.Get(r.Context(), id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
@@ -448,7 +463,7 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	snaps, err := h.snapshots.ListByInstance(id)
+	snaps, err := h.snapshots.ListByInstance(r.Context(), id)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list variable history")
 		return

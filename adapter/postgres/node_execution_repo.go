@@ -26,7 +26,7 @@ func NewNodeExecutionRepo(pool *pgxpool.Pool) *NodeExecutionRepo {
 	}
 }
 
-func (r *NodeExecutionRepo) Create(exec *instance.NodeExecution) error {
+func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecution) error {
 	resolvedInputsJSON, err := toJSON(exec.ResolvedInputs)
 	if err != nil {
 		return fmt.Errorf("marshalling resolved inputs: %w", err)
@@ -44,7 +44,7 @@ func (r *NodeExecutionRepo) Create(exec *instance.NodeExecution) error {
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	row, err := r.queries.CreateNodeExecution(context.Background(), generated.CreateNodeExecutionParams{
+	row, err := r.queries.CreateNodeExecution(ctx, generated.CreateNodeExecutionParams{
 		ID:              toPgUUID(exec.ID),
 		InstanceID:      toPgUUID(exec.InstanceID),
 		NodeID:          exec.NodeID,
@@ -72,7 +72,7 @@ func (r *NodeExecutionRepo) Create(exec *instance.NodeExecution) error {
 	return nil
 }
 
-func (r *NodeExecutionRepo) Update(exec *instance.NodeExecution) error {
+func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecution) error {
 	outputJSON, err := toJSON(exec.Output)
 	if err != nil {
 		return fmt.Errorf("marshalling output: %w", err)
@@ -86,7 +86,7 @@ func (r *NodeExecutionRepo) Update(exec *instance.NodeExecution) error {
 		return fmt.Errorf("marshalling llm conversation: %w", err)
 	}
 
-	err = r.queries.UpdateNodeExecution(context.Background(), generated.UpdateNodeExecutionParams{
+	err = r.queries.UpdateNodeExecution(ctx, generated.UpdateNodeExecutionParams{
 		ID:              toPgUUID(exec.ID),
 		Status:          generated.NodeExecutionStatus(exec.Status),
 		Output:          outputJSON,
@@ -106,8 +106,8 @@ func (r *NodeExecutionRepo) Update(exec *instance.NodeExecution) error {
 	return nil
 }
 
-func (r *NodeExecutionRepo) ListByInstance(instanceID uuid.UUID) ([]instance.NodeExecution, error) {
-	rows, err := r.queries.ListNodeExecutionsByInstance(context.Background(), toPgUUID(instanceID))
+func (r *NodeExecutionRepo) ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]instance.NodeExecution, error) {
+	rows, err := r.queries.ListNodeExecutionsByInstance(ctx, toPgUUID(instanceID))
 	if err != nil {
 		return nil, fmt.Errorf("listing node executions: %w", err)
 	}
@@ -123,8 +123,8 @@ func (r *NodeExecutionRepo) ListByInstance(instanceID uuid.UUID) ([]instance.Nod
 	return executions, nil
 }
 
-func (r *NodeExecutionRepo) GetByInstanceAndNode(instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
-	row, err := r.queries.GetNodeExecutionByInstanceAndNode(context.Background(), generated.GetNodeExecutionByInstanceAndNodeParams{
+func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	row, err := r.queries.GetNodeExecutionByInstanceAndNode(ctx, generated.GetNodeExecutionByInstanceAndNodeParams{
 		InstanceID: toPgUUID(instanceID),
 		NodeID:     nodeID,
 	})

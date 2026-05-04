@@ -75,7 +75,7 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Verify instance exists before upgrading.
-	inst, err := h.instances.Get(id)
+	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -86,9 +86,7 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Upgrade to WebSocket.
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		// Accept writes its own HTTP error response on failure.
 		return

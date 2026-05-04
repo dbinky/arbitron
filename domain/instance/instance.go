@@ -2,9 +2,20 @@
 package instance
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+// Sentinel errors for instance operations.
+var (
+	ErrNotFound        = errors.New("not found")
+	ErrNotRunning      = errors.New("instance is not running")
+	ErrNotPaused       = errors.New("instance is not paused")
+	ErrNotFailed       = errors.New("instance is not failed")
+	ErrCannotCancel    = errors.New("instance cannot be cancelled")
+	ErrCannotRerun     = errors.New("instance cannot be rerun")
 )
 
 // State represents the lifecycle state of a workflow instance.
