@@ -61,6 +61,12 @@ func TestSetupTracing_Disabled_NoOp(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestTracingShutdown_NilProvider_ReturnsNil(t *testing.T) {
+	ts := &TracingShutdown{}
+	err := ts.Shutdown(context.Background())
+	assert.NoError(t, err)
+}
+
 func TestSetupTracing_Enabled_ExportsSpans(t *testing.T) {
 	dir := t.TempDir()
 

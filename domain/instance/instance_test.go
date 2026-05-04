@@ -158,3 +158,15 @@ func TestListFiltersWithState(t *testing.T) {
 	assert.NotNil(t, filters.State)
 	assert.Equal(t, StateRunning, *filters.State)
 }
+
+func TestListFiltersWithWorkflowName(t *testing.T) {
+	name := "my-workflow"
+	filters := ListFilters{
+		WorkflowName: &name,
+		Limit:        10,
+	}
+
+	assert.NotNil(t, filters.WorkflowName)
+	assert.Equal(t, "my-workflow", *filters.WorkflowName)
+	assert.Nil(t, filters.State)
+}

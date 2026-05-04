@@ -182,6 +182,31 @@ func TestResolveMixedResolvedAndUnresolved(t *testing.T) {
 	assert.Equal(t, "Hello alice, your id is {{id}}", result)
 }
 
+func TestResolveUnclosedBrace(t *testing.T) {
+	store := NewStore()
+	store.SetInput("name", "alice")
+
+	// Unclosed {{ — no matching }}, so the whole string is returned as-is.
+	result := Resolve("{{unclosed", store)
+	assert.Equal(t, "{{unclosed", result)
+}
+
+func TestResolveDanglingClose(t *testing.T) {
+	store := NewStore()
+
+	// Dangling }} with no matching {{ — returned verbatim.
+	result := Resolve("text}}", store)
+	assert.Equal(t, "text}}", result)
+}
+
+func TestResolveInt64Value(t *testing.T) {
+	store := NewStore()
+	store.SetInput("count", int64(1234567890123))
+
+	result := Resolve("{{count}}", store)
+	assert.Equal(t, "1234567890123", result)
+}
+
 func TestResolveNestedObjectInText(t *testing.T) {
 	store := NewStore()
 	store.SetNodeOutput("resp", map[string]any{

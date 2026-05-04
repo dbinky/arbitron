@@ -95,12 +95,69 @@ func TestWorkflowRepo_List(t *testing.T) {
 	summaries, err := repo.List()
 	require.NoError(t, err)
 
-	// Should find valid-workflow but skip empty-dir (no workflow.json)
-	// and malformed-json (invalid JSON)
-	require.Len(t, summaries, 1)
-	assert.Equal(t, "valid-workflow", summaries[0].Name)
-	assert.Equal(t, "A test workflow with one transform node", summaries[0].Description)
-	assert.Equal(t, "test-author", summaries[0].Author)
+	// Should find all-node-types and valid-workflow; skip empty-dir and malformed-json.
+	require.Len(t, summaries, 2)
+
+	names := make([]string, len(summaries))
+	for i, s := range summaries {
+		names[i] = s.Name
+	}
+	assert.Contains(t, names, "valid-workflow")
+	assert.Contains(t, names, "all-node-types")
+}
+
+func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+
+	wf, err := repo.Load("all-node-types")
+	require.NoError(t, err)
+	require.NotNil(t, wf)
+	require.Len(t, wf.Nodes, 5)
+
+	byID := make(map[string]workflow.Node, 5)
+	for _, n := range wf.Nodes {
+		byID[n.ID] = n
+	}
+
+	// LLM node
+	llm := byID["llm-node"]
+	assert.Equal(t, workflow.NodeTypeLLMCall, llm.Type)
+	assert.Equal(t, "prompt.md", llm.Config.TemplateFile)
+	assert.Equal(t, "claude-sonnet-4-6", llm.Config.Model)
+	assert.Equal(t, 1000, llm.Config.MaxTokens)
+	assert.Equal(t, 0.7, llm.Config.Temperature)
+	assert.NotNil(t, llm.Config.OutputSchema)
+
+	// Script node
+	script := byID["script-node"]
+	assert.Equal(t, workflow.NodeTypeScript, script.Type)
+	assert.Equal(t, "run.sh", script.Config.ScriptFile)
+	assert.Equal(t, "bash", script.Config.Interpreter)
+	assert.Equal(t, []string{"--input", "{{llm-node.result}}"}, script.Config.Args)
+	assert.Equal(t, 30, script.Config.TimeoutSeconds)
+
+	// Tool call node
+	tool := byID["tool-node"]
+	assert.Equal(t, workflow.NodeTypeToolCall, tool.Type)
+	assert.Equal(t, "git", tool.Config.Command)
+	assert.Equal(t, []string{"status"}, tool.Config.Args)
+	assert.Equal(t, 10, tool.Config.TimeoutSeconds)
+
+	// Conditional node
+	cond := byID["cond-node"]
+	assert.Equal(t, workflow.NodeTypeConditional, cond.Type)
+	require.Len(t, cond.Config.Conditions, 1)
+	assert.Equal(t, "score", cond.Config.Conditions[0].Field)
+	assert.Equal(t, "gt", cond.Config.Conditions[0].Operator)
+	assert.Equal(t, "high", cond.Config.Conditions[0].Output)
+	assert.Equal(t, "low", cond.Config.DefaultOutput)
+
+	// Transform node
+	transform := byID["transform-node"]
+	assert.Equal(t, workflow.NodeTypeTransform, transform.Type)
+	require.Len(t, transform.Config.Operations, 1)
+	assert.Equal(t, "result", transform.Config.Operations[0].Variable)
+	assert.Equal(t, "set", transform.Config.Operations[0].Operation)
 }
 
 func TestWorkflowRepo_List_EmptyWorkspace(t *testing.T) {

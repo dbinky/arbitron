@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -160,4 +161,57 @@ func TestParseLevel_InvalidLevel(t *testing.T) {
 	level, err := parseLevel("bogus")
 	assert.Error(t, err)
 	assert.Equal(t, slog.LevelInfo, level)
+}
+
+func TestSetupLogging_InvalidLevel_DefaultsToInfo(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.LoggingConfig{Level: "bogus-level", File: filepath.Join(dir, "test.log")}
+
+	logger, closer, err := SetupLogging(cfg)
+	require.NoError(t, err)
+	defer closer.Close()
+
+	// Logger should still work (at info level by default).
+	require.NotNil(t, logger)
+	logger.Info("info-at-default")
+	data, err := os.ReadFile(cfg.File)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "info-at-default")
+}
+
+func TestSetupLogging_InvalidFilePath(t *testing.T) {
+	// /dev/null is not a directory; trying to create a file inside it should fail.
+	cfg := config.LoggingConfig{Level: "info", File: "/dev/null/arbitron-test-logs/app.log"}
+
+	_, _, err := SetupLogging(cfg)
+	assert.Error(t, err)
+}
+
+func TestMultiHandler_Enabled_AllDisabled(t *testing.T) {
+	// Both handlers at Error level; querying Info should return false.
+	opts := &slog.HandlerOptions{Level: slog.LevelError}
+	h1 := slog.NewJSONHandler(os.Stdout, opts)
+	h2 := slog.NewJSONHandler(os.Stdout, opts)
+	multi := NewMultiHandler(h1, h2)
+
+	assert.False(t, multi.Enabled(context.Background(), slog.LevelInfo))
+}
+
+func TestMultiHandler_Enabled_AnyEnabled(t *testing.T) {
+	// One handler at Error, another at Debug; querying Info should return true.
+	h1 := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError})
+	h2 := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	multi := NewMultiHandler(h1, h2)
+
+	assert.True(t, multi.Enabled(context.Background(), slog.LevelInfo))
+}
+
+func TestMultiHandler_EmptyHandlers(t *testing.T) {
+	multi := NewMultiHandler()
+
+	// With no handlers, Enabled should return false.
+	assert.False(t, multi.Enabled(context.Background(), slog.LevelInfo))
+
+	// Handle should not error.
+	assert.NoError(t, multi.Handle(context.Background(), slog.Record{}))
 }

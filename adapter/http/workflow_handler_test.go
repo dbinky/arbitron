@@ -50,6 +50,11 @@ func (r *mockWorkflowRepo) List() ([]workflow.WorkflowSummary, error) {
 	return summaries, nil
 }
 
+type errWorkflowRepo struct{ err error }
+
+func (r *errWorkflowRepo) Load(_ string) (*workflow.Workflow, error)    { return nil, r.err }
+func (r *errWorkflowRepo) List() ([]workflow.WorkflowSummary, error)    { return nil, r.err }
+
 type mockWorkflowService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error)
 }
@@ -399,4 +404,72 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 
 		assert.Equal(t, http.StatusCreated, w.Code)
 	})
+
+	t.Run("returns 500 when service fails with unexpected error", func(t *testing.T) {
+		repo := newMockWorkflowRepo()
+		repo.workflows["test-wf"] = testWorkflow()
+		svc := &mockWorkflowService{
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+				return uuid.Nil, fmt.Errorf("database connection lost")
+			},
+		}
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+
+		body := `{"variables":{"name":"Alice"}}`
+		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
+		req = withChiURLParam(req, "name", "test-wf")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Trigger(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: internal errors from repo
+// ---------------------------------------------------------------------------
+
+func TestWorkflowHandler_List_RepoError(t *testing.T) {
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+}
+
+func TestWorkflowHandler_Get_InternalError(t *testing.T) {
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf", nil)
+	req = withChiURLParam(req, "name", "test-wf")
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+}
+
+func TestWorkflowHandler_Validate_InternalError(t *testing.T) {
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/validate", nil)
+	req = withChiURLParam(req, "name", "test-wf")
+	w := httptest.NewRecorder()
+	h.Validate(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
 }

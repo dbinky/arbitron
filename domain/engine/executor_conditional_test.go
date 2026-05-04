@@ -260,3 +260,64 @@ func TestConditionalExecutor_EmptyConditions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "default", result.OutputPort)
 }
+
+func TestConditionalExecutor_NeqMissingField(t *testing.T) {
+	// When the field doesn't exist, neq should be true (absence is not equal).
+	vars := variable.NewStore()
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "email", Operator: "neq", Value: "x@x.com", Output: "different"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "different", result.OutputPort)
+}
+
+func TestConditionalExecutor_ContainsStringNotFound(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("message", "hello world")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "message", Operator: "contains", Value: "xyz", Output: "found"},
+	}, "not_found")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "not_found", result.OutputPort)
+}
+
+func TestConditionalExecutor_ContainsNonStringNonArray(t *testing.T) {
+	// contains on a numeric field → false, routes to default.
+	vars := variable.NewStore()
+	vars.SetInput("count", float64(42))
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "count", Operator: "contains", Value: "42", Output: "found"},
+	}, "not_found")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "not_found", result.OutputPort)
+}
+
+func TestConditionalExecutor_UnknownOperator(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("x", "y")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "x", Operator: "bogus", Value: "y", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort)
+}

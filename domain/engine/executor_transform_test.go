@@ -231,6 +231,35 @@ func TestTransformExecutor_DeleteMissingNoError(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTransformExecutor_UnknownOperation(t *testing.T) {
+	vars := variable.NewStore()
+
+	node := transformNode([]workflow.Operation{
+		{Variable: "x", Operation: "bogus", Value: "y"},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown operation")
+}
+
+func TestTransformExecutor_IncrementNonNumericDelta(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("counter", float64(5))
+
+	node := transformNode([]workflow.Operation{
+		{Variable: "counter", Operation: "increment", Value: "not_a_number"},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-numeric")
+}
+
 func TestTransformExecutor_MultipleOpsSequential(t *testing.T) {
 	vars := variable.NewStore()
 

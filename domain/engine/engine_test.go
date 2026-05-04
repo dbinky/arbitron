@@ -1414,3 +1414,122 @@ func TestEngine_PublishesNodeFailedEventOnSkip(t *testing.T) {
 	assert.Contains(t, completedIDs, "C")
 	assert.NotContains(t, completedIDs, "B")
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Lifecycle state conflict errors
+// ---------------------------------------------------------------------------
+
+func TestEngine_PauseNonRunning(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	err = f.engine.Pause(id)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not running")
+}
+
+func TestEngine_ResumeNonPaused(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	err = f.engine.Resume(id)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not paused")
+}
+
+func TestEngine_CancelTerminalState(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	err = f.engine.Cancel(id)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be cancelled")
+}
+
+func TestEngine_RetryNonFailed(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	err = f.engine.Retry(id, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not failed")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Edge cases
+// ---------------------------------------------------------------------------
+
+func TestEngine_UnregisteredNodeType(t *testing.T) {
+	f := newTestFixtures()
+	wf := &workflow.Workflow{
+		Name: "unknown-type-wf",
+		Nodes: []workflow.Node{
+			// NodeType "foobar" has no registered executor
+			{ID: "A", Type: "foobar", Entrypoint: true},
+		},
+	}
+	f.workflowRepo.add(wf)
+
+	// Remove all executors so the unknown type definitely isn't handled
+	eng := engine.NewEngine(
+		f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo,
+		map[workflow.NodeType]engine.NodeExecutor{},
+		f.eventBus,
+	)
+
+	id, err := eng.Trigger("unknown-type-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Equal(t, instance.StateFailed, inst.State)
+}
+
+func TestEngine_RetryWithVariableEdits(t *testing.T) {
+	f := newTestFixtures()
+	wf := linearWorkflow()
+	f.workflowRepo.add(wf)
+
+	// B reads "name" from variables; on first run name is "wrong", on retry it's "Alice"
+	firstRun := true
+	var mu sync.Mutex
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, vars *variable.VariableStore) (*engine.NodeResult, error) {
+		mu.Lock()
+		isFirst := firstRun
+		firstRun = false
+		mu.Unlock()
+		if isFirst {
+			return nil, fmt.Errorf("node B exploded")
+		}
+		nameVal, _ := vars.Get("name")
+		return &engine.NodeResult{Output: map[string]any{"name": nameVal}}, nil
+	})
+
+	id, err := f.engine.Trigger("linear-wf", map[string]any{"name": "wrong"}, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	// Retry with corrected variable
+	err = f.engine.Retry(id, map[string]any{"name": "Alice"})
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State)
+	// Variable should be updated
+	assert.Equal(t, "Alice", inst.Variables["name"])
+}

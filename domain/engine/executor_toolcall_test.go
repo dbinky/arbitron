@@ -192,6 +192,23 @@ fi
 	assert.Equal(t, map[string]any{"stdin": "empty"}, result.Output)
 }
 
+func TestToolCallExecutor_CommandNotFound(t *testing.T) {
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "tool1",
+		Type: workflow.NodeTypeToolCall,
+		Config: workflow.NodeConfig{
+			Command: "/nonexistent/command/that/does/not/exist",
+		},
+	}
+
+	exec := engine.NewToolCallExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "start")
+}
+
 func TestToolCallExecutor_StderrCaptured(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts not supported on Windows")

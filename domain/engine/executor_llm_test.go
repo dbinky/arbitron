@@ -3,7 +3,6 @@ package engine_test
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -218,7 +217,7 @@ func TestLLMCallExecutor_FileNotFound(t *testing.T) {
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, os.ErrNotExist) || assert.ObjectsAreEqual("", "") || true)
+	assert.Contains(t, err.Error(), "read template")
 }
 
 func TestLLMCallExecutor_RequestFields(t *testing.T) {

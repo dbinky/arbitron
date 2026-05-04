@@ -486,3 +486,138 @@ func TestStreamHandler_MultipleEventsInOrder(t *testing.T) {
 		assert.Equal(t, "node_completed", evt.Type)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tests: isTerminalEvent edge cases
+// ---------------------------------------------------------------------------
+
+func TestStreamHandler_StateChangedStringTerminalState(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// state_changed with a string "completed" should be treated as terminal.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "state_changed",
+		Timestamp: time.Now(),
+		Data:      "completed",
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "state_changed", received.Type)
+
+	_, _, err = conn.Read(ctx)
+	assert.Error(t, err, "connection should close after state_changed(completed)")
+}
+
+func TestStreamHandler_StateChangedStringNonTerminal(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// state_changed with "running" is NOT terminal — connection should stay open.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "state_changed",
+		Timestamp: time.Now(),
+		Data:      "running",
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "state_changed", received.Type)
+
+	// Send a follow-up event to confirm connection is still open.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "node_started",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": "A"},
+	})
+
+	_, msg, err = conn.Read(ctx)
+	require.NoError(t, err)
+	var follow engine.Event
+	require.NoError(t, json.Unmarshal(msg, &follow))
+	assert.Equal(t, "node_started", follow.Type)
+}
+
+func TestStreamHandler_StateChangedMapNoStateKey(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServer(instRepo, bus)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// state_changed map without "state" key should NOT be terminal.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "state_changed",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"progress": float64(50)},
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+	var received engine.Event
+	require.NoError(t, json.Unmarshal(msg, &received))
+	assert.Equal(t, "state_changed", received.Type)
+
+	// Connection should still be open — send another event to confirm.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "node_started",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": "B"},
+	})
+
+	_, msg, err = conn.Read(ctx)
+	require.NoError(t, err)
+	var follow engine.Event
+	require.NoError(t, json.Unmarshal(msg, &follow))
+	assert.Equal(t, "node_started", follow.Type)
+}

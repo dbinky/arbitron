@@ -311,6 +311,26 @@ func TestFromSnapshotWithNodeIDs_ObjectInputNotMisclassified(t *testing.T) {
 	assert.Equal(t, 85, val)
 }
 
+func TestGetEmptyPath(t *testing.T) {
+	store := NewStore()
+	store.SetInput("", "should-not-matter")
+
+	// An empty dot-path resolves the empty-string key — unusual but handled.
+	val, ok := store.Get("")
+	assert.True(t, ok)
+	assert.Equal(t, "should-not-matter", val)
+}
+
+func TestGetThroughNilIntermediate(t *testing.T) {
+	store := NewStore()
+	store.SetNodeOutput("node", map[string]any{"result": nil})
+
+	// Traversing deeper through a nil intermediate must not panic.
+	val, ok := store.Get("node.result.deeper")
+	assert.False(t, ok)
+	assert.Nil(t, val)
+}
+
 func TestFromSnapshotWithNodeIDs_NilNodeIDsFallsBackToHeuristic(t *testing.T) {
 	data := map[string]any{
 		"scalar": "hello",

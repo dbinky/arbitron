@@ -21,6 +21,43 @@ import (
 // Mocks for InstanceHandler
 // ---------------------------------------------------------------------------
 
+// errInstanceRepo always returns the stored error from List and Get.
+type errInstanceRepo struct{ err error }
+
+func (r *errInstanceRepo) Create(_ *instance.Instance) error { return r.err }
+func (r *errInstanceRepo) Get(_ uuid.UUID) (*instance.Instance, error) {
+	return nil, r.err
+}
+func (r *errInstanceRepo) List(_ instance.ListFilters) ([]instance.InstanceSummary, error) {
+	return nil, r.err
+}
+func (r *errInstanceRepo) UpdateState(_ uuid.UUID, _ instance.State) error    { return r.err }
+func (r *errInstanceRepo) UpdateVariables(_ uuid.UUID, _ map[string]any) error { return r.err }
+func (r *errInstanceRepo) UpdateCurrentNode(_ uuid.UUID, _ string) error       { return r.err }
+func (r *errInstanceRepo) SetFailed(_ uuid.UUID, _ string) error               { return r.err }
+func (r *errInstanceRepo) SetCompleted(_ uuid.UUID) error                       { return r.err }
+func (r *errInstanceRepo) ListRunning() ([]instance.Instance, error)            { return nil, r.err }
+
+// errNodeExecRepo always returns the stored error.
+type errNodeExecRepo struct{ err error }
+
+func (r *errNodeExecRepo) Create(_ *instance.NodeExecution) error { return r.err }
+func (r *errNodeExecRepo) Update(_ *instance.NodeExecution) error { return r.err }
+func (r *errNodeExecRepo) ListByInstance(_ uuid.UUID) ([]instance.NodeExecution, error) {
+	return nil, r.err
+}
+func (r *errNodeExecRepo) GetByInstanceAndNode(_ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+	return nil, r.err
+}
+
+// errSnapshotRepo always returns the stored error.
+type errSnapshotRepo struct{ err error }
+
+func (r *errSnapshotRepo) Create(_ *instance.VariableSnapshot) error { return r.err }
+func (r *errSnapshotRepo) ListByInstance(_ uuid.UUID) ([]instance.VariableSnapshot, error) {
+	return nil, r.err
+}
+
 type mockInstanceRepo struct {
 	instances map[uuid.UUID]*instance.Instance
 }
@@ -967,4 +1004,204 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("returns 500 when snapshots repo errors", func(t *testing.T) {
+		instRepo := newMockInstanceRepo()
+		inst := testInstance(instance.StateCompleted)
+		instRepo.instances[inst.ID] = inst
+		h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), &errSnapshotRepo{err: fmt.Errorf("db down")}, &mockInstanceService{})
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/variables/history", nil)
+		req = withChiURLParam(req, "id", inst.ID.String())
+		w := httptest.NewRecorder()
+		h.GetVariableHistory(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: internal/error paths for all handlers
+// ---------------------------------------------------------------------------
+
+func TestInstanceHandler_List_InternalError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+}
+
+func TestInstanceHandler_Get_InternalError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String(), nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_Pause_InternalError(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.pauseFn = func(_ uuid.UUID) error { return fmt.Errorf("unexpected db error") }
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Pause(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_Resume_InternalError(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.resumeFn = func(_ uuid.UUID) error { return fmt.Errorf("unexpected db error") }
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Resume(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_Cancel_InternalError(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.cancelFn = func(_ uuid.UUID) error { return fmt.Errorf("unexpected db error") }
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Cancel(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_Retry_InternalError(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.retryFn = func(_ uuid.UUID, _ map[string]any) error { return fmt.Errorf("unexpected db error") }
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Retry(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_Rerun_InternalError(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.rerunFn = func(_ uuid.UUID) (uuid.UUID, error) {
+		return uuid.Nil, fmt.Errorf("unexpected db error")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/rerun", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Rerun(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_GetTrace_NodeExecsError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	inst := testInstance(instance.StateCompleted)
+	instRepo.instances[inst.ID] = inst
+	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace", nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.GetTrace(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
+	req = withChiURLParam(req, "id", id.String())
+	req = withChiURLParam(req, "nodeId", "A")
+	w := httptest.NewRecorder()
+	h.GetNodeTrace(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_GetVariables_InternalError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.GetVariables(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInstanceHandler_GetVariableHistory_InstanceError(t *testing.T) {
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables/history", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.GetVariableHistory(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: edge cases
+// ---------------------------------------------------------------------------
+
+func TestInstanceHandler_List_LimitAndOffset(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+	for i := 0; i < 5; i++ {
+		inst := testInstance(instance.StateRunning)
+		instRepo.instances[inst.ID] = inst
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances?limit=2&offset=1", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []instance.InstanceSummary
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Len(t, resp, 2)
+}
+
+func TestInstanceHandler_Get_IncludesCompletedAt(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+	inst := testInstance(instance.StateCompleted)
+	completedAt := time.Now()
+	inst.CompletedAt = &completedAt
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotNil(t, resp["completedAt"])
 }

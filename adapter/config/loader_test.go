@@ -207,6 +207,46 @@ server:
 	assert.Nil(t, cfg)
 }
 
+func TestLoad_PartialYAML_MissingFieldsGetDefaults(t *testing.T) {
+	// A YAML file with only some fields should get defaults for the rest.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	partialYAML := `
+server:
+  port: 9090
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(partialYAML), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	// Overridden field.
+	assert.Equal(t, 9090, cfg.Server.Port)
+	// Non-overridden fields get defaults.
+	assert.Equal(t, "0.0.0.0", cfg.Server.Host)
+	assert.Equal(t, "postgres://localhost:5432/arbitron?sslmode=disable", cfg.Database.URL)
+	assert.Equal(t, "info", cfg.Logging.Level)
+}
+
+func TestLoad_AnthropicAPIKeyHasHighestPrecedence(t *testing.T) {
+	// ANTHROPIC_API_KEY is loaded after ARBITRON_LLM_APIKEY, so it wins.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	t.Setenv("ARBITRON_LLM_APIKEY", "arbitron-key")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-wins")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "anthropic-wins", cfg.LLM.APIKey)
+}
+
 func TestLoad_MissingFileCreatesDefault(t *testing.T) {
 	// When the config file does not exist, Load should create it with default
 	// content, and subsequent loads of that file should produce the same config.

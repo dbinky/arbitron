@@ -200,6 +200,29 @@ func TestValidate_TemplateFileExists(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
+func TestValidate_MissingScriptFile(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeScript
+	wf.Nodes[0].Config.ScriptFile = "run.sh"
+
+	checker := &mockFileChecker{existing: map[string]bool{}}
+
+	errs := workflow.Validate(wf, checker)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "MISSING_FILE")
+}
+
+func TestValidate_ScriptFileExists(t *testing.T) {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = workflow.NodeTypeScript
+	wf.Nodes[0].Config.ScriptFile = "run.sh"
+
+	checker := &mockFileChecker{existing: map[string]bool{"run.sh": true}}
+
+	errs := workflow.Validate(wf, checker)
+	assert.Empty(t, errs)
+}
+
 func TestValidate_ComplexValidWorkflow(t *testing.T) {
 	wf := &workflow.Workflow{
 		Name: "complex-valid",

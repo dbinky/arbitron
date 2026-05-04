@@ -24,7 +24,7 @@ UPDATE instances SET variables = $2, updated_at = now() WHERE id = $1;
 UPDATE instances SET current_node_id = $2, updated_at = now() WHERE id = $1;
 
 -- name: SetInstanceFailed :exec
-UPDATE instances SET state = 'failed', failed_node_id = $2, updated_at = now() WHERE id = $1;
+UPDATE instances SET state = 'failed', failed_node_id = $2, completed_at = now(), updated_at = now() WHERE id = $1;
 
 -- name: SetInstanceCompleted :exec
 UPDATE instances SET state = 'completed', completed_at = now(), updated_at = now() WHERE id = $1;
