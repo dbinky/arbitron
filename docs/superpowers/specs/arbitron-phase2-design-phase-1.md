@@ -118,12 +118,19 @@ Migration `005_add_queue_support`:
 
 ## API Changes
 
-### New Endpoint
+### New Endpoints
 
 `POST /instances/{id}/priority` — change priority of a queued or waiting instance.
 - Request body: `{"priority": "high|normal|low"}`
 - Returns 200 on success
 - Returns 409 if instance is not in `queued` or `waiting` state
+
+`PUT /system/config/queue` — update queue cap configuration at runtime.
+- Request body: `{"globalCap": 20, "perUserCap": 5}`
+- Returns 200 on success with the updated config
+- If a cap is raised, triggers immediate queue evaluation (may start queued instances)
+- If a cap is lowered, graceful drain applies — no running instances are interrupted
+- Persists the new values to the config file so they survive restarts
 
 ### Modified Endpoints
 
