@@ -1,0 +1,37 @@
+{
+  "name": "valid-workflow",
+  "description": "A test workflow with one transform node",
+  "author": "test-author",
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 3,
+    "retryDelaySeconds": 5
+  },
+  "inputs": [
+    {
+      "name": "inputText",
+      "type": "string",
+      "description": "The text to transform",
+      "required": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Uppercase Transform",
+      "description": "Transforms input to uppercase",
+      "entrypoint": true,
+      "config": {
+        "operations": [
+          {
+            "variable": "outputText",
+            "operation": "uppercase",
+            "value": "{{ inputText }}"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": []
+}
