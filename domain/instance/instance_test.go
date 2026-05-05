@@ -9,12 +9,23 @@ import (
 )
 
 func TestStateConstants(t *testing.T) {
-	states := []State{StateQueued, StateRunning, StateCompleted, StateFailed, StateCancelled, StatePaused}
-	expected := []string{"queued", "running", "completed", "failed", "cancelled", "paused"}
+	states := []State{StateQueued, StateRunning, StateWaiting, StateCompleted, StateFailed, StateCancelled, StatePaused}
+	expected := []string{"queued", "running", "waiting", "completed", "failed", "cancelled", "paused"}
 
 	for i, s := range states {
 		assert.Equal(t, expected[i], string(s))
 	}
+}
+
+func TestStateWaitingConstant(t *testing.T) {
+	assert.Equal(t, "waiting", string(StateWaiting))
+}
+
+func TestSentinelErrors(t *testing.T) {
+	assert.NotNil(t, ErrNotQueued)
+	assert.Equal(t, "instance is not queued", ErrNotQueued.Error())
+	assert.NotNil(t, ErrNotWaiting)
+	assert.Equal(t, "instance is not waiting", ErrNotWaiting.Error())
 }
 
 func TestPriorityConstants(t *testing.T) {

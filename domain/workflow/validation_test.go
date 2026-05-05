@@ -423,3 +423,266 @@ func extractCodes(errs []workflow.ValidationError) []string {
 	}
 	return codes
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Timer Delay node validation
+// ---------------------------------------------------------------------------
+
+func TestValidateTimerDelay_Valid(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-valid",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Config: workflow.NodeConfig{DurationSeconds: "30"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "timer"},
+			{Source: "timer", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidateTimerDelay_MissingDurationSeconds(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-no-duration",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Config: workflow.NodeConfig{}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "timer"},
+			{Source: "timer", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidateTimerDelay_NoOutgoingEdge(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-no-edge",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Config: workflow.NodeConfig{DurationSeconds: "10"}},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "timer"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
+}
+
+func TestValidateTimerDelay_MultipleOutgoingEdges(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-multi-edge",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Config: workflow.NodeConfig{DurationSeconds: "10"}},
+			{ID: "a", Type: workflow.NodeTypeTransform},
+			{ID: "b", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "timer"},
+			{Source: "timer", Target: "a"},
+			{Source: "timer", Target: "b"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
+}
+
+func TestValidateTimerDelay_AsEntrypoint(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-entry",
+		Nodes: []workflow.Node{
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Entrypoint: true, Config: workflow.NodeConfig{DurationSeconds: "10"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "timer", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
+}
+
+func TestValidateTimerDelay_WithSubstitution(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "timer-subst",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "timer", Type: workflow.NodeTypeTimerDelay, Config: workflow.NodeConfig{DurationSeconds: "{{delay}}"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "timer"},
+			{Source: "timer", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Webhook Wait node validation
+// ---------------------------------------------------------------------------
+
+func TestValidateWebhookWait_Valid_NoConfig(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-valid-noconfig",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidateWebhookWait_Valid_WithSecret(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-valid-secret",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait, Config: workflow.NodeConfig{Secret: "my-secret"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidateWebhookWait_Valid_WithTimeout(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-valid-timeout",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait, Config: workflow.NodeConfig{WaitTimeoutSeconds: "60"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidateWebhookWait_Valid_WithBoth(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-valid-both",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait, Config: workflow.NodeConfig{Secret: "s", WaitTimeoutSeconds: "30"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidateWebhookWait_NoOutgoingEdge(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-no-edge",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
+}
+
+func TestValidateWebhookWait_MultipleOutgoingEdges(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-multi-edge",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait},
+			{ID: "a", Type: workflow.NodeTypeTransform},
+			{ID: "b", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "a"},
+			{Source: "webhook", Target: "b"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
+}
+
+func TestValidateWebhookWait_AsEntrypoint(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-entry",
+		Nodes: []workflow.Node{
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait, Entrypoint: true},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
+}
+
+func TestValidateWebhookWait_TimeoutWithSubstitution(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "webhook-subst",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "webhook", Type: workflow.NodeTypeWebhookWait, Config: workflow.NodeConfig{WaitTimeoutSeconds: "{{timeout}}"}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "webhook"},
+			{Source: "webhook", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Empty(t, errs)
+}

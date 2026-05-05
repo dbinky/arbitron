@@ -15,7 +15,7 @@ import (
 
 // WorkflowService defines the engine methods needed by workflow handlers.
 type WorkflowService interface {
-	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, error)
+	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 }
 
 // WorkflowHandler handles REST API requests for workflow operations.
@@ -130,7 +130,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		req.Priority = "normal"
 	}
 
-	id, err := h.service.Trigger(name, req.Variables, req.Priority)
+	id, started, err := h.service.Trigger(name, req.Variables, req.Priority)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -144,8 +144,15 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusCreated, map[string]any{
+	status := http.StatusAccepted
+	state := "queued"
+	if started {
+		status = http.StatusCreated
+		state = "running"
+	}
+
+	WriteJSON(w, status, map[string]any{
 		"instanceId": id.String(),
-		"state":      "running",
+		"state":      state,
 	})
 }

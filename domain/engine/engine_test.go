@@ -210,6 +210,58 @@ func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, 
 	return running, nil
 }
 
+func (r *mockInstanceRepo) UpdatePriority(_ context.Context, id uuid.UUID, priority instance.Priority) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.Priority = priority
+	inst.UpdatedAt = time.Now()
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWaiting(_ context.Context, id uuid.UUID, waitingUntil *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	if waitingUntil != nil {
+		inst.State = instance.StateWaiting
+	}
+	inst.WaitingUntil = waitingUntil
+	inst.UpdatedAt = time.Now()
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWebhookFields(_ context.Context, id uuid.UUID, token *string, secretHash *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.WebhookToken = token
+	inst.WebhookSecretHash = secretHash
+	inst.UpdatedAt = time.Now()
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, receivedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.WebhookReceivedAt = &receivedAt
+	inst.UpdatedAt = time.Now()
+	return nil
+}
+
 func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -310,6 +362,62 @@ func (r *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 	return r.defaultUserID, nil
 }
 
+// mockQueueManager implements engine.QueueManager
+type mockQueueManager struct {
+	mu                    sync.Mutex
+	enqueueFn             func(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error)
+	notifyCapacityFreedCh chan struct{}
+}
+
+func newMockQueueManager() *mockQueueManager {
+	return &mockQueueManager{
+		notifyCapacityFreedCh: make(chan struct{}, 100),
+	}
+}
+
+func (m *mockQueueManager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error) {
+	m.mu.Lock()
+	fn := m.enqueueFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id, ownerID)
+	}
+	// Default: always start immediately (backwards-compatible for existing tests)
+	return true, nil
+}
+
+func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
+	select {
+	case m.notifyCapacityFreedCh <- struct{}{}:
+	default:
+	}
+}
+
+// mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)
+type mockQueueRepo struct {
+	mu        sync.Mutex
+	instRepo  *mockInstanceRepo
+}
+
+func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error)                             { return 0, nil }
+func (r *mockQueueRepo) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)        { return 0, nil }
+func (r *mockQueueRepo) CountQueued(_ context.Context) (int, error)                              { return 0, nil }
+func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error)                             { return 0, nil }
+func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) { return nil, nil }
+func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
+	if r.instRepo != nil {
+		r.instRepo.mu.Lock()
+		if inst, ok := r.instRepo.instances[id]; ok {
+			inst.State = instance.StateQueued
+			inst.QueuedAt = &queuedAt
+		}
+		r.instRepo.mu.Unlock()
+	}
+	return nil
+}
+func (r *mockQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error)    { return nil, nil }
+func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error)  { return nil, nil }
+
 // mockEventBus implements engine.EventBus
 type mockEventBus struct {
 	mu     sync.Mutex
@@ -406,6 +514,7 @@ type testFixtures struct {
 	userRepo     *mockUserRepo
 	eventBus     *mockEventBus
 	executor     *mockExecutor
+	queueManager *mockQueueManager
 	engine       *engine.Engine
 }
 
@@ -417,6 +526,7 @@ func newTestFixtures() *testFixtures {
 	userRepo := newMockUserRepo()
 	eventBus := newMockEventBus()
 	exec := newMockExecutor()
+	qm := newMockQueueManager()
 
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     exec,
@@ -426,7 +536,19 @@ func newTestFixtures() *testFixtures {
 		workflow.NodeTypeTransform:   exec,
 	}
 
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus)
+	// The mock queue manager's default Enqueue calls StartInstance directly,
+	// which simulates the old behavior of immediately starting.
+	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo})
+
+	// Wire the mock queue manager to call StartInstance on the engine.
+	qm.mu.Lock()
+	qm.enqueueFn = func(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error) {
+		if err := eng.StartInstance(ctx, id); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	qm.mu.Unlock()
 
 	return &testFixtures{
 		workflowRepo: wfRepo,
@@ -436,6 +558,7 @@ func newTestFixtures() *testFixtures {
 		userRepo:     userRepo,
 		eventBus:     eventBus,
 		executor:     exec,
+		queueManager: qm,
 		engine:       eng,
 	}
 }
@@ -560,7 +683,7 @@ func TestEngine_LinearWorkflow(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	assert.NotEqual(t, uuid.Nil, id)
 
@@ -592,7 +715,7 @@ func TestEngine_ConditionalBranch_High(t *testing.T) {
 		return &engine.NodeResult{OutputPort: "low"}, nil
 	})
 
-	id, err := f.engine.Trigger("conditional-wf", map[string]any{"score": float64(90)}, "normal")
+	id, _, err := f.engine.Trigger("conditional-wf", map[string]any{"score": float64(90)}, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -624,7 +747,7 @@ func TestEngine_ConditionalBranch_DefaultOutput(t *testing.T) {
 		return &engine.NodeResult{OutputPort: "low"}, nil
 	})
 
-	id, err := f.engine.Trigger("conditional-wf", map[string]any{"score": float64(50)}, "normal")
+	id, _, err := f.engine.Trigger("conditional-wf", map[string]any{"score": float64(50)}, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -644,7 +767,7 @@ func TestEngine_SingleNode(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(singleNodeWorkflow())
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -665,7 +788,7 @@ func TestEngine_ErrorHalt(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
@@ -697,7 +820,7 @@ func TestEngine_ErrorSkip(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -741,7 +864,7 @@ func TestEngine_ErrorRoute(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-route-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-route-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -781,7 +904,7 @@ func TestEngine_RetrySucceedsOnSecondAttempt(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -812,7 +935,7 @@ func TestEngine_RetryExhausted(t *testing.T) {
 		return nil, fmt.Errorf("node B always explodes")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
@@ -857,7 +980,7 @@ func TestEngine_DefaultErrorBehaviorFromWorkflow(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("default-err-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("default-err-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -880,7 +1003,7 @@ func TestEngine_TriggerWithValidInputs(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(workflowWithInputs())
 
-	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	id, _, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 	assert.NotEqual(t, uuid.Nil, id)
 
@@ -893,7 +1016,7 @@ func TestEngine_TriggerWithMissingRequiredInput(t *testing.T) {
 	f.workflowRepo.add(workflowWithInputs())
 
 	// "name" is required but not provided
-	_, err := f.engine.Trigger("input-wf", map[string]any{}, "normal")
+	_, _, err := f.engine.Trigger("input-wf", map[string]any{}, "normal")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "name")
 }
@@ -902,7 +1025,7 @@ func TestEngine_TriggerWithDefaultInput(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(workflowWithInputs())
 
-	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	id, _, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -912,7 +1035,7 @@ func TestEngine_TriggerWithDefaultInput(t *testing.T) {
 
 func TestEngine_TriggerWorkflowNotFound(t *testing.T) {
 	f := newTestFixtures()
-	_, err := f.engine.Trigger("nonexistent", nil, "normal")
+	_, _, err := f.engine.Trigger("nonexistent", nil, "normal")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -950,7 +1073,7 @@ func TestEngine_PauseRunning(t *testing.T) {
 		}
 	})
 
-	id, err := f.engine.Trigger("pause-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("pause-wf", nil, "normal")
 	require.NoError(t, err)
 
 	// Wait for B to start
@@ -1007,7 +1130,7 @@ func TestEngine_ResumeFromPaused(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("resume-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("resume-wf", nil, "normal")
 	require.NoError(t, err)
 
 	<-bStarted
@@ -1048,7 +1171,7 @@ func TestEngine_CancelRunning(t *testing.T) {
 		return nil, ctx.Err()
 	})
 
-	id, err := f.engine.Trigger("cancel-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("cancel-wf", nil, "normal")
 	require.NoError(t, err)
 
 	<-bStarted
@@ -1079,7 +1202,7 @@ func TestEngine_RetryFailed(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
@@ -1097,7 +1220,7 @@ func TestEngine_RerunCompleted(t *testing.T) {
 	wf := workflowWithInputs()
 	f.workflowRepo.add(wf)
 
-	origID, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	origID, _, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, origID, 5*time.Second, instance.StateCompleted)
 
@@ -1113,32 +1236,50 @@ func TestEngine_RerunCompleted(t *testing.T) {
 
 func TestEngine_RerunNonTerminalFails(t *testing.T) {
 	f := newTestFixtures()
-	wf := workflowWithInputs()
+
+	// Use a two-node workflow so pause can be detected between nodes.
+	wf := &workflow.Workflow{
+		Name: "rerun-nonterminal-wf",
+		Inputs: []workflow.InputField{
+			{Name: "name", Type: "string", Required: true},
+		},
+		Nodes: []workflow.Node{
+			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
+			{ID: "B", Type: workflow.NodeTypeScript},
+		},
+		Edges: []workflow.Edge{
+			{Source: "A", Target: "B"},
+		},
+	}
 	f.workflowRepo.add(wf)
 
-	// Pause the instance so it's non-terminal (running→paused).
-	// Use a workflow that pauses mid-execution.
-	pauseCh := make(chan struct{})
-	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
-		<-pauseCh // block until we pause
-		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	// Block on node B so we can pause while it's running.
+	bStarted := make(chan struct{})
+	bDone := make(chan struct{})
+	f.executor.onNode("B", func(ctx context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		close(bStarted)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-bDone:
+			return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+		}
 	})
 
-	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	id, _, err := f.engine.Trigger("rerun-nonterminal-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 
-	// Wait for it to be running, then pause it.
-	time.Sleep(20 * time.Millisecond)
+	// Wait for B to start, then pause.
+	<-bStarted
 	require.NoError(t, f.engine.Pause(id))
-	close(pauseCh)
+	close(bDone)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Rerun should fail because the instance is paused (non-terminal).
 	_, err = f.engine.Rerun(id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be rerun")
-
-	// Clean up: cancel to release the goroutine.
-	_ = f.engine.Cancel(id)
 }
 
 func TestEngine_RecoverCrashedInstances(t *testing.T) {
@@ -1172,7 +1313,7 @@ func TestEngine_WorkflowSnapshotStored(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1194,7 +1335,7 @@ func TestEngine_VariableSnapshotsCreated(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1212,7 +1353,7 @@ func TestEngine_NodeExecutionRecords(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1226,7 +1367,7 @@ func TestEngine_NodeExecutionHasCorrectTiming(t *testing.T) {
 	f.workflowRepo.add(singleNodeWorkflow())
 
 	before := time.Now()
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 	after := time.Now()
@@ -1264,7 +1405,7 @@ func TestEngine_RetryCreatesPerAttemptRecords(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1304,7 +1445,7 @@ func TestEngine_RetryExhaustedAttemptNumbers(t *testing.T) {
 		return nil, fmt.Errorf("always fails")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -1335,7 +1476,7 @@ func TestEngine_SkipStatusPersistedAsSkipped(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1360,7 +1501,7 @@ func TestEngine_PublishesNodeStartedEvents(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1381,7 +1522,7 @@ func TestEngine_PublishesNodeCompletedEvents(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1405,7 +1546,7 @@ func TestEngine_PublishesNodeFailedEvent(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -1426,7 +1567,7 @@ func TestEngine_PublishesNodeFailedEventOnSkip(t *testing.T) {
 		return nil, fmt.Errorf("node B exploded")
 	})
 
-	id, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1454,7 +1595,7 @@ func TestEngine_PauseNonRunning(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(singleNodeWorkflow())
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1467,7 +1608,7 @@ func TestEngine_ResumeNonPaused(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(singleNodeWorkflow())
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1480,7 +1621,7 @@ func TestEngine_CancelTerminalState(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(singleNodeWorkflow())
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1493,7 +1634,7 @@ func TestEngine_RetryNonFailed(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(singleNodeWorkflow())
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1518,13 +1659,24 @@ func TestEngine_UnregisteredNodeType(t *testing.T) {
 	f.workflowRepo.add(wf)
 
 	// Remove all executors so the unknown type definitely isn't handled
+	qm2 := newMockQueueManager()
 	eng := engine.NewEngine(
 		f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo,
 		map[workflow.NodeType]engine.NodeExecutor{},
 		f.eventBus,
+		qm2,
+		&mockQueueRepo{instRepo: f.instanceRepo},
 	)
+	qm2.mu.Lock()
+	qm2.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {
+		if err := eng.StartInstance(ctx, id); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	qm2.mu.Unlock()
 
-	id, err := eng.Trigger("unknown-type-wf", nil, "normal")
+	id, _, err := eng.Trigger("unknown-type-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
@@ -1547,7 +1699,7 @@ func TestEngine_NodeOutputAccessibleByLaterNode(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "world"}}, nil
 	})
 
-	id, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1574,7 +1726,7 @@ func TestEngine_RetryPreservesUneditedNodeOutputs(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("linear-wf", map[string]any{"name": "Alice"}, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -1610,7 +1762,7 @@ func TestEngine_UpdateCurrentNodeFiresBeforeExecution(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1627,7 +1779,7 @@ func TestEngine_VariableSnapshotCapturedPreExecution(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"transformed": "yes"}}, nil
 	})
 
-	id, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
+	id, _, err := f.engine.Trigger("input-wf", map[string]any{"name": "Alice"}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1668,7 +1820,7 @@ func TestEngine_NodeResultTelemetryFieldsPersistedToNodeExecution(t *testing.T) 
 		}, nil
 	})
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1705,7 +1857,7 @@ func TestEngine_NonZeroScriptExitCodePersisted(t *testing.T) {
 		}, fmt.Errorf("exit status 2")
 	})
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	// Skip error behavior makes the instance complete even if the node fails
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -1747,7 +1899,7 @@ func TestEngine_RetryWithVariableEdits(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"name": nameVal}}, nil
 	})
 
-	id, err := f.engine.Trigger("linear-wf", map[string]any{"name": "wrong"}, "normal")
+	id, _, err := f.engine.Trigger("linear-wf", map[string]any{"name": "wrong"}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -1766,7 +1918,7 @@ func TestEngine_WorkflowNamePassedToExecutor(t *testing.T) {
 	wf := singleNodeWorkflow()
 	f.workflowRepo.add(wf)
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1794,7 +1946,7 @@ func TestEngine_LLMConversationPersistedToNodeExecution(t *testing.T) {
 		}, nil
 	})
 
-	id, err := f.engine.Trigger("single-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1813,7 +1965,7 @@ func TestEngine_RerunNilOriginalVariablesFails(t *testing.T) {
 	wf := singleNodeWorkflow()
 	f.workflowRepo.add(wf)
 
-	id, err := f.engine.Trigger("single-wf", map[string]any{"x": 1}, "normal")
+	id, _, err := f.engine.Trigger("single-wf", map[string]any{"x": 1}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -1860,7 +2012,7 @@ func TestEngine_SkipConditionalNodeRoutesViaDefaultOutput(t *testing.T) {
 		return nil, fmt.Errorf("conditional eval failed")
 	})
 
-	id, err := f.engine.Trigger("cond-skip-wf", nil, "normal")
+	id, _, err := f.engine.Trigger("cond-skip-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 

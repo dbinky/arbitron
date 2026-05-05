@@ -14,6 +14,8 @@ var (
 	ErrNotRunning      = errors.New("instance is not running")
 	ErrNotPaused       = errors.New("instance is not paused")
 	ErrNotFailed       = errors.New("instance is not failed")
+	ErrNotQueued       = errors.New("instance is not queued")
+	ErrNotWaiting      = errors.New("instance is not waiting")
 	ErrCannotCancel    = errors.New("instance cannot be cancelled")
 	ErrCannotRerun     = errors.New("instance cannot be rerun")
 )
@@ -24,6 +26,7 @@ type State string
 const (
 	StateQueued    State = "queued"
 	StateRunning   State = "running"
+	StateWaiting   State = "waiting"
 	StateCompleted State = "completed"
 	StateFailed    State = "failed"
 	StateCancelled State = "cancelled"
@@ -54,6 +57,11 @@ type Instance struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	CompletedAt       *time.Time
+	QueuedAt          *time.Time
+	WaitingUntil      *time.Time
+	WebhookToken      *string
+	WebhookSecretHash *string
+	WebhookReceivedAt *time.Time
 }
 
 // InstanceSummary is a lightweight representation for listing instances.
@@ -66,6 +74,7 @@ type InstanceSummary struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+	QueuedAt      *time.Time `json:"queuedAt,omitempty"`
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.

@@ -56,14 +56,14 @@ func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow,
 func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)    { return nil, r.err }
 
 type mockWorkflowService struct {
-	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error)
+	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 }
 
-func (m *mockWorkflowService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+func (m *mockWorkflowService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
-	return uuid.New(), nil
+	return uuid.New(), true, nil
 }
 
 type mockFileReader struct {
@@ -287,11 +287,11 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 
 		expectedID := uuid.New()
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 				assert.Equal(t, "test-wf", workflowName)
 				assert.Equal(t, "Alice", variables["name"])
 				assert.Equal(t, "normal", priority)
-				return expectedID, nil
+				return expectedID, true, nil
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
@@ -330,8 +330,8 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 	t.Run("returns 404 for unknown workflow", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
-				return uuid.Nil, fmt.Errorf("failed to load workflow: workflow not found: unknown")
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+				return uuid.Nil, false, fmt.Errorf("failed to load workflow: workflow not found: unknown")
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
@@ -351,8 +351,8 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo.workflows["test-wf"] = testWorkflow()
 
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
-				return uuid.Nil, fmt.Errorf("missing required input: name")
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+				return uuid.Nil, false, fmt.Errorf("missing required input: name")
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
@@ -372,9 +372,9 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo.workflows["test-wf"] = testWorkflow()
 
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 				assert.Equal(t, "normal", priority)
-				return uuid.New(), nil
+				return uuid.New(), true, nil
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
@@ -394,8 +394,8 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo.workflows["test-wf"] = testWorkflow()
 
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
-				return uuid.New(), nil
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+				return uuid.New(), true, nil
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
@@ -412,8 +412,8 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()
 		svc := &mockWorkflowService{
-			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
-				return uuid.Nil, fmt.Errorf("database connection lost")
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+				return uuid.Nil, false, fmt.Errorf("database connection lost")
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())

@@ -348,8 +348,83 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 					NodeID:  n.ID,
 				})
 			}
+		case NodeTypeTimerDelay:
+			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
+		case NodeTypeWebhookWait:
+			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
 		}
 	}
+	return errs
+}
+
+// validateTimerDelayNode checks timer_delay-specific validation rules.
+func validateTimerDelayNode(node Node, edges []Edge) []ValidationError {
+	var errs []ValidationError
+
+	// Rule 1: Timer delay nodes cannot be entry points.
+	if node.Entrypoint {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_TIMER_DELAY",
+			Message: "timer_delay node " + node.ID + " cannot be an entrypoint",
+			NodeID:  node.ID,
+		})
+	}
+
+	// Rule 2: DurationSeconds is required (must not be empty).
+	if node.Config.DurationSeconds == "" {
+		errs = append(errs, ValidationError{
+			Code:    "MISSING_REQUIRED_CONFIG",
+			Message: "timer_delay node " + node.ID + " must have durationSeconds",
+			NodeID:  node.ID,
+		})
+	}
+
+	// Rule 3: Timer delay nodes must have exactly one outgoing edge.
+	outgoing := 0
+	for _, e := range edges {
+		if e.Source == node.ID {
+			outgoing++
+		}
+	}
+	if outgoing != 1 {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_TIMER_DELAY",
+			Message: "timer_delay node " + node.ID + " must have exactly one outgoing edge",
+			NodeID:  node.ID,
+		})
+	}
+
+	return errs
+}
+
+// validateWebhookWaitNode checks webhook_wait-specific validation rules.
+func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
+	var errs []ValidationError
+
+	// Rule 1: Webhook wait nodes cannot be entry points.
+	if node.Entrypoint {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_WEBHOOK_WAIT",
+			Message: "webhook_wait node " + node.ID + " cannot be an entrypoint",
+			NodeID:  node.ID,
+		})
+	}
+
+	// Rule 2: Must have exactly one outgoing edge.
+	outgoing := 0
+	for _, e := range edges {
+		if e.Source == node.ID {
+			outgoing++
+		}
+	}
+	if outgoing != 1 {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_WEBHOOK_WAIT",
+			Message: "webhook_wait node " + node.ID + " must have exactly one outgoing edge",
+			NodeID:  node.ID,
+		})
+	}
+
 	return errs
 }
 

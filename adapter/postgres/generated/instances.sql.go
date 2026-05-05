@@ -12,9 +12,9 @@ import (
 )
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at
 `
 
 type CreateInstanceParams struct {
@@ -26,6 +26,7 @@ type CreateInstanceParams struct {
 	Priority          InstancePriority
 	Variables         []byte
 	OriginalVariables []byte
+	QueuedAt          pgtype.Timestamptz
 }
 
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
@@ -38,6 +39,7 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.Priority,
 		arg.Variables,
 		arg.OriginalVariables,
+		arg.QueuedAt,
 	)
 	var i Instance
 	err := row.Scan(
@@ -54,12 +56,13 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.QueuedAt,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at FROM instances WHERE id = $1
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at FROM instances WHERE id = $1
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id pgtype.UUID) (Instance, error) {
@@ -79,12 +82,13 @@ func (q *Queries) GetInstance(ctx context.Context, id pgtype.UUID) (Instance, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,
+		&i.QueuedAt,
 	)
 	return i, err
 }
 
 const listInstances = `-- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at
 FROM instances
 WHERE ($3::instance_state IS NULL OR state = $3::instance_state)
 AND ($4::text IS NULL OR workflow_name = $4::text)
@@ -108,6 +112,7 @@ type ListInstancesRow struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	CompletedAt   pgtype.Timestamptz
+	QueuedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([]ListInstancesRow, error) {
@@ -133,6 +138,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.QueuedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +151,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -171,6 +177,7 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+			&i.QueuedAt,
 		); err != nil {
 			return nil, err
 		}

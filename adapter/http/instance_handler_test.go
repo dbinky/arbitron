@@ -38,6 +38,10 @@ func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ st
 func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error               { return r.err }
 func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error                       { return r.err }
 func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error)            { return nil, r.err }
+func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error { return r.err }
+func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error          { return r.err }
+func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error { return r.err }
+func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error    { return r.err }
 
 // errNodeExecRepo always returns the stored error.
 type errNodeExecRepo struct{ err error }
@@ -157,6 +161,46 @@ func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, 
 	return nil, nil
 }
 
+func (r *mockInstanceRepo) UpdatePriority(_ context.Context, id uuid.UUID, priority instance.Priority) error {
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.Priority = priority
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWaiting(_ context.Context, id uuid.UUID, waitingUntil *time.Time) error {
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	if waitingUntil != nil {
+		inst.State = instance.StateWaiting
+	}
+	inst.WaitingUntil = waitingUntil
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWebhookFields(_ context.Context, id uuid.UUID, token *string, secretHash *string) error {
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.WebhookToken = token
+	inst.WebhookSecretHash = secretHash
+	return nil
+}
+
+func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, receivedAt time.Time) error {
+	inst, ok := r.instances[id]
+	if !ok {
+		return fmt.Errorf("instance not found: %s", id)
+	}
+	inst.WebhookReceivedAt = &receivedAt
+	return nil
+}
+
 // mockNodeExecutionRepo for InstanceHandler
 type mockNodeExecRepo struct {
 	executions []*instance.NodeExecution
@@ -220,11 +264,12 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
-	pauseFn  func(id uuid.UUID) error
-	resumeFn func(id uuid.UUID) error
-	cancelFn func(id uuid.UUID) error
-	retryFn  func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn  func(id uuid.UUID) (uuid.UUID, error)
+	pauseFn       func(id uuid.UUID) error
+	resumeFn      func(id uuid.UUID) error
+	cancelFn      func(id uuid.UUID) error
+	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn func(id uuid.UUID, priority string) error
 }
 
 func (m *mockInstanceService) Pause(id uuid.UUID) error {
@@ -260,6 +305,13 @@ func (m *mockInstanceService) Rerun(id uuid.UUID) (uuid.UUID, error) {
 		return m.rerunFn(id)
 	}
 	return uuid.New(), nil
+}
+
+func (m *mockInstanceService) SetPriority(id uuid.UUID, priority string) error {
+	if m.setPriorityFn != nil {
+		return m.setPriorityFn(id, priority)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

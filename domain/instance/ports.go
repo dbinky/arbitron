@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -17,6 +18,22 @@ type InstanceRepository interface {
 	SetFailed(ctx context.Context, id uuid.UUID, failedNodeID string) error
 	SetCompleted(ctx context.Context, id uuid.UUID) error
 	ListRunning(ctx context.Context) ([]Instance, error)
+	UpdatePriority(ctx context.Context, id uuid.UUID, priority Priority) error
+	SetWaiting(ctx context.Context, id uuid.UUID, waitingUntil *time.Time) error
+	SetWebhookFields(ctx context.Context, id uuid.UUID, token *string, secretHash *string) error
+	SetWebhookReceived(ctx context.Context, id uuid.UUID, receivedAt time.Time) error
+}
+
+// QueueRepository defines the port for queue-specific persistence operations.
+type QueueRepository interface {
+	CountRunning(ctx context.Context) (int, error)
+	CountRunningByOwner(ctx context.Context, ownerID uuid.UUID) (int, error)
+	CountQueued(ctx context.Context) (int, error)
+	CountWaiting(ctx context.Context) (int, error)
+	NextEligible(ctx context.Context, globalCap int, perUserCap int) (*Instance, error)
+	SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
+	ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
+	ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
 }
 
 // NodeExecutionRepository defines the port for persisting and querying node executions.

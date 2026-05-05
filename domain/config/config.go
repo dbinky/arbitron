@@ -3,12 +3,19 @@ package config
 
 // Config is the top-level configuration structure for the Arbitron system.
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
+	Server    ServerConfig
+	Database  DatabaseConfig
 	Workspace WorkspaceConfig
-	LLM      LLMConfig
-	Logging  LoggingConfig
-	Tracing  TracingConfig
+	LLM       LLMConfig
+	Logging   LoggingConfig
+	Tracing   TracingConfig
+	Queue     QueueConfig
+}
+
+// QueueConfig holds queue management settings.
+type QueueConfig struct {
+	GlobalCap  int // 0 = unlimited
+	PerUserCap int // 0 = unlimited
 }
 
 // ServerConfig holds HTTP server settings.

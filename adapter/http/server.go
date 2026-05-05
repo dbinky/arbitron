@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +47,15 @@ type SnapshotRepo = instance.VariableSnapshotRepository
 // EventBusPort is a type alias for the domain event bus port.
 type EventBusPort = engine.EventBus
 
+// QueueManagerPort defines the queue manager operations used by the API layer.
+type QueueManagerPort interface {
+	UpdateConfig(globalCap, perUserCap int)
+	Evaluate(ctx context.Context) error
+}
+
+// QueueRepoPort is a type alias for the domain queue repository port.
+type QueueRepoPort = instance.QueueRepository
+
 // NewRouter creates the chi router with all API routes wired up.
 func NewRouter(
 	svc EngineService,
@@ -55,6 +66,9 @@ func NewRouter(
 	fileReader FileReader,
 	eventBus EventBusPort,
 	cfg *config.Config,
+	queueManager QueueManagerPort,
+	queueRepo QueueRepoPort,
+	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
 
@@ -66,6 +80,7 @@ func NewRouter(
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
 	streamHandler := NewStreamHandler(instances, eventBus)
+	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// System endpoints
@@ -73,7 +88,8 @@ func NewRouter(
 			WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		})
 
-		r.Get("/system/config", systemConfigHandler(cfg))
+		r.Get("/system/config", sysHandler.GetConfig)
+		r.Put("/system/config/queue", sysHandler.UpdateQueueConfig)
 
 		// Workflow endpoints
 		r.Route("/workflows", func(r chi.Router) {
@@ -82,6 +98,11 @@ func NewRouter(
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
 		})
+
+		// Webhook endpoints
+		if len(webhookHandler) > 0 && webhookHandler[0] != nil {
+			r.Post("/webhooks/wait/{token}", webhookHandler[0].ReceiveWebhook)
+		}
 
 		// Instance endpoints
 		r.Route("/instances", func(r chi.Router) {
@@ -92,6 +113,7 @@ func NewRouter(
 			r.Post("/{id}/cancel", instHandler.Cancel)
 			r.Post("/{id}/retry", instHandler.Retry)
 			r.Post("/{id}/rerun", instHandler.Rerun)
+			r.Post("/{id}/priority", instHandler.SetPriority)
 			r.Get("/{id}/trace", instHandler.GetTrace)
 			r.Get("/{id}/trace/{nodeId}", instHandler.GetNodeTrace)
 			r.Get("/{id}/variables", instHandler.GetVariables)
@@ -103,6 +125,13 @@ func NewRouter(
 	return r
 }
 
+// SystemHandler handles system configuration endpoints.
+type SystemHandler struct {
+	config       *config.Config
+	queueManager QueueManagerPort
+	queueRepo    QueueRepoPort
+}
+
 // systemConfigResponse is the JSON representation of system configuration
 // with sensitive fields redacted.
 type systemConfigResponse struct {
@@ -112,6 +141,7 @@ type systemConfigResponse struct {
 	LLM       llmConfigResponse       `json:"llm"`
 	Logging   loggingConfigResponse   `json:"logging"`
 	Tracing   tracingConfigResponse   `json:"tracing"`
+	Queue     queueConfigResponse     `json:"queue"`
 }
 
 type serverConfigResponse struct {
@@ -142,32 +172,98 @@ type tracingConfigResponse struct {
 	ExportDir string `json:"exportDir"`
 }
 
-func systemConfigHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		resp := systemConfigResponse{
-			Server: serverConfigResponse{
-				Host: cfg.Server.Host,
-				Port: cfg.Server.Port,
-			},
-			Database: databaseConfigResponse{
-				Connected: cfg.Database.URL != "",
-			},
-			Workspace: workspaceConfigResponse{
-				Path: cfg.Workspace.Path,
-			},
-			LLM: llmConfigResponse{
-				Provider: cfg.LLM.Provider,
-				APIKey:   "**REDACTED**",
-			},
-			Logging: loggingConfigResponse{
-				Level: cfg.Logging.Level,
-				File:  cfg.Logging.File,
-			},
-			Tracing: tracingConfigResponse{
-				Enabled:   cfg.Tracing.Enabled,
-				ExportDir: cfg.Tracing.ExportDir,
-			},
-		}
-		WriteJSON(w, http.StatusOK, resp)
+type queueConfigResponse struct {
+	GlobalCap    int `json:"globalCap"`
+	PerUserCap   int `json:"perUserCap"`
+	RunningCount int `json:"runningCount"`
+	QueuedCount  int `json:"queuedCount"`
+	WaitingCount int `json:"waitingCount"`
+}
+
+// GetConfig handles GET /system/config.
+func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	var running, queued, waiting int
+	if h.queueRepo != nil {
+		running, _ = h.queueRepo.CountRunning(r.Context())
+		queued, _ = h.queueRepo.CountQueued(r.Context())
+		waiting, _ = h.queueRepo.CountWaiting(r.Context())
 	}
+
+	resp := systemConfigResponse{
+		Server: serverConfigResponse{
+			Host: h.config.Server.Host,
+			Port: h.config.Server.Port,
+		},
+		Database: databaseConfigResponse{
+			Connected: h.config.Database.URL != "",
+		},
+		Workspace: workspaceConfigResponse{
+			Path: h.config.Workspace.Path,
+		},
+		LLM: llmConfigResponse{
+			Provider: h.config.LLM.Provider,
+			APIKey:   "**REDACTED**",
+		},
+		Logging: loggingConfigResponse{
+			Level: h.config.Logging.Level,
+			File:  h.config.Logging.File,
+		},
+		Tracing: tracingConfigResponse{
+			Enabled:   h.config.Tracing.Enabled,
+			ExportDir: h.config.Tracing.ExportDir,
+		},
+		Queue: queueConfigResponse{
+			GlobalCap:    h.config.Queue.GlobalCap,
+			PerUserCap:   h.config.Queue.PerUserCap,
+			RunningCount: running,
+			QueuedCount:  queued,
+			WaitingCount: waiting,
+		},
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// updateQueueConfigRequest is the JSON body for updating queue config.
+type updateQueueConfigRequest struct {
+	GlobalCap  *int `json:"globalCap"`
+	PerUserCap *int `json:"perUserCap"`
+}
+
+// UpdateQueueConfig handles PUT /system/config/queue.
+func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request) {
+	var req updateQueueConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+
+	oldGlobalCap := h.config.Queue.GlobalCap
+	oldPerUserCap := h.config.Queue.PerUserCap
+
+	newGlobalCap := oldGlobalCap
+	newPerUserCap := oldPerUserCap
+	if req.GlobalCap != nil {
+		newGlobalCap = *req.GlobalCap
+	}
+	if req.PerUserCap != nil {
+		newPerUserCap = *req.PerUserCap
+	}
+
+	h.queueManager.UpdateConfig(newGlobalCap, newPerUserCap)
+
+	// If cap was raised, trigger queue evaluation.
+	capRaised := (newGlobalCap == 0 && oldGlobalCap > 0) ||
+		(newGlobalCap > oldGlobalCap) ||
+		(newPerUserCap == 0 && oldPerUserCap > 0) ||
+		(newPerUserCap > oldPerUserCap)
+	if capRaised {
+		go func() {
+			_ = h.queueManager.Evaluate(context.Background())
+		}()
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"globalCap":  newGlobalCap,
+		"perUserCap": newPerUserCap,
+	})
 }

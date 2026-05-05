@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -26,19 +27,20 @@ import (
 
 // routerMockService implements both WorkflowService and InstanceService.
 type routerMockService struct {
-	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, error)
-	pauseFn   func(id uuid.UUID) error
-	resumeFn  func(id uuid.UUID) error
-	cancelFn  func(id uuid.UUID) error
-	retryFn   func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn   func(id uuid.UUID) (uuid.UUID, error)
+	triggerFn     func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	pauseFn       func(id uuid.UUID) error
+	resumeFn      func(id uuid.UUID) error
+	cancelFn      func(id uuid.UUID) error
+	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn func(id uuid.UUID, priority string) error
 }
 
-func (m *routerMockService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+func (m *routerMockService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
-	return uuid.New(), nil
+	return uuid.New(), true, nil
 }
 
 func (m *routerMockService) Pause(id uuid.UUID) error {
@@ -76,7 +78,32 @@ func (m *routerMockService) Rerun(id uuid.UUID) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
 
-func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config) {
+func (m *routerMockService) SetPriority(id uuid.UUID, priority string) error {
+	if m.setPriorityFn != nil {
+		return m.setPriorityFn(id, priority)
+	}
+	return nil
+}
+
+// mockQueueManagerForRouter implements adapthttp.QueueManagerPort
+type mockQueueManagerForRouter struct{}
+
+func (m *mockQueueManagerForRouter) UpdateConfig(_, _ int)                    {}
+func (m *mockQueueManagerForRouter) Evaluate(_ context.Context) error         { return nil }
+
+// mockQueueRepoForRouter implements instance.QueueRepository
+type mockQueueRepoForRouter struct{}
+
+func (r *mockQueueRepoForRouter) CountRunning(_ context.Context) (int, error)                              { return 0, nil }
+func (r *mockQueueRepoForRouter) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)         { return 0, nil }
+func (r *mockQueueRepoForRouter) CountQueued(_ context.Context) (int, error)                               { return 0, nil }
+func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error)                              { return 0, nil }
+func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) { return nil, nil }
+func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error              { return nil }
+func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error)     { return nil, nil }
+func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error)   { return nil, nil }
+
+func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config, adapthttp.QueueManagerPort, adapthttp.QueueRepoPort) {
 	wfRepo := newMockWorkflowRepo()
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecRepo()
@@ -89,8 +116,11 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 		Database: config.DatabaseConfig{URL: "postgres://user:pass@localhost/arbitron"},
 		LLM:      config.LLMConfig{Provider: "anthropic", APIKey: "sk-secret-key-12345"},
 		Logging:  config.LoggingConfig{Level: "info"},
+		Queue:    config.QueueConfig{GlobalCap: 20, PerUserCap: 5},
 	}
-	return wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg
+	qm := &mockQueueManagerForRouter{}
+	qr := &mockQueueRepoForRouter{}
+	return wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr
 }
 
 // ---------------------------------------------------------------------------
@@ -98,8 +128,8 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 // ---------------------------------------------------------------------------
 
 func TestRouter_Health(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -118,8 +148,8 @@ func TestRouter_Health(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_SystemConfig(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -148,7 +178,7 @@ func TestRouter_SystemConfig(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_WorkflowRoutes(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
 	wfRepo.workflows["my-wf"] = &workflow.Workflow{
 		Name:        "my-wf",
 		Description: "Test workflow",
@@ -156,7 +186,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
@@ -194,7 +224,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_InstanceRoutes(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
 	inst := &instance.Instance{
 		ID:                uuid.New(),
 		OwnerID:           uuid.New(),
@@ -207,7 +237,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 		UpdatedAt:         time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
 
 	t.Run("GET /api/v1/instances", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -302,8 +332,8 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRouter_NotFound(t *testing.T) {
-	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg)
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/nonexistent", nil)
 	w := httptest.NewRecorder()

@@ -23,4 +23,8 @@ type NodeResult struct {
 	ScriptStdout    string
 	ScriptStderr    string
 	ScriptExitCode  int
+	// IsWait signals that the engine should exit the run loop cleanly because
+	// the instance has transitioned to a waiting state. The executor has already
+	// handled the state transition.
+	IsWait bool
 }
