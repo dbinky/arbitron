@@ -1,6 +1,6 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the Arbitron Phase 1 workflow engine and REST API for correctness, security, and robustness.
+This document tracks the systematic review of the Arbitron Phase 2 Queue & Concurrency implementation for correctness, concurrency safety, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -15,20 +15,19 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Domain Workflow Types & Validation (`domain/workflow/` — type definitions, JSON tags, graph validation, BFS connectivity, input schema validation, file reference checking) | [x] | [x] | |
-| 2 | Domain Instance Types & Ports (`domain/instance/` — state enums, instance/execution/snapshot types, repository interface contracts, filter types) | [x] | [x] | |
-| 3 | Variable Store & Substitution (`domain/variable/` — dot-path resolution, input/nodeOutput scoping, snapshot round-tripping, `{{}}` pattern matching, value formatting) | [x] | [x] | |
-| 4 | Node Executors: Conditional & Transform (`domain/engine/executor_conditional.go`, `executor_transform.go` — condition evaluation, operator semantics, type coercion, variable mutation, operation ordering) | [x] | [x] | |
-| 5 | Node Executors: Script, Tool Call & LLM (`domain/engine/executor_script.go`, `executor_toolcall.go`, `executor_llm.go` — subprocess management, timeout handling, stdin/stdout, JSON parsing, template substitution, provider delegation) | [x] | [x] | |
-| 6 | Engine Graph Walker & Lifecycle (`domain/engine/engine.go` — adjacency map, execution loop, error behavior resolution, retry logic, pause/cancel/resume/retry/rerun, crash recovery, goroutine management) | [x] | [x] | |
-| 7 | Configuration & Config Loader (`domain/config/`, `adapter/config/` — config struct, koanf loading, YAML/env var precedence, ANTHROPIC_API_KEY mapping, default file creation) | [x] | [x] | |
-| 8 | Filesystem Adapters (`adapter/filesystem/` — workflow repo loading/listing, file reader read/resolve/exists, error handling for missing files, testdata fixtures) | [x] | [x] | |
-| 9 | Database Migrations & Postgres Adapters (`adapter/postgres/` — migration SQL, enum types, FK constraints, indexes, sqlc queries, type conversion helpers, repo implementations) | [x] | [x] | |
-| 10 | REST API: Workflow Handlers (`adapter/http/workflow_handler.go`, `errors.go` — list/get/validate/trigger endpoints, error response format, input validation, status codes) | [x] | [x] | |
-| 11 | REST API: Instance Handlers (`adapter/http/instance_handler.go` — CRUD, lifecycle operations, trace/variables/history endpoints, UUID parsing, state conflict handling) | [x] | [x] | |
-| 12 | Event Bus & WebSocket Streaming (`adapter/eventbus/eventbus.go`, `adapter/http/stream_handler.go` — publish/subscribe, buffer overflow, client lifecycle, terminal state handling, WebSocket upgrade) | [x] | [x] | |
-| 13 | Observability: Logging & Tracing (`adapter/observability/` — MultiHandler, JSON+text fan-out, level filtering, OTel tracer provider, file exporter, span attributes, request logging middleware) | [x] | [x] | |
-| 14 | Bootstrap & CLI (`cmd/arbitron/main.go` — cobra setup, dependency wiring, startup sequence, graceful shutdown, crash recovery invocation) | [x] | [x] | |
+| FA1 | Queue Manager (`domain/queue/manager.go` — capacity checking, next eligible selection, evaluation loop, enqueue, cap semantics) | [ ] | [ ] | |
+| FA2 | Timer Scheduler (`domain/queue/scheduler.go` — hybrid single-timer design, Schedule/Cancel, timer fire flow, graceful shutdown) | [ ] | [ ] | |
+| FA3 | Crash Recovery (`domain/queue/recovery.go` — RecoverTimers, RecoverWebhooks, past-due detection, re-registration) | [ ] | [ ] | |
+| FA4 | Timer Delay Executor (`domain/engine/executor_timer.go` — substitution, duration parsing, state transition, WaitResult, scheduler notification) | [ ] | [ ] | |
+| FA5 | Webhook Wait Executor (`domain/engine/executor_webhook.go` — token generation, HMAC hashing, timeout setup, registry registration, WaitResult) | [ ] | [ ] | |
+| FA6 | Engine Queue Integration (`domain/engine/engine.go` — Trigger refactor, StartInstance, run() loop WaitResult handling, Cancel/Pause/Resume for waiting/webhook states) | [ ] | [ ] | |
+| FA7 | Webhook Registry (`adapter/http/webhook_registry.go` — in-memory map, RWMutex, Register/Lookup/Deactivate lifecycle, concurrency safety) | [ ] | [ ] | |
+| FA8 | Webhook HTTP Handler (`adapter/http/webhook_handler.go` — token lookup, state validation, secret verification, payload parsing, state transitions, error responses) | [ ] | [ ] | |
+| FA9 | API Layer Queue Endpoints (`adapter/http/instance_handler.go`, `adapter/http/server.go` — priority endpoint, trigger 201/202, system config queue section, queue-ordered listing) | [ ] | [ ] | |
+| FA10 | Database Layer (`adapter/postgres/queue_repo.go`, `adapter/postgres/queries/queue.sql`, migrations 005-007 — query correctness, index usage, enum updates) | [ ] | [ ] | |
+| FA11 | Instance Domain Model (`domain/instance/instance.go`, `domain/instance/ports.go` — StateWaiting, QueuedAt, WaitingUntil, Webhook fields, new errors, QueueRepository interface) | [ ] | [ ] | |
+| FA12 | Workflow Validation (`domain/workflow/workflow.go`, `domain/workflow/validation.go` — timer_delay and webhook_wait node types, config fields, validation rules) | [ ] | [ ] | |
+| FA13 | Configuration (`domain/config/config.go`, `adapter/config/loader.go` — QueueConfig, defaults 20/5, env var overrides, config update persistence) | [ ] | [ ] | |
 
 ---
 
@@ -36,15 +35,14 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 15 | Engine + Node Executors (executor map wiring, NodeResult handling, error propagation from executors to engine, output port routing) | [x] | |
-| 16 | Engine + Instance Ports (state transitions match port interface, variable updates persisted correctly, node execution recording, snapshot timing) | [x] | |
-| 17 | Engine + Variable Store (substitution called at correct points, node output namespacing, snapshot/fromSnapshot round-trip through engine lifecycle) | [x] | |
-| 18 | REST API Handlers + Engine Service Interface (WorkflowService/InstanceService contracts match engine methods, error string mapping to HTTP codes, request/response shapes) | [x] | |
-| 19 | REST API Handlers + Instance Repos (handler queries match repo interface, filter params wired correctly, UUID parsing before repo calls, 404 vs 409 distinction) | [x] | |
-| 20 | WebSocket Handler + Event Bus (subscribe/unsubscribe lifecycle during connection, event serialization, terminal state detection and close, concurrent access safety) | [x] | |
-| 21 | Workflow Validation + FileReader (FileChecker interface subset, validation calls FileExists correctly, nil checker skip path, error codes propagated) | [x] | |
-| 22 | Postgres Adapters + Domain Types (type conversion correctness, JSONB marshaling/unmarshaling, nullable field handling, enum string mapping, original_variables preserved) | [x] | |
-| 23 | Bootstrap + All Adapters (dependency injection order, nil checks, adapter interface satisfaction, graceful shutdown sequence covers all resources) | [x] | |
+| FA14 | Queue Manager + Engine (enqueue flow, capacity notification via NotifyCapacityFreed, StartInstance contract, Trigger→Enqueue→Evaluate chain) | [ ] | |
+| FA15 | Timer Scheduler + Timer Delay Executor (Schedule interface contract, timer type constants, instanceID in context, WaitingUntil calculation agreement) | [ ] | |
+| FA16 | Timer Scheduler + Webhook Timeout (same scheduler for webhook timeouts, TimerTypeWebhook discrimination, deactivate-on-fire flow) | [ ] | |
+| FA17 | Webhook Registry + Webhook Handler (Register/Lookup/Deactivate contract, entry struct fields, concurrency between registration and lookup) | [ ] | |
+| FA18 | Webhook Handler + Engine (state transition correctness for waiting+paused, Resume logic for webhook-received-while-paused, Cancel deactivating tokens) | [ ] | |
+| FA19 | Queue Manager + Crash Recovery (RecoverTimers/RecoverWebhooks → scheduler registration → evaluation pass, startup ordering) | [ ] | |
+| FA20 | API Layer + Queue Manager (trigger capacity check path, priority mutation → no re-evaluation needed, PUT config → cap raise triggers evaluation) | [ ] | |
+| FA21 | Engine + Instance Model (SetWaiting/SetWebhookFields/SetQueued usage correctness, state transition preconditions, field nullability) | [ ] | |
 
 ---
 
@@ -54,20 +52,23 @@ A review pass is only checked when the checklist produces a passing result for t
 
 **Pass 1 (Correctness & Coverage):**
 - All public functions have test coverage (happy path, failure, error, edge cases)
-- The code does what the design doc says it should
-- Error handling is thorough — no silent failures
+- The code does what the spec and design docs say it should
+- Error handling is thorough — no silent failures, errors wrapped with context
+- Concurrency is safe — shared state protected, no data races under `-race`
 - Module boundaries are clean (no leaking types across boundaries)
 
 **Pass 2 (Robustness & Extensibility):**
 - Code aligns to the spirit of the design, not just surface conformance
-- The component is ready to be extended by future work (Phase 2-8)
+- The component is ready to be extended by future phases (Phase 3 dashboard, Phase 4 interactive)
 - Test assertions test real risks, not just happy-path ceremony
-- Edge cases are handled (empty inputs, concurrent access, boundary values)
+- Edge cases are handled (zero/negative durations, concurrent pause+timer fire, cap changes during evaluation)
+- Graceful shutdown paths work correctly
 
 ### Paired Area Reviews — What To Check
 
 Paired reviews verify that two components integrate correctly:
-- Data flows cleanly across the boundary
-- Error propagation works end-to-end
+- Data flows cleanly across the boundary (types match, nullability agrees)
+- Error propagation works end-to-end (one side's error triggers correct behavior in the other)
 - No assumptions in one component that the other doesn't satisfy
 - The integration tests cover the seams between the pair
+- Concurrency interactions are safe (e.g., timer fires while webhook handler is processing)

@@ -13,10 +13,10 @@ _(none yet — as issues are fixed during iterations, move them here with a summ
 <!--
 Example of a fixed issue entry:
 
-### ENG-001: Missing context cancellation check in retry sleep
-**Area**: Engine Graph Walker (`domain/engine/engine.go`)
+### QUEUE-001: Race between timer fire and cancel
+**Area**: Timer Scheduler (`domain/queue/scheduler.go`)
 **Fixed**: Iteration N
-**Detail**: The retry loop slept for retryDelaySeconds without checking context cancellation, meaning a cancelled instance could block for up to retryDelaySeconds before stopping. Added select with ctx.Done() during the sleep.
+**Detail**: A race existed where Cancel() could be called after the timer fired but before the transition completed, leaving the instance in an inconsistent state. Added a state check in OnTimerFired to verify the instance is still in waiting state before transitioning.
 -->
 
 ## Won't Fix (Beyond Current Scope)
@@ -26,7 +26,7 @@ _(items logged here are new functionality or enhancements that are outside the s
 <!--
 Example of a won't-fix entry:
 
-### OBS-W01: No log rotation or retention policy
-**Area**: Observability (`adapter/observability/logging.go`)
-**Detail**: Log files grow unbounded. Adding rotation is explicitly out of scope for Phase 1 per the spec. Low risk for local single-user mode.
+### QUEUE-W01: No distributed locking for multi-instance deployment
+**Area**: Queue Manager (`domain/queue/manager.go`)
+**Detail**: The queue evaluation logic assumes a single process. In a multi-instance deployment, two processes could dequeue the same instance. This is out of scope for Phase 2 which targets single-user local mode.
 -->
