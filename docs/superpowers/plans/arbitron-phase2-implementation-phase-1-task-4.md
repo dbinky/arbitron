@@ -13,7 +13,7 @@ Refactor `Engine.Trigger()` to create instances as `queued` and delegate to the 
 
 ## Implementation Steps
 
-1. **Add Queue Manager dependency to Engine**:
+1. **Add Queue Manager and QueueRepo dependencies to Engine**:
    ```go
    type Engine struct {
        workflows      workflow.WorkflowRepository
@@ -24,6 +24,7 @@ Refactor `Engine.Trigger()` to create instances as `queued` and delegate to the 
        executors      map[workflow.NodeType]NodeExecutor
        eventBus       EventBus
        queueManager   QueueManager  // new field
+       queueRepo      instance.QueueRepository  // new field — used by Resume in Phase 2 Task 4
        mu             sync.Mutex
        contexts       map[uuid.UUID]context.CancelFunc
        wg             sync.WaitGroup
@@ -40,7 +41,7 @@ Refactor `Engine.Trigger()` to create instances as `queued` and delegate to the 
    ```
    Add to `domain/engine/ports.go`.
 
-3. **Update NewEngine** to accept `QueueManager`:
+3. **Update NewEngine** to accept `QueueManager` and `QueueRepository`:
    ```go
    func NewEngine(
        workflows workflow.WorkflowRepository,
@@ -51,6 +52,7 @@ Refactor `Engine.Trigger()` to create instances as `queued` and delegate to the 
        executors map[workflow.NodeType]NodeExecutor,
        eventBus EventBus,
        queueManager QueueManager,
+       queueRepo instance.QueueRepository,
    ) *Engine
    ```
 

@@ -91,7 +91,7 @@ Implement the timer delay executor that transitions instances to `waiting` state
 
    // TimerScheduler is the subset of Scheduler the executor needs.
    type TimerScheduler interface {
-       Schedule(instanceID uuid.UUID, waitingUntil time.Time)
+       Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)
    }
 
    func NewTimerDelayExecutor(instances instance.InstanceRepository, scheduler TimerScheduler, queueMgr QueueManager) *TimerDelayExecutor {
@@ -123,8 +123,8 @@ Implement the timer delay executor that transitions instances to `waiting` state
            return nil, fmt.Errorf("failed to set waiting state: %w", err)
        }
 
-       // 5. Register with scheduler
-       e.scheduler.Schedule(instanceID, waitingUntil)
+       // 5. Register with scheduler (TimerTypeDelay from domain/queue package)
+       e.scheduler.Schedule(instanceID, waitingUntil, "timer_delay")
 
        // 6. Notify queue manager (capacity freed)
        e.queueMgr.NotifyCapacityFreed(ctx)

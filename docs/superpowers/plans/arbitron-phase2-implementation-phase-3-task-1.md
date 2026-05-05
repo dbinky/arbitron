@@ -30,27 +30,12 @@ Add the `NodeTypeWebhookWait` constant, webhook-specific fields to `NodeConfig`,
    ```go
    type NodeConfig struct {
        // ... existing fields ...
-       DurationSeconds string `json:"durationSeconds,omitempty"` // timer_delay
-       Secret          string `json:"secret,omitempty"`          // webhook_wait: optional shared secret
-       WebhookTimeout  string `json:"timeoutSeconds,omitempty"`  // webhook_wait: optional timeout, supports {{substitution}}
+       DurationSeconds    string `json:"durationSeconds,omitempty"`    // timer_delay: supports {{substitution}}
+       Secret             string `json:"secret,omitempty"`             // webhook_wait: optional shared secret
+       WaitTimeoutSeconds string `json:"waitTimeoutSeconds,omitempty"` // webhook_wait: optional timeout, supports {{substitution}}
    }
    ```
-   Note: `TimeoutSeconds` already exists on NodeConfig for scripts. Use a distinct field name like `WebhookTimeout` or reuse `TimeoutSeconds` (check if the existing field is `int` — it is: `TimeoutSeconds int`). Since the webhook timeout needs string type for substitution support, add a new field:
-   ```go
-   WebhookTimeoutSeconds string `json:"webhookTimeoutSeconds,omitempty"` // webhook_wait: supports {{substitution}}
-   ```
-   Actually, looking at the design doc, it uses `timeoutSeconds` as the JSON key. Since the existing `TimeoutSeconds int` is for script timeout, we need a string variant. Best approach: add a new Go field with a different JSON tag or use the same JSON tag with different field name. Since `timeoutSeconds` is already taken by the int field, use a distinct JSON key for webhooks:
-   
-   Simplest approach — reuse the `DurationSeconds` pattern and just check node type when parsing:
-   ```go
-   WebhookTimeoutSeconds string `json:"webhookTimeoutSeconds,omitempty"`
-   ```
-   Or keep it as `timeoutSeconds` in the JSON (workflow authors expect this) and handle the dual type. Actually, since NodeConfig is a flat struct and `timeoutSeconds` is an int for scripts, the cleanest approach for the webhook is a separate string field with a different JSON key that matches the design doc's `timeoutSeconds` for webhook_wait nodes only. Since the JSON deserialization happens per-node-type in practice, use:
-   ```go
-   WaitTimeoutSeconds string `json:"waitTimeoutSeconds,omitempty"` // webhook_wait/timer could use this
-   ```
-   
-   **Final decision**: Use `Secret string` and `WaitTimeoutSeconds string` as new fields on NodeConfig.
+   Note: The existing `TimeoutSeconds int` field is used for script execution timeouts. The webhook wait timeout needs a `string` type to support `{{substitution}}`, so it uses a distinct field name `WaitTimeoutSeconds` with JSON key `"waitTimeoutSeconds"`. Workflow authors use `waitTimeoutSeconds` in their webhook_wait node configs.
 
 3. **Add validation rules** for webhook wait nodes in `domain/workflow/validate.go`:
    ```go

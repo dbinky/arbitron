@@ -44,6 +44,12 @@ Create the database migration that adds `waiting` to the state enum, adds `queue
    -- name: CountRunningByOwner :one
    SELECT COUNT(*) FROM instances WHERE state = 'running' AND owner_id = $1;
 
+   -- name: CountQueued :one
+   SELECT COUNT(*) FROM instances WHERE state = 'queued';
+
+   -- name: CountWaiting :one
+   SELECT COUNT(*) FROM instances WHERE state = 'waiting';
+
    -- name: NextEligible :one
    SELECT i.* FROM instances i
    WHERE i.state = 'queued'
@@ -79,8 +85,12 @@ Create the database migration that adds `waiting` to the state enum, adds `queue
 
    func (r *QueueRepo) CountRunning(ctx context.Context) (int, error)
    func (r *QueueRepo) CountRunningByOwner(ctx context.Context, ownerID uuid.UUID) (int, error)
+   func (r *QueueRepo) CountQueued(ctx context.Context) (int, error)
+   func (r *QueueRepo) CountWaiting(ctx context.Context) (int, error)
    func (r *QueueRepo) NextEligible(ctx context.Context, globalCap int, perUserCap int) (*instance.Instance, error)
    func (r *QueueRepo) SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
+   func (r *QueueRepo) ListWaitingWithTimer(ctx context.Context) ([]instance.Instance, error)   // stub returning nil until Phase 2 Task 5
+   func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Instance, error) // stub returning nil until Phase 3 Task 6
    ```
    Each method delegates to the generated queries and maps results to domain types.
 

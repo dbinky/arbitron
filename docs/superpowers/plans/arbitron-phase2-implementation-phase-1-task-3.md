@@ -26,20 +26,23 @@ Implement the `domain/queue/manager.go` service that is the single authority on 
 3. **Define the Manager struct**:
    ```go
    type Manager struct {
-       queue   instance.QueueRepository
-       config  *config.Config
-       starter InstanceStarter
-       mu      sync.Mutex
+       queue     instance.QueueRepository
+       instances instance.InstanceRepository
+       config    *config.Config
+       starter   InstanceStarter
+       mu        sync.Mutex
    }
 
-   func NewManager(queue instance.QueueRepository, cfg *config.Config, starter InstanceStarter) *Manager {
+   func NewManager(queue instance.QueueRepository, instances instance.InstanceRepository, cfg *config.Config, starter InstanceStarter) *Manager {
        return &Manager{
-           queue:   queue,
-           config:  cfg,
-           starter: starter,
+           queue:     queue,
+           instances: instances,
+           config:    cfg,
+           starter:   starter,
        }
    }
    ```
+   Note: The `instances` field is needed by `OnTimerFired` (Phase 2 Task 2) which checks instance state before transitioning. A scheduler field is added later in Phase 2 Task 5 for crash recovery.
 
 4. **Implement `CanStart` method** — checks if a given owner can start an instance:
    ```go

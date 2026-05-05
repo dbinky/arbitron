@@ -80,7 +80,8 @@ Add the priority mutation endpoint, modify the trigger endpoint to return 201/20
    // GET /system/config — returns full config including queue section with counts
    func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
        running, _ := h.queueRepo.CountRunning(r.Context())
-       // Also count queued and waiting
+       queued, _ := h.queueRepo.CountQueued(r.Context())
+       waiting, _ := h.queueRepo.CountWaiting(r.Context())
        resp := map[string]any{
            // ... existing config fields ...
            "queue": map[string]any{

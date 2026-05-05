@@ -43,10 +43,15 @@ Add the `StateWaiting` constant, new sentinel errors, `QueuedAt` field to Instan
    type QueueRepository interface {
        CountRunning(ctx context.Context) (int, error)
        CountRunningByOwner(ctx context.Context, ownerID uuid.UUID) (int, error)
+       CountQueued(ctx context.Context) (int, error)
+       CountWaiting(ctx context.Context) (int, error)
        NextEligible(ctx context.Context, globalCap int, perUserCap int) (*Instance, error)
        SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
+       ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
+       ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
    }
    ```
+   Note: `CountQueued` and `CountWaiting` are used by the system config API endpoint. `ListWaitingWithTimer` and `ListWaitingWithWebhook` are used by crash recovery in later phases. All are defined here so the interface is complete from the start. Their Postgres implementations are added incrementally (counts in Phase 1 Task 2, lists in Phase 2 Task 5 and Phase 3 Task 6).
 
 6. **Add QueueConfig** in `domain/config/config.go`:
    ```go
@@ -80,6 +85,6 @@ Add the `StateWaiting` constant, new sentinel errors, `QueuedAt` field to Instan
 - `StateWaiting` constant exists and equals `"waiting"`
 - `ErrNotQueued` and `ErrNotWaiting` sentinel errors are exported
 - `Instance.QueuedAt` and `InstanceSummary.QueuedAt` fields exist as `*time.Time`
-- `QueueRepository` interface is defined in `domain/instance/ports.go` with 4 methods
+- `QueueRepository` interface is defined in `domain/instance/ports.go` with 8 methods (6 used in Phase 1 + 2 list methods for crash recovery in later phases)
 - `Config.Queue` is a `QueueConfig` with `GlobalCap` and `PerUserCap` int fields
 - All existing tests pass without modification

@@ -165,9 +165,9 @@ Implement the webhook wait executor that generates tokens, hashes secrets, trans
        // 6. Register with webhook registry
        e.registry.Register(token, instanceID, node.ID, secretHash)
 
-       // 7. If timeout configured, register with scheduler
+       // 7. If timeout configured, register with scheduler (webhook_timeout type)
        if deadline != nil {
-           e.scheduler.Schedule(instanceID, *deadline)
+           e.scheduler.Schedule(instanceID, *deadline, "webhook_timeout")
        }
 
        // 8. Notify queue manager (capacity freed)

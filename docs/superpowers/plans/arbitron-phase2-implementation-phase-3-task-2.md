@@ -44,13 +44,17 @@ Implement the in-memory webhook registry that maps tokens to instance metadata f
    }
    ```
 
-3. **Implement Register**:
+3. **Implement Register** (satisfies the `WebhookRegistrar` domain port interface):
    ```go
    // Register adds an active webhook endpoint token to the registry.
-   func (r *WebhookRegistry) Register(token string, entry webhookEntry) {
+   func (r *WebhookRegistry) Register(token string, instanceID uuid.UUID, nodeID string, secretHash *string) {
        r.mu.Lock()
        defer r.mu.Unlock()
-       r.entries[token] = entry
+       r.entries[token] = webhookEntry{
+           InstanceID: instanceID,
+           NodeID:     nodeID,
+           SecretHash: secretHash,
+       }
    }
    ```
 

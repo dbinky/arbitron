@@ -11,16 +11,13 @@ Implement startup recovery logic that scans for instances in `waiting` state wit
 ## Files to Create/Modify
 - `domain/queue/recovery.go` — crash recovery logic
 - `domain/queue/recovery_test.go` — unit tests
-- `domain/instance/ports.go` — add `ListWaiting` method to InstanceRepository (or QueueRepository)
-- `adapter/postgres/instance_repo.go` — implement `ListWaiting`
+- `adapter/postgres/queue_repo.go` — implement `ListWaitingWithTimer` (interface already defined in Phase 1 Task 1)
+- `adapter/postgres/sqlc/queries/queue.sql` — add sqlc query for ListWaitingWithTimer
 - `cmd/` (main startup file) — wire recovery into startup sequence
 
 ## Implementation Steps
 
-1. **Add ListWaiting to repository** — in `domain/instance/ports.go` add to `QueueRepository`:
-   ```go
-   ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
-   ```
+1. **Implement ListWaitingWithTimer in Postgres adapter** — the method is already defined on `QueueRepository` in Phase 1 Task 1. Now implement it:
    This returns all instances where `state = 'waiting' AND waiting_until IS NOT NULL`.
 
 2. **Implement ListWaitingWithTimer in Postgres adapter**:
@@ -62,7 +59,7 @@ Implement startup recovery logic that scans for instances in `waiting` state wit
                }
            } else {
                // Still pending: register with scheduler
-               m.scheduler.Schedule(inst.ID, *inst.WaitingUntil)
+               m.scheduler.Schedule(inst.ID, *inst.WaitingUntil, TimerTypeDelay)
            }
        }
 
@@ -94,25 +91,7 @@ Implement startup recovery logic that scans for instances in `waiting` state wit
    }
    ```
 
-6. **Handle the edge case of paused instances** — if an instance was paused while waiting (state=paused, waiting_until is set), it should NOT be recovered by the timer scan (the timer fires for it are handled by the scheduler which checks state). The query `state = 'waiting'` naturally excludes paused instances. However, the scheduler's `OnTimerFired` should check if the instance is still in `waiting` state before transitioning:
-   ```go
-   func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID) error {
-       inst, err := m.instances.Get(ctx, instanceID)
-       if err != nil { return err }
-
-       // Only transition if still in waiting state
-       if inst.State != instance.StateWaiting {
-           return nil // instance was paused or cancelled while timer was pending
-       }
-
-       now := time.Now()
-       if err := m.queue.SetQueued(ctx, instanceID, now); err != nil {
-           return err
-       }
-       return m.Evaluate(ctx)
-   }
-   ```
-   Note: This requires the Manager to also have access to the main InstanceRepository. Add it as a dependency.
+6. **Handle the edge case of paused instances** — if an instance was paused while waiting (state=paused, waiting_until is set), it should NOT be recovered by the timer scan (the timer fires for it are handled by the scheduler which checks state). The query `state = 'waiting'` naturally excludes paused instances. The scheduler's `OnTimerFired` already checks instance state before transitioning (implemented in Phase 2 Task 2, step 10). No additional work needed here — the state guard is in the `OnTimerFired` method on the Manager.
 
 ## Tests
 - `domain/queue/recovery_test.go`:

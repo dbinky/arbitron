@@ -14,10 +14,7 @@ Implement webhook crash recovery (re-register tokens on startup), add webhook-re
 
 ## Implementation Steps
 
-1. **Add ListWaitingWithWebhook to QueueRepository**:
-   ```go
-   ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
-   ```
+1. **Implement ListWaitingWithWebhook in Postgres adapter** (interface already defined in Phase 1 Task 1):
    SQL query:
    ```sql
    -- name: ListWaitingWithWebhook :many

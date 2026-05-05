@@ -17,82 +17,39 @@ Wire the timer scheduler to handle webhook timeouts, and implement cancel/pause/
 
 ## Implementation Steps
 
-1. **Extend OnTimerFired to handle webhook timeouts** — when a timer fires, the handler needs to know whether it's a timer delay expiration or a webhook timeout. Two approaches:
-   
-   **Approach A**: Store the reason in the scheduler's in-memory map:
+1. **Implement the `TimerTypeWebhook` case in OnTimerFired** — The `timerType` routing infrastructure was established in Phase 2 Task 2 (the `timerEntry` struct, `Schedule(instanceID, waitingUntil, timerType)` signature, and `OnTimerFired(ctx, instanceID, timerType)` signature are already in place). Phase 2 left the `TimerTypeWebhook` case as a no-op placeholder. Now implement it:
    ```go
-   type timerEntry struct {
-       WaitingUntil time.Time
-       Type         string // "timer_delay" or "webhook_timeout"
-   }
-
-   type Scheduler struct {
-       mu      sync.Mutex
-       timers  map[uuid.UUID]timerEntry
-       // ...
-   }
-   ```
-
-   **Approach B**: Check the instance state/fields when the timer fires to determine the action.
-   
-   **Recommended**: Approach A is simpler — store the type at schedule time and route accordingly.
-
-2. **Update Schedule method signature**:
-   ```go
-   func (s *Scheduler) Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)
-   ```
-   Constants:
-   ```go
-   const (
-       TimerTypeDelay   = "timer_delay"
-       TimerTypeWebhook = "webhook_timeout"
-   )
-   ```
-
-3. **Update OnTimerFired to route by type**:
-   ```go
-   func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID, timerType string) error {
-       inst, err := m.instances.Get(ctx, instanceID)
-       if err != nil { return err }
-
-       switch timerType {
-       case TimerTypeDelay:
-           // Existing logic: waiting → queued (if still waiting)
-           if inst.State != instance.StateWaiting { return nil }
-           now := time.Now()
-           return m.queue.SetQueued(ctx, instanceID, now)
-
-       case TimerTypeWebhook:
-           // Webhook timeout: deactivate endpoint, fail the node
-           if inst.State != instance.StateWaiting { return nil }
-           // Deactivate webhook token
-           if inst.WebhookToken != nil {
-               m.webhookRegistry.Deactivate(*inst.WebhookToken)
-           }
-           // Clear webhook fields
-           _ = m.instances.SetWebhookFields(ctx, instanceID, nil, nil)
-           // Fail the node per error behavior
-           // This requires access to the workflow snapshot to determine error behavior
-           // Mark instance as failed with the webhook node as failed_node_id
-           _ = m.instances.SetFailed(ctx, instanceID, m.getWebhookNodeID(ctx, instanceID))
-           return nil
+   // In Manager.OnTimerFired, the TimerTypeWebhook case:
+   case TimerTypeWebhook:
+       // Webhook timeout: deactivate endpoint, fail the node
+       if inst.State != instance.StateWaiting { return nil }
+       // Deactivate webhook token
+       if inst.WebhookToken != nil {
+           m.webhookRegistry.Deactivate(*inst.WebhookToken)
        }
+       // Clear webhook fields
+       _ = m.instances.SetWebhookFields(ctx, instanceID, nil, nil)
+       // Fail the node per error behavior
+       // Mark instance as failed with the webhook node as failed_node_id
+       _ = m.instances.SetFailed(ctx, instanceID, m.getWebhookNodeID(ctx, instanceID))
        return nil
-   }
    ```
 
 4. **Add WebhookRegistry reference to Manager**:
    ```go
    type Manager struct {
        // ... existing fields ...
-       webhookRegistry WebhookDeactivator
-       instances       instance.InstanceRepository
+       webhookRegistry WebhookRegistryPort
    }
 
-   type WebhookDeactivator interface {
+   // WebhookRegistryPort defines the webhook registry operations the Manager needs.
+   // Used by both timeout handling (Deactivate) and crash recovery (Register).
+   type WebhookRegistryPort interface {
+       Register(token string, instanceID uuid.UUID, nodeID string, secretHash *string)
        Deactivate(token string)
    }
    ```
+   Note: The Manager already has `instances instance.InstanceRepository` from Phase 1 Task 3.
 
 5. **Implement Cancel for webhook-waiting instances** in Engine:
    ```go
@@ -151,9 +108,8 @@ Wire the timer scheduler to handle webhook timeouts, and implement cancel/pause/
    ```
 
 ## Tests
-- `domain/queue/scheduler_test.go`:
-  - `TestScheduler_WebhookTimeout_FiresAndDeactivates` — timer fires with webhook_timeout type
-  - `TestScheduler_TimerType_StoredCorrectly` — schedule with type, verify on fire
+- `domain/queue/manager_test.go` (OnTimerFired webhook case):
+  - `TestOnTimerFired_WebhookTimeout_FiresAndDeactivates` — timer fires with webhook_timeout type, endpoint deactivated
 - `domain/engine/engine_test.go`:
   - `TestCancel_WebhookWaiting_DeactivatesEndpoint` — webhook token deactivated
   - `TestCancel_WebhookWaiting_CancelsTimeout` — scheduler.Cancel called

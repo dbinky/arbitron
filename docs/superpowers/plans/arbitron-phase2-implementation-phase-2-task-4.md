@@ -69,7 +69,7 @@ Implement cancel, pause, and resume operations for instances in the `waiting` st
    Define `TimerScheduler` interface in `domain/engine/ports.go`:
    ```go
    type TimerScheduler interface {
-       Schedule(instanceID uuid.UUID, waitingUntil time.Time)
+       Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)
        Cancel(instanceID uuid.UUID)
    }
    ```
@@ -112,12 +112,12 @@ Implement cancel, pause, and resume operations for instances in the `waiting` st
            return instance.ErrNotPaused
        }
 
-       // Check if the instance was waiting on a timer
+       // Check if the instance was waiting on a timer delay
        if inst.WaitingUntil != nil {
            if time.Now().After(*inst.WaitingUntil) {
                // Timer expired while paused → go to queued
                now := time.Now()
-               if err := e.instances.SetQueued(ctx, id, now); err != nil {
+               if err := e.queueRepo.SetQueued(ctx, id, now); err != nil {
                    return err
                }
                // Clear waitingUntil
@@ -134,14 +134,23 @@ Implement cancel, pause, and resume operations for instances in the `waiting` st
            return nil
        }
 
+       // Check if the instance was waiting on a webhook (handled in Phase 3, Task 5)
+       // For Phase 2, fall through to normal resume.
+
        // Normal resume (was running when paused) — go back to running
        return e.StartInstance(ctx, id)
    }
    ```
-   Note: This needs refinement — we need to distinguish "paused from running" vs "paused from waiting". The `WaitingUntil` field being non-nil is the indicator.
+   Note: Distinguishing "paused from running" vs "paused from waiting" uses the `WaitingUntil` field (non-nil = was waiting on timer) and `WebhookToken` field (non-nil = was waiting on webhook, handled in Phase 3 Task 5).
 
-5. **Add SetQueued to InstanceRepository** (if not already added in Phase 1 Task 2 on the main repo interface):
-   Ensure `InstanceRepository` has a method to transition to queued with timestamp, or use the `QueueRepository.SetQueued` directly. The Engine should have access to `QueueRepository` for this operation, or add it to `InstanceRepository`.
+5. **Add QueueRepository dependency to Engine** — the Engine needs access to `QueueRepository.SetQueued` for the resume-from-waiting flow. Add a `queueRepo instance.QueueRepository` field to the Engine struct and accept it in `NewEngine`:
+   ```go
+   type Engine struct {
+       // ... existing fields ...
+       queueRepo instance.QueueRepository
+   }
+   ```
+   The `Resume` method calls `e.queueRepo.SetQueued(ctx, id, now)` when resuming a paused-from-waiting instance whose timer has expired.
 
 6. **Update state transition validation** — ensure the following transitions are allowed:
    - `waiting → cancelled`
