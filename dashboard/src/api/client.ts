@@ -14,6 +14,7 @@ import type {
 export interface ListInstancesParams {
   state?: InstanceState
   workflowName?: string
+  since?: string
   limit?: number
   offset?: number
 }
@@ -58,6 +59,7 @@ export const api = {
       const q = new URLSearchParams()
       if (params?.state) q.set('state', params.state)
       if (params?.workflowName) q.set('workflowName', params.workflowName)
+      if (params?.since) q.set('since', params.since)
       if (params?.limit != null) q.set('limit', String(params.limit))
       if (params?.offset != null) q.set('offset', String(params.offset))
       const qs = q.toString()
