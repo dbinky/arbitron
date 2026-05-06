@@ -7,6 +7,7 @@ import type {
   QueueConfigUpdate,
   SystemConfig,
   VariableSnapshot,
+  WorkflowStats,
   WorkflowSummary,
 } from './types'
 
@@ -138,6 +139,21 @@ export const api = {
         variables: variables ?? {},
         priority: priority ?? 'normal',
       })
+    },
+
+    /** Save node positions for a workflow layout. */
+    saveLayout(
+      name: string,
+      positions: Record<string, { x: number; y: number }>,
+    ): Promise<void> {
+      return put(`/api/v1/workflows/${name}/layout`, { positions })
+    },
+
+    /** Get usage stats for a workflow over a date range. */
+    getStats(name: string, from: string, to: string): Promise<WorkflowStats> {
+      return request(
+        `/api/v1/workflows/${name}/stats?from=${from}&to=${to}`,
+      )
     },
   },
 

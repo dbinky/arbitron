@@ -80,6 +80,7 @@ export interface WorkflowSummary {
   name: string
   description: string
   author: string
+  nodeCount?: number
 }
 
 /** System configuration returned by /system/config. */
@@ -103,6 +104,14 @@ export interface SystemConfig {
 export interface QueueConfigUpdate {
   globalCap: number
   perUserCap: number
+}
+
+/** Workflow usage statistics over a date range. */
+export interface WorkflowStats {
+  totalRuns: number
+  successCount: number
+  failureCount: number
+  avgDurationSeconds: number
 }
 
 /** Domain event streamed over WebSocket. */
