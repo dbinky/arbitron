@@ -38,7 +38,8 @@ func TestRecoverTimers_PastDue_TransitionsToQueued(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	qr.mu.Lock()
@@ -66,7 +67,8 @@ func TestRecoverTimers_FuturePending_RegistersWithScheduler(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	// The scheduler should have the timer registered.
@@ -96,7 +98,8 @@ func TestRecoverTimers_MultipleMixed(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	// Past-due should be queued.
@@ -124,7 +127,8 @@ func TestRecoverTimers_NoWaitingInstances(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 }
 
@@ -153,7 +157,8 @@ func TestRecoverTimers_TriggersEvaluation(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	// Evaluate should have tried to start the eligible instance.
@@ -195,7 +200,8 @@ func TestRecoverTimers_WebhookInstanceNotInList(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	// Webhook instance must NOT be queued by RecoverTimers.
@@ -244,7 +250,8 @@ func TestRecoverWebhooks_ReRegistersToken(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
 	require.NoError(t, err)
 
 	// Token should be re-registered.
@@ -293,7 +300,8 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
 	require.NoError(t, err)
 
 	// Token should be deactivated.
@@ -326,7 +334,8 @@ func TestRecoverTimers_NilWaitingUntil_Skipped(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	qr.mu.Lock()
@@ -361,7 +370,8 @@ func TestRecoverTimers_SetQueuedError_ContinuesAndNoError(t *testing.T) {
 	defer scheduler.Stop()
 
 	// RecoverTimers should return no error (SetQueued errors are logged, not propagated).
-	err := m.RecoverTimers(context.Background(), scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverTimers(context.Background())
 	require.NoError(t, err)
 
 	// Future timer should still have been registered with scheduler.
@@ -390,7 +400,8 @@ func TestRecoverWebhooks_NilToken_Skipped(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
 	require.NoError(t, err)
 
 	registry.mu.Lock()
@@ -429,7 +440,8 @@ func TestRecoverWebhooks_NoTimeout_OnlyReRegisters(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
 	require.NoError(t, err)
 
 	// Token should be re-registered but no scheduler timer (no timeout).
@@ -475,7 +487,8 @@ func TestRecoverWebhooks_PendingTimeout_RegistersWithScheduler(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler)
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
 	require.NoError(t, err)
 
 	// Token should be re-registered (not deactivated).

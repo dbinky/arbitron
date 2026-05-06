@@ -322,7 +322,7 @@ func TestEvaluate_StartsMultipleEligible(t *testing.T) {
 	assert.Equal(t, id2, calls[1])
 }
 
-func TestEvaluate_SkipsWhenStartFails(t *testing.T) {
+func TestEvaluate_ReturnsErrorWhenStartFails(t *testing.T) {
 	id1 := uuid.New()
 	id2 := uuid.New()
 	qr := newMockQueueRepo()
@@ -338,12 +338,13 @@ func TestEvaluate_SkipsWhenStartFails(t *testing.T) {
 	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
 
 	err := m.Evaluate(context.Background())
-	require.NoError(t, err)
+	require.Error(t, err)
 
+	// Only the first instance was attempted; loop stops on error to avoid
+	// holding the mutex indefinitely when a persistent failure occurs.
 	calls := starter.getCalls()
-	assert.Len(t, calls, 2)
+	assert.Len(t, calls, 1)
 	assert.Equal(t, id1, calls[0])
-	assert.Equal(t, id2, calls[1])
 }
 
 func TestEvaluate_NoEligible(t *testing.T) {

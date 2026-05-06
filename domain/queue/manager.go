@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -23,6 +24,12 @@ type WebhookRegistryPort interface {
 	Deactivate(token string)
 }
 
+// TimerSchedulerPort defines the timer scheduling operations the Manager needs.
+type TimerSchedulerPort interface {
+	Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)
+	Cancel(instanceID uuid.UUID)
+}
+
 // Manager is the queue management domain service. It is the single authority
 // on capacity decisions, queue evaluation, and dequeuing.
 type Manager struct {
@@ -31,6 +38,7 @@ type Manager struct {
 	config          *config.Config
 	starter         InstanceStarter
 	webhookRegistry WebhookRegistryPort
+	scheduler       TimerSchedulerPort
 	mu              sync.Mutex
 }
 
@@ -54,12 +62,23 @@ func (m *Manager) SetWebhookRegistry(reg WebhookRegistryPort) {
 	m.webhookRegistry = reg
 }
 
+// SetScheduler sets the timer scheduler on the manager. This is used during
+// initialization to break circular dependencies.
+func (m *Manager) SetScheduler(s TimerSchedulerPort) {
+	m.scheduler = s
+}
+
 // CanStart checks if a given owner can start an instance given current capacity.
 func (m *Manager) CanStart(ctx context.Context, ownerID uuid.UUID) (bool, error) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.canStartLocked(ctx, ownerID)
+}
+
+// canStartLocked performs the capacity check assuming m.mu is already held.
+func (m *Manager) canStartLocked(ctx context.Context, ownerID uuid.UUID) (bool, error) {
 	globalCap := m.config.Queue.GlobalCap
 	perUserCap := m.config.Queue.PerUserCap
-	m.mu.Unlock()
 
 	// Check global cap (skip if 0 = unlimited)
 	if globalCap > 0 {
@@ -101,8 +120,7 @@ func (m *Manager) Evaluate(ctx context.Context) error {
 
 		if err := m.starter.StartInstance(ctx, next.ID); err != nil {
 			slog.Error("queue evaluate: failed to start instance", "instanceID", next.ID, "error", err)
-			// Continue evaluating other eligible instances
-			continue
+			return err
 		}
 	}
 }
@@ -111,7 +129,10 @@ func (m *Manager) Evaluate(ctx context.Context) error {
 // started=true when the instance begins running immediately, false when it
 // stays in queued state.
 func (m *Manager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (started bool, err error) {
-	canStart, err := m.CanStart(ctx, ownerID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	canStart, err := m.canStartLocked(ctx, ownerID)
 	if err != nil {
 		return false, err
 	}
@@ -131,8 +152,49 @@ func (m *Manager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) 
 // It triggers asynchronous queue evaluation.
 func (m *Manager) NotifyCapacityFreed(_ context.Context) {
 	go func() {
-		_ = m.Evaluate(context.Background())
+		if err := m.Evaluate(context.Background()); err != nil {
+			slog.Error("queue: async evaluation failed after capacity freed", "error", err)
+		}
 	}()
+}
+
+// OnTimerFired implements TimerFiredHandler on the Manager.
+// When a timer fires, if the instance is still in waiting state, it transitions
+// to queued and triggers queue evaluation.
+func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID, timerType string) error {
+	inst, err := m.instances.Get(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	// Only transition if still in waiting state.
+	if inst.State != instance.StateWaiting {
+		return nil
+	}
+
+	switch timerType {
+	case TimerTypeDelay:
+		now := time.Now()
+		if err := m.queue.SetQueued(ctx, instanceID, now); err != nil {
+			return err
+		}
+		return m.Evaluate(ctx)
+
+	case TimerTypeWebhook:
+		// Webhook timeout: deactivate endpoint, fail the instance.
+		if m.webhookRegistry != nil && inst.WebhookToken != nil {
+			m.webhookRegistry.Deactivate(*inst.WebhookToken)
+		}
+		if err := m.instances.SetWebhookFields(ctx, instanceID, nil, nil); err != nil {
+			slog.Error("queue: failed to clear webhook fields on timeout", "instanceID", instanceID, "error", err)
+		}
+		failedNodeID := ""
+		if inst.CurrentNodeID != nil {
+			failedNodeID = *inst.CurrentNodeID
+		}
+		return m.instances.SetFailed(ctx, instanceID, failedNodeID)
+	}
+	return nil
 }
 
 // UpdateConfig updates the queue capacity configuration at runtime.

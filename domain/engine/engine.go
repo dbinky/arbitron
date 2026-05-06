@@ -193,6 +193,12 @@ func (e *Engine) StartInstance(ctx context.Context, id uuid.UUID) error {
 // edges until there are no more nodes to execute.
 func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	defer e.wg.Done()
+
+	// capacityFreed tracks whether capacity notification was already handled
+	// by an executor (e.g., timer/webhook wait) or an external caller (pause/cancel).
+	// The deferred cleanup only fires NotifyCapacityFreed if this remains false.
+	capacityFreed := false
+
 	defer func() {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
@@ -203,6 +209,9 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				Timestamp: time.Now(),
 				Data:      map[string]any{"error": fmt.Sprintf("panic: %v", r)},
 			})
+			capacityFreed = false // ensure we notify below
+		}
+		if !capacityFreed {
 			e.queueManager.NotifyCapacityFreed(context.Background())
 		}
 	}()
@@ -214,7 +223,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
-		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -222,7 +230,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
 	if parseErr != nil {
 		_ = e.instances.SetFailed(ctx, instanceID, "")
-		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -243,7 +250,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	if currentNodeID == "" {
 		_ = e.instances.SetFailed(ctx, instanceID, "")
-		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -268,22 +274,27 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
-			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
 		if freshInst.State == instance.StatePaused {
 			// The instance was paused externally. Stop execution.
+			// Pause() already called NotifyCapacityFreed.
+			capacityFreed = true
 			return
 		}
 		if freshInst.State == instance.StateCancelled {
 			// The instance was cancelled externally. Stop execution.
+			// Cancel() already called NotifyCapacityFreed.
+			capacityFreed = true
 			return
 		}
 
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
+			// Context cancelled externally (Cancel() already notified).
+			capacityFreed = true
 			return
 		default:
 		}
@@ -293,7 +304,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
-			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
@@ -313,7 +323,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
-			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
@@ -351,7 +360,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 					}
-					e.queueManager.NotifyCapacityFreed(context.Background())
 					return
 				}
 				// Conditional nodes route via their declared default output port so
@@ -370,7 +378,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 					}
-					e.queueManager.NotifyCapacityFreed(context.Background())
 					return
 				}
 
@@ -383,19 +390,20 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					Timestamp: time.Now(),
 					Data:      map[string]any{"failedNodeId": currentNodeID, "error": execErr.Error()},
 				})
-				e.queueManager.NotifyCapacityFreed(context.Background())
 				return
 			}
 		} else {
 			// Check if this is a wait result (timer delay, webhook wait, etc.)
 			if result != nil && result.IsWait {
 				// Instance has transitioned to waiting. Exit the run loop cleanly.
-				// Do NOT mark as completed or failed — the executor already handled state transition.
+				// Do NOT mark as completed or failed — the executor already handled
+				// state transition and called NotifyCapacityFreed.
 				e.eventBus.Publish(instanceID, Event{
 					Type:      "node.completed",
 					Timestamp: time.Now(),
 					Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 				})
+				capacityFreed = true
 				return
 			}
 
@@ -413,7 +421,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 				}
-				e.queueManager.NotifyCapacityFreed(context.Background())
 				return
 			}
 
@@ -434,7 +441,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		Type:      "instance.completed",
 		Timestamp: time.Now(),
 	})
-	e.queueManager.NotifyCapacityFreed(context.Background())
 }
 
 // executeWithRetry executes a node, applying retry logic from the error behavior.

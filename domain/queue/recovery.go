@@ -9,8 +9,9 @@ import (
 
 // RecoverTimers scans for waiting instances with timer delays and either
 // re-registers them with the scheduler or transitions past-due ones to queued.
-// It should be called during startup after the scheduler has been started.
-func (m *Manager) RecoverTimers(ctx context.Context, scheduler *Scheduler) error {
+// It should be called during startup after the scheduler has been started and
+// SetScheduler has been called on the manager.
+func (m *Manager) RecoverTimers(ctx context.Context) error {
 	waiting, err := m.queue.ListWaitingWithTimer(ctx)
 	if err != nil {
 		return fmt.Errorf("listing waiting instances: %w", err)
@@ -30,7 +31,7 @@ func (m *Manager) RecoverTimers(ctx context.Context, scheduler *Scheduler) error
 			}
 		} else {
 			// Still pending: register with scheduler.
-			scheduler.Schedule(inst.ID, *inst.WaitingUntil, TimerTypeDelay)
+			m.scheduler.Schedule(inst.ID, *inst.WaitingUntil, TimerTypeDelay)
 		}
 	}
 
@@ -41,7 +42,9 @@ func (m *Manager) RecoverTimers(ctx context.Context, scheduler *Scheduler) error
 // RecoverWebhooks scans for waiting instances with webhook tokens and either
 // re-registers them in the webhook registry, or fails them if their timeout
 // has expired during downtime.
-func (m *Manager) RecoverWebhooks(ctx context.Context, scheduler *Scheduler) error {
+// It should be called during startup after the scheduler has been started and
+// SetScheduler has been called on the manager.
+func (m *Manager) RecoverWebhooks(ctx context.Context) error {
 	waiting, err := m.queue.ListWaitingWithWebhook(ctx)
 	if err != nil {
 		return fmt.Errorf("listing waiting webhook instances: %w", err)
@@ -81,7 +84,7 @@ func (m *Manager) RecoverWebhooks(ctx context.Context, scheduler *Scheduler) err
 
 		// If timeout is still pending, re-register with the scheduler.
 		if inst.WaitingUntil != nil {
-			scheduler.Schedule(inst.ID, *inst.WaitingUntil, TimerTypeWebhook)
+			m.scheduler.Schedule(inst.ID, *inst.WaitingUntil, TimerTypeWebhook)
 		}
 	}
 

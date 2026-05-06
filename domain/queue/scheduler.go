@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
 
@@ -29,6 +28,9 @@ type timerEntry struct {
 
 // Scheduler manages in-memory timers for waiting instances using a single
 // time.Timer set to the earliest pending expiration (hybrid single-timer design).
+//
+// Invariant: any method that modifies the timers map must call notifyWake()
+// after releasing the lock so the loop goroutine re-evaluates the next deadline.
 type Scheduler struct {
 	mu      sync.Mutex
 	timers  map[uuid.UUID]timerEntry
@@ -195,41 +197,3 @@ func (s *Scheduler) findEarliestLocked() (time.Time, bool) {
 	return earliest, found
 }
 
-// OnTimerFired implements TimerFiredHandler on the Manager.
-// When a timer fires, if the instance is still in waiting state, it transitions
-// to queued and triggers queue evaluation.
-func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID, timerType string) error {
-	inst, err := m.instances.Get(ctx, instanceID)
-	if err != nil {
-		return err
-	}
-
-	// Only transition if still in waiting state.
-	if inst.State != instance.StateWaiting {
-		return nil
-	}
-
-	switch timerType {
-	case TimerTypeDelay:
-		now := time.Now()
-		if err := m.queue.SetQueued(ctx, instanceID, now); err != nil {
-			return err
-		}
-		return m.Evaluate(ctx)
-
-	case TimerTypeWebhook:
-		// Webhook timeout: deactivate endpoint, fail the instance.
-		if m.webhookRegistry != nil && inst.WebhookToken != nil {
-			m.webhookRegistry.Deactivate(*inst.WebhookToken)
-		}
-		if err := m.instances.SetWebhookFields(ctx, instanceID, nil, nil); err != nil {
-			slog.Error("queue: failed to clear webhook fields on timeout", "instanceID", instanceID, "error", err)
-		}
-		failedNodeID := ""
-		if inst.CurrentNodeID != nil {
-			failedNodeID = *inst.CurrentNodeID
-		}
-		return m.instances.SetFailed(ctx, instanceID, failedNodeID)
-	}
-	return nil
-}

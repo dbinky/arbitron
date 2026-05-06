@@ -68,20 +68,11 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 3. Verify instance state (database check).
-	inst, err := h.instances.Get(r.Context(), entry.InstanceID)
-	if err != nil {
-		http.Error(w, "Not Found", http.StatusNotFound)
-		return
-	}
-	if inst.State != instance.StateWaiting && inst.State != instance.StatePaused {
-		// Instance is no longer waiting (cancelled, completed, failed).
-		h.registry.Deactivate(token)
-		http.Error(w, "Gone", http.StatusGone)
-		return
-	}
+	// 3. Deactivate token immediately to close the double-fire window.
+	h.registry.Deactivate(token)
 
-	// 4. Validate secret if configured.
+	// 4. Validate secret if configured (before any state check to prevent
+	// unauthenticated callers from probing instance lifecycle state).
 	if entry.SecretHash != nil {
 		secret := r.Header.Get("X-Webhook-Secret")
 		if secret == "" {
@@ -98,7 +89,20 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// 5. Read and parse request body as JSON.
+	// 5. Verify instance state (database check).
+	inst, err := h.instances.Get(r.Context(), entry.InstanceID)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	if inst.State != instance.StateWaiting && inst.State != instance.StatePaused {
+		// Instance is no longer waiting (cancelled, completed, failed).
+		http.Error(w, "Gone", http.StatusGone)
+		return
+	}
+
+	// 6. Read and parse request body as JSON (limit to 1MB).
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var payload map[string]any
 	body, err := io.ReadAll(r.Body)
 	if err != nil || len(body) == 0 {
@@ -109,7 +113,7 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// 6. Store payload as node output (update existing node execution record).
+	// 7. Store payload as node output (update existing node execution record).
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), entry.InstanceID, entry.NodeID)
 	if err == nil && nodeExec != nil {
 		nodeExec.Output = payload
@@ -119,9 +123,6 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 			slog.Error("webhook handler: failed to update node execution output", "instanceID", entry.InstanceID, "error", err)
 		}
 	}
-
-	// 7. Deactivate token in registry.
-	h.registry.Deactivate(token)
 
 	// 8. Cancel pending timeout timer if configured.
 	h.scheduler.Cancel(entry.InstanceID)

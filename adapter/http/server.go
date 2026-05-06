@@ -239,6 +239,7 @@ type updateQueueConfigRequest struct {
 
 // UpdateQueueConfig handles PUT /system/config/queue.
 func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req updateQueueConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())

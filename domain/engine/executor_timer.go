@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
@@ -68,6 +69,9 @@ func (e *TimerDelayExecutor) Execute(ctx context.Context, node workflow.Node, va
 	duration, err := strconv.ParseFloat(durationStr, 64)
 	if err != nil {
 		return nil, fmt.Errorf("durationSeconds is not numeric: %q", durationStr)
+	}
+	if math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return nil, fmt.Errorf("durationSeconds is not a finite number: %q", durationStr)
 	}
 
 	// 3. Calculate waitingUntil.
