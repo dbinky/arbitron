@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/arbitron/arbitron/adapter/postgres/generated"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -49,6 +50,7 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		Priority:          generated.InstancePriority(inst.Priority),
 		Variables:         varsJSON,
 		OriginalVariables: origVarsJSON,
+		QueuedAt:          toPgTimestamptzPtr(inst.QueuedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -104,6 +106,7 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 			CreatedAt:     fromPgTimestamptz(row.CreatedAt),
 			UpdatedAt:     fromPgTimestamptz(row.UpdatedAt),
 			CompletedAt:   fromPgTimestamptzPtr(row.CompletedAt),
+			QueuedAt:      fromPgTimestamptzPtr(row.QueuedAt),
 		}
 	}
 	return summaries, nil
@@ -182,6 +185,54 @@ func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, er
 	return instances, nil
 }
 
+func (r *InstanceRepo) UpdatePriority(ctx context.Context, id uuid.UUID, priority instance.Priority) error {
+	err := r.queries.UpdateInstancePriority(ctx, generated.UpdateInstancePriorityParams{
+		ID:       toPgUUID(id),
+		Priority: generated.InstancePriority(priority),
+	})
+	if err != nil {
+		return fmt.Errorf("updating instance priority: %w", err)
+	}
+	return nil
+}
+
+func (r *InstanceRepo) SetWaiting(ctx context.Context, id uuid.UUID, waitingUntil *time.Time) error {
+	// Use a raw query to update state and waiting_until together.
+	var query string
+	if waitingUntil != nil {
+		query = `UPDATE instances SET state = 'waiting', waiting_until = $2, updated_at = now() WHERE id = $1`
+		_, err := r.pool.Exec(ctx, query, id, *waitingUntil)
+		if err != nil {
+			return fmt.Errorf("setting instance waiting: %w", err)
+		}
+	} else {
+		query = `UPDATE instances SET waiting_until = NULL, updated_at = now() WHERE id = $1`
+		_, err := r.pool.Exec(ctx, query, id)
+		if err != nil {
+			return fmt.Errorf("clearing waiting_until: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *InstanceRepo) SetWebhookFields(ctx context.Context, id uuid.UUID, token *string, secretHash *string) error {
+	query := `UPDATE instances SET webhook_token = $2, webhook_secret_hash = $3, updated_at = now() WHERE id = $1`
+	_, err := r.pool.Exec(ctx, query, id, token, secretHash)
+	if err != nil {
+		return fmt.Errorf("setting webhook fields: %w", err)
+	}
+	return nil
+}
+
+func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, receivedAt time.Time) error {
+	query := `UPDATE instances SET webhook_received_at = $2, updated_at = now() WHERE id = $1`
+	_, err := r.pool.Exec(ctx, query, id, receivedAt)
+	if err != nil {
+		return fmt.Errorf("setting webhook received: %w", err)
+	}
+	return nil
+}
+
 func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	snapshot, err := fromJSON(row.WorkflowSnapshot)
 	if err != nil {
@@ -210,5 +261,10 @@ func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance
 		CreatedAt:         fromPgTimestamptz(row.CreatedAt),
 		UpdatedAt:         fromPgTimestamptz(row.UpdatedAt),
 		CompletedAt:       fromPgTimestamptzPtr(row.CompletedAt),
+		QueuedAt:          fromPgTimestamptzPtr(row.QueuedAt),
+		WaitingUntil:      fromPgTimestamptzPtr(row.WaitingUntil),
+		WebhookToken:      fromPgTextPtr(row.WebhookToken),
+		WebhookSecretHash: fromPgTextPtr(row.WebhookSecretHash),
+		WebhookReceivedAt: fromPgTimestamptzPtr(row.WebhookReceivedAt),
 	}, nil
 }

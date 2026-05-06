@@ -5,6 +5,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/google/uuid"
 )
 
@@ -44,6 +45,32 @@ type LLMStreamChunk struct {
 	Token string
 	Done  bool
 	Error error
+}
+
+// QueueManager defines the queue operations the engine needs.
+type QueueManager interface {
+	Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (started bool, err error)
+	NotifyCapacityFreed(ctx context.Context)
+}
+
+// Timer type constants imported from the queue package (single source of truth).
+// Re-exported here for convenience so executor callers don't need to import queue directly.
+const (
+	TimerTypeDelay   = queue.TimerTypeDelay
+	TimerTypeWebhook = queue.TimerTypeWebhook
+)
+
+// TimerScheduler defines the timer scheduling operations the engine needs.
+type TimerScheduler interface {
+	Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)
+	Cancel(instanceID uuid.UUID)
+}
+
+// WebhookRegistrar defines the port for registering/deactivating webhook endpoints.
+// The adapter's WebhookRegistry implements this interface.
+type WebhookRegistrar interface {
+	Register(token string, instanceID uuid.UUID, nodeID string, secretHash *string)
+	Deactivate(token string)
 }
 
 // Event represents a domain event emitted during workflow execution.

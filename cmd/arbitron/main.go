@@ -26,6 +26,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/postgres"
 	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -137,7 +138,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 	}
 
-	// 10. Create the workflow engine.
+	// 10. Create the queue repository.
+	queueRepo := postgres.NewQueueRepo(pool)
+
+	// 11. Create the workflow engine (queue manager wired below).
 	eng := engine.NewEngine(
 		workflowRepo,
 		instanceRepo,
@@ -146,22 +150,28 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		userRepo,
 		executors,
 		bus,
+		nil, // queueManager set below after creation
+		queueRepo,
 	)
 
-	// 11. Set up OpenTelemetry tracing before crash recovery so that any spans
+	// 12. Create the queue manager and wire it to the engine.
+	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
+	eng.SetQueueManager(queueMgr)
+
+	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
 	if err != nil {
 		return fmt.Errorf("setting up tracing: %w", err)
 	}
 
-	// 12. Recover any instances that were running when the process last crashed.
+	// 14. Recover any instances that were running when the process last crashed.
 	logger.Info("recovering crashed instances")
 	if err := eng.RecoverCrashedInstances(); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
-	// 13. Create the full API router.
+	// 15. Create the full API router.
 	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,
@@ -171,9 +181,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		fileReader,
 		bus,
 		cfg,
+		queueMgr,
+		queueRepo,
 	)
 
-	// 14. Add request logging middleware (wraps the entire router).
+	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -189,7 +201,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// 15. Graceful shutdown on SIGINT/SIGTERM.
+	// 17. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -211,7 +223,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// 16. Shutdown with a 15-second deadline.
+	// 18. Shutdown with a 15-second deadline.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

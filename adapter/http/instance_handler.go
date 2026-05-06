@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type InstanceService interface {
 	Cancel(id uuid.UUID) error
 	Retry(id uuid.UUID, variableEdits map[string]any) error
 	Rerun(id uuid.UUID) (uuid.UUID, error)
+	SetPriority(id uuid.UUID, priority string) error
 }
 
 // InstanceHandler handles REST API requests for instance operations.
@@ -59,6 +61,10 @@ type instanceResponse struct {
 	CreatedAt         string         `json:"createdAt"`
 	UpdatedAt         string         `json:"updatedAt"`
 	CompletedAt       *string        `json:"completedAt,omitempty"`
+	QueuedAt          *string        `json:"queuedAt,omitempty"`
+	WaitingUntil      *string        `json:"waitingUntil,omitempty"`
+	WebhookURL        *string        `json:"webhookUrl,omitempty"`
+	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -78,6 +84,21 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	if inst.CompletedAt != nil {
 		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
 		resp.CompletedAt = &s
+	}
+	if inst.QueuedAt != nil {
+		s := inst.QueuedAt.Format("2006-01-02T15:04:05Z07:00")
+		resp.QueuedAt = &s
+	}
+	if inst.WaitingUntil != nil {
+		s := inst.WaitingUntil.Format("2006-01-02T15:04:05Z07:00")
+		resp.WaitingUntil = &s
+	}
+	if inst.WebhookToken != nil {
+		url := fmt.Sprintf("/api/v1/webhooks/wait/%s", *inst.WebhookToken)
+		resp.WebhookURL = &url
+	}
+	if inst.WebhookReceivedAt != nil {
+		resp.WebhookReceived = true
 	}
 	return resp
 }
@@ -102,6 +123,8 @@ func mapEngineError(err error) int {
 	if errors.Is(err, instance.ErrNotRunning) ||
 		errors.Is(err, instance.ErrNotPaused) ||
 		errors.Is(err, instance.ErrNotFailed) ||
+		errors.Is(err, instance.ErrNotQueued) ||
+		errors.Is(err, instance.ErrNotWaiting) ||
 		errors.Is(err, instance.ErrCannotCancel) ||
 		errors.Is(err, instance.ErrCannotRerun) {
 		return http.StatusConflict
@@ -474,4 +497,46 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 		resp[i] = toVariableSnapshotResponse(&snap)
 	}
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// priorityRequest is the JSON body for changing instance priority.
+type priorityRequest struct {
+	Priority string `json:"priority"`
+}
+
+// SetPriority handles POST /instances/{id}/priority.
+func (h *InstanceHandler) SetPriority(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	var req priorityRequest
+	if r.Body == nil || r.ContentLength == 0 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "request body required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRetryBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+
+	// Validate priority value.
+	switch req.Priority {
+	case "high", "normal", "low":
+		// valid
+	default:
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid priority: must be high, normal, or low")
+		return
+	}
+
+	if err := h.service.SetPriority(id, req.Priority); err != nil {
+		status := mapEngineError(err)
+		WriteError(w, status, mapEngineErrorCode(err), err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "priority_updated"})
 }

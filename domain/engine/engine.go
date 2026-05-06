@@ -17,16 +17,20 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
-	workflows      workflow.WorkflowRepository
-	instances      instance.InstanceRepository
-	nodeExecutions instance.NodeExecutionRepository
-	snapshots      instance.VariableSnapshotRepository
-	users          instance.UserRepository
-	executors      map[workflow.NodeType]NodeExecutor
-	eventBus       EventBus
-	mu             sync.Mutex
-	contexts       map[uuid.UUID]context.CancelFunc
-	wg             sync.WaitGroup
+	workflows       workflow.WorkflowRepository
+	instances       instance.InstanceRepository
+	nodeExecutions  instance.NodeExecutionRepository
+	snapshots       instance.VariableSnapshotRepository
+	users           instance.UserRepository
+	executors       map[workflow.NodeType]NodeExecutor
+	eventBus        EventBus
+	queueManager    QueueManager
+	queueRepo       instance.QueueRepository
+	scheduler       TimerScheduler
+	webhookRegistry WebhookRegistrar
+	mu              sync.Mutex
+	contexts        map[uuid.UUID]context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -38,6 +42,8 @@ func NewEngine(
 	users instance.UserRepository,
 	executors map[workflow.NodeType]NodeExecutor,
 	eventBus EventBus,
+	queueManager QueueManager,
+	queueRepo instance.QueueRepository,
 ) *Engine {
 	return &Engine{
 		workflows:      workflows,
@@ -47,8 +53,20 @@ func NewEngine(
 		users:          users,
 		executors:      executors,
 		eventBus:       eventBus,
+		queueManager:   queueManager,
+		queueRepo:      queueRepo,
 		contexts:       make(map[uuid.UUID]context.CancelFunc),
 	}
+}
+
+// SetScheduler sets the timer scheduler on the engine.
+func (e *Engine) SetScheduler(s TimerScheduler) {
+	e.scheduler = s
+}
+
+// SetWebhookRegistry sets the webhook registry on the engine.
+func (e *Engine) SetWebhookRegistry(reg WebhookRegistrar) {
+	e.webhookRegistry = reg
 }
 
 // edgeTarget describes a destination from a graph edge.
@@ -58,13 +76,15 @@ type edgeTarget struct {
 }
 
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
-// and launches the graph walker in a goroutine.
-func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, error) {
+// and delegates to the queue manager for capacity-based scheduling.
+// The second return value indicates whether the instance started immediately (true)
+// or stayed in queued state (false).
+func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	ctx := context.Background()
 
 	wf, err := e.workflows.Load(ctx, workflowName)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to load workflow: %w", err)
+		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
 
 	// Validate inputs.
@@ -73,7 +93,7 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		val, provided := variables[inp.Name]
 		if !provided || val == nil {
 			if inp.Required {
-				return uuid.Nil, fmt.Errorf("missing required input: %s", inp.Name)
+				return uuid.Nil, false, fmt.Errorf("missing required input: %s", inp.Name)
 			}
 			if inp.Default != nil {
 				vars.SetInput(inp.Name, inp.Default)
@@ -93,17 +113,17 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 	// Snapshot the workflow definition as a JSON-serializable map.
 	wfBytes, err := json.Marshal(wf)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to snapshot workflow: %w", err)
+		return uuid.Nil, false, fmt.Errorf("failed to snapshot workflow: %w", err)
 	}
 	var wfSnapshot map[string]any
 	if err := json.Unmarshal(wfBytes, &wfSnapshot); err != nil {
-		return uuid.Nil, fmt.Errorf("failed to parse workflow snapshot: %w", err)
+		return uuid.Nil, false, fmt.Errorf("failed to parse workflow snapshot: %w", err)
 	}
 
 	// Get default user for OwnerID.
 	ownerID, err := e.users.GetDefaultUser(ctx)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to get default user: %w", err)
+		return uuid.Nil, false, fmt.Errorf("failed to get default user: %w", err)
 	}
 
 	now := time.Now()
@@ -118,16 +138,17 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		OwnerID:           ownerID,
 		WorkflowName:      workflowName,
 		WorkflowSnapshot:  wfSnapshot,
-		State:             instance.StateRunning,
+		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
 		OriginalVariables: origVars,
+		QueuedAt:          &now,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
 
 	if err := e.instances.Create(ctx, inst); err != nil {
-		return uuid.Nil, fmt.Errorf("failed to create instance: %w", err)
+		return uuid.Nil, false, fmt.Errorf("failed to create instance: %w", err)
 	}
 
 	e.eventBus.Publish(inst.ID, Event{
@@ -136,21 +157,48 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		Data:      map[string]any{"workflowName": workflowName},
 	})
 
+	started, err := e.queueManager.Enqueue(ctx, inst.ID, inst.OwnerID)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("failed to enqueue instance: %w", err)
+	}
+
+	return inst.ID, started, nil
+}
+
+// StartInstance transitions a queued instance to running and launches the
+// graph walker goroutine. It implements queue.InstanceStarter.
+func (e *Engine) StartInstance(ctx context.Context, id uuid.UUID) error {
+	if err := e.instances.UpdateState(ctx, id, instance.StateRunning); err != nil {
+		return fmt.Errorf("failed to transition to running: %w", err)
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
-	e.contexts[inst.ID] = cancel
+	e.contexts[id] = cancel
 	e.mu.Unlock()
 
-	e.wg.Add(1)
-	go e.run(runCtx, inst.ID)
+	e.eventBus.Publish(id, Event{
+		Type:      "instance.started",
+		Timestamp: time.Now(),
+		Data:      map[string]any{},
+	})
 
-	return inst.ID, nil
+	e.wg.Add(1)
+	go e.run(runCtx, id)
+
+	return nil
 }
 
 // run is the graph walker loop. It executes nodes sequentially following
 // edges until there are no more nodes to execute.
 func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	defer e.wg.Done()
+
+	// capacityFreed tracks whether capacity notification was already handled
+	// by an executor (e.g., timer/webhook wait) or an external caller (pause/cancel).
+	// The deferred cleanup only fires NotifyCapacityFreed if this remains false.
+	capacityFreed := false
+
 	defer func() {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
@@ -161,6 +209,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				Timestamp: time.Now(),
 				Data:      map[string]any{"error": fmt.Sprintf("panic: %v", r)},
 			})
+			capacityFreed = false // ensure we notify below
+		}
+		if !capacityFreed {
+			e.queueManager.NotifyCapacityFreed(context.Background())
 		}
 	}()
 	defer func() {
@@ -227,16 +279,22 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		if freshInst.State == instance.StatePaused {
 			// The instance was paused externally. Stop execution.
+			// Pause() already called NotifyCapacityFreed.
+			capacityFreed = true
 			return
 		}
 		if freshInst.State == instance.StateCancelled {
 			// The instance was cancelled externally. Stop execution.
+			// Cancel() already called NotifyCapacityFreed.
+			capacityFreed = true
 			return
 		}
 
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
+			// Context cancelled externally (Cancel() already notified).
+			capacityFreed = true
 			return
 		default:
 		}
@@ -275,7 +333,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
-		result, nodeExec, execErr := e.executeWithRetry(ctx, instanceID, node, vars, *wf)
+		execCtx := ContextWithInstanceID(ctx, instanceID)
+		result, nodeExec, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
 			e.eventBus.Publish(instanceID, Event{
@@ -334,6 +393,20 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				return
 			}
 		} else {
+			// Check if this is a wait result (timer delay, webhook wait, etc.)
+			if result != nil && result.IsWait {
+				// Instance has transitioned to waiting. Exit the run loop cleanly.
+				// Do NOT mark as completed or failed — the executor already handled
+				// state transition and called NotifyCapacityFreed.
+				e.eventBus.Publish(instanceID, Event{
+					Type:      "node.completed",
+					Timestamp: time.Now(),
+					Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+				})
+				capacityFreed = true
+				return
+			}
+
 			e.eventBus.Publish(instanceID, Event{
 				Type:      "node.completed",
 				Timestamp: time.Now(),
@@ -455,7 +528,10 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 				nodeExec.ScriptExitCode = &result.ScriptExitCode
 			}
 		}
-		_ = e.nodeExecutions.Create(ctx, nodeExec)
+		// Skip writing when the executor itself already wrote the record (IsWait path).
+		if result == nil || !result.IsWait {
+			_ = e.nodeExecutions.Create(ctx, nodeExec)
+		}
 		lastExec = nodeExec
 
 		if err == nil {
@@ -538,29 +614,50 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 	return targets[0].nodeID
 }
 
-// Pause sets a running instance to paused state. The graph walker will
-// detect this on its next iteration and stop.
+// Pause sets a running or waiting instance to paused state. The graph walker will
+// detect this on its next iteration and stop. For waiting instances, the timer
+// keeps counting (do NOT cancel the scheduler entry).
 func (e *Engine) Pause(instanceID uuid.UUID) error {
 	ctx := context.Background()
 	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
-	if inst.State != instance.StateRunning {
+
+	switch inst.State {
+	case instance.StateRunning:
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.paused",
+			Timestamp: time.Now(),
+		})
+		e.queueManager.NotifyCapacityFreed(context.Background())
+
+	case instance.StateWaiting:
+		// Transition to paused — timer keeps counting (do NOT cancel scheduler entry).
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.paused",
+			Timestamp: time.Now(),
+		})
+
+	default:
 		return fmt.Errorf("instance %s is not running (state: %s): %w", instanceID, inst.State, instance.ErrNotRunning)
 	}
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StatePaused); err != nil {
-		return fmt.Errorf("failed to update state: %w", err)
-	}
-	e.eventBus.Publish(instanceID, Event{
-		Type:      "instance.paused",
-		Timestamp: time.Now(),
-	})
 	return nil
 }
 
-// Resume sets a paused instance back to running and re-launches the
-// graph walker from the current node.
+// Resume sets a paused instance back to its appropriate state. If the instance
+// was paused from a waiting state (WaitingUntil is set), it checks whether the
+// timer has expired:
+//   - Timer expired: transition to queued, trigger queue evaluation
+//   - Timer not expired: transition back to waiting
+//
+// If the instance was paused from running (WaitingUntil is nil), resume normally.
 func (e *Engine) Resume(instanceID uuid.UUID) error {
 	ctx := context.Background()
 	inst, err := e.instances.Get(ctx, instanceID)
@@ -570,6 +667,84 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 	if inst.State != instance.StatePaused {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
+
+	// Check if the instance was waiting on a webhook.
+	if inst.WebhookToken != nil {
+		if inst.WebhookReceivedAt != nil {
+			// Webhook received while paused -> go to queued.
+			now := time.Now()
+			if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
+				return fmt.Errorf("failed to set queued: %w", err)
+			}
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "instance.resumed",
+				Timestamp: time.Now(),
+			})
+			e.queueManager.NotifyCapacityFreed(context.Background())
+			return nil
+		}
+		// Check if webhook timeout expired while paused (timer fired, no-oped, is now gone).
+		if inst.WaitingUntil != nil && time.Now().After(*inst.WaitingUntil) {
+			// Deactivate the token so no stale webhook can arrive after this point.
+			if e.webhookRegistry != nil {
+				e.webhookRegistry.Deactivate(*inst.WebhookToken)
+			}
+			failedNodeID := ""
+			if inst.CurrentNodeID != nil {
+				failedNodeID = *inst.CurrentNodeID
+			}
+			if err := e.instances.SetFailed(ctx, instanceID, failedNodeID); err != nil {
+				return fmt.Errorf("failed to fail expired webhook instance on resume: %w", err)
+			}
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "instance.failed",
+				Timestamp: time.Now(),
+				Data:      map[string]any{"reason": "webhook timeout expired while paused"},
+			})
+			return nil
+		}
+		// No webhook received and timeout not expired -> go back to waiting.
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.resumed",
+			Timestamp: time.Now(),
+		})
+		return nil
+	}
+
+	// Check if the instance was waiting on a timer delay.
+	if inst.WaitingUntil != nil {
+		if time.Now().After(*inst.WaitingUntil) {
+			// Timer expired while paused -> go to queued.
+			now := time.Now()
+			if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
+				return fmt.Errorf("failed to set queued: %w", err)
+			}
+			// Clear waitingUntil.
+			if err := e.instances.SetWaiting(ctx, instanceID, nil); err != nil {
+				return fmt.Errorf("failed to clear waiting_until: %w", err)
+			}
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "instance.resumed",
+				Timestamp: time.Now(),
+			})
+			e.queueManager.NotifyCapacityFreed(context.Background())
+			return nil
+		}
+		// Timer has not expired -> go back to waiting.
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.resumed",
+			Timestamp: time.Now(),
+		})
+		return nil
+	}
+
+	// Normal resume (was running when paused) -> go back to running.
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
@@ -589,32 +764,69 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 	return nil
 }
 
-// Cancel sets a running instance to cancelled and cancels its context.
+// Cancel sets a running, queued, paused, or waiting instance to cancelled and
+// cancels its context/timer as appropriate.
 func (e *Engine) Cancel(instanceID uuid.UUID) error {
 	ctx := context.Background()
 	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to get instance: %w", err)
 	}
-	if inst.State != instance.StateRunning && inst.State != instance.StatePaused {
+
+	switch inst.State {
+	case instance.StateRunning:
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.mu.Lock()
+		if cancelFn, ok := e.contexts[instanceID]; ok {
+			cancelFn()
+		}
+		e.mu.Unlock()
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.cancelled",
+			Timestamp: time.Now(),
+		})
+		e.queueManager.NotifyCapacityFreed(context.Background())
+
+	case instance.StateWaiting:
+		// Deactivate webhook endpoint if this was a webhook wait.
+		if e.webhookRegistry != nil && inst.WebhookToken != nil {
+			e.webhookRegistry.Deactivate(*inst.WebhookToken)
+		}
+		// Cancel the pending timer.
+		if e.scheduler != nil {
+			e.scheduler.Cancel(instanceID)
+		}
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.cancelled",
+			Timestamp: time.Now(),
+		})
+		e.queueManager.NotifyCapacityFreed(context.Background())
+
+	case instance.StatePaused, instance.StateQueued:
+		// Deactivate webhook endpoint if present (paused from webhook wait).
+		if e.webhookRegistry != nil && inst.WebhookToken != nil {
+			e.webhookRegistry.Deactivate(*inst.WebhookToken)
+		}
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+		// Cancel any timer that might still be running (for paused-from-waiting).
+		if e.scheduler != nil && (inst.WaitingUntil != nil || inst.WebhookToken != nil) {
+			e.scheduler.Cancel(instanceID)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      "instance.cancelled",
+			Timestamp: time.Now(),
+		})
+
+	default:
 		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
-
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
-		return fmt.Errorf("failed to update state: %w", err)
-	}
-
-	// Cancel the context to interrupt any running executor.
-	e.mu.Lock()
-	if cancelFn, ok := e.contexts[instanceID]; ok {
-		cancelFn()
-	}
-	e.mu.Unlock()
-
-	e.eventBus.Publish(instanceID, Event{
-		Type:      "instance.cancelled",
-		Timestamp: time.Now(),
-	})
 	return nil
 }
 
@@ -687,7 +899,27 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
-	return e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
+	id, _, err := e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
+	return id, err
+}
+
+// SetQueueManager sets the queue manager on the engine. This is used to break
+// the circular dependency between engine and queue manager during initialization.
+func (e *Engine) SetQueueManager(qm QueueManager) {
+	e.queueManager = qm
+}
+
+// SetPriority changes the priority of a queued or waiting instance.
+func (e *Engine) SetPriority(id uuid.UUID, priority string) error {
+	ctx := context.Background()
+	inst, err := e.instances.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get instance: %w", err)
+	}
+	if inst.State != instance.StateQueued && inst.State != instance.StateWaiting {
+		return fmt.Errorf("instance %s is not queued (state: %s): %w", id, inst.State, instance.ErrNotQueued)
+	}
+	return e.instances.UpdatePriority(ctx, id, instance.Priority(priority))
 }
 
 // Shutdown gracefully waits for all in-flight workflow goroutines to finish.

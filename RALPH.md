@@ -1,37 +1,45 @@
-# Ralph Loop Configuration
+# Ralph-o-matic Configuration
 
 ## Mission
 
-Review and refine the implementation of the Arbitron Phase 1 workflow engine and REST API per the spec at `docs/specs/arbitron-phase1-spec.md`. The loop should verify correctness against the spec, ensure test coverage across happy path, success, failure, error, and edge case scenarios, fix gaps, and polish the implementation to production quality.
+Review and refine the implementation of the Queue & Concurrency system (parallelism caps, priority enforcement, queue management, timer delay nodes, webhook wait nodes, and waiting state) per the spec at `docs/specs/arbitron-phase2-spec.md`. The loop should verify correctness against the spec, ensure test coverage, fix gaps, and polish the implementation to production quality.
 
 ## Test Command
 
 ```bash
-go test ./... -count=1 -race -timeout 120s
+go test $(go list ./... | grep -v adapter/postgres) -race -count=1
 ```
 
 ## Persona
 
-You are a senior Go engineer specializing in workflow orchestration engines and distributed systems. You understand hexagonal (ports & adapters) architecture, strict TDD, and the Go idioms for interfaces, goroutines, and context-based cancellation. You care deeply about clean domain boundaries, comprehensive error handling, crash resilience, and observable systems. You review code with the rigor of a principal engineer preparing for a production deployment.
+You are a senior Go engineer specializing in workflow orchestration and concurrent systems. You understand hexagonal architecture, domain-driven design, and Go concurrency patterns (goroutines, channels, sync primitives, context cancellation). You care deeply about correctness under concurrency, clean port/adapter boundaries, and robust error handling. You review code with the rigor of a principal engineer preparing for a production deployment.
 
 ## Checklist
 
 For each focus area review, verify:
 
-1. All tests pass (`go test ./... -count=1 -race -timeout 120s`)
+1. All tests pass (`go test $(go list ./... | grep -v adapter/postgres) -race -count=1`)
 2. No open issues in `docs/reference/gaps-identified.md` for this focus area
 3. The focus area is complete and polished — you'd be proud to ship it
-4. Code aligns with the spec at `docs/specs/arbitron-phase1-spec.md`
-5. Implementation matches the design docs at `docs/superpowers/specs/arbitron-phase1-design-phase-*.md`
-6. Domain boundaries are clean — no adapter types leak into domain packages
-7. All public functions have test coverage (happy path, failure, error, edge cases)
-8. Error handling is thorough — no silent failures, errors are wrapped with context
-9. Go race detector passes (included in test command via `-race`)
+4. Code aligns with the spec at `docs/specs/arbitron-phase2-spec.md`
+5. Implementation matches the design docs at `docs/superpowers/specs/arbitron-phase2-design-phase-*.md`
+6. Module boundaries are clean — domain packages import no adapters, adapters depend only on domain ports
+7. Concurrency is safe — no races under `-race`, mutexes protect shared state, goroutines have shutdown paths
+8. Error handling follows Go conventions — wrapped errors with context, sentinel errors for domain conditions, no swallowed errors
 
 ## Extra Constraints
 
-- Strict hexagonal architecture: `domain/` imports nothing from `adapter/` or third-party frameworks. Only Go stdlib types (`context.Context`, `time.Time`, `uuid.UUID`) cross domain boundaries.
-- Strict TDD: every feature must have tests for happy path, success, failure, error, and edge case scenarios.
-- No dashboard, MCP server, multi-user auth, scheduled/webhook triggers, interactive nodes, timer/webhook wait, fan-out/fan-in, or LiteLLM in Phase 1.
-- Workflows are files on disk — no CRUD via API.
-- Single-user local mode with auto-created default admin user.
+- Strict hexagonal architecture: domain defines ports (interfaces), adapters implement them. Domain packages must never import adapter packages.
+- All code must follow strict TDD with table-driven tests using t.Run subtests.
+- context.Context as first parameter for all I/O methods.
+- Wrap errors with fmt.Errorf("context: %w", err). Define sentinel errors as package-level vars.
+- The postgres integration tests require Docker/testcontainers — they may be skipped if unavailable but must be correct.
+- sqlc generates the query layer — manual edits to `adapter/postgres/generated/` will be overwritten.
+
+## Focus Areas
+
+See `docs/reference/focus-areas.md` for the full review tracking table.
+
+## Gaps
+
+See `docs/reference/gaps-identified.md` for issues found during iterations.

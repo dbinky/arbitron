@@ -59,6 +59,7 @@ type InstanceState string
 const (
 	InstanceStateQueued    InstanceState = "queued"
 	InstanceStateRunning   InstanceState = "running"
+	InstanceStateWaiting   InstanceState = "waiting"
 	InstanceStateCompleted InstanceState = "completed"
 	InstanceStateFailed    InstanceState = "failed"
 	InstanceStateCancelled InstanceState = "cancelled"
@@ -199,6 +200,11 @@ type Instance struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	CompletedAt       pgtype.Timestamptz
+	QueuedAt          pgtype.Timestamptz
+	WaitingUntil      pgtype.Timestamptz
+	WebhookToken      pgtype.Text
+	WebhookSecretHash pgtype.Text
+	WebhookReceivedAt pgtype.Timestamptz
 }
 
 type NodeExecution struct {

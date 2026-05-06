@@ -21,16 +21,18 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":      "127.0.0.1",
-		"server.port":      8080,
-		"database.url":     "postgres://localhost:5432/arbitron?sslmode=disable",
-		"workspace.path":   "./workspaces",
-		"llm.provider":     "anthropic",
-		"llm.apikey":       "",
-		"logging.level":    "info",
-		"logging.file":     "arbitron.log",
-		"tracing.enabled":  false,
+		"server.host":       "127.0.0.1",
+		"server.port":       8080,
+		"database.url":      "postgres://localhost:5432/arbitron?sslmode=disable",
+		"workspace.path":    "./workspaces",
+		"llm.provider":      "anthropic",
+		"llm.apikey":        "",
+		"logging.level":     "info",
+		"logging.file":      "arbitron.log",
+		"tracing.enabled":   false,
 		"tracing.exportdir": "./traces",
+		"queue.globalcap":   20,
+		"queue.perusercap":  5,
 	}
 }
 
