@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
-import type { InstanceSummary } from '../api/types'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import type { InstanceSummary, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import QueueSection from '../components/QueueSection'
@@ -12,6 +12,20 @@ function daysAgo(n: number): string {
 }
 
 const HISTORY_DAYS = 5
+const DEBOUNCE_MS = 300
+
+/** Event types that indicate a state change worth refetching for. */
+const STATE_CHANGE_EVENTS = new Set([
+  'instance.created',
+  'instance.started',
+  'instance.completed',
+  'instance.failed',
+  'instance.cancelled',
+  'instance.paused',
+  'instance.resumed',
+  'instance.retrying',
+  'instance.recovered',
+])
 
 export default function QueueView() {
   const [active, setActive] = useState<InstanceSummary[]>([])
@@ -50,11 +64,27 @@ export default function QueueView() {
     void fetchAll()
   }, [fetchAll])
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useSystemWebSocket(
-    useCallback(() => {
-      void fetchAll()
-    }, [fetchAll]),
+    useCallback(
+      (event: WebSocketEvent) => {
+        if (!STATE_CHANGE_EVENTS.has(event.type)) return
+        if (debounceRef.current) clearTimeout(debounceRef.current)
+        debounceRef.current = setTimeout(() => {
+          void fetchAll()
+        }, DEBOUNCE_MS)
+      },
+      [fetchAll],
+    ),
   )
+
+  // Clean up debounce timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
 
   if (loading) {
     return (

@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"nhooyr.io/websocket"
 
 	"github.com/arbitron/arbitron/domain/engine"
 )
+
+// wsWriteTimeout is the maximum time allowed for a single WebSocket write.
+// This prevents goroutine leaks from frozen or slow clients.
+const wsWriteTimeout = 10 * time.Second
 
 // SystemStreamHandler handles WebSocket connections for streaming all workflow events
 // system-wide, regardless of instance.
@@ -69,11 +74,14 @@ func (h *SystemStreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// writeEvent serializes an event as JSON and sends it as a WebSocket text message.
+// writeEvent serializes an event as JSON and sends it as a WebSocket text message
+// with a write deadline to prevent goroutine leaks from slow/frozen clients.
 func (h *SystemStreamHandler) writeEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
 	data, err := json.Marshal(evt)
 	if err != nil {
 		return err
 	}
-	return conn.Write(ctx, websocket.MessageText, data)
+	writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }

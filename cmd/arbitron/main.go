@@ -199,6 +199,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+
+	// Warn if binding to a non-loopback address. The API has no authentication,
+	// so exposing it on the network is a security risk.
+	if cfg.Server.Host != "127.0.0.1" && cfg.Server.Host != "localhost" && cfg.Server.Host != "::1" {
+		logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
+			"host", cfg.Server.Host)
+	}
+
 	srv := &http.Server{
 		Addr:        addr,
 		Handler:     handler,

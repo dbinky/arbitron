@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
@@ -20,21 +21,28 @@ type WorkflowService interface {
 	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 }
 
+// workflowStatsReader is a consumer-side interface for reading workflow
+// execution statistics. It avoids importing the full InstanceRepository and
+// keeps the dependency surface minimal (accept interfaces, return structs).
+type workflowStatsReader interface {
+	Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*instance.WorkflowStats, error)
+}
+
 // WorkflowHandler handles REST API requests for workflow operations.
 type WorkflowHandler struct {
 	repo       workflow.WorkflowRepository
 	service    WorkflowService
 	fileReader engine.FileReader
-	instances  instance.InstanceRepository
+	stats      workflowStatsReader
 }
 
 // NewWorkflowHandler creates a new WorkflowHandler with its dependencies.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, instances instance.InstanceRepository) *WorkflowHandler {
+func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader) *WorkflowHandler {
 	return &WorkflowHandler{
 		repo:       repo,
 		service:    service,
 		fileReader: fileReader,
-		instances:  instances,
+		stats:      stats,
 	}
 }
 
@@ -205,7 +213,7 @@ func (h *WorkflowHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.instances == nil {
+	if h.stats == nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "stats not available")
 		return
 	}
@@ -231,7 +239,7 @@ func (h *WorkflowHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		to = parsed
 	}
 
-	stats, err := h.instances.Stats(r.Context(), name, from, to)
+	stats, err := h.stats.Stats(r.Context(), name, from, to)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch stats")
 		return

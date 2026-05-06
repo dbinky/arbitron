@@ -1,10 +1,14 @@
 package notification
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrNotFound is returned when a notification does not exist.
+var ErrNotFound = errors.New("notification not found")
 
 // Type represents the kind of notification.
 type Type string

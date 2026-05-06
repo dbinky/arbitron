@@ -1,6 +1,8 @@
 package http
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -86,7 +88,8 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	notifications, err := h.repo.List(r.Context(), filters)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list notifications: "+err.Error())
+		slog.Error("failed to list notifications", "error", err)
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list notifications")
 		return
 	}
 
@@ -115,7 +118,8 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 	count, err := h.repo.CountUnread(r.Context())
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to count unread notifications: "+err.Error())
+		slog.Error("failed to count unread notifications", "error", err)
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to count unread notifications")
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]int{"count": count})
@@ -124,7 +128,8 @@ func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request
 // MarkRead handles POST /api/v1/notifications/mark-read.
 func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.MarkAllRead(r.Context()); err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to mark notifications read: "+err.Error())
+		slog.Error("failed to mark notifications read", "error", err)
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to mark notifications read")
 		return
 	}
 	if h.eventBus != nil {
@@ -146,7 +151,12 @@ func (h *NotificationHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Dismiss(r.Context(), id); err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss notification: "+err.Error())
+		if errors.Is(err, notification.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "notification not found")
+			return
+		}
+		slog.Error("failed to dismiss notification", "error", err, "notificationID", id)
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss notification")
 		return
 	}
 	if h.eventBus != nil {

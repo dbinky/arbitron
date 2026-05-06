@@ -214,22 +214,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
 			// Mark the instance as failed and log via event bus.
-			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil && e.notifications != nil {
-				n := &notification.Notification{
-					ID:           uuid.New(),
-					InstanceID:   instanceID,
-					WorkflowName: workflowName,
-					Type:         notification.TypeFailed,
-				}
-				if err := e.notifications.Create(context.Background(), n); err != nil {
-					slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
-				} else {
-					e.eventBus.Publish(instanceID, Event{
-						Type:      "notification.created",
-						Timestamp: time.Now(),
-						Data:      notificationEventData(n),
-					})
-				}
+			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil {
+				e.emitNotification(context.Background(), instanceID, workflowName, notification.TypeFailed)
 			}
 			e.eventBus.Publish(instanceID, Event{
 				Type:      "instance.failed",
@@ -412,22 +398,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			default: // "halt" or unrecognized
 				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-				} else if e.notifications != nil {
-					n := &notification.Notification{
-						ID:           uuid.New(),
-						InstanceID:   instanceID,
-						WorkflowName: workflowName,
-						Type:         notification.TypeFailed,
-					}
-					if err := e.notifications.Create(context.Background(), n); err != nil {
-						slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
-					} else {
-						e.eventBus.Publish(instanceID, Event{
-							Type:      "notification.created",
-							Timestamp: time.Now(),
-							Data:      notificationEventData(n),
-						})
-					}
+				} else {
+					e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
 				}
 				e.eventBus.Publish(instanceID, Event{
 					Type:      "instance.failed",
@@ -480,22 +452,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// All nodes executed successfully.
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
-	} else if e.notifications != nil {
-		n := &notification.Notification{
-			ID:           uuid.New(),
-			InstanceID:   instanceID,
-			WorkflowName: workflowName,
-			Type:         notification.TypeCompleted,
-		}
-		if err := e.notifications.Create(context.Background(), n); err != nil {
-			slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
-		} else {
-			e.eventBus.Publish(instanceID, Event{
-				Type:      "notification.created",
-				Timestamp: time.Now(),
-				Data:      notificationEventData(n),
-			})
-		}
+	} else {
+		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "instance.completed",
@@ -603,6 +561,33 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	return nil, lastExec, lastErr
 }
 
+// emitNotification creates a notification and publishes a notification.created event.
+// It is a no-op if the notification repository has not been wired.
+//
+// TODO: if a 4th notification type is added, or routing logic becomes necessary,
+// extract a dedicated NotificationListener that subscribes to the event bus
+// instead of embedding this logic in Engine.
+func (e *Engine) emitNotification(ctx context.Context, instanceID uuid.UUID, workflowName string, notifType notification.Type) {
+	if e.notifications == nil {
+		return
+	}
+	n := &notification.Notification{
+		ID:           uuid.New(),
+		InstanceID:   instanceID,
+		WorkflowName: workflowName,
+		Type:         notifType,
+	}
+	if err := e.notifications.Create(ctx, n); err != nil {
+		slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+		return
+	}
+	e.eventBus.Publish(instanceID, Event{
+		Type:      "notification.created",
+		Timestamp: time.Now(),
+		Data:      notificationEventData(n),
+	})
+}
+
 // notificationEventData converts a notification into the map shape expected
 // by the frontend's NotificationItem interface.
 func notificationEventData(n *notification.Notification) map[string]any {
@@ -611,9 +596,9 @@ func notificationEventData(n *notification.Notification) map[string]any {
 		"instanceId":   n.InstanceID.String(),
 		"workflowName": n.WorkflowName,
 		"type":         string(n.Type),
-		"read":         false,
-		"dismissed":    false,
-		"createdAt":    time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
+		"read":         n.Read,
+		"dismissed":    n.Dismissed,
+		"createdAt":    n.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
 	}
 }
 

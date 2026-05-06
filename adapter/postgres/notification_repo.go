@@ -12,6 +12,12 @@ import (
 
 // NotificationRepo implements notification.Repository using raw SQL queries
 // against a pgxpool.Pool (same pattern as Stats in instance_repo.go).
+//
+// Raw SQL is used instead of sqlc because the List query builds its WHERE
+// clause and parameter indices dynamically based on optional filters
+// (dismissed, limit, offset). sqlc requires static queries, so hand-rolled
+// SQL with careful argIdx tracking is the pragmatic choice here. If this
+// grows beyond a few filter combinations, consider a query-builder library.
 type NotificationRepo struct {
 	pool *pgxpool.Pool
 }
@@ -43,9 +49,9 @@ func (r *NotificationRepo) List(ctx context.Context, filters notification.ListFi
 	}
 
 	query := `
-SELECT n.id, n.instance_id, i.workflow_name, n.type, n.read, n.dismissed, n.created_at, n.updated_at
+SELECT n.id, n.instance_id, COALESCE(i.workflow_name, ''), n.type, n.read, n.dismissed, n.created_at, n.updated_at
 FROM notifications n
-JOIN instances i ON i.id = n.instance_id`
+LEFT JOIN instances i ON i.id = n.instance_id`
 
 	args := []any{}
 	argIdx := 1
@@ -103,12 +109,16 @@ func (r *NotificationRepo) MarkAllRead(ctx context.Context) error {
 	return nil
 }
 
-// Dismiss sets dismissed=true for a single notification.
+// Dismiss sets dismissed=true for a single notification. Returns
+// notification.ErrNotFound if no row matches the given ID.
 func (r *NotificationRepo) Dismiss(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE notifications SET dismissed = true, updated_at = $1 WHERE id = $2`
-	_, err := r.pool.Exec(ctx, query, time.Now(), id)
+	tag, err := r.pool.Exec(ctx, query, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("dismissing notification: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return notification.ErrNotFound
 	}
 	return nil
 }

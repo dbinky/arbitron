@@ -3,27 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { NotificationItem, WebSocketEvent } from '../api/types'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
-import { relativeTime } from '../utils/time'
+import NotificationPopover from './NotificationPopover'
 import styles from './NotificationBell.module.css'
-
-/** Map notification type to a compact icon. */
-function typeIcon(type: string): string {
-  switch (type) {
-    case 'failed':
-      return '⚠'
-    case 'completed':
-      return '✓'
-    case 'needs_interaction':
-      return '💬'
-    default:
-      return '🔔'
-  }
-}
-
-/** Return the first 8 characters of an instance ID for display. */
-function shortId(id: string): string {
-  return id.slice(0, 8)
-}
 
 const PAGE_SIZE = 20
 
@@ -45,8 +26,8 @@ export default function NotificationBell() {
     try {
       const { count } = await api.notifications.unreadCount()
       setUnreadCount(count)
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error('failed to fetch unread count', err)
     }
   }, [])
 
@@ -54,8 +35,8 @@ export default function NotificationBell() {
     try {
       const { items: data } = await api.notifications.list({ dismissed: false, limit: 50 })
       setItems(data)
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error('failed to fetch active notifications', err)
     }
   }, [])
 
@@ -73,8 +54,8 @@ export default function NotificationBell() {
       }
       setHasMoreDismissed(hasMore)
       setDismissedOffset(offset + data.length)
-    } catch {
-      // silently ignore
+    } catch (err) {
+      console.error('failed to fetch dismissed notifications', err)
     }
   }, [])
 
@@ -108,13 +89,17 @@ export default function NotificationBell() {
     setOpen((prev) => {
       const next = !prev
       if (next) {
-        // Opening: fetch fresh list and mark-read
-        void fetchActive()
-        if (unreadCount > 0) {
-          void api.notifications.markRead()
-          setUnreadCount(0)
-          setItems((prev) => prev.map((n) => ({ ...n, read: true })))
-        }
+        // Opening: fetch fresh list, then mark-read once the list is loaded
+        // to avoid a race where markRead fires before the list renders.
+        void fetchActive().then(() => {
+          if (unreadCount > 0) {
+            void api.notifications.markRead().catch((err: unknown) => {
+              console.error('failed to mark notifications read', err)
+            })
+            setUnreadCount(0)
+            setItems((prev) => prev.map((n) => ({ ...n, read: true })))
+          }
+        })
       } else {
         // Closing: reset dismissed section
         setShowDismissed(false)
@@ -205,87 +190,16 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <div className={styles.popover}>
-          <div className={styles.header}>
-            <span>Notifications</span>
-          </div>
-
-          <div className={styles.list}>
-            {items.length === 0 && !showDismissed && (
-              <div className={styles.empty}>No notifications</div>
-            )}
-
-            {items.map((n) => (
-              <div
-                key={n.id}
-                className={styles.item}
-                onClick={() => handleItemClick(n.instanceId)}
-              >
-                <span className={styles.itemIcon}>{typeIcon(n.type)}</span>
-                <div className={styles.itemBody}>
-                  <div className={styles.itemWorkflow}>
-                    {n.workflowName}{' '}
-                    <span className={styles.itemMeta}>{shortId(n.instanceId)}</span>
-                  </div>
-                  <div className={styles.itemMeta}>{relativeTime(n.createdAt)}</div>
-                </div>
-                {!n.read && <span className={styles.unreadDot} />}
-                <button
-                  className={styles.dismissButton}
-                  title="Dismiss"
-                  aria-label="Dismiss notification"
-                  onClick={(e) => handleDismiss(e, n.id)}
-                >
-                  &times;
-                </button>
-              </div>
-            ))}
-
-            {showDismissed && dismissedItems.length > 0 && (
-              <>
-                {dismissedItems.map((n) => (
-                  <div
-                    key={n.id}
-                    className={styles.item}
-                    style={{ opacity: 0.6 }}
-                    onClick={() => handleItemClick(n.instanceId)}
-                  >
-                    <span className={styles.itemIcon}>{typeIcon(n.type)}</span>
-                    <div className={styles.itemBody}>
-                      <div className={styles.itemWorkflow}>
-                        {n.workflowName}{' '}
-                        <span className={styles.itemMeta}>{shortId(n.instanceId)}</span>
-                      </div>
-                      <div className={styles.itemMeta}>{relativeTime(n.createdAt)}</div>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-
-          <div className={styles.footer}>
-            {!showDismissed ? (
-              <button
-                className={styles.footerLink}
-                onClick={handleShowDismissed}
-              >
-                Show dismissed
-              </button>
-            ) : hasMoreDismissed ? (
-              <button
-                className={styles.footerLink}
-                onClick={handleLoadMore}
-              >
-                Load more
-              </button>
-            ) : (
-              <span className={styles.footerLink} style={{ cursor: 'default', opacity: 0.5 }}>
-                {dismissedItems.length === 0 ? 'No dismissed notifications' : 'All loaded'}
-              </span>
-            )}
-          </div>
-        </div>
+        <NotificationPopover
+          items={items}
+          dismissedItems={dismissedItems}
+          showDismissed={showDismissed}
+          hasMoreDismissed={hasMoreDismissed}
+          onItemClick={handleItemClick}
+          onDismiss={handleDismiss}
+          onShowDismissed={handleShowDismissed}
+          onLoadMore={handleLoadMore}
+        />
       )}
     </div>
   )

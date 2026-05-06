@@ -86,6 +86,7 @@ func NewRouter(
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(securityHeaders)
 
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
@@ -154,6 +155,16 @@ func NewRouter(
 	}
 
 	return r
+}
+
+// securityHeaders adds standard security headers to every HTTP response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SystemHandler handles system configuration endpoints.
