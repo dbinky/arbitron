@@ -15,7 +15,7 @@ export default function App() {
         <main style={{ flex: 1, overflow: 'auto' }}>
           <Routes>
             <Route path="/" element={<QueueView />} />
-            <Route path="/instance/:id" element={<ExecutionView />} />
+            <Route path="/instances/:id" element={<ExecutionView />} />
             <Route path="/workflows" element={<WorkflowsCatalog />} />
             <Route path="/workflows/:name" element={<WorkflowReview />} />
             <Route path="/settings" element={<Settings />} />
