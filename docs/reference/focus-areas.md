@@ -15,25 +15,25 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Go Embed & Static Serving (`adapter/dashboard/` — embed directive, SPA fallback, cache headers, catch-all route wiring in `adapter/http/server.go`) | [ ] | [ ] | |
-| 2 | System WebSocket & EventBus SubscribeAll (`adapter/eventbus/eventbus.go`, `adapter/http/system_stream_handler.go` — fan-out to all subscribers, system-wide WS endpoint, connection lifecycle) | [ ] | [ ] | |
-| 3 | Instance List Since Filter (`domain/instance/instance.go` ListFilters, `adapter/postgres/` query changes, `adapter/http/instance_handler.go` — since param parsing, query integration) | [ ] | [ ] | |
-| 4 | Node Position Domain & Persistence (`domain/workflow/workflow.go` NodePosition, `domain/workflow/ports.go` SaveNodePositions, `adapter/filesystem/workflow_repo.go` — position read/write, all-or-nothing rule, field preservation) | [ ] | [ ] | |
-| 5 | Workflow Stats Endpoint (`domain/instance/instance.go` WorkflowStats, `adapter/postgres/instance_repo.go` Stats, `adapter/http/workflow_handler.go` Stats handler — aggregation, date range, edge cases) | [ ] | [ ] | |
-| 6 | Notification Backend (`domain/notification/`, `adapter/postgres/notification_repo.go`, `adapter/http/notification_handler.go` — CRUD, pagination, mark-read, dismiss, migration) | [ ] | [ ] | |
-| 7 | Engine Notification Wiring (`domain/engine/engine.go` — SetNotifications, fire-and-forget creation on completed/failed transitions, error logging) | [ ] | [ ] | |
-| 8 | Dashboard Theme & App Shell (`dashboard/src/styles/theme.css`, `dashboard/src/App.tsx`, `dashboard/src/main.tsx` — CSS custom properties, React Router setup, route definitions) | [ ] | [ ] | |
-| 9 | NavBar & Navigation (`dashboard/src/components/NavBar.tsx` — active link highlighting, breadcrumb integration, bell placeholder replaced with NotificationBell) | [ ] | [ ] | |
-| 10 | API Client & Types (`dashboard/src/api/client.ts`, `dashboard/src/api/types.ts` — all endpoint methods, type definitions match backend contracts, error handling) | [ ] | [ ] | |
-| 11 | WebSocket Hooks (`dashboard/src/hooks/useSystemWebSocket.ts`, `dashboard/src/hooks/useInstanceWebSocket.ts` — reconnection, cleanup, event parsing, callback refs) | [ ] | [ ] | |
-| 12 | Queue View (`dashboard/src/routes/QueueView.tsx`, `dashboard/src/components/QueueSection.tsx`, `dashboard/src/components/InstanceRow.tsx`, `dashboard/src/components/StateBadge.tsx` — three sections, collapsible, sort, attention flags, live updates) | [ ] | [ ] | |
-| 13 | React Flow Graph & Layout (`dashboard/src/graph/` — ArbitronNode component, nodeTypes registry, useGraphLayout hook, dagre config, all-or-nothing position rule, edge labels) | [ ] | [ ] | |
-| 14 | Execution View (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/components/SidePanel.tsx` — graph + side panel, node click, live WS updates, breadcrumb, instance controls) | [ ] | [ ] | |
-| 15 | Node Output & Variables Display (`dashboard/src/components/NodeOutput.tsx`, `dashboard/src/components/VariablesPanel.tsx` — script stdout/stderr, LLM conversation, error details, timing, key-value table) | [ ] | [ ] | |
-| 16 | Workflow Review Panel (`dashboard/src/routes/WorkflowReview.tsx`, `dashboard/src/components/UsageStats.tsx`, `dashboard/src/components/TriggerModal.tsx` — draggable graph, position auto-save, stats display, trigger form, input schema) | [ ] | [ ] | |
-| 17 | Workflows Catalog & Settings (`dashboard/src/routes/WorkflowsCatalog.tsx`, `dashboard/src/routes/Settings.tsx` — list/search, queue config editing, live queue status) | [ ] | [ ] | |
-| 18 | Notification Bell & Popover (`dashboard/src/components/NotificationBell.tsx` — badge, popover, mark-read, dismiss, dismissed paging, cross-tab sync via WS) | [ ] | [ ] | |
-| 19 | Interactive Callout Placeholder (`dashboard/src/graph/nodes/InteractiveCallout.tsx` — bubble styling, pulsing border, children prop, positioning) | [ ] | [ ] | |
+| 1 | Go Embed & Static Serving (`adapter/dashboard/` — embed directive, SPA fallback, cache headers, catch-all route wiring in `adapter/http/server.go`) | [x] | [ ] | |
+| 2 | System WebSocket & EventBus SubscribeAll (`adapter/eventbus/eventbus.go`, `adapter/http/system_stream_handler.go` — fan-out to all subscribers, system-wide WS endpoint, connection lifecycle) | [x] | [ ] | |
+| 3 | Instance List Since Filter (`domain/instance/instance.go` ListFilters, `adapter/postgres/` query changes, `adapter/http/instance_handler.go` — since param parsing, query integration) | [x] | [ ] | |
+| 4 | Node Position Domain & Persistence (`domain/workflow/workflow.go` NodePosition, `domain/workflow/ports.go` SaveNodePositions, `adapter/filesystem/workflow_repo.go` — position read/write, all-or-nothing rule, field preservation) | [x] | [ ] | |
+| 5 | Workflow Stats Endpoint (`domain/instance/instance.go` WorkflowStats, `adapter/postgres/instance_repo.go` Stats, `adapter/http/workflow_handler.go` Stats handler — aggregation, date range, edge cases) | [x] | [ ] | |
+| 6 | Notification Backend (`domain/notification/`, `adapter/postgres/notification_repo.go`, `adapter/http/notification_handler.go` — CRUD, pagination, mark-read, dismiss, migration) | [x] | [ ] | |
+| 7 | Engine Notification Wiring (`domain/engine/engine.go` — SetNotifications, fire-and-forget creation on completed/failed transitions, error logging) | [x] | [ ] | |
+| 8 | Dashboard Theme & App Shell (`dashboard/src/styles/theme.css`, `dashboard/src/App.tsx`, `dashboard/src/main.tsx` — CSS custom properties, React Router setup, route definitions) | [x] | [ ] | |
+| 9 | NavBar & Navigation (`dashboard/src/components/NavBar.tsx` — active link highlighting, breadcrumb integration, bell placeholder replaced with NotificationBell) | [x] | [ ] | |
+| 10 | API Client & Types (`dashboard/src/api/client.ts`, `dashboard/src/api/types.ts` — all endpoint methods, type definitions match backend contracts, error handling) | [x] | [ ] | |
+| 11 | WebSocket Hooks (`dashboard/src/hooks/useSystemWebSocket.ts`, `dashboard/src/hooks/useInstanceWebSocket.ts` — reconnection, cleanup, event parsing, callback refs) | [x] | [ ] | |
+| 12 | Queue View (`dashboard/src/routes/QueueView.tsx`, `dashboard/src/components/QueueSection.tsx`, `dashboard/src/components/InstanceRow.tsx`, `dashboard/src/components/StateBadge.tsx` — three sections, collapsible, sort, attention flags, live updates) | [x] | [ ] | |
+| 13 | React Flow Graph & Layout (`dashboard/src/graph/` — ArbitronNode component, nodeTypes registry, useGraphLayout hook, dagre config, all-or-nothing position rule, edge labels) | [x] | [ ] | |
+| 14 | Execution View (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/components/SidePanel.tsx` — graph + side panel, node click, live WS updates, breadcrumb, instance controls) | [x] | [ ] | |
+| 15 | Node Output & Variables Display (`dashboard/src/components/NodeOutput.tsx`, `dashboard/src/components/VariablesPanel.tsx` — script stdout/stderr, LLM conversation, error details, timing, key-value table) | [x] | [ ] | |
+| 16 | Workflow Review Panel (`dashboard/src/routes/WorkflowReview.tsx`, `dashboard/src/components/UsageStats.tsx`, `dashboard/src/components/TriggerModal.tsx` — draggable graph, position auto-save, stats display, trigger form, input schema) | [x] | [ ] | |
+| 17 | Workflows Catalog & Settings (`dashboard/src/routes/WorkflowsCatalog.tsx`, `dashboard/src/routes/Settings.tsx` — list/search, queue config editing, live queue status) | [x] | [ ] | |
+| 18 | Notification Bell & Popover (`dashboard/src/components/NotificationBell.tsx` — badge, popover, mark-read, dismiss, dismissed paging, cross-tab sync via WS) | [x] | [ ] | |
+| 19 | Interactive Callout Placeholder (`dashboard/src/graph/nodes/InteractiveCallout.tsx` — bubble styling, pulsing border, children prop, positioning) | [x] | [ ] | |
 
 ---
 

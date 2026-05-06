@@ -106,5 +106,5 @@
 }
 
 .borderCancelled {
-  border-left-color: var(--state-queued);
+  border-left-color: var(--state-cancelled);
 }

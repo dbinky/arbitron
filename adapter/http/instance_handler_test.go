@@ -107,6 +107,9 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 		if filters.WorkflowName != nil && inst.WorkflowName != *filters.WorkflowName {
 			continue
 		}
+		if filters.Since != nil && !inst.CreatedAt.After(*filters.Since) {
+			continue
+		}
 		summaries = append(summaries, instance.InstanceSummary{
 			ID:           inst.ID,
 			WorkflowName: inst.WorkflowName,
@@ -1441,4 +1444,67 @@ func TestInstanceHandler_SetPriority_ServiceError_Conflict(t *testing.T) {
 	h.SetPriority(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: List with since filter
+// ---------------------------------------------------------------------------
+
+func TestInstanceHandler_List_SinceFilter(t *testing.T) {
+	t.Run("returns only instances created after since timestamp", func(t *testing.T) {
+		h, instRepo, _, _, _ := newInstanceHandler()
+		cutoff := time.Now().Add(-time.Hour)
+
+		old := testInstance(instance.StateRunning)
+		old.CreatedAt = cutoff.Add(-time.Minute) // before cutoff
+		recent := testInstance(instance.StateRunning)
+		recent.CreatedAt = cutoff.Add(time.Minute) // after cutoff
+
+		instRepo.instances[old.ID] = old
+		instRepo.instances[recent.ID] = recent
+
+		req := httptest.NewRequest(http.MethodGet, "/instances?since="+cutoff.UTC().Format(time.RFC3339), nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp, 1)
+		assert.Equal(t, recent.ID, resp[0].ID)
+	})
+
+	t.Run("malformed since param is silently ignored and returns all instances", func(t *testing.T) {
+		h, instRepo, _, _, _ := newInstanceHandler()
+		inst := testInstance(instance.StateRunning)
+		instRepo.instances[inst.ID] = inst
+
+		req := httptest.NewRequest(http.MethodGet, "/instances?since=not-a-timestamp", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Len(t, resp, 1, "malformed since must not filter out instances")
+	})
+
+	t.Run("since exactly at instance creation time excludes that instance", func(t *testing.T) {
+		h, instRepo, _, _, _ := newInstanceHandler()
+		exact := time.Now().UTC().Truncate(time.Second)
+
+		inst := testInstance(instance.StateRunning)
+		inst.CreatedAt = exact
+		instRepo.instances[inst.ID] = inst
+
+		// since == createdAt: the instance was created AT the cutoff, not AFTER it.
+		req := httptest.NewRequest(http.MethodGet, "/instances?since="+exact.Format(time.RFC3339), nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Empty(t, resp, "instance created AT since boundary should be excluded (strictly after)")
+	})
 }

@@ -135,8 +135,15 @@ func (r *WorkflowRepo) SaveNodePositions(name string, positions map[string]workf
 	}
 	out = append(out, '\n')
 
-	if err := os.WriteFile(manifestPath, out, 0o644); err != nil {
+	// Write to a temp file in the same directory then rename atomically so a
+	// mid-write crash never leaves the manifest in a truncated state.
+	tmp := manifestPath + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
 		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+	if err := os.Rename(tmp, manifestPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("committing workflow %q: %w", name, err)
 	}
 
 	return nil

@@ -206,11 +206,25 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// The deferred cleanup only fires NotifyCapacityFreed if this remains false.
 	capacityFreed := false
 
+	// workflowName is set after the instance is loaded; the panic deferred function
+	// reads it via closure so notifications carry the correct workflow name.
+	var workflowName string
+
 	defer func() {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
 			// Mark the instance as failed and log via event bus.
-			_ = e.instances.SetFailed(ctx, instanceID, "")
+			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil && e.notifications != nil {
+				n := &notification.Notification{
+					ID:           uuid.New(),
+					InstanceID:   instanceID,
+					WorkflowName: workflowName,
+					Type:         notification.TypeFailed,
+				}
+				if err := e.notifications.Create(context.Background(), n); err != nil {
+					slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+				}
+			}
 			e.eventBus.Publish(instanceID, Event{
 				Type:      "instance.failed",
 				Timestamp: time.Now(),
@@ -232,6 +246,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	if err != nil {
 		return
 	}
+	workflowName = inst.WorkflowName
 
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
@@ -393,9 +408,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 				} else if e.notifications != nil {
 					n := &notification.Notification{
-						ID:         uuid.New(),
-						InstanceID: instanceID,
-						Type:       notification.TypeFailed,
+						ID:           uuid.New(),
+						InstanceID:   instanceID,
+						WorkflowName: workflowName,
+						Type:         notification.TypeFailed,
 					}
 					if err := e.notifications.Create(context.Background(), n); err != nil {
 						slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
@@ -454,9 +470,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
 	} else if e.notifications != nil {
 		n := &notification.Notification{
-			ID:         uuid.New(),
-			InstanceID: instanceID,
-			Type:       notification.TypeCompleted,
+			ID:           uuid.New(),
+			InstanceID:   instanceID,
+			WorkflowName: workflowName,
+			Type:         notification.TypeCompleted,
 		}
 		if err := e.notifications.Create(context.Background(), n); err != nil {
 			slog.Error("failed to create notification", "instanceID", instanceID, "error", err)

@@ -11,6 +11,7 @@ import type {
   WorkflowStats,
   WorkflowSummary,
 } from './types'
+import type { WorkflowDefinition } from '../graph/types'
 
 /** Parameters for listing instances. */
 export interface ListInstancesParams {
@@ -126,7 +127,7 @@ export const api = {
     },
 
     /** Get a workflow definition by name. */
-    get(name: string): Promise<unknown> {
+    get(name: string): Promise<WorkflowDefinition> {
       return request(`/api/v1/workflows/${name}`)
     },
 
@@ -174,8 +175,8 @@ export const api = {
     list(params: { dismissed?: boolean; limit?: number; offset?: number } = {}): Promise<NotificationItem[]> {
       const qs = new URLSearchParams()
       if (params.dismissed != null) qs.set('dismissed', String(params.dismissed))
-      if (params.limit) qs.set('limit', String(params.limit))
-      if (params.offset) qs.set('offset', String(params.offset))
+      if (params.limit != null) qs.set('limit', String(params.limit))
+      if (params.offset != null) qs.set('offset', String(params.offset))
       const query = qs.toString()
       return request(`/api/v1/notifications${query ? '?' + query : ''}`)
     },
@@ -186,7 +187,7 @@ export const api = {
     },
 
     /** Mark all notifications as read. */
-    markRead(): Promise<void> {
+    markRead(): Promise<{ status: string }> {
       return post('/api/v1/notifications/mark-read')
     },
 

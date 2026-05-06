@@ -17,6 +17,7 @@
   --state-waiting: #e67e22;
   --state-queued: #7f8c8d;
   --state-paused: #9b59b6;
+  --state-cancelled: #546e7a;
   --priority-high: #f39c12;
   --priority-normal: #888888;
   --priority-low: #666666;
