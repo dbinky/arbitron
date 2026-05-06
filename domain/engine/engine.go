@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ type Engine struct {
 	queueRepo       instance.QueueRepository
 	scheduler       TimerScheduler
 	webhookRegistry WebhookRegistrar
+	notifications   notification.Repository
 	mu              sync.Mutex
 	contexts        map[uuid.UUID]context.CancelFunc
 	wg              sync.WaitGroup
@@ -67,6 +69,11 @@ func (e *Engine) SetScheduler(s TimerScheduler) {
 // SetWebhookRegistry sets the webhook registry on the engine.
 func (e *Engine) SetWebhookRegistry(reg WebhookRegistrar) {
 	e.webhookRegistry = reg
+}
+
+// SetNotifications sets the notification repository on the engine.
+func (e *Engine) SetNotifications(repo notification.Repository) {
+	e.notifications = repo
 }
 
 // edgeTarget describes a destination from a graph edge.
@@ -384,6 +391,15 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			default: // "halt" or unrecognized
 				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+				} else if e.notifications != nil {
+					n := &notification.Notification{
+						ID:         uuid.New(),
+						InstanceID: instanceID,
+						Type:       notification.TypeFailed,
+					}
+					if err := e.notifications.Create(context.Background(), n); err != nil {
+						slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+					}
 				}
 				e.eventBus.Publish(instanceID, Event{
 					Type:      "instance.failed",
@@ -436,6 +452,15 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// All nodes executed successfully.
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
+	} else if e.notifications != nil {
+		n := &notification.Notification{
+			ID:         uuid.New(),
+			InstanceID: instanceID,
+			Type:       notification.TypeCompleted,
+		}
+		if err := e.notifications.Create(context.Background(), n); err != nil {
+			slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+		}
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "instance.completed",

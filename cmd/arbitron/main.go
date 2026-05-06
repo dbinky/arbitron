@@ -159,6 +159,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
 	eng.SetQueueManager(queueMgr)
 
+	// 12a. Create notification repo and wire it to the engine.
+	notifRepo := postgres.NewNotificationRepo(pool)
+	eng.SetNotifications(notifRepo)
+
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
@@ -174,6 +178,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	// 15. Create the full API router with embedded dashboard.
 	dashHandler := dashboard.Handler()
+	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
 	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,
@@ -186,6 +191,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		queueMgr,
 		queueRepo,
 		dashHandler,
+		notifHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).

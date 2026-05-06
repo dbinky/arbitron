@@ -130,7 +130,7 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 
 func TestRouter_Health(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestRouter_Health(t *testing.T) {
 
 func TestRouter_SystemConfig(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -187,7 +187,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
@@ -238,7 +238,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 		UpdatedAt:         time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	t.Run("GET /api/v1/instances", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -334,7 +334,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 
 func TestRouter_NotFound(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -351,7 +351,7 @@ func TestRouter_GetConfig_IncludesQueueSection(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, _ := newRouterTestDeps()
 	// Use a queue repo that returns non-zero counts.
 	qr := &mockCountingQueueRepo{running: 3, queued: 5, waiting: 2}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, &mockQueueManagerForRouter{}, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, &mockQueueManagerForRouter{}, qr, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -373,7 +373,7 @@ func TestRouter_GetConfig_IncludesQueueSection(t *testing.T) {
 func TestRouter_UpdateQueueConfig_UpdatesBothCaps(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
 	qm := &mockCapturingQueueManager{}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	body := `{"globalCap":30,"perUserCap":10}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -398,7 +398,7 @@ func TestRouter_UpdateQueueConfig_CapRaised_TriggersEvaluate(t *testing.T) {
 	evaluateCh := make(chan struct{}, 1)
 	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
 	cfg.Queue.GlobalCap = 20 // old cap
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	// Raise cap from 20 → 30.
 	body := `{"globalCap":30}`
@@ -419,7 +419,7 @@ func TestRouter_UpdateQueueConfig_CapRaised_TriggersEvaluate(t *testing.T) {
 
 func TestRouter_UpdateQueueConfig_NegativeCap_400(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	body := `{"globalCap":-1}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -432,7 +432,7 @@ func TestRouter_UpdateQueueConfig_NegativeCap_400(t *testing.T) {
 
 func TestRouter_UpdateQueueConfig_InvalidBody_400(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	body := `{not json`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -454,7 +454,7 @@ func TestRouter_InstanceRoutes_SetPriority(t *testing.T) {
 		UpdatedAt:    time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	body := `{"priority":"high"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances/"+inst.ID.String()+"/priority", strings.NewReader(body))
@@ -512,7 +512,7 @@ func TestRouter_UpdateQueueConfig_OnlyPerUserCap_PartialUpdate(t *testing.T) {
 	qm := &mockCapturingQueueManager{}
 	cfg.Queue.GlobalCap = 20
 	cfg.Queue.PerUserCap = 5
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	// Update only perUserCap — globalCap should stay at 20.
 	body := `{"perUserCap":15}`
@@ -538,7 +538,7 @@ func TestRouter_UpdateQueueConfig_CapLowered_NoEvaluate(t *testing.T) {
 	evaluateCh := make(chan struct{}, 1)
 	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
 	cfg.Queue.GlobalCap = 30 // old cap — higher than new
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	// Lower cap from 30 → 10 — should NOT trigger Evaluate.
 	body := `{"globalCap":10}`
@@ -565,7 +565,7 @@ func TestRouter_GetConfig_ReflectsUpdatedQueueCaps(t *testing.T) {
 	qm := &mockCapturingQueueManager{}
 	cfg.Queue.GlobalCap = 20
 	cfg.Queue.PerUserCap = 5
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil)
 
 	// Confirm initial GET values.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)

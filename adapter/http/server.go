@@ -13,6 +13,7 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -58,6 +59,9 @@ type QueueManagerPort interface {
 // QueueRepoPort is a type alias for the domain queue repository port.
 type QueueRepoPort = instance.QueueRepository
 
+// NotificationRepoPort is a type alias for the domain notification repository port.
+type NotificationRepoPort = notification.Repository
+
 // NewRouter creates the chi router with all API routes wired up.
 // If dashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
@@ -73,6 +77,7 @@ func NewRouter(
 	queueManager QueueManagerPort,
 	queueRepo QueueRepoPort,
 	dashboardHandler http.Handler,
+	notifHandler *NotificationHandler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -109,6 +114,16 @@ func NewRouter(
 			r.Put("/{name}/layout", wfHandler.SaveLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
 		})
+
+		// Notification endpoints
+		if notifHandler != nil {
+			r.Route("/notifications", func(r chi.Router) {
+				r.Get("/", notifHandler.List)
+				r.Get("/unread-count", notifHandler.UnreadCount)
+				r.Post("/mark-read", notifHandler.MarkRead)
+				r.Post("/{id}/dismiss", notifHandler.Dismiss)
+			})
+		}
 
 		// Webhook endpoints
 		if len(webhookHandler) > 0 && webhookHandler[0] != nil {
