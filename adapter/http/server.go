@@ -59,6 +59,8 @@ type QueueManagerPort interface {
 type QueueRepoPort = instance.QueueRepository
 
 // NewRouter creates the chi router with all API routes wired up.
+// If dashboardHandler is non-nil, unmatched routes fall through to the
+// embedded SPA instead of returning chi's default 404.
 func NewRouter(
 	svc EngineService,
 	workflows WorkflowRepo,
@@ -70,6 +72,7 @@ func NewRouter(
 	cfg *config.Config,
 	queueManager QueueManagerPort,
 	queueRepo QueueRepoPort,
+	dashboardHandler http.Handler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -127,6 +130,11 @@ func NewRouter(
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 		})
 	})
+
+	// Serve the embedded dashboard SPA for any route not matched by the API.
+	if dashboardHandler != nil {
+		r.NotFound(dashboardHandler.ServeHTTP)
+	}
 
 	return r
 }

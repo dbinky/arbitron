@@ -19,6 +19,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/anthropic"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
+	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
@@ -171,7 +172,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
-	// 15. Create the full API router.
+	// 15. Create the full API router with embedded dashboard.
+	dashHandler := dashboard.Handler()
 	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,
@@ -183,6 +185,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		cfg,
 		queueMgr,
 		queueRepo,
+		dashHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).
