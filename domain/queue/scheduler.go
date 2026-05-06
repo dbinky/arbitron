@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -155,7 +156,9 @@ func (s *Scheduler) processExpired(ctx context.Context) {
 
 	// Process expired timers outside the lock.
 	for _, e := range expired {
-		_ = s.handler.OnTimerFired(ctx, e.ID, e.Type)
+		if err := s.handler.OnTimerFired(ctx, e.ID, e.Type); err != nil {
+			slog.Error("scheduler: timer handler failed", "instanceID", e.ID, "timerType", e.Type, "error", err)
+		}
 	}
 }
 
@@ -219,15 +222,14 @@ func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID, timerT
 		if m.webhookRegistry != nil && inst.WebhookToken != nil {
 			m.webhookRegistry.Deactivate(*inst.WebhookToken)
 		}
-		// Clear webhook fields.
-		_ = m.instances.SetWebhookFields(ctx, instanceID, nil, nil)
-		// Determine the failed node ID from the current node.
+		if err := m.instances.SetWebhookFields(ctx, instanceID, nil, nil); err != nil {
+			slog.Error("queue: failed to clear webhook fields on timeout", "instanceID", instanceID, "error", err)
+		}
 		failedNodeID := ""
 		if inst.CurrentNodeID != nil {
 			failedNodeID = *inst.CurrentNodeID
 		}
-		_ = m.instances.SetFailed(ctx, instanceID, failedNodeID)
-		return nil
+		return m.instances.SetFailed(ctx, instanceID, failedNodeID)
 	}
 	return nil
 }

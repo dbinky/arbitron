@@ -14,7 +14,7 @@ import (
 const createInstance = `-- name: CreateInstance :one
 INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at
 `
 
 type CreateInstanceParams struct {
@@ -57,12 +57,16 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.QueuedAt,
+		&i.WaitingUntil,
+		&i.WebhookToken,
+		&i.WebhookSecretHash,
+		&i.WebhookReceivedAt,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at FROM instances WHERE id = $1
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE id = $1
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id pgtype.UUID) (Instance, error) {
@@ -83,6 +87,10 @@ func (q *Queries) GetInstance(ctx context.Context, id pgtype.UUID) (Instance, er
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.QueuedAt,
+		&i.WaitingUntil,
+		&i.WebhookToken,
+		&i.WebhookSecretHash,
+		&i.WebhookReceivedAt,
 	)
 	return i, err
 }
@@ -151,7 +159,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -178,6 +186,10 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.UpdatedAt,
 			&i.CompletedAt,
 			&i.QueuedAt,
+			&i.WaitingUntil,
+			&i.WebhookToken,
+			&i.WebhookSecretHash,
+			&i.WebhookReceivedAt,
 		); err != nil {
 			return nil, err
 		}

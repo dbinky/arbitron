@@ -3,7 +3,9 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -127,6 +129,7 @@ func NewRouter(
 
 // SystemHandler handles system configuration endpoints.
 type SystemHandler struct {
+	mu           sync.Mutex
 	config       *config.Config
 	queueManager QueueManagerPort
 	queueRepo    QueueRepoPort
@@ -189,6 +192,11 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		waiting, _ = h.queueRepo.CountWaiting(r.Context())
 	}
 
+	h.mu.Lock()
+	globalCap := h.config.Queue.GlobalCap
+	perUserCap := h.config.Queue.PerUserCap
+	h.mu.Unlock()
+
 	resp := systemConfigResponse{
 		Server: serverConfigResponse{
 			Host: h.config.Server.Host,
@@ -213,8 +221,8 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 			ExportDir: h.config.Tracing.ExportDir,
 		},
 		Queue: queueConfigResponse{
-			GlobalCap:    h.config.Queue.GlobalCap,
-			PerUserCap:   h.config.Queue.PerUserCap,
+			GlobalCap:    globalCap,
+			PerUserCap:   perUserCap,
 			RunningCount: running,
 			QueuedCount:  queued,
 			WaitingCount: waiting,
@@ -237,6 +245,16 @@ func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if req.GlobalCap != nil && *req.GlobalCap < 0 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "globalCap must be >= 0 (0 = unlimited)")
+		return
+	}
+	if req.PerUserCap != nil && *req.PerUserCap < 0 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "perUserCap must be >= 0 (0 = unlimited)")
+		return
+	}
+
+	h.mu.Lock()
 	oldGlobalCap := h.config.Queue.GlobalCap
 	oldPerUserCap := h.config.Queue.PerUserCap
 
@@ -248,6 +266,9 @@ func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request
 	if req.PerUserCap != nil {
 		newPerUserCap = *req.PerUserCap
 	}
+	h.config.Queue.GlobalCap = newGlobalCap
+	h.config.Queue.PerUserCap = newPerUserCap
+	h.mu.Unlock()
 
 	h.queueManager.UpdateConfig(newGlobalCap, newPerUserCap)
 
@@ -258,7 +279,9 @@ func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request
 		(newPerUserCap > oldPerUserCap)
 	if capRaised {
 		go func() {
-			_ = h.queueManager.Evaluate(context.Background())
+			if err := h.queueManager.Evaluate(context.Background()); err != nil {
+				slog.Error("queue config update: evaluation failed", "error", err)
+			}
 		}()
 	}
 

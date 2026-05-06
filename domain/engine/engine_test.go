@@ -62,8 +62,10 @@ func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
 
 // mockInstanceRepo implements instance.InstanceRepository
 type mockInstanceRepo struct {
-	mu        sync.Mutex
-	instances map[uuid.UUID]*instance.Instance
+	mu                  sync.Mutex
+	instances           map[uuid.UUID]*instance.Instance
+	setWaitingErr       error
+	setWebhookFieldsErr error
 }
 
 func newMockInstanceRepo() *mockInstanceRepo {
@@ -225,6 +227,9 @@ func (r *mockInstanceRepo) UpdatePriority(_ context.Context, id uuid.UUID, prior
 func (r *mockInstanceRepo) SetWaiting(_ context.Context, id uuid.UUID, waitingUntil *time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setWaitingErr != nil {
+		return r.setWaitingErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		return fmt.Errorf("instance not found: %s", id)
@@ -240,6 +245,9 @@ func (r *mockInstanceRepo) SetWaiting(_ context.Context, id uuid.UUID, waitingUn
 func (r *mockInstanceRepo) SetWebhookFields(_ context.Context, id uuid.UUID, token *string, secretHash *string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setWebhookFieldsErr != nil {
+		return r.setWebhookFieldsErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		return fmt.Errorf("instance not found: %s", id)
@@ -272,6 +280,7 @@ func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {
 type mockNodeExecutionRepo struct {
 	mu         sync.Mutex
 	executions []*instance.NodeExecution
+	createErr  error
 }
 
 func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
@@ -281,6 +290,9 @@ func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
 func (r *mockNodeExecutionRepo) Create(_ context.Context, exec *instance.NodeExecution) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.createErr != nil {
+		return r.createErr
+	}
 	r.executions = append(r.executions, exec)
 	return nil
 }
@@ -2025,4 +2037,389 @@ func TestEngine_SkipConditionalNodeRoutesViaDefaultOutput(t *testing.T) {
 	assert.Contains(t, nodeIDs, "gate")
 	assert.Contains(t, nodeIDs, "good")
 	assert.NotContains(t, nodeIDs, "bad", "skip on conditional must route through DefaultOutput, not arbitrary first edge")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Queue integration — Trigger, WaitResult, waiting/queued lifecycle
+// ---------------------------------------------------------------------------
+
+func TestEngine_Trigger_ReturnsQueuedWhenNotStarted(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+	f.queueManager.mu.Lock()
+	f.queueManager.enqueueFn = func(_ context.Context, _ uuid.UUID, _ uuid.UUID) (bool, error) {
+		return false, nil // simulate staying in queue
+	}
+	f.queueManager.mu.Unlock()
+
+	id, started, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+	assert.NotEqual(t, uuid.Nil, id)
+	assert.False(t, started, "should return false when queue manager does not start immediately")
+
+	inst, err := f.instanceRepo.Get(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateQueued, inst.State)
+}
+
+func TestEngine_WaitResult_ExitsLoopCleanlyNoExtraRecord(t *testing.T) {
+	// When an executor returns IsWait=true, the run loop exits cleanly,
+	// the instance stays in waiting state, and executeWithRetry must NOT
+	// write a duplicate node execution record (ENGINE-003 fix).
+	f := newTestFixtures()
+	f.workflowRepo.add(singleNodeWorkflow())
+
+	var executorRecordID uuid.UUID
+	f.executor.onNode("A", func(ctx context.Context, node workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		id, _ := engine.InstanceIDFromContext(ctx)
+		rec := &instance.NodeExecution{
+			ID:         uuid.New(),
+			InstanceID: id,
+			NodeID:     node.ID,
+			Attempt:    1,
+			Status:     instance.NodeStatusSucceeded,
+		}
+		_ = f.nodeExecRepo.Create(ctx, rec)
+		executorRecordID = rec.ID
+		_ = f.instanceRepo.UpdateState(ctx, id, instance.StateWaiting)
+		return &engine.NodeResult{IsWait: true}, nil
+	})
+
+	id, _, err := f.engine.Trigger("single-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
+
+	execs, err := f.nodeExecRepo.ListByInstance(context.Background(), id)
+	require.NoError(t, err)
+	require.Len(t, execs, 1, "executeWithRetry must not write a duplicate record when IsWait=true")
+	assert.Equal(t, executorRecordID, execs[0].ID, "the only record should be the one written by the executor")
+}
+
+func TestEngine_PauseWaiting_SetsStateToPaused(t *testing.T) {
+	f := newTestFixtures()
+	scheduler := &mockTimerScheduler{}
+	f.engine.SetScheduler(scheduler)
+
+	id := uuid.New()
+	now := time.Now()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:        id,
+		State:     instance.StateWaiting,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Pause(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StatePaused, inst.State)
+
+	scheduler.mu.Lock()
+	cancelled := scheduler.cancelCalls
+	scheduler.mu.Unlock()
+	assert.Empty(t, cancelled, "timer must not be cancelled when pausing from waiting state")
+}
+
+func TestEngine_ResumeFromWaiting_TimerExpired_Enqueues(t *testing.T) {
+	f := newTestFixtures()
+
+	id := uuid.New()
+	past := time.Now().Add(-time.Minute)
+	now := time.Now()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StatePaused,
+		WaitingUntil: &past,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateQueued, inst.State)
+	assert.NotNil(t, inst.QueuedAt, "QueuedAt should be set when re-enqueuing after timer expiry")
+	assert.Nil(t, inst.WaitingUntil, "WaitingUntil should be cleared after timer expiry resume")
+}
+
+func TestEngine_ResumeFromWaiting_TimerNotExpired_RestoresWaiting(t *testing.T) {
+	f := newTestFixtures()
+
+	id := uuid.New()
+	future := time.Now().Add(time.Hour)
+	now := time.Now()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StatePaused,
+		WaitingUntil: &future,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
+func TestEngine_ResumeFromWebhookWaiting_WebhookReceived_Enqueues(t *testing.T) {
+	f := newTestFixtures()
+	token := "test-token-received"
+	now := time.Now()
+	receivedAt := now.Add(-time.Second)
+
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:                id,
+		State:             instance.StatePaused,
+		WebhookToken:      &token,
+		WebhookReceivedAt: &receivedAt,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateQueued, inst.State)
+	assert.NotNil(t, inst.QueuedAt)
+}
+
+func TestEngine_ResumeFromWebhookWaiting_NotReceived_RestoresWaiting(t *testing.T) {
+	f := newTestFixtures()
+	token := "test-token-pending"
+	now := time.Now()
+
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StatePaused,
+		WebhookToken: &token,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
+func TestEngine_ResumeFromWebhookWaiting_TimeoutExpiredWhilePaused_FailsInstance(t *testing.T) {
+	// ENGINE-005: when a webhook-wait instance is paused and the timer fires
+	// while paused (OnTimerFired no-ops because state != StateWaiting), the timer
+	// entry is removed from the scheduler. On Resume, if the timeout has passed
+	// and no webhook was received, the instance must be failed — not returned to
+	// StateWaiting with no active timer (which would leave it stuck).
+	f := newTestFixtures()
+	registry := &mockWebhookRegistrar{}
+	f.engine.SetWebhookRegistry(registry)
+
+	token := "expired-timeout-token"
+	past := time.Now().Add(-time.Minute)
+	now := time.Now()
+	nodeID := "webhook-node"
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:            id,
+		State:         instance.StatePaused,
+		WebhookToken:  &token,
+		WaitingUntil:  &past,
+		CurrentNodeID: &nodeID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateFailed, inst.State, "instance must be failed when webhook timeout expired while paused")
+	require.NotNil(t, inst.FailedNodeID, "FailedNodeID must be set")
+	assert.Equal(t, nodeID, *inst.FailedNodeID, "FailedNodeID must be set to the webhook node")
+
+	registry.mu.Lock()
+	deactivated := registry.deactivateCalls
+	registry.mu.Unlock()
+	assert.Contains(t, deactivated, token, "webhook token must be deactivated when failing on resume")
+}
+
+func TestEngine_ResumeFromWebhookWaiting_TimeoutNotExpired_RestoresWaiting(t *testing.T) {
+	// When the webhook timeout has not yet expired and no webhook was received,
+	// Resume should return the instance to StateWaiting (timer still running).
+	f := newTestFixtures()
+
+	token := "pending-timeout-token"
+	future := time.Now().Add(time.Hour)
+	now := time.Now()
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StatePaused,
+		WebhookToken: &token,
+		WaitingUntil: &future,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Resume(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
+func TestEngine_CancelWaiting_DeactivatesWebhookCancelsTimer(t *testing.T) {
+	f := newTestFixtures()
+	scheduler := &mockTimerScheduler{}
+	registry := &mockWebhookRegistrar{}
+	f.engine.SetScheduler(scheduler)
+	f.engine.SetWebhookRegistry(registry)
+
+	token := "cancel-waiting-token"
+	now := time.Now()
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StateWaiting,
+		WebhookToken: &token,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Cancel(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateCancelled, inst.State)
+
+	registry.mu.Lock()
+	deactivated := registry.deactivateCalls
+	registry.mu.Unlock()
+	assert.Contains(t, deactivated, token, "webhook token must be deactivated on cancel")
+
+	scheduler.mu.Lock()
+	cancelled := scheduler.cancelCalls
+	scheduler.mu.Unlock()
+	assert.Contains(t, cancelled, id, "timer must be cancelled on cancel")
+}
+
+func TestEngine_CancelQueued_TransitionsToCancelled(t *testing.T) {
+	f := newTestFixtures()
+
+	id := uuid.New()
+	now := time.Now()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:        id,
+		State:     instance.StateQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Cancel(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateCancelled, inst.State)
+}
+
+func TestEngine_CancelPaused_WithWebhookToken_DeactivatesWebhookCancelsTimer(t *testing.T) {
+	f := newTestFixtures()
+	scheduler := &mockTimerScheduler{}
+	registry := &mockWebhookRegistrar{}
+	f.engine.SetScheduler(scheduler)
+	f.engine.SetWebhookRegistry(registry)
+
+	token := "paused-cancel-token"
+	now := time.Now()
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StatePaused,
+		WebhookToken: &token,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	err := f.engine.Cancel(id)
+	require.NoError(t, err)
+
+	inst := f.instanceRepo.get(id)
+	assert.Equal(t, instance.StateCancelled, inst.State)
+
+	registry.mu.Lock()
+	deactivated := registry.deactivateCalls
+	registry.mu.Unlock()
+	assert.Contains(t, deactivated, token, "webhook token must be deactivated when cancelling paused instance")
+
+	scheduler.mu.Lock()
+	cancelled := scheduler.cancelCalls
+	scheduler.mu.Unlock()
+	assert.Contains(t, cancelled, id, "timer must be cancelled when cancelling paused webhook-wait instance")
+}
+
+// TestEngine_RunLoop_ParseFailure_NotifiesCapacity verifies ENGINE-006: when the
+// run() loop fails early (e.g., corrupted WorkflowSnapshot), NotifyCapacityFreed
+// is still called so waiting instances are not blocked.
+func TestEngine_RunLoop_ParseFailure_NotifiesCapacity(t *testing.T) {
+	f := newTestFixtures()
+
+	// Pre-seed the instance with a snapshot that cannot be parsed as a Workflow.
+	id := uuid.New()
+	now := time.Now()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID:               id,
+		State:            instance.StateRunning,
+		WorkflowSnapshot: map[string]any{"nodes": "not-an-array"},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	// Drain any existing capacity notifications.
+	for len(f.queueManager.notifyCapacityFreedCh) > 0 {
+		<-f.queueManager.notifyCapacityFreedCh
+	}
+
+	err := f.engine.StartInstance(context.Background(), id)
+	require.NoError(t, err) // StartInstance succeeds; the run loop handles the failure
+
+	// Wait for the instance to be marked failed.
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Equal(t, instance.StateFailed, inst.State)
+
+	// NotifyCapacityFreed must be called so queued instances are not stuck.
+	select {
+	case <-f.queueManager.notifyCapacityFreedCh:
+		// success
+	case <-time.After(time.Second):
+		t.Fatal("expected NotifyCapacityFreed after run-loop parse failure")
+	}
 }

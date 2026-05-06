@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -315,4 +316,112 @@ func TestOnTimerFired_InstanceNoLongerWaiting_NoOp(t *testing.T) {
 	qr.mu.Lock()
 	assert.Empty(t, qr.setQueuedCalls)
 	qr.mu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Scheduler edge cases
+// ---------------------------------------------------------------------------
+
+func TestScheduler_ContextCancel_StopsLoop(t *testing.T) {
+	handler := &mockTimerHandler{}
+	s := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+
+	// Schedule a timer that won't fire within the test window.
+	s.Schedule(uuid.New(), time.Now().Add(10*time.Second), queue.TimerTypeDelay)
+
+	// Cancel context — should cause the loop to exit.
+	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return after context cancel")
+	}
+}
+
+func TestScheduler_PastDueTimer_FiresImmediately(t *testing.T) {
+	handler := &mockTimerHandler{}
+	s := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	defer s.Stop()
+
+	id := uuid.New()
+	// Schedule with a past-due time — should fire within a few milliseconds.
+	s.Schedule(id, time.Now().Add(-time.Second), queue.TimerTypeDelay)
+
+	time.Sleep(50 * time.Millisecond)
+
+	events := handler.getEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, id, events[0].ID)
+}
+
+func TestScheduler_RescheduleExistingEntry_UpdatesDeadline(t *testing.T) {
+	handler := &mockTimerHandler{}
+	s := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	defer s.Stop()
+
+	id := uuid.New()
+	// First schedule: 1 second out (won't fire during test).
+	s.Schedule(id, time.Now().Add(time.Second), queue.TimerTypeDelay)
+	// Re-schedule: much sooner.
+	s.Schedule(id, time.Now().Add(50*time.Millisecond), queue.TimerTypeDelay)
+
+	time.Sleep(150 * time.Millisecond)
+
+	events := handler.getEvents()
+	require.Len(t, events, 1, "timer should fire once from the updated deadline")
+	assert.Equal(t, id, events[0].ID)
+}
+
+func TestScheduler_HandlerError_ContinuesProcessing(t *testing.T) {
+	errHandler := &errorOnFirstHandler{failID: uuid.New()}
+	id2 := uuid.New()
+
+	s := queue.NewScheduler(errHandler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Start(ctx)
+	defer s.Stop()
+
+	target := time.Now().Add(30 * time.Millisecond)
+	s.Schedule(errHandler.failID, target, queue.TimerTypeDelay)
+	s.Schedule(id2, target, queue.TimerTypeDelay)
+
+	time.Sleep(150 * time.Millisecond)
+
+	errHandler.mu.Lock()
+	defer errHandler.mu.Unlock()
+	// Both timers should have been attempted even though the first one errored.
+	assert.Len(t, errHandler.attempted, 2)
+}
+
+type errorOnFirstHandler struct {
+	mu        sync.Mutex
+	failID    uuid.UUID
+	attempted []uuid.UUID
+}
+
+func (h *errorOnFirstHandler) OnTimerFired(_ context.Context, id uuid.UUID, _ string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.attempted = append(h.attempted, id)
+	if id == h.failID {
+		return fmt.Errorf("simulated handler failure")
+	}
+	return nil
 }

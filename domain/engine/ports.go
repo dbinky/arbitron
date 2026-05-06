@@ -52,6 +52,13 @@ type QueueManager interface {
 	NotifyCapacityFreed(ctx context.Context)
 }
 
+// Timer type constants used by TimerScheduler implementors and executor callers.
+// These must match the constants in the queue package (domain/queue/scheduler.go).
+const (
+	TimerTypeDelay   = "timer_delay"
+	TimerTypeWebhook = "webhook_timeout"
+)
+
 // TimerScheduler defines the timer scheduling operations the engine needs.
 type TimerScheduler interface {
 	Schedule(instanceID uuid.UUID, waitingUntil time.Time, timerType string)

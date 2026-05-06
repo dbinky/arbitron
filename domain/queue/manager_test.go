@@ -20,16 +20,20 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockQueueRepo struct {
-	mu                 sync.Mutex
-	runningCount       int
-	ownerCounts        map[uuid.UUID]int
-	queuedCount        int
-	waitingCount       int
-	eligible           []*instance.Instance
-	eligibleIdx        int
-	setQueuedCalls     []uuid.UUID
-	waitingWithTimer   []instance.Instance
-	waitingWithWebhook []instance.Instance
+	mu                     sync.Mutex
+	runningCount           int
+	ownerCounts            map[uuid.UUID]int
+	queuedCount            int
+	waitingCount           int
+	eligible               []*instance.Instance
+	eligibleIdx            int
+	setQueuedCalls         []uuid.UUID
+	waitingWithTimer       []instance.Instance
+	waitingWithWebhook     []instance.Instance
+	countRunningErr        error
+	countRunningByOwnerErr error
+	nextEligibleErr        error
+	setQueuedErr           error
 }
 
 func newMockQueueRepo() *mockQueueRepo {
@@ -41,13 +45,13 @@ func newMockQueueRepo() *mockQueueRepo {
 func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.runningCount, nil
+	return r.runningCount, r.countRunningErr
 }
 
 func (r *mockQueueRepo) CountRunningByOwner(_ context.Context, ownerID uuid.UUID) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.ownerCounts[ownerID], nil
+	return r.ownerCounts[ownerID], r.countRunningByOwnerErr
 }
 
 func (r *mockQueueRepo) CountQueued(_ context.Context) (int, error) {
@@ -65,6 +69,9 @@ func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error) {
 func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.nextEligibleErr != nil {
+		return nil, r.nextEligibleErr
+	}
 	if r.eligibleIdx >= len(r.eligible) {
 		return nil, nil
 	}
@@ -76,6 +83,9 @@ func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setQueuedErr != nil {
+		return r.setQueuedErr
+	}
 	r.setQueuedCalls = append(r.setQueuedCalls, id)
 	return nil
 }
@@ -93,8 +103,9 @@ func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.In
 }
 
 type mockInstanceRepo struct {
-	mu        sync.Mutex
-	instances map[uuid.UUID]*instance.Instance
+	mu           sync.Mutex
+	instances    map[uuid.UUID]*instance.Instance
+	setFailedErr error
 }
 
 func newMockInstanceRepo() *mockInstanceRepo {
@@ -133,6 +144,9 @@ func (r *mockInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ s
 func (r *mockInstanceRepo) SetFailed(_ context.Context, id uuid.UUID, failedNodeID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setFailedErr != nil {
+		return r.setFailedErr
+	}
 	if inst, ok := r.instances[id]; ok {
 		inst.State = instance.StateFailed
 		inst.FailedNodeID = &failedNodeID
@@ -507,4 +521,206 @@ func TestOnTimerFired_WebhookTimeout_InstanceNotWaiting_NoOp(t *testing.T) {
 	inst := instRepo.instances[id]
 	assert.Equal(t, instance.StateCancelled, inst.State)
 	instRepo.mu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Tests: CanStart error cases
+// ---------------------------------------------------------------------------
+
+func TestCanStart_CountRunningError(t *testing.T) {
+	qr := newMockQueueRepo()
+	qr.countRunningErr = fmt.Errorf("db error")
+
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	_, err := m.CanStart(context.Background(), uuid.New())
+	require.Error(t, err)
+}
+
+func TestCanStart_CountRunningByOwnerError(t *testing.T) {
+	qr := newMockQueueRepo()
+	qr.runningCount = 1
+	qr.countRunningByOwnerErr = fmt.Errorf("db error")
+
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	_, err := m.CanStart(context.Background(), uuid.New())
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Evaluate error cases
+// ---------------------------------------------------------------------------
+
+func TestEvaluate_NextEligibleError(t *testing.T) {
+	qr := newMockQueueRepo()
+	qr.nextEligibleErr = fmt.Errorf("db error")
+
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	err := m.Evaluate(context.Background())
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Enqueue error cases
+// ---------------------------------------------------------------------------
+
+func TestEnqueue_CanStartError(t *testing.T) {
+	qr := newMockQueueRepo()
+	qr.countRunningErr = fmt.Errorf("db error")
+
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	_, err := m.Enqueue(context.Background(), uuid.New(), uuid.New())
+	require.Error(t, err)
+}
+
+func TestEnqueue_StartFails(t *testing.T) {
+	qr := newMockQueueRepo()
+	qr.runningCount = 0
+
+	id := uuid.New()
+	starter := newMockStarter()
+	starter.errOnCall[id] = fmt.Errorf("start failed")
+
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+
+	_, err := m.Enqueue(context.Background(), id, uuid.New())
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: OnTimerFired — TimerTypeDelay
+// ---------------------------------------------------------------------------
+
+func TestOnTimerFired_TimerDelay_EnqueuesAndEvaluates(t *testing.T) {
+	id := uuid.New()
+	nextID := uuid.New()
+
+	instRepo := newMockInstanceRepo()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:    id,
+		State: instance.StateWaiting,
+	}
+	instRepo.mu.Unlock()
+
+	qr := newMockQueueRepo()
+	qr.eligible = []*instance.Instance{
+		{ID: nextID, State: instance.StateQueued},
+	}
+
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+
+	err := m.OnTimerFired(context.Background(), id, queue.TimerTypeDelay)
+	require.NoError(t, err)
+
+	// SetQueued should have been called for the timer-expired instance.
+	qr.mu.Lock()
+	assert.Contains(t, qr.setQueuedCalls, id)
+	qr.mu.Unlock()
+
+	// Evaluate should have started the next eligible instance.
+	calls := starter.getCalls()
+	assert.Contains(t, calls, nextID)
+}
+
+func TestOnTimerFired_TimerDelay_InstanceNotWaiting_NoOp(t *testing.T) {
+	id := uuid.New()
+
+	instRepo := newMockInstanceRepo()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:    id,
+		State: instance.StatePaused,
+	}
+	instRepo.mu.Unlock()
+
+	qr := newMockQueueRepo()
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+
+	err := m.OnTimerFired(context.Background(), id, queue.TimerTypeDelay)
+	require.NoError(t, err)
+
+	qr.mu.Lock()
+	assert.Empty(t, qr.setQueuedCalls)
+	qr.mu.Unlock()
+
+	assert.Empty(t, starter.getCalls())
+}
+
+func TestOnTimerFired_WebhookTimeout_SetFailedError(t *testing.T) {
+	id := uuid.New()
+	token := "webhook-token-789"
+	nodeID := "webhook-node"
+
+	instRepo := newMockInstanceRepo()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:            id,
+		State:         instance.StateWaiting,
+		WebhookToken:  &token,
+		CurrentNodeID: &nodeID,
+	}
+	instRepo.setFailedErr = fmt.Errorf("db write failed")
+	instRepo.mu.Unlock()
+
+	qr := newMockQueueRepo()
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	registry := &mockWebhookRegistry{}
+
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+	m.SetWebhookRegistry(registry)
+
+	err := m.OnTimerFired(context.Background(), id, queue.TimerTypeWebhook)
+	require.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: UpdateConfig
+// ---------------------------------------------------------------------------
+
+func TestUpdateConfig_UpdatesCaps(t *testing.T) {
+	qr := newMockQueueRepo()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	m.UpdateConfig(50, 10)
+
+	// New global cap is 50, running count 30 should be under cap now.
+	qr.mu.Lock()
+	qr.runningCount = 30
+	qr.mu.Unlock()
+	canStart, err := m.CanStart(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.True(t, canStart)
+}
+
+func TestUpdateConfig_UnlimitedCaps(t *testing.T) {
+	qr := newMockQueueRepo()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+
+	m.UpdateConfig(0, 0) // 0 = unlimited
+
+	qr.mu.Lock()
+	qr.runningCount = 9999
+	ownerID := uuid.New()
+	qr.ownerCounts[ownerID] = 9999
+	qr.mu.Unlock()
+
+	canStart, err := m.CanStart(context.Background(), ownerID)
+	require.NoError(t, err)
+	assert.True(t, canStart)
 }

@@ -56,23 +56,28 @@ func (m *Manager) SetWebhookRegistry(reg WebhookRegistryPort) {
 
 // CanStart checks if a given owner can start an instance given current capacity.
 func (m *Manager) CanStart(ctx context.Context, ownerID uuid.UUID) (bool, error) {
+	m.mu.Lock()
+	globalCap := m.config.Queue.GlobalCap
+	perUserCap := m.config.Queue.PerUserCap
+	m.mu.Unlock()
+
 	// Check global cap (skip if 0 = unlimited)
-	if m.config.Queue.GlobalCap > 0 {
+	if globalCap > 0 {
 		running, err := m.queue.CountRunning(ctx)
 		if err != nil {
 			return false, err
 		}
-		if running >= m.config.Queue.GlobalCap {
+		if running >= globalCap {
 			return false, nil
 		}
 	}
 	// Check per-user cap (skip if 0 = unlimited)
-	if m.config.Queue.PerUserCap > 0 {
+	if perUserCap > 0 {
 		userRunning, err := m.queue.CountRunningByOwner(ctx, ownerID)
 		if err != nil {
 			return false, err
 		}
-		if userRunning >= m.config.Queue.PerUserCap {
+		if userRunning >= perUserCap {
 			return false, nil
 		}
 	}
@@ -132,6 +137,8 @@ func (m *Manager) NotifyCapacityFreed(_ context.Context) {
 
 // UpdateConfig updates the queue capacity configuration at runtime.
 func (m *Manager) UpdateConfig(globalCap, perUserCap int) {
+	m.mu.Lock()
 	m.config.Queue.GlobalCap = globalCap
 	m.config.Queue.PerUserCap = perUserCap
+	m.mu.Unlock()
 }

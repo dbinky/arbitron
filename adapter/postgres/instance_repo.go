@@ -262,5 +262,9 @@ func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance
 		UpdatedAt:         fromPgTimestamptz(row.UpdatedAt),
 		CompletedAt:       fromPgTimestamptzPtr(row.CompletedAt),
 		QueuedAt:          fromPgTimestamptzPtr(row.QueuedAt),
+		WaitingUntil:      fromPgTimestamptzPtr(row.WaitingUntil),
+		WebhookToken:      fromPgTextPtr(row.WebhookToken),
+		WebhookSecretHash: fromPgTextPtr(row.WebhookSecretHash),
+		WebhookReceivedAt: fromPgTimestamptzPtr(row.WebhookReceivedAt),
 	}, nil
 }

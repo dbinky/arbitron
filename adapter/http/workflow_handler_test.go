@@ -408,6 +408,34 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, w.Code)
 	})
 
+	t.Run("returns 202 Accepted with state=queued when not started immediately", func(t *testing.T) {
+		repo := newMockWorkflowRepo()
+		repo.workflows["test-wf"] = testWorkflow()
+
+		expectedID := uuid.New()
+		svc := &mockWorkflowService{
+			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+				return expectedID, false, nil // started=false means queued
+			},
+		}
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+
+		body := `{"variables":{"name":"Alice"}}`
+		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
+		req = withChiURLParam(req, "name", "test-wf")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Trigger(w, req)
+
+		assert.Equal(t, http.StatusAccepted, w.Code)
+
+		var resp map[string]any
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, expectedID.String(), resp["instanceId"])
+		assert.Equal(t, "queued", resp["state"])
+	})
+
 	t.Run("returns 500 when service fails with unexpected error", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()

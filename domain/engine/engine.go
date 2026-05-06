@@ -214,6 +214,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	inst, err := e.instances.Get(ctx, instanceID)
 	if err != nil {
+		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -221,6 +222,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
 	if parseErr != nil {
 		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -241,6 +243,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 	if currentNodeID == "" {
 		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.queueManager.NotifyCapacityFreed(context.Background())
 		return
 	}
 
@@ -265,6 +268,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
+			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
@@ -289,6 +293,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
+			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
@@ -308,6 +313,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 			}
+			e.queueManager.NotifyCapacityFreed(context.Background())
 			return
 		}
 
@@ -345,6 +351,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 					}
+					e.queueManager.NotifyCapacityFreed(context.Background())
 					return
 				}
 				// Conditional nodes route via their declared default output port so
@@ -363,6 +370,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 					}
+					e.queueManager.NotifyCapacityFreed(context.Background())
 					return
 				}
 
@@ -405,6 +413,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 				}
+				e.queueManager.NotifyCapacityFreed(context.Background())
 				return
 			}
 
@@ -513,7 +522,10 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 				nodeExec.ScriptExitCode = &result.ScriptExitCode
 			}
 		}
-		_ = e.nodeExecutions.Create(ctx, nodeExec)
+		// Skip writing when the executor itself already wrote the record (IsWait path).
+		if result == nil || !result.IsWait {
+			_ = e.nodeExecutions.Create(ctx, nodeExec)
+		}
 		lastExec = nodeExec
 
 		if err == nil {
@@ -665,7 +677,27 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 			e.queueManager.NotifyCapacityFreed(context.Background())
 			return nil
 		}
-		// No webhook received and no timeout -> go back to waiting.
+		// Check if webhook timeout expired while paused (timer fired, no-oped, is now gone).
+		if inst.WaitingUntil != nil && time.Now().After(*inst.WaitingUntil) {
+			// Deactivate the token so no stale webhook can arrive after this point.
+			if e.webhookRegistry != nil {
+				e.webhookRegistry.Deactivate(*inst.WebhookToken)
+			}
+			failedNodeID := ""
+			if inst.CurrentNodeID != nil {
+				failedNodeID = *inst.CurrentNodeID
+			}
+			if err := e.instances.SetFailed(ctx, instanceID, failedNodeID); err != nil {
+				return fmt.Errorf("failed to fail expired webhook instance on resume: %w", err)
+			}
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "instance.failed",
+				Timestamp: time.Now(),
+				Data:      map[string]any{"reason": "webhook timeout expired while paused"},
+			})
+			return nil
+		}
+		// No webhook received and timeout not expired -> go back to waiting.
 		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
 			return fmt.Errorf("failed to update state: %w", err)
 		}

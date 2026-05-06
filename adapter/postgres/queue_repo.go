@@ -87,12 +87,36 @@ func (r *QueueRepo) SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.T
 	return nil
 }
 
-func (r *QueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error) {
-	// Stub: implemented in Phase 2 Task 5
-	return nil, nil
+func (r *QueueRepo) ListWaitingWithTimer(ctx context.Context) ([]instance.Instance, error) {
+	rows, err := r.queries.ListWaitingWithTimer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing waiting instances with timer: %w", err)
+	}
+	repo := &InstanceRepo{pool: r.pool, queries: r.queries}
+	instances := make([]instance.Instance, 0, len(rows))
+	for _, row := range rows {
+		inst, err := repo.rowToInstance(row)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, *inst)
+	}
+	return instances, nil
 }
 
-func (r *QueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
-	// Stub: implemented in Phase 3 Task 6
-	return nil, nil
+func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Instance, error) {
+	rows, err := r.queries.ListWaitingWithWebhook(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing waiting instances with webhook: %w", err)
+	}
+	repo := &InstanceRepo{pool: r.pool, queries: r.queries}
+	instances := make([]instance.Instance, 0, len(rows))
+	for _, row := range rows {
+		inst, err := repo.rowToInstance(row)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, *inst)
+	}
+	return instances, nil
 }

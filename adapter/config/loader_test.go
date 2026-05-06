@@ -63,6 +63,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, expected.Logging.File, cfg.Logging.File)
 	assert.Equal(t, expected.Tracing.Enabled, cfg.Tracing.Enabled)
 	assert.Equal(t, expected.Tracing.ExportDir, cfg.Tracing.ExportDir)
+	assert.Equal(t, 20, cfg.Queue.GlobalCap, "default GlobalCap must be 20")
+	assert.Equal(t, 5, cfg.Queue.PerUserCap, "default PerUserCap must be 5")
 }
 
 func TestLoad_YAMLOverride(t *testing.T) {
@@ -185,6 +187,23 @@ func TestLoad_AnthropicAPIKeyEnvVar(t *testing.T) {
 	assert.Equal(t, "sk-ant-test-key-123", cfg.LLM.APIKey)
 }
 
+func TestLoad_QueueEnvVarOverride(t *testing.T) {
+	// ARBITRON_QUEUE_GLOBALCAP and ARBITRON_QUEUE_PERUSERCAP should override defaults.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_QUEUE_GLOBALCAP", "50")
+	t.Setenv("ARBITRON_QUEUE_PERUSERCAP", "10")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, 50, cfg.Queue.GlobalCap)
+	assert.Equal(t, 10, cfg.Queue.PerUserCap)
+}
+
 func TestLoad_MalformedYAML(t *testing.T) {
 	// A malformed YAML file should produce an error.
 	tmpDir := t.TempDir()
@@ -279,4 +298,27 @@ func TestLoad_MissingFileCreatesDefault(t *testing.T) {
 	assert.Equal(t, cfg1.LLM, cfg2.LLM)
 	assert.Equal(t, cfg1.Logging, cfg2.Logging)
 	assert.Equal(t, cfg1.Tracing, cfg2.Tracing)
+	assert.Equal(t, cfg1.Queue, cfg2.Queue)
+}
+
+func TestLoad_QueueYAMLOverride(t *testing.T) {
+	// A YAML config file should override queue defaults.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+queue:
+  globalcap: 100
+  perusercap: 25
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, 100, cfg.Queue.GlobalCap, "YAML globalcap must override default 20")
+	assert.Equal(t, 25, cfg.Queue.PerUserCap, "YAML perusercap must override default 5")
 }

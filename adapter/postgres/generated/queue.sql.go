@@ -56,7 +56,7 @@ func (q *Queries) CountWaiting(ctx context.Context) (int64, error) {
 }
 
 const nextEligible = `-- name: NextEligible :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at FROM instances i
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances i
 WHERE i.state = 'queued'
   AND ($1::int = 0 OR (SELECT COUNT(*) FROM instances WHERE state = 'running') < $1)
   AND ($2::int = 0 OR (SELECT COUNT(*) FROM instances WHERE state = 'running' AND owner_id = i.owner_id) < $2)
@@ -93,8 +93,98 @@ func (q *Queries) NextEligible(ctx context.Context, arg NextEligibleParams) (Ins
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.QueuedAt,
+		&i.WaitingUntil,
+		&i.WebhookToken,
+		&i.WebhookSecretHash,
+		&i.WebhookReceivedAt,
 	)
 	return i, err
+}
+
+const listWaitingWithTimer = `-- name: ListWaitingWithTimer :many
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AND webhook_token IS NULL
+`
+
+func (q *Queries) ListWaitingWithTimer(ctx context.Context) ([]Instance, error) {
+	rows, err := q.db.Query(ctx, listWaitingWithTimer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Instance
+	for rows.Next() {
+		var i Instance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.WorkflowName,
+			&i.WorkflowSnapshot,
+			&i.State,
+			&i.Priority,
+			&i.Variables,
+			&i.OriginalVariables,
+			&i.CurrentNodeID,
+			&i.FailedNodeID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.QueuedAt,
+			&i.WaitingUntil,
+			&i.WebhookToken,
+			&i.WebhookSecretHash,
+			&i.WebhookReceivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingWithWebhook = `-- name: ListWaitingWithWebhook :many
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL
+`
+
+func (q *Queries) ListWaitingWithWebhook(ctx context.Context) ([]Instance, error) {
+	rows, err := q.db.Query(ctx, listWaitingWithWebhook)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Instance
+	for rows.Next() {
+		var i Instance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.WorkflowName,
+			&i.WorkflowSnapshot,
+			&i.State,
+			&i.Priority,
+			&i.Variables,
+			&i.OriginalVariables,
+			&i.CurrentNodeID,
+			&i.FailedNodeID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.QueuedAt,
+			&i.WaitingUntil,
+			&i.WebhookToken,
+			&i.WebhookSecretHash,
+			&i.WebhookReceivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setQueued = `-- name: SetQueued :exec

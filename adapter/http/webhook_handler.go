@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -114,7 +115,9 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		nodeExec.Output = payload
 		now := time.Now()
 		nodeExec.CompletedAt = &now
-		_ = h.nodeExecs.Update(r.Context(), nodeExec)
+		if err := h.nodeExecs.Update(r.Context(), nodeExec); err != nil {
+			slog.Error("webhook handler: failed to update node execution output", "instanceID", entry.InstanceID, "error", err)
+		}
 	}
 
 	// 7. Deactivate token in registry.
@@ -125,13 +128,18 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 
 	// 9. Set webhook_received_at on instance.
 	now := time.Now()
-	_ = h.instances.SetWebhookReceived(r.Context(), entry.InstanceID, now)
+	if err := h.instances.SetWebhookReceived(r.Context(), entry.InstanceID, now); err != nil {
+		slog.Error("webhook handler: failed to set webhook received timestamp", "instanceID", entry.InstanceID, "error", err)
+	}
 
 	// 10. Handle state transition.
 	if inst.State == instance.StateWaiting {
 		// Transition to queued.
-		_ = h.queueRepo.SetQueued(r.Context(), entry.InstanceID, now)
-		h.queueMgr.NotifyCapacityFreed(r.Context())
+		if err := h.queueRepo.SetQueued(r.Context(), entry.InstanceID, now); err != nil {
+			slog.Error("webhook handler: failed to transition instance to queued after webhook received", "instanceID", entry.InstanceID, "error", err)
+		} else {
+			h.queueMgr.NotifyCapacityFreed(r.Context())
+		}
 	}
 	// If paused: payload stored, endpoint deactivated. Resume logic handles transition.
 

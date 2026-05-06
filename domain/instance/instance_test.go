@@ -22,10 +22,25 @@ func TestStateWaitingConstant(t *testing.T) {
 }
 
 func TestSentinelErrors(t *testing.T) {
-	assert.NotNil(t, ErrNotQueued)
-	assert.Equal(t, "instance is not queued", ErrNotQueued.Error())
-	assert.NotNil(t, ErrNotWaiting)
-	assert.Equal(t, "instance is not waiting", ErrNotWaiting.Error())
+	tests := []struct {
+		err  error
+		msg  string
+	}{
+		{ErrNotFound, "not found"},
+		{ErrNotRunning, "instance is not running"},
+		{ErrNotPaused, "instance is not paused"},
+		{ErrNotFailed, "instance is not failed"},
+		{ErrNotQueued, "instance is not queued"},
+		{ErrNotWaiting, "instance is not waiting"},
+		{ErrCannotCancel, "instance cannot be cancelled"},
+		{ErrCannotRerun, "instance cannot be rerun"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.msg, func(t *testing.T) {
+			assert.NotNil(t, tc.err)
+			assert.Equal(t, tc.msg, tc.err.Error())
+		})
+	}
 }
 
 func TestPriorityConstants(t *testing.T) {
@@ -74,6 +89,38 @@ func TestInstanceConstruction(t *testing.T) {
 	assert.Equal(t, &nodeID, inst.CurrentNodeID)
 	assert.Nil(t, inst.FailedNodeID)
 	assert.Nil(t, inst.CompletedAt)
+}
+
+func TestInstancePhase2Fields(t *testing.T) {
+	now := time.Now()
+	token := "tok-abc"
+	hash := "sha256-hash"
+	waitUntil := now.Add(30 * time.Second)
+
+	inst := Instance{
+		ID:                uuid.New(),
+		OwnerID:           uuid.New(),
+		WorkflowName:      "webhook-workflow",
+		WorkflowSnapshot:  map[string]any{},
+		State:             StateWaiting,
+		Priority:          PriorityNormal,
+		Variables:         map[string]any{},
+		OriginalVariables: map[string]any{},
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		QueuedAt:          &now,
+		WaitingUntil:      &waitUntil,
+		WebhookToken:      &token,
+		WebhookSecretHash: &hash,
+		WebhookReceivedAt: &now,
+	}
+
+	assert.Equal(t, StateWaiting, inst.State)
+	assert.Equal(t, &now, inst.QueuedAt)
+	assert.Equal(t, &waitUntil, inst.WaitingUntil)
+	assert.Equal(t, &token, inst.WebhookToken)
+	assert.Equal(t, &hash, inst.WebhookSecretHash)
+	assert.Equal(t, &now, inst.WebhookReceivedAt)
 }
 
 func TestInstanceSummaryConstruction(t *testing.T) {

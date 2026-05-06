@@ -201,6 +201,10 @@ type Instance struct {
 	UpdatedAt         pgtype.Timestamptz
 	CompletedAt       pgtype.Timestamptz
 	QueuedAt          pgtype.Timestamptz
+	WaitingUntil      pgtype.Timestamptz
+	WebhookToken      pgtype.Text
+	WebhookSecretHash pgtype.Text
+	WebhookReceivedAt pgtype.Timestamptz
 }
 
 type NodeExecution struct {

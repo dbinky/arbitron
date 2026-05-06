@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -282,7 +283,7 @@ func TestTimerDelayExecutor_RegistersWithScheduler(t *testing.T) {
 	calls := scheduler.getScheduleCalls()
 	require.Len(t, calls, 1)
 	assert.Equal(t, instanceID, calls[0].InstanceID)
-	assert.Equal(t, "timer_delay", calls[0].TimerType)
+	assert.Equal(t, engine.TimerTypeDelay, calls[0].TimerType)
 }
 
 func TestTimerDelayExecutor_NotifiesQueueManager(t *testing.T) {
@@ -974,4 +975,113 @@ func TestTimerDelay_NonNumericDuration_FailsInstance(t *testing.T) {
 	assert.Equal(t, instance.StateFailed, inst.State)
 	require.NotNil(t, inst.FailedNodeID)
 	assert.Equal(t, "timer", *inst.FailedNodeID)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: TimerDelayExecutor error cases
+// ---------------------------------------------------------------------------
+
+func TestTimerDelayExecutor_NoInstanceIDInContext_Fails(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+
+	executor := engine.NewTimerDelayExecutor(instRepo, nodeExecRepo, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "timer-node",
+		Type: workflow.NodeTypeTimerDelay,
+		Config: workflow.NodeConfig{
+			DurationSeconds: "10",
+		},
+	}
+
+	// No instance ID embedded in context.
+	_, err := executor.Execute(context.Background(), node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "instance ID not found in context")
+}
+
+func TestTimerDelayExecutor_SetWaitingFails_ReturnsError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	instRepo.setWaitingErr = fmt.Errorf("db error")
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewTimerDelayExecutor(instRepo, nodeExecRepo, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "timer-node",
+		Type: workflow.NodeTypeTimerDelay,
+		Config: workflow.NodeConfig{
+			DurationSeconds: "10",
+		},
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to set waiting state")
+
+	// Scheduler should NOT have been called (we never reached that step).
+	assert.Empty(t, scheduler.getScheduleCalls())
+}
+
+// TestTimerDelayExecutor_NodeExecCreateFails_StillSchedules verifies that if
+// writing the node execution record fails, the executor still succeeds: SetWaiting
+// already committed, so the scheduler and queue notification must still proceed.
+func TestTimerDelayExecutor_NodeExecCreateFails_StillSchedules(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	nodeExecRepo.createErr = fmt.Errorf("db write failed")
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewTimerDelayExecutor(instRepo, nodeExecRepo, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "timer-node",
+		Type: workflow.NodeTypeTimerDelay,
+		Config: workflow.NodeConfig{
+			DurationSeconds: "10",
+		},
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	result, err := executor.Execute(ctx, node, vars, "test-wf")
+
+	// The error must NOT propagate: SetWaiting already committed.
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsWait)
+
+	// Scheduler must still be called.
+	calls := scheduler.getScheduleCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, instanceID, calls[0].InstanceID)
+
+	// Instance state should be waiting.
+	inst := instRepo.get(instanceID)
+	assert.Equal(t, instance.StateWaiting, inst.State)
 }

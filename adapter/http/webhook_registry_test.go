@@ -75,6 +75,35 @@ func TestRegistry_ActiveCount_AfterDeactivation(t *testing.T) {
 	assert.Equal(t, 1, reg.ActiveCount())
 }
 
+func TestRegistry_Register_OverwritesSameToken(t *testing.T) {
+	// Re-registering the same token (crash recovery path) must overwrite
+	// the previous entry, not accumulate duplicates.
+	reg := adapthttp.NewWebhookRegistry()
+	id1 := uuid.New()
+	id2 := uuid.New()
+
+	reg.Register("token-reuse", id1, "node-old", nil)
+	reg.Register("token-reuse", id2, "node-new", nil)
+
+	entry, ok := reg.Lookup("token-reuse")
+	require.True(t, ok)
+	assert.Equal(t, id2, entry.InstanceID, "re-registration must overwrite the previous entry")
+	assert.Equal(t, "node-new", entry.NodeID)
+	assert.Equal(t, 1, reg.ActiveCount(), "overwrite must not increase count")
+}
+
+func TestRegistry_Lookup_NoSecretHash(t *testing.T) {
+	reg := adapthttp.NewWebhookRegistry()
+	instanceID := uuid.New()
+
+	reg.Register("no-secret-token", instanceID, "node-x", nil)
+
+	entry, ok := reg.Lookup("no-secret-token")
+	require.True(t, ok)
+	assert.Equal(t, instanceID, entry.InstanceID)
+	assert.Nil(t, entry.SecretHash)
+}
+
 func TestRegistry_ConcurrentAccess(t *testing.T) {
 	reg := adapthttp.NewWebhookRegistry()
 	const goroutines = 100

@@ -3,6 +3,9 @@ package http_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,8 +28,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockWebhookInstanceRepo struct {
-	mu        sync.Mutex
-	instances map[uuid.UUID]*instance.Instance
+	mu                     sync.Mutex
+	instances              map[uuid.UUID]*instance.Instance
+	setWebhookReceivedErr  error
 }
 
 func newMockWebhookInstanceRepo() *mockWebhookInstanceRepo {
@@ -82,6 +86,9 @@ func (r *mockWebhookInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUI
 func (r *mockWebhookInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, receivedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.setWebhookReceivedErr != nil {
+		return r.setWebhookReceivedErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		return fmt.Errorf("instance not found: %s", id)
@@ -623,4 +630,171 @@ func TestWebhookHandler_TriggersQueueEvaluation(t *testing.T) {
 	queueMgr.mu.Lock()
 	assert.Equal(t, 1, queueMgr.calls)
 	queueMgr.mu.Unlock()
+}
+
+func TestWebhookHandler_ValidSecret_200(t *testing.T) {
+	// Happy path: correct X-Webhook-Secret header passes HMAC validation.
+	registry := adapthttp.NewWebhookRegistry()
+	instRepo := newMockWebhookInstanceRepo()
+	nodeExecRepo := newMockWebhookNodeExecRepo()
+	scheduler := &mockWebhookScheduler{}
+	queueRepo := &mockWebhookQueueRepo{}
+	queueMgr := &mockWebhookQueueNotifier{}
+
+	instanceID := uuid.New()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateWaiting,
+	}
+
+	token := "hmac-test-token"
+	secret := "my-secret"
+	// Compute the expected hash the same way the executor does: HMAC(key=token, msg=secret).
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte(secret))
+	secretHash := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	registry.Register(token, instanceID, "webhook-node", &secretHash)
+
+	nodeExecRepo.Create(context.Background(), &instance.NodeExecution{
+		ID:         uuid.New(),
+		InstanceID: instanceID,
+		NodeID:     "webhook-node",
+		Status:     instance.NodeStatusSucceeded,
+		StartedAt:  time.Now(),
+	})
+
+	handler := adapthttp.NewWebhookHandler(registry, instRepo, nodeExecRepo, scheduler, queueRepo, queueMgr)
+
+	rr := makeWebhookRequest(handler, token, nil, map[string]string{"X-Webhook-Secret": secret})
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	queueRepo.mu.Lock()
+	assert.Contains(t, queueRepo.setQueuedCalls, instanceID, "should transition to queued on valid secret")
+	queueRepo.mu.Unlock()
+}
+
+func TestWebhookHandler_NodeExecNotFound_StillSucceeds(t *testing.T) {
+	// If no node execution record exists for this node, the payload update is
+	// skipped but the webhook still succeeds (the exec record is supplementary).
+	registry := adapthttp.NewWebhookRegistry()
+	instRepo := newMockWebhookInstanceRepo()
+	nodeExecRepo := newMockWebhookNodeExecRepo()
+	scheduler := &mockWebhookScheduler{}
+	queueRepo := &mockWebhookQueueRepo{}
+	queueMgr := &mockWebhookQueueNotifier{}
+
+	instanceID := uuid.New()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateWaiting,
+	}
+
+	token := "no-exec-token"
+	registry.Register(token, instanceID, "webhook-node", nil)
+	// No node execution record created.
+
+	handler := adapthttp.NewWebhookHandler(registry, instRepo, nodeExecRepo, scheduler, queueRepo, queueMgr)
+
+	rr := makeWebhookRequest(handler, token, []byte(`{"data": "ok"}`), nil)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	queueRepo.mu.Lock()
+	assert.Contains(t, queueRepo.setQueuedCalls, instanceID)
+	queueRepo.mu.Unlock()
+}
+
+func TestWebhookHandler_SetQueuedError_LogsButReturns200(t *testing.T) {
+	// If SetQueued fails, the error is logged but 200 is still returned
+	// (the webhook was accepted; the state transition failure is an infra issue).
+	registry := adapthttp.NewWebhookRegistry()
+	instRepo := newMockWebhookInstanceRepo()
+	nodeExecRepo := newMockWebhookNodeExecRepo()
+	scheduler := &mockWebhookScheduler{}
+	queueMgr := &mockWebhookQueueNotifier{}
+
+	// Use a queue repo that fails on SetQueued.
+	failingQueueRepo := &mockFailingQueueRepo{}
+
+	instanceID := uuid.New()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateWaiting,
+	}
+
+	token := "set-queued-fail-token"
+	registry.Register(token, instanceID, "webhook-node", nil)
+
+	handler := adapthttp.NewWebhookHandler(registry, instRepo, nodeExecRepo, scheduler, failingQueueRepo, queueMgr)
+
+	rr := makeWebhookRequest(handler, token, nil, nil)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Queue NOT notified because SetQueued failed.
+	queueMgr.mu.Lock()
+	assert.Equal(t, 0, queueMgr.calls)
+	queueMgr.mu.Unlock()
+
+	// Token still deactivated (webhook was received).
+	_, ok := registry.Lookup(token)
+	assert.False(t, ok)
+}
+
+// mockFailingQueueRepo fails on SetQueued.
+type mockFailingQueueRepo struct{ mockWebhookQueueRepo }
+
+func (r *mockFailingQueueRepo) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return fmt.Errorf("db write failed")
+}
+
+func TestWebhookHandler_InstanceGetFails_404(t *testing.T) {
+	// Registry lookup succeeds but instances.Get fails (e.g., DB down after registration).
+	// Handler must return 404.
+	registry := adapthttp.NewWebhookRegistry()
+	instRepo := newMockWebhookInstanceRepo() // empty — Get will fail
+	nodeExecRepo := newMockWebhookNodeExecRepo()
+	scheduler := &mockWebhookScheduler{}
+	queueRepo := &mockWebhookQueueRepo{}
+	queueMgr := &mockWebhookQueueNotifier{}
+
+	// Register a token for an instance that is NOT in the repo.
+	missingID := uuid.New()
+	token := "ghost-instance-token"
+	registry.Register(token, missingID, "webhook-node", nil)
+
+	handler := adapthttp.NewWebhookHandler(registry, instRepo, nodeExecRepo, scheduler, queueRepo, queueMgr)
+
+	rr := makeWebhookRequest(handler, token, nil, nil)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestWebhookHandler_SetWebhookReceivedFails_StillReturns200(t *testing.T) {
+	// SetWebhookReceived failure is logged but the webhook response is still 200
+	// (the webhook was accepted; the timestamp is advisory).
+	registry := adapthttp.NewWebhookRegistry()
+	instRepo := newMockWebhookInstanceRepo()
+	instRepo.setWebhookReceivedErr = fmt.Errorf("db write failed")
+	nodeExecRepo := newMockWebhookNodeExecRepo()
+	scheduler := &mockWebhookScheduler{}
+	queueRepo := &mockWebhookQueueRepo{}
+	queueMgr := &mockWebhookQueueNotifier{}
+
+	instanceID := uuid.New()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateWaiting,
+	}
+
+	token := "recv-fail-token"
+	registry.Register(token, instanceID, "webhook-node", nil)
+
+	handler := adapthttp.NewWebhookHandler(registry, instRepo, nodeExecRepo, scheduler, queueRepo, queueMgr)
+
+	rr := makeWebhookRequest(handler, token, nil, nil)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// SetQueued should still have been called (state transition proceeds despite SetWebhookReceived failure).
+	queueRepo.mu.Lock()
+	assert.Contains(t, queueRepo.setQueuedCalls, instanceID)
+	queueRepo.mu.Unlock()
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -212,7 +213,7 @@ func TestWebhookWaitExecutor_TimeoutParsing(t *testing.T) {
 	calls := scheduler.getScheduleCalls()
 	require.Len(t, calls, 1)
 	assert.Equal(t, instanceID, calls[0].InstanceID)
-	assert.Equal(t, "webhook_timeout", calls[0].TimerType)
+	assert.Equal(t, engine.TimerTypeWebhook, calls[0].TimerType)
 	expected := before.Add(60 * time.Second)
 	assert.WithinDuration(t, expected, calls[0].WaitingUntil, 2*time.Second)
 }
@@ -626,4 +627,145 @@ func TestResume_WebhookPaused_NotReceived_GoesToWaiting(t *testing.T) {
 
 	inst := f.instanceRepo.get(id)
 	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: WebhookWaitExecutor error cases
+// ---------------------------------------------------------------------------
+
+func TestWebhookWaitExecutor_NoInstanceIDInContext_Fails(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+	registry := &mockWebhookRegistrar{}
+
+	executor := engine.NewWebhookWaitExecutor(instRepo, nodeExecRepo, registry, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "webhook-node",
+		Type: workflow.NodeTypeWebhookWait,
+	}
+
+	_, err := executor.Execute(context.Background(), node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "instance ID not found in context")
+}
+
+func TestWebhookWaitExecutor_SetWebhookFieldsFails_ReturnsError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	instRepo.setWebhookFieldsErr = fmt.Errorf("db error")
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+	registry := &mockWebhookRegistrar{}
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewWebhookWaitExecutor(instRepo, nodeExecRepo, registry, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "webhook-node",
+		Type: workflow.NodeTypeWebhookWait,
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting webhook fields")
+
+	// Instance should NOT be in waiting state (SetWebhookFields fails before SetWaiting).
+	inst := instRepo.get(instanceID)
+	assert.Equal(t, instance.StateRunning, inst.State)
+
+	// Registry should NOT have been called.
+	assert.Empty(t, registry.getRegisterCalls())
+}
+
+func TestWebhookWaitExecutor_SetWaitingFails_RollsBackWebhookFields(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	instRepo.setWaitingErr = fmt.Errorf("db error")
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+	registry := &mockWebhookRegistrar{}
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewWebhookWaitExecutor(instRepo, nodeExecRepo, registry, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "webhook-node",
+		Type: workflow.NodeTypeWebhookWait,
+		Config: workflow.NodeConfig{
+			WaitTimeoutSeconds: "60",
+		},
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting waiting state")
+
+	// Webhook fields should have been rolled back (token cleared).
+	inst := instRepo.get(instanceID)
+	assert.Nil(t, inst.WebhookToken, "webhook token should be cleared on rollback")
+	assert.Equal(t, instance.StateRunning, inst.State)
+}
+
+// TestWebhookWaitExecutor_NodeExecCreateFails_ReturnsError verifies that a
+// nodeExecs.Create failure propagates as an error. Unlike the timer executor,
+// this happens before SetWaiting, so the instance remains running and the
+// engine can safely call SetFailed.
+func TestWebhookWaitExecutor_NodeExecCreateFails_ReturnsError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	nodeExecRepo.createErr = fmt.Errorf("db write failed")
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+	registry := &mockWebhookRegistrar{}
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewWebhookWaitExecutor(instRepo, nodeExecRepo, registry, scheduler, qm)
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "webhook-node",
+		Type: workflow.NodeTypeWebhookWait,
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating node execution")
+
+	// Instance must still be running — the engine will call SetFailed.
+	inst := instRepo.get(instanceID)
+	assert.Equal(t, instance.StateRunning, inst.State)
+
+	// Registry and scheduler must not have been called.
+	assert.Empty(t, registry.getRegisterCalls())
+	assert.Empty(t, scheduler.getScheduleCalls())
 }

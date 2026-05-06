@@ -24,6 +24,12 @@ ORDER BY
   i.queued_at ASC
 LIMIT 1;
 
+-- name: ListWaitingWithTimer :many
+SELECT * FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AND webhook_token IS NULL;
+
+-- name: ListWaitingWithWebhook :many
+SELECT * FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL;
+
 -- name: SetQueued :exec
 UPDATE instances SET state = 'queued', queued_at = $2, updated_at = now() WHERE id = $1;
 

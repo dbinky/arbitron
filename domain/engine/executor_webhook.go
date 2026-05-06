@@ -82,7 +82,7 @@ func (e *WebhookWaitExecutor) Execute(ctx context.Context, node workflow.Node, v
 		deadline = &d
 	}
 
-	// 4. Write node execution record.
+	// 4. Write node execution record (instance still running — safe to return error if this fails).
 	webhookURL := fmt.Sprintf("/api/v1/webhooks/wait/%s", token)
 	now := time.Now()
 	exec := &instance.NodeExecution{
@@ -99,32 +99,37 @@ func (e *WebhookWaitExecutor) Execute(ctx context.Context, node workflow.Node, v
 		return nil, fmt.Errorf("creating node execution: %w", err)
 	}
 
-	// 5. Transition instance to waiting, store token and secret hash.
-	if deadline != nil {
-		if err := e.instances.SetWaiting(ctx, instanceID, deadline); err != nil {
-			return nil, fmt.Errorf("setting waiting state: %w", err)
-		}
-	} else {
-		// No timeout: transition to waiting without a deadline.
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
-			return nil, fmt.Errorf("setting waiting state: %w", err)
-		}
-	}
+	// 5. Store webhook fields before transitioning to waiting. This order ensures
+	// that if SetWaiting succeeds but SetWebhookFields fails, the instance is not
+	// stuck in waiting with no token (ListWaitingWithWebhook filters by non-null token).
 	if err := e.instances.SetWebhookFields(ctx, instanceID, &token, secretHash); err != nil {
 		return nil, fmt.Errorf("setting webhook fields: %w", err)
 	}
 
-	// 6. Register with webhook registry.
-	e.registry.Register(token, instanceID, node.ID, secretHash)
-
-	// 7. If timeout configured, register with scheduler.
-	if deadline != nil {
-		e.scheduler.Schedule(instanceID, *deadline, "webhook_timeout")
+	// 6. Transition instance to waiting, committing the capacity release.
+	setWaitingErr := func() error {
+		if deadline != nil {
+			return e.instances.SetWaiting(ctx, instanceID, deadline)
+		}
+		return e.instances.UpdateState(ctx, instanceID, instance.StateWaiting)
+	}()
+	if setWaitingErr != nil {
+		// Roll back webhook fields so the instance doesn't retain a stale token.
+		_ = e.instances.SetWebhookFields(ctx, instanceID, nil, nil)
+		return nil, fmt.Errorf("setting waiting state: %w", setWaitingErr)
 	}
 
-	// 8. Notify queue manager (capacity freed).
+	// 7. Register with webhook registry.
+	e.registry.Register(token, instanceID, node.ID, secretHash)
+
+	// 8. If timeout configured, register with scheduler.
+	if deadline != nil {
+		e.scheduler.Schedule(instanceID, *deadline, TimerTypeWebhook)
+	}
+
+	// 9. Notify queue manager (capacity freed).
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
-	// 9. Return wait result.
+	// 10. Return wait result.
 	return &NodeResult{IsWait: true}, nil
 }

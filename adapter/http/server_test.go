@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -340,4 +341,257 @@ func TestRouter_NotFound(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Queue config endpoints
+// ---------------------------------------------------------------------------
+
+func TestRouter_GetConfig_IncludesQueueSection(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, _ := newRouterTestDeps()
+	// Use a queue repo that returns non-zero counts.
+	qr := &mockCountingQueueRepo{running: 3, queued: 5, waiting: 2}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, &mockQueueManagerForRouter{}, qr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	queue, ok := resp["queue"].(map[string]any)
+	require.True(t, ok, "queue section must be present")
+	assert.Equal(t, float64(20), queue["globalCap"])
+	assert.Equal(t, float64(5), queue["perUserCap"])
+	assert.Equal(t, float64(3), queue["runningCount"])
+	assert.Equal(t, float64(5), queue["queuedCount"])
+	assert.Equal(t, float64(2), queue["waitingCount"])
+}
+
+func TestRouter_UpdateQueueConfig_UpdatesBothCaps(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
+	qm := &mockCapturingQueueManager{}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	body := `{"globalCap":30,"perUserCap":10}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, float64(30), resp["globalCap"])
+	assert.Equal(t, float64(10), resp["perUserCap"])
+
+	qm.mu.Lock()
+	assert.Equal(t, 30, qm.lastGlobalCap)
+	assert.Equal(t, 10, qm.lastPerUserCap)
+	qm.mu.Unlock()
+}
+
+func TestRouter_UpdateQueueConfig_CapRaised_TriggersEvaluate(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
+	evaluateCh := make(chan struct{}, 1)
+	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
+	cfg.Queue.GlobalCap = 20 // old cap
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	// Raise cap from 20 → 30.
+	body := `{"globalCap":30}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	select {
+	case <-evaluateCh:
+		// Evaluate was called — correct.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Evaluate was not called after cap was raised")
+	}
+}
+
+func TestRouter_UpdateQueueConfig_NegativeCap_400(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	body := `{"globalCap":-1}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRouter_UpdateQueueConfig_InvalidBody_400(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	body := `{not json`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRouter_InstanceRoutes_SetPriority(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	inst := &instance.Instance{
+		ID:           uuid.New(),
+		State:        instance.StateQueued,
+		Priority:     instance.PriorityNormal,
+		Variables:    map[string]any{},
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	instRepo.instances[inst.ID] = inst
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	body := `{"priority":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances/"+inst.ID.String()+"/priority", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "priority_updated", resp["status"])
+}
+
+// ---------------------------------------------------------------------------
+// Additional mocks for queue config tests
+// ---------------------------------------------------------------------------
+
+type mockCountingQueueRepo struct {
+	mockQueueRepoForRouter
+	running int
+	queued  int
+	waiting int
+}
+
+func (r *mockCountingQueueRepo) CountRunning(_ context.Context) (int, error)  { return r.running, nil }
+func (r *mockCountingQueueRepo) CountQueued(_ context.Context) (int, error)   { return r.queued, nil }
+func (r *mockCountingQueueRepo) CountWaiting(_ context.Context) (int, error)  { return r.waiting, nil }
+
+type mockCapturingQueueManager struct {
+	mu             sync.Mutex
+	lastGlobalCap  int
+	lastPerUserCap int
+	evaluateCh     chan struct{}
+}
+
+func (m *mockCapturingQueueManager) UpdateConfig(globalCap, perUserCap int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastGlobalCap = globalCap
+	m.lastPerUserCap = perUserCap
+}
+
+func (m *mockCapturingQueueManager) Evaluate(_ context.Context) error {
+	if m.evaluateCh != nil {
+		select {
+		case m.evaluateCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func TestRouter_UpdateQueueConfig_OnlyPerUserCap_PartialUpdate(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
+	qm := &mockCapturingQueueManager{}
+	cfg.Queue.GlobalCap = 20
+	cfg.Queue.PerUserCap = 5
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	// Update only perUserCap — globalCap should stay at 20.
+	body := `{"perUserCap":15}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, float64(20), resp["globalCap"], "globalCap should remain unchanged")
+	assert.Equal(t, float64(15), resp["perUserCap"])
+
+	qm.mu.Lock()
+	assert.Equal(t, 20, qm.lastGlobalCap, "globalCap passed to UpdateConfig must be unchanged")
+	assert.Equal(t, 15, qm.lastPerUserCap)
+	qm.mu.Unlock()
+}
+
+func TestRouter_UpdateQueueConfig_CapLowered_NoEvaluate(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
+	evaluateCh := make(chan struct{}, 1)
+	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
+	cfg.Queue.GlobalCap = 30 // old cap — higher than new
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	// Lower cap from 30 → 10 — should NOT trigger Evaluate.
+	body := `{"globalCap":10}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Give any goroutine a brief window to fire (it shouldn't).
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-evaluateCh:
+		t.Fatal("Evaluate must NOT be called when cap is lowered")
+	default:
+		// Correct: evaluate was not called.
+	}
+}
+
+func TestRouter_GetConfig_ReflectsUpdatedQueueCaps(t *testing.T) {
+	// PUT /system/config/queue must update the values returned by GET /system/config.
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
+	qm := &mockCapturingQueueManager{}
+	cfg.Queue.GlobalCap = 20
+	cfg.Queue.PerUserCap = 5
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr)
+
+	// Confirm initial GET values.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+	require.Equal(t, http.StatusOK, getW.Code)
+	var before map[string]any
+	require.NoError(t, json.NewDecoder(getW.Body).Decode(&before))
+	assert.Equal(t, float64(20), before["queue"].(map[string]any)["globalCap"])
+	assert.Equal(t, float64(5), before["queue"].(map[string]any)["perUserCap"])
+
+	// Update both caps.
+	putBody := `{"globalCap":50,"perUserCap":15}`
+	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(putBody))
+	putReq.Header.Set("Content-Type", "application/json")
+	putW := httptest.NewRecorder()
+	router.ServeHTTP(putW, putReq)
+	require.Equal(t, http.StatusOK, putW.Code)
+
+	// GET must now return the updated caps.
+	getReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	getW2 := httptest.NewRecorder()
+	router.ServeHTTP(getW2, getReq2)
+	require.Equal(t, http.StatusOK, getW2.Code)
+	var after map[string]any
+	require.NoError(t, json.NewDecoder(getW2.Body).Decode(&after))
+	assert.Equal(t, float64(50), after["queue"].(map[string]any)["globalCap"], "globalCap must reflect PUT update")
+	assert.Equal(t, float64(15), after["queue"].(map[string]any)["perUserCap"], "perUserCap must reflect PUT update")
 }

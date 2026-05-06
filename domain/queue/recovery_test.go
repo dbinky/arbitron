@@ -2,14 +2,13 @@ package queue_test
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/queue"
-	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,68 +161,57 @@ func TestRecoverTimers_TriggersEvaluation(t *testing.T) {
 	assert.Contains(t, calls, eligibleID)
 }
 
+// TestRecoverTimers_WebhookInstanceNotInList verifies the DB-level fix (DB-002):
+// ListWaitingWithTimer excludes instances with webhook_token set. This test
+// ensures that RecoverTimers correctly handles an empty timer list even when
+// webhook-wait instances exist (they are handled exclusively by RecoverWebhooks).
+func TestRecoverTimers_WebhookInstanceNotInList(t *testing.T) {
+	qr := newMockQueueRepo()
+	// Deliberately empty: the DB query filters out webhook instances.
+	// A webhook-wait instance with past-due timeout is NOT returned here.
+	qr.waitingWithTimer = []instance.Instance{}
+
+	instRepo := newMockInstanceRepo()
+	pastDue := time.Now().Add(-2 * time.Minute)
+	token := "wh-token-excluded"
+	id := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StateWaiting,
+		WebhookToken: &token,
+		WaitingUntil: &pastDue,
+	}
+	instRepo.mu.Unlock()
+
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	err := m.RecoverTimers(context.Background(), scheduler)
+	require.NoError(t, err)
+
+	// Webhook instance must NOT be queued by RecoverTimers.
+	qr.mu.Lock()
+	assert.NotContains(t, qr.setQueuedCalls, id, "webhook instance must not be queued by RecoverTimers")
+	qr.mu.Unlock()
+
+	// Instance must still be in waiting state.
+	inst, _ := instRepo.Get(context.Background(), id)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
 // ---------------------------------------------------------------------------
 // Tests: RecoverWebhooks
 // ---------------------------------------------------------------------------
-
-// mockNodeExecRepoForRecovery implements instance.NodeExecutionRepository for recovery tests.
-type mockNodeExecRepoForRecovery struct {
-	executions map[string]*instance.NodeExecution // keyed by instanceID:nodeID
-}
-
-func newMockNodeExecRepoForRecovery() *mockNodeExecRepoForRecovery {
-	return &mockNodeExecRepoForRecovery{executions: make(map[string]*instance.NodeExecution)}
-}
-
-func (r *mockNodeExecRepoForRecovery) Create(_ context.Context, exec *instance.NodeExecution) error {
-	key := exec.InstanceID.String() + ":" + exec.NodeID
-	r.executions[key] = exec
-	return nil
-}
-
-func (r *mockNodeExecRepoForRecovery) Update(_ context.Context, exec *instance.NodeExecution) error {
-	key := exec.InstanceID.String() + ":" + exec.NodeID
-	r.executions[key] = exec
-	return nil
-}
-
-func (r *mockNodeExecRepoForRecovery) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.NodeExecution, error) {
-	var result []instance.NodeExecution
-	for _, e := range r.executions {
-		if e.InstanceID == instanceID {
-			result = append(result, *e)
-		}
-	}
-	return result, nil
-}
-
-func (r *mockNodeExecRepoForRecovery) GetByInstanceAndNode(_ context.Context, instanceID uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
-	key := instanceID.String() + ":" + nodeID
-	exec, ok := r.executions[key]
-	if !ok {
-		return nil, nil
-	}
-	return exec, nil
-}
-
-func makeWebhookSnapshot(nodeID string, timeoutSeconds string) map[string]any {
-	wf := workflow.Workflow{
-		Name: "test-wf",
-		Nodes: []workflow.Node{
-			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: nodeID, Type: workflow.NodeTypeWebhookWait, Config: workflow.NodeConfig{WaitTimeoutSeconds: timeoutSeconds}},
-			{ID: "next", Type: workflow.NodeTypeTransform},
-		},
-		Edges: []workflow.Edge{
-			{Source: "entry", Target: nodeID},
-			{Source: nodeID, Target: "next"},
-		},
-	}
-	wfBytes, _ := json.Marshal(wf)
-	var snapshot map[string]any
-	_ = json.Unmarshal(wfBytes, &snapshot)
-	return snapshot
-}
 
 func TestRecoverWebhooks_ReRegistersToken(t *testing.T) {
 	id := uuid.New()
@@ -233,11 +221,11 @@ func TestRecoverWebhooks_ReRegistersToken(t *testing.T) {
 	qr := newMockQueueRepo()
 	qr.waitingWithWebhook = []instance.Instance{
 		{
-			ID:               id,
-			State:            instance.StateWaiting,
-			WebhookToken:     &token,
-			CurrentNodeID:    &nodeID,
-			WorkflowSnapshot: makeWebhookSnapshot(nodeID, ""),
+			ID:            id,
+			State:         instance.StateWaiting,
+			WebhookToken:  &token,
+			CurrentNodeID: &nodeID,
+			WaitingUntil:  nil, // no timeout
 		},
 	}
 
@@ -245,7 +233,6 @@ func TestRecoverWebhooks_ReRegistersToken(t *testing.T) {
 	starter := newMockStarter()
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
 	registry := &mockWebhookRegistry{}
-	nodeExecRepo := newMockNodeExecRepoForRecovery()
 
 	m := queue.NewManager(qr, instRepo, cfg, starter)
 	m.SetWebhookRegistry(registry)
@@ -257,7 +244,7 @@ func TestRecoverWebhooks_ReRegistersToken(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler, nodeExecRepo)
+	err := m.RecoverWebhooks(ctx, scheduler)
 	require.NoError(t, err)
 
 	// Token should be re-registered.
@@ -270,15 +257,16 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	id := uuid.New()
 	token := "recover-token-timeout"
 	nodeID := "webhook-node"
+	pastDue := time.Now().Add(-2 * time.Minute)
 
 	qr := newMockQueueRepo()
 	qr.waitingWithWebhook = []instance.Instance{
 		{
-			ID:               id,
-			State:            instance.StateWaiting,
-			WebhookToken:     &token,
-			CurrentNodeID:    &nodeID,
-			WorkflowSnapshot: makeWebhookSnapshot(nodeID, "60"), // 60 second timeout
+			ID:            id,
+			State:         instance.StateWaiting,
+			WebhookToken:  &token,
+			CurrentNodeID: &nodeID,
+			WaitingUntil:  &pastDue, // expired during downtime
 		},
 	}
 
@@ -294,16 +282,6 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	starter := newMockStarter()
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
 	registry := &mockWebhookRegistry{}
-	nodeExecRepo := newMockNodeExecRepoForRecovery()
-
-	// Node execution started 2 minutes ago (timeout of 60s => expired).
-	startedAt := time.Now().Add(-2 * time.Minute)
-	nodeExecRepo.executions[id.String()+":"+nodeID] = &instance.NodeExecution{
-		ID:         uuid.New(),
-		InstanceID: id,
-		NodeID:     nodeID,
-		StartedAt:  startedAt,
-	}
 
 	m := queue.NewManager(qr, instRepo, cfg, starter)
 	m.SetWebhookRegistry(registry)
@@ -315,7 +293,7 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler, nodeExecRepo)
+	err := m.RecoverWebhooks(ctx, scheduler)
 	require.NoError(t, err)
 
 	// Token should be deactivated.
@@ -330,19 +308,155 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	instRepo.mu.Unlock()
 }
 
-func TestRecoverWebhooks_TimeoutPending_RegistersWithScheduler(t *testing.T) {
+func TestRecoverTimers_NilWaitingUntil_Skipped(t *testing.T) {
+	id := uuid.New()
+	qr := newMockQueueRepo()
+	qr.waitingWithTimer = []instance.Instance{
+		{ID: id, State: instance.StateWaiting, WaitingUntil: nil}, // nil — should be skipped
+	}
+
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	err := m.RecoverTimers(context.Background(), scheduler)
+	require.NoError(t, err)
+
+	qr.mu.Lock()
+	assert.Empty(t, qr.setQueuedCalls, "nil WaitingUntil should be skipped")
+	qr.mu.Unlock()
+	assert.Equal(t, 0, scheduler.Pending())
+}
+
+func TestRecoverTimers_SetQueuedError_ContinuesAndNoError(t *testing.T) {
+	pastID := uuid.New()
+	futureID := uuid.New()
+	pastDue := time.Now().Add(-time.Minute)
+	future := time.Now().Add(time.Hour)
+
+	qr := newMockQueueRepo()
+	qr.waitingWithTimer = []instance.Instance{
+		{ID: pastID, State: instance.StateWaiting, WaitingUntil: &pastDue},
+		{ID: futureID, State: instance.StateWaiting, WaitingUntil: &future},
+	}
+	// SetQueued fails — past-due re-queue attempt fails.
+	qr.setQueuedErr = fmt.Errorf("db error")
+
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	// RecoverTimers should return no error (SetQueued errors are logged, not propagated).
+	err := m.RecoverTimers(context.Background(), scheduler)
+	require.NoError(t, err)
+
+	// Future timer should still have been registered with scheduler.
+	assert.Equal(t, 1, scheduler.Pending())
+}
+
+func TestRecoverWebhooks_NilToken_Skipped(t *testing.T) {
+	id := uuid.New()
+	nodeID := "webhook-node"
+	qr := newMockQueueRepo()
+	qr.waitingWithWebhook = []instance.Instance{
+		{ID: id, State: instance.StateWaiting, WebhookToken: nil, CurrentNodeID: &nodeID},
+	}
+
+	registry := &mockWebhookRegistry{}
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+	m.SetWebhookRegistry(registry)
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	err := m.RecoverWebhooks(ctx, scheduler)
+	require.NoError(t, err)
+
+	registry.mu.Lock()
+	assert.Empty(t, registry.registerCalls, "nil token should be skipped")
+	registry.mu.Unlock()
+}
+
+func TestRecoverWebhooks_NoTimeout_OnlyReRegisters(t *testing.T) {
+	id := uuid.New()
+	token := "no-timeout-token"
+	nodeID := "webhook-node"
+
+	qr := newMockQueueRepo()
+	// Webhook wait with no WaitingUntil — no timeout configured.
+	qr.waitingWithWebhook = []instance.Instance{
+		{
+			ID:            id,
+			State:         instance.StateWaiting,
+			WebhookToken:  &token,
+			CurrentNodeID: &nodeID,
+			WaitingUntil:  nil, // no timeout
+		},
+	}
+
+	registry := &mockWebhookRegistry{}
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+
+	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+	m.SetWebhookRegistry(registry)
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	err := m.RecoverWebhooks(ctx, scheduler)
+	require.NoError(t, err)
+
+	// Token should be re-registered but no scheduler timer (no timeout).
+	registry.mu.Lock()
+	assert.Contains(t, registry.registerCalls, token)
+	assert.Empty(t, registry.deactivateCalls)
+	registry.mu.Unlock()
+	assert.Equal(t, 0, scheduler.Pending())
+}
+
+// TestRecoverWebhooks_PendingTimeout_RegistersWithScheduler verifies that an
+// instance with WaitingUntil in the future re-registers both the webhook token
+// and the timeout timer.
+func TestRecoverWebhooks_PendingTimeout_RegistersWithScheduler(t *testing.T) {
 	id := uuid.New()
 	token := "recover-token-pending"
 	nodeID := "webhook-node"
+	future := time.Now().Add(1 * time.Hour) // timeout still pending
 
 	qr := newMockQueueRepo()
 	qr.waitingWithWebhook = []instance.Instance{
 		{
-			ID:               id,
-			State:            instance.StateWaiting,
-			WebhookToken:     &token,
-			CurrentNodeID:    &nodeID,
-			WorkflowSnapshot: makeWebhookSnapshot(nodeID, "3600"), // 1 hour timeout
+			ID:            id,
+			State:         instance.StateWaiting,
+			WebhookToken:  &token,
+			CurrentNodeID: &nodeID,
+			WaitingUntil:  &future,
 		},
 	}
 
@@ -350,16 +464,6 @@ func TestRecoverWebhooks_TimeoutPending_RegistersWithScheduler(t *testing.T) {
 	starter := newMockStarter()
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
 	registry := &mockWebhookRegistry{}
-	nodeExecRepo := newMockNodeExecRepoForRecovery()
-
-	// Node execution started 5 seconds ago (timeout of 3600s => still pending).
-	startedAt := time.Now().Add(-5 * time.Second)
-	nodeExecRepo.executions[id.String()+":"+nodeID] = &instance.NodeExecution{
-		ID:         uuid.New(),
-		InstanceID: id,
-		NodeID:     nodeID,
-		StartedAt:  startedAt,
-	}
 
 	m := queue.NewManager(qr, instRepo, cfg, starter)
 	m.SetWebhookRegistry(registry)
@@ -371,7 +475,7 @@ func TestRecoverWebhooks_TimeoutPending_RegistersWithScheduler(t *testing.T) {
 	scheduler.Start(ctx)
 	defer scheduler.Stop()
 
-	err := m.RecoverWebhooks(ctx, scheduler, nodeExecRepo)
+	err := m.RecoverWebhooks(ctx, scheduler)
 	require.NoError(t, err)
 
 	// Token should be re-registered (not deactivated).

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -94,10 +95,14 @@ func (e *TimerDelayExecutor) Execute(ctx context.Context, node workflow.Node, va
 		StartedAt:  startTime,
 		CompletedAt: &now,
 	}
-	_ = e.nodeExecs.Create(ctx, nodeExec)
+	if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
+		// Log but do not return: SetWaiting already committed — the audit record
+		// is advisory. Recovery uses WaitingUntil on the instance, not this record.
+		slog.Error("timer_delay: failed to write node execution record", "instanceID", instanceID, "error", err)
+	}
 
 	// 6. Register with scheduler.
-	e.scheduler.Schedule(instanceID, waitingUntil, "timer_delay")
+	e.scheduler.Schedule(instanceID, waitingUntil, TimerTypeDelay)
 
 	// 7. Notify queue manager (capacity freed).
 	e.queueMgr.NotifyCapacityFreed(ctx)

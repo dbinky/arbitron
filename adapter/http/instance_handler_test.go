@@ -1286,3 +1286,154 @@ func TestInstanceHandler_Get_IncludesCompletedAt(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.NotNil(t, resp["completedAt"])
 }
+
+func TestInstanceHandler_Get_IncludesQueueFields(t *testing.T) {
+	// Verifies that queuedAt, waitingUntil, webhookUrl, and webhookReceived
+	// are correctly mapped in the instance response.
+	h, instRepo, _, _, _ := newInstanceHandler()
+	inst := testInstance(instance.StateWaiting)
+	now := time.Now()
+	future := now.Add(time.Hour)
+	token := "test-webhook-token"
+	receivedAt := now.Add(-time.Second)
+
+	inst.QueuedAt = &now
+	inst.WaitingUntil = &future
+	inst.WebhookToken = &token
+	inst.WebhookReceivedAt = &receivedAt
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.NotNil(t, resp["queuedAt"], "queuedAt should be present")
+	assert.NotNil(t, resp["waitingUntil"], "waitingUntil should be present")
+	require.NotNil(t, resp["webhookUrl"], "webhookUrl should be present when webhook token is set")
+	assert.Contains(t, resp["webhookUrl"].(string), token, "webhookUrl should embed the token")
+	assert.Equal(t, true, resp["webhookReceived"], "webhookReceived should be true when WebhookReceivedAt is set")
+}
+
+func TestInstanceHandler_Get_NoWebhookFields_WhenTokenAbsent(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Nil(t, resp["webhookUrl"], "webhookUrl should be absent when no webhook token")
+	// webhookReceived omitempty — absent when false
+	_, present := resp["webhookReceived"]
+	assert.False(t, present, "webhookReceived should be omitted when false")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: SetPriority endpoint
+// ---------------------------------------------------------------------------
+
+func TestInstanceHandler_SetPriority_HappyPath(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	var gotID uuid.UUID
+	var gotPriority string
+	svc.setPriorityFn = func(id uuid.UUID, priority string) error {
+		gotID = id
+		gotPriority = priority
+		return nil
+	}
+
+	instanceID := uuid.New()
+	body := `{"priority":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+	req = withChiURLParam(req, "id", instanceID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, instanceID, gotID)
+	assert.Equal(t, "high", gotPriority)
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "priority_updated", resp["status"])
+}
+
+func TestInstanceHandler_SetPriority_MissingBody_400(t *testing.T) {
+	h, _, _, _, _ := newInstanceHandler()
+
+	instanceID := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", nil)
+	req = withChiURLParam(req, "id", instanceID.String())
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestInstanceHandler_SetPriority_InvalidPriority_400(t *testing.T) {
+	h, _, _, _, _ := newInstanceHandler()
+
+	instanceID := uuid.New()
+	body := `{"priority":"urgent"}`
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+	req = withChiURLParam(req, "id", instanceID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp.Error, "invalid priority")
+}
+
+func TestInstanceHandler_SetPriority_AllValidValues(t *testing.T) {
+	for _, priority := range []string{"high", "normal", "low"} {
+		t.Run(priority, func(t *testing.T) {
+			h, _, _, _, svc := newInstanceHandler()
+			var got string
+			svc.setPriorityFn = func(_ uuid.UUID, p string) error {
+				got = p
+				return nil
+			}
+
+			instanceID := uuid.New()
+			body := `{"priority":"` + priority + `"}`
+			req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+			req = withChiURLParam(req, "id", instanceID.String())
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.SetPriority(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, priority, got)
+		})
+	}
+}
+
+func TestInstanceHandler_SetPriority_ServiceError_Conflict(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	svc.setPriorityFn = func(_ uuid.UUID, _ string) error {
+		return fmt.Errorf("instance is not queued: %w", instance.ErrNotQueued)
+	}
+
+	instanceID := uuid.New()
+	body := `{"priority":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+	req = withChiURLParam(req, "id", instanceID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
