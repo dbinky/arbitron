@@ -460,6 +460,12 @@ func (b *mockEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event, fun
 	return ch, func() {}
 }
 
+func (b *mockEventBus) SubscribeAll() (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event)
+	close(ch)
+	return ch, func() {}
+}
+
 func (b *mockEventBus) eventsOfType(instanceID uuid.UUID, eventType string) []engine.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
