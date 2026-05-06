@@ -18,6 +18,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// ensure mock repos implement the interface at compile time
+var _ workflow.WorkflowRepository = (*mockWorkflowRepo)(nil)
+var _ workflow.WorkflowRepository = (*errWorkflowRepo)(nil)
+
 // ---------------------------------------------------------------------------
 // Mocks for WorkflowHandler
 // ---------------------------------------------------------------------------
@@ -45,15 +49,21 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 			Name:        wf.Name,
 			Description: wf.Description,
 			Author:      wf.Author,
+			NodeCount:   len(wf.Nodes),
 		})
 	}
 	return summaries, nil
+}
+
+func (r *mockWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error {
+	return nil
 }
 
 type errWorkflowRepo struct{ err error }
 
 func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error)    { return nil, r.err }
 func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)    { return nil, r.err }
+func (r *errWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error { return r.err }
 
 type mockWorkflowService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
@@ -131,7 +141,7 @@ func testWorkflow() *workflow.Workflow {
 func TestWorkflowHandler_List(t *testing.T) {
 	t.Run("returns empty array when no workflows", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
 		w := httptest.NewRecorder()
@@ -148,7 +158,7 @@ func TestWorkflowHandler_List(t *testing.T) {
 	t.Run("returns workflow summaries", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
 		w := httptest.NewRecorder()
@@ -172,7 +182,7 @@ func TestWorkflowHandler_Get(t *testing.T) {
 	t.Run("returns workflow definition", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf", nil)
 		req = withChiURLParam(req, "name", "test-wf")
@@ -190,7 +200,7 @@ func TestWorkflowHandler_Get(t *testing.T) {
 
 	t.Run("returns 404 for unknown workflow", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows/unknown", nil)
 		req = withChiURLParam(req, "name", "unknown")
@@ -217,7 +227,7 @@ func TestWorkflowHandler_Validate(t *testing.T) {
 		fr := newMockFileReader()
 		fr.existingFiles["test-wf/a.sh"] = true
 		fr.existingFiles["test-wf/b.sh"] = true
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, fr)
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, fr, nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/validate", nil)
 		req = withChiURLParam(req, "name", "test-wf")
@@ -245,7 +255,7 @@ func TestWorkflowHandler_Validate(t *testing.T) {
 				{ID: "A", Type: workflow.NodeTypeScript},
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/workflows/bad-wf/validate", nil)
 		req = withChiURLParam(req, "name", "bad-wf")
@@ -265,7 +275,7 @@ func TestWorkflowHandler_Validate(t *testing.T) {
 
 	t.Run("returns 404 for unknown workflow", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/workflows/unknown/validate", nil)
 		req = withChiURLParam(req, "name", "unknown")
@@ -294,7 +304,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return expectedID, true, nil
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{"name":"Alice"},"priority":"normal"}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -315,7 +325,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 	t.Run("returns 400 for invalid JSON body", func(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		repo.workflows["test-wf"] = testWorkflow()
-		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		body := `{invalid json`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -334,7 +344,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return uuid.Nil, false, fmt.Errorf("failed to load workflow: workflow not found: unknown")
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{}}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/unknown/trigger", strings.NewReader(body))
@@ -355,7 +365,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return uuid.Nil, false, fmt.Errorf("missing required input: name")
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{}}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -377,7 +387,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return uuid.New(), true, nil
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{"name":"Alice"}}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -398,7 +408,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return uuid.New(), true, nil
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", nil)
 		req = withChiURLParam(req, "name", "test-wf")
@@ -418,7 +428,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return expectedID, false, nil // started=false means queued
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{"name":"Alice"}}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -444,7 +454,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 				return uuid.Nil, false, fmt.Errorf("database connection lost")
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader())
+		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
 
 		body := `{"variables":{"name":"Alice"}}`
 		req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/trigger", strings.NewReader(body))
@@ -465,7 +475,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowHandler_List_RepoError(t *testing.T) {
-	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
 	w := httptest.NewRecorder()
@@ -478,7 +488,7 @@ func TestWorkflowHandler_List_RepoError(t *testing.T) {
 }
 
 func TestWorkflowHandler_Get_InternalError(t *testing.T) {
-	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf", nil)
 	req = withChiURLParam(req, "name", "test-wf")
@@ -492,7 +502,7 @@ func TestWorkflowHandler_Get_InternalError(t *testing.T) {
 }
 
 func TestWorkflowHandler_Validate_InternalError(t *testing.T) {
-	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader())
+	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/validate", nil)
 	req = withChiURLParam(req, "name", "test-wf")

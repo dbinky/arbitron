@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -23,14 +25,16 @@ type WorkflowHandler struct {
 	repo       workflow.WorkflowRepository
 	service    WorkflowService
 	fileReader engine.FileReader
+	instances  instance.InstanceRepository
 }
 
 // NewWorkflowHandler creates a new WorkflowHandler with its dependencies.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader) *WorkflowHandler {
+func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, instances instance.InstanceRepository) *WorkflowHandler {
 	return &WorkflowHandler{
 		repo:       repo,
 		service:    service,
 		fileReader: fileReader,
+		instances:  instances,
 	}
 }
 
@@ -155,4 +159,83 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		"instanceId": id.String(),
 		"state":      state,
 	})
+}
+
+// saveLayoutRequest is the JSON body for saving node positions.
+type saveLayoutRequest struct {
+	Positions map[string]workflow.NodePosition `json:"positions"`
+}
+
+// SaveLayout handles PUT /workflows/{name}/layout and persists node positions.
+func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req saveLayoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if len(req.Positions) == 0 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "positions must not be empty")
+		return
+	}
+
+	if err := h.repo.SaveNodePositions(name, req.Positions); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save layout")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// Stats handles GET /workflows/{name}/stats and returns execution statistics.
+func (h *WorkflowHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	if h.instances == nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "stats not available")
+		return
+	}
+
+	now := time.Now().UTC()
+	from := now.AddDate(0, 0, -30)
+	to := now
+
+	if v := r.URL.Query().Get("from"); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid from parameter: "+err.Error())
+			return
+		}
+		from = parsed
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid to parameter: "+err.Error())
+			return
+		}
+		to = parsed
+	}
+
+	stats, err := h.instances.Stats(r.Context(), name, from, to)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch stats")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, stats)
 }

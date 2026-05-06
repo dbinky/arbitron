@@ -42,6 +42,7 @@ func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ insta
 func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error          { return r.err }
 func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error { return r.err }
 func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error    { return r.err }
+func (r *errInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) { return nil, r.err }
 
 // errNodeExecRepo always returns the stored error.
 type errNodeExecRepo struct{ err error }
@@ -199,6 +200,10 @@ func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, r
 	}
 	inst.WebhookReceivedAt = &receivedAt
 	return nil
+}
+
+func (r *mockInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return &instance.WorkflowStats{}, nil
 }
 
 // mockNodeExecutionRepo for InstanceHandler

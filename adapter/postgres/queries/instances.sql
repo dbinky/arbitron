@@ -32,3 +32,14 @@ UPDATE instances SET state = 'completed', completed_at = now(), updated_at = now
 
 -- name: ListRunningInstances :many
 SELECT * FROM instances WHERE state = 'running';
+
+-- name: WorkflowStats :one
+SELECT
+  COUNT(*) AS total_runs,
+  COUNT(*) FILTER (WHERE state = 'completed') AS success_count,
+  COUNT(*) FILTER (WHERE state = 'failed') AS failure_count,
+  COALESCE(EXTRACT(EPOCH FROM AVG(completed_at - created_at)) FILTER (WHERE state = 'completed' AND completed_at IS NOT NULL), 0) AS avg_duration_secs
+FROM instances
+WHERE workflow_name = $1
+  AND created_at >= $2
+  AND created_at <= $3;

@@ -54,6 +54,10 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 	return summaries, nil
 }
 
+func (r *mockWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error {
+	return nil
+}
+
 func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -268,6 +272,10 @@ func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, r
 	inst.WebhookReceivedAt = &receivedAt
 	inst.UpdatedAt = time.Now()
 	return nil
+}
+
+func (r *mockInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return &instance.WorkflowStats{}, nil
 }
 
 func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {

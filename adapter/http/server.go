@@ -82,7 +82,7 @@ func NewRouter(
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 
-	wfHandler := NewWorkflowHandler(workflows, svc, fileReader)
+	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
 	streamHandler := NewStreamHandler(instances, eventBus)
 	sysStreamHandler := NewSystemStreamHandler(eventBus)
@@ -106,6 +106,8 @@ func NewRouter(
 			r.Get("/{name}", wfHandler.Get)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
+			r.Put("/{name}/layout", wfHandler.SaveLayout)
+			r.Get("/{name}/stats", wfHandler.Stats)
 		})
 
 		// Webhook endpoints

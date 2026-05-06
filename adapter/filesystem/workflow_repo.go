@@ -76,8 +76,68 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 			Name:        wf.Name,
 			Description: wf.Description,
 			Author:      wf.Author,
+			NodeCount:   len(wf.Nodes),
 		})
 	}
 
 	return summaries, nil
+}
+
+// SaveNodePositions updates the position field of each node in the workflow's
+// manifest file. It reads the raw JSON (preserving unknown fields), patches
+// matching nodes, and writes the file back with indentation.
+func (r *WorkflowRepo) SaveNodePositions(name string, positions map[string]workflow.NodePosition) error {
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
+	if !strings.HasPrefix(manifestPath, root) {
+		return fmt.Errorf("workflow not found: %s", name)
+	}
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workflow not found: %s", name)
+		}
+		return fmt.Errorf("reading workflow %q: %w", name, err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing workflow %q: %w", name, err)
+	}
+
+	nodesRaw, ok := raw["nodes"]
+	if !ok {
+		return nil // no nodes to update
+	}
+	nodes, ok := nodesRaw.([]any)
+	if !ok {
+		return fmt.Errorf("unexpected nodes type in workflow %q", name)
+	}
+
+	for i, n := range nodes {
+		nodeMap, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := nodeMap["id"].(string)
+		if pos, found := positions[id]; found {
+			nodeMap["position"] = map[string]any{"x": pos.X, "y": pos.Y}
+			nodes[i] = nodeMap
+		}
+	}
+
+	raw["nodes"] = nodes
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling workflow %q: %w", name, err)
+	}
+	out = append(out, '\n')
+
+	if err := os.WriteFile(manifestPath, out, 0o644); err != nil {
+		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+
+	return nil
 }

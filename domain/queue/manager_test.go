@@ -198,6 +198,10 @@ func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, r
 	return nil
 }
 
+func (r *mockInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return &instance.WorkflowStats{}, nil
+}
+
 type mockStarter struct {
 	mu        sync.Mutex
 	calls     []uuid.UUID

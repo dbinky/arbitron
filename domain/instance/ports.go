@@ -22,6 +22,7 @@ type InstanceRepository interface {
 	SetWaiting(ctx context.Context, id uuid.UUID, waitingUntil *time.Time) error
 	SetWebhookFields(ctx context.Context, id uuid.UUID, token *string, secretHash *string) error
 	SetWebhookReceived(ctx context.Context, id uuid.UUID, receivedAt time.Time) error
+	Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*WorkflowStats, error)
 }
 
 // QueueRepository defines the port for queue-specific persistence operations.

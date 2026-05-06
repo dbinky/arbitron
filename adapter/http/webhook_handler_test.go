@@ -97,6 +97,10 @@ func (r *mockWebhookInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.
 	return nil
 }
 
+func (r *mockWebhookInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return &instance.WorkflowStats{}, nil
+}
+
 type mockWebhookNodeExecRepo struct {
 	mu         sync.Mutex
 	executions map[string]*instance.NodeExecution // keyed by instanceID+nodeID
