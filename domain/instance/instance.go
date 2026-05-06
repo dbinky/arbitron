@@ -120,6 +120,7 @@ type VariableSnapshot struct {
 type ListFilters struct {
 	State        *State
 	WorkflowName *string
+	Since        *time.Time
 	Limit        int
 	Offset       int
 }

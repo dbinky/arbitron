@@ -23,3 +23,10 @@ func (b *NoOpEventBus) Subscribe(_ uuid.UUID) (<-chan engine.Event, func()) {
 	close(ch)
 	return ch, func() {}
 }
+
+// SubscribeAll returns a closed channel and a no-op cancel function.
+func (b *NoOpEventBus) SubscribeAll() (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event)
+	close(ch)
+	return ch, func() {}
+}

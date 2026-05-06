@@ -82,9 +82,13 @@ func NewRouter(
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
 	streamHandler := NewStreamHandler(instances, eventBus)
+	sysStreamHandler := NewSystemStreamHandler(eventBus)
 	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// System-wide WebSocket stream
+		r.Get("/ws", sysStreamHandler.HandleWebSocket)
+
 		// System endpoints
 		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 			WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})

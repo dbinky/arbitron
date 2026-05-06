@@ -100,6 +100,7 @@ SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_
 FROM instances
 WHERE ($3::instance_state IS NULL OR state = $3::instance_state)
 AND ($4::text IS NULL OR workflow_name = $4::text)
+AND ($5::timestamptz IS NULL OR created_at >= $5::timestamptz)
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -109,6 +110,7 @@ type ListInstancesParams struct {
 	Offset       int32
 	State        NullInstanceState
 	WorkflowName pgtype.Text
+	Since        pgtype.Timestamptz
 }
 
 type ListInstancesRow struct {
@@ -129,6 +131,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 		arg.Offset,
 		arg.State,
 		arg.WorkflowName,
+		arg.Since,
 	)
 	if err != nil {
 		return nil, err

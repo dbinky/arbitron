@@ -11,6 +11,7 @@ SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_
 FROM instances
 WHERE (sqlc.narg('state')::instance_state IS NULL OR state = sqlc.narg('state')::instance_state)
 AND (sqlc.narg('workflow_name')::text IS NULL OR workflow_name = sqlc.narg('workflow_name')::text)
+AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since')::timestamptz)
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 

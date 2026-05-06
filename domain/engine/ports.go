@@ -84,4 +84,5 @@ type Event struct {
 type EventBus interface {
 	Publish(instanceID uuid.UUID, event Event)
 	Subscribe(instanceID uuid.UUID) (<-chan Event, func())
+	SubscribeAll() (<-chan Event, func())
 }

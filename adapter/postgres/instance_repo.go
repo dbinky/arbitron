@@ -89,6 +89,9 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 	if filters.WorkflowName != nil {
 		params.WorkflowName = toPgText(*filters.WorkflowName)
 	}
+	if filters.Since != nil {
+		params.Since = toPgTimestamptzPtr(filters.Since)
+	}
 
 	rows, err := r.queries.ListInstances(ctx, params)
 	if err != nil {

@@ -14,8 +14,9 @@ const bufferSize = 256
 // to all subscribers of a given instance. It uses non-blocking sends so that a
 // slow consumer does not block other subscribers or the publisher.
 type InProcessEventBus struct {
-	mu          sync.RWMutex
-	subscribers map[uuid.UUID][]*subscriber
+	mu             sync.RWMutex
+	subscribers    map[uuid.UUID][]*subscriber
+	allSubscribers []*subscriber
 }
 
 // subscriber holds the channel. The closed field is only accessed under the
@@ -58,6 +59,20 @@ func (b *InProcessEventBus) Publish(instanceID uuid.UUID, event engine.Event) {
 			)
 		}
 	}
+
+	for _, s := range b.allSubscribers {
+		if s.closed {
+			continue
+		}
+		select {
+		case s.ch <- event:
+		default:
+			slog.Warn("event bus dropped event for slow all-subscriber",
+				"instanceID", instanceID,
+				"eventType", event.Type,
+			)
+		}
+	}
 }
 
 // Subscribe creates a buffered channel for the given instance and returns it
@@ -91,6 +106,41 @@ func (b *InProcessEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event
 			}
 			if len(b.subscribers[instanceID]) == 0 {
 				delete(b.subscribers, instanceID)
+			}
+
+			close(ch)
+		})
+	}
+
+	return ch, unsub
+}
+
+// SubscribeAll creates a buffered channel that receives events from all instances.
+// It returns the channel and an unsubscribe function. The unsubscribe function
+// closes the channel and removes the subscriber. It is safe to call multiple times.
+func (b *InProcessEventBus) SubscribeAll() (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event, bufferSize)
+	s := &subscriber{ch: ch}
+
+	b.mu.Lock()
+	b.allSubscribers = append(b.allSubscribers, s)
+	b.mu.Unlock()
+
+	var once sync.Once
+	unsub := func() {
+		once.Do(func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+
+			s.closed = true
+
+			for i, sub := range b.allSubscribers {
+				if sub == s {
+					b.allSubscribers[i] = b.allSubscribers[len(b.allSubscribers)-1]
+					b.allSubscribers[len(b.allSubscribers)-1] = nil
+					b.allSubscribers = b.allSubscribers[:len(b.allSubscribers)-1]
+					break
+				}
 			}
 
 			close(ch)
