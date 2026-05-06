@@ -57,7 +57,7 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error {
+func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
 }
 
@@ -65,7 +65,9 @@ type errWorkflowRepo struct{ err error }
 
 func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error)    { return nil, r.err }
 func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)    { return nil, r.err }
-func (r *errWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error { return r.err }
+func (r *errWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+	return r.err
+}
 
 type mockWorkflowService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
@@ -534,7 +536,7 @@ func newCapturingWorkflowRepo() *capturingWorkflowRepo {
 	}
 }
 
-func (r *capturingWorkflowRepo) SaveNodePositions(name string, positions map[string]workflow.NodePosition) error {
+func (r *capturingWorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
 	if r.saveErr != nil {
 		return r.saveErr
 	}

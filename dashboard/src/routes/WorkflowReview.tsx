@@ -224,7 +224,7 @@ export default function WorkflowReview() {
     let cancelled = false
     async function load() {
       try {
-        const data = (await api.workflows.get(name!)) as WorkflowDefinition
+        const data = await api.workflows.get(name!)
         if (!cancelled) setWorkflowDef(data)
       } catch (err) {
         if (!cancelled)

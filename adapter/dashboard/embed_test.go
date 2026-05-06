@@ -1,6 +1,7 @@
 package dashboard_test
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,8 +34,25 @@ func TestHandler_SPAFallback(t *testing.T) {
 }
 
 func TestHandler_ServesStaticAsset(t *testing.T) {
+	// Discover the actual CSS asset name at test time — Vite content-hashes
+	// filenames on every build, so hardcoding the name would break on rebuild.
+	entries, err := fs.ReadDir(dashboard.Assets(), "assets")
+	if err != nil {
+		t.Fatalf("reading assets dir: %v", err)
+	}
+	var cssPath string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".css") {
+			cssPath = "/assets/" + e.Name()
+			break
+		}
+	}
+	if cssPath == "" {
+		t.Skip("no CSS asset found in embedded filesystem")
+	}
+
 	handler := dashboard.Handler()
-	req := httptest.NewRequest("GET", "/assets/index-C3wlROOj.css", nil)
+	req := httptest.NewRequest("GET", cssPath, nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

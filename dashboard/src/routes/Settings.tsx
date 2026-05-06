@@ -63,10 +63,15 @@ export default function Settings() {
         if (data.waitingCount != null) setWaitingCount(data.waitingCount)
       }
     }
-    // Also refresh on any instance state change to update counts.
+    // Refresh on any event that causes an instance to enter or leave a queue slot.
     if (
-      event.type === 'instance.state_changed' ||
-      event.type === 'instance.created'
+      event.type === 'instance.created' ||
+      event.type === 'instance.started' ||
+      event.type === 'instance.completed' ||
+      event.type === 'instance.failed' ||
+      event.type === 'instance.cancelled' ||
+      event.type === 'instance.paused' ||
+      event.type === 'instance.resumed'
     ) {
       api.system.getConfig().then((cfg) => {
         setRunningCount(cfg.queue.runningCount)

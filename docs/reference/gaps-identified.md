@@ -92,6 +92,26 @@ Example of a fixed issue entry:
 **Detail**: The `process()` function accepted empty strings without validation, which caused a downstream `IndexError` in the parser. The code handled `None` but not `""`. Added an early return with a structured error response. Added 2 tests: empty string input returns error, whitespace-only input returns error.
 -->
 
+### FA4-001: SaveNodePositions port missing context.Context
+**Area**: Workflow port (`domain/workflow/ports.go`), filesystem adapter (`adapter/filesystem/workflow_repo.go`), HTTP handler (`adapter/http/workflow_handler.go`), tests
+**Fixed**: Iteration 3
+**Detail**: `SaveNodePositions` signature lacked `context.Context` as the first parameter, violating the explicit constraint that all Go I/O methods accept a context. Updated the port interface, the filesystem implementation, the HTTP handler call site (`r.Context()`), three mock repos in `workflow_handler_test.go`, and four direct calls in `workflow_repo_positions_test.go`.
+
+### FA17-001: Settings.tsx WS handler only refreshes on dead instance.state_changed event
+**Area**: Settings (`dashboard/src/routes/Settings.tsx`)
+**Fixed**: Iteration 3
+**Detail**: The WS event handler that refreshes live queue counts only listened to `instance.state_changed` (never published by the engine) and `instance.created`. Replaced with the full set of events that change queue slot occupancy: `instance.created`, `instance.started`, `instance.completed`, `instance.failed`, `instance.cancelled`, `instance.paused`, `instance.resumed`.
+
+### FA1-001: embed_test.go hardcoded content-hashed CSS filename
+**Area**: Dashboard embed test (`adapter/dashboard/embed_test.go`)
+**Fixed**: Iteration 3
+**Detail**: `TestHandler_ServesStaticAsset` hardcoded `/assets/index-C3wlROOj.css` which breaks whenever Vite rebuilds and regenerates the content hash. Added an exported `Assets() fs.FS` accessor to `embed.go` so the test can call `fs.ReadDir` to discover the real CSS filename at test time.
+
+### FA16-001: Redundant as WorkflowDefinition cast in WorkflowReview.tsx
+**Area**: Workflow Review (`dashboard/src/routes/WorkflowReview.tsx`)
+**Fixed**: Iteration 3
+**Detail**: `api.workflows.get()` already returns `Promise<WorkflowDefinition>` (fixed in Iteration 1), so the `as WorkflowDefinition` cast at the call site was redundant. Removed it.
+
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_

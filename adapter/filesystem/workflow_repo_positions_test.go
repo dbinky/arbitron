@@ -1,6 +1,7 @@
 package filesystem_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ func TestSaveNodePositions_WritesCorrectly(t *testing.T) {
 		"B": {X: 300.5, Y: 400.75},
 	}
 
-	err := repo.SaveNodePositions("pos-test", positions)
+	err := repo.SaveNodePositions(context.Background(), "pos-test", positions)
 	require.NoError(t, err)
 
 	// Re-read the file and verify positions were written.
@@ -97,7 +98,7 @@ func TestSaveNodePositions_PreservesExistingFields(t *testing.T) {
 		"N1": {X: 42, Y: 84},
 	}
 
-	err := repo.SaveNodePositions("preserve-test", positions)
+	err := repo.SaveNodePositions(context.Background(), "preserve-test", positions)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(base, "preserve-test", "workflow.json"))
@@ -139,7 +140,7 @@ func TestSaveNodePositions_WorkflowNotFound(t *testing.T) {
 	base := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(base)
 
-	err := repo.SaveNodePositions("nonexistent", map[string]workflow.NodePosition{
+	err := repo.SaveNodePositions(context.Background(), "nonexistent", map[string]workflow.NodePosition{
 		"A": {X: 1, Y: 2},
 	})
 	require.Error(t, err)
@@ -167,7 +168,7 @@ func TestSaveNodePositions_PartialMatch(t *testing.T) {
 		"C": {X: 50, Y: 60},
 	}
 
-	err := repo.SaveNodePositions("partial-test", positions)
+	err := repo.SaveNodePositions(context.Background(), "partial-test", positions)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(base, "partial-test", "workflow.json"))

@@ -86,7 +86,7 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 // SaveNodePositions updates the position field of each node in the workflow's
 // manifest file. It reads the raw JSON (preserving unknown fields), patches
 // matching nodes, and writes the file back with indentation.
-func (r *WorkflowRepo) SaveNodePositions(name string, positions map[string]workflow.NodePosition) error {
+func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
 	if !strings.HasPrefix(manifestPath, root) {

@@ -185,7 +185,7 @@ func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.SaveNodePositions(name, req.Positions); err != nil {
+	if err := h.repo.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return

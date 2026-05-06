@@ -55,7 +55,7 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ string, _ map[string]workflow.NodePosition) error {
+func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
 }
 
