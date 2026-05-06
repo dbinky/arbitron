@@ -3,6 +3,7 @@ import type {
   InstanceSummary,
   InstanceState,
   NodeExecution,
+  NotificationItem,
   Priority,
   QueueConfigUpdate,
   SystemConfig,
@@ -166,6 +167,32 @@ export const api = {
     /** Update queue configuration. */
     updateQueueConfig(globalCap: number, perUserCap: number): Promise<QueueConfigUpdate> {
       return put('/api/v1/system/config/queue', { globalCap, perUserCap })
+    },
+  },
+  notifications: {
+    /** List notifications with optional filters. */
+    list(params: { dismissed?: boolean; limit?: number; offset?: number } = {}): Promise<NotificationItem[]> {
+      const qs = new URLSearchParams()
+      if (params.dismissed != null) qs.set('dismissed', String(params.dismissed))
+      if (params.limit) qs.set('limit', String(params.limit))
+      if (params.offset) qs.set('offset', String(params.offset))
+      const query = qs.toString()
+      return request(`/api/v1/notifications${query ? '?' + query : ''}`)
+    },
+
+    /** Get the count of unread notifications. */
+    unreadCount(): Promise<{ count: number }> {
+      return request('/api/v1/notifications/unread-count')
+    },
+
+    /** Mark all notifications as read. */
+    markRead(): Promise<void> {
+      return post('/api/v1/notifications/mark-read')
+    },
+
+    /** Dismiss a single notification. */
+    dismiss(id: string): Promise<void> {
+      return post(`/api/v1/notifications/${id}/dismiss`)
     },
   },
 } as const
