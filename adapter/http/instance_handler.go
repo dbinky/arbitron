@@ -66,6 +66,7 @@ type instanceResponse struct {
 	WaitingUntil      *string        `json:"waitingUntil,omitempty"`
 	WebhookURL        *string        `json:"webhookUrl,omitempty"`
 	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
+	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -82,6 +83,7 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 		CreatedAt:         inst.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:         inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
+	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	if inst.CompletedAt != nil {
 		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
 		resp.CompletedAt = &s

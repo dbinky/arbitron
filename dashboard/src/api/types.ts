@@ -42,6 +42,7 @@ export interface Instance {
   waitingUntil?: string
   webhookUrl?: string
   webhookReceived?: boolean
+  workflowSnapshot?: Record<string, unknown>
 }
 
 /** Node execution record within an instance trace. */
