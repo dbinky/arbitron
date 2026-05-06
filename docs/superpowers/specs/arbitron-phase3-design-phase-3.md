@@ -12,7 +12,7 @@ Route: `/workflows`.
 
 ### Data Loading
 
-Fetches `GET /api/v1/workflows` — returns an array of workflow summaries (name, description, author). Node count is derived client-side by fetching the full workflow on navigation to the review panel, or the summary endpoint is extended to include node count.
+Fetches `GET /api/v1/workflows` — returns an array of workflow summaries (name, description, author, node count). The `WorkflowSummary` struct is extended to include `NodeCount` so the catalog can display it without fetching full definitions.
 
 ### Display
 

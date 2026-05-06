@@ -104,13 +104,14 @@ Query parameters:
 - `limit` (int, default: 20, max: 100) — page size
 - `offset` (int, default: 0) — pagination offset
 
-Returns notifications ordered by `created_at DESC`. Response:
+Returns notifications ordered by `created_at DESC`. The response joins with the instances table to include `workflowName` so the popover can display it without extra fetches. Response:
 
 ```json
 [
   {
     "id": "...",
     "instanceId": "...",
+    "workflowName": "data-pipeline",
     "type": "failed",
     "read": false,
     "dismissed": false,
