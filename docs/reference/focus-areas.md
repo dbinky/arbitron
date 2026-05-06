@@ -41,15 +41,15 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 20 | System WebSocket + Queue View (live update events flow from EventBus SubscribeAll through system WS to QueueView refetch — event types, reconnection, state transitions move instances between sections) | [ ] | |
-| 21 | Instance WebSocket + Execution View (per-instance WS events update node states in graph, side panel output streaming, variable updates — event type handling, cleanup on navigate away) | [ ] | |
-| 22 | API Client + Backend Endpoints (all client methods match server routes — paths, HTTP methods, query params, request/response JSON shapes, error codes) | [ ] | |
-| 23 | React Flow Graph + Dagre Layout (useGraphLayout produces correct rfNodes/rfEdges, ArbitronNode renders correctly with layout positions, edge labels from workflow definition) | [ ] | |
-| 24 | Position Persistence + Review Panel (drag-end saves positions via layout endpoint, auto-save on first view when needsAutoSave is true, positions round-trip through workflow.json) | [ ] | |
-| 25 | Notification Backend + Bell Frontend (notification list endpoint returns workflowName, bell fetches unread count, mark-read on popover open, dismiss removes entry, cross-tab sync events) | [ ] | |
-| 26 | Go Embed + Vite Build (dashboard dist/ copied to adapter/dashboard/dist/, SPA fallback serves index.html for client routes, API routes take precedence over catch-all) | [ ] | |
-| 27 | Workflow Stats + UsageStats Component (stats endpoint returns correct aggregation, frontend date range picker maps to from/to params, success/failure rates computed correctly) | [ ] | |
-| 28 | Engine Notifications + Notification Repo (fire-and-forget creation doesn't block workflow, completed/failed transitions create correct notification types, error logging on repo failure) | [ ] | |
+| 20 | System WebSocket + Queue View (live update events flow from EventBus SubscribeAll through system WS to QueueView refetch — event types, reconnection, state transitions move instances between sections) | [x] | |
+| 21 | Instance WebSocket + Execution View (per-instance WS events update node states in graph, side panel output streaming, variable updates — event type handling, cleanup on navigate away) | [x] | |
+| 22 | API Client + Backend Endpoints (all client methods match server routes — paths, HTTP methods, query params, request/response JSON shapes, error codes) | [x] | |
+| 23 | React Flow Graph + Dagre Layout (useGraphLayout produces correct rfNodes/rfEdges, ArbitronNode renders correctly with layout positions, edge labels from workflow definition) | [x] | |
+| 24 | Position Persistence + Review Panel (drag-end saves positions via layout endpoint, auto-save on first view when needsAutoSave is true, positions round-trip through workflow.json) | [x] | |
+| 25 | Notification Backend + Bell Frontend (notification list endpoint returns workflowName, bell fetches unread count, mark-read on popover open, dismiss removes entry, cross-tab sync events) | [x] | |
+| 26 | Go Embed + Vite Build (dashboard dist/ copied to adapter/dashboard/dist/, SPA fallback serves index.html for client routes, API routes take precedence over catch-all) | [x] | |
+| 27 | Workflow Stats + UsageStats Component (stats endpoint returns correct aggregation, frontend date range picker maps to from/to params, success/failure rates computed correctly) | [x] | |
+| 28 | Engine Notifications + Notification Repo (fire-and-forget creation doesn't block workflow, completed/failed transitions create correct notification types, error logging on repo failure) | [x] | |
 
 ---
 

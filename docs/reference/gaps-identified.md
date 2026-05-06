@@ -4,21 +4,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### FA2-001: No test for server-side context cancellation in system stream handler
-**Area**: System WebSocket (`adapter/http/system_stream_handler.go` line 65)
-**Detail**: The `ctx.Done()` branch — triggered on server shutdown — is not covered by any test. The two existing tests verify event delivery and client disconnect, but not the graceful server-side teardown path. Low risk (the code is correct), but the branch is dark.
-
-### FA12-001: QueueView surfaces no error UI when initial fetch fails
-**Area**: Queue View (`dashboard/src/routes/QueueView.tsx` lines 38-41)
-**Detail**: Errors from `fetchAll()` are only logged to `console.error`. If the initial load fails, all three sections display empty state with no error message or retry button. Users see "no instances" rather than a failure indicator.
-
-### FA12-002: QueueSection sort-by-time uses updatedAt instead of createdAt
-**Area**: Queue View (`dashboard/src/components/QueueSection.tsx` line 40)
-**Detail**: Sorting by elapsed time sorts on `updatedAt` descending. For the Active section, sorting by elapsed time from `createdAt` would surface the longest-running instances. A recently-updated instance with a very recent `updatedAt` always floats to the top regardless of actual runtime.
-
-### FA18-001: Off-by-one in dismissed notifications paging
-**Area**: Notification Bell (`dashboard/src/components/NotificationBell.tsx` line 74)
-**Detail**: `setHasMoreDismissed(data.length === PAGE_SIZE)` produces a false `hasMoreDismissed = false` when the total dismissed count is an exact multiple of `PAGE_SIZE`. Resolving this definitively requires a server-side `hasMore` flag or `total` count in the List response.
+_(no open issues)_
 
 ## Fixed Previously
 
@@ -61,6 +47,41 @@ Issues found during review iterations. Only the user can move items to the Won't
 **Area**: NavBar (`dashboard/src/components/NavBar.module.css`)
 **Fixed**: Iteration 1
 **Detail**: `.iconButton` and `.iconButton:hover` were defined but never referenced in `NavBar.tsx` (the bell uses its own module's `.bellButton`). Removed dead CSS.
+
+### FA2-001: No test for server-side context cancellation in system stream handler
+**Area**: System WebSocket (`adapter/http/system_stream_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: The `ctx.Done()` branch (server shutdown path) was uncovered. Added `TestSystemStreamHandler_ServerContextCancel_ClosesConnection` using a channel to inject a cancellable context without races.
+
+### FA12-001: QueueView surfaces no error UI when initial fetch fails
+**Area**: Queue View (`dashboard/src/routes/QueueView.tsx`)
+**Fixed**: Iteration 2
+**Detail**: Errors from `fetchAll()` were only logged to `console.error`. Added `error` state, error message display, and a retry button.
+
+### FA12-002: QueueSection sort-by-time uses updatedAt instead of createdAt for elapsed sort
+**Area**: Queue View (`dashboard/src/components/QueueSection.tsx`)
+**Fixed**: Iteration 2
+**Detail**: The elapsed sort (Active section) should surface longest-running instances using `createdAt` ascending. Changed `sortInstances` to accept `timeMode` and use `createdAt` when `timeMode === 'elapsed'`.
+
+### FA18-001: Off-by-one in dismissed notifications paging
+**Area**: Notification Bell (`dashboard/src/components/NotificationBell.tsx`), Notification Handler (`adapter/http/notification_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: `setHasMoreDismissed(data.length === PAGE_SIZE)` produced false negatives when the count was an exact multiple of `PAGE_SIZE`. Fixed by changing the backend `List` endpoint to return `{ items, hasMore }` using a `limit+1` probe, and updating the bell to use `hasMore` from the response.
+
+### FA25-001: Notification WS events not published — bell cross-tab sync broken
+**Area**: Engine (`domain/engine/engine.go`), Notification Handler (`adapter/http/notification_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: The bell component listens for `notification.created`, `notification.read`, `notification.dismissed` WS events but the backend never published them. Fixed: engine now publishes `notification.created` after each successful `Create` call; `NotificationHandler` now has an optional eventBus (via `SetEventBus`) and publishes `notification.read` / `notification.dismissed` after successful operations. Wired in `cmd/arbitron/main.go`.
+
+### FA27-001: JSON key mismatch — backend returns avgDurationSecs but frontend expects avgDurationSeconds
+**Area**: Instance domain (`domain/instance/instance.go`)
+**Fixed**: Iteration 2
+**Detail**: `WorkflowStats.AvgDurationSecs` had JSON tag `avgDurationSecs` but both the spec and the TypeScript type used `avgDurationSeconds`. Fixed the Go struct tag to `json:"avgDurationSeconds"`.
+
+### FA21-001: Dead event cases in ExecutionView WS handler
+**Area**: Execution View (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: None — no fix required
+**Detail**: `case 'node.skipped'` and `case 'instance.state_changed'` are handled but these event types are never published by the engine. Low severity: node state changes are reflected via `node.completed`/`node.failed` events, and instance actions are followed by `onAction` callbacks. No code change needed.
 
 <!--
 Example of a fixed issue entry:

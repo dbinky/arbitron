@@ -3,7 +3,9 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,6 +74,56 @@ func TestSystemStreamHandler_ReceivesEventsFromAnyInstance(t *testing.T) {
 	var evt2 engine.Event
 	require.NoError(t, json.Unmarshal(msg2, &evt2))
 	assert.Equal(t, "node_completed", evt2.Type)
+}
+
+func TestSystemStreamHandler_ServerContextCancel_ClosesConnection(t *testing.T) {
+	bus := eventbus.New()
+	sh := adapthttp.NewSystemStreamHandler(bus)
+
+	// cancelCh receives the cancel func injected into the handler's request context.
+	cancelCh := make(chan context.CancelFunc, 1)
+
+	r := chi.NewRouter()
+	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
+		ctx, cancel := context.WithCancel(req.Context())
+		cancelCh <- cancel
+		sh.HandleWebSocket(w, req.WithContext(ctx))
+	})
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/ws"
+	conn, _, err := websocket.Dial(dialCtx, wsURL, nil)
+	require.NoError(t, err)
+
+	// Retrieve the injected cancel func and wait for the handler to reach the select loop.
+	var cancel context.CancelFunc
+	select {
+	case cancel = <-cancelCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start within timeout")
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel the server-side context — simulates server shutdown.
+	cancel()
+
+	// The handler should send a close frame (StatusGoingAway). The client's next
+	// read should return an error indicating the connection was closed.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var readErr error
+	go func() {
+		defer wg.Done()
+		_, _, readErr = conn.Read(dialCtx)
+	}()
+
+	wg.Wait()
+	assert.Error(t, readErr, "connection must be closed after server context is cancelled")
 }
 
 func TestSystemStreamHandler_ClientDisconnect(t *testing.T) {

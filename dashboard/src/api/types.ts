@@ -125,6 +125,12 @@ export interface NotificationItem {
   createdAt: string
 }
 
+/** Paginated response from the notifications list endpoint. */
+export interface NotificationListResponse {
+  items: NotificationItem[]
+  hasMore: boolean
+}
+
 /** Domain event streamed over WebSocket. */
 export interface WebSocketEvent {
   type: string

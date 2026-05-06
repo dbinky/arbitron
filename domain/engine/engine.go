@@ -223,6 +223,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				}
 				if err := e.notifications.Create(context.Background(), n); err != nil {
 					slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+				} else {
+					e.eventBus.Publish(instanceID, Event{
+						Type:      "notification.created",
+						Timestamp: time.Now(),
+						Data:      notificationEventData(n),
+					})
 				}
 			}
 			e.eventBus.Publish(instanceID, Event{
@@ -415,6 +421,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					}
 					if err := e.notifications.Create(context.Background(), n); err != nil {
 						slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+					} else {
+						e.eventBus.Publish(instanceID, Event{
+							Type:      "notification.created",
+							Timestamp: time.Now(),
+							Data:      notificationEventData(n),
+						})
 					}
 				}
 				e.eventBus.Publish(instanceID, Event{
@@ -477,6 +489,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		}
 		if err := e.notifications.Create(context.Background(), n); err != nil {
 			slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+		} else {
+			e.eventBus.Publish(instanceID, Event{
+				Type:      "notification.created",
+				Timestamp: time.Now(),
+				Data:      notificationEventData(n),
+			})
 		}
 	}
 	e.eventBus.Publish(instanceID, Event{
@@ -583,6 +601,20 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	return nil, lastExec, lastErr
+}
+
+// notificationEventData converts a notification into the map shape expected
+// by the frontend's NotificationItem interface.
+func notificationEventData(n *notification.Notification) map[string]any {
+	return map[string]any{
+		"id":           n.ID.String(),
+		"instanceId":   n.InstanceID.String(),
+		"workflowName": n.WorkflowName,
+		"type":         string(n.Type),
+		"read":         false,
+		"dismissed":    false,
+		"createdAt":    time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
 }
 
 // parseWorkflowGraph deserializes a workflow snapshot into its definition,

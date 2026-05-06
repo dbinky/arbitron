@@ -52,7 +52,7 @@ export default function NotificationBell() {
 
   const fetchActive = useCallback(async () => {
     try {
-      const data = await api.notifications.list({ dismissed: false, limit: 50 })
+      const { items: data } = await api.notifications.list({ dismissed: false, limit: 50 })
       setItems(data)
     } catch {
       // silently ignore
@@ -61,7 +61,7 @@ export default function NotificationBell() {
 
   const fetchDismissed = useCallback(async (offset: number) => {
     try {
-      const data = await api.notifications.list({
+      const { items: data, hasMore } = await api.notifications.list({
         dismissed: true,
         limit: PAGE_SIZE,
         offset,
@@ -71,7 +71,7 @@ export default function NotificationBell() {
       } else {
         setDismissedItems((prev) => [...prev, ...data])
       }
-      setHasMoreDismissed(data.length === PAGE_SIZE)
+      setHasMoreDismissed(hasMore)
       setDismissedOffset(offset + data.length)
     } catch {
       // silently ignore

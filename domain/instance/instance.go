@@ -121,7 +121,7 @@ type WorkflowStats struct {
 	TotalRuns       int     `json:"totalRuns"`
 	SuccessCount    int     `json:"successCount"`
 	FailureCount    int     `json:"failureCount"`
-	AvgDurationSecs float64 `json:"avgDurationSecs"`
+	AvgDurationSecs float64 `json:"avgDurationSeconds"`
 }
 
 // ListFilters specifies filtering and pagination options for listing instances.

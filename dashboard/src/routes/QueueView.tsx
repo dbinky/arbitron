@@ -18,6 +18,7 @@ export default function QueueView() {
   const [failed, setFailed] = useState<InstanceSummary[]>([])
   const [completed, setCompleted] = useState<InstanceSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     try {
@@ -36,8 +37,10 @@ export default function QueueView() {
       setActive([...running, ...waiting, ...queued, ...paused])
       setFailed(failedRes)
       setCompleted(completedRes)
+      setError(null)
     } catch (err) {
-      console.error('Failed to fetch instances', err)
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -57,6 +60,29 @@ export default function QueueView() {
     return (
       <div style={{ padding: 32, color: 'var(--text-muted)', textAlign: 'center' }}>
         Loading instances...
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: 32, textAlign: 'center' }}>
+        <div style={{ color: 'var(--state-failed)', marginBottom: 12 }}>
+          Failed to load instances: {error}
+        </div>
+        <button
+          onClick={() => { setLoading(true); void fetchAll() }}
+          style={{
+            padding: '6px 16px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+          }}
+        >
+          Retry
+        </button>
       </div>
     )
   }

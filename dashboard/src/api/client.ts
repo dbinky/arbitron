@@ -3,7 +3,7 @@ import type {
   InstanceSummary,
   InstanceState,
   NodeExecution,
-  NotificationItem,
+  NotificationListResponse,
   Priority,
   QueueConfigUpdate,
   SystemConfig,
@@ -172,7 +172,7 @@ export const api = {
   },
   notifications: {
     /** List notifications with optional filters. */
-    list(params: { dismissed?: boolean; limit?: number; offset?: number } = {}): Promise<NotificationItem[]> {
+    list(params: { dismissed?: boolean; limit?: number; offset?: number } = {}): Promise<NotificationListResponse> {
       const qs = new URLSearchParams()
       if (params.dismissed != null) qs.set('dismissed', String(params.dismissed))
       if (params.limit != null) qs.set('limit', String(params.limit))

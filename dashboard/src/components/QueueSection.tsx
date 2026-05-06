@@ -25,6 +25,7 @@ const priorityOrder: Record<string, number> = {
 function sortInstances(
   instances: InstanceSummary[],
   field: SortField,
+  timeMode: 'elapsed' | 'relative',
 ): InstanceSummary[] {
   const sorted = [...instances]
   switch (field) {
@@ -35,10 +36,19 @@ function sortInstances(
       )
       break
     case 'time':
-      sorted.sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      )
+      if (timeMode === 'elapsed') {
+        // Elapsed: sort oldest createdAt first so longest-running instances surface to the top.
+        sorted.sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        )
+      } else {
+        // Relative: sort most-recently-updated first.
+        sorted.sort(
+          (a, b) =>
+            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        )
+      }
       break
     case 'name':
       sorted.sort((a, b) => a.workflowName.localeCompare(b.workflowName))
@@ -61,8 +71,8 @@ export default function QueueSection({
   const [sortField, setSortField] = useState<SortField>('priority')
 
   const sorted = useMemo(
-    () => sortInstances(instances, sortField),
-    [instances, sortField],
+    () => sortInstances(instances, sortField, timeMode),
+    [instances, sortField, timeMode],
   )
 
   return (

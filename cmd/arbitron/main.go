@@ -179,6 +179,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// 15. Create the full API router with embedded dashboard.
 	dashHandler := dashboard.Handler()
 	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
+	notifHandler.SetEventBus(bus)
 	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,

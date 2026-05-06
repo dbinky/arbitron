@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,9 +14,43 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/google/uuid"
 )
+
+// ---------------------------------------------------------------------------
+// Mock event bus for notification event tests
+// ---------------------------------------------------------------------------
+
+type notifMockEventBus struct {
+	mu     sync.Mutex
+	events []engine.Event
+}
+
+func (b *notifMockEventBus) Publish(_ uuid.UUID, evt engine.Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = append(b.events, evt)
+}
+
+func (b *notifMockEventBus) Subscribe(_ uuid.UUID) (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event)
+	return ch, func() { close(ch) }
+}
+
+func (b *notifMockEventBus) SubscribeAll() (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event)
+	return ch, func() { close(ch) }
+}
+
+func (b *notifMockEventBus) published() []engine.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]engine.Event, len(b.events))
+	copy(out, b.events)
+	return out
+}
 
 // ---------------------------------------------------------------------------
 // Mock notification repository
@@ -98,12 +133,18 @@ func testNotification(wfName string, notifType notification.Type) notification.N
 	}
 }
 
+// listResp is a helper to decode the paginated list envelope.
+type listResp struct {
+	Items   []map[string]any `json:"items"`
+	HasMore bool             `json:"hasMore"`
+}
+
 // ---------------------------------------------------------------------------
 // Tests: List
 // ---------------------------------------------------------------------------
 
 func TestNotificationHandler_List(t *testing.T) {
-	t.Run("returns empty array when no notifications", func(t *testing.T) {
+	t.Run("returns empty items and hasMore=false when no notifications", func(t *testing.T) {
 		repo := newMockNotificationRepo()
 		h := adapthttp.NewNotificationHandler(repo)
 
@@ -112,9 +153,10 @@ func TestNotificationHandler_List(t *testing.T) {
 		h.List(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp []map[string]any
+		var resp listResp
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.Empty(t, resp)
+		assert.Empty(t, resp.Items)
+		assert.False(t, resp.HasMore)
 	})
 
 	t.Run("returns notifications with correct fields", func(t *testing.T) {
@@ -128,16 +170,17 @@ func TestNotificationHandler_List(t *testing.T) {
 		h.List(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp []map[string]any
+		var resp listResp
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		require.Len(t, resp, 1)
-		assert.Equal(t, n.ID.String(), resp[0]["id"])
-		assert.Equal(t, n.InstanceID.String(), resp[0]["instanceId"])
-		assert.Equal(t, "my-workflow", resp[0]["workflowName"])
-		assert.Equal(t, "completed", resp[0]["type"])
-		assert.Equal(t, false, resp[0]["read"])
-		assert.Equal(t, false, resp[0]["dismissed"])
-		assert.NotEmpty(t, resp[0]["createdAt"])
+		require.Len(t, resp.Items, 1)
+		assert.Equal(t, n.ID.String(), resp.Items[0]["id"])
+		assert.Equal(t, n.InstanceID.String(), resp.Items[0]["instanceId"])
+		assert.Equal(t, "my-workflow", resp.Items[0]["workflowName"])
+		assert.Equal(t, "completed", resp.Items[0]["type"])
+		assert.Equal(t, false, resp.Items[0]["read"])
+		assert.Equal(t, false, resp.Items[0]["dismissed"])
+		assert.NotEmpty(t, resp.Items[0]["createdAt"])
+		assert.False(t, resp.HasMore)
 	})
 
 	t.Run("filters by dismissed=true", func(t *testing.T) {
@@ -153,10 +196,10 @@ func TestNotificationHandler_List(t *testing.T) {
 		h.List(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp []map[string]any
+		var resp listResp
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		require.Len(t, resp, 1)
-		assert.Equal(t, dismissed.ID.String(), resp[0]["id"])
+		require.Len(t, resp.Items, 1)
+		assert.Equal(t, dismissed.ID.String(), resp.Items[0]["id"])
 	})
 
 	t.Run("respects limit and offset", func(t *testing.T) {
@@ -171,9 +214,46 @@ func TestNotificationHandler_List(t *testing.T) {
 		h.List(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp []map[string]any
+		var resp listResp
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.Len(t, resp, 2)
+		assert.Len(t, resp.Items, 2)
+		assert.True(t, resp.HasMore, "4 items remain after offset=1, limit=2 should leave more")
+	})
+
+	t.Run("hasMore is false when results fit within limit", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		for i := 0; i < 3; i++ {
+			repo.notifications = append(repo.notifications, testNotification("wf", notification.TypeCompleted))
+		}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?limit=5", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp listResp
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Len(t, resp.Items, 3)
+		assert.False(t, resp.HasMore)
+	})
+
+	t.Run("hasMore is true when exactly limit+1 items exist", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		for i := 0; i < 6; i++ {
+			repo.notifications = append(repo.notifications, testNotification("wf", notification.TypeCompleted))
+		}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications?limit=5", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp listResp
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Len(t, resp.Items, 5)
+		assert.True(t, resp.HasMore)
 	})
 
 	t.Run("caps limit at 100", func(t *testing.T) {
@@ -188,9 +268,10 @@ func TestNotificationHandler_List(t *testing.T) {
 		h.List(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var resp []map[string]any
+		var resp listResp
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-		assert.LessOrEqual(t, len(resp), 100)
+		assert.LessOrEqual(t, len(resp.Items), 100)
+		assert.True(t, resp.HasMore)
 	})
 
 	t.Run("returns 400 for invalid dismissed param", func(t *testing.T) {
@@ -370,5 +451,93 @@ func TestNotificationHandler_Dismiss(t *testing.T) {
 		h.Dismiss(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: WebSocket event publishing
+// ---------------------------------------------------------------------------
+
+func TestNotificationHandler_MarkRead_PublishesEvent(t *testing.T) {
+	t.Run("publishes notification.read event on success", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		bus := &notifMockEventBus{}
+		h := adapthttp.NewNotificationHandler(repo)
+		h.SetEventBus(bus)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/mark-read", nil)
+		w := httptest.NewRecorder()
+		h.MarkRead(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		evts := bus.published()
+		require.Len(t, evts, 1)
+		assert.Equal(t, "notification.read", evts[0].Type)
+	})
+
+	t.Run("does not publish event when repo fails", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		repo.markReadErr = fmt.Errorf("db error")
+		bus := &notifMockEventBus{}
+		h := adapthttp.NewNotificationHandler(repo)
+		h.SetEventBus(bus)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/mark-read", nil)
+		w := httptest.NewRecorder()
+		h.MarkRead(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Empty(t, bus.published())
+	})
+
+	t.Run("no event published when eventBus is nil", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/mark-read", nil)
+		w := httptest.NewRecorder()
+		h.MarkRead(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestNotificationHandler_Dismiss_PublishesEvent(t *testing.T) {
+	t.Run("publishes notification.dismissed event with correct id", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		bus := &notifMockEventBus{}
+		h := adapthttp.NewNotificationHandler(repo)
+		h.SetEventBus(bus)
+
+		id := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/"+id.String()+"/dismiss", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Dismiss(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		evts := bus.published()
+		require.Len(t, evts, 1)
+		assert.Equal(t, "notification.dismissed", evts[0].Type)
+		data, ok := evts[0].Data.(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, id.String(), data["id"])
+	})
+
+	t.Run("does not publish event when repo fails", func(t *testing.T) {
+		repo := newMockNotificationRepo()
+		repo.dismissErr = fmt.Errorf("db error")
+		bus := &notifMockEventBus{}
+		h := adapthttp.NewNotificationHandler(repo)
+		h.SetEventBus(bus)
+
+		id := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/"+id.String()+"/dismiss", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Dismiss(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Empty(t, bus.published())
 	})
 }
