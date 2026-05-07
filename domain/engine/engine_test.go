@@ -10,6 +10,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -52,6 +53,10 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 		})
 	}
 	return summaries, nil
+}
+
+func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+	return nil
 }
 
 func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
@@ -270,6 +275,10 @@ func (r *mockInstanceRepo) SetWebhookReceived(_ context.Context, id uuid.UUID, r
 	return nil
 }
 
+func (r *mockInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return &instance.WorkflowStats{}, nil
+}
+
 func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -447,6 +456,12 @@ func (b *mockEventBus) Publish(instanceID uuid.UUID, event engine.Event) {
 }
 
 func (b *mockEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event, func()) {
+	ch := make(chan engine.Event)
+	close(ch)
+	return ch, func() {}
+}
+
+func (b *mockEventBus) SubscribeAll() (<-chan engine.Event, func()) {
 	ch := make(chan engine.Event)
 	close(ch)
 	return ch, func() {}
@@ -2422,4 +2437,137 @@ func TestEngine_RunLoop_ParseFailure_NotifiesCapacity(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected NotifyCapacityFreed after run-loop parse failure")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Mock notification repository
+// ---------------------------------------------------------------------------
+
+type mockNotificationRepo struct {
+	mu            sync.Mutex
+	created       []notification.Notification
+	createErr     error
+}
+
+func newMockNotificationRepo() *mockNotificationRepo {
+	return &mockNotificationRepo{}
+}
+
+func (r *mockNotificationRepo) Create(_ context.Context, n *notification.Notification) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.created = append(r.created, *n)
+	return nil
+}
+
+func (r *mockNotificationRepo) List(_ context.Context, _ notification.ListFilters) ([]notification.Notification, error) {
+	return nil, nil
+}
+
+func (r *mockNotificationRepo) CountUnread(_ context.Context) (int, error) { return 0, nil }
+
+func (r *mockNotificationRepo) MarkAllRead(_ context.Context) error { return nil }
+
+func (r *mockNotificationRepo) Dismiss(_ context.Context, _ uuid.UUID) error { return nil }
+
+func (r *mockNotificationRepo) getCreated() []notification.Notification {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make([]notification.Notification, len(r.created))
+	copy(cp, r.created)
+	return cp
+}
+
+// waitForNotification polls until at least one notification of the given type is created
+// or the timeout expires.
+func waitForNotification(t *testing.T, repo *mockNotificationRepo, notifType notification.Type, timeout time.Duration) notification.Notification {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for notification of type %q", notifType)
+		default:
+			for _, n := range repo.getCreated() {
+				if n.Type == notifType {
+					return n
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Engine notification wiring
+// ---------------------------------------------------------------------------
+
+func TestEngine_Notifications_CompletedWorkflowCreatesNotification(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	n := waitForNotification(t, notifRepo, notification.TypeCompleted, 2*time.Second)
+	assert.Equal(t, id, n.InstanceID)
+	assert.Equal(t, "linear-wf", n.WorkflowName, "notification must carry the workflow name")
+	assert.Equal(t, notification.TypeCompleted, n.Type)
+	assert.NotEqual(t, uuid.Nil, n.ID)
+}
+
+func TestEngine_Notifications_FailedWorkflowCreatesNotification(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "halt"})
+	f.workflowRepo.add(wf)
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	n := waitForNotification(t, notifRepo, notification.TypeFailed, 2*time.Second)
+	assert.Equal(t, id, n.InstanceID)
+	assert.Equal(t, "error-wf", n.WorkflowName, "notification must carry the workflow name")
+	assert.Equal(t, notification.TypeFailed, n.Type)
+}
+
+func TestEngine_Notifications_NoNotificationWhenRepoNotSet(t *testing.T) {
+	// Without SetNotifications the engine must not panic and must still complete the instance.
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State)
+}
+
+func TestEngine_Notifications_RepoErrorIsLoggedNotPropagated(t *testing.T) {
+	// A notification repo failure must not affect instance state.
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	notifRepo.createErr = fmt.Errorf("db timeout")
+	f.engine.SetNotifications(notifRepo)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State, "instance must still be completed even when notification fails")
 }

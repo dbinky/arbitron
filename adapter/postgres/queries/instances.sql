@@ -11,6 +11,7 @@ SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_
 FROM instances
 WHERE (sqlc.narg('state')::instance_state IS NULL OR state = sqlc.narg('state')::instance_state)
 AND (sqlc.narg('workflow_name')::text IS NULL OR workflow_name = sqlc.narg('workflow_name')::text)
+AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since')::timestamptz)
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
@@ -31,3 +32,14 @@ UPDATE instances SET state = 'completed', completed_at = now(), updated_at = now
 
 -- name: ListRunningInstances :many
 SELECT * FROM instances WHERE state = 'running';
+
+-- name: WorkflowStats :one
+SELECT
+  COUNT(*) AS total_runs,
+  COUNT(*) FILTER (WHERE state = 'completed') AS success_count,
+  COUNT(*) FILTER (WHERE state = 'failed') AS failure_count,
+  COALESCE(EXTRACT(EPOCH FROM AVG(completed_at - created_at)) FILTER (WHERE state = 'completed' AND completed_at IS NOT NULL), 0) AS avg_duration_secs
+FROM instances
+WHERE workflow_name = $1
+  AND created_at >= $2
+  AND created_at <= $3;

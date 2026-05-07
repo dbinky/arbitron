@@ -149,11 +149,14 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// writeEvent serializes an event as JSON and sends it as a WebSocket text message.
+// writeEvent serializes an event as JSON and sends it as a WebSocket text message
+// with a write deadline to prevent goroutine leaks from slow/frozen clients.
 func (h *StreamHandler) writeEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
 	data, err := json.Marshal(evt)
 	if err != nil {
 		return err
 	}
-	return conn.Write(ctx, websocket.MessageText, data)
+	writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageText, data)
 }

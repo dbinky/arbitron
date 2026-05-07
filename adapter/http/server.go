@@ -13,6 +13,7 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -58,7 +59,12 @@ type QueueManagerPort interface {
 // QueueRepoPort is a type alias for the domain queue repository port.
 type QueueRepoPort = instance.QueueRepository
 
+// NotificationRepoPort is a type alias for the domain notification repository port.
+type NotificationRepoPort = notification.Repository
+
 // NewRouter creates the chi router with all API routes wired up.
+// If dashboardHandler is non-nil, unmatched routes fall through to the
+// embedded SPA instead of returning chi's default 404.
 func NewRouter(
 	svc EngineService,
 	workflows WorkflowRepo,
@@ -70,6 +76,8 @@ func NewRouter(
 	cfg *config.Config,
 	queueManager QueueManagerPort,
 	queueRepo QueueRepoPort,
+	dashboardHandler http.Handler,
+	notifHandler *NotificationHandler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -78,13 +86,18 @@ func NewRouter(
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(securityHeaders)
 
-	wfHandler := NewWorkflowHandler(workflows, svc, fileReader)
+	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
 	streamHandler := NewStreamHandler(instances, eventBus)
+	sysStreamHandler := NewSystemStreamHandler(eventBus)
 	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// System-wide WebSocket stream
+		r.Get("/ws", sysStreamHandler.HandleWebSocket)
+
 		// System endpoints
 		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 			WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -99,7 +112,19 @@ func NewRouter(
 			r.Get("/{name}", wfHandler.Get)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
+			r.Put("/{name}/layout", wfHandler.SaveLayout)
+			r.Get("/{name}/stats", wfHandler.Stats)
 		})
+
+		// Notification endpoints
+		if notifHandler != nil {
+			r.Route("/notifications", func(r chi.Router) {
+				r.Get("/", notifHandler.List)
+				r.Get("/unread-count", notifHandler.UnreadCount)
+				r.Post("/mark-read", notifHandler.MarkRead)
+				r.Post("/{id}/dismiss", notifHandler.Dismiss)
+			})
+		}
 
 		// Webhook endpoints
 		if len(webhookHandler) > 0 && webhookHandler[0] != nil {
@@ -124,7 +149,22 @@ func NewRouter(
 		})
 	})
 
+	// Serve the embedded dashboard SPA for any route not matched by the API.
+	if dashboardHandler != nil {
+		r.NotFound(dashboardHandler.ServeHTTP)
+	}
+
 	return r
+}
+
+// securityHeaders adds standard security headers to every HTTP response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SystemHandler handles system configuration endpoints.

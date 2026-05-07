@@ -4,116 +4,113 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### API-003: UpdateQueueConfig does not write back to config struct — GetConfig returns stale caps
-**Area**: API Layer (`adapter/http/server.go` — `UpdateQueueConfig`, `GetConfig`, `SystemHandler`)
-**Fixed**: FA13 Pass 2
-**Detail**: `UpdateQueueConfig` read `h.config.Queue.GlobalCap/PerUserCap` to compute the old values, called `h.queueManager.UpdateConfig`, then returned — but never wrote the new values back into `h.config.Queue`. Consequently: (1) `GET /system/config` always returned the startup caps regardless of updates; (2) a second `PUT` would use stale old values when deciding whether the cap was raised, potentially triggering a spurious `Evaluate` call. Fixed by adding a `sync.Mutex` to `SystemHandler` and updating `h.config.Queue.GlobalCap/PerUserCap` under that lock before releasing, with corresponding lock in `GetConfig` for the Queue field reads. Added regression test `TestRouter_GetConfig_ReflectsUpdatedQueueCaps`. Also added `TestLoad_QueueYAMLOverride` to the config loader tests, and `assert.Equal(t, cfg1.Queue, cfg2.Queue)` to `TestLoad_MissingFileCreatesDefault`.
-
-### ENGINE-006: Missing NotifyCapacityFreed in run() error exit paths
-**Area**: Engine (`domain/engine/engine.go` — `run()`)
-**Fixed**: FA6 Pass 2
-**Detail**: Seven error return paths inside `run()` called `SetFailed` and returned without calling `NotifyCapacityFreed`, unlike the halt path which correctly notifies. Affected paths: initial `Get` failure, `parseWorkflowGraph` failure, missing entrypoint, loop `Get` failure, `UpdateCurrentNode` failure, `UpdateVariables` in skip path, route path with no error node ID, and `UpdateVariables` in success path. If any of these DB errors occurred, the running instance would transition to failed but the queue manager would not be triggered, leaving queued instances stuck until another event (completion, trigger, timer fire) happened. Fixed by adding `NotifyCapacityFreed` to all affected return sites. Added regression test `TestEngine_RunLoop_ParseFailure_NotifiesCapacity`.
-
-### HTTP-W-001: Silent error suppression in webhook handler
-**Area**: Webhook HTTP Handler (`adapter/http/webhook_handler.go`)
-**Fixed**: FA8 Pass 1
-**Detail**: Three errors were silently discarded with `_ =`: (1) `nodeExecs.Update` — payload lost on failure; (2) `SetWebhookReceived` — paused instance won't see the received webhook on Resume, returning it to waiting instead of enqueuing; (3) `SetQueued` — instance stuck in waiting with deactivated token and no active timer. Fixed by replacing `_ =` with `slog.Error` calls. For `SetQueued` specifically, `NotifyCapacityFreed` is only called on success. Added tests for valid secret happy path, missing node exec record, and SetQueued failure path.
-
-### API-001: Silent errors and missing validation in UpdateQueueConfig
-**Area**: API Layer (`adapter/http/server.go` — `UpdateQueueConfig`)
-**Fixed**: FA9 Pass 1
-**Detail**: Two issues: (1) `go queueManager.Evaluate(...)` goroutine error was silently dropped with `_ =`; fixed by logging via `slog.Error`. (2) No validation that `globalCap`/`perUserCap` are non-negative — a negative cap would silently be treated as unlimited (since `CanStart` guards with `> 0`); fixed by adding 400 validation.
-
-### API-002: Missing test coverage for new queue API surface
-**Area**: API Layer (`adapter/http/instance_handler.go`, `adapter/http/server.go`, `adapter/http/workflow_handler.go`)
-**Fixed**: FA9 Pass 1
-**Detail**: No tests existed for: (a) `SetPriority` handler — entire handler untested; (b) Trigger returning 202+queued when `started=false`; (c) `UpdateQueueConfig` endpoint; (d) `GET /system/config` queue section fields; (e) instance response fields for `queuedAt`, `waitingUntil`, `webhookUrl`, `webhookReceived`. Added 15 tests covering all these paths including happy paths, validation errors, and route wiring.
-
-### ENGINE-005: Resume of paused webhook-wait with expired timeout goes back to waiting (stuck instance)
-**Area**: Engine (`domain/engine/engine.go` — `Resume`)
-**Fixed**: FA16 Pass 1
-**Detail**: When a webhook-wait instance (with `WebhookToken` AND `WaitingUntil`) is paused, and the timer fires while paused, `OnTimerFired` sees `StatePaused` (not `StateWaiting`) and no-ops. The timer slot is then gone. When `Resume` is later called, the webhook branch checked `WebhookReceivedAt == nil` and transitioned back to `StateWaiting` — but with no active timer and the timeout already passed. Fixed by adding a `WaitingUntil` expiry check in the webhook branch of `Resume`: if `WaitingUntil != nil && time.Now().After(*WaitingUntil)`, deactivate the webhook token in the registry and call `SetFailed` instead of going back to waiting. Added regression tests `TestEngine_ResumeFromWebhookWaiting_TimeoutExpiredWhilePaused_FailsInstance` and `TestEngine_ResumeFromWebhookWaiting_TimeoutNotExpired_RestoresWaiting`.
-
-### DB-001: Generated code missing Phase 2 columns — crash recovery completely broken
-**Area**: Database Layer (`adapter/postgres/generated/models.go`, `generated/instances.sql.go`, `generated/queue.sql.go`, `adapter/postgres/instance_repo.go`, `adapter/postgres/queue_repo.go`)
-**Fixed**: FA10 Pass 1
-**Detail**: Four critical issues found together: (1) `generated.Instance` struct was missing `WaitingUntil`, `WebhookToken`, `WebhookSecretHash`, `WebhookReceivedAt` — all 4 columns added by migrations 006/007; (2) all SELECT/RETURNING queries in `instances.sql.go` and `nextEligible` in `queue.sql.go` only selected the original 14 columns and only scanned 14 values — reading back `nil` for all Phase 2 fields, making `Resume` always see no webhook token and no waiting-until, causing incorrect behavior; (3) `rowToInstance` in `instance_repo.go` did not map the 4 new fields; (4) `ListWaitingWithTimer` and `ListWaitingWithWebhook` in `queue_repo.go` were stubs returning `(nil, nil)` — crash recovery would find no instances to recover. Fixed by: updating `generated.Instance` struct with the 4 new fields; updating all column lists and scan calls in generated SQL files; adding `ListWaitingWithTimer` and `ListWaitingWithWebhook` as proper generated queries in `queue.sql.go` and documenting them in `queries/queue.sql`; implementing both methods in `queue_repo.go` via the generated queries; updating `rowToInstance` to map all new fields.
-
-### DB-002: ListWaitingWithTimer incorrectly includes webhook-wait instances
-**Area**: Database Layer (`adapter/postgres/queries/queue.sql`, `generated/queue.sql.go`)
-**Fixed**: FA10 Pass 2
-**Detail**: `ListWaitingWithTimer` queried `WHERE state = 'waiting' AND waiting_until IS NOT NULL`, which also matched webhook-wait instances that have a timeout configured (`waiting_until IS NOT NULL` AND `webhook_token IS NOT NULL`). `RecoverTimers` would then call `SetQueued` on an expired webhook-wait instance instead of letting `RecoverWebhooks` call `SetFailed`. This would queue (and possibly restart) an instance whose webhook timeout expired during downtime, bypassing the failure semantics. Fixed by adding `AND webhook_token IS NULL` to the query so webhook-wait instances are exclusively processed by `RecoverWebhooks`. Added regression test `TestRecoverTimers_WebhookInstanceNotInList`.
+_(no open issues)_
 
 ## Fixed Previously
 
-### QUEUE-001: Data race in UpdateConfig / CanStart
-**Area**: Queue Manager (`domain/queue/manager.go`)
-**Fixed**: FA1 Pass 1
-**Detail**: `UpdateConfig` wrote `GlobalCap`/`PerUserCap` on the shared `*config.Config` without holding `m.mu`, while `Evaluate` read them under `m.mu` and `CanStart` read them with no lock at all — a live data race under `-race` for any concurrent trigger+config-update scenario. Fixed by: (1) having `UpdateConfig` acquire `m.mu` before writing, (2) having `CanStart` take a brief snapshot of the cap values under `m.mu` before releasing and doing I/O.
+### FA4: Non-atomic SaveNodePositions write
+**Area**: Filesystem adapter (`adapter/filesystem/workflow_repo.go`)
+**Fixed**: Iteration 1
+**Detail**: `os.WriteFile` could leave `workflow.json` truncated on a mid-write crash. Changed to write to `manifestPath + ".tmp"` then `os.Rename` for atomic commit.
 
-### QUEUE-002: SetFailed error swallowed in webhook timeout handler
-**Area**: Queue Manager (`domain/queue/scheduler.go` — `OnTimerFired`)
-**Fixed**: FA1 Pass 1
-**Detail**: In the `TimerTypeWebhook` branch, both `SetWebhookFields` and `SetFailed` errors were discarded with `_ =`. If `SetFailed` fails the instance is permanently stuck in `waiting` with no active timer. Fixed by: returning the `SetFailed` error so the scheduler can log it; logging (but not returning) the `SetWebhookFields` error since it is best-effort cleanup.
+### FA6/FA7: WorkflowName always empty string on engine notifications
+**Area**: Engine (`domain/engine/engine.go`)
+**Fixed**: Iteration 1
+**Detail**: Both `TypeCompleted` and `TypeFailed` notification structs omitted `WorkflowName`. The field was available via `inst.WorkflowName` after the initial `instances.Get` call. Fixed by storing the workflow name in a closure variable and populating both structs.
 
-### ENGINE-001: Magic string "timer_delay" in executor_timer.go
-**Area**: Timer Delay Executor (`domain/engine/executor_timer.go`)
-**Fixed**: FA4 Pass 1
-**Detail**: The scheduler `Schedule` call used the raw string `"timer_delay"` instead of a constant. The queue package defines `TimerTypeDelay = "timer_delay"` but the engine domain cannot import the queue domain. Fixed by adding `TimerTypeDelay` and `TimerTypeWebhook` constants to `domain/engine/ports.go` (alongside the `TimerScheduler` interface where they belong) and updating the executor to use the constant.
+### FA7: Panic recovery path skipped notification emit
+**Area**: Engine (`domain/engine/engine.go`)
+**Fixed**: Iteration 1
+**Detail**: The deferred panic handler called `SetFailed` but never created a notification, leaving users with no bell alert for panicking instances. Fixed by adding notification creation (with `WorkflowName`) to the panic recovery path.
 
-### ENGINE-002: nodeExecs.Create error silently dropped in TimerDelayExecutor
-**Area**: Timer Delay Executor (`domain/engine/executor_timer.go`)
-**Fixed**: FA4 Pass 1
-**Detail**: After a successful `SetWaiting` call (instance now in waiting state), the node execution record write failure was silently ignored with `_ =`. If the write fails, the audit record is missing. Changed to log via `slog.Error` — the error is not propagated because `SetWaiting` already committed (returning the error would cause the engine to call `SetFailed` on an instance that's already in `waiting` state, creating an inconsistent state).
+### FA10: notifications.list offset=0 silently dropped in API client
+**Area**: API Client (`dashboard/src/api/client.ts` line 178)
+**Fixed**: Iteration 1
+**Detail**: `if (params.offset)` is falsy for `offset === 0`, so the first page could never be explicitly requested. Changed to `if (params.offset != null)`.
 
-### ENGINE-003: Duplicate node execution records for timer delay and webhook wait nodes
-**Area**: Timer Delay Executor / Webhook Wait Executor / `engine.go` — `executeWithRetry`
-**Fixed**: FA6 Pass 1
-**Detail**: Both `TimerDelayExecutor` and `WebhookWaitExecutor` write their own node execution records internally, AND `executeWithRetry` also wrote one after any executor returns. Fixed by skipping the `executeWithRetry` record write when `result.IsWait == true`. Added regression test `TestEngine_WaitResult_ExitsLoopCleanlyNoExtraRecord`.
+### FA10: workflows.get return type was Promise<unknown>
+**Area**: API Client (`dashboard/src/api/client.ts` line 129)
+**Fixed**: Iteration 1
+**Detail**: Typed as `Promise<unknown>`, forcing callers to use double-cast. Fixed to `Promise<WorkflowDefinition>` with an import from `../graph/types`.
 
-### ENGINE-004: Missing error case tests in TimerDelayExecutor
-**Area**: Timer Delay Executor (`domain/engine/executor_timer_test.go`)
-**Fixed**: FA4 Pass 1
-**Detail**: No tests for (a) context missing instance ID (returns immediate error), (b) `SetWaiting` DB failure (returns wrapped error, scheduler NOT called). Added 2 tests.
+### FA9: markRead return type was Promise<void>
+**Area**: API Client (`dashboard/src/api/client.ts` line 189)
+**Fixed**: Iteration 1
+**Detail**: Backend returns `{"status":"ok"}` but the client typed it as `void`. Fixed to `Promise<{ status: string }>`.
 
-### QUEUE-006: Dead code TimerSchedulerForRecovery interface in recovery.go
-**Area**: Crash Recovery (`domain/queue/recovery.go`)
-**Fixed**: FA3 Pass 1
-**Detail**: `TimerSchedulerForRecovery` interface was defined but never used — `RecoverTimers` and `RecoverWebhooks` both take `*Scheduler` as a concrete type. Additionally, the interface's `Schedule` signature (`instanceID interface{ String() string }`) doesn't match `Scheduler.Schedule(uuid.UUID, ...)`, making it unreachable. Removed the interface entirely.
+### FA12: borderCancelled CSS used queued colour (copy-paste error)
+**Area**: Queue View (`dashboard/src/components/InstanceRow.module.css` line 108)
+**Fixed**: Iteration 1
+**Detail**: `borderCancelled` was `var(--state-queued)` (blue-grey) instead of a distinct cancelled colour. Added `--state-cancelled: #546e7a` to `theme.css` and updated the class.
 
-### QUEUE-007: Silent error suppression in RecoverTimers and RecoverWebhooks
-**Area**: Crash Recovery (`domain/queue/recovery.go`)
-**Fixed**: FA3 Pass 1
-**Detail**: Three issues: (1) `RecoverTimers` had a comment "Log error but continue recovery" on its `SetQueued` failure branch but no actual log call, leaving failures invisible. (2) `RecoverWebhooks` timed-out path swallowed `SetWebhookFields` and `SetFailed` errors with `_ =`. Fixed by adding `slog.Error` calls to all three sites.
+### FA9: Dead .iconButton CSS in NavBar.module.css
+**Area**: NavBar (`dashboard/src/components/NavBar.module.css`)
+**Fixed**: Iteration 1
+**Detail**: `.iconButton` and `.iconButton:hover` were defined but never referenced in `NavBar.tsx` (the bell uses its own module's `.bellButton`). Removed dead CSS.
 
-### QUEUE-008: Missing recovery edge-case tests
-**Area**: Crash Recovery (`domain/queue/recovery_test.go`)
-**Fixed**: FA3 Pass 1
-**Detail**: No tests for: (a) nil `WaitingUntil` in `RecoverTimers` (should skip gracefully), (b) `SetQueued` failure in `RecoverTimers` (error logged, not propagated, other timers still processed), (c) nil `WebhookToken` in `RecoverWebhooks` (should skip), (d) webhook wait node with no timeout configured (re-registers only, no scheduler entry), (e) no node execution record found for a timed-out webhook (no scheduler entry, no crash). Added 5 tests.
+### FA2-001: No test for server-side context cancellation in system stream handler
+**Area**: System WebSocket (`adapter/http/system_stream_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: The `ctx.Done()` branch (server shutdown path) was uncovered. Added `TestSystemStreamHandler_ServerContextCancel_ClosesConnection` using a channel to inject a cancellable context without races.
 
-### QUEUE-004: Handler errors silently dropped in Scheduler.processExpired
-**Area**: Timer Scheduler (`domain/queue/scheduler.go`)
-**Fixed**: FA2 Pass 1
-**Detail**: `processExpired` discarded `OnTimerFired` errors with `_ =`. Since the timer entry is already removed from the map before the handler is called, a handler failure (e.g., DB write failure in `SetFailed`) leaves the instance permanently stuck in `waiting` with no active timer and no log evidence. Fixed by logging the error via `slog.Error` so operators can detect the stuck instance.
+### FA12-001: QueueView surfaces no error UI when initial fetch fails
+**Area**: Queue View (`dashboard/src/routes/QueueView.tsx`)
+**Fixed**: Iteration 2
+**Detail**: Errors from `fetchAll()` were only logged to `console.error`. Added `error` state, error message display, and a retry button.
 
-### QUEUE-005: Missing scheduler edge-case tests
-**Area**: Timer Scheduler (`domain/queue/scheduler_test.go`)
-**Fixed**: FA2 Pass 1
-**Detail**: No tests for: (a) context cancellation stopping the loop goroutine, (b) past-due timer scheduled with negative duration fires in ≤1ms, (c) re-scheduling an existing entry (same instanceID, new deadline) correctly updates the deadline, (d) handler error resilience (scheduler continues processing remaining expired timers after one handler returns an error). Added 4 new tests.
+### FA12-002: QueueSection sort-by-time uses updatedAt instead of createdAt for elapsed sort
+**Area**: Queue View (`dashboard/src/components/QueueSection.tsx`)
+**Fixed**: Iteration 2
+**Detail**: The elapsed sort (Active section) should surface longest-running instances using `createdAt` ascending. Changed `sortInstances` to accept `timeMode` and use `createdAt` when `timeMode === 'elapsed'`.
 
-### QUEUE-003: Missing test coverage in Queue Manager
-**Area**: Queue Manager (`domain/queue/manager_test.go`)
-**Fixed**: FA1 Pass 1
-**Detail**: No tests for (a) DB error paths in `CanStart` (`CountRunning` error, `CountRunningByOwner` error), (b) `NextEligible` error in `Evaluate`, (c) `StartInstance` failure in `Enqueue`, (d) `CanStart` error propagation in `Enqueue`, (e) `OnTimerFired` with `TimerTypeDelay` (both the happy path and the not-waiting no-op), (f) `SetFailed` error propagation in the webhook timeout path, (g) `UpdateConfig` entirely. Added 9 new tests covering all these cases._
+### FA18-001: Off-by-one in dismissed notifications paging
+**Area**: Notification Bell (`dashboard/src/components/NotificationBell.tsx`), Notification Handler (`adapter/http/notification_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: `setHasMoreDismissed(data.length === PAGE_SIZE)` produced false negatives when the count was an exact multiple of `PAGE_SIZE`. Fixed by changing the backend `List` endpoint to return `{ items, hasMore }` using a `limit+1` probe, and updating the bell to use `hasMore` from the response.
+
+### FA25-001: Notification WS events not published — bell cross-tab sync broken
+**Area**: Engine (`domain/engine/engine.go`), Notification Handler (`adapter/http/notification_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: The bell component listens for `notification.created`, `notification.read`, `notification.dismissed` WS events but the backend never published them. Fixed: engine now publishes `notification.created` after each successful `Create` call; `NotificationHandler` now has an optional eventBus (via `SetEventBus`) and publishes `notification.read` / `notification.dismissed` after successful operations. Wired in `cmd/arbitron/main.go`.
+
+### FA27-001: JSON key mismatch — backend returns avgDurationSecs but frontend expects avgDurationSeconds
+**Area**: Instance domain (`domain/instance/instance.go`)
+**Fixed**: Iteration 2
+**Detail**: `WorkflowStats.AvgDurationSecs` had JSON tag `avgDurationSecs` but both the spec and the TypeScript type used `avgDurationSeconds`. Fixed the Go struct tag to `json:"avgDurationSeconds"`.
+
+### FA21-001: Dead event cases in ExecutionView WS handler
+**Area**: Execution View (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: None — no fix required
+**Detail**: `case 'node.skipped'` and `case 'instance.state_changed'` are handled but these event types are never published by the engine. Low severity: node state changes are reflected via `node.completed`/`node.failed` events, and instance actions are followed by `onAction` callbacks. No code change needed.
 
 <!--
 Example of a fixed issue entry:
 
-### QUEUE-001: Race between timer fire and cancel
-**Area**: Timer Scheduler (`domain/queue/scheduler.go`)
-**Fixed**: Iteration N
-**Detail**: A race existed where Cancel() could be called after the timer fired but before the transition completed, leaving the instance in an inconsistent state. Added a state check in OnTimerFired to verify the instance is still in waiting state before transitioning.
+### COMP-A-001: Input validation missing for empty strings
+**Area**: Component A (`path/to/component_a.py`)
+**Fixed**: Iteration 3
+**Detail**: The `process()` function accepted empty strings without validation, which caused a downstream `IndexError` in the parser. The code handled `None` but not `""`. Added an early return with a structured error response. Added 2 tests: empty string input returns error, whitespace-only input returns error.
 -->
+
+### FA4-001: SaveNodePositions port missing context.Context
+**Area**: Workflow port (`domain/workflow/ports.go`), filesystem adapter (`adapter/filesystem/workflow_repo.go`), HTTP handler (`adapter/http/workflow_handler.go`), tests
+**Fixed**: Iteration 3
+**Detail**: `SaveNodePositions` signature lacked `context.Context` as the first parameter, violating the explicit constraint that all Go I/O methods accept a context. Updated the port interface, the filesystem implementation, the HTTP handler call site (`r.Context()`), three mock repos in `workflow_handler_test.go`, and four direct calls in `workflow_repo_positions_test.go`.
+
+### FA17-001: Settings.tsx WS handler only refreshes on dead instance.state_changed event
+**Area**: Settings (`dashboard/src/routes/Settings.tsx`)
+**Fixed**: Iteration 3
+**Detail**: The WS event handler that refreshes live queue counts only listened to `instance.state_changed` (never published by the engine) and `instance.created`. Replaced with the full set of events that change queue slot occupancy: `instance.created`, `instance.started`, `instance.completed`, `instance.failed`, `instance.cancelled`, `instance.paused`, `instance.resumed`.
+
+### FA1-001: embed_test.go hardcoded content-hashed CSS filename
+**Area**: Dashboard embed test (`adapter/dashboard/embed_test.go`)
+**Fixed**: Iteration 3
+**Detail**: `TestHandler_ServesStaticAsset` hardcoded `/assets/index-C3wlROOj.css` which breaks whenever Vite rebuilds and regenerates the content hash. Added an exported `Assets() fs.FS` accessor to `embed.go` so the test can call `fs.ReadDir` to discover the real CSS filename at test time.
+
+### FA16-001: Redundant as WorkflowDefinition cast in WorkflowReview.tsx
+**Area**: Workflow Review (`dashboard/src/routes/WorkflowReview.tsx`)
+**Fixed**: Iteration 3
+**Detail**: `api.workflows.get()` already returns `Promise<WorkflowDefinition>` (fixed in Iteration 1), so the `as WorkflowDefinition` cast at the call site was redundant. Removed it.
 
 ## Won't Fix (Beyond Current Scope)
 
@@ -122,7 +119,7 @@ _(items logged here are new functionality or enhancements that are outside the s
 <!--
 Example of a won't-fix entry:
 
-### QUEUE-W01: No distributed locking for multi-instance deployment
-**Area**: Queue Manager (`domain/queue/manager.go`)
-**Detail**: The queue evaluation logic assumes a single process. In a multi-instance deployment, two processes could dequeue the same instance. This is out of scope for Phase 2 which targets single-user local mode.
+### COMP-C-W01: No retry logic for transient network failures
+**Area**: Component C (`path/to/component_c.ts`)
+**Detail**: The external API client has no retry/backoff for 5xx responses. Adding retry logic is a robustness improvement beyond the current feature scope. Low risk since failures are surfaced to the caller.
 -->

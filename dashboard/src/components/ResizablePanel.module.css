@@ -1,0 +1,31 @@
+.container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+.left {
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.divider {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--border-color);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.divider:hover,
+.dividerActive {
+  background: var(--accent);
+}
+
+.right {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}

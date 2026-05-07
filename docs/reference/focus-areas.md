@@ -1,6 +1,6 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the Arbitron Phase 2 Queue & Concurrency implementation for correctness, concurrency safety, and robustness.
+This document tracks the systematic review of the Arbitron Phase 3 Dashboard for correctness, security, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -15,19 +15,25 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| FA1 | Queue Manager (`domain/queue/manager.go` — capacity checking, next eligible selection, evaluation loop, enqueue, cap semantics) | [x] | [x] | |
-| FA2 | Timer Scheduler (`domain/queue/scheduler.go` — hybrid single-timer design, Schedule/Cancel, timer fire flow, graceful shutdown) | [x] | [x] | |
-| FA3 | Crash Recovery (`domain/queue/recovery.go` — RecoverTimers, RecoverWebhooks, past-due detection, re-registration) | [x] | [x] | |
-| FA4 | Timer Delay Executor (`domain/engine/executor_timer.go` — substitution, duration parsing, state transition, WaitResult, scheduler notification) | [x] | [x] | |
-| FA5 | Webhook Wait Executor (`domain/engine/executor_webhook.go` — token generation, HMAC hashing, timeout setup, registry registration, WaitResult) | [x] | [x] | |
-| FA6 | Engine Queue Integration (`domain/engine/engine.go` — Trigger refactor, StartInstance, run() loop WaitResult handling, Cancel/Pause/Resume for waiting/webhook states) | [x] | [x] | |
-| FA7 | Webhook Registry (`adapter/http/webhook_registry.go` — in-memory map, RWMutex, Register/Lookup/Deactivate lifecycle, concurrency safety) | [x] | [x] | |
-| FA8 | Webhook HTTP Handler (`adapter/http/webhook_handler.go` — token lookup, state validation, secret verification, payload parsing, state transitions, error responses) | [x] | [x] | |
-| FA9 | API Layer Queue Endpoints (`adapter/http/instance_handler.go`, `adapter/http/server.go` — priority endpoint, trigger 201/202, system config queue section, queue-ordered listing) | [x] | [x] | |
-| FA10 | Database Layer (`adapter/postgres/queue_repo.go`, `adapter/postgres/queries/queue.sql`, migrations 005-007 — query correctness, index usage, enum updates) | [x] | [x] | |
-| FA11 | Instance Domain Model (`domain/instance/instance.go`, `domain/instance/ports.go` — StateWaiting, QueuedAt, WaitingUntil, Webhook fields, new errors, QueueRepository interface) | [x] | [x] | |
-| FA12 | Workflow Validation (`domain/workflow/workflow.go`, `domain/workflow/validation.go` — timer_delay and webhook_wait node types, config fields, validation rules) | [x] | [x] | |
-| FA13 | Configuration (`domain/config/config.go`, `adapter/config/loader.go` — QueueConfig, defaults 20/5, env var overrides, config update persistence) | [x] | [x] | |
+| 1 | Go Embed & Static Serving (`adapter/dashboard/` — embed directive, SPA fallback, cache headers, catch-all route wiring in `adapter/http/server.go`) | [x] | [x] | |
+| 2 | System WebSocket & EventBus SubscribeAll (`adapter/eventbus/eventbus.go`, `adapter/http/system_stream_handler.go` — fan-out to all subscribers, system-wide WS endpoint, connection lifecycle) | [x] | [x] | |
+| 3 | Instance List Since Filter (`domain/instance/instance.go` ListFilters, `adapter/postgres/` query changes, `adapter/http/instance_handler.go` — since param parsing, query integration) | [x] | [x] | |
+| 4 | Node Position Domain & Persistence (`domain/workflow/workflow.go` NodePosition, `domain/workflow/ports.go` SaveNodePositions, `adapter/filesystem/workflow_repo.go` — position read/write, all-or-nothing rule, field preservation) | [x] | [x] | |
+| 5 | Workflow Stats Endpoint (`domain/instance/instance.go` WorkflowStats, `adapter/postgres/instance_repo.go` Stats, `adapter/http/workflow_handler.go` Stats handler — aggregation, date range, edge cases) | [x] | [x] | |
+| 6 | Notification Backend (`domain/notification/`, `adapter/postgres/notification_repo.go`, `adapter/http/notification_handler.go` — CRUD, pagination, mark-read, dismiss, migration) | [x] | [x] | |
+| 7 | Engine Notification Wiring (`domain/engine/engine.go` — SetNotifications, fire-and-forget creation on completed/failed transitions, error logging) | [x] | [x] | |
+| 8 | Dashboard Theme & App Shell (`dashboard/src/styles/theme.css`, `dashboard/src/App.tsx`, `dashboard/src/main.tsx` — CSS custom properties, React Router setup, route definitions) | [x] | [x] | |
+| 9 | NavBar & Navigation (`dashboard/src/components/NavBar.tsx` — active link highlighting, breadcrumb integration, bell placeholder replaced with NotificationBell) | [x] | [x] | |
+| 10 | API Client & Types (`dashboard/src/api/client.ts`, `dashboard/src/api/types.ts` — all endpoint methods, type definitions match backend contracts, error handling) | [x] | [x] | |
+| 11 | WebSocket Hooks (`dashboard/src/hooks/useSystemWebSocket.ts`, `dashboard/src/hooks/useInstanceWebSocket.ts` — reconnection, cleanup, event parsing, callback refs) | [x] | [x] | |
+| 12 | Queue View (`dashboard/src/routes/QueueView.tsx`, `dashboard/src/components/QueueSection.tsx`, `dashboard/src/components/InstanceRow.tsx`, `dashboard/src/components/StateBadge.tsx` — three sections, collapsible, sort, attention flags, live updates) | [x] | [x] | |
+| 13 | React Flow Graph & Layout (`dashboard/src/graph/` — ArbitronNode component, nodeTypes registry, useGraphLayout hook, dagre config, all-or-nothing position rule, edge labels) | [x] | [x] | |
+| 14 | Execution View (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/components/SidePanel.tsx` — graph + side panel, node click, live WS updates, breadcrumb, instance controls) | [x] | [x] | |
+| 15 | Node Output & Variables Display (`dashboard/src/components/NodeOutput.tsx`, `dashboard/src/components/VariablesPanel.tsx` — script stdout/stderr, LLM conversation, error details, timing, key-value table) | [x] | [x] | |
+| 16 | Workflow Review Panel (`dashboard/src/routes/WorkflowReview.tsx`, `dashboard/src/components/UsageStats.tsx`, `dashboard/src/components/TriggerModal.tsx` — draggable graph, position auto-save, stats display, trigger form, input schema) | [x] | [x] | |
+| 17 | Workflows Catalog & Settings (`dashboard/src/routes/WorkflowsCatalog.tsx`, `dashboard/src/routes/Settings.tsx` — list/search, queue config editing, live queue status) | [x] | [x] | |
+| 18 | Notification Bell & Popover (`dashboard/src/components/NotificationBell.tsx` — badge, popover, mark-read, dismiss, dismissed paging, cross-tab sync via WS) | [x] | [x] | |
+| 19 | Interactive Callout Placeholder (`dashboard/src/graph/nodes/InteractiveCallout.tsx` — bubble styling, pulsing border, children prop, positioning) | [x] | [x] | |
 
 ---
 
@@ -35,14 +41,15 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| FA14 | Queue Manager + Engine (enqueue flow, capacity notification via NotifyCapacityFreed, StartInstance contract, Trigger→Enqueue→Evaluate chain) | [x] | |
-| FA15 | Timer Scheduler + Timer Delay Executor (Schedule interface contract, timer type constants, instanceID in context, WaitingUntil calculation agreement) | [x] | |
-| FA16 | Timer Scheduler + Webhook Timeout (same scheduler for webhook timeouts, TimerTypeWebhook discrimination, deactivate-on-fire flow) | [x] | |
-| FA17 | Webhook Registry + Webhook Handler (Register/Lookup/Deactivate contract, entry struct fields, concurrency between registration and lookup) | [x] | |
-| FA18 | Webhook Handler + Engine (state transition correctness for waiting+paused, Resume logic for webhook-received-while-paused, Cancel deactivating tokens) | [x] | |
-| FA19 | Queue Manager + Crash Recovery (RecoverTimers/RecoverWebhooks → scheduler registration → evaluation pass, startup ordering) | [x] | |
-| FA20 | API Layer + Queue Manager (trigger capacity check path, priority mutation → no re-evaluation needed, PUT config → cap raise triggers evaluation) | [x] | |
-| FA21 | Engine + Instance Model (SetWaiting/SetWebhookFields/SetQueued usage correctness, state transition preconditions, field nullability) | [x] | |
+| 20 | System WebSocket + Queue View (live update events flow from EventBus SubscribeAll through system WS to QueueView refetch — event types, reconnection, state transitions move instances between sections) | [x] | |
+| 21 | Instance WebSocket + Execution View (per-instance WS events update node states in graph, side panel output streaming, variable updates — event type handling, cleanup on navigate away) | [x] | |
+| 22 | API Client + Backend Endpoints (all client methods match server routes — paths, HTTP methods, query params, request/response JSON shapes, error codes) | [x] | |
+| 23 | React Flow Graph + Dagre Layout (useGraphLayout produces correct rfNodes/rfEdges, ArbitronNode renders correctly with layout positions, edge labels from workflow definition) | [x] | |
+| 24 | Position Persistence + Review Panel (drag-end saves positions via layout endpoint, auto-save on first view when needsAutoSave is true, positions round-trip through workflow.json) | [x] | |
+| 25 | Notification Backend + Bell Frontend (notification list endpoint returns workflowName, bell fetches unread count, mark-read on popover open, dismiss removes entry, cross-tab sync events) | [x] | |
+| 26 | Go Embed + Vite Build (dashboard dist/ copied to adapter/dashboard/dist/, SPA fallback serves index.html for client routes, API routes take precedence over catch-all) | [x] | |
+| 27 | Workflow Stats + UsageStats Component (stats endpoint returns correct aggregation, frontend date range picker maps to from/to params, success/failure rates computed correctly) | [x] | |
+| 28 | Engine Notifications + Notification Repo (fire-and-forget creation doesn't block workflow, completed/failed transitions create correct notification types, error logging on repo failure) | [x] | |
 
 ---
 
@@ -52,23 +59,23 @@ A review pass is only checked when the checklist produces a passing result for t
 
 **Pass 1 (Correctness & Coverage):**
 - All public functions have test coverage (happy path, failure, error, edge cases)
-- The code does what the spec and design docs say it should
-- Error handling is thorough — no silent failures, errors wrapped with context
-- Concurrency is safe — shared state protected, no data races under `-race`
+- The code does what the design doc says it should
+- Error handling is thorough — no silent failures
 - Module boundaries are clean (no leaking types across boundaries)
+- React components have correct TypeScript types and handle loading/error states
 
 **Pass 2 (Robustness & Extensibility):**
 - Code aligns to the spirit of the design, not just surface conformance
-- The component is ready to be extended by future phases (Phase 3 dashboard, Phase 4 interactive)
+- The component is ready to be extended by future work (Phase 4 interactive steps, Phase 5 MCP)
 - Test assertions test real risks, not just happy-path ceremony
-- Edge cases are handled (zero/negative durations, concurrent pause+timer fire, cap changes during evaluation)
-- Graceful shutdown paths work correctly
+- Edge cases are handled (empty inputs, WebSocket disconnection, missing data, concurrent access)
+- CSS uses theme variables consistently, no hardcoded colors
 
 ### Paired Area Reviews — What To Check
 
 Paired reviews verify that two components integrate correctly:
-- Data flows cleanly across the boundary (types match, nullability agrees)
-- Error propagation works end-to-end (one side's error triggers correct behavior in the other)
+- Data flows cleanly across the boundary (Go backend → REST API → React frontend)
+- Error propagation works end-to-end
 - No assumptions in one component that the other doesn't satisfy
-- The integration tests cover the seams between the pair
-- Concurrency interactions are safe (e.g., timer fires while webhook handler is processing)
+- WebSocket event contracts match between publisher and subscriber
+- API request/response shapes are consistent between client and server

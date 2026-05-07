@@ -1,0 +1,110 @@
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.workflowName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.currentNode {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.priority {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.priorityHigh {
+  color: var(--priority-high);
+}
+
+.priorityNormal {
+  color: var(--priority-normal);
+}
+
+.priorityLow {
+  color: var(--priority-low);
+}
+
+.time {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 64px;
+  text-align: right;
+}
+
+.owner {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--state-failed);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* State-based left border colors */
+.borderRunning {
+  border-left-color: var(--state-running);
+}
+
+.borderCompleted {
+  border-left-color: var(--state-completed);
+}
+
+.borderFailed {
+  border-left-color: var(--state-failed);
+}
+
+.borderWaiting {
+  border-left-color: var(--state-waiting);
+}
+
+.borderQueued {
+  border-left-color: var(--state-queued);
+}
+
+.borderPaused {
+  border-left-color: var(--state-paused);
+}
+
+.borderCancelled {
+  border-left-color: var(--state-cancelled);
+}

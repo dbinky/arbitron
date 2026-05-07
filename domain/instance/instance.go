@@ -116,10 +116,19 @@ type VariableSnapshot struct {
 	CapturedAt time.Time
 }
 
+// WorkflowStats summarises execution metrics for a workflow over a time range.
+type WorkflowStats struct {
+	TotalRuns       int     `json:"totalRuns"`
+	SuccessCount    int     `json:"successCount"`
+	FailureCount    int     `json:"failureCount"`
+	AvgDurationSecs float64 `json:"avgDurationSeconds"`
+}
+
 // ListFilters specifies filtering and pagination options for listing instances.
 type ListFilters struct {
 	State        *State
 	WorkflowName *string
+	Since        *time.Time
 	Limit        int
 	Offset       int
 }

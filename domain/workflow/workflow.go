@@ -34,6 +34,12 @@ type InputField struct {
 	Required    bool   `json:"required"`
 }
 
+// NodePosition stores the x/y coordinates of a node on the canvas.
+type NodePosition struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
 // Node is a single processing step in the workflow graph.
 type Node struct {
 	ID            string        `json:"id"`
@@ -43,6 +49,7 @@ type Node struct {
 	Description   string        `json:"description"`
 	ErrorBehavior ErrorBehavior `json:"errorBehavior,omitempty"`
 	Entrypoint    bool          `json:"entrypoint,omitempty"`
+	Position      *NodePosition `json:"position,omitempty"`
 }
 
 // NodeConfig holds the type-specific configuration for a node.
@@ -102,4 +109,5 @@ type WorkflowSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Author      string `json:"author"`
+	NodeCount   int    `json:"nodeCount"`
 }

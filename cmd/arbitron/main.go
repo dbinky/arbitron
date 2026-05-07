@@ -19,6 +19,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/anthropic"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
+	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
@@ -158,6 +159,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
 	eng.SetQueueManager(queueMgr)
 
+	// 12a. Create notification repo and wire it to the engine.
+	notifRepo := postgres.NewNotificationRepo(pool)
+	eng.SetNotifications(notifRepo)
+
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
@@ -171,7 +176,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
-	// 15. Create the full API router.
+	// 15. Create the full API router with embedded dashboard.
+	dashHandler := dashboard.Handler()
+	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
+	notifHandler.SetEventBus(bus)
 	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,
@@ -183,12 +191,22 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		cfg,
 		queueMgr,
 		queueRepo,
+		dashHandler,
+		notifHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+
+	// Warn if binding to a non-loopback address. The API has no authentication,
+	// so exposing it on the network is a security risk.
+	if cfg.Server.Host != "127.0.0.1" && cfg.Server.Host != "localhost" && cfg.Server.Host != "::1" {
+		logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
+			"host", cfg.Server.Host)
+	}
+
 	srv := &http.Server{
 		Addr:        addr,
 		Handler:     handler,

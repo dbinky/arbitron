@@ -1,0 +1,47 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.running {
+  background: rgba(52, 152, 219, 0.15);
+  color: var(--state-running);
+}
+
+.completed {
+  background: rgba(46, 204, 113, 0.15);
+  color: var(--state-completed);
+}
+
+.failed {
+  background: rgba(231, 76, 60, 0.15);
+  color: var(--state-failed);
+}
+
+.waiting {
+  background: rgba(230, 126, 34, 0.15);
+  color: var(--state-waiting);
+}
+
+.queued {
+  background: rgba(127, 140, 141, 0.15);
+  color: var(--state-queued);
+}
+
+.paused {
+  background: rgba(155, 89, 182, 0.15);
+  color: var(--state-paused);
+}
+
+.cancelled {
+  background: rgba(127, 140, 141, 0.15);
+  color: var(--state-queued);
+}

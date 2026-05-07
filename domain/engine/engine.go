@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ type Engine struct {
 	queueRepo       instance.QueueRepository
 	scheduler       TimerScheduler
 	webhookRegistry WebhookRegistrar
+	notifications   notification.Repository
 	mu              sync.Mutex
 	contexts        map[uuid.UUID]context.CancelFunc
 	wg              sync.WaitGroup
@@ -67,6 +69,11 @@ func (e *Engine) SetScheduler(s TimerScheduler) {
 // SetWebhookRegistry sets the webhook registry on the engine.
 func (e *Engine) SetWebhookRegistry(reg WebhookRegistrar) {
 	e.webhookRegistry = reg
+}
+
+// SetNotifications sets the notification repository on the engine.
+func (e *Engine) SetNotifications(repo notification.Repository) {
+	e.notifications = repo
 }
 
 // edgeTarget describes a destination from a graph edge.
@@ -199,11 +206,17 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// The deferred cleanup only fires NotifyCapacityFreed if this remains false.
 	capacityFreed := false
 
+	// workflowName is set after the instance is loaded; the panic deferred function
+	// reads it via closure so notifications carry the correct workflow name.
+	var workflowName string
+
 	defer func() {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
 			// Mark the instance as failed and log via event bus.
-			_ = e.instances.SetFailed(ctx, instanceID, "")
+			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil {
+				e.emitNotification(context.Background(), instanceID, workflowName, notification.TypeFailed)
+			}
 			e.eventBus.Publish(instanceID, Event{
 				Type:      "instance.failed",
 				Timestamp: time.Now(),
@@ -225,6 +238,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	if err != nil {
 		return
 	}
+	workflowName = inst.WorkflowName
 
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
@@ -384,6 +398,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			default: // "halt" or unrecognized
 				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
 					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+				} else {
+					e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
 				}
 				e.eventBus.Publish(instanceID, Event{
 					Type:      "instance.failed",
@@ -436,6 +452,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// All nodes executed successfully.
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
+	} else {
+		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "instance.completed",
@@ -541,6 +559,47 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	return nil, lastExec, lastErr
+}
+
+// emitNotification creates a notification and publishes a notification.created event.
+// It is a no-op if the notification repository has not been wired.
+//
+// TODO: if a 4th notification type is added, or routing logic becomes necessary,
+// extract a dedicated NotificationListener that subscribes to the event bus
+// instead of embedding this logic in Engine.
+func (e *Engine) emitNotification(ctx context.Context, instanceID uuid.UUID, workflowName string, notifType notification.Type) {
+	if e.notifications == nil {
+		return
+	}
+	n := &notification.Notification{
+		ID:           uuid.New(),
+		InstanceID:   instanceID,
+		WorkflowName: workflowName,
+		Type:         notifType,
+	}
+	if err := e.notifications.Create(ctx, n); err != nil {
+		slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
+		return
+	}
+	e.eventBus.Publish(instanceID, Event{
+		Type:      "notification.created",
+		Timestamp: time.Now(),
+		Data:      notificationEventData(n),
+	})
+}
+
+// notificationEventData converts a notification into the map shape expected
+// by the frontend's NotificationItem interface.
+func notificationEventData(n *notification.Notification) map[string]any {
+	return map[string]any{
+		"id":           n.ID.String(),
+		"instanceId":   n.InstanceID.String(),
+		"workflowName": n.WorkflowName,
+		"type":         string(n.Type),
+		"read":         n.Read,
+		"dismissed":    n.Dismissed,
+		"createdAt":    n.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+	}
 }
 
 // parseWorkflowGraph deserializes a workflow snapshot into its definition,

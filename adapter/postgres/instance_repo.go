@@ -89,6 +89,9 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 	if filters.WorkflowName != nil {
 		params.WorkflowName = toPgText(*filters.WorkflowName)
 	}
+	if filters.Since != nil {
+		params.Since = toPgTimestamptzPtr(filters.Since)
+	}
 
 	rows, err := r.queries.ListInstances(ctx, params)
 	if err != nil {
@@ -231,6 +234,31 @@ func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, rec
 		return fmt.Errorf("setting webhook received: %w", err)
 	}
 	return nil
+}
+
+func (r *InstanceRepo) Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*instance.WorkflowStats, error) {
+	query := `
+SELECT
+  COUNT(*) AS total_runs,
+  COUNT(*) FILTER (WHERE state = 'completed') AS success_count,
+  COUNT(*) FILTER (WHERE state = 'failed') AS failure_count,
+  COALESCE(EXTRACT(EPOCH FROM AVG(completed_at - created_at)) FILTER (WHERE state = 'completed' AND completed_at IS NOT NULL), 0) AS avg_duration_secs
+FROM instances
+WHERE workflow_name = $1
+  AND created_at >= $2
+  AND created_at <= $3`
+
+	var stats instance.WorkflowStats
+	err := r.pool.QueryRow(ctx, query, workflowName, from, to).Scan(
+		&stats.TotalRuns,
+		&stats.SuccessCount,
+		&stats.FailureCount,
+		&stats.AvgDurationSecs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying workflow stats: %w", err)
+	}
+	return &stats, nil
 }
 
 func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance, error) {

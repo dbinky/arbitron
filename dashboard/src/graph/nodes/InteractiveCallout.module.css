@@ -1,0 +1,49 @@
+.callout {
+  position: relative;
+  background: var(--bg-surface);
+  border: 2px solid var(--state-waiting);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  animation: pulseCallout 2s ease-in-out infinite;
+  margin-bottom: 12px;
+}
+
+.callout::after {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-top: 10px solid var(--state-waiting);
+}
+
+.callout::before {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid var(--bg-surface);
+  z-index: 1;
+}
+
+@keyframes pulseCallout {
+  0%, 100% {
+    border-color: var(--state-waiting);
+    box-shadow: 0 0 8px rgba(243, 156, 18, 0.2);
+  }
+  50% {
+    border-color: #e67e22;
+    box-shadow: 0 0 16px rgba(243, 156, 18, 0.5);
+  }
+}

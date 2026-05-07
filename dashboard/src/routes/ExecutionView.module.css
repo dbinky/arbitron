@@ -1,0 +1,108 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  min-height: 42px;
+}
+
+.breadcrumbLink {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.breadcrumbLink:hover {
+  color: var(--accent);
+}
+
+.breadcrumbSep {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.breadcrumbCurrent {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.instanceId {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.connIndicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connConnected {
+  background: var(--success);
+}
+
+.connDisconnected {
+  background: var(--text-dim);
+}
+
+.graphContainer {
+  flex: 1;
+  overflow: hidden;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--state-failed);
+  font-size: 14px;
+}
+
+.priorityBadge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.5px;
+}
+
+.priorityHigh {
+  color: var(--priority-high);
+  background: rgba(243, 156, 18, 0.15);
+}
+
+.priorityNormal {
+  color: var(--priority-normal);
+  background: rgba(136, 136, 136, 0.15);
+}
+
+.priorityLow {
+  color: var(--priority-low);
+  background: rgba(102, 102, 102, 0.15);
+}

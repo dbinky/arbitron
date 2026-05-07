@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -65,6 +66,7 @@ type instanceResponse struct {
 	WaitingUntil      *string        `json:"waitingUntil,omitempty"`
 	WebhookURL        *string        `json:"webhookUrl,omitempty"`
 	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
+	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -81,6 +83,7 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 		CreatedAt:         inst.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:         inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
+	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	if inst.CompletedAt != nil {
 		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
 		resp.CompletedAt = &s
@@ -187,6 +190,12 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	if o := r.URL.Query().Get("offset"); o != "" {
 		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
 			filters.Offset = parsed
+		}
+	}
+	if s := r.URL.Query().Get("since"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err == nil {
+			filters.Since = &t
 		}
 	}
 

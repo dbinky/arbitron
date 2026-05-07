@@ -1,0 +1,120 @@
+.node {
+  min-width: 180px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 2px solid var(--border-color);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.node:hover {
+  border-color: var(--border-subtle);
+}
+
+.selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* State-dependent styles */
+.stateCompleted {
+  border-color: var(--state-completed);
+}
+
+.stateRunning {
+  border-color: var(--state-running);
+  box-shadow: 0 0 12px rgba(52, 152, 219, 0.4);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.statePending {
+  border-color: var(--border-color);
+  opacity: 0.7;
+}
+
+.stateFailed {
+  border-color: var(--state-failed);
+}
+
+.stateWaiting {
+  border-color: var(--state-waiting);
+}
+
+.stateSkipped {
+  border-color: var(--border-color);
+  opacity: 0.5;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(52, 152, 219, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(52, 152, 219, 0.6); }
+}
+
+/* Type accent bar at top */
+.typeBar {
+  height: 4px;
+  width: 100%;
+}
+
+.content {
+  padding: 8px 12px;
+}
+
+.typeLabel {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+  color: var(--text-muted);
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stateIndicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.indicatorCompleted {
+  background: var(--state-completed);
+}
+
+.indicatorRunning {
+  background: var(--state-running);
+  animation: blink 1s ease-in-out infinite;
+}
+
+.indicatorPending {
+  background: var(--text-dim);
+}
+
+.indicatorFailed {
+  background: var(--state-failed);
+}
+
+.indicatorWaiting {
+  background: var(--state-waiting);
+}
+
+.indicatorSkipped {
+  background: var(--text-dim);
+  opacity: 0.5;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
