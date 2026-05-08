@@ -49,7 +49,7 @@ func NewInteractiveExecutor(
    - If `chunk.Done`: break
    - If `chunk.Error`: return error
 9. Build the initial conversation array: `[{role: "user", content: orchestration+template}, {role: "assistant", content: fullResponse}]`
-10. Write node execution record: status `succeeded` (partially — node is still "in progress" from the workflow perspective), `llm_conversation` = conversation array
+10. Write node execution record: status `succeeded` (consistent with timer/webhook executors — the executor completed its job of initiating the session), `llm_conversation` = conversation array
 11. Create notification: `notification.Notification{ID: uuid.New(), InstanceID, WorkflowName: workflowName, Type: notification.TypeNeedsInteraction}`
 12. Persist notification via `notifications.Create(ctx, n)`
 13. Call `externalNotifier.Notify(ctx, n)`

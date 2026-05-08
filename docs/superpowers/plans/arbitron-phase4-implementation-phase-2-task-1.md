@@ -47,6 +47,7 @@ type interactiveErrorEvent struct {
 - The read goroutine runs independently from the write goroutine (which handles outbound events from the event bus)
 - The read goroutine must not block the write goroutine
 - HandleMessage() is synchronous from the read goroutine's perspective — it blocks until the LLM response is fully streamed. This is intentional: the user can't send another message while the assistant is generating (the UI disables input during streaming)
+- While HandleMessage() blocks the read goroutine, it publishes `interactive.token` and `interactive.message` events to the EventBus. These flow to the write goroutine via the event bus channel subscription, which runs independently. The EventBus uses buffered channels (256 buffer), so the read goroutine's publishes don't block waiting for the write goroutine.
 - Error writes from the read goroutine must use the same write mutex/coordination as the outbound event loop to prevent concurrent WebSocket writes
 
 ### Modify: `StreamHandler` constructor
