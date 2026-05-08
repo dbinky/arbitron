@@ -254,8 +254,8 @@ func validateInputTypes(wf *Workflow) []ValidationError {
 	return errs
 }
 
-// validateFileReferences checks that templateFile and scriptFile values
-// reference files that actually exist on disk.
+// validateFileReferences checks that templateFile, scriptFile, and
+// orchestrationFile values reference files that actually exist on disk.
 func validateFileReferences(wf *Workflow, checker FileChecker) []ValidationError {
 	var errs []ValidationError
 
@@ -274,6 +274,15 @@ func validateFileReferences(wf *Workflow, checker FileChecker) []ValidationError
 				errs = append(errs, ValidationError{
 					Code:    "MISSING_FILE",
 					Message: "node " + n.ID + " references missing scriptFile: " + n.Config.ScriptFile,
+					NodeID:  n.ID,
+				})
+			}
+		}
+		if n.Config.OrchestrationFile != "" {
+			if !checker.FileExists(wf.Name, n.Config.OrchestrationFile) {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_FILE",
+					Message: "node " + n.ID + " references missing orchestrationFile: " + n.Config.OrchestrationFile,
 					NodeID:  n.ID,
 				})
 			}

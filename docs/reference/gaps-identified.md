@@ -8,7 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### WFVAL-001: `validateFileReferences` did not check `OrchestrationFile` for interactive nodes
+**Area**: Interactive Node Type (`domain/workflow/validation.go`)
+**Fixed**: Iteration 1
+**Detail**: The `validateFileReferences` function validated `TemplateFile` and `ScriptFile` but silently ignored `OrchestrationFile`. An interactive node with a nonexistent orchestration file would pass validation and fail at runtime in the executor. Added the check alongside the existing file checks, plus two new tests: one verifying the error is produced when the file is missing (with a FileChecker), and one verifying the check is skipped when the checker is nil._
 
 <!--
 Example of a fixed issue entry:

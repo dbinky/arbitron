@@ -738,3 +738,47 @@ func TestValidateInteractive_AcceptsNodeType(t *testing.T) {
 	errs := workflow.Validate(wf, nil)
 	assert.Empty(t, errs)
 }
+
+func TestValidateInteractive_MissingOrchestrationFile(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "interactive-missing-orch",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "nonexistent.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	checker := &mockFileChecker{existing: map[string]bool{}}
+
+	errs := workflow.Validate(wf, checker)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "MISSING_FILE")
+}
+
+func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "interactive-nil-checker",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "nonexistent.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	// With nil checker, file references should not be validated.
+	errs := workflow.Validate(wf, nil)
+	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
+}
