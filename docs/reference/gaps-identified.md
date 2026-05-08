@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HOOK-001: No test framework and streaming state not cleared on interactive.error
+**Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)
+**Fixed**: Iteration 13
+**Detail**: The dashboard had no test runner configured. Additionally, the `interactive.error` event handler did not clear `isStreaming` or `streamingContent` — if an error fired mid-stream, the UI would show a typing indicator alongside an error message simultaneously. Set up vitest + @testing-library/react + jsdom with 16 tests covering all 5 scenario categories. The streaming-state test failed first (proving the bug), then fixed by adding `setIsStreaming(false)` and `setStreamingContent('')` to the error handler.
+
 ### INT-001: No integration test for EndSession (interactive.end) error path
 **Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
 **Fixed**: Iteration 12
