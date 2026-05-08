@@ -1371,3 +1371,64 @@ func TestStreamHandler_HistoryHydration_NilNodeExecRepo_SkipsHistory(t *testing.
 	// First received event must be node_started, not interactive.history.
 	assert.Equal(t, "node_started", received["type"])
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Node execution not found during history hydration — warning path
+// ---------------------------------------------------------------------------
+
+func TestStreamHandler_HistoryHydration_NodeExecNotFound_SkipsHistory(t *testing.T) {
+	// Error: the node execution record can be missing in crash-recovery scenarios
+	// (instance reached waiting state but the executor never persisted the nodeExec).
+	// sendInteractiveHistory must log a warning and skip — no panic, no history event,
+	// connection stays open for normal bus events.
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecRepo() // empty — no executions registered
+	bus := eventbus.New()
+
+	nodeID := "review-design"
+	inst := testInstance(instance.StateWaiting)
+	inst.CurrentNodeID = &nodeID
+	inst.WorkflowSnapshot = map[string]any{
+		"name": "test-wf",
+		"nodes": []any{
+			map[string]any{
+				"id":   "review-design",
+				"type": "interactive",
+				"config": map[string]any{
+					"systemPrompt": "You are a reviewer.",
+				},
+			},
+		},
+	}
+	instRepo.instances[inst.ID] = inst
+	// nodeExecRepo has no matching execution — GetByInstanceAndNode will error.
+
+	srv := newStreamTestServerFull(instRepo, nodeExecRepo, bus, nil)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Give the handler time to attempt history hydration (it should skip it).
+	time.Sleep(100 * time.Millisecond)
+
+	// Connection must still be open — publish a bus event to confirm.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "node_started",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": nodeID},
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+
+	var evtReceived map[string]any
+	require.NoError(t, json.Unmarshal(msg, &evtReceived))
+	// First event must be node_started, not interactive.history.
+	assert.Equal(t, "node_started", evtReceived["type"])
+}

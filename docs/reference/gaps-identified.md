@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HIST-001: No test for history hydration when node execution record is missing
+**Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
+**Fixed**: Iteration 10
+**Detail**: Added `TestStreamHandler_HistoryHydration_NodeExecNotFound_SkipsHistory`. Uses an empty `mockNodeExecRepo` so `GetByInstanceAndNode` returns "not found". Verifies the connection stays open (normal bus event is received as first message) and no `interactive.history` event is sent. Covers the crash-recovery scenario where an instance reaches waiting state but the executor never persisted the node execution record.
+
 ### WS-001: Typed-nil interface trap in newStreamTestServerFull masked nil nodeExecRepo guard
 **Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
 **Fixed**: Iteration 9
