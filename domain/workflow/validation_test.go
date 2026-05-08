@@ -424,6 +424,17 @@ func extractCodes(errs []workflow.ValidationError) []string {
 	return codes
 }
 
+// countCode counts how many times the given code appears in a codes slice.
+func countCode(codes []string, code string) int {
+	n := 0
+	for _, c := range codes {
+		if c == code {
+			n++
+		}
+	}
+	return n
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Timer Delay node validation
 // ---------------------------------------------------------------------------
@@ -781,4 +792,32 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 	// With nil checker, file references should not be validated.
 	errs := workflow.Validate(wf, nil)
 	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
+}
+
+func TestValidateInteractive_BothFilesMissing(t *testing.T) {
+	// Boundary: both TemplateFile and OrchestrationFile reference nonexistent
+	// files. Validation must report MISSING_FILE for each independently — the
+	// validator must not short-circuit on the first missing file.
+	wf := &workflow.Workflow{
+		Name: "interactive-both-missing",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				TemplateFile:      "missing-template.hbs",
+				OrchestrationFile: "missing-orch.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	checker := &mockFileChecker{existing: map[string]bool{}}
+
+	errs := workflow.Validate(wf, checker)
+	codes := extractCodes(errs)
+	// Both missing files must be reported.
+	assert.Equal(t, 2, countCode(codes, "MISSING_FILE"), "expected one MISSING_FILE per missing file reference")
 }
