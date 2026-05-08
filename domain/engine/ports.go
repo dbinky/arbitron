@@ -22,13 +22,29 @@ type LLMProvider interface {
 	StreamCall(ctx context.Context, request LLMRequest) (<-chan LLMStreamChunk, error)
 }
 
+// LLMMessage represents a single message in a multi-turn LLM conversation.
+type LLMMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 // LLMRequest describes a single LLM invocation.
 type LLMRequest struct {
 	Model        string
-	Prompt       string
+	SystemPrompt string
+	Prompt       string       // Single-turn prompt (used when Messages is empty).
+	Messages     []LLMMessage // Multi-turn conversation history (takes precedence over Prompt).
 	MaxTokens    int
 	Temperature  float64
 	OutputSchema any
+	Tools        []LLMTool
+}
+
+// LLMTool describes a tool definition passed to the LLM provider.
+type LLMTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	InputSchema any    `json:"input_schema"`
 }
 
 // LLMResponse holds the result of a non-streaming LLM call.
@@ -42,9 +58,20 @@ type LLMResponse struct {
 
 // LLMStreamChunk is one piece of a streaming LLM response.
 type LLMStreamChunk struct {
-	Token string
-	Done  bool
-	Error error
+	Token     string
+	Done      bool
+	Error     error
+	TokensIn  int
+	TokensOut int
+	// ToolUse is set on the final chunk when the LLM invokes a tool instead
+	// of producing a plain-text response.
+	ToolUse *LLMToolUse
+}
+
+// LLMToolUse describes a tool invocation detected in a streaming response.
+type LLMToolUse struct {
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
 }
 
 // QueueManager defines the queue operations the engine needs.
@@ -72,6 +99,26 @@ type WebhookRegistrar interface {
 	Register(token string, instanceID uuid.UUID, nodeID string, secretHash *string)
 	Deactivate(token string)
 }
+
+// Event type constants for domain events emitted during workflow execution.
+const (
+	// Node lifecycle events.
+	EventTypeNodeStarted   = "node.started"
+	EventTypeNodeCompleted = "node.completed"
+	EventTypeNodeFailed    = "node.failed"
+
+	// Instance lifecycle events.
+	EventTypeInstanceCompleted = "instance.completed"
+	EventTypeInstanceFailed    = "instance.failed"
+	EventTypeInstanceCancelled = "instance.cancelled"
+
+	// Interactive session events.
+	EventTypeInteractiveMessage = "interactive.message"
+	EventTypeInteractiveToken   = "interactive.token"
+	EventTypeInteractiveEnded   = "interactive.ended"
+	EventTypeInteractiveHistory = "interactive.history"
+	EventTypeInteractiveError   = "interactive.error"
+)
 
 // Event represents a domain event emitted during workflow execution.
 type Event struct {

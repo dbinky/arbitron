@@ -29,8 +29,9 @@ type Engine struct {
 	queueRepo       instance.QueueRepository
 	scheduler       TimerScheduler
 	webhookRegistry WebhookRegistrar
-	notifications   notification.Repository
-	mu              sync.Mutex
+	notifications    notification.Repository
+	externalNotifier notification.ExternalNotifier
+	mu               sync.Mutex
 	contexts        map[uuid.UUID]context.CancelFunc
 	wg              sync.WaitGroup
 }
@@ -74,6 +75,13 @@ func (e *Engine) SetWebhookRegistry(reg WebhookRegistrar) {
 // SetNotifications sets the notification repository on the engine.
 func (e *Engine) SetNotifications(repo notification.Repository) {
 	e.notifications = repo
+}
+
+// SetExternalNotifier sets the external notifier on the engine. When set,
+// every notification emitted by the engine will also be forwarded to this
+// notifier (e.g., for email, Slack, or logging).
+func (e *Engine) SetExternalNotifier(n notification.ExternalNotifier) {
+	e.externalNotifier = n
 }
 
 // edgeTarget describes a destination from a graph edge.
@@ -218,7 +226,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				e.emitNotification(context.Background(), instanceID, workflowName, notification.TypeFailed)
 			}
 			e.eventBus.Publish(instanceID, Event{
-				Type:      "instance.failed",
+				Type:      EventTypeInstanceFailed,
 				Timestamp: time.Now(),
 				Data:      map[string]any{"error": fmt.Sprintf("panic: %v", r)},
 			})
@@ -341,7 +349,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		}
 
 		e.eventBus.Publish(instanceID, Event{
-			Type:      "node.started",
+			Type:      EventTypeNodeStarted,
 			Timestamp: time.Now(),
 			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 		})
@@ -352,7 +360,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		if execErr != nil {
 			e.eventBus.Publish(instanceID, Event{
-				Type:      "node.failed",
+				Type:      EventTypeNodeFailed,
 				Timestamp: time.Now(),
 				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
 			})
@@ -402,7 +410,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
 				}
 				e.eventBus.Publish(instanceID, Event{
-					Type:      "instance.failed",
+					Type:      EventTypeInstanceFailed,
 					Timestamp: time.Now(),
 					Data:      map[string]any{"failedNodeId": currentNodeID, "error": execErr.Error()},
 				})
@@ -415,7 +423,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 				// Do NOT mark as completed or failed — the executor already handled
 				// state transition and called NotifyCapacityFreed.
 				e.eventBus.Publish(instanceID, Event{
-					Type:      "node.completed",
+					Type:      EventTypeNodeCompleted,
 					Timestamp: time.Now(),
 					Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 				})
@@ -424,7 +432,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			}
 
 			e.eventBus.Publish(instanceID, Event{
-				Type:      "node.completed",
+				Type:      EventTypeNodeCompleted,
 				Timestamp: time.Now(),
 				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 			})
@@ -456,7 +464,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
 	}
 	e.eventBus.Publish(instanceID, Event{
-		Type:      "instance.completed",
+		Type:      EventTypeInstanceCompleted,
 		Timestamp: time.Now(),
 	})
 }
@@ -586,6 +594,11 @@ func (e *Engine) emitNotification(ctx context.Context, instanceID uuid.UUID, wor
 		Timestamp: time.Now(),
 		Data:      notificationEventData(n),
 	})
+	if e.externalNotifier != nil {
+		if err := e.externalNotifier.Notify(ctx, n); err != nil {
+			slog.Error("external notifier failed", "instanceID", instanceID, "error", err)
+		}
+	}
 }
 
 // notificationEventData converts a notification into the map shape expected
@@ -756,7 +769,7 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 				return fmt.Errorf("failed to fail expired webhook instance on resume: %w", err)
 			}
 			e.eventBus.Publish(instanceID, Event{
-				Type:      "instance.failed",
+				Type:      EventTypeInstanceFailed,
 				Timestamp: time.Now(),
 				Data:      map[string]any{"reason": "webhook timeout expired while paused"},
 			})
@@ -843,7 +856,7 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 		}
 		e.mu.Unlock()
 		e.eventBus.Publish(instanceID, Event{
-			Type:      "instance.cancelled",
+			Type:      EventTypeInstanceCancelled,
 			Timestamp: time.Now(),
 		})
 		e.queueManager.NotifyCapacityFreed(context.Background())
@@ -861,7 +874,7 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 			return fmt.Errorf("failed to update state: %w", err)
 		}
 		e.eventBus.Publish(instanceID, Event{
-			Type:      "instance.cancelled",
+			Type:      EventTypeInstanceCancelled,
 			Timestamp: time.Now(),
 		})
 		e.queueManager.NotifyCapacityFreed(context.Background())
@@ -879,7 +892,7 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 			e.scheduler.Cancel(instanceID)
 		}
 		e.eventBus.Publish(instanceID, Event{
-			Type:      "instance.cancelled",
+			Type:      EventTypeInstanceCancelled,
 			Timestamp: time.Now(),
 		})
 

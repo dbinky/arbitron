@@ -62,6 +62,9 @@ type QueueRepoPort = instance.QueueRepository
 // NotificationRepoPort is a type alias for the domain notification repository port.
 type NotificationRepoPort = notification.Repository
 
+// ConversationHandlerPort is a type alias for the domain ConversationHandler port.
+type ConversationHandlerPort = engine.ConversationHandler
+
 // NewRouter creates the chi router with all API routes wired up.
 // If dashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
@@ -80,6 +83,29 @@ func NewRouter(
 	notifHandler *NotificationHandler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
+	return NewRouterWithConversation(svc, workflows, instances, nodeExecs, snapshots, fileReader, eventBus, cfg, queueManager, queueRepo, dashboardHandler, notifHandler, nil, webhookHandler...)
+}
+
+// NewRouterWithConversation creates the chi router with all API routes wired up,
+// including the ConversationHandler for interactive WebSocket messaging.
+// If dashboardHandler is non-nil, unmatched routes fall through to the
+// embedded SPA instead of returning chi's default 404.
+func NewRouterWithConversation(
+	svc EngineService,
+	workflows WorkflowRepo,
+	instances InstanceRepo,
+	nodeExecs NodeExecRepo,
+	snapshots SnapshotRepo,
+	fileReader FileReader,
+	eventBus EventBusPort,
+	cfg *config.Config,
+	queueManager QueueManagerPort,
+	queueRepo QueueRepoPort,
+	dashboardHandler http.Handler,
+	notifHandler *NotificationHandler,
+	conversationHandler ConversationHandlerPort,
+	webhookHandler ...*WebhookHandler,
+) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -90,9 +116,14 @@ func NewRouter(
 
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
-	streamHandler := NewStreamHandler(instances, eventBus)
+	streamHandler := NewStreamHandler(instances, nodeExecs, eventBus, conversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(eventBus)
 	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
+
+	var interactiveHandler *InteractiveHandler
+	if conversationHandler != nil {
+		interactiveHandler = NewInteractiveHandler(conversationHandler, instances, nodeExecs)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// System-wide WebSocket stream
@@ -146,6 +177,9 @@ func NewRouter(
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
+			if interactiveHandler != nil {
+				r.Post("/{id}/interact/end", interactiveHandler.EndSession)
+			}
 		})
 	})
 

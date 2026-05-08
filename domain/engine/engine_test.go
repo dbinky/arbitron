@@ -2571,3 +2571,139 @@ func TestEngine_Notifications_RepoErrorIsLoggedNotPropagated(t *testing.T) {
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 	assert.Equal(t, instance.StateCompleted, inst.State, "instance must still be completed even when notification fails")
 }
+
+// ---------------------------------------------------------------------------
+// Mock external notifier
+// ---------------------------------------------------------------------------
+
+type mockExternalNotifier struct {
+	mu       sync.Mutex
+	called   []notification.Notification
+	notifyFn func(ctx context.Context, n *notification.Notification) error
+}
+
+func newMockExternalNotifier() *mockExternalNotifier {
+	return &mockExternalNotifier{}
+}
+
+func (m *mockExternalNotifier) Notify(ctx context.Context, n *notification.Notification) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.called = append(m.called, *n)
+	if m.notifyFn != nil {
+		return m.notifyFn(ctx, n)
+	}
+	return nil
+}
+
+func (m *mockExternalNotifier) getCalled() []notification.Notification {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]notification.Notification, len(m.called))
+	copy(cp, m.called)
+	return cp
+}
+
+// waitForExternalNotification polls until at least one external notification
+// of the given type is recorded or the timeout expires.
+func waitForExternalNotification(t *testing.T, ext *mockExternalNotifier, notifType notification.Type, timeout time.Duration) notification.Notification {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for external notification of type %q", notifType)
+		default:
+			for _, n := range ext.getCalled() {
+				if n.Type == notifType {
+					return n
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Engine external notifier wiring
+// ---------------------------------------------------------------------------
+
+func TestEngine_ExternalNotifier_CalledOnCompletion(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	ext := newMockExternalNotifier()
+	f.engine.SetExternalNotifier(ext)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	n := waitForExternalNotification(t, ext, notification.TypeCompleted, 2*time.Second)
+	assert.Equal(t, id, n.InstanceID)
+	assert.Equal(t, "linear-wf", n.WorkflowName)
+	assert.Equal(t, notification.TypeCompleted, n.Type)
+	assert.NotEqual(t, uuid.Nil, n.ID)
+}
+
+func TestEngine_ExternalNotifier_CalledOnFailure(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "halt"})
+	f.workflowRepo.add(wf)
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	ext := newMockExternalNotifier()
+	f.engine.SetExternalNotifier(ext)
+
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	n := waitForExternalNotification(t, ext, notification.TypeFailed, 2*time.Second)
+	assert.Equal(t, id, n.InstanceID)
+	assert.Equal(t, "error-wf", n.WorkflowName)
+	assert.Equal(t, notification.TypeFailed, n.Type)
+}
+
+func TestEngine_ExternalNotifier_NilDoesNotPanic(t *testing.T) {
+	// Without SetExternalNotifier the engine must not panic.
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State)
+}
+
+func TestEngine_ExternalNotifier_ErrorDoesNotAffectInstance(t *testing.T) {
+	// An external notifier error must not affect instance state.
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	ext := newMockExternalNotifier()
+	ext.notifyFn = func(_ context.Context, _ *notification.Notification) error {
+		return fmt.Errorf("external service down")
+	}
+	f.engine.SetExternalNotifier(ext)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State, "instance must still complete even when external notifier fails")
+}

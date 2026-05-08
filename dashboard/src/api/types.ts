@@ -137,3 +137,62 @@ export interface WebSocketEvent {
   timestamp: string
   data: unknown
 }
+
+// ---------------------------------------------------------------------------
+// Interactive session types
+// ---------------------------------------------------------------------------
+
+/** A single message in an interactive conversation. */
+export interface InteractiveMessage {
+  role: 'assistant' | 'user'
+  content: string
+}
+
+/** Sent on WebSocket connect for instances in interactive-wait state. */
+export interface InteractiveHistoryEvent {
+  type: 'interactive.history'
+  data: { nodeId: string; messages: InteractiveMessage[] }
+}
+
+/** A complete message (user or assistant) added to the conversation. */
+export interface InteractiveMessageEvent {
+  type: 'interactive.message'
+  data: { role: 'assistant' | 'user'; content: string }
+}
+
+/** A streaming token fragment from the assistant. */
+export interface InteractiveTokenEvent {
+  type: 'interactive.token'
+  data: { token: string }
+}
+
+/** The interactive session has ended. */
+export interface InteractiveEndedEvent {
+  type: 'interactive.ended'
+  data: { reason: 'llm_completed' | 'user_ended'; output?: unknown }
+}
+
+/** An error occurred during the interactive session. */
+export interface InteractiveErrorEvent {
+  type: 'interactive.error'
+  data: { message: string }
+}
+
+/** Union of all interactive event types. */
+export type InteractiveEvent =
+  | InteractiveHistoryEvent
+  | InteractiveMessageEvent
+  | InteractiveTokenEvent
+  | InteractiveEndedEvent
+  | InteractiveErrorEvent
+
+/** Outbound message sent by the user to the interactive session. */
+export interface InteractiveSendCommand {
+  type: 'interactive.send'
+  content: string
+}
+
+/** Outbound command to end the interactive session. */
+export interface InteractiveEndCommand {
+  type: 'interactive.end'
+}

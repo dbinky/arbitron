@@ -23,6 +23,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
 	"github.com/arbitron/arbitron/adapter/process"
@@ -163,6 +164,21 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	notifRepo := postgres.NewNotificationRepo(pool)
 	eng.SetNotifications(notifRepo)
 
+	// 12b. Create external notifier (logging-only) and wire it to the engine.
+	logNotifier := adaptnotif.NewLogNotifier(logger)
+	eng.SetExternalNotifier(logNotifier)
+
+	// 12c. Register the interactive executor now that notifRepo and logNotifier are available.
+	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
+		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr, notifRepo, logNotifier,
+	)
+
+	// 12d. Create the conversation handler for interactive sessions.
+	conversationHandler := engine.NewConversationHandler(
+		instanceRepo, nodeExecRepo, llmProvider, bus, queueMgr,
+	)
+	// conversationHandler is passed to the HTTP layer for interactive WebSocket messaging.
+
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
@@ -180,7 +196,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	dashHandler := dashboard.Handler()
 	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
 	notifHandler.SetEventBus(bus)
-	router := adapthttp.NewRouter(
+	router := adapthttp.NewRouterWithConversation(
 		eng,
 		workflowRepo,
 		instanceRepo,
@@ -193,6 +209,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		queueRepo,
 		dashHandler,
 		notifHandler,
+		conversationHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).

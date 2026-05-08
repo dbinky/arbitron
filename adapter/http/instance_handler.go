@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // InstanceService defines the engine methods needed by instance handlers.
@@ -67,6 +68,8 @@ type instanceResponse struct {
 	WebhookURL        *string        `json:"webhookUrl,omitempty"`
 	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
 	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
+	InteractiveNodeID *string        `json:"interactiveNodeId"`
+	InteractiveActive bool           `json:"interactiveActive"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -103,7 +106,39 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	if inst.WebhookReceivedAt != nil {
 		resp.WebhookReceived = true
 	}
+
+	// Derive interactive state fields.
+	if inst.State == instance.StateWaiting && inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
+		if isCurrentNodeInteractive(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
+			nodeID := *inst.CurrentNodeID
+			resp.InteractiveNodeID = &nodeID
+			resp.InteractiveActive = true
+		}
+	}
+
 	return resp
+}
+
+// isCurrentNodeInteractive parses the workflow snapshot and checks if the
+// specified node is of type "interactive".
+func isCurrentNodeInteractive(snapshot map[string]any, nodeID string) bool {
+	if snapshot == nil {
+		return false
+	}
+	wfBytes, err := json.Marshal(snapshot)
+	if err != nil {
+		return false
+	}
+	var wf workflow.Workflow
+	if err := json.Unmarshal(wfBytes, &wf); err != nil {
+		return false
+	}
+	for _, node := range wf.Nodes {
+		if node.ID == nodeID {
+			return node.Type == workflow.NodeTypeInteractive
+		}
+	}
+	return false
 }
 
 // retryRequest is the optional JSON body for retrying an instance.
