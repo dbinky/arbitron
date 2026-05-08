@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### INT-001: No integration test for EndSession (interactive.end) error path
+**Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
+**Fixed**: Iteration 12
+**Detail**: `TestIntegration_InteractiveError_FlowsBackOverWebSocket` proved that `HandleMessage` errors reach the client as `interactive.error` events, but there was no corresponding test for `EndSession` errors. The `handleInbound` function routes both `interactive.send` and `interactive.end` through the same error-event path (stream_handler.go:203–235). Added `TestIntegration_InteractiveEndSession_ErrorFlowsBack` which wires `endSessionFn` to return `assert.AnError`, then verifies the client receives an `interactive.error` event with a non-empty message field. This closes the gap where a future refactor of the EndSession branch could silently break error propagation.
+
 ### REST-001: No test for 500 response when EndSession returns unexpected error
 **Area**: InteractiveHandler (`adapter/http/interactive_handler_test.go`)
 **Fixed**: Iteration 11

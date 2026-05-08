@@ -419,6 +419,54 @@ func TestIntegration_InteractiveError_FlowsBackOverWebSocket(t *testing.T) {
 }
 
 // ===========================================================================
+// Integration Test: Error during EndSession flows back as interactive.error
+// ===========================================================================
+
+func TestIntegration_InteractiveEndSession_ErrorFlowsBack(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecRepo()
+	bus := eventbus.New()
+
+	inst, nodeExec := interactiveWaitInstance()
+	instRepo.instances[inst.ID] = inst
+	nodeExecRepo.executions = []*instance.NodeExecution{nodeExec}
+
+	convo := &mockConversationHandler{
+		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
+			return assert.AnError
+		},
+	}
+
+	srv := newStreamTestServerFull(instRepo, nodeExecRepo, bus, convo)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Consume the history event first.
+	historyEvt := readWSEvent(t, ctx, conn)
+	assert.Equal(t, engine.EventTypeInteractiveHistory, historyEvt["type"])
+
+	// Send interactive.end which will cause EndSession to error.
+	time.Sleep(50 * time.Millisecond)
+	endMsg := `{"type":"interactive.end"}`
+	err = conn.Write(ctx, websocket.MessageText, []byte(endMsg))
+	require.NoError(t, err)
+
+	// Verify interactive.error is received.
+	errEvt := readWSEvent(t, ctx, conn)
+	assert.Equal(t, engine.EventTypeInteractiveError, errEvt["type"])
+	errData, ok := errEvt["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, errData["message"])
+}
+
+// ===========================================================================
 // Integration Test: Multiple send/receive cycles work correctly
 // ===========================================================================
 
