@@ -88,9 +88,10 @@ ConversationHandler interface {
 4. Persist the updated history immediately (user message is durable before LLM call)
 5. Publish `interactive.message` event (role: user, content)
 6. Reconstruct the full LLM request from the conversation history:
-   - System message: system prompt from the node config (read from workflow snapshot)
+   - Read the interactive node's config from the instance's `workflow_snapshot` field (already loaded in step 1)
+   - System message: the `systemPrompt` from node config
    - Messages: the full conversation history
-   - Include the `complete_session` tool definition
+   - Include the `complete_session` tool definition (parameters from node config's `outputSchema`)
 7. Call `LLMProvider.StreamCall()` with the full conversation
 8. Stream tokens via `EventBus.Publish()` as `interactive.token` events
 9. When streaming completes:
@@ -99,13 +100,11 @@ ConversationHandler interface {
 
 ### Dependencies
 
-- `InstanceRepository` — to read instance state and transition on completion
-- `NodeExecutionRepository` — to read/update conversation history
-- `WorkflowRepository` or instance's `workflow_snapshot` — to access node config for system prompt and tool definition
+- `InstanceRepository` — to read instance state, transition on completion, and persist updated variables
+- `NodeExecutionRepository` — to read/update conversation history and store structured output
 - `LLMProvider` — for streaming LLM calls
 - `EventBus` — for real-time event publishing
 - `QueueManager` — to notify capacity freed when session completes
-- `variable.VariableStore` — to update node output in the instance variable store
 
 ---
 
