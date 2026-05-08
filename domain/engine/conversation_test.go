@@ -667,6 +667,49 @@ func TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError(t *testing
 }
 
 // ---------------------------------------------------------------------------
+// HandleMessage Tests: Edge cases
+// ---------------------------------------------------------------------------
+
+func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMessage(t *testing.T) {
+	// Edge: the node execution record has no prior conversation (nil
+	// LLMConversation). parseConversation returns nil, and append(nil, msg)
+	// is safe in Go — the user message becomes the first and only message
+	// sent to the LLM. This scenario occurs after crash recovery if the
+	// instance was set to waiting before the executor wrote its record.
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	// Clear the conversation on the existing nodeExec.
+	nodeExecRepo.mu.Lock()
+	if len(nodeExecRepo.executions) > 0 {
+		nodeExecRepo.executions[0].LLMConversation = nil
+	}
+	nodeExecRepo.mu.Unlock()
+
+	llmProvider.streamCallFn = cannedStream([]string{"Sure"}, 5, 10)
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	err := handler.HandleMessage(context.Background(), instanceID, "Hello from scratch")
+	require.NoError(t, err)
+
+	// LLM should have received exactly one message: the user message.
+	reqs := llmProvider.getCapturedReqs()
+	require.Len(t, reqs, 1)
+	require.Len(t, reqs[0].Messages, 1)
+	assert.Equal(t, "user", reqs[0].Messages[0].Role)
+	assert.Equal(t, "Hello from scratch", reqs[0].Messages[0].Content)
+
+	// Conversation should now have user + assistant messages.
+	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
+	require.NoError(t, err)
+	messages := extractMessages(t, nodeExec.LLMConversation)
+	require.Len(t, messages, 2)
+	assert.Equal(t, "user", messages[0]["role"])
+	assert.Equal(t, "Hello from scratch", messages[0]["content"])
+	assert.Equal(t, "assistant", messages[1]["role"])
+}
+
+// ---------------------------------------------------------------------------
 // HandleMessage Tests: LLM error during streaming
 // ---------------------------------------------------------------------------
 

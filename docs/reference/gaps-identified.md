@@ -4,11 +4,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### CONV-002: Missing edge test for empty conversation history in HandleMessage
-**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
-**Detail**: `parseConversation` handles a nil `conv` map or missing `messages` key by returning nil, which means `messages` starts as nil and the user message is the first. This boundary/edge case (instance in waiting with nodeExec having no prior conversation) is not tested.
+_(none)_
 
 ## Fixed Previously
+
+### CONV-002: Missing edge test for empty conversation history in HandleMessage
+**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+**Fixed**: Iteration 6
+**Detail**: Added `TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMessage`. Clears `LLMConversation` on the existing nodeExec to nil, then verifies: no error, LLM receives exactly 1 message (the user message), and the conversation is persisted with user + assistant. Covers the crash-recovery scenario where an instance is in waiting state but the executor never wrote its conversation record.
 
 ### CONV-001: Missing error tests for `GetByInstanceAndNode` failure in ConversationHandler
 **Area**: ConversationHandler (`domain/engine/conversation_test.go`)
