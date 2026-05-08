@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### WS-001: Typed-nil interface trap in newStreamTestServerFull masked nil nodeExecRepo guard
+**Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
+**Fixed**: Iteration 9
+**Detail**: `newStreamTestServerFull` had parameter type `*mockNodeExecRepo`. Passing `nil` for that parameter created a typed nil, which when assigned to the `instance.NodeExecutionRepository` interface inside `NewStreamHandler` produced a non-nil interface — bypassing the `if h.nodeExecs == nil` nil guard in `sendInteractiveHistory`. Changed the parameter type to `instance.NodeExecutionRepository` so that passing `nil` creates a true nil interface. Added `TestStreamHandler_HistoryHydration_NilNodeExecRepo_SkipsHistory` to prove the guard works for a waiting interactive instance, which previously panicked.
+
 ### LLMPX-001: anthropic.Provider had no tests and no compile-time interface assertion
 **Area**: LLM Provider Adapter (`adapter/anthropic/provider.go`)
 **Fixed**: Iteration 8

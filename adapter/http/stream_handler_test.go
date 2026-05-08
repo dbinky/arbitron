@@ -70,7 +70,7 @@ func newStreamTestServerWithConvo(instRepo *mockInstanceRepo, bus engine.EventBu
 	return newStreamTestServerFull(instRepo, nil, bus, convo)
 }
 
-func newStreamTestServerFull(instRepo *mockInstanceRepo, nodeExecRepo *mockNodeExecRepo, bus engine.EventBus, convo engine.ConversationHandler) *httptest.Server {
+func newStreamTestServerFull(instRepo *mockInstanceRepo, nodeExecRepo instance.NodeExecutionRepository, bus engine.EventBus, convo engine.ConversationHandler) *httptest.Server {
 	sh := adapthttp.NewStreamHandler(instRepo, nodeExecRepo, bus, convo)
 
 	r := chi.NewRouter()
@@ -1311,4 +1311,63 @@ func TestStreamHandler_HistoryHydration_NotSentForNonInteractiveWait(t *testing.
 	var evt map[string]any
 	require.NoError(t, json.Unmarshal(msg, &evt))
 	assert.Equal(t, "node_started", evt["type"])
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Nil nodeExecRepo with waiting interactive instance — nil guard
+// ---------------------------------------------------------------------------
+
+func TestStreamHandler_HistoryHydration_NilNodeExecRepo_SkipsHistory(t *testing.T) {
+	// Edge: NewStreamHandler documents that nodeExecs may be nil. When a
+	// waiting interactive instance connects, sendInteractiveHistory must
+	// hit the nil guard and silently skip — no panic, connection stays open.
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+
+	nodeID := "review-design"
+	inst := testInstance(instance.StateWaiting)
+	inst.CurrentNodeID = &nodeID
+	inst.WorkflowSnapshot = map[string]any{
+		"name": "test-wf",
+		"nodes": []any{
+			map[string]any{
+				"id":   "review-design",
+				"type": "interactive",
+				"config": map[string]any{
+					"systemPrompt": "You are a reviewer.",
+				},
+			},
+		},
+	}
+	instRepo.instances[inst.ID] = inst
+
+	// Pass nil for nodeExecRepo — exercises the nil guard in sendInteractiveHistory.
+	srv := newStreamTestServerFull(instRepo, nil, bus, nil)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Give the handler time to process any history event (none should be sent).
+	time.Sleep(100 * time.Millisecond)
+
+	// Connection must still be open — publish a bus event to confirm.
+	bus.Publish(inst.ID, engine.Event{
+		Type:      "node_started",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": nodeID},
+	})
+
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+
+	var received map[string]any
+	require.NoError(t, json.Unmarshal(msg, &received))
+	// First received event must be node_started, not interactive.history.
+	assert.Equal(t, "node_started", received["type"])
 }
