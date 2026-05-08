@@ -105,18 +105,22 @@ func interactiveTestSetup() (
 
 // mockExternalNotifierForInteractive implements notification.ExternalNotifier.
 type mockExternalNotifierForInteractive struct {
-	mu     sync.Mutex
-	called []notification.Notification
+	mu       sync.Mutex
+	called   []notification.Notification
+	notifyFn func(ctx context.Context, n *notification.Notification) error
 }
 
 func newMockExternalNotifierForInteractive() *mockExternalNotifierForInteractive {
 	return &mockExternalNotifierForInteractive{}
 }
 
-func (m *mockExternalNotifierForInteractive) Notify(_ context.Context, n *notification.Notification) error {
+func (m *mockExternalNotifierForInteractive) Notify(ctx context.Context, n *notification.Notification) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.called = append(m.called, *n)
+	if m.notifyFn != nil {
+		return m.notifyFn(ctx, n)
+	}
 	return nil
 }
 
@@ -770,6 +774,33 @@ func TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic(t *testing.T) {
 	notifications := notifRepo.getCreated()
 	require.Len(t, notifications, 1)
 	assert.Equal(t, notification.TypeNeedsInteraction, notifications[0].Type)
+
+	inst := instRepo.get(instanceID)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
+
+func TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution(t *testing.T) {
+	// Error: when the external notifier returns an error, the executor must
+	// log it but must not propagate it — the wait transition must still complete.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
+
+	extNotifier.notifyFn = func(_ context.Context, _ *notification.Notification) error {
+		return fmt.Errorf("external service unavailable")
+	}
+
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsWait)
 
 	inst := instRepo.get(instanceID)
 	require.NotNil(t, inst)

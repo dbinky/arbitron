@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### NOTIF-001: Missing test for ExternalNotifier error non-propagation in InteractiveExecutor
+**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+**Fixed**: Iteration 7
+**Detail**: When `externalNotifier.Notify` returns an error, the executor logs it but must not propagate it — the instance must still transition to waiting and return `IsWait: true`. Added `notifyFn` hook to `mockExternalNotifierForInteractive` (matching the engine's mock pattern) and added `TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution` to verify the executor returns `IsWait: true` and the instance reaches `StateWaiting` even when the notifier fails.
+
 ### CONV-002: Missing edge test for empty conversation history in HandleMessage
 **Area**: ConversationHandler (`domain/engine/conversation_test.go`)
 **Fixed**: Iteration 6
