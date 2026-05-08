@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### REST-001: No test for 500 response when EndSession returns unexpected error
+**Area**: InteractiveHandler (`adapter/http/interactive_handler_test.go`)
+**Fixed**: Iteration 11
+**Detail**: Added `TestInteractiveHandler_EndSession_InternalError` which injects a database-style error (`fmt.Errorf("db: connection reset by peer")`) that matches neither the "not found" nor "not in interactive wait state" patterns. Verifies the handler returns 500 with `"code": "INTERNAL_ERROR"`. Completes the error-response coverage: 400, 404, 409, 500 are all now tested.
+
 ### HIST-001: No test for history hydration when node execution record is missing
 **Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
 **Fixed**: Iteration 10

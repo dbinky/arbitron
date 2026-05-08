@@ -22,7 +22,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 5 | LLM Provider Extensions (`domain/engine/ports.go` — LLMRequest.SystemPrompt, LLMRequest.Tools, LLMRequest.Messages, LLMStreamChunk.ToolUse, LLMTool, LLMMessage types) | [x] | [ ] | Pass 1 complete |
 | 6 | WebSocket Bidirectional Messaging (`adapter/http/stream_handler.go`, `adapter/http/stream_handler_test.go` — inbound message routing, write mutex, interactive.send/end handling) | [x] | [ ] | Pass 1 complete |
 | 7 | History Hydration & Instance Detail (`adapter/http/stream_handler.go`, `adapter/http/instance_handler.go` — interactive.history on connect, interactiveActive/interactiveNodeId fields) | [x] | [ ] | Pass 1 complete |
-| 8 | Interactive REST Endpoint (`adapter/http/interactive_handler.go`, `adapter/http/interactive_handler_test.go` — POST /interact/end, error responses, router wiring) | [ ] | [ ] | |
+| 8 | Interactive REST Endpoint (`adapter/http/interactive_handler.go`, `adapter/http/interactive_handler_test.go` — POST /interact/end, error responses, router wiring) | [x] | [ ] | Pass 1 complete |
 | 9 | Integration Tests (`adapter/http/interactive_integration_test.go` — full round-trip WebSocket tests, tool completion, error flows, multi-message) | [ ] | [ ] | |
 | 10 | useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts` — state management, event handling, streaming-to-message transition, send/end actions) | [ ] | [ ] | |
 | 11 | Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx` — panel layout, markdown rendering, input behavior, auto-scroll) | [ ] | [ ] | |

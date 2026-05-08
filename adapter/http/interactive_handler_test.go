@@ -108,6 +108,34 @@ func TestInteractiveHandler_EndSession_InvalidState(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Tests: POST /instances/{id}/interact/end — 500 unexpected error
+// ---------------------------------------------------------------------------
+
+func TestInteractiveHandler_EndSession_InternalError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecRepo()
+
+	convo := &mockConversationHandler{
+		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
+			return fmt.Errorf("db: connection reset by peer")
+		},
+	}
+	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/interact/end", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.EndSession(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "INTERNAL_ERROR", resp["code"])
+}
+
+// ---------------------------------------------------------------------------
 // Tests: POST /instances/{id}/interact/end — 400 bad UUID
 // ---------------------------------------------------------------------------
 
