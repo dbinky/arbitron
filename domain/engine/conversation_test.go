@@ -477,6 +477,21 @@ func TestConversationHandler_HandleMessage_InstanceNotFound_ReturnsError(t *test
 	require.Error(t, err)
 }
 
+func TestConversationHandler_HandleMessage_NodeExecNotFound_ReturnsError(t *testing.T) {
+	// The instance is in waiting state on an interactive node, but there is no
+	// corresponding node execution record. HandleMessage must return an error
+	// rather than panicking or silently proceeding.
+	instRepo, _, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	emptyNodeExecRepo := newMockNodeExecutionRepo() // no executions registered
+
+	handler := buildConversationHandler(instRepo, emptyNodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load node execution")
+}
+
 // ---------------------------------------------------------------------------
 // EndSession Tests: With existing output
 // ---------------------------------------------------------------------------
@@ -635,6 +650,20 @@ func TestConversationHandler_EndSession_InstanceNotFound_ReturnsError(t *testing
 
 	err := handler.EndSession(context.Background(), uuid.New())
 	require.Error(t, err)
+}
+
+func TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError(t *testing.T) {
+	// The instance exists and is waiting, but there is no node execution record.
+	// EndSession must return an error rather than panicking.
+	instRepo, _, _, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	emptyNodeExecRepo := newMockNodeExecutionRepo() // no executions registered
+
+	handler := buildConversationHandler(instRepo, emptyNodeExecRepo, nil, eventBus, queueMgr)
+
+	err := handler.EndSession(context.Background(), instanceID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "load node execution")
 }
 
 // ---------------------------------------------------------------------------

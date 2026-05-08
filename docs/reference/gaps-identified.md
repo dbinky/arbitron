@@ -4,9 +4,16 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+### CONV-002: Missing edge test for empty conversation history in HandleMessage
+**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+**Detail**: `parseConversation` handles a nil `conv` map or missing `messages` key by returning nil, which means `messages` starts as nil and the user message is the first. This boundary/edge case (instance in waiting with nodeExec having no prior conversation) is not tested.
 
 ## Fixed Previously
+
+### CONV-001: Missing error tests for `GetByInstanceAndNode` failure in ConversationHandler
+**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+**Fixed**: Iteration 5
+**Detail**: Added `TestConversationHandler_HandleMessage_NodeExecNotFound_ReturnsError` and `TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError`. Both use an empty nodeExec repo so `GetByInstanceAndNode` returns "not found", verifying the error message contains "load node execution".
 
 ### EXEC-002: Missing test for nil external notifier in InteractiveExecutor
 **Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
