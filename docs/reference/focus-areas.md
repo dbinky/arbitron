@@ -16,7 +16,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
 | 1 | Interactive Node Type (`domain/workflow/workflow.go` — NodeTypeInteractive constant, config fields, validation for interactive nodes) | [x] | [ ] | Pass 1 complete |
-| 2 | InteractiveExecutor (`domain/engine/executor_interactive.go`, `domain/engine/executor_interactive_test.go` — initial LLM call, streaming, notification creation, IsWait transition) | [ ] | [ ] | |
+| 2 | InteractiveExecutor (`domain/engine/executor_interactive.go`, `domain/engine/executor_interactive_test.go` — initial LLM call, streaming, notification creation, IsWait transition) | [x] | [ ] | Pass 1 complete |
 | 3 | ConversationHandler (`domain/engine/conversation.go`, `domain/engine/conversation_test.go` — HandleMessage, EndSession, tool-use detection, state transitions) | [ ] | [ ] | |
 | 4 | External Notification Interface (`domain/notification/external.go`, `adapter/notification/log_notifier.go`, `adapter/notification/log_notifier_test.go` — interface, logging adapter, engine integration) | [ ] | [ ] | |
 | 5 | LLM Provider Extensions (`domain/engine/ports.go` — LLMRequest.SystemPrompt, LLMRequest.Tools, LLMRequest.Messages, LLMStreamChunk.ToolUse, LLMTool, LLMMessage types) | [ ] | [ ] | |
