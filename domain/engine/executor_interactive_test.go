@@ -600,6 +600,31 @@ func TestInteractiveExecutor_StreamChunkError_Fails(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection reset")
 }
 
+func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
+	// Use an instance repo that does NOT contain our instance ID so that
+	// UpdateState returns "instance not found". Every earlier step (file reads,
+	// LLM call, nodeExec.Create, notification.Create) succeeds — only the
+	// state transition fails, which must propagate as an error.
+	_, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, _ := interactiveTestSetup()
+
+	emptyInstRepo := newMockInstanceRepo() // no instances registered
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
+
+	executor := engine.NewInteractiveExecutor(
+		emptyInstRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier,
+	)
+
+	instanceID := uuid.New()
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to set waiting state")
+}
+
 func TestInteractiveExecutor_AccumulatesFullResponse(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
 

@@ -4,9 +4,16 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+### EXEC-002: Missing test for nil external notifier in InteractiveExecutor
+**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+**Detail**: The executor has a nil-guard `if e.externalNotifier != nil` to gracefully skip the external notifier call, but this path is never tested. Without a test, the nil-guard could be accidentally removed during refactoring without a failing test.
 
 ## Fixed Previously
+
+### EXEC-001: Missing test for `UpdateState()` failure in InteractiveExecutor
+**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+**Fixed**: Iteration 3
+**Detail**: The executor returns an error when `instances.UpdateState()` fails but no test covered this path. Added `TestInteractiveExecutor_UpdateStateFailure_ReturnsError` which uses an empty instance repo (so UpdateState returns "instance not found") to verify that the error propagates correctly with the expected message.
 
 ### WFVAL-001: `validateFileReferences` did not check `OrchestrationFile` for interactive nodes
 **Area**: Interactive Node Type (`domain/workflow/validation.go`)
