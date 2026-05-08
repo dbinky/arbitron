@@ -4,11 +4,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### EXEC-002: Missing test for nil external notifier in InteractiveExecutor
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
-**Detail**: The executor has a nil-guard `if e.externalNotifier != nil` to gracefully skip the external notifier call, but this path is never tested. Without a test, the nil-guard could be accidentally removed during refactoring without a failing test.
+_(none)_
 
 ## Fixed Previously
+
+### EXEC-002: Missing test for nil external notifier in InteractiveExecutor
+**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+**Fixed**: Iteration 4
+**Detail**: Added `TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic` which passes `nil` as the ExternalNotifier and verifies no panic occurs, IsWait is true, the notification is still created in the in-app repo, and the instance transitions to waiting — confirming all non-external side effects still complete correctly.
 
 ### EXEC-001: Missing test for `UpdateState()` failure in InteractiveExecutor
 **Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)

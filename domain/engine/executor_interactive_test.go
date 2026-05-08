@@ -743,3 +743,35 @@ func TestInteractiveExecutor_NoOutputSchema_NoTools(t *testing.T) {
 	require.Len(t, reqs, 1)
 	assert.Empty(t, reqs[0].Tools)
 }
+
+func TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic(t *testing.T) {
+	// Edge: the executor must tolerate a nil ExternalNotifier. Callers that
+	// have not wired an external transport pass nil, and the executor's nil-
+	// guard must prevent a panic while still completing all other side effects.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, _, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
+
+	// Pass nil explicitly as the ExternalNotifier.
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, nil,
+	)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsWait)
+
+	// All non-external side effects must still occur.
+	notifications := notifRepo.getCreated()
+	require.Len(t, notifications, 1)
+	assert.Equal(t, notification.TypeNeedsInteraction, notifications[0].Type)
+
+	inst := instRepo.get(instanceID)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateWaiting, inst.State)
+}
