@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LLMPX-001: anthropic.Provider had no tests and no compile-time interface assertion
+**Area**: LLM Provider Adapter (`adapter/anthropic/provider.go`)
+**Fixed**: Iteration 8
+**Detail**: Added `var _ engine.LLMProvider = (*Provider)(nil)` to `provider.go` (matching project convention in postgres/assert.go, filesystem/workflow_repo.go). Created `adapter/anthropic/provider_test.go` with 4 tests covering: empty key → `ErrNotConfigured` for both `Call` and `StreamCall`, non-empty key → stub error (not ErrNotConfigured) for both methods, and a package-level compile-time assertion. Prevents silent interface drift when new methods are added to `engine.LLMProvider`.
+
 ### NOTIF-001: Missing test for ExternalNotifier error non-propagation in InteractiveExecutor
 **Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
 **Fixed**: Iteration 7
