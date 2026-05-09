@@ -6,7 +6,13 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
+
 ## Fixed Previously
+
+### HIST-002: useInteractiveSession did not clear streaming state on interactive.history (reconnect gap)
+**Area**: History Hydration + useInteractiveSession (`dashboard/src/hooks/useInteractiveSession.ts`)
+**Fixed**: Iteration 21
+**Detail**: The `interactive.history` handler set `messages`, `nodeId`, `isActive`, and `error`, but did not clear `streamingContent` or `isStreaming`. If a WebSocket reconnect occurred mid-stream, the client would retain the pre-disconnect partial content and the typing indicator (`isStreaming=true`), resulting in a phantom streaming UI alongside the hydrated history. Fixed by adding `setStreamingContent('')` and `setIsStreaming(false)` to the history handler. Test: `'clears streaming state when history arrives mid-stream (reconnect)'`.
 
 ### NOTIF-002: Zero CreatedAt on notifications forwarded to external notifier and event bus
 **Area**: External Notification + Engine (`domain/engine/engine.go`, `domain/engine/executor_interactive.go`)

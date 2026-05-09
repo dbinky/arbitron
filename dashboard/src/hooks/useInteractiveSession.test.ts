@@ -139,6 +139,29 @@ describe('useInteractiveSession — interactive.history', () => {
     expect(result.current.messages).toHaveLength(1)
     expect(result.current.messages[0].content).toBe('New message only')
   })
+
+  it('clears streaming state when history arrives mid-stream (reconnect)', () => {
+    // If the WebSocket reconnects while the assistant is streaming, the
+    // interactive.history event should reset streaming state so the UI
+    // doesn't show a stale typing indicator or partial content.
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+
+    // Simulate tokens arriving (session is mid-stream).
+    fireEvent(tokenEvent('partial'))
+    fireEvent(tokenEvent(' content'))
+    expect(result.current.isStreaming).toBe(true)
+    expect(result.current.streamingContent).toBe('partial content')
+
+    // Reconnect delivers interactive.history.
+    fireEvent(historyEvent())
+
+    // Streaming state must be cleared — stale tokens should not linger.
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.streamingContent).toBe('')
+    // Session must be active with the hydrated messages.
+    expect(result.current.isActive).toBe(true)
+    expect(result.current.messages).toHaveLength(2)
+  })
 })
 
 // ---------------------------------------------------------------------------

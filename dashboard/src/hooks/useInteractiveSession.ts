@@ -55,6 +55,8 @@ export function useInteractiveSession(
         setNodeId(e.data.nodeId)
         setIsActive(true)
         setError(null)
+        setStreamingContent('')
+        setIsStreaming(false)
         break
 
       case 'interactive.message':
