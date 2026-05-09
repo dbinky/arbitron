@@ -56,7 +56,13 @@ func TestInteractiveHandler_EndSession_Success(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["output"])
+
+	output, ok := resp["output"].(map[string]any)
+	require.True(t, ok, "output must be a JSON object")
+	assert.Equal(t, true, output["approved"], "output must carry node execution output fields")
+
+	require.Len(t, convo.endCalls, 1, "EndSession must be called exactly once")
+	assert.Equal(t, inst.ID, convo.endCalls[0], "EndSession must be called with the correct instance ID")
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +203,10 @@ func TestRouter_InteractEndRoute(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp["output"])
+
+	output, ok := resp["output"].(map[string]any)
+	require.True(t, ok, "output must be a JSON object")
+	assert.Equal(t, "ok", output["result"], "output must carry node execution output fields")
 }
 
 // ---------------------------------------------------------------------------
