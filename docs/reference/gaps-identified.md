@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### NOTIF-002: Zero CreatedAt on notifications forwarded to external notifier and event bus
+**Area**: External Notification + Engine (`domain/engine/engine.go`, `domain/engine/executor_interactive.go`)
+**Fixed**: Iteration 20
+**Detail**: Both `emitNotification` (for TypeFailed/TypeCompleted) and `InteractiveExecutor` (for TypeNeedsInteraction) created `notification.Notification` structs without setting `CreatedAt`. The Postgres `Create` method uses a DB default (`NOW()`) but does not read it back, so the in-memory struct's `CreatedAt` remains at zero value (`time.Time{}`). This zero value was then serialized as `"0001-01-01T00:00:00.000Z"` in both the `notification.created` event payload (used by the frontend) and in external notifier calls (e.g., LogNotifier logs a bogus timestamp). Fixed by setting `CreatedAt: time.Now()` on notification creation in both code paths. Tests: `TestEngine_ExternalNotifier_NotificationHasNonZeroCreatedAt` and `TestInteractiveExecutor_ExternalNotifier_NotificationHasNonZeroCreatedAt`.
+
 ### PAIR15-001: complete_session tool name duplicated as string literal in 3 production-code locations
 **Area**: InteractiveExecutor + ConversationHandler (`domain/engine/executor_interactive.go`, `domain/engine/conversation.go`, `domain/engine/ports.go`)
 **Fixed**: Iteration 19

@@ -179,6 +179,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		InstanceID:   instanceID,
 		WorkflowName: workflowName,
 		Type:         notification.TypeNeedsInteraction,
+		CreatedAt:    time.Now(),
 	}
 
 	// 13. Persist notification.

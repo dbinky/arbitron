@@ -389,6 +389,27 @@ func TestInteractiveExecutor_CallsExternalNotifier(t *testing.T) {
 	assert.Equal(t, instanceID, called[0].InstanceID)
 }
 
+func TestInteractiveExecutor_ExternalNotifier_NotificationHasNonZeroCreatedAt(t *testing.T) {
+	// Boundary: the notification forwarded to the external notifier must have a
+	// non-zero CreatedAt. A zero value produces a "0001-01-01" timestamp in
+	// external systems and in the notification.created event payload.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
+
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+
+	called := extNotifier.getCalled()
+	require.Len(t, called, 1)
+	assert.False(t, called[0].CreatedAt.IsZero(), "notification.CreatedAt must not be zero when forwarded to external notifier")
+}
+
 func TestInteractiveExecutor_PublishesNotificationCreatedEvent(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
 

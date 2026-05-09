@@ -40,7 +40,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 16 | ConversationHandler + WebSocket Handler (HandleMessage/EndSession call contracts, error propagation, blocking behavior during streaming) | [x] | Pass complete |
 | 17 | WebSocket Handler + useInteractiveSession Hook (event type naming consistency, message payload shapes, inbound/outbound format agreement) | [x] | Pass complete |
 | 18 | InteractiveExecutor + Engine Loop (IsWait pattern correctness, node execution record ownership, state transition consistency with timer/webhook) | [x] | Pass complete |
-| 19 | External Notification + Engine (emitNotification integration, ExternalNotifier called for all notification types, nil-safety) | [ ] | |
+| 19 | External Notification + Engine (emitNotification integration, ExternalNotifier called for all notification types, nil-safety) | [x] | Pass complete |
 | 20 | History Hydration + useInteractiveSession (interactive.history event shape, message array format, auto-open behavior on connect) | [ ] | |
 | 21 | Chat Panel + Callout Connector (panel takeover triggers connector visibility, snap-back removes connector, position tracking across scroll/zoom) | [ ] | |
 | 22 | LLM Provider Extensions + InteractiveExecutor + ConversationHandler (SystemPrompt/Tools/Messages fields used correctly across both, tool-use streaming detection) | [ ] | |

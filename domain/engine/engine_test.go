@@ -2707,3 +2707,24 @@ func TestEngine_ExternalNotifier_ErrorDoesNotAffectInstance(t *testing.T) {
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 	assert.Equal(t, instance.StateCompleted, inst.State, "instance must still complete even when external notifier fails")
 }
+
+func TestEngine_ExternalNotifier_NotificationHasNonZeroCreatedAt(t *testing.T) {
+	// Boundary: emitNotification must set CreatedAt on the notification before
+	// forwarding it to the external notifier. A zero CreatedAt produces a
+	// "0001-01-01" timestamp in external systems and event payloads.
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	notifRepo := newMockNotificationRepo()
+	f.engine.SetNotifications(notifRepo)
+
+	ext := newMockExternalNotifier()
+	f.engine.SetExternalNotifier(ext)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	n := waitForExternalNotification(t, ext, notification.TypeCompleted, 2*time.Second)
+	assert.False(t, n.CreatedAt.IsZero(), "notification.CreatedAt must not be zero when forwarded to external notifier")
+}

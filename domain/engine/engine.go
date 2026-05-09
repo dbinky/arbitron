@@ -584,6 +584,7 @@ func (e *Engine) emitNotification(ctx context.Context, instanceID uuid.UUID, wor
 		InstanceID:   instanceID,
 		WorkflowName: workflowName,
 		Type:         notifType,
+		CreatedAt:    time.Now(),
 	}
 	if err := e.notifications.Create(ctx, n); err != nil {
 		slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
