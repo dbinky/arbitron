@@ -4,11 +4,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### PANEL-002: No tests for ChatInput, ChatMessage, and InteractiveTranscript components
-**Area**: Chat Panel Components (`dashboard/src/components/`)
-**Detail**: ChatInput, ChatMessage, and InteractiveTranscript have zero test coverage. ChatInput has testable keyboard behavior (Enter to send, Shift+Enter for newline, empty content guard). ChatMessage renders markdown content which has edge cases. These components need tests covering all 5 scenario categories.
+_(none)_
 
 ## Fixed Previously
+
+### PANEL-002: No tests for ChatInput, ChatMessage, and InteractiveTranscript components
+**Area**: Chat Panel Components (`dashboard/src/components/`)
+**Fixed**: Iteration 15
+**Detail**: Added 44 tests across ChatInput (11), ChatMessage (7), and InteractiveTranscript (8) covering all 5 scenario categories. ChatInput tests cover Enter-to-send, Shift+Enter newline, whitespace guard, disabled state, and sequential sends. ChatMessage tests cover role labels, markdown rendering (bold, inline code, multi-paragraph), empty content, and distinct role classes. InteractiveTranscript tests cover message rendering, empty/null state, singular/plural count, and role label delegation to ChatMessage.
 
 ### PANEL-001: Missing typing indicator when streaming starts (spec-required feature)
 **Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
