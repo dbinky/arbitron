@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -51,15 +52,24 @@ func main() {
 
 // redactDatabaseURL replaces the password in a database URL with "***".
 // Returns the original string on parse error so startup is never blocked.
+// Uses manual string reconstruction instead of url.String() to prevent
+// url.String() from percent-encoding "***" to "%2A%2A%2A" in log output.
 func redactDatabaseURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.User == nil {
 		return raw
 	}
-	if _, hasPassword := u.User.Password(); hasPassword {
-		u.User = url.UserPassword(u.User.Username(), "***")
+	_, hasPassword := u.User.Password()
+	if !hasPassword {
+		return raw
 	}
-	return u.String()
+	username := u.User.Username()
+	u.User = nil
+	// Reconstruct with literal *** by prepending user:***@ after the scheme.
+	base := u.String()
+	scheme := u.Scheme + "://"
+	after := strings.TrimPrefix(base, scheme)
+	return scheme + username + ":***@" + after
 }
 
 func newServeCmd() *cobra.Command {
