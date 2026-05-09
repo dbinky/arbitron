@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HOOK10-P2-001: isEnding not reset on interactive.error — End Session button permanently disabled on backend failure
+**Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)
+**Fixed**: Iteration 36
+**Detail**: `endSession()` sets `isEnding = true` to disable the End Session button during the in-flight request. But the `interactive.error` handler only cleared `error`, `isStreaming`, and `streamingContent` — it never reset `isEnding`. If the backend failed to end the session (e.g., instance was no longer in interactive wait state) and sent back `interactive.error`, `isEnding` would stay `true` indefinitely. The button would remain disabled with no recovery path except a page reload. Fixed by adding `setIsEnding(false)` to the `interactive.error` handler and added a regression test that verifies the End Session button can be retried after a failure.
+
 ### INTEG9-P2-001: multi-message integration test did not verify response content per request
 **Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
 **Fixed**: Iteration 35
