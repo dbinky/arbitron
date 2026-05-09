@@ -819,6 +819,16 @@ func TestStreamHandler_InteractiveSend_ErrorReturnsInteractiveError(t *testing.T
 	data, ok := evt["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, data["message"], "not in interactive wait state")
+
+	// Verify the error event carries a non-zero timestamp. If Timestamp were
+	// accidentally removed from interactiveErrorEvent the frontend would display
+	// "0001-01-01T00:00:00Z" on every error, but this assertion would still pass
+	// if the field is absent (null) — so we explicitly require it.
+	tsStr, tsOk := evt["timestamp"].(string)
+	require.True(t, tsOk, "interactive.error must include a string timestamp field")
+	ts, parseErr := time.Parse(time.RFC3339Nano, tsStr)
+	require.NoError(t, parseErr, "interactive.error timestamp must parse as RFC3339")
+	assert.False(t, ts.IsZero(), "interactive.error timestamp must not be the zero time")
 }
 
 // ---------------------------------------------------------------------------
@@ -863,6 +873,12 @@ func TestStreamHandler_InteractiveEnd_ErrorReturnsInteractiveError(t *testing.T)
 	data, ok := evt["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, data["message"], "not in interactive wait state")
+
+	tsStr, tsOk := evt["timestamp"].(string)
+	require.True(t, tsOk, "interactive.error must include a string timestamp field")
+	ts, parseErr := time.Parse(time.RFC3339Nano, tsStr)
+	require.NoError(t, parseErr, "interactive.error timestamp must parse as RFC3339")
+	assert.False(t, ts.IsZero(), "interactive.error timestamp must not be the zero time")
 }
 
 // ---------------------------------------------------------------------------

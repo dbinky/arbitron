@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### WS6-P2-001: interactive.error event timestamp not verified — zero timestamp would pass undetected
+**Area**: WebSocket Bidirectional Messaging (`adapter/http/stream_handler_test.go`)
+**Fixed**: Iteration 32
+**Detail**: `TestStreamHandler_InteractiveSend_ErrorReturnsInteractiveError` and `TestStreamHandler_InteractiveEnd_ErrorReturnsInteractiveError` verified `evt["type"]` and `data["message"]` but not the `timestamp` field. The `interactiveErrorEvent` struct explicitly sets `Timestamp: time.Now().UTC()` — if this were accidentally dropped (or the struct were created without the field), the frontend would receive `"0001-01-01T00:00:00Z"` on every error message, but both tests would still pass. Added RFC3339 timestamp parsing assertions to both tests: require that `evt["timestamp"]` is a present string, parses as RFC3339Nano, and is not the zero time. Matches the same pattern as NOTIF4-P2-001.
+
 ### LLM5-P2-001: Prompt vs Messages contract not asserted — accidental population of the wrong field would be undetected
 **Area**: LLM Provider Extensions (`domain/engine/executor_interactive_test.go`, `domain/engine/conversation_test.go`)
 **Fixed**: Iteration 31
