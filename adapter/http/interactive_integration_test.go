@@ -479,10 +479,8 @@ func TestIntegration_InteractiveMultipleMessages(t *testing.T) {
 	instRepo.instances[inst.ID] = inst
 	nodeExecRepo.executions = []*instance.NodeExecution{nodeExec}
 
-	msgCount := 0
 	convo := &mockConversationHandler{
 		handleMessageFn: func(_ context.Context, instanceID uuid.UUID, content string) error {
-			msgCount++
 			// Publish just an assistant message event (no tokens, to keep test simple).
 			bus.Publish(instanceID, engine.Event{
 				Type:      engine.EventTypeInteractiveMessage,
@@ -513,9 +511,10 @@ func TestIntegration_InteractiveMultipleMessages(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Send 3 messages and verify each gets a response.
+	// Send 3 messages and verify each gets a correctly-keyed response.
 	for i := 0; i < 3; i++ {
-		sendMsg := `{"type":"interactive.send","content":"msg` + string(rune('1'+i)) + `"}`
+		msgLabel := string(rune('1' + i))
+		sendMsg := `{"type":"interactive.send","content":"msg` + msgLabel + `"}`
 		err = conn.Write(ctx, websocket.MessageText, []byte(sendMsg))
 		require.NoError(t, err)
 
@@ -525,6 +524,8 @@ func TestIntegration_InteractiveMultipleMessages(t *testing.T) {
 		data, ok := assistantEvt["data"].(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "assistant", data["role"])
+		assert.Equal(t, "Response msg"+msgLabel, data["content"],
+			"response content must echo back the corresponding request message")
 	}
 
 	// Verify all 3 messages were handled.
