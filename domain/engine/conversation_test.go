@@ -710,6 +710,57 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 }
 
 // ---------------------------------------------------------------------------
+// HandleMessage Tests: Unknown tool name (boundary — name check is load-bearing)
+// ---------------------------------------------------------------------------
+
+func TestConversationHandler_HandleMessage_UnknownToolName_TreatsAsNormalResponse(t *testing.T) {
+	// Boundary: when the LLM returns a ToolUse whose name is NOT
+	// InteractiveCompletionToolName, the handler must NOT complete the session.
+	// The condition `toolUse.Name == InteractiveCompletionToolName` is the gate
+	// that prevents arbitrary tool calls from terminating the interactive session.
+	// This test verifies the name check is load-bearing and not redundant.
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	unknownToolInput := map[string]any{"some": "data"}
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+		ch := make(chan engine.LLMStreamChunk, 2)
+		ch <- engine.LLMStreamChunk{Token: "Let me look that up."}
+		ch <- engine.LLMStreamChunk{
+			Done: true,
+			ToolUse: &engine.LLMToolUse{
+				Name:  "some_other_tool", // NOT complete_session
+				Input: unknownToolInput,
+			},
+		}
+		close(ch)
+		return ch, nil
+	}
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	err := handler.HandleMessage(context.Background(), instanceID, "Search for something")
+	require.NoError(t, err)
+
+	// Session must NOT have ended — no interactive.ended event.
+	endedEvents := eventBus.eventsOfType(instanceID, "interactive.ended")
+	assert.Empty(t, endedEvents, "unknown tool name must not complete the session")
+
+	// Instance must still be waiting — not transitioned to queued.
+	inst := instRepo.get(instanceID)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateWaiting, inst.State, "instance must remain in waiting state when unknown tool is called")
+
+	// The assistant's text response must have been published as an interactive.message.
+	msgEvents := eventBus.eventsOfType(instanceID, "interactive.message")
+	require.GreaterOrEqual(t, len(msgEvents), 1, "assistant message event should be published")
+	assistantEvent := msgEvents[len(msgEvents)-1]
+	data, ok := assistantEvent.Data.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "assistant", data["role"])
+	assert.Equal(t, "Let me look that up.", data["content"])
+}
+
+// ---------------------------------------------------------------------------
 // HandleMessage Tests: LLM error during streaming
 // ---------------------------------------------------------------------------
 
