@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### EXEC13-P2-001: SidePanel fallback-tab test never actually put activeTab in 'transcript' state
+**Area**: Execution View Integration (`dashboard/src/components/SidePanel.test.tsx`)
+**Fixed**: Iteration 39
+**Detail**: The test `'falls back to output tab when transcript tab is removed (node deselected)'` rendered an interactive node with `execution=null` (no transcript data). Because `transcript=null`, the effect's first condition (`transcript && showTranscriptTab`) was false, so `activeTab` was never changed from its initial 'output' value. Deselecting the node set `showTranscriptTab=false`, but the else-if fallback (`activeTab === 'transcript' && !showTranscriptTab`) was also false. The test asserted the Output tab was visible — trivially true since it was never left. The `setActiveTab('output')` branch could be deleted without the test failing. Added `'reverts to Output tab when the user is on Transcript and then selects a non-interactive node'`: starts with a completed interactive node with real transcript data (auto-switches to Transcript), then re-renders with an LLM node — verifying the Transcript button disappears and Output content is shown.
+
 ### RESIZE12-P2-001: drag-resize test only verified CSS class, never the resulting width
 **Area**: Callout Connector & Panel Resizing (`dashboard/src/components/ResizablePanel.test.tsx`)
 **Fixed**: Iteration 38
