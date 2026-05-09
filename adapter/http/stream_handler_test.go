@@ -1232,6 +1232,16 @@ func TestStreamHandler_HistoryHydration_InteractiveWait(t *testing.T) {
 	messages, ok := data["messages"].([]any)
 	require.True(t, ok)
 	assert.Len(t, messages, 2)
+
+	msg0, ok0 := messages[0].(map[string]any)
+	require.True(t, ok0, "first message must be a map")
+	assert.Equal(t, "user", msg0["role"])
+	assert.Equal(t, "hello", msg0["content"])
+
+	msg1, ok1 := messages[1].(map[string]any)
+	require.True(t, ok1, "second message must be a map")
+	assert.Equal(t, "assistant", msg1["role"])
+	assert.Equal(t, "hi there", msg1["content"])
 }
 
 // ---------------------------------------------------------------------------
