@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### PANEL11-P2-001: End Session button not disabled when WebSocket disconnected — silent no-op on click
+**Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
+**Fixed**: Iteration 37
+**Detail**: `endSession()` sends `interactive.end` over WebSocket. When disconnected (`connected=false`), the WebSocket send is a no-op, but the End Session button remained enabled and showed no feedback to the user. The chat input was already disabled when `!session.connected`, creating an inconsistency: users could click End Session and get no response while unable to type. Fixed by adding `|| !session.connected` to the button's `disabled` prop, consistent with how the chat input handles the disconnected state. Added a regression test.
+
 ### HOOK10-P2-001: isEnding not reset on interactive.error — End Session button permanently disabled on backend failure
 **Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)
 **Fixed**: Iteration 36
