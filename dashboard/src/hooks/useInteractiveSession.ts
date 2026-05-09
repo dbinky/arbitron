@@ -98,6 +98,7 @@ export function useInteractiveSession(
         setError(e.data.message)
         setIsStreaming(false)
         setStreamingContent('')
+        setIsEnding(false)
         break
 
       default:

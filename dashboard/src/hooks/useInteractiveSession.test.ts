@@ -337,6 +337,20 @@ describe('useInteractiveSession — send actions', () => {
     fireEvent(endedEvent('user_ended'))
     expect(result.current.isEnding).toBe(false)
   })
+
+  it('resets isEnding to false when interactive.error is received (end-session failure recovery)', () => {
+    // If the backend fails to end the session and returns interactive.error,
+    // isEnding must be cleared so the user can retry — otherwise the End
+    // Session button remains disabled indefinitely.
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    act(() => {
+      result.current.endSession()
+    })
+    expect(result.current.isEnding).toBe(true)
+    fireEvent(errorEvent('EndSession failed: instance not in interactive wait state'))
+    expect(result.current.isEnding).toBe(false)
+    expect(result.current.error).toBe('EndSession failed: instance not in interactive wait state')
+  })
 })
 
 // ---------------------------------------------------------------------------
