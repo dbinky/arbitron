@@ -94,8 +94,8 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	var tools []LLMTool
 	if nodeConfig.OutputSchema != nil {
 		tools = append(tools, LLMTool{
-			Name:        "complete_session",
-			Description: "Complete the interactive session with structured output.",
+			Name:        InteractiveCompletionToolName,
+			Description: InteractiveCompletionToolDescription,
 			InputSchema: nodeConfig.OutputSchema,
 		})
 	}
@@ -153,7 +153,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	fullResponse := responseBuilder.String()
 
 	// 11. Handle the response based on whether a tool was called.
-	if toolUse != nil && toolUse.Name == "complete_session" {
+	if toolUse != nil && toolUse.Name == InteractiveCompletionToolName {
 		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, fullResponse, toolUse.Input)
 	}
 

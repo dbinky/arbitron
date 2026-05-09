@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR15-001: complete_session tool name duplicated as string literal in 3 production-code locations
+**Area**: InteractiveExecutor + ConversationHandler (`domain/engine/executor_interactive.go`, `domain/engine/conversation.go`, `domain/engine/ports.go`)
+**Fixed**: Iteration 19
+**Detail**: The `"complete_session"` tool name was a string literal in (1) the executor's tool definition, (2) the conversation handler's tool definition, and (3) the conversation handler's detection check `toolUse.Name == "complete_session"`. A mismatch would cause session completion to silently break — the LLM calls the tool but the handler never detects it, leaving the session in waiting state indefinitely. Added `InteractiveCompletionToolName = "complete_session"` and `InteractiveCompletionToolDescription = "..."` constants to `ports.go` alongside the existing EventType constants. Updated both executor and handler to use the constants.
+
 ### MAIN-001: Missing compile-time assertions for *InteractiveExecutor / NodeExecutor and *LogNotifier / ExternalNotifier
 **Area**: Main Wiring (`domain/engine/executor_interactive.go`, `adapter/notification/log_notifier.go`)
 **Fixed**: Iteration 18

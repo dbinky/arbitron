@@ -86,8 +86,8 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	var tools []LLMTool
 	if node.Config.OutputSchema != nil {
 		tools = append(tools, LLMTool{
-			Name:        "complete_session",
-			Description: "Complete the interactive session with structured output.",
+			Name:        InteractiveCompletionToolName,
+			Description: InteractiveCompletionToolDescription,
 			InputSchema: node.Config.OutputSchema,
 		})
 	}
