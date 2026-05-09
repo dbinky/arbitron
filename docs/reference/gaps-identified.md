@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MAIN14-P2-001: redactDatabaseURL logged %2A%2A%2A instead of *** — url.String() percent-encodes asterisks
+**Area**: Main Wiring (`cmd/arbitron/main.go`)
+**Fixed**: Iteration 40
+**Detail**: `redactDatabaseURL` used `url.UserPassword(username, "***")` then called `u.String()` to rebuild the URL. `url.String()` percent-encodes `*` to `%2A`, so startup logs showed `alice:%2A%2A%2A@localhost:5432/...` instead of `alice:***@localhost:5432/...`. The original intent was human-readable redaction. Fixed by clearing `u.User = nil`, calling `u.String()` to get a clean base URL, then manually prepending `username:***@` after the scheme using `strings.TrimPrefix`. Added five-scenario test file (`cmd/arbitron/main_test.go`): happy path (password replaced with `***`), malformed URL returned unchanged, no-password URL unchanged, no-user-info URL unchanged, and empty-password URL handled without panic.
+
 ### EXEC13-P2-001: SidePanel fallback-tab test never actually put activeTab in 'transcript' state
 **Area**: Execution View Integration (`dashboard/src/components/SidePanel.test.tsx`)
 **Fixed**: Iteration 39
