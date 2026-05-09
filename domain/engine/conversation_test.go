@@ -710,6 +710,45 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 	assert.Equal(t, "assistant", messages[1]["role"])
 }
 
+func TestConversationHandler_HandleMessage_JsonRoundTripHistory_ParsesMessages(t *testing.T) {
+	// Edge: after a Postgres JSONB round-trip, json.Unmarshal into map[string]any
+	// produces []any for JSON arrays — NOT []map[string]any. parseConversation
+	// must handle the []any branch correctly or multi-turn conversations silently
+	// drop all prior history (every message appears as a fresh send with no context).
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	// Simulate the JSON round-trip that happens when sqlc reads JSONB from Postgres.
+	nodeExecRepo.mu.Lock()
+	if len(nodeExecRepo.executions) > 0 {
+		conv := nodeExecRepo.executions[0].LLMConversation
+		convBytes, err := json.Marshal(conv)
+		require.NoError(t, err)
+		var roundTripped map[string]any
+		require.NoError(t, json.Unmarshal(convBytes, &roundTripped))
+		nodeExecRepo.executions[0].LLMConversation = roundTripped
+	}
+	nodeExecRepo.mu.Unlock()
+
+	llmProvider.streamCallFn = cannedStream([]string{"Got it"}, 5, 10)
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	err := handler.HandleMessage(context.Background(), instanceID, "After DB round-trip")
+	require.NoError(t, err)
+
+	// The LLM must receive the full prior history — not just the new message.
+	reqs := llmProvider.getCapturedReqs()
+	require.Len(t, reqs, 1)
+	// Initial user + initial assistant + new user = 3 messages.
+	require.Len(t, reqs[0].Messages, 3, "prior messages must survive []any round-trip in parseConversation")
+	assert.Equal(t, "user", reqs[0].Messages[0].Role)
+	assert.Equal(t, "Initial orchestration prompt", reqs[0].Messages[0].Content)
+	assert.Equal(t, "assistant", reqs[0].Messages[1].Role)
+	assert.Equal(t, "Hello! How can I help you?", reqs[0].Messages[1].Content)
+	assert.Equal(t, "user", reqs[0].Messages[2].Role)
+	assert.Equal(t, "After DB round-trip", reqs[0].Messages[2].Content)
+}
+
 // ---------------------------------------------------------------------------
 // HandleMessage Tests: Unknown tool name (boundary — name check is load-bearing)
 // ---------------------------------------------------------------------------

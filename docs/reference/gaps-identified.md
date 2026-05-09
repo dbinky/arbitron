@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### CONV3-P2-001: parseConversation []any branch untested — Postgres JSONB round-trip path never exercised
+**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+**Fixed**: Iteration 29
+**Detail**: `parseConversation` has two branches: `[]map[string]any` (in-memory) and `[]any` (after Postgres JSONB deserialization, where `json.Unmarshal` into `map[string]any` always produces `[]interface{}`). All 29 existing tests set `LLMConversation` directly on the mock without a JSON round-trip, so only the first branch was ever reached. The production path goes through `[]any` on every turn after the first (the first persist stores `[]map[string]any`; subsequent reads from sqlc return `[]any`). Added `TestConversationHandler_HandleMessage_JsonRoundTripHistory_ParsesMessages`: JSON-marshals and unmarshals the initial conversation to force `[]any` typing, then verifies the LLM receives all 3 messages (2 prior + 1 new) — not just the new one. A silent bug in the `[]any` branch would now be caught.
+
 ### EXEC2-P2-001: WritesNodeExecutionRecord test had weak assertions — conversation structure, LLM metadata, and StartedAt not verified
 **Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
 **Fixed**: Iteration 28
