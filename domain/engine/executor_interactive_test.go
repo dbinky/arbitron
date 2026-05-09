@@ -283,6 +283,12 @@ func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
 	require.Len(t, req.Tools, 1)
 	assert.Equal(t, "complete_session", req.Tools[0].Name)
 	assert.Equal(t, node.Config.OutputSchema, req.Tools[0].InputSchema)
+
+	// The initial interactive call must use Prompt, not Messages.
+	// LLMRequest documents that Messages takes precedence over Prompt — an
+	// accidental non-nil Messages would silently override the Prompt and send
+	// an unexpected conversation history to the LLM on the first turn.
+	assert.Empty(t, req.Messages, "initial interactive call must use Prompt, not Messages")
 }
 
 func TestInteractiveExecutor_PublishesTokenEvents(t *testing.T) {

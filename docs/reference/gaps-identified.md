@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LLM5-P2-001: Prompt vs Messages contract not asserted — accidental population of the wrong field would be undetected
+**Area**: LLM Provider Extensions (`domain/engine/executor_interactive_test.go`, `domain/engine/conversation_test.go`)
+**Fixed**: Iteration 31
+**Detail**: `LLMRequest` documents that `Messages` takes precedence over `Prompt`. Two call sites build `LLMRequest` with different fields: the `InteractiveExecutor` uses `Prompt` for the initial turn; `ConversationHandler` uses `Messages` for all subsequent turns. Neither test verified the OTHER field was absent. If `Messages` were accidentally populated in the executor (e.g., by copying code from the conversation handler), the `Prompt` would be silently ignored and the LLM would receive unexpected history on the first turn — with no test failure. Symmetrically, an accidental `Prompt` in the conversation handler would be masked by `Messages` in providers that check precedence, but would expose data in providers that don't. Added `assert.Empty(t, req.Messages, ...)` to `TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest` and `assert.Empty(t, req.Prompt, ...)` to `TestConversationHandler_HandleMessage_SendsFullConversationToLLM`.
+
 ### NOTIF4-P2-001: LogNotifier timestamp assertion used NotEmpty — ISO 8601 millisecond format not verified
 **Area**: External Notification Interface (`adapter/notification/log_notifier_test.go`)
 **Fixed**: Iteration 30

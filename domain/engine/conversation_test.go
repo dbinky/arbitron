@@ -256,6 +256,12 @@ func TestConversationHandler_HandleMessage_SendsFullConversationToLLM(t *testing
 	assert.Equal(t, "complete_session", req.Tools[0].Name)
 	assert.Equal(t, "Call this tool when the conversation has reached its natural conclusion and you have the final output ready.", req.Tools[0].Description)
 
+	// Subsequent conversation turns must use Messages, not Prompt.
+	// LLMRequest documents that Messages takes precedence over Prompt — an
+	// accidental non-empty Prompt here would be masked by Messages, but a
+	// provider that ignores Messages would silently fall back to the Prompt.
+	assert.Empty(t, req.Prompt, "conversation handler must use Messages not Prompt")
+
 	// Should have model settings.
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
 	assert.Equal(t, 4096, req.MaxTokens)
