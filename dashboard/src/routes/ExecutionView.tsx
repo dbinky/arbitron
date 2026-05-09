@@ -128,6 +128,14 @@ export default function ExecutionView() {
   // Interactive session state.
   const interactiveSession = useInteractiveSession(id)
 
+  // Pre-warm session state from the REST instance data so the interactive panel
+  // renders immediately on page load, before interactive.history arrives over WebSocket.
+  useEffect(() => {
+    if (instance?.interactiveActive && instance.interactiveNodeId) {
+      interactiveSession.seedFromInstance(instance.interactiveNodeId)
+    }
+  }, [instance?.interactiveActive, instance?.interactiveNodeId])
+
   // Resolve the interactive session's nodeId to a human-readable label.
   const interactiveNodeName = useMemo(() => {
     if (!interactiveSession.nodeId || !workflowDef) return 'Unknown Node'

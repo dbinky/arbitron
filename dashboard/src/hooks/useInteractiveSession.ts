@@ -28,6 +28,13 @@ export interface InteractiveSessionState {
   sendMessage: (content: string) => void
   /** End the interactive session. */
   endSession: () => void
+  /**
+   * Pre-warm session state from the REST instance response.
+   * Activates the panel immediately on page load without waiting for
+   * interactive.history — eliminates the flash of the normal side panel.
+   * Safe to call multiple times; nodeId is only set if not already known.
+   */
+  seedFromInstance: (nodeId: string) => void
 }
 
 /**
@@ -114,6 +121,11 @@ export function useInteractiveSession(
     sendRef.current({ type: 'interactive.end' })
   }, [])
 
+  const seedFromInstance = useCallback((newNodeId: string) => {
+    setIsActive(true)
+    setNodeId((current) => current ?? newNodeId)
+  }, [])
+
   return {
     messages,
     streamingContent,
@@ -125,5 +137,6 @@ export function useInteractiveSession(
     connected,
     sendMessage,
     endSession,
+    seedFromInstance,
   }
 }

@@ -20,6 +20,7 @@ function makeSession(overrides: Partial<InteractiveSessionState> = {}): Interact
     connected: true,
     sendMessage: vi.fn(),
     endSession: vi.fn(),
+    seedFromInstance: vi.fn(),
     ...overrides,
   }
 }

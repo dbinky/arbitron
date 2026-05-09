@@ -340,6 +340,44 @@ describe('useInteractiveSession — send actions', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Boundary: seedFromInstance pre-warms state from REST instance data
+// ---------------------------------------------------------------------------
+
+describe('useInteractiveSession — seedFromInstance', () => {
+  it('activates the session with the given nodeId before interactive.history arrives', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    expect(result.current.isActive).toBe(false)
+    expect(result.current.nodeId).toBeNull()
+    act(() => {
+      result.current.seedFromInstance('review-design')
+    })
+    expect(result.current.isActive).toBe(true)
+    expect(result.current.nodeId).toBe('review-design')
+    expect(result.current.messages).toEqual([]) // messages arrive later via interactive.history
+  })
+
+  it('does not override nodeId already set by interactive.history', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(historyEvent()) // sets nodeId='review-design'
+    act(() => {
+      result.current.seedFromInstance('different-node')
+    })
+    expect(result.current.nodeId).toBe('review-design')
+  })
+
+  it('interactive.ended deactivates a session that was seeded from instance data', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    act(() => {
+      result.current.seedFromInstance('review-design')
+    })
+    expect(result.current.isActive).toBe(true)
+    fireEvent(endedEvent('user_ended'))
+    expect(result.current.isActive).toBe(false)
+    expect(result.current.nodeId).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration: full conversation round-trip
 // ---------------------------------------------------------------------------
 

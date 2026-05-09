@@ -43,6 +43,10 @@ export interface Instance {
   webhookUrl?: string
   webhookReceived?: boolean
   workflowSnapshot?: Record<string, unknown>
+  /** True when the instance is in waiting state on an interactive node. */
+  interactiveActive: boolean
+  /** The node ID of the interactive node waiting for input, or null. */
+  interactiveNodeId: string | null
 }
 
 /** Node execution record within an instance trace. */
