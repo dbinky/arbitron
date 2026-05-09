@@ -28,7 +28,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 11 | Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx` — panel layout, markdown rendering, input behavior, auto-scroll) | [x] | [ ] | Pass 1 complete |
 | 12 | Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `InteractiveCallout.tsx` — SVG overlay, 40/60 split, snap-back) | [x] | [ ] | Pass 1 complete |
 | 13 | Execution View Integration (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/SidePanel.tsx` — conditional rendering, auto-open, transcript viewing) | [x] | [ ] | Pass 1 complete |
-| 14 | Main Wiring (`cmd/arbitron/main.go` — executor registration, ConversationHandler instantiation, router wiring, dependency injection) | [ ] | [ ] | |
+| 14 | Main Wiring (`cmd/arbitron/main.go` — executor registration, ConversationHandler instantiation, router wiring, dependency injection) | [x] | [ ] | Pass 1 complete |
 
 ---
 

@@ -14,6 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// Compile-time assertion that *InteractiveExecutor satisfies NodeExecutor.
+var _ NodeExecutor = (*InteractiveExecutor)(nil)
+
 // InteractiveExecutor handles interactive nodes by initiating an LLM
 // conversation, streaming the first response, creating a needs_interaction
 // notification, and transitioning the instance to the waiting state.

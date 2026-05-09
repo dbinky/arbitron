@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MAIN-001: Missing compile-time assertions for *InteractiveExecutor / NodeExecutor and *LogNotifier / ExternalNotifier
+**Area**: Main Wiring (`domain/engine/executor_interactive.go`, `adapter/notification/log_notifier.go`)
+**Fixed**: Iteration 18
+**Detail**: Project convention (established in `adapter/postgres/assert.go`, `adapter/anthropic/provider.go`, `adapter/filesystem/workflow_repo.go`) is to add `var _ Interface = (*Impl)(nil)` in each implementation file so interface drift is caught at compile time with a clear error message. Neither `*InteractiveExecutor` (satisfies `engine.NodeExecutor`) nor `*LogNotifier` (satisfies `notification.ExternalNotifier`) had these assertions. Added `var _ NodeExecutor = (*InteractiveExecutor)(nil)` to `executor_interactive.go` and `var _ notification.ExternalNotifier = (*LogNotifier)(nil)` to `log_notifier.go`. While usage patterns already provide implicit compile-time checking, the explicit assertions document intent and produce clearer diagnostics on interface changes.
+
 ### EXEC-001: No tests for SidePanel — transcript extraction, tab switching, interactive detection
 **Area**: Execution View Integration (`dashboard/src/components/SidePanel.tsx`)
 **Fixed**: Iteration 17

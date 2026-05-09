@@ -8,6 +8,9 @@ import (
 	"github.com/arbitron/arbitron/domain/notification"
 )
 
+// Compile-time assertion that *LogNotifier satisfies notification.ExternalNotifier.
+var _ notification.ExternalNotifier = (*LogNotifier)(nil)
+
 // LogNotifier is an ExternalNotifier that logs notifications at Info level.
 // It is intended as a default/development adapter and always returns nil.
 type LogNotifier struct {
