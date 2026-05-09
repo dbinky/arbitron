@@ -25,7 +25,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 8 | Interactive REST Endpoint (`adapter/http/interactive_handler.go`, `adapter/http/interactive_handler_test.go` — POST /interact/end, error responses, router wiring) | [x] | [ ] | Pass 1 complete |
 | 9 | Integration Tests (`adapter/http/interactive_integration_test.go` — full round-trip WebSocket tests, tool completion, error flows, multi-message) | [x] | [ ] | Pass 1 complete |
 | 10 | useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts` — state management, event handling, streaming-to-message transition, send/end actions) | [x] | [ ] | Pass 1 complete |
-| 11 | Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx` — panel layout, markdown rendering, input behavior, auto-scroll) | [ ] | [ ] | |
+| 11 | Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx` — panel layout, markdown rendering, input behavior, auto-scroll) | [x] | [ ] | Pass 1 complete |
 | 12 | Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `InteractiveCallout.tsx` — SVG overlay, 40/60 split, snap-back) | [ ] | [ ] | |
 | 13 | Execution View Integration (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/SidePanel.tsx` — conditional rendering, auto-open, transcript viewing) | [ ] | [ ] | |
 | 14 | Main Wiring (`cmd/arbitron/main.go` — executor registration, ConversationHandler instantiation, router wiring, dependency injection) | [ ] | [ ] | |
