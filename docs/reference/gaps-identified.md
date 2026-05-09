@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### EXEC-001: No tests for SidePanel — transcript extraction, tab switching, interactive detection
+**Area**: Execution View Integration (`dashboard/src/components/SidePanel.tsx`)
+**Fixed**: Iteration 17
+**Detail**: Added 22 tests for `SidePanel` covering all 5 scenario categories. Key scenarios: `extractTranscript` with all 3 code paths (output.interactiveMessages, llmConversation direct array, llmConversation.messages object), auto-switch to Transcript tab when transcript found, interactive node detection via type ('interactive', 'interactive_call') and config flag, fall-back to output tab when node deselected, empty/null edge cases, tab interaction boundaries. Child components (NodeOutput, VariablesPanel, InteractiveTranscript) mocked to keep tests focused on SidePanel logic.
+
 ### CONN-001: No tests for Callout Connector, ResizablePanel, InteractiveCallout components
 **Area**: Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/graph/nodes/InteractiveCallout.tsx`)
 **Fixed**: Iteration 16
