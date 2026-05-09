@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### REST8-P2-001: success test asserted NotNil output and never verified EndSession was called
+**Area**: Interactive REST Endpoint (`adapter/http/interactive_handler_test.go`)
+**Fixed**: Iteration 34
+**Detail**: `TestInteractiveHandler_EndSession_Success` used `assert.NotNil(t, resp["output"])` — this passes when `output` is an empty map `{}`, meaning any regression in the output-loading path (node exec not found, output nil) would be invisible. The test also never checked `convo.endCalls`, so a handler that returned early without calling EndSession would pass. Strengthened the test to type-assert `resp["output"]` as `map[string]any`, assert the `"approved": true` field, and verify `convo.endCalls` has exactly one entry matching `inst.ID`. Applied the same output content assertion to `TestRouter_InteractEndRoute`.
+
 ### HIST7-P2-001: interactive.history message content not verified — field transformation would pass undetected
 **Area**: History Hydration & Instance Detail (`adapter/http/stream_handler_test.go`)
 **Fixed**: Iteration 33
