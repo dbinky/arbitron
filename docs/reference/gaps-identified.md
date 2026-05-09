@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR23-001: complete_session tool description weaker than design doc specifies
+**Area**: Spec Alignment: Product Spec + All Backend (`domain/engine/ports.go`)
+**Fixed**: Iteration 24
+**Detail**: The `InteractiveCompletionToolDescription` constant said "Complete the interactive session with structured output." — telling the LLM WHAT the tool does but not WHEN to call it. The design doc specifies "Call this tool when the conversation has reached its natural conclusion and you have the final output ready." which gives the LLM explicit guidance on when to invoke the tool, reducing premature or missed session completions. No test previously asserted the description value. Updated the constant and added description assertions to `TestInteractiveExecutor_BuildsCompleteSessionTool` and `TestConversationHandler_HandleMessage_SendsFullConversationToLLM`.
+
 ### PAIR22-001: No test for unknown tool name in ConversationHandler (name check is load-bearing)
 **Area**: LLM Provider Extensions + InteractiveExecutor + ConversationHandler (`domain/engine/conversation.go`, `domain/engine/conversation_test.go`)
 **Fixed**: Iteration 23
