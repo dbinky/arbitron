@@ -92,6 +92,7 @@ describe('useInteractiveSession — initial state', () => {
     expect(result.current.streamingContent).toBe('')
     expect(result.current.isStreaming).toBe(false)
     expect(result.current.isActive).toBe(false)
+    expect(result.current.isEnding).toBe(false)
     expect(result.current.nodeId).toBeNull()
     expect(result.current.error).toBeNull()
     expect(result.current.connected).toBe(true)
@@ -316,6 +317,25 @@ describe('useInteractiveSession — send actions', () => {
       result.current.endSession()
     })
     expect(mockSend).toHaveBeenCalledWith({ type: 'interactive.end' })
+  })
+
+  it('sets isEnding to true when endSession is called', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    expect(result.current.isEnding).toBe(false)
+    act(() => {
+      result.current.endSession()
+    })
+    expect(result.current.isEnding).toBe(true)
+  })
+
+  it('resets isEnding to false when interactive.ended is received', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    act(() => {
+      result.current.endSession()
+    })
+    expect(result.current.isEnding).toBe(true)
+    fireEvent(endedEvent('user_ended'))
+    expect(result.current.isEnding).toBe(false)
   })
 })
 

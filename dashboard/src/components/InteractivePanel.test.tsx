@@ -14,6 +14,7 @@ function makeSession(overrides: Partial<InteractiveSessionState> = {}): Interact
     streamingContent: '',
     isStreaming: false,
     isActive: true,
+    isEnding: false,
     nodeId: 'review-design',
     error: null,
     connected: true,
@@ -124,6 +125,24 @@ describe('InteractivePanel — empty state', () => {
     const session = makeSession({ messages: [], isStreaming: true })
     render(<InteractivePanel session={session} nodeName="review-design" />)
     expect(screen.queryByText(/waiting for the assistant/i)).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Boundary: End Session button disabled while ending
+// ---------------------------------------------------------------------------
+
+describe('InteractivePanel — end session button disabled state', () => {
+  it('disables End Session button when isEnding is true', () => {
+    const session = makeSession({ isEnding: true })
+    render(<InteractivePanel session={session} nodeName="review-design" />)
+    expect(screen.getByRole('button', { name: /end session/i })).toBeDisabled()
+  })
+
+  it('enables End Session button when isEnding is false', () => {
+    const session = makeSession({ isEnding: false })
+    render(<InteractivePanel session={session} nodeName="review-design" />)
+    expect(screen.getByRole('button', { name: /end session/i })).not.toBeDisabled()
   })
 })
 

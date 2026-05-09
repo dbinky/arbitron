@@ -32,6 +32,7 @@ export default function InteractivePanel({
         <button
           className={styles.endButton}
           onClick={session.endSession}
+          disabled={session.isEnding}
           title="End the interactive session"
         >
           End Session

@@ -22,6 +22,8 @@ export interface InteractiveSessionState {
   error: string | null
   /** Whether the WebSocket is connected. */
   connected: boolean
+  /** True while the end-session request is in flight (button should be disabled). */
+  isEnding: boolean
   /** Send a user message to the interactive session. */
   sendMessage: (content: string) => void
   /** End the interactive session. */
@@ -41,6 +43,7 @@ export function useInteractiveSession(
   const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [isActive, setIsActive] = useState(false)
+  const [isEnding, setIsEnding] = useState(false)
   const [nodeId, setNodeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -78,6 +81,7 @@ export function useInteractiveSession(
 
       case 'interactive.ended':
         setIsActive(false)
+        setIsEnding(false)
         setNodeId(null)
         setStreamingContent('')
         setIsStreaming(false)
@@ -106,6 +110,7 @@ export function useInteractiveSession(
   )
 
   const endSession = useCallback(() => {
+    setIsEnding(true)
     sendRef.current({ type: 'interactive.end' })
   }, [])
 
@@ -114,6 +119,7 @@ export function useInteractiveSession(
     streamingContent,
     isStreaming,
     isActive,
+    isEnding,
     nodeId,
     error,
     connected,
