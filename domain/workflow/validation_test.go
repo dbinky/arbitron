@@ -702,6 +702,50 @@ func TestValidateWebhookWait_TimeoutWithSubstitution(t *testing.T) {
 // Tests: Interactive node validation
 // ---------------------------------------------------------------------------
 
+func TestValidateInteractive_RequiresOrchestrationFile(t *testing.T) {
+	// The executor reads OrchestrationFile unconditionally; an empty value
+	// would cause a runtime error, so validation must catch it.
+	wf := &workflow.Workflow{
+		Name: "interactive-no-orch",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				TemplateFile: "prompt.hbs", // TemplateFile is set, OrchestrationFile is empty
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidateInteractive_RequiresTemplateFile(t *testing.T) {
+	// The executor reads TemplateFile unconditionally; an empty value
+	// would cause a runtime error, so validation must catch it.
+	wf := &workflow.Workflow{
+		Name: "interactive-no-template",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "orchestrate.yaml", // OrchestrationFile is set, TemplateFile is empty
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
 func TestValidateInteractive_Valid(t *testing.T) {
 	wf := &workflow.Workflow{
 		Name: "interactive-valid",
@@ -730,24 +774,28 @@ func TestValidateInteractive_Valid(t *testing.T) {
 	assert.Empty(t, errs)
 }
 
-func TestValidateInteractive_AcceptsNodeType(t *testing.T) {
-	// The interactive node type should be accepted by the workflow parser
-	// (i.e., used in a single-node workflow without validation errors).
+func TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig(t *testing.T) {
+	// The interactive node type is accepted by the workflow validator when
+	// required config fields are present.
 	wf := &workflow.Workflow{
 		Name: "interactive-basic",
 		Nodes: []workflow.Node{
 			{
-				ID:         "entry",
-				Type:       workflow.NodeTypeInteractive,
-				Label:      "Interactive",
-				Entrypoint: true,
+				ID:                "entry",
+				Type:              workflow.NodeTypeInteractive,
+				Label:             "Interactive",
+				Entrypoint:        true,
+				Config: workflow.NodeConfig{
+					OrchestrationFile: "orchestrate.yaml",
+					TemplateFile:      "prompt.hbs",
+				},
 			},
 		},
 		Edges: []workflow.Edge{},
 	}
 
 	errs := workflow.Validate(wf, nil)
-	assert.Empty(t, errs)
+	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
 func TestValidateInteractive_MissingOrchestrationFile(t *testing.T) {

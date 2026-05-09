@@ -361,6 +361,8 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
+		case NodeTypeInteractive:
+			errs = append(errs, validateInteractiveNode(n)...)
 		}
 	}
 	return errs
@@ -430,6 +432,30 @@ func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 		errs = append(errs, ValidationError{
 			Code:    "INVALID_WEBHOOK_WAIT",
 			Message: "webhook_wait node " + node.ID + " must have exactly one outgoing edge",
+			NodeID:  node.ID,
+		})
+	}
+
+	return errs
+}
+
+// validateInteractiveNode checks interactive-node-specific validation rules.
+// Both orchestrationFile and templateFile are read unconditionally by the
+// InteractiveExecutor; omitting either causes a runtime failure.
+func validateInteractiveNode(node Node) []ValidationError {
+	var errs []ValidationError
+
+	if node.Config.OrchestrationFile == "" {
+		errs = append(errs, ValidationError{
+			Code:    "MISSING_REQUIRED_CONFIG",
+			Message: "interactive node " + node.ID + " must have an orchestrationFile",
+			NodeID:  node.ID,
+		})
+	}
+	if node.Config.TemplateFile == "" {
+		errs = append(errs, ValidationError{
+			Code:    "MISSING_REQUIRED_CONFIG",
+			Message: "interactive node " + node.ID + " must have a templateFile",
 			NodeID:  node.ID,
 		})
 	}
