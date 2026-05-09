@@ -806,3 +806,53 @@ func TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution(t *test
 	require.NotNil(t, inst)
 	assert.Equal(t, instance.StateWaiting, inst.State)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: IsWait resumption idempotency
+// ---------------------------------------------------------------------------
+
+func TestInteractiveExecutor_ResumeAfterSessionComplete_ReturnsExistingOutput(t *testing.T) {
+	// Integration: after ConversationHandler completes the session, the queue
+	// re-starts the instance with CurrentNodeID still pointing at the interactive
+	// node. The executor must detect the existing NodeStatusSucceeded record and
+	// return the stored output without starting a new LLM conversation.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+
+	// Pre-seed the completed node execution record that ConversationHandler leaves.
+	existingOutput := map[string]any{"summary": "session concluded"}
+	completedExec := &instance.NodeExecution{
+		ID:         uuid.New(),
+		InstanceID: instanceID,
+		NodeID:     "interact",
+		Attempt:    1,
+		Status:     instance.NodeStatusSucceeded,
+		Output:     existingOutput,
+	}
+	require.NoError(t, nodeExecRepo.Create(context.Background(), completedExec))
+
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Must not re-enter the wait state.
+	assert.False(t, result.IsWait, "re-execution must not issue a new wait")
+
+	// Must return the output the conversation handler persisted.
+	assert.Equal(t, existingOutput, result.Output)
+
+	// LLM must not be called on resume — no new conversation should start.
+	assert.Empty(t, llmProvider.getCapturedReqs(), "LLM must not be called on resume")
+
+	// Executor must not create a second node execution record.
+	execs, _ := nodeExecRepo.ListByInstance(context.Background(), instanceID)
+	assert.Len(t, execs, 1, "executor must not duplicate the node execution record on resume")
+
+	// Instance state must not be driven back to waiting.
+	inst := instRepo.get(instanceID)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateRunning, inst.State)
+}

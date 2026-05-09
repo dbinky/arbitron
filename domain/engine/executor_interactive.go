@@ -65,24 +65,33 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		return nil, fmt.Errorf("interactive executor: instance ID not found in context")
 	}
 
+	// 2. Short-circuit if the session was already completed by ConversationHandler.
+	// After an interactive session ends, the queue re-starts the instance with
+	// CurrentNodeID still pointing at this node. Returning the stored output here
+	// lets the engine advance to the next node without starting a new conversation.
+	if existing, err := e.nodeExecs.GetByInstanceAndNode(ctx, instanceID, node.ID); err == nil &&
+		existing.Status == instance.NodeStatusSucceeded {
+		return &NodeResult{Output: existing.Output}, nil
+	}
+
 	startTime := time.Now()
 
-	// 2. Read the orchestration file.
+	// 3. Read the orchestration file.
 	orchBytes, err := e.fileReader.ReadFile(workflowName, node.Config.OrchestrationFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read orchestration: %w", node.ID, err)
 	}
 
-	// 3. Read the template file.
+	// 4. Read the template file.
 	templateBytes, err := e.fileReader.ReadFile(workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read template: %w", node.ID, err)
 	}
 
-	// 4. Resolve {{variable}} substitutions in the template content.
+	// 5. Resolve {{variable}} substitutions in the template content.
 	resolvedTemplate := variable.Resolve(string(templateBytes), vars)
 
-	// 5. Build the complete_session tool definition from outputSchema.
+	// 6. Build the complete_session tool definition from outputSchema.
 	var tools []LLMTool
 	if node.Config.OutputSchema != nil {
 		tools = append(tools, LLMTool{
@@ -92,7 +101,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		})
 	}
 
-	// 6. Compose the LLM request.
+	// 7. Compose the LLM request.
 	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate
 	req := LLMRequest{
 		SystemPrompt: node.Config.SystemPrompt,
@@ -103,13 +112,13 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		Tools:        tools,
 	}
 
-	// 7. Call the LLM provider with streaming.
+	// 8. Call the LLM provider with streaming.
 	stream, err := e.llmProvider.StreamCall(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
 	}
 
-	// 8. Consume the stream channel.
+	// 9. Consume the stream channel.
 	var responseBuilder strings.Builder
 	var tokensIn, tokensOut int
 
@@ -136,7 +145,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	fullResponse := responseBuilder.String()
 
-	// 9. Build the initial conversation array.
+	// 10. Build the initial conversation array.
 	conversation := map[string]any{
 		"messages": []map[string]any{
 			{"role": "user", "content": userMessage},
@@ -144,7 +153,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		},
 	}
 
-	// 10. Write node execution record with succeeded status.
+	// 11. Write node execution record with succeeded status.
 	now := time.Now()
 	model := node.Config.Model
 	nodeExec := &instance.NodeExecution{
@@ -164,7 +173,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		slog.Error("interactive: failed to write node execution record", "instanceID", instanceID, "error", err)
 	}
 
-	// 11. Create notification.
+	// 12. Create notification.
 	n := &notification.Notification{
 		ID:           uuid.New(),
 		InstanceID:   instanceID,
@@ -172,19 +181,19 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		Type:         notification.TypeNeedsInteraction,
 	}
 
-	// 12. Persist notification.
+	// 13. Persist notification.
 	if err := e.notifications.Create(ctx, n); err != nil {
 		slog.Error("interactive: failed to create notification", "instanceID", instanceID, "error", err)
 	}
 
-	// 13. Call external notifier.
+	// 14. Call external notifier.
 	if e.externalNotifier != nil {
 		if err := e.externalNotifier.Notify(ctx, n); err != nil {
 			slog.Error("interactive: external notifier failed", "instanceID", instanceID, "error", err)
 		}
 	}
 
-	// 14. Publish notification.created event.
+	// 15. Publish notification.created event.
 	e.eventBus.Publish(instanceID, Event{
 		Type:      "notification.created",
 		Timestamp: time.Now(),
@@ -199,15 +208,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		},
 	})
 
-	// 15. Transition instance to waiting state.
+	// 16. Transition instance to waiting state.
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
 		return nil, fmt.Errorf("interactive %q: failed to set waiting state: %w", node.ID, err)
 	}
 
-	// 16. Notify capacity freed.
+	// 17. Notify capacity freed.
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
-	// 17. Return result with IsWait=true.
+	// 18. Return result with IsWait=true.
 	return &NodeResult{
 		IsWait:          true,
 		LLMConversation: conversation,
