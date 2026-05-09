@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### EXEC2-P2-001: WritesNodeExecutionRecord test had weak assertions — conversation structure, LLM metadata, and StartedAt not verified
+**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+**Fixed**: Iteration 28
+**Detail**: `TestInteractiveExecutor_WritesNodeExecutionRecord` had a comment "Verify the conversation contains user and assistant messages" but only asserted `NotNil` twice (redundantly). It also never checked `LLMModel`, `LLMTokensIn`, `LLMTokensOut`, or `StartedAt` on the persisted record — all real regression risks. Strengthened assertions now verify: conversation `messages` array has exactly two entries with the correct `role` values (guards `ConversationHandler` history load on reconnect), all LLM metadata fields are non-nil and correct (guards execution-view display), and `StartedAt` is non-zero.
+
 ### NODE1-P2-001: Interactive nodes passed validation without required orchestrationFile and templateFile
 **Area**: Interactive Node Type (`domain/workflow/validation.go`, `domain/workflow/validation_test.go`)
 **Fixed**: Iteration 27
