@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HIST7-P2-001: interactive.history message content not verified — field transformation would pass undetected
+**Area**: History Hydration & Instance Detail (`adapter/http/stream_handler_test.go`)
+**Fixed**: Iteration 33
+**Detail**: `TestStreamHandler_HistoryHydration_InteractiveWait` asserted `assert.Len(t, messages, 2)` but did not verify the `role` or `content` fields of individual messages. The mock node execution set up messages with `{"role":"user","content":"hello"}` and `{"role":"assistant","content":"hi there"}`. If `sendInteractiveHistory` were modified to accidentally transform, filter, or reorder messages (e.g., dropping content, swapping roles, or re-mapping field names), the length check would still pass. Added assertions for each message's `role` and `content` using `map[string]any` type assertions with `require.True` on the type guard, matching the pattern used in the error event timestamp tests.
+
 ### WS6-P2-001: interactive.error event timestamp not verified — zero timestamp would pass undetected
 **Area**: WebSocket Bidirectional Messaging (`adapter/http/stream_handler_test.go`)
 **Fixed**: Iteration 32
