@@ -43,7 +43,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 19 | External Notification + Engine (emitNotification integration, ExternalNotifier called for all notification types, nil-safety) | [x] | Pass complete |
 | 20 | History Hydration + useInteractiveSession (interactive.history event shape, message array format, auto-open behavior on connect) | [x] | Pass complete |
 | 21 | Chat Panel + Callout Connector (panel takeover triggers connector visibility, snap-back removes connector, position tracking across scroll/zoom) | [x] | Pass complete |
-| 22 | LLM Provider Extensions + InteractiveExecutor + ConversationHandler (SystemPrompt/Tools/Messages fields used correctly across both, tool-use streaming detection) | [ ] | |
+| 22 | LLM Provider Extensions + InteractiveExecutor + ConversationHandler (SystemPrompt/Tools/Messages fields used correctly across both, tool-use streaming detection) | [x] | Pass complete |
 | 23 | Spec Alignment: Product Spec + All Backend (every spec requirement has corresponding implementation, no scope creep, no missing behaviors) | [ ] | |
 | 24 | Spec Alignment: Product Spec + All Dashboard (every UI spec requirement has corresponding implementation, side panel behavior matches spec) | [ ] | |
 

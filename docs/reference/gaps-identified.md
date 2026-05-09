@@ -6,8 +6,12 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
-
 ## Fixed Previously
+
+### PAIR22-001: No test for unknown tool name in ConversationHandler (name check is load-bearing)
+**Area**: LLM Provider Extensions + InteractiveExecutor + ConversationHandler (`domain/engine/conversation.go`, `domain/engine/conversation_test.go`)
+**Fixed**: Iteration 23
+**Detail**: The condition `toolUse.Name == InteractiveCompletionToolName` in `HandleMessage` is the gate that prevents arbitrary LLM tool calls from terminating the interactive session. Every existing test used `cannedToolStream` which hard-codes `Name: "complete_session"`, so the failure branch (unknown name → fall through to `handleNormalResponse`) was completely untested. If the check were simplified to just `toolUse != nil`, all tests would still pass but any LLM tool call would silently end the session. Added `TestConversationHandler_HandleMessage_UnknownToolName_TreatsAsNormalResponse` which fires a ToolUse with `Name="some_other_tool"`, then asserts: no `interactive.ended` event, instance remains `StateWaiting`, and the assistant text response is published as `interactive.message`.
 
 ### CONN-002: CalloutConnector tests missing integration category (visible prop transitions)
 **Area**: Chat Panel + Callout Connector (`dashboard/src/graph/CalloutConnector.tsx`)
