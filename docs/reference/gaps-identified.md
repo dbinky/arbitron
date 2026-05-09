@@ -4,11 +4,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### PAIR24-002: Instance type missing interactiveActive/interactiveNodeId; initial render uses WebSocket instead of REST
-**Area**: Execution View Integration + Spec Alignment (`dashboard/src/api/types.ts`, `dashboard/src/routes/ExecutionView.tsx`)
-**Detail**: The design doc (Phase 3, section 2) states: "If `interactiveActive` is true, render the chat panel immediately." The `Instance` REST type should include `interactiveActive: boolean` and `interactiveNodeId: string | null`. The `ExecutionView` should use `instance.interactiveActive` for the initial conditional render on page load — before the WebSocket connects. Currently both fields are missing from the TypeScript `Instance` interface and `ExecutionView` never reads them; the interactive panel only activates after `interactive.history` arrives over WebSocket (~100ms delay on reconnect). This creates a brief flash of the normal tabs on page load when the instance is already in interactive wait state.
+_(none)_
 
 ## Fixed Previously
+
+### PAIR24-002: Instance type missing interactiveActive/interactiveNodeId; panel flashed on page load
+**Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/api/types.ts`, `dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: Iteration 26
+**Detail**: The design doc (Phase 3, section 2) states: "If `interactiveActive` is true, render the chat panel immediately." Both `interactiveActive: boolean` and `interactiveNodeId: string | null` were missing from the TypeScript `Instance` type, and `ExecutionView` never read them — the panel only activated after `interactive.history` arrived over WebSocket, causing a brief flash of the normal side panel on page load. Added the two fields to the `Instance` type. Added `seedFromInstance(nodeId)` action to `useInteractiveSession` that sets `isActive=true` and `nodeId` immediately from the REST response. `ExecutionView` calls `seedFromInstance` in a `useEffect` when `instance.interactiveActive` is true. `interactive.history` still updates messages normally; `interactive.ended` deactivates the seeded session correctly. Three new tests: seed activates panel, history's nodeId takes precedence over seed, and `interactive.ended` deactivates a seeded session.
 
 ### PAIR24-001: End Session button had no disabled/loading state while interactive.end is in flight
 **Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/components/InteractivePanel.tsx`)
