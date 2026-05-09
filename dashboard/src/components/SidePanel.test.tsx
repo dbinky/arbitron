@@ -283,3 +283,53 @@ describe('SidePanel — tab interaction boundary', () => {
     expect(screen.getByTestId('transcript')).toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Integration: tab fallback when active transcript tab is removed
+// ---------------------------------------------------------------------------
+
+describe('SidePanel — active transcript tab fallback', () => {
+  it('reverts to Output tab when the user is on Transcript and then selects a non-interactive node', () => {
+    // Step 1: interactive node with transcript data — auto-switches to Transcript.
+    const interactiveExec = makeExecution({
+      output: { interactiveMessages: interactiveMessages },
+    })
+    const interactiveWf = makeWorkflowDef('interactive')
+    const { rerender } = render(
+      <SidePanel
+        execution={interactiveExec}
+        variables={null}
+        selectedNodeId="node-1"
+        workflowDef={interactiveWf}
+      />,
+    )
+    // Confirm activeTab is 'transcript' (auto-switched by the effect)
+    expect(screen.getByTestId('transcript')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-output')).not.toBeInTheDocument()
+
+    // Step 2: user selects an LLM node — no transcript, not interactive.
+    // The effect must detect activeTab='transcript' && !showTranscriptTab and revert.
+    const llmExec = makeExecution({ nodeId: 'node-2', status: 'succeeded' })
+    const llmWf: WorkflowDefinition = {
+      name: 'test-wf',
+      description: '',
+      author: '',
+      nodes: [
+        { id: 'node-2', type: 'llm', label: 'LLM Node', description: '', config: {} },
+      ],
+      edges: [],
+    }
+    rerender(
+      <SidePanel
+        execution={llmExec}
+        variables={null}
+        selectedNodeId="node-2"
+        workflowDef={llmWf}
+      />,
+    )
+
+    // The Transcript tab must be gone and Output must be active.
+    expect(screen.queryByRole('button', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('node-output')).toBeInTheDocument()
+  })
+})
