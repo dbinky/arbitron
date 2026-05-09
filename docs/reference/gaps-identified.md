@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### NODE1-P2-001: Interactive nodes passed validation without required orchestrationFile and templateFile
+**Area**: Interactive Node Type (`domain/workflow/validation.go`, `domain/workflow/validation_test.go`)
+**Fixed**: Iteration 27
+**Detail**: `InteractiveExecutor.Execute()` reads `OrchestrationFile` and `TemplateFile` unconditionally via `fileReader.ReadFile()` — empty values produce a runtime error. However, `validateNodeConfigs` had no `case NodeTypeInteractive:` so interactive nodes with empty required fields silently passed workflow validation and only failed at execution time. Added `validateInteractiveNode()` which emits `MISSING_REQUIRED_CONFIG` for each missing field, wired into the switch. Updated `TestValidateInteractive_AcceptsNodeType` to provide the required config (renaming it to `TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig`). Added two new tests: `TestValidateInteractive_RequiresOrchestrationFile` and `TestValidateInteractive_RequiresTemplateFile`.
+
 ### PAIR24-002: Instance type missing interactiveActive/interactiveNodeId; panel flashed on page load
 **Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/api/types.ts`, `dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/routes/ExecutionView.tsx`)
 **Fixed**: Iteration 26
