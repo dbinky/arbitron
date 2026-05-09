@@ -70,6 +70,39 @@ func TestLogNotifier_ImplementsExternalNotifier(t *testing.T) {
 	var _ notification.ExternalNotifier = notifier
 }
 
+func TestLogNotifier_Notify_TimestampFormatIsISO8601WithMilliseconds(t *testing.T) {
+	// Boundary: the timestamp field must be formatted as ISO 8601 with milliseconds
+	// (e.g., "2026-05-08T10:30:00.500Z"). If the format string changes to time.RFC3339
+	// (which drops milliseconds) or to a Unix integer, assert.NotEmpty still passes
+	// while log consumers that parse the millisecond format silently break.
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	notifier := adaptnotif.NewLogNotifier(logger)
+
+	// Use a fixed time with 500ms to distinguish the format from RFC3339.
+	ts := time.Date(2026, 5, 8, 10, 30, 0, 500_000_000, time.UTC)
+	n := &notification.Notification{
+		ID:           uuid.New(),
+		InstanceID:   uuid.New(),
+		WorkflowName: "wf",
+		Type:         notification.TypeCompleted,
+		CreatedAt:    ts,
+	}
+
+	err := notifier.Notify(context.Background(), n)
+	require.NoError(t, err)
+
+	var logEntry map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &logEntry))
+
+	timestampStr, ok := logEntry["timestamp"].(string)
+	require.True(t, ok, "timestamp must be a string in the log entry")
+
+	parsed, parseErr := time.Parse("2006-01-02T15:04:05.000Z07:00", timestampStr)
+	require.NoError(t, parseErr, "timestamp %q must parse as ISO 8601 with milliseconds", timestampStr)
+	assert.Equal(t, ts.UTC(), parsed.UTC(), "parsed timestamp must equal notification CreatedAt")
+}
+
 func TestLogNotifier_Notify_AllNotificationTypes(t *testing.T) {
 	types := []notification.Type{
 		notification.TypeNeedsInteraction,

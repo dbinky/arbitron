@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### NOTIF4-P2-001: LogNotifier timestamp assertion used NotEmpty — ISO 8601 millisecond format not verified
+**Area**: External Notification Interface (`adapter/notification/log_notifier_test.go`)
+**Fixed**: Iteration 30
+**Detail**: `TestLogNotifier_Notify_LogsStructuredFields` asserted `assert.NotEmpty(t, logEntry["timestamp"])` — this passes for any non-empty string, including a Unix timestamp integer serialized as a string or an RFC3339 timestamp without milliseconds. The `Notify` implementation formats `n.CreatedAt` as `"2006-01-02T15:04:05.000Z07:00"` (ISO 8601 with milliseconds), but no test verified this contract. Added `TestLogNotifier_Notify_TimestampFormatIsISO8601WithMilliseconds`: uses a fixed time with 500ms sub-second precision, then parses the log entry's timestamp string with `time.Parse("2006-01-02T15:04:05.000Z07:00", ...)`, asserting both that parsing succeeds and that the parsed value equals the original `CreatedAt`. If the format string in `Notify` is changed to `time.RFC3339` (drops milliseconds) or a Unix integer, this test now fails.
+
 ### CONV3-P2-001: parseConversation []any branch untested — Postgres JSONB round-trip path never exercised
 **Area**: ConversationHandler (`domain/engine/conversation_test.go`)
 **Fixed**: Iteration 29
