@@ -124,7 +124,7 @@ const (
 	// ConversationHandler must agree on this value — a mismatch causes silent
 	// session hang (tool called but never detected).
 	InteractiveCompletionToolName        = "complete_session"
-	InteractiveCompletionToolDescription = "Complete the interactive session with structured output."
+	InteractiveCompletionToolDescription = "Call this tool when the conversation has reached its natural conclusion and you have the final output ready."
 )
 
 // Event represents a domain event emitted during workflow execution.

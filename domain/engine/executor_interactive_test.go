@@ -708,6 +708,7 @@ func TestInteractiveExecutor_BuildsCompleteSessionTool(t *testing.T) {
 
 	tool := reqs[0].Tools[0]
 	assert.Equal(t, "complete_session", tool.Name)
+	assert.Equal(t, "Call this tool when the conversation has reached its natural conclusion and you have the final output ready.", tool.Description)
 	assert.Equal(t, schema, tool.InputSchema)
 }
 

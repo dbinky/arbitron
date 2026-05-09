@@ -251,9 +251,10 @@ func TestConversationHandler_HandleMessage_SendsFullConversationToLLM(t *testing
 	assert.Equal(t, "user", req.Messages[2].Role)
 	assert.Equal(t, "New question", req.Messages[2].Content)
 
-	// Should have the complete_session tool.
+	// Should have the complete_session tool with the correct name and description.
 	require.Len(t, req.Tools, 1)
 	assert.Equal(t, "complete_session", req.Tools[0].Name)
+	assert.Equal(t, "Call this tool when the conversation has reached its natural conclusion and you have the final output ready.", req.Tools[0].Description)
 
 	// Should have model settings.
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
