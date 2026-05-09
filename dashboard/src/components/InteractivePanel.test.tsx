@@ -145,6 +145,14 @@ describe('InteractivePanel — end session button disabled state', () => {
     render(<InteractivePanel session={session} nodeName="review-design" />)
     expect(screen.getByRole('button', { name: /end session/i })).not.toBeDisabled()
   })
+
+  it('disables End Session button when disconnected', () => {
+    // endSession sends over WebSocket; clicking it while disconnected is a
+    // silent no-op with no user feedback. Disable it to prevent false clicks.
+    const session = makeSession({ connected: false })
+    render(<InteractivePanel session={session} nodeName="review-design" />)
+    expect(screen.getByRole('button', { name: /end session/i })).toBeDisabled()
+  })
 })
 
 // ---------------------------------------------------------------------------
