@@ -4,9 +4,16 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+### PAIR24-002: Instance type missing interactiveActive/interactiveNodeId; initial render uses WebSocket instead of REST
+**Area**: Execution View Integration + Spec Alignment (`dashboard/src/api/types.ts`, `dashboard/src/routes/ExecutionView.tsx`)
+**Detail**: The design doc (Phase 3, section 2) states: "If `interactiveActive` is true, render the chat panel immediately." The `Instance` REST type should include `interactiveActive: boolean` and `interactiveNodeId: string | null`. The `ExecutionView` should use `instance.interactiveActive` for the initial conditional render on page load — before the WebSocket connects. Currently both fields are missing from the TypeScript `Instance` interface and `ExecutionView` never reads them; the interactive panel only activates after `interactive.history` arrives over WebSocket (~100ms delay on reconnect). This creates a brief flash of the normal tabs on page load when the instance is already in interactive wait state.
 
 ## Fixed Previously
+
+### PAIR24-001: End Session button had no disabled/loading state while interactive.end is in flight
+**Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/components/InteractivePanel.tsx`)
+**Fixed**: Iteration 25
+**Detail**: Design doc section 8 specifies: "Button enters a disabled/loading state until `interactive.ended` is received." The `InteractiveSessionState` interface had no `isEnding` field, `endSession()` sent the WebSocket message without setting any loading state, and the End Session button had no `disabled` prop — leaving the button clickable (and re-sendable) for the full round-trip duration. Added `isEnding: boolean` to `InteractiveSessionState`, set it `true` in `endSession()`, reset it `false` in the `interactive.ended` handler, and added `disabled={session.isEnding}` to the button. Tests: initial `isEnding` is `false` (initial state assertion), `endSession()` sets `isEnding` to `true`, `interactive.ended` resets `isEnding` to `false`, and button is disabled when `isEnding` is `true`.
 
 ### PAIR23-001: complete_session tool description weaker than design doc specifies
 **Area**: Spec Alignment: Product Spec + All Backend (`domain/engine/ports.go`)
