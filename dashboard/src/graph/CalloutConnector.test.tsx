@@ -102,3 +102,39 @@ describe('CalloutConnector — geometry guard', () => {
     expect(container.querySelector('svg')).not.toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Integration: dynamic visible transitions (panel takeover and snap-back)
+// ---------------------------------------------------------------------------
+
+describe('CalloutConnector — integration (visible transitions)', () => {
+  it('removes SVG when visible transitions from true to false (snap-back)', () => {
+    // Verifies that when the interactive session ends, the connector disappears.
+    mockNodes.push(makeNode('interactive-1', 100, 100))
+    Object.defineProperty(window, 'innerWidth', { value: 1200, writable: true })
+
+    const { container, rerender } = render(
+      <CalloutConnector nodeId="interactive-1" visible />,
+    )
+    expect(container.querySelector('svg')).toBeInTheDocument()
+
+    // Session ends → isActive=false → visible=false → connector must disappear.
+    rerender(<CalloutConnector nodeId="interactive-1" visible={false} />)
+    expect(container.querySelector('svg')).not.toBeInTheDocument()
+  })
+
+  it('shows SVG when visible transitions from false to true (panel takeover)', () => {
+    // Verifies that when an interactive session starts, the connector appears.
+    mockNodes.push(makeNode('interactive-1', 100, 100))
+    Object.defineProperty(window, 'innerWidth', { value: 1200, writable: true })
+
+    const { container, rerender } = render(
+      <CalloutConnector nodeId="interactive-1" visible={false} />,
+    )
+    expect(container.querySelector('svg')).not.toBeInTheDocument()
+
+    // Interactive session starts → isActive=true → visible=true → connector must appear.
+    rerender(<CalloutConnector nodeId="interactive-1" visible />)
+    expect(container.querySelector('svg')).toBeInTheDocument()
+  })
+})

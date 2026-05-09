@@ -9,6 +9,11 @@ _(none)_
 
 ## Fixed Previously
 
+### CONN-002: CalloutConnector tests missing integration category (visible prop transitions)
+**Area**: Chat Panel + Callout Connector (`dashboard/src/graph/CalloutConnector.tsx`)
+**Fixed**: Iteration 22
+**Detail**: The CalloutConnector tests covered happy path, not-visible, missing node, and geometry guard — but had no integration category test verifying dynamic visible transitions (panel takeover: false→true, snap-back: true→false). These transitions are the core behavior of the pair: when the interactive session starts, the connector must appear; when it ends, the connector must disappear. Added two integration tests using `rerender()` to verify both transitions work correctly.
+
 ### HIST-002: useInteractiveSession did not clear streaming state on interactive.history (reconnect gap)
 **Area**: History Hydration + useInteractiveSession (`dashboard/src/hooks/useInteractiveSession.ts`)
 **Fixed**: Iteration 21
