@@ -335,12 +335,26 @@ func TestInteractiveExecutor_WritesNodeExecutionRecord(t *testing.T) {
 	assert.Equal(t, instance.NodeStatusSucceeded, exec.Status)
 	assert.Equal(t, "interact", exec.NodeID)
 	assert.Equal(t, instanceID, exec.InstanceID)
+	assert.False(t, exec.StartedAt.IsZero(), "StartedAt must be set on the node execution record")
 	assert.NotNil(t, exec.CompletedAt)
-	assert.NotNil(t, exec.LLMConversation)
 
-	// Verify the conversation contains user and assistant messages
-	conv := exec.LLMConversation
-	require.NotNil(t, conv)
+	// Conversation must be persisted with the correct user+assistant structure.
+	// If the executor stops writing conversation data, the ConversationHandler
+	// cannot load history on reconnect, silently breaking multi-turn sessions.
+	require.NotNil(t, exec.LLMConversation)
+	messages, ok := exec.LLMConversation["messages"].([]map[string]any)
+	require.True(t, ok, "conversation.messages must be []map[string]any")
+	require.Len(t, messages, 2, "conversation must have exactly user + assistant messages")
+	assert.Equal(t, "user", messages[0]["role"])
+	assert.Equal(t, "assistant", messages[1]["role"])
+
+	// LLM metadata must be persisted so the execution view can display model/token info.
+	require.NotNil(t, exec.LLMModel, "LLMModel must be set on the node execution record")
+	assert.Equal(t, "claude-sonnet-4-20250514", *exec.LLMModel)
+	require.NotNil(t, exec.LLMTokensIn, "LLMTokensIn must be set on the node execution record")
+	assert.Equal(t, 10, *exec.LLMTokensIn)
+	require.NotNil(t, exec.LLMTokensOut, "LLMTokensOut must be set on the node execution record")
+	assert.Equal(t, 20, *exec.LLMTokensOut)
 }
 
 func TestInteractiveExecutor_CreatesNotification(t *testing.T) {
