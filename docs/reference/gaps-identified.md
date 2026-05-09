@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### INTEG9-P2-001: multi-message integration test did not verify response content per request
+**Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
+**Fixed**: Iteration 35
+**Detail**: `TestIntegration_InteractiveMultipleMessages` sent 3 messages and read 3 responses, but only asserted `data["role"] == "assistant"` — it never checked `data["content"]`. The mock returns `"Response " + content` for each message, so if messages were processed out of order, responses swapped, or content dropped, the test would still pass. Added `assert.Equal(t, "Response msg"+msgLabel, data["content"], ...)` inside the loop to bind each response to its corresponding request. Also removed dead `msgCount` variable that was incremented but never asserted on.
+
 ### REST8-P2-001: success test asserted NotNil output and never verified EndSession was called
 **Area**: Interactive REST Endpoint (`adapter/http/interactive_handler_test.go`)
 **Fixed**: Iteration 34
