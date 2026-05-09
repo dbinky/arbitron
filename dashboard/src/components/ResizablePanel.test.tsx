@@ -173,3 +173,70 @@ describe('ResizablePanel — boundary constraints', () => {
     expect(container.querySelector('[class*="right"]')).toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Integration: drag resize actually updates the right panel width
+// ---------------------------------------------------------------------------
+
+describe('ResizablePanel — drag resize integration', () => {
+  it('resizes the right panel to the mouse position while dragging', () => {
+    // Container: 1000px wide at left=0; mouse moves to clientX=400.
+    // newRightWidth = 1000 - (400 - 0) - 2 = 598; within [200, 796] → 598px.
+    mockContainerRect(1000)
+    const { container } = render(
+      <ResizablePanel
+        left={<div>L</div>}
+        right={<div>R</div>}
+        defaultRightWidth={380}
+      />,
+    )
+    const divider = container.querySelector('[class*="divider"]') as HTMLElement
+    const right = container.querySelector('[class*="right"]') as HTMLElement
+
+    fireEvent.mouseDown(divider)
+    fireEvent.mouseMove(document, { clientX: 400 })
+    expect(right.style.width).toBe('598px')
+
+    fireEvent.mouseUp(document)
+    // Width persists after releasing the mouse.
+    expect(right.style.width).toBe('598px')
+  })
+
+  it('clamps drag width to minRightWidth when dragged too far right', () => {
+    // Container: 1000px; mouse to clientX=900 → newRight = 1000-900-2 = 98 < 200 → clamp to 200.
+    mockContainerRect(1000)
+    const { container } = render(
+      <ResizablePanel
+        left={<div>L</div>}
+        right={<div>R</div>}
+        defaultRightWidth={380}
+        minRightWidth={200}
+      />,
+    )
+    const divider = container.querySelector('[class*="divider"]') as HTMLElement
+    const right = container.querySelector('[class*="right"]') as HTMLElement
+
+    fireEvent.mouseDown(divider)
+    fireEvent.mouseMove(document, { clientX: 900 })
+    expect(right.style.width).toBe('200px')
+  })
+
+  it('clamps drag width to totalWidth - minLeftWidth when dragged too far left', () => {
+    // Container: 1000px; mouse to clientX=10 → newRight = 1000-10-2 = 988 > 796 → clamp to 796.
+    mockContainerRect(1000)
+    const { container } = render(
+      <ResizablePanel
+        left={<div>L</div>}
+        right={<div>R</div>}
+        defaultRightWidth={380}
+        minLeftWidth={200}
+      />,
+    )
+    const divider = container.querySelector('[class*="divider"]') as HTMLElement
+    const right = container.querySelector('[class*="right"]') as HTMLElement
+
+    fireEvent.mouseDown(divider)
+    fireEvent.mouseMove(document, { clientX: 10 })
+    expect(right.style.width).toBe('796px')
+  })
+})
