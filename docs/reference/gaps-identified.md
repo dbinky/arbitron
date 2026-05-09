@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### RESIZE12-P2-001: drag-resize test only verified CSS class, never the resulting width
+**Area**: Callout Connector & Panel Resizing (`dashboard/src/components/ResizablePanel.test.tsx`)
+**Fixed**: Iteration 38
+**Detail**: The existing drag test (`adds active class to divider while dragging`) only asserted that the CSS `dividerActive` class toggled on mouseDown/mouseUp — it never fired a `mouseMove` event or checked the right panel's `style.width`. If the `onMouseMove` calculation were wrong (e.g., off-by-one in the right-width formula, or clamping applied incorrectly), no test would catch it. Added three integration tests under `ResizablePanel — drag resize integration`: mid-range drag (clientX=400 → 598px), drag past minRightWidth (clientX=900 → 200px clamp), drag past maxRight (clientX=10 → 796px clamp). Each uses `mockContainerRect(1000)` for deterministic coordinates.
+
 ### PANEL11-P2-001: End Session button not disabled when WebSocket disconnected — silent no-op on click
 **Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
 **Fixed**: Iteration 37
