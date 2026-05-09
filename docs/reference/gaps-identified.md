@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### CONN-001: No tests for Callout Connector, ResizablePanel, InteractiveCallout components
+**Area**: Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/graph/nodes/InteractiveCallout.tsx`)
+**Fixed**: Iteration 16
+**Detail**: Added tests for all three components: `InteractiveCallout` (7 tests — renders children, waiting class toggled, rerender removes class, nested children), `ResizablePanel` (8 tests — renders L/R content, divider present, defaultRightWidth applied, fraction width computation, clamping to minRightWidth, snap-back to saved width, drag activates class, boundary constraints), `CalloutConnector` (4 tests via mocked @xyflow/react — SVG rendered when visible+node exists, null when not visible, null when node missing, null when geometry guard fires).
+
 ### PANEL-002: No tests for ChatInput, ChatMessage, and InteractiveTranscript components
 **Area**: Chat Panel Components (`dashboard/src/components/`)
 **Fixed**: Iteration 15
