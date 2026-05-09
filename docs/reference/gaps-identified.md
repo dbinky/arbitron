@@ -4,9 +4,16 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+### PANEL-002: No tests for ChatInput, ChatMessage, and InteractiveTranscript components
+**Area**: Chat Panel Components (`dashboard/src/components/`)
+**Detail**: ChatInput, ChatMessage, and InteractiveTranscript have zero test coverage. ChatInput has testable keyboard behavior (Enter to send, Shift+Enter for newline, empty content guard). ChatMessage renders markdown content which has edge cases. These components need tests covering all 5 scenario categories.
 
 ## Fixed Previously
+
+### PANEL-001: Missing typing indicator when streaming starts (spec-required feature)
+**Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
+**Fixed**: Iteration 14
+**Detail**: The design spec requires a pulsing "Thinking..." indicator when `isStreaming=true` but no tokens have arrived yet. `InteractivePanel` only used `isStreaming` to disable the input — users had no feedback for several seconds until the first token arrived. Fixed: added typing indicator (pulsing dot + "Thinking..." text with CSS keyframe animation) shown when `isStreaming && !streamingContent`. Also fixed the empty state condition to exclude the `isStreaming` case. Added 15 tests for `InteractivePanel` covering all 5 scenario categories.
 
 ### HOOK-001: No test framework and streaming state not cleared on interactive.error
 **Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)

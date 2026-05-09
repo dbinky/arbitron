@@ -45,7 +45,7 @@ export default function InteractivePanel({
 
       {/* Messages area */}
       <div className={styles.messages}>
-        {session.messages.length === 0 && !session.streamingContent && (
+        {session.messages.length === 0 && !session.streamingContent && !session.isStreaming && (
           <div className={styles.empty}>
             Waiting for the assistant to respond...
           </div>
@@ -60,6 +60,14 @@ export default function InteractivePanel({
           <ChatMessage
             message={{ role: 'assistant', content: session.streamingContent }}
           />
+        )}
+
+        {/* Typing indicator: shown when streaming has started but no tokens yet */}
+        {session.isStreaming && !session.streamingContent && (
+          <div className={styles.typingIndicator}>
+            <span className={styles.typingDot} />
+            Thinking...
+          </div>
         )}
 
         <div ref={messagesEndRef} />
