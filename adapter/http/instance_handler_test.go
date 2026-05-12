@@ -80,7 +80,7 @@ func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) er
 func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
 	inst, ok := r.instances[id]
 	if !ok {
-		return nil, fmt.Errorf("instance not found: %s", id)
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	cp := *inst
 	if inst.Variables != nil {
@@ -1449,6 +1449,95 @@ func TestInstanceHandler_SetPriority_ServiceError_Conflict(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Tests: List with since filter
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Tests: Instance detail interactive state fields
+// ---------------------------------------------------------------------------
+
+func TestInstanceHandler_Get_InteractiveWait_HasInteractiveFields(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+
+	nodeID := "review-design"
+	inst := testInstance(instance.StateWaiting)
+	inst.CurrentNodeID = &nodeID
+	inst.WorkflowSnapshot = map[string]any{
+		"name": "test-wf",
+		"nodes": []any{
+			map[string]any{
+				"id":   "review-design",
+				"type": "interactive",
+				"config": map[string]any{
+					"systemPrompt": "You are a reviewer.",
+				},
+			},
+		},
+	}
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "review-design", resp["interactiveNodeId"])
+	assert.Equal(t, true, resp["interactiveActive"])
+}
+
+func TestInstanceHandler_Get_Running_NoInteractiveFields(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Nil(t, resp["interactiveNodeId"])
+	assert.Equal(t, false, resp["interactiveActive"])
+}
+
+func TestInstanceHandler_Get_WaitingNonInteractive_NoInteractiveFields(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+
+	nodeID := "timer-node"
+	inst := testInstance(instance.StateWaiting)
+	inst.CurrentNodeID = &nodeID
+	inst.WorkflowSnapshot = map[string]any{
+		"name": "test-wf",
+		"nodes": []any{
+			map[string]any{
+				"id":   "timer-node",
+				"type": "timer_delay",
+				"config": map[string]any{
+					"durationSeconds": "30",
+				},
+			},
+		},
+	}
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Nil(t, resp["interactiveNodeId"])
+	assert.Equal(t, false, resp["interactiveActive"])
+}
 
 func TestInstanceHandler_List_SinceFilter(t *testing.T) {
 	t.Run("returns only instances created after since timestamp", func(t *testing.T) {

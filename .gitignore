@@ -1,3 +1,5 @@
 .superpowers/
 /arbitron
 .env
+node_modules/
+dashboard/.vite/

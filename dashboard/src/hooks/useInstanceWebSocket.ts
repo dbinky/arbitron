@@ -5,6 +5,8 @@ import { useWebSocket } from './useWebSocket'
 /**
  * Connects to the per-instance WebSocket at /api/v1/instances/:id/ws.
  * Auto-reconnects on disconnect after a 3-second delay.
+ *
+ * @returns An object with the current connection state and a send function.
  */
 export function useInstanceWebSocket(
   instanceId: string | undefined,

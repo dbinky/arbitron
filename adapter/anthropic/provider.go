@@ -13,6 +13,8 @@ import (
 // a valid API key.
 var ErrNotConfigured = errors.New("anthropic provider not configured: set ANTHROPIC_API_KEY")
 
+var _ engine.LLMProvider = (*Provider)(nil)
+
 // Provider is a stub implementation of engine.LLMProvider for the Anthropic API.
 type Provider struct {
 	apiKey string

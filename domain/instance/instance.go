@@ -10,14 +10,15 @@ import (
 
 // Sentinel errors for instance operations.
 var (
-	ErrNotFound        = errors.New("not found")
-	ErrNotRunning      = errors.New("instance is not running")
-	ErrNotPaused       = errors.New("instance is not paused")
-	ErrNotFailed       = errors.New("instance is not failed")
-	ErrNotQueued       = errors.New("instance is not queued")
-	ErrNotWaiting      = errors.New("instance is not waiting")
-	ErrCannotCancel    = errors.New("instance cannot be cancelled")
-	ErrCannotRerun     = errors.New("instance cannot be rerun")
+	ErrNotFound             = errors.New("not found")
+	ErrNotRunning           = errors.New("instance is not running")
+	ErrNotPaused            = errors.New("instance is not paused")
+	ErrNotFailed            = errors.New("instance is not failed")
+	ErrNotQueued            = errors.New("instance is not queued")
+	ErrNotWaiting           = errors.New("instance is not waiting")
+	ErrNotInteractiveWait   = errors.New("instance is not in interactive wait state")
+	ErrCannotCancel         = errors.New("instance cannot be cancelled")
+	ErrCannotRerun          = errors.New("instance cannot be rerun")
 )
 
 // State represents the lifecycle state of a workflow instance.

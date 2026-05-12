@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
 	"github.com/arbitron/arbitron/adapter/process"
@@ -50,15 +52,24 @@ func main() {
 
 // redactDatabaseURL replaces the password in a database URL with "***".
 // Returns the original string on parse error so startup is never blocked.
+// Uses manual string reconstruction instead of url.String() to prevent
+// url.String() from percent-encoding "***" to "%2A%2A%2A" in log output.
 func redactDatabaseURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.User == nil {
 		return raw
 	}
-	if _, hasPassword := u.User.Password(); hasPassword {
-		u.User = url.UserPassword(u.User.Username(), "***")
+	_, hasPassword := u.User.Password()
+	if !hasPassword {
+		return raw
 	}
-	return u.String()
+	username := u.User.Username()
+	u.User = nil
+	// Reconstruct with literal *** by prepending user:***@ after the scheme.
+	base := u.String()
+	scheme := u.Scheme + "://"
+	after := strings.TrimPrefix(base, scheme)
+	return scheme + username + ":***@" + after
 }
 
 func newServeCmd() *cobra.Command {
@@ -163,6 +174,22 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	notifRepo := postgres.NewNotificationRepo(pool)
 	eng.SetNotifications(notifRepo)
 
+	// 12b. Create external notifier (logging-only) and wire it to the engine.
+	logNotifier := adaptnotif.NewLogNotifier(logger)
+	eng.SetExternalNotifier(logNotifier)
+
+	// 12c. Register the interactive executor. Notification creation is handled
+	// by the engine when it processes the IsWait result.
+	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
+		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr,
+	)
+
+	// 12d. Create the conversation handler for interactive sessions.
+	conversationHandler := engine.NewConversationHandler(
+		instanceRepo, nodeExecRepo, llmProvider, bus, queueMgr,
+	)
+	// conversationHandler is passed to the HTTP layer for interactive WebSocket messaging.
+
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
@@ -193,6 +220,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		queueRepo,
 		dashHandler,
 		notifHandler,
+		conversationHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).

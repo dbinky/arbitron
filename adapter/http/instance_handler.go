@@ -12,7 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // InstanceService defines the engine methods needed by instance handlers.
@@ -67,6 +69,8 @@ type instanceResponse struct {
 	WebhookURL        *string        `json:"webhookUrl,omitempty"`
 	WebhookReceived   bool           `json:"webhookReceived,omitempty"`
 	WorkflowSnapshot  map[string]any `json:"workflowSnapshot,omitempty"`
+	InteractiveNodeID *string        `json:"interactiveNodeId"`
+	InteractiveActive bool           `json:"interactiveActive"`
 }
 
 func toInstanceResponse(inst *instance.Instance) instanceResponse {
@@ -103,7 +107,27 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	if inst.WebhookReceivedAt != nil {
 		resp.WebhookReceived = true
 	}
+
+	// Derive interactive state fields.
+	if inst.State == instance.StateWaiting && inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
+		if isCurrentNodeInteractive(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
+			nodeID := *inst.CurrentNodeID
+			resp.InteractiveNodeID = &nodeID
+			resp.InteractiveActive = true
+		}
+	}
+
 	return resp
+}
+
+// isCurrentNodeInteractive checks if the specified node in the workflow
+// snapshot is of type "interactive". Uses the shared engine.FindNodeByID helper.
+func isCurrentNodeInteractive(snapshot map[string]any, nodeID string) bool {
+	node, err := engine.FindNodeByID(snapshot, nodeID)
+	if err != nil {
+		return false
+	}
+	return node.Type == workflow.NodeTypeInteractive
 }
 
 // retryRequest is the optional JSON body for retrying an instance.

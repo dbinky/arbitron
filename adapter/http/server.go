@@ -62,9 +62,13 @@ type QueueRepoPort = instance.QueueRepository
 // NotificationRepoPort is a type alias for the domain notification repository port.
 type NotificationRepoPort = notification.Repository
 
+// ConversationHandlerPort is a type alias for the domain ConversationHandler port.
+type ConversationHandlerPort = engine.ConversationHandler
+
 // NewRouter creates the chi router with all API routes wired up.
 // If dashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
+// conversationHandler may be nil if interactive messaging is not needed.
 func NewRouter(
 	svc EngineService,
 	workflows WorkflowRepo,
@@ -78,6 +82,7 @@ func NewRouter(
 	queueRepo QueueRepoPort,
 	dashboardHandler http.Handler,
 	notifHandler *NotificationHandler,
+	conversationHandler ConversationHandlerPort,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -87,12 +92,22 @@ func NewRouter(
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(securityHeaders)
+	// TODO(phase-6): Add authentication middleware here when multi-user support
+	// lands. Currently all endpoints (REST and WebSocket) are unauthenticated.
+	// The interactive session endpoints (WebSocket messaging and POST .../interact/end)
+	// are especially sensitive — without auth, any client can send messages to or
+	// terminate any instance's interactive session.
 
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
-	streamHandler := NewStreamHandler(instances, eventBus)
+	streamHandler := NewStreamHandler(instances, nodeExecs, eventBus, conversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(eventBus)
 	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
+
+	var interactiveHandler *InteractiveHandler
+	if conversationHandler != nil {
+		interactiveHandler = NewInteractiveHandler(conversationHandler, instances, nodeExecs)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// System-wide WebSocket stream
@@ -146,6 +161,9 @@ func NewRouter(
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
+			if interactiveHandler != nil {
+				r.Post("/{id}/interact/end", interactiveHandler.EndSession)
+			}
 		})
 	})
 

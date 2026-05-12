@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ReactFlowProvider, ReactFlow, Background, Controls } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -9,10 +9,13 @@ import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
+import { useInteractiveSession } from '../hooks/useInteractiveSession'
+import CalloutConnector from '../graph/CalloutConnector'
 import StateBadge from '../components/StateBadge'
 import InstanceControls from '../components/InstanceControls'
 import ResizablePanel from '../components/ResizablePanel'
 import SidePanel from '../components/SidePanel'
+import InteractivePanel from '../components/InteractivePanel'
 import styles from './ExecutionView.module.css'
 
 /**
@@ -121,6 +124,29 @@ export default function ExecutionView() {
   const [selectedExec, setSelectedExec] = useState<NodeExecution | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Interactive session state.
+  const interactiveSession = useInteractiveSession(id)
+
+  // Pre-warm session state from the REST instance data so the interactive panel
+  // renders immediately on page load, before interactive.history arrives over WebSocket.
+  useEffect(() => {
+    if (instance?.interactiveActive && instance.interactiveNodeId) {
+      interactiveSession.seedFromInstance(instance.interactiveNodeId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seedFromInstance is
+    // a stable useCallback with no deps; including interactiveSession would cause
+    // an infinite re-render loop since every state update creates a new object.
+  }, [instance?.interactiveActive, instance?.interactiveNodeId])
+
+  // Resolve the interactive session's nodeId to a human-readable label.
+  const interactiveNodeName = useMemo(() => {
+    if (!interactiveSession.nodeId || !workflowDef) return 'Unknown Node'
+    const node = workflowDef.nodes.find(
+      (n) => n.id === interactiveSession.nodeId,
+    )
+    return node?.label ?? interactiveSession.nodeId
+  }, [interactiveSession.nodeId, workflowDef])
 
   // Fetch initial data.
   const fetchData = useCallback(async () => {
@@ -270,9 +296,30 @@ export default function ExecutionView() {
             />
           }
           right={
-            <SidePanel execution={selectedExec} variables={variables} />
+            interactiveSession.isActive ? (
+              <InteractivePanel
+                session={interactiveSession}
+                nodeName={interactiveNodeName}
+              />
+            ) : (
+              <SidePanel
+                execution={selectedExec}
+                variables={variables}
+                selectedNodeId={selectedNodeId}
+                workflowDef={workflowDef}
+              />
+            )
           }
+          rightWidthFraction={interactiveSession.isActive ? 0.6 : undefined}
         />
+
+        {/* Connector line from interactive node to panel border */}
+        {interactiveSession.nodeId && (
+          <CalloutConnector
+            nodeId={interactiveSession.nodeId}
+            visible={interactiveSession.isActive}
+          />
+        )}
       </div>
     </ReactFlowProvider>
   )

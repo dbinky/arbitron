@@ -17,12 +17,13 @@ interface UseWebSocketOptions {
  * that was previously duplicated across useSystemWebSocket and
  * useInstanceWebSocket.
  *
- * @returns An object with the current connection state.
+ * @returns An object with the current connection state and a send function.
  */
 export function useWebSocket({ url, onEvent }: UseWebSocketOptions) {
   const [connected, setConnected] = useState(false)
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
+  const wsRef = useRef<WebSocket | null>(null)
 
   const connect = useCallback(() => {
     if (!url) return null
@@ -56,6 +57,7 @@ export function useWebSocket({ url, onEvent }: UseWebSocketOptions) {
     if (!url) return
 
     let ws = connect()
+    wsRef.current = ws
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let unmounted = false
 
@@ -64,6 +66,7 @@ export function useWebSocket({ url, onEvent }: UseWebSocketOptions) {
       reconnectTimer = setTimeout(() => {
         if (!unmounted) {
           ws = connect()
+          wsRef.current = ws
           ws?.addEventListener('close', scheduleReconnect)
         }
       }, RECONNECT_DELAY_MS)
@@ -73,10 +76,19 @@ export function useWebSocket({ url, onEvent }: UseWebSocketOptions) {
 
     return () => {
       unmounted = true
+      wsRef.current = null
       if (reconnectTimer) clearTimeout(reconnectTimer)
       ws?.close()
     }
   }, [url, connect])
 
-  return { connected }
+  /** Send a JSON-serialized message over the WebSocket. */
+  const send = useCallback((data: object) => {
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(data))
+    }
+  }, [])
+
+  return { connected, send }
 }

@@ -424,6 +424,17 @@ func extractCodes(errs []workflow.ValidationError) []string {
 	return codes
 }
 
+// countCode counts how many times the given code appears in a codes slice.
+func countCode(codes []string, code string) int {
+	n := 0
+	for _, c := range codes {
+		if c == code {
+			n++
+		}
+	}
+	return n
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Timer Delay node validation
 // ---------------------------------------------------------------------------
@@ -685,4 +696,176 @@ func TestValidateWebhookWait_TimeoutWithSubstitution(t *testing.T) {
 
 	errs := workflow.Validate(wf, nil)
 	assert.Empty(t, errs)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Interactive node validation
+// ---------------------------------------------------------------------------
+
+func TestValidateInteractive_RequiresOrchestrationFile(t *testing.T) {
+	// The executor reads OrchestrationFile unconditionally; an empty value
+	// would cause a runtime error, so validation must catch it.
+	wf := &workflow.Workflow{
+		Name: "interactive-no-orch",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				TemplateFile: "prompt.hbs", // TemplateFile is set, OrchestrationFile is empty
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidateInteractive_RequiresTemplateFile(t *testing.T) {
+	// The executor reads TemplateFile unconditionally; an empty value
+	// would cause a runtime error, so validation must catch it.
+	wf := &workflow.Workflow{
+		Name: "interactive-no-template",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "orchestrate.yaml", // OrchestrationFile is set, TemplateFile is empty
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidateInteractive_Valid(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "interactive-valid",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				SystemPrompt:      "You are a helpful assistant",
+				OrchestrationFile: "orchestrate.yaml",
+				TemplateFile:      "prompt.hbs",
+				Model:             "claude-3-sonnet",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	checker := &mockFileChecker{existing: map[string]bool{
+		"prompt.hbs":       true,
+		"orchestrate.yaml": true,
+	}}
+
+	errs := workflow.Validate(wf, checker)
+	assert.Empty(t, errs)
+}
+
+func TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig(t *testing.T) {
+	// The interactive node type is accepted by the workflow validator when
+	// required config fields are present.
+	wf := &workflow.Workflow{
+		Name: "interactive-basic",
+		Nodes: []workflow.Node{
+			{
+				ID:                "entry",
+				Type:              workflow.NodeTypeInteractive,
+				Label:             "Interactive",
+				Entrypoint:        true,
+				Config: workflow.NodeConfig{
+					OrchestrationFile: "orchestrate.yaml",
+					TemplateFile:      "prompt.hbs",
+				},
+			},
+		},
+		Edges: []workflow.Edge{},
+	}
+
+	errs := workflow.Validate(wf, nil)
+	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
+}
+
+func TestValidateInteractive_MissingOrchestrationFile(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "interactive-missing-orch",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "nonexistent.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	checker := &mockFileChecker{existing: map[string]bool{}}
+
+	errs := workflow.Validate(wf, checker)
+	codes := extractCodes(errs)
+	assert.Contains(t, codes, "MISSING_FILE")
+}
+
+func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "interactive-nil-checker",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				OrchestrationFile: "nonexistent.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	// With nil checker, file references should not be validated.
+	errs := workflow.Validate(wf, nil)
+	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
+}
+
+func TestValidateInteractive_BothFilesMissing(t *testing.T) {
+	// Boundary: both TemplateFile and OrchestrationFile reference nonexistent
+	// files. Validation must report MISSING_FILE for each independently — the
+	// validator must not short-circuit on the first missing file.
+	wf := &workflow.Workflow{
+		Name: "interactive-both-missing",
+		Nodes: []workflow.Node{
+			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
+			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+				TemplateFile:      "missing-template.hbs",
+				OrchestrationFile: "missing-orch.md",
+			}},
+			{ID: "next", Type: workflow.NodeTypeTransform},
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "interact"},
+			{Source: "interact", Target: "next"},
+		},
+	}
+
+	checker := &mockFileChecker{existing: map[string]bool{}}
+
+	errs := workflow.Validate(wf, checker)
+	codes := extractCodes(errs)
+	// Both missing files must be reported.
+	assert.Equal(t, 2, countCode(codes, "MISSING_FILE"), "expected one MISSING_FILE per missing file reference")
 }
