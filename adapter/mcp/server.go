@@ -1,0 +1,68 @@
+// Package mcp provides the MCP (Model Context Protocol) server adapter for Arbitron.
+// It wraps the mcp-go library and exposes workflow orchestration capabilities as
+// MCP tools that can be consumed by LLM clients via the stdio transport.
+package mcp
+
+import (
+	"context"
+	"os"
+
+	gomcp "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// Server wraps the mcp-go MCPServer, providing a higher-level API for
+// registering Arbitron workflow tools and serving them over stdio.
+type Server struct {
+	mcpServer *server.MCPServer
+	tools     []gomcp.Tool
+	deps      *Deps
+}
+
+// NewServer constructs a new MCP Server with the given name and version.
+// Tools must be added via AddTool before serving.
+func NewServer(name, version string) *Server {
+	s := server.NewMCPServer(name, version,
+		server.WithToolCapabilities(true),
+	)
+	return &Server{mcpServer: s}
+}
+
+// NewServerWithDeps constructs a new MCP Server pre-wired with domain dependencies.
+func NewServerWithDeps(name, version string, deps *Deps) *Server {
+	srv := NewServer(name, version)
+	srv.deps = deps
+	return srv
+}
+
+// AddTool registers a tool definition and its handler with the underlying MCPServer.
+func (s *Server) AddTool(tool gomcp.Tool, handler server.ToolHandlerFunc) {
+	s.tools = append(s.tools, tool)
+	s.mcpServer.AddTool(tool, handler)
+}
+
+// ListTools returns the set of tools registered with this server.
+func (s *Server) ListTools() []gomcp.Tool {
+	return s.tools
+}
+
+// MCPServer returns the underlying mcp-go MCPServer for advanced use cases.
+func (s *Server) MCPServer() *server.MCPServer {
+	return s.mcpServer
+}
+
+// ServeStdio starts the MCP server on stdin/stdout with signal-based graceful
+// shutdown. This blocks until the client disconnects or a termination signal
+// is received. The ctx parameter is reserved for future use (e.g., parent
+// cancellation); the underlying mcp-go ServeStdio manages its own context.
+func (s *Server) ServeStdio(_ context.Context) error {
+	return server.ServeStdio(s.mcpServer)
+}
+
+// Listen starts the MCP server on the provided reader/writer pair. This is
+// useful for testing (piped IO) or embedding scenarios where os.Stdin/Stdout
+// are not appropriate.
+func (s *Server) Listen(ctx context.Context, stdin *os.File, stdout *os.File) error {
+	stdio := server.NewStdioServer(s.mcpServer)
+	return stdio.Listen(ctx, stdin, stdout)
+}
