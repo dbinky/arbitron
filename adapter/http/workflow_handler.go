@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -119,7 +120,8 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const maxTriggerBodyBytes = 1 << 20 // 1 MiB
+const maxTriggerBodyBytes = 1 << 20  // 1 MiB
+const maxWriteFileBytes = 10 << 20   // 10 MiB
 
 // Trigger handles POST /workflows/{name}/trigger and creates a new workflow instance.
 func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
@@ -246,4 +248,186 @@ func (h *WorkflowHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, stats)
+}
+
+// Create handles POST /workflows and creates a new workflow definition.
+func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var wf workflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if !safeWorkflowName(wf.Name) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid workflow name: "+wf.Name)
+		return
+	}
+
+	if err := h.repo.Create(r.Context(), wf.Name, &wf); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create workflow")
+		return
+	}
+	WriteJSON(w, http.StatusCreated, wf)
+}
+
+// Update handles PUT /workflows/{name} and updates an existing workflow definition.
+func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var wf workflow.Workflow
+	if err := json.NewDecoder(r.Body).Decode(&wf); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+
+	if err := h.repo.Update(r.Context(), name, &wf); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update workflow")
+		return
+	}
+	WriteJSON(w, http.StatusOK, wf)
+}
+
+// Delete handles DELETE /workflows/{name} and removes a workflow definition.
+func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	if err := h.repo.Delete(r.Context(), name); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListFiles handles GET /workflows/{name}/files and returns the list of files
+// in a workflow directory.
+func (h *WorkflowHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	files, err := h.repo.ListFiles(r.Context(), name)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list files")
+		return
+	}
+	if files == nil {
+		files = []string{}
+	}
+	WriteJSON(w, http.StatusOK, files)
+}
+
+// ReadFile handles GET /workflows/{name}/files/* and returns the raw file contents.
+func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	filePath := chi.URLParam(r, "*")
+	if filePath == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "file path is required")
+		return
+	}
+
+	data, err := h.fileReader.ReadFile(name, filePath)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to read file")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// WriteFile handles PUT /workflows/{name}/files/* and writes content to a file.
+func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	filePath := chi.URLParam(r, "*")
+	if filePath == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "file path is required")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxWriteFileBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "failed to read request body: "+err.Error())
+		return
+	}
+
+	if err := h.repo.WriteFile(r.Context(), name, filePath, data); err != nil {
+		if strings.Contains(err.Error(), "traversal") {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to write file")
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "written"})
+}
+
+// DeleteFile handles DELETE /workflows/{name}/files/* and removes a file.
+func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	filePath := chi.URLParam(r, "*")
+	if filePath == "" {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "file path is required")
+		return
+	}
+
+	if err := h.repo.DeleteFile(r.Context(), name, filePath); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete file")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

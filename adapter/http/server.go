@@ -124,11 +124,18 @@ func NewRouter(
 		// Workflow endpoints
 		r.Route("/workflows", func(r chi.Router) {
 			r.Get("/", wfHandler.List)
+			r.Post("/", wfHandler.Create)
 			r.Get("/{name}", wfHandler.Get)
+			r.Put("/{name}", wfHandler.Update)
+			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
 			r.Put("/{name}/layout", wfHandler.SaveLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
+			r.Get("/{name}/files", wfHandler.ListFiles)
+			r.Get("/{name}/files/*", wfHandler.ReadFile)
+			r.Put("/{name}/files/*", wfHandler.WriteFile)
+			r.Delete("/{name}/files/*", wfHandler.DeleteFile)
 		})
 
 		// Notification endpoints
