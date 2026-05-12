@@ -1316,7 +1316,7 @@ func TestWorkflowHandler_WriteFile(t *testing.T) {
 	t.Run("returns 400 for path traversal", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.writeFileFn = func(_ context.Context, _, _ string, _ []byte) error {
-			return fmt.Errorf("path traversal detected")
+			return fmt.Errorf("invalid file path: ../../etc/passwd")
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 

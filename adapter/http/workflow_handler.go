@@ -393,7 +393,7 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.WriteFile(r.Context(), name, filePath, data); err != nil {
-		if strings.Contains(err.Error(), "traversal") {
+		if strings.Contains(err.Error(), "invalid file path") {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
