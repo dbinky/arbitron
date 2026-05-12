@@ -1,7 +1,10 @@
 package mcp_test
 
 import (
+	"context"
+	"os"
 	"testing"
+	"time"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 
@@ -96,5 +99,70 @@ func TestServer_Subscriptions_NonNilWithEventBus(t *testing.T) {
 		deps := &adaptmcp.Deps{EventBus: bus}
 		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 		require.NotNil(t, srv.Subscriptions(), "Subscriptions must be non-nil when EventBus is provided")
+	})
+}
+
+// Listen — transport smoke tests.
+
+func TestServer_Listen_StdinEOF(t *testing.T) {
+	t.Run("returns when stdin reaches EOF immediately", func(t *testing.T) {
+		// Edge case: client disconnects before sending any data.
+		// Listen must terminate rather than blocking forever.
+		srv := adaptmcp.NewServer("test", "0.0.0")
+
+		stdinR, stdinW, err := os.Pipe()
+		require.NoError(t, err)
+		_, stdoutW, err := os.Pipe()
+		require.NoError(t, err)
+		defer stdinR.Close()
+		defer stdoutW.Close()
+
+		// EOF on the write side surfaces as EOF on the read side.
+		stdinW.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		done := make(chan error, 1)
+		go func() { done <- srv.Listen(ctx, stdinR, stdoutW) }()
+
+		select {
+		case <-done:
+			// any return value (nil or error) is acceptable
+		case <-time.After(5 * time.Second):
+			t.Fatal("Listen did not return after stdin EOF")
+		}
+	})
+}
+
+func TestServer_Listen_ContextCancellation(t *testing.T) {
+	t.Run("shuts down when context is cancelled", func(t *testing.T) {
+		// Error scenario: parent context cancelled (e.g., SIGINT handling).
+		// Close stdin as well so the read loop definitely unblocks, since not
+		// all stdio implementations interrupt blocked reads on ctx.Done().
+		srv := adaptmcp.NewServer("test", "0.0.0")
+
+		stdinR, stdinW, err := os.Pipe()
+		require.NoError(t, err)
+		_, stdoutW, err := os.Pipe()
+		require.NoError(t, err)
+		defer stdinR.Close()
+		defer stdoutW.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan error, 1)
+		go func() { done <- srv.Listen(ctx, stdinR, stdoutW) }()
+
+		// Cancel the context then close stdin to ensure the read loop unblocks.
+		cancel()
+		stdinW.Close()
+
+		select {
+		case <-done:
+			// returned cleanly
+		case <-time.After(5 * time.Second):
+			t.Fatal("Listen did not return after context cancellation")
+		}
 	})
 }

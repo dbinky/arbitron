@@ -4,9 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-- **[Area 3] `Listen` method has no test** — `Server.Listen(ctx, stdin, stdout)` is documented as "useful for testing (piped IO)" but is never exercised in any test. A basic smoke test sending an `initialize` JSON-RPC request over a pair of pipes would verify the transport wiring end-to-end.
+_(none)_
 
 ## Fixed Previously
+
+- **[Area 3] `Listen` method had no test** — Added `TestServer_Listen_StdinEOF` (edge: immediate EOF returns cleanly) and `TestServer_Listen_ContextCancellation` (error: context cancel + stdin close forces shutdown) to `adapter/mcp/server_test.go`, using `os.Pipe()` as the documented testing transport.
 
 - **[Area 3] `Subscriptions()` method was never tested** — Added `TestServer_Subscriptions_NilWhenNoEventBus` (nil deps, nil EventBus → nil SubscriptionManager) and `TestServer_Subscriptions_NonNilWithEventBus` (valid EventBus → non-nil SubscriptionManager) to `adapter/mcp/server_test.go`.
 
