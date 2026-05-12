@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -28,7 +29,10 @@ import (
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
 	"github.com/arbitron/arbitron/adapter/process"
+	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -81,47 +85,86 @@ func newServeCmd() *cobra.Command {
 	}
 }
 
-func runServe(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+// domainStack holds all shared domain dependencies initialised by initDomain.
+// Both the HTTP serve command and the standalone MCP command reuse this struct
+// so that initialisation logic is not duplicated.
+type domainStack struct {
+	cfg                 *config.Config
+	logger              *slog.Logger
+	logCloser           io.Closer
+	pool                *pgxpool.Pool
+	eng                 *engine.Engine
+	workflowRepo        workflow.WorkflowRepository
+	instanceRepo        instance.InstanceRepository
+	nodeExecRepo        instance.NodeExecutionRepository
+	snapshotRepo        instance.VariableSnapshotRepository
+	fileReader          engine.FileReader
+	bus                 engine.EventBus
+	queueMgr            *queue.Manager
+	queueRepo           instance.QueueRepository
+	notifRepo           notification.Repository
+	conversationHandler engine.ConversationHandler
+	tracingShutdown     func(ctx context.Context) error
+}
 
+// Close tears down the domain stack in the correct order: engine first, then
+// tracing flush, then the database pool, and finally the log sink.
+func (ds *domainStack) Close(ctx context.Context) {
+	ds.eng.Shutdown()
+	if ds.tracingShutdown != nil {
+		if err := ds.tracingShutdown(ctx); err != nil {
+			ds.logger.Error("tracing shutdown error", "error", err)
+		}
+	}
+	ds.pool.Close()
+	ds.logCloser.Close()
+}
+
+// initDomain performs all shared initialisation: configuration, logging,
+// database, adapters, engine, queue manager, notifications, tracing, and
+// crash recovery. The returned domainStack must be closed by the caller.
+func initDomain(ctx context.Context) (*domainStack, error) {
 	// 1. Load configuration.
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("determining home directory: %w", err)
+		return nil, fmt.Errorf("determining home directory: %w", err)
 	}
 	configPath := filepath.Join(homeDir, ".arbitron", "config.yaml")
 
 	slog.Info("loading configuration", "path", configPath)
 	cfg, err := configadapter.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
 	// 2. Set up structured logging.
 	logger, logCloser, err := observability.SetupLogging(cfg.Logging)
 	if err != nil {
-		return fmt.Errorf("setting up logging: %w", err)
+		return nil, fmt.Errorf("setting up logging: %w", err)
 	}
-	defer logCloser.Close()
 
 	// 3. Connect to Postgres.
 	logger.Info("connecting to database", "url", redactDatabaseURL(cfg.Database.URL))
 	pool, err := pgxpool.New(ctx, cfg.Database.URL)
 	if err != nil {
-		return fmt.Errorf("creating database pool: %w", err)
+		logCloser.Close()
+		return nil, fmt.Errorf("creating database pool: %w", err)
 	}
-	defer pool.Close()
 
 	// Ping database to verify connectivity.
 	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("pinging database: %w", err)
+		pool.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 	logger.Info("database connection established")
 
 	// 4. Run migrations.
 	logger.Info("running database migrations")
 	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-		return fmt.Errorf("running migrations: %w", err)
+		pool.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 	logger.Info("database migrations complete")
 
@@ -188,51 +231,83 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	conversationHandler := engine.NewConversationHandler(
 		instanceRepo, nodeExecRepo, llmProvider, bus, queueMgr,
 	)
-	// conversationHandler is passed to the HTTP layer for interactive WebSocket messaging.
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
 	tracingShutdown, err := observability.SetupTracing(cfg.Tracing)
 	if err != nil {
-		return fmt.Errorf("setting up tracing: %w", err)
+		pool.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("setting up tracing: %w", err)
 	}
 
 	// 14. Recover any instances that were running when the process last crashed.
 	logger.Info("recovering crashed instances")
 	if err := eng.RecoverCrashedInstances(); err != nil {
-		return fmt.Errorf("recovering crashed instances: %w", err)
+		pool.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("recovering crashed instances: %w", err)
 	}
+
+	return &domainStack{
+		cfg:                 cfg,
+		logger:              logger,
+		logCloser:           logCloser,
+		pool:                pool,
+		eng:                 eng,
+		workflowRepo:        workflowRepo,
+		instanceRepo:        instanceRepo,
+		nodeExecRepo:        nodeExecRepo,
+		snapshotRepo:        snapshotRepo,
+		fileReader:          fileReader,
+		bus:                 bus,
+		queueMgr:            queueMgr,
+		queueRepo:           queueRepo,
+		notifRepo:           notifRepo,
+		conversationHandler: conversationHandler,
+		tracingShutdown:     tracingShutdown,
+	}, nil
+}
+
+func runServe(cmd *cobra.Command, _ []string) error {
+	ctx := cmd.Context()
+
+	ds, err := initDomain(ctx)
+	if err != nil {
+		return err
+	}
+	defer ds.Close(context.Background())
 
 	// 15. Create the full API router with embedded dashboard.
 	dashHandler := dashboard.Handler()
-	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
-	notifHandler.SetEventBus(bus)
+	notifHandler := adapthttp.NewNotificationHandler(ds.notifRepo)
+	notifHandler.SetEventBus(ds.bus)
 	router := adapthttp.NewRouter(
-		eng,
-		workflowRepo,
-		instanceRepo,
-		nodeExecRepo,
-		snapshotRepo,
-		fileReader,
-		bus,
-		cfg,
-		queueMgr,
-		queueRepo,
+		ds.eng,
+		ds.workflowRepo,
+		ds.instanceRepo,
+		ds.nodeExecRepo,
+		ds.snapshotRepo,
+		ds.fileReader,
+		ds.bus,
+		ds.cfg,
+		ds.queueMgr,
+		ds.queueRepo,
 		dashHandler,
 		notifHandler,
-		conversationHandler,
+		ds.conversationHandler,
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).
-	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
+	handler := adapthttp.RequestLoggingMiddleware(ds.logger)(router)
 
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	addr := fmt.Sprintf("%s:%d", ds.cfg.Server.Host, ds.cfg.Server.Port)
 
 	// Warn if binding to a non-loopback address. The API has no authentication,
 	// so exposing it on the network is a security risk.
-	if cfg.Server.Host != "127.0.0.1" && cfg.Server.Host != "localhost" && cfg.Server.Host != "::1" {
-		logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
-			"host", cfg.Server.Host)
+	if ds.cfg.Server.Host != "127.0.0.1" && ds.cfg.Server.Host != "localhost" && ds.cfg.Server.Host != "::1" {
+		ds.logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
+			"host", ds.cfg.Server.Host)
 	}
 
 	srv := &http.Server{
@@ -253,7 +328,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("server starting", "addr", addr)
+		ds.logger.Info("server starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("server error: %w", err)
 		}
@@ -262,7 +337,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	select {
 	case sig := <-shutdownCh:
-		logger.Info("shutdown signal received", "signal", sig)
+		ds.logger.Info("shutdown signal received", "signal", sig)
 	case err := <-errCh:
 		if err != nil {
 			return err
@@ -273,20 +348,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	logger.Info("shutting down server")
+	ds.logger.Info("shutting down server")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
 	// Wait for in-flight workflow goroutines to finish before closing the pool.
-	logger.Info("waiting for in-flight workflows to complete")
-	eng.Shutdown()
+	ds.logger.Info("waiting for in-flight workflows to complete")
 
-	// Flush OTel spans.
-	if err := tracingShutdown(shutdownCtx); err != nil {
-		logger.Error("tracing shutdown error", "error", err)
-	}
-
-	logger.Info("server stopped gracefully")
+	ds.logger.Info("server stopped gracefully")
 	return nil
 }
