@@ -324,6 +324,35 @@ func TestWorkflowUpdate(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "manifest is required")
 	})
+
+	t.Run("invalid JSON manifest returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_update", map[string]any{
+			"name":     "my-wf",
+			"manifest": "not-json",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid manifest JSON")
+	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			updateFn: func(_ context.Context, _ string, _ *workflow.Workflow) error {
+				return errors.New("workflow locked")
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_update", map[string]any{
+			"name":     "my-wf",
+			"manifest": `{"name":"my-wf"}`,
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "workflow locked")
+	})
 }
 
 func TestWorkflowDelete(t *testing.T) {
@@ -347,6 +376,20 @@ func TestWorkflowDelete(t *testing.T) {
 		result := callTool(t, srv, "workflow_delete", map[string]any{})
 
 		assert.True(t, result.IsError)
+	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			deleteFn: func(_ context.Context, _ string) error {
+				return errors.New("workflow not found")
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "ghost"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "workflow not found")
 	})
 }
 
@@ -411,6 +454,15 @@ func TestWorkflowListFiles(t *testing.T) {
 		assert.Contains(t, text, "script.sh")
 	})
 
+	t.Run("missing name returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_list_files", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "name is required")
+	})
+
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		repo := &stubWorkflowRepo{
 			listFilesFn: func(_ context.Context, _ string) ([]string, error) {
@@ -437,6 +489,15 @@ func TestWorkflowReadFile(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Equal(t, "hello world", text)
+	})
+
+	t.Run("missing name returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_read_file", map[string]any{"path": "readme.txt"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "name is required")
 	})
 
 	t.Run("missing path returns error", func(t *testing.T) {

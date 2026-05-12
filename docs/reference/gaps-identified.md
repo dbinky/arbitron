@@ -4,9 +4,13 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-- **[Area 4] Several workflow tool tests lack full 5-category coverage** — `TestWorkflowUpdate` has no domain error test and no invalid-manifest-JSON test (update path parses JSON too). `TestWorkflowDelete` has no domain error test (only tests missing name). `TestWorkflowListFiles` and `TestWorkflowReadFile` have no missing-name test. These are failure/error/edge scenarios that need to be added to fully satisfy the 5-category requirement.
+- **[Area 4] `TestWorkflowDeleteFile` missing validation failure tests** — the handler validates both `name` and `path` before calling the repo, but there are no tests for "missing name returns error" or "missing path returns error". These are failure scenarios that leave the validation code paths untested.
+
+- **[Area 4] `TestWorkflowValidate` missing domain error test** — the handler calls `Load` before running validation; if `Load` returns an error the handler returns a tool error (`"failed to load workflow: ..."`), but there is no test for this code path. This is an error scenario gap.
 
 ## Fixed Previously
+
+- **[Area 4] Several workflow tool tests lacked full 5-category coverage** — `TestWorkflowUpdate` had no domain error test and no invalid-manifest-JSON test. `TestWorkflowDelete` had no domain error test. `TestWorkflowListFiles` and `TestWorkflowReadFile` had no missing-name test. All four gaps fixed by adding the missing test cases.
 
 - **[Area 4] `workflow_write_file` rejected empty content, blocking valid empty-file writes** — Fixed `workflowWriteFileHandler` to check key presence (`_, ok := args["content"]`) rather than value non-emptiness (`content == ""`), so absent content is rejected but empty-string content is forwarded to the repo. Added `TestWorkflowWriteFile/empty_content_writes_empty_file` (edge case) and `TestWorkflowWriteFile/domain_error_returned_as_tool_error` (error scenario).
 
