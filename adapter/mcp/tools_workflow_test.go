@@ -436,6 +436,20 @@ func TestWorkflowValidate(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("load error returned as tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			loadFn: func(_ context.Context, _ string) (*workflow.Workflow, error) {
+				return nil, errors.New("workflow not found")
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_validate", map[string]any{"name": "missing-wf"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "workflow not found")
+	})
 }
 
 func TestWorkflowListFiles(t *testing.T) {

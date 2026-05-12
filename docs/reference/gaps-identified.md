@@ -4,9 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-- **[Area 4] `TestWorkflowValidate` missing domain error test** — the handler calls `Load` before running validation; if `Load` returns an error the handler returns a tool error (`"failed to load workflow: ..."`), but there is no test for this code path. This is an error scenario gap.
+_(none — all identified issues have been resolved)_
 
 ## Fixed Previously
+
+- **[Area 4] `TestWorkflowValidate` missing domain error test** — added "load error returned as tool error" sub-test: repo stub returns an error from `Load`, verifying the handler surfaces it as a tool error with the original message.
 
 - **[Area 4] `TestWorkflowDeleteFile` missing validation failure tests** — added "missing name returns error" and "missing path returns error" sub-cases; also tightened the existing domain error assertion to verify the error message text.
 

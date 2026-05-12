@@ -18,7 +18,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 1 | Workflow Repository Write Ops (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go` — Create, Update, Delete, WriteFile, DeleteFile, ListFiles, path-traversal protection, atomic writes) | [x] | [ ] | |
 | 2 | Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`, `adapter/http/server.go` — POST/PUT/DELETE /workflows, file management endpoints, input validation, error mapping) | [x] | [ ] | |
 | 3 | MCP Server Foundation (`adapter/mcp/server.go`, `adapter/mcp/deps.go`, `adapter/mcp/helpers.go` — Server construction, AddTool, ServeStdio, Listen, HTTPHandler, Deps wiring, MarshalResult, ParseUUID) | [x] | [ ] | |
-| 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [ ] | [ ] | |
+| 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [x] | [ ] | |
 | 5 | MCP Instance Tools (`adapter/mcp/tools_instance.go` — 9 tools: list, get, trigger, pause, resume, cancel, retry, rerun, set_priority) | [ ] | [ ] | |
 | 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [ ] | [ ] | |
 | 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [ ] | [ ] | |
