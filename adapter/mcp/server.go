@@ -17,6 +17,7 @@ type Server struct {
 	mcpServer *server.MCPServer
 	tools     []gomcp.Tool
 	deps      *Deps
+	subs      *SubscriptionManager
 }
 
 // NewServer constructs a new MCP Server with the given name and version.
@@ -32,6 +33,9 @@ func NewServer(name, version string) *Server {
 func NewServerWithDeps(name, version string, deps *Deps) *Server {
 	srv := NewServer(name, version)
 	srv.deps = deps
+	if deps != nil && deps.EventBus != nil {
+		srv.subs = NewSubscriptionManager(deps.EventBus)
+	}
 	return srv
 }
 
@@ -49,6 +53,12 @@ func (s *Server) ListTools() []gomcp.Tool {
 // MCPServer returns the underlying mcp-go MCPServer for advanced use cases.
 func (s *Server) MCPServer() *server.MCPServer {
 	return s.mcpServer
+}
+
+// Subscriptions returns the SubscriptionManager for event streaming, or nil
+// if no EventBus was provided.
+func (s *Server) Subscriptions() *SubscriptionManager {
+	return s.subs
 }
 
 // ServeStdio starts the MCP server on stdin/stdout with signal-based graceful
