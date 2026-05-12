@@ -428,3 +428,107 @@ func TestWorkflowRepo_Delete_WithExtraFiles(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "with-files"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+// ---------------------------------------------------------------------------
+// Tests: WriteFile
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_WriteFile_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf1", sampleWorkflow("wf1")))
+
+	err := repo.WriteFile(ctx, "wf1", "script.sh", []byte("#!/bin/bash\necho hi"))
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "wf1", "script.sh"))
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/bash\necho hi", string(data))
+}
+
+func TestWorkflowRepo_WriteFile_NestedDirs(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf2", sampleWorkflow("wf2")))
+
+	err := repo.WriteFile(ctx, "wf2", "templates/prompt.md", []byte("# Hello"))
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "wf2", "templates", "prompt.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "# Hello", string(data))
+}
+
+func TestWorkflowRepo_WriteFile_EmptyContent(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf3", sampleWorkflow("wf3")))
+
+	err := repo.WriteFile(ctx, "wf3", "empty.txt", []byte{})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "wf3", "empty.txt"))
+	require.NoError(t, err)
+	assert.Empty(t, data)
+}
+
+func TestWorkflowRepo_WriteFile_WorkflowNotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.WriteFile(ctx, "nonexistent", "file.txt", []byte("data"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_WriteFile_PathTraversalWorkflowName(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.WriteFile(ctx, "../escape", "file.txt", []byte("data"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_WriteFile_PathTraversalRelativePath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf4", sampleWorkflow("wf4")))
+
+	err := repo.WriteFile(ctx, "wf4", "../escape.txt", []byte("evil"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid file path")
+
+	// Also try double traversal
+	err = repo.WriteFile(ctx, "wf4", "sub/../../escape.txt", []byte("evil"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid file path")
+}
+
+func TestWorkflowRepo_WriteFile_OverwriteExisting(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf5", sampleWorkflow("wf5")))
+
+	// Write once
+	require.NoError(t, repo.WriteFile(ctx, "wf5", "data.txt", []byte("v1")))
+
+	// Overwrite
+	require.NoError(t, repo.WriteFile(ctx, "wf5", "data.txt", []byte("v2")))
+
+	data, err := os.ReadFile(filepath.Join(dir, "wf5", "data.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(data))
+}

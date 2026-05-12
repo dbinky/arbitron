@@ -246,10 +246,38 @@ func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
 // WriteFile writes content to a file at relativePath inside the named workflow
 // directory, creating intermediate directories as needed.
 func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
-	_ = name
-	_ = relativePath
-	_ = content
-	return fmt.Errorf("not implemented")
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workflow not found: %s", name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	// Path-traversal check on relativePath against the workflow directory.
+	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
+	targetPath := filepath.Join(wfDir, relativePath)
+	if !strings.HasPrefix(targetPath, wfRoot) {
+		return fmt.Errorf("invalid file path: %s", relativePath)
+	}
+
+	// Create intermediate directories.
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating directories for %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	if err := os.WriteFile(targetPath, content, 0o644); err != nil {
+		return fmt.Errorf("writing file %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	return nil
 }
 
 // DeleteFile removes a single file from inside the named workflow directory.
