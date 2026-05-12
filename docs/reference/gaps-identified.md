@@ -4,9 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+- **[Area 4] Several workflow tool tests lack full 5-category coverage** — `TestWorkflowUpdate` has no domain error test and no invalid-manifest-JSON test (update path parses JSON too). `TestWorkflowDelete` has no domain error test (only tests missing name). `TestWorkflowListFiles` and `TestWorkflowReadFile` have no missing-name test. These are failure/error/edge scenarios that need to be added to fully satisfy the 5-category requirement.
 
 ## Fixed Previously
+
+- **[Area 4] `workflow_write_file` rejected empty content, blocking valid empty-file writes** — Fixed `workflowWriteFileHandler` to check key presence (`_, ok := args["content"]`) rather than value non-emptiness (`content == ""`), so absent content is rejected but empty-string content is forwarded to the repo. Added `TestWorkflowWriteFile/empty_content_writes_empty_file` (edge case) and `TestWorkflowWriteFile/domain_error_returned_as_tool_error` (error scenario).
 
 - **[Area 3] `Listen` method had no test** — Added `TestServer_Listen_StdinEOF` (edge: immediate EOF returns cleanly) and `TestServer_Listen_ContextCancellation` (error: context cancel + stdin close forces shutdown) to `adapter/mcp/server_test.go`, using `os.Pipe()` as the documented testing transport.
 

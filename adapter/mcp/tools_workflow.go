@@ -252,10 +252,11 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 		if path == "" {
 			return gomcp.NewToolResultError("path is required"), nil
 		}
-		content, _ := args["content"].(string)
-		if content == "" {
+		rawContent, hasContent := args["content"]
+		if !hasContent {
 			return gomcp.NewToolResultError("content is required"), nil
 		}
+		content, _ := rawContent.(string)
 
 		if err := srv.deps.Workflows.WriteFile(ctx, name, path, []byte(content)); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to write file: %s", err)), nil

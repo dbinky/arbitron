@@ -479,13 +479,49 @@ func TestWorkflowWriteFile(t *testing.T) {
 		assert.Equal(t, []byte("file content"), capturedContent)
 	})
 
+	t.Run("empty content writes empty file", func(t *testing.T) {
+		// Edge case: empty string content is valid — creates an empty file.
+		// This mirrors "PUT file with empty body" from the REST API design.
+		var capturedContent []byte
+		repo := &stubWorkflowRepo{
+			writeFileFn: func(_ context.Context, _, _ string, content []byte) error {
+				capturedContent = content
+				return nil
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_write_file", map[string]any{
+			"name": "wf1", "path": "empty.txt", "content": "",
+		})
+
+		assert.False(t, result.IsError)
+		assert.Len(t, capturedContent, 0)
+	})
+
 	t.Run("missing content returns error", func(t *testing.T) {
+		// Failure: content key is absent entirely — must be rejected.
 		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
 		result := callTool(t, srv, "workflow_write_file", map[string]any{"name": "wf1", "path": "x"})
 
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "content is required")
+	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			writeFileFn: func(_ context.Context, _, _ string, _ []byte) error {
+				return errors.New("disk full")
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_write_file", map[string]any{
+			"name": "wf1", "path": "x.txt", "content": "data",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "disk full")
 	})
 }
 
