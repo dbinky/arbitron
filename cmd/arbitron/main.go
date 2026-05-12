@@ -308,7 +308,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 	defer ds.Close(context.Background())
 
-	// 15. Create the full API router with embedded dashboard.
+	// 15. Create the MCP server and full API router with embedded dashboard.
+	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
+	adaptmcp.RegisterAllTools(mcpSrv)
+
 	dashHandler := dashboard.Handler()
 	notifHandler := adapthttp.NewNotificationHandler(ds.notifRepo)
 	notifHandler.SetEventBus(ds.bus)
@@ -326,6 +329,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		dashHandler,
 		notifHandler,
 		ds.conversationHandler,
+		mcpSrv.HTTPHandler(),
 	)
 
 	// 16. Add request logging middleware (wraps the entire router).
@@ -353,10 +357,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Optionally start MCP stdio server alongside the HTTP server.
+	// The mcpSrv is already created above and its HTTP handler is mounted
+	// at /mcp on the router; this only adds the stdio transport.
 	mcpEnabled, _ := cmd.Flags().GetBool("mcp")
 	if mcpEnabled {
-		mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
-		adaptmcp.RegisterAllTools(mcpSrv)
 		go func() {
 			ds.logger.Info("MCP stdio server starting (alongside HTTP)")
 			if err := mcpSrv.ServeStdio(context.Background()); err != nil {

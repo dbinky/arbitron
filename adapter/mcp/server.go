@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"net/http"
 	"os"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
@@ -59,6 +60,14 @@ func (s *Server) MCPServer() *server.MCPServer {
 // if no EventBus was provided.
 func (s *Server) Subscriptions() *SubscriptionManager {
 	return s.subs
+}
+
+// HTTPHandler returns an http.Handler for serving the MCP protocol over
+// Streamable HTTP. Mount at a path (e.g., /mcp) on the HTTP router. The
+// returned handler accepts POST (JSON-RPC), GET (SSE streaming), and DELETE
+// (session termination) requests per the MCP Streamable HTTP specification.
+func (s *Server) HTTPHandler() http.Handler {
+	return server.NewStreamableHTTPServer(s.mcpServer)
 }
 
 // ServeStdio starts the MCP server on stdin/stdout with signal-based graceful

@@ -51,3 +51,16 @@ func TestServer_AddMultipleTools(t *testing.T) {
 	assert.Equal(t, "tool-a", tools[0].Name)
 	assert.Equal(t, "tool-b", tools[1].Name)
 }
+
+func TestServer_HTTPHandler(t *testing.T) {
+	srv := adaptmcp.NewServer("test-arbitron", "0.0.0")
+	handler := srv.HTTPHandler()
+	require.NotNil(t, handler, "HTTPHandler must return a non-nil http.Handler")
+}
+
+func TestServer_HTTPHandlerWithDeps(t *testing.T) {
+	deps := &adaptmcp.Deps{}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	handler := srv.HTTPHandler()
+	require.NotNil(t, handler, "HTTPHandler must return a non-nil http.Handler for server with deps")
+}

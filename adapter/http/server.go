@@ -69,6 +69,7 @@ type ConversationHandlerPort = engine.ConversationHandler
 // If dashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
 // conversationHandler may be nil if interactive messaging is not needed.
+// mcpHandler, when non-nil, is mounted at /mcp for Streamable HTTP transport.
 func NewRouter(
 	svc EngineService,
 	workflows WorkflowRepo,
@@ -83,6 +84,7 @@ func NewRouter(
 	dashboardHandler http.Handler,
 	notifHandler *NotificationHandler,
 	conversationHandler ConversationHandlerPort,
+	mcpHandler http.Handler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	r := chi.NewRouter()
@@ -173,6 +175,12 @@ func NewRouter(
 			}
 		})
 	})
+
+	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
+	// over HTTP instead of (or in addition to) the stdio transport.
+	if mcpHandler != nil {
+		r.Mount("/mcp", mcpHandler)
+	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
 	if dashboardHandler != nil {
