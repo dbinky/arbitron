@@ -1,6 +1,6 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the Arbitron Phase 4 Interactive Steps implementation for correctness, security, and robustness.
+This document tracks the systematic review of the Phase 5 MCP Server & Skills implementation for correctness, security, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -15,20 +15,20 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Interactive Node Type (`domain/workflow/workflow.go` — NodeTypeInteractive constant, config fields, validation for interactive nodes) | [x] | [x] | Done |
-| 2 | InteractiveExecutor (`domain/engine/executor_interactive.go`, `domain/engine/executor_interactive_test.go` — initial LLM call, streaming, notification creation, IsWait transition) | [x] | [x] | Done |
-| 3 | ConversationHandler (`domain/engine/conversation.go`, `domain/engine/conversation_test.go` — HandleMessage, EndSession, tool-use detection, state transitions) | [x] | [x] | Done |
-| 4 | External Notification Interface (`domain/notification/external.go`, `adapter/notification/log_notifier.go`, `adapter/notification/log_notifier_test.go` — interface, logging adapter, engine integration) | [x] | [x] | Done |
-| 5 | LLM Provider Extensions (`domain/engine/ports.go` — LLMRequest.SystemPrompt, LLMRequest.Tools, LLMRequest.Messages, LLMStreamChunk.ToolUse, LLMTool, LLMMessage types) | [x] | [x] | Done |
-| 6 | WebSocket Bidirectional Messaging (`adapter/http/stream_handler.go`, `adapter/http/stream_handler_test.go` — inbound message routing, write mutex, interactive.send/end handling) | [x] | [x] | Done |
-| 7 | History Hydration & Instance Detail (`adapter/http/stream_handler.go`, `adapter/http/instance_handler.go` — interactive.history on connect, interactiveActive/interactiveNodeId fields) | [x] | [x] | Done |
-| 8 | Interactive REST Endpoint (`adapter/http/interactive_handler.go`, `adapter/http/interactive_handler_test.go` — POST /interact/end, error responses, router wiring) | [x] | [x] | Done |
-| 9 | Integration Tests (`adapter/http/interactive_integration_test.go` — full round-trip WebSocket tests, tool completion, error flows, multi-message) | [x] | [x] | Done |
-| 10 | useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts` — state management, event handling, streaming-to-message transition, send/end actions) | [x] | [x] | Done |
-| 11 | Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`, `ChatMessage.tsx`, `ChatInput.tsx` — panel layout, markdown rendering, input behavior, auto-scroll) | [x] | [x] | Done |
-| 12 | Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `InteractiveCallout.tsx` — SVG overlay, 40/60 split, snap-back) | [x] | [x] | Done |
-| 13 | Execution View Integration (`dashboard/src/routes/ExecutionView.tsx`, `dashboard/src/components/SidePanel.tsx` — conditional rendering, auto-open, transcript viewing) | [x] | [x] | Done |
-| 14 | Main Wiring (`cmd/arbitron/main.go` — executor registration, ConversationHandler instantiation, router wiring, dependency injection) | [x] | [x] | Done |
+| 1 | Workflow Repository Write Ops (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go` — Create, Update, Delete, WriteFile, DeleteFile, ListFiles, path-traversal protection, atomic writes) | [ ] | [ ] | |
+| 2 | Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`, `adapter/http/server.go` — POST/PUT/DELETE /workflows, file management endpoints, input validation, error mapping) | [ ] | [ ] | |
+| 3 | MCP Server Foundation (`adapter/mcp/server.go`, `adapter/mcp/deps.go`, `adapter/mcp/helpers.go` — Server construction, AddTool, ServeStdio, Listen, HTTPHandler, Deps wiring, MarshalResult, ParseUUID) | [ ] | [ ] | |
+| 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [ ] | [ ] | |
+| 5 | MCP Instance Tools (`adapter/mcp/tools_instance.go` — 9 tools: list, get, trigger, pause, resume, cancel, retry, rerun, set_priority) | [ ] | [ ] | |
+| 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [ ] | [ ] | |
+| 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [ ] | [ ] | |
+| 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [ ] | [ ] | |
+| 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [ ] | [ ] | |
+| 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [ ] | [ ] | |
+| 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [ ] | [ ] | |
+| 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [ ] | [ ] | |
+| 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [ ] | [ ] | |
+| 14 | Test Coverage (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [ ] | [ ] | |
 
 ---
 
@@ -36,16 +36,15 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 15 | InteractiveExecutor + ConversationHandler (conversation data format consistency, llm_conversation JSONB shape agreement, tool definition sharing) | [x] | Pass complete |
-| 16 | ConversationHandler + WebSocket Handler (HandleMessage/EndSession call contracts, error propagation, blocking behavior during streaming) | [x] | Pass complete |
-| 17 | WebSocket Handler + useInteractiveSession Hook (event type naming consistency, message payload shapes, inbound/outbound format agreement) | [x] | Pass complete |
-| 18 | InteractiveExecutor + Engine Loop (IsWait pattern correctness, node execution record ownership, state transition consistency with timer/webhook) | [x] | Pass complete |
-| 19 | External Notification + Engine (emitNotification integration, ExternalNotifier called for all notification types, nil-safety) | [x] | Pass complete |
-| 20 | History Hydration + useInteractiveSession (interactive.history event shape, message array format, auto-open behavior on connect) | [x] | Pass complete |
-| 21 | Chat Panel + Callout Connector (panel takeover triggers connector visibility, snap-back removes connector, position tracking across scroll/zoom) | [x] | Pass complete |
-| 22 | LLM Provider Extensions + InteractiveExecutor + ConversationHandler (SystemPrompt/Tools/Messages fields used correctly across both, tool-use streaming detection) | [x] | Pass complete |
-| 23 | Spec Alignment: Product Spec + All Backend (every spec requirement has corresponding implementation, no scope creep, no missing behaviors) | [x] | Pass complete |
-| 24 | Spec Alignment: Product Spec + All Dashboard (every UI spec requirement has corresponding implementation, side panel behavior matches spec) | [x] | Pass complete |
+| 15 | Workflow Repo + REST Endpoints (Create/Update/Delete flow through handler → repo, error mapping consistency, path validation at both layers) | [ ] | |
+| 16 | MCP Foundation + Tool Implementation (Deps threading, handler closure pattern, MarshalResult/ParseUUID usage consistency, error result pattern) | [ ] | |
+| 17 | MCP Workflow Tools + Workflow Repo (tool args → repo method args, error strings match handler mapping, file operations round-trip) | [ ] | |
+| 18 | MCP Instance Tools + Engine Service (tool args → engine method signatures, UUID parsing, priority/state string handling) | [ ] | |
+| 19 | Event Streaming + Subscription Manager (subscribe/unsubscribe lifecycle, EventBus channel cleanup, goroutine leak safety, connection close cleanup) | [ ] | |
+| 20 | Interactive Tools + ConversationHandler (HandleMessage/EndSession call signatures, get_history node execution lookup, nil handler safety) | [ ] | |
+| 21 | Streamable HTTP + Router Integration (NewRouter parameter threading, /mcp mount position, existing route collision check, nil handler fallthrough) | [ ] | |
+| 22 | CLI + MCP Server (initDomain → mcpDeps() → NewServerWithDeps flow, shared state between HTTP and MCP in --mcp mode, shutdown coordination) | [ ] | |
+| 23 | Skills + MCP Tool Names (every tool referenced in skill markdown exists in RegisterAllTools, no stale/renamed references) | [ ] | |
 
 ---
 
@@ -61,7 +60,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 **Pass 2 (Robustness & Extensibility):**
 - Code aligns to the spirit of the design, not just surface conformance
-- The component is ready to be extended by future work
+- The component is ready to be extended by future work (Phase 6 auth, Phase 7 triggers)
 - Test assertions test real risks, not just happy-path ceremony
 - Edge cases are handled (empty inputs, concurrent access, boundary values)
 
