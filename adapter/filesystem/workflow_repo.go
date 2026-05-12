@@ -175,10 +175,17 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 	}
 	data = append(data, '\n')
 
+	// Atomic write: write to a temp file then rename so a crash mid-write
+	// never leaves a partial manifest visible to readers.
 	manifestPath := filepath.Join(wfDir, "workflow.json")
-	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+	tmp := manifestPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		_ = os.RemoveAll(wfDir)
 		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+	if err := os.Rename(tmp, manifestPath); err != nil {
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("committing workflow %q: %w", name, err)
 	}
 
 	return nil

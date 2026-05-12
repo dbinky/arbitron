@@ -286,6 +286,31 @@ func TestWorkflowRepo_Create_SpecialCharsInName(t *testing.T) {
 	assert.Equal(t, "my_workflow-2", loaded.Name)
 }
 
+func TestWorkflowRepo_Create_AtomicManifestWrite(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("atomic-create")
+	require.NoError(t, repo.Create(ctx, "atomic-create", wf))
+
+	// No .tmp files should remain after a successful create
+	entries, err := os.ReadDir(filepath.Join(dir, "atomic-create"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
+	}
+
+	// Exactly one file: workflow.json
+	require.Len(t, entries, 1)
+	assert.Equal(t, "workflow.json", entries[0].Name())
+
+	// Content must be a valid, parseable manifest
+	loaded, err := repo.Load(ctx, "atomic-create")
+	require.NoError(t, err)
+	assert.Equal(t, "atomic-create", loaded.Name)
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Update
 // ---------------------------------------------------------------------------
