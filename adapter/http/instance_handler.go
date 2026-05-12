@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -119,26 +120,14 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	return resp
 }
 
-// isCurrentNodeInteractive parses the workflow snapshot and checks if the
-// specified node is of type "interactive".
+// isCurrentNodeInteractive checks if the specified node in the workflow
+// snapshot is of type "interactive". Uses the shared engine.FindNodeByID helper.
 func isCurrentNodeInteractive(snapshot map[string]any, nodeID string) bool {
-	if snapshot == nil {
-		return false
-	}
-	wfBytes, err := json.Marshal(snapshot)
+	node, err := engine.FindNodeByID(snapshot, nodeID)
 	if err != nil {
 		return false
 	}
-	var wf workflow.Workflow
-	if err := json.Unmarshal(wfBytes, &wf); err != nil {
-		return false
-	}
-	for _, node := range wf.Nodes {
-		if node.ID == nodeID {
-			return node.Type == workflow.NodeTypeInteractive
-		}
-	}
-	return false
+	return node.Type == workflow.NodeTypeInteractive
 }
 
 // retryRequest is the optional JSON body for retrying an instance.

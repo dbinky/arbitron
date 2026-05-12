@@ -32,7 +32,7 @@ type mockConversationHandler struct {
 	handleCalls    []handleMessageCall
 	endCalls       []uuid.UUID
 	handleMessageFn func(ctx context.Context, instanceID uuid.UUID, content string) error
-	endSessionFn    func(ctx context.Context, instanceID uuid.UUID) error
+	endSessionFn    func(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
 }
 
 type handleMessageCall struct {
@@ -51,7 +51,7 @@ func (m *mockConversationHandler) HandleMessage(ctx context.Context, instanceID 
 	return nil
 }
 
-func (m *mockConversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) error {
+func (m *mockConversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error) {
 	m.mu.Lock()
 	m.endCalls = append(m.endCalls, instanceID)
 	fn := m.endSessionFn
@@ -59,7 +59,7 @@ func (m *mockConversationHandler) EndSession(ctx context.Context, instanceID uui
 	if fn != nil {
 		return fn(ctx, instanceID)
 	}
-	return nil
+	return nil, nil
 }
 
 func newStreamTestServer(instRepo *mockInstanceRepo, bus engine.EventBus) *httptest.Server {
@@ -785,7 +785,7 @@ func TestStreamHandler_InteractiveSend_ErrorReturnsInteractiveError(t *testing.T
 	bus := eventbus.New()
 	convo := &mockConversationHandler{
 		handleMessageFn: func(_ context.Context, _ uuid.UUID, _ string) error {
-			return fmt.Errorf("conversation: instance %s not in interactive wait state (state: running)", uuid.Nil)
+			return fmt.Errorf("conversation: %w", instance.ErrNotInteractiveWait)
 		},
 	}
 
@@ -818,7 +818,8 @@ func TestStreamHandler_InteractiveSend_ErrorReturnsInteractiveError(t *testing.T
 	assert.Equal(t, "interactive.error", evt["type"])
 	data, ok := evt["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(t, data["message"], "not in interactive wait state")
+	// Generic client-safe message, not the raw error string.
+	assert.Equal(t, "No active interactive session", data["message"])
 
 	// Verify the error event carries a non-zero timestamp. If Timestamp were
 	// accidentally removed from interactiveErrorEvent the frontend would display
@@ -839,8 +840,8 @@ func TestStreamHandler_InteractiveEnd_ErrorReturnsInteractiveError(t *testing.T)
 	instRepo := newMockInstanceRepo()
 	bus := eventbus.New()
 	convo := &mockConversationHandler{
-		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
-			return fmt.Errorf("conversation: instance not in interactive wait state")
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return nil, fmt.Errorf("conversation: %w", instance.ErrNotInteractiveWait)
 		},
 	}
 
@@ -872,7 +873,8 @@ func TestStreamHandler_InteractiveEnd_ErrorReturnsInteractiveError(t *testing.T)
 	assert.Equal(t, "interactive.error", evt["type"])
 	data, ok := evt["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Contains(t, data["message"], "not in interactive wait state")
+	// Generic client-safe message, not the raw error string.
+	assert.Equal(t, "No active interactive session", data["message"])
 
 	tsStr, tsOk := evt["timestamp"].(string)
 	require.True(t, tsOk, "interactive.error must include a string timestamp field")

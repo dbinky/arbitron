@@ -2,8 +2,8 @@ package http
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -38,39 +38,20 @@ func (h *InteractiveHandler) EndSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.conversationHandler.EndSession(r.Context(), id); err != nil {
-		if errors.Is(err, instance.ErrNotFound) || strings.Contains(err.Error(), "not found") {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-			return
-		}
-		if strings.Contains(err.Error(), "not in interactive wait state") {
-			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to end session")
-		return
-	}
-
-	// Load the instance to get the current node ID, then load the node
-	// execution to retrieve the output.
-	inst, err := h.instances.Get(r.Context(), id)
+	output, err := h.conversationHandler.EndSession(r.Context(), id)
 	if err != nil {
-		// EndSession succeeded but we failed to load the output — return
-		// success with an empty output rather than confusing the client.
-		WriteJSON(w, http.StatusOK, map[string]any{"output": map[string]any{}})
+		switch {
+		case errors.Is(err, instance.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found")
+		case errors.Is(err, instance.ErrNotInteractiveWait):
+			WriteError(w, http.StatusConflict, "CONFLICT", "no active interactive session")
+		default:
+			slog.Error("interactive: end session failed", "instanceID", id, "error", err)
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to end session")
+		}
 		return
 	}
 
-	// After EndSession, the instance state has transitioned to "queued"
-	// and CurrentNodeID still points to the interactive node. Load its
-	// execution record for the output.
-	var output map[string]any
-	if inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
-		nodeExec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, *inst.CurrentNodeID)
-		if err == nil && nodeExec.Output != nil {
-			output = nodeExec.Output
-		}
-	}
 	if output == nil {
 		output = map[string]any{}
 	}

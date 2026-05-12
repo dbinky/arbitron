@@ -120,7 +120,7 @@ func TestIntegration_InteractiveRoundTrip_FullFlow(t *testing.T) {
 			})
 			return nil
 		},
-		endSessionFn: func(_ context.Context, instanceID uuid.UUID) error {
+		endSessionFn: func(_ context.Context, instanceID uuid.UUID) (map[string]any, error) {
 			// Transition instance to queued (simulating real handler).
 			instRepo.instances[instanceID].State = instance.StateQueued
 			// Publish interactive.ended event.
@@ -132,7 +132,7 @@ func TestIntegration_InteractiveRoundTrip_FullFlow(t *testing.T) {
 					"output": map[string]any{},
 				},
 			})
-			return nil
+			return map[string]any{}, nil
 		},
 	}
 
@@ -432,8 +432,8 @@ func TestIntegration_InteractiveEndSession_ErrorFlowsBack(t *testing.T) {
 	nodeExecRepo.executions = []*instance.NodeExecution{nodeExec}
 
 	convo := &mockConversationHandler{
-		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
-			return assert.AnError
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return nil, assert.AnError
 		},
 	}
 

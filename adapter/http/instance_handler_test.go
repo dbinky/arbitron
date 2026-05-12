@@ -80,7 +80,7 @@ func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) er
 func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
 	inst, ok := r.instances[id]
 	if !ok {
-		return nil, fmt.Errorf("instance not found: %s", id)
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	cp := *inst
 	if inst.Variables != nil {

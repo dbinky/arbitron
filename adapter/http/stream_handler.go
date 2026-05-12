@@ -3,9 +3,9 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -101,8 +101,8 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	// Verify instance exists before upgrading.
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+		if errors.Is(err, instance.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found")
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
@@ -204,18 +204,31 @@ func (h *StreamHandler) handleInbound(ctx context.Context, conn *websocket.Conn,
 	case "interactive.send":
 		handlerErr = h.conversationHandler.HandleMessage(ctx, instanceID, msg.Content)
 	case "interactive.end":
-		handlerErr = h.conversationHandler.EndSession(ctx, instanceID)
+		_, handlerErr = h.conversationHandler.EndSession(ctx, instanceID)
 	default:
 		// Unknown type — silently ignore for forward compatibility.
 		return
 	}
 
 	if handlerErr != nil {
+		// Map domain errors to generic client-safe messages. Internal details
+		// (DB errors, state machine internals) are logged server-side only.
+		var clientMsg string
+		switch {
+		case errors.Is(handlerErr, instance.ErrNotFound):
+			clientMsg = "Session not found"
+		case errors.Is(handlerErr, instance.ErrNotInteractiveWait):
+			clientMsg = "No active interactive session"
+		default:
+			clientMsg = "An error occurred processing your request"
+			slog.Error("interactive handler error", "instanceID", instanceID, "type", msg.Type, "error", handlerErr)
+		}
+
 		errEvt := interactiveErrorEvent{
 			Type:      engine.EventTypeInteractiveError,
 			Timestamp: time.Now().UTC(),
 		}
-		errEvt.Data.Message = handlerErr.Error()
+		errEvt.Data.Message = clientMsg
 
 		errData, err := json.Marshal(errEvt)
 		if err != nil {
@@ -287,25 +300,13 @@ func (h *StreamHandler) sendInteractiveHistory(ctx context.Context, conn *websoc
 }
 
 // isInteractiveNode checks if the specified node in the workflow snapshot is
-// of type "interactive".
+// of type "interactive". Uses the shared engine.FindNodeByID helper.
 func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
-	if snapshot == nil {
-		return false
-	}
-	wfBytes, err := json.Marshal(snapshot)
+	node, err := engine.FindNodeByID(snapshot, nodeID)
 	if err != nil {
 		return false
 	}
-	var wf workflow.Workflow
-	if err := json.Unmarshal(wfBytes, &wf); err != nil {
-		return false
-	}
-	for _, node := range wf.Nodes {
-		if node.ID == nodeID {
-			return node.Type == workflow.NodeTypeInteractive
-		}
-	}
-	return false
+	return node.Type == workflow.NodeTypeInteractive
 }
 
 // writeEvent serializes an event as JSON and sends it as a WebSocket text message

@@ -17,7 +17,10 @@ import (
 // session completion via tool-use, and handles user-initiated session end.
 type ConversationHandler interface {
 	HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error
-	EndSession(ctx context.Context, instanceID uuid.UUID) error
+	// EndSession ends the interactive session and returns the captured output.
+	// The output is captured before any state transition to avoid a race with
+	// the queue manager advancing the instance.
+	EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
 }
 
 // conversationHandler implements ConversationHandler.
@@ -68,19 +71,13 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 3. Parse conversation history.
 	messages := parseConversation(nodeExec.LLMConversation)
 
-	// 4. Append user message.
+	// 4. Append user message (in memory only -- not persisted until LLM succeeds).
 	messages = append(messages, map[string]any{
 		"role":    "user",
 		"content": content,
 	})
 
-	// 5. Persist updated conversation immediately (durability before LLM call).
-	nodeExec.LLMConversation = map[string]any{"messages": messages}
-	if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
-		return fmt.Errorf("conversation: persist user message: %w", err)
-	}
-
-	// 6. Publish interactive.message event for user message.
+	// 5. Publish interactive.message event for user message.
 	h.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInteractiveMessage,
 		Timestamp: time.Now(),
@@ -90,7 +87,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		},
 	})
 
-	// 7. Build the complete_session tool from output schema.
+	// 6. Build the complete_session tool from output schema.
 	var tools []LLMTool
 	if nodeConfig.OutputSchema != nil {
 		tools = append(tools, LLMTool{
@@ -100,7 +97,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		})
 	}
 
-	// 8. Build the LLM request with full conversation history.
+	// 7. Build the LLM request with full conversation history.
 	llmMessages := make([]LLMMessage, len(messages))
 	for i, msg := range messages {
 		role, _ := msg["role"].(string)
@@ -117,19 +114,127 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		Tools:        tools,
 	}
 
-	// 9. Call the LLM provider with streaming.
-	stream, err := h.llmProvider.StreamCall(ctx, req)
+	// 8. Call the LLM provider with streaming.
+	fullResponse, toolUse, err := h.streamLLMResponse(ctx, instanceID, req)
 	if err != nil {
-		return fmt.Errorf("conversation: stream call: %w", err)
+		// LLM failed -- the user message was never persisted, so there is no
+		// conversation corruption to roll back.
+		return err
 	}
 
-	// 10. Consume the stream.
+	// 9. Persist the user message and LLM response together (atomic from the
+	// conversation's perspective -- both are written in a single Update call).
+
+	// 10. Handle the response based on whether a tool was called.
+	if toolUse != nil && toolUse.Name == InteractiveCompletionToolName {
+		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, fullResponse, toolUse.Input)
+	}
+
+	// Normal response: append assistant message and persist.
+	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, fullResponse)
+}
+
+// EndSession handles user-initiated session termination. It captures existing
+// output (or stores an empty object), updates instance variables, transitions
+// the instance to queued, and publishes the interactive.ended event.
+// The output is returned to the caller so it can be sent in the HTTP response
+// before any state transition that might cause a race with the queue manager.
+func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error) {
+	// 1. Load and validate instance state.
+	inst, nodeID, _, err := h.loadAndValidate(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Load node execution record.
+	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("conversation: load node execution: %w", err)
+	}
+
+	// 3. Determine output: use existing if present, otherwise empty object.
+	output := nodeExec.Output
+	if output == nil {
+		output = map[string]any{}
+		nodeExec.Output = output
+		if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
+			return nil, fmt.Errorf("conversation: persist empty output: %w", err)
+		}
+	}
+
+	// 4. Complete the session (shared with handleSessionCompletion).
+	if err := h.completeSession(ctx, inst, instanceID, nodeID, output, "user_ended"); err != nil {
+		return nil, err
+	}
+
+	return output, nil
+}
+
+// completeSession performs the shared completion steps for both LLM-initiated
+// (tool call) and user-initiated session termination:
+//   - Update instance variables with output namespaced under node ID
+//   - Transition to queued
+//   - Publish interactive.ended event
+//   - Notify capacity freed
+func (h *conversationHandler) completeSession(
+	ctx context.Context,
+	inst *instance.Instance,
+	instanceID uuid.UUID,
+	nodeID string,
+	output map[string]any,
+	reason string,
+) error {
+	// 1. Update instance variables with output namespaced under node ID.
+	vars := inst.Variables
+	if vars == nil {
+		vars = map[string]any{}
+	}
+	vars[nodeID] = output
+	if err := h.instances.UpdateVariables(ctx, instanceID, vars); err != nil {
+		return fmt.Errorf("conversation: update instance variables: %w", err)
+	}
+
+	// 2. Transition to queued.
+	if err := h.instances.UpdateState(ctx, instanceID, instance.StateQueued); err != nil {
+		return fmt.Errorf("conversation: transition to queued: %w", err)
+	}
+
+	// 3. Publish interactive.ended event.
+	h.eventBus.Publish(instanceID, Event{
+		Type:      EventTypeInteractiveEnded,
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"reason": reason,
+			"output": output,
+		},
+	})
+
+	// 4. Notify capacity freed.
+	h.queueMgr.NotifyCapacityFreed(ctx)
+
+	return nil
+}
+
+// streamLLMResponse calls the LLM with streaming and consumes the stream,
+// publishing token events along the way. Returns the full response text and
+// any tool use detected. Used by both HandleMessage and can be shared with
+// InteractiveExecutor if needed in the future.
+func (h *conversationHandler) streamLLMResponse(
+	ctx context.Context,
+	instanceID uuid.UUID,
+	req LLMRequest,
+) (string, *LLMToolUse, error) {
+	stream, err := h.llmProvider.StreamCall(ctx, req)
+	if err != nil {
+		return "", nil, fmt.Errorf("conversation: stream call: %w", err)
+	}
+
 	var responseBuilder strings.Builder
 	var toolUse *LLMToolUse
 
 	for chunk := range stream {
 		if chunk.Error != nil {
-			return fmt.Errorf("conversation: stream error: %w", chunk.Error)
+			return "", nil, fmt.Errorf("conversation: stream error: %w", chunk.Error)
 		}
 
 		if chunk.Token != "" {
@@ -150,72 +255,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		}
 	}
 
-	fullResponse := responseBuilder.String()
-
-	// 11. Handle the response based on whether a tool was called.
-	if toolUse != nil && toolUse.Name == InteractiveCompletionToolName {
-		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, fullResponse, toolUse.Input)
-	}
-
-	// Normal response: append assistant message and persist.
-	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, fullResponse)
-}
-
-// EndSession handles user-initiated session termination. It captures existing
-// output (or stores an empty object), updates instance variables, transitions
-// the instance to queued, and publishes the interactive.ended event.
-func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) error {
-	// 1. Load and validate instance state.
-	inst, nodeID, _, err := h.loadAndValidate(ctx, instanceID)
-	if err != nil {
-		return err
-	}
-
-	// 2. Load node execution record.
-	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
-	if err != nil {
-		return fmt.Errorf("conversation: load node execution: %w", err)
-	}
-
-	// 3. Determine output: use existing if present, otherwise empty object.
-	output := nodeExec.Output
-	if output == nil {
-		output = map[string]any{}
-		nodeExec.Output = output
-		if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
-			return fmt.Errorf("conversation: persist empty output: %w", err)
-		}
-	}
-
-	// 4. Update instance variables with node output namespaced under node ID.
-	vars := inst.Variables
-	if vars == nil {
-		vars = map[string]any{}
-	}
-	vars[nodeID] = output
-	if err := h.instances.UpdateVariables(ctx, instanceID, vars); err != nil {
-		return fmt.Errorf("conversation: update instance variables: %w", err)
-	}
-
-	// 5. Transition to queued.
-	if err := h.instances.UpdateState(ctx, instanceID, instance.StateQueued); err != nil {
-		return fmt.Errorf("conversation: transition to queued: %w", err)
-	}
-
-	// 6. Publish interactive.ended event.
-	h.eventBus.Publish(instanceID, Event{
-		Type:      EventTypeInteractiveEnded,
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"reason": "user_ended",
-			"output": output,
-		},
-	})
-
-	// 7. Notify capacity freed.
-	h.queueMgr.NotifyCapacityFreed(ctx)
-
-	return nil
+	return responseBuilder.String(), toolUse, nil
 }
 
 // loadAndValidate loads an instance and verifies it is in the waiting state
@@ -228,11 +268,11 @@ func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uu
 	}
 
 	if inst.State != instance.StateWaiting {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s not in interactive wait state (state: %s)", instanceID, inst.State)
+		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s (state: %s): %w", instanceID, inst.State, instance.ErrNotInteractiveWait)
 	}
 
 	if inst.CurrentNodeID == nil || *inst.CurrentNodeID == "" {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s has no current node", instanceID)
+		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s has no current node: %w", instanceID, instance.ErrNotInteractiveWait)
 	}
 	nodeID := *inst.CurrentNodeID
 
@@ -248,25 +288,38 @@ func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uu
 // findInteractiveNodeConfig parses the workflow snapshot and returns the config
 // for the specified node, verifying it is an interactive node.
 func findInteractiveNodeConfig(snapshot map[string]any, nodeID string) (workflow.NodeConfig, error) {
+	node, err := FindNodeByID(snapshot, nodeID)
+	if err != nil {
+		return workflow.NodeConfig{}, fmt.Errorf("conversation: %w", err)
+	}
+
+	if node.Type != workflow.NodeTypeInteractive {
+		return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
+	}
+	return node.Config, nil
+}
+
+// FindNodeByID parses a workflow snapshot and returns the node with the given ID.
+// This is the shared helper that eliminates the duplicated marshal/unmarshal
+// pattern across instance_handler.go, stream_handler.go, and conversation.go.
+func FindNodeByID(snapshot map[string]any, nodeID string) (*workflow.Node, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("workflow snapshot is nil")
+	}
 	wfBytes, err := json.Marshal(snapshot)
 	if err != nil {
-		return workflow.NodeConfig{}, fmt.Errorf("conversation: marshal workflow snapshot: %w", err)
+		return nil, fmt.Errorf("marshal workflow snapshot: %w", err)
 	}
 	var wf workflow.Workflow
 	if err := json.Unmarshal(wfBytes, &wf); err != nil {
-		return workflow.NodeConfig{}, fmt.Errorf("conversation: parse workflow snapshot: %w", err)
+		return nil, fmt.Errorf("parse workflow snapshot: %w", err)
 	}
-
-	for _, node := range wf.Nodes {
-		if node.ID == nodeID {
-			if node.Type != workflow.NodeTypeInteractive {
-				return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
-			}
-			return node.Config, nil
+	for i := range wf.Nodes {
+		if wf.Nodes[i].ID == nodeID {
+			return &wf.Nodes[i], nil
 		}
 	}
-
-	return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s not found in workflow snapshot", nodeID)
+	return nil, fmt.Errorf("node %s not found in workflow snapshot", nodeID)
 }
 
 // parseConversation extracts the messages array from an LLM conversation map.
@@ -324,39 +377,14 @@ func (h *conversationHandler) handleSessionCompletion(
 		return fmt.Errorf("conversation: persist session completion: %w", err)
 	}
 
-	// 4. Update instance variables with output namespaced under node ID.
+	// 4. Reload instance for fresh variables (avoids stale read).
 	inst, err := h.instances.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("conversation: reload instance for variables: %w", err)
 	}
-	vars := inst.Variables
-	if vars == nil {
-		vars = map[string]any{}
-	}
-	vars[nodeID] = toolInput
-	if err := h.instances.UpdateVariables(ctx, instanceID, vars); err != nil {
-		return fmt.Errorf("conversation: update instance variables: %w", err)
-	}
 
-	// 5. Transition to queued.
-	if err := h.instances.UpdateState(ctx, instanceID, instance.StateQueued); err != nil {
-		return fmt.Errorf("conversation: transition to queued: %w", err)
-	}
-
-	// 6. Publish interactive.ended event.
-	h.eventBus.Publish(instanceID, Event{
-		Type:      EventTypeInteractiveEnded,
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"reason": "llm_completed",
-			"output": toolInput,
-		},
-	})
-
-	// 7. Notify capacity freed.
-	h.queueMgr.NotifyCapacityFreed(ctx)
-
-	return nil
+	// 5. Complete the session (shared steps).
+	return h.completeSession(ctx, inst, instanceID, nodeID, toolInput, "llm_completed")
 }
 
 // handleNormalResponse appends the assistant's text response to the conversation

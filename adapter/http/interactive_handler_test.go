@@ -31,20 +31,12 @@ func TestInteractiveHandler_EndSession_Success(t *testing.T) {
 	inst.CurrentNodeID = &nodeID
 	instRepo.instances[inst.ID] = inst
 
-	// Create a node execution with output.
-	nodeExecRepo.executions = []*instance.NodeExecution{
-		{
-			ID:         uuid.New(),
-			InstanceID: inst.ID,
-			NodeID:     "review-design",
-			Attempt:    1,
-			Status:     instance.NodeStatusSucceeded,
-			Output:     map[string]any{"approved": true},
-			StartedAt:  time.Now(),
+	// The mock EndSession now returns the output directly.
+	convo := &mockConversationHandler{
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return map[string]any{"approved": true}, nil
 		},
 	}
-
-	convo := &mockConversationHandler{}
 	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
 
 	req := httptest.NewRequest(http.MethodPost, "/instances/"+inst.ID.String()+"/interact/end", nil)
@@ -74,8 +66,8 @@ func TestInteractiveHandler_EndSession_NotFound(t *testing.T) {
 	nodeExecRepo := newMockNodeExecRepo()
 
 	convo := &mockConversationHandler{
-		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
-			return fmt.Errorf("conversation: load instance: %w", instance.ErrNotFound)
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return nil, fmt.Errorf("conversation: load instance: %w", instance.ErrNotFound)
 		},
 	}
 	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
@@ -98,8 +90,8 @@ func TestInteractiveHandler_EndSession_InvalidState(t *testing.T) {
 	nodeExecRepo := newMockNodeExecRepo()
 
 	convo := &mockConversationHandler{
-		endSessionFn: func(_ context.Context, id uuid.UUID) error {
-			return fmt.Errorf("conversation: instance %s not in interactive wait state (state: running)", id)
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return nil, fmt.Errorf("conversation: %w", instance.ErrNotInteractiveWait)
 		},
 	}
 	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
@@ -122,8 +114,8 @@ func TestInteractiveHandler_EndSession_InternalError(t *testing.T) {
 	nodeExecRepo := newMockNodeExecRepo()
 
 	convo := &mockConversationHandler{
-		endSessionFn: func(_ context.Context, _ uuid.UUID) error {
-			return fmt.Errorf("db: connection reset by peer")
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return nil, fmt.Errorf("db: connection reset by peer")
 		},
 	}
 	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
@@ -192,7 +184,11 @@ func TestRouter_InteractEndRoute(t *testing.T) {
 		},
 	}
 
-	convo := &mockConversationHandler{}
+	convo := &mockConversationHandler{
+		endSessionFn: func(_ context.Context, _ uuid.UUID) (map[string]any, error) {
+			return map[string]any{"result": "ok"}, nil
+		},
+	}
 	router := adapthttp.NewRouterWithConversation(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, convo)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances/"+inst.ID.String()+"/interact/end", nil)

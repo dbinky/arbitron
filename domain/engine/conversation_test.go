@@ -426,7 +426,7 @@ func TestConversationHandler_HandleMessage_NotWaiting_ReturnsError(t *testing.T)
 
 	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not in interactive wait state")
+	assert.ErrorIs(t, err, instance.ErrNotInteractiveWait)
 }
 
 func TestConversationHandler_HandleMessage_NotInteractiveNode_ReturnsError(t *testing.T) {
@@ -515,7 +515,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_PreservesOutput(t *te
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	// Verify the existing output was preserved.
@@ -535,7 +535,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_TransitionsToQueued(t
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -554,7 +554,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_UpdatesVariables(t *t
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -575,7 +575,7 @@ func TestConversationHandler_EndSession_WithoutOutput_StoresEmptyObject(t *testi
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
@@ -589,7 +589,7 @@ func TestConversationHandler_EndSession_WithoutOutput_TransitionsToQueued(t *tes
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -602,7 +602,7 @@ func TestConversationHandler_EndSession_PublishesEndedEvent(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	endedEvents := eventBus.eventsOfType(instanceID, "interactive.ended")
@@ -618,7 +618,7 @@ func TestConversationHandler_EndSession_NotifiesCapacityFreed(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.NoError(t, err)
 
 	select {
@@ -642,9 +642,9 @@ func TestConversationHandler_EndSession_NotWaiting_ReturnsError(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not in interactive wait state")
+	assert.ErrorIs(t, err, instance.ErrNotInteractiveWait)
 }
 
 func TestConversationHandler_EndSession_InstanceNotFound_ReturnsError(t *testing.T) {
@@ -655,7 +655,7 @@ func TestConversationHandler_EndSession_InstanceNotFound_ReturnsError(t *testing
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), uuid.New())
+	_, err := handler.EndSession(context.Background(), uuid.New())
 	require.Error(t, err)
 }
 
@@ -668,7 +668,7 @@ func TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError(t *testing
 
 	handler := buildConversationHandler(instRepo, emptyNodeExecRepo, nil, eventBus, queueMgr)
 
-	err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(context.Background(), instanceID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "load node execution")
 }
