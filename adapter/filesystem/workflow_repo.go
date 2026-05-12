@@ -148,3 +148,77 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 
 	return nil
 }
+
+// Create creates a new workflow directory and writes its workflow.json manifest.
+// It returns an error if the workflow already exists or the name is invalid.
+func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workflow) error {
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	// Fail if the directory already exists.
+	if _, err := os.Stat(wfDir); err == nil {
+		return fmt.Errorf("workflow already exists: %s", name)
+	}
+
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		return fmt.Errorf("creating workflow directory %q: %w", name, err)
+	}
+
+	data, err := json.MarshalIndent(wf, "", "  ")
+	if err != nil {
+		// Rollback: remove the directory we just created.
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("marshalling workflow %q: %w", name, err)
+	}
+	data = append(data, '\n')
+
+	manifestPath := filepath.Join(wfDir, "workflow.json")
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// Update atomically replaces the workflow.json manifest for an existing workflow.
+// It returns an error if the workflow does not exist.
+func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
+	_ = name
+	_ = wf
+	return fmt.Errorf("not implemented")
+}
+
+// Delete removes an entire workflow directory and all its contents.
+// It returns an error if the workflow does not exist.
+func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
+	_ = name
+	return fmt.Errorf("not implemented")
+}
+
+// WriteFile writes content to a file at relativePath inside the named workflow
+// directory, creating intermediate directories as needed.
+func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
+	_ = name
+	_ = relativePath
+	_ = content
+	return fmt.Errorf("not implemented")
+}
+
+// DeleteFile removes a single file from inside the named workflow directory.
+func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
+	_ = name
+	_ = relativePath
+	return fmt.Errorf("not implemented")
+}
+
+// ListFiles returns all file paths inside the named workflow directory,
+// excluding workflow.json. Paths use forward slashes and are relative to the
+// workflow directory.
+func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
+	_ = name
+	return nil, fmt.Errorf("not implemented")
+}

@@ -61,12 +61,33 @@ func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[
 	return nil
 }
 
+func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
+func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
+func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error                      { return nil }
+func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+	return nil
+}
+func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return nil }
+func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 type errWorkflowRepo struct{ err error }
 
-func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error)    { return nil, r.err }
-func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)    { return nil, r.err }
+func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error) { return nil, r.err }
+func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)  { return nil, r.err }
 func (r *errWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
 	return r.err
+}
+func (r *errWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return r.err }
+func (r *errWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return r.err }
+func (r *errWorkflowRepo) Delete(_ context.Context, _ string) error                      { return r.err }
+func (r *errWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+	return r.err
+}
+func (r *errWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return r.err }
+func (r *errWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+	return nil, r.err
 }
 
 type mockWorkflowService struct {

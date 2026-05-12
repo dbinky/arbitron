@@ -2,6 +2,7 @@ package filesystem_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,4 +182,106 @@ func TestWorkflowRepo_Load_PathTraversalRejected(t *testing.T) {
 	_, err := repo.Load(context.Background(),"../sibling")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// ---------------------------------------------------------------------------
+// Helper: create a temp dir for write tests
+// ---------------------------------------------------------------------------
+
+func tmpWorkspace(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	return dir
+}
+
+func sampleWorkflow(name string) *workflow.Workflow {
+	return &workflow.Workflow{
+		Name:        name,
+		Description: "test workflow",
+		Author:      "tester",
+		Nodes: []workflow.Node{
+			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true, Config: workflow.NodeConfig{ScriptFile: "run.sh"}},
+		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Create
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_Create_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("my-workflow")
+	err := repo.Create(ctx, "my-workflow", wf)
+	require.NoError(t, err)
+
+	// Verify the workflow.json was written
+	data, err := os.ReadFile(filepath.Join(dir, "my-workflow", "workflow.json"))
+	require.NoError(t, err)
+
+	var loaded workflow.Workflow
+	require.NoError(t, json.Unmarshal(data, &loaded))
+	assert.Equal(t, "my-workflow", loaded.Name)
+	assert.Equal(t, "test workflow", loaded.Description)
+	assert.Equal(t, "tester", loaded.Author)
+	assert.Len(t, loaded.Nodes, 1)
+}
+
+func TestWorkflowRepo_Create_AlreadyExists(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("existing")
+	require.NoError(t, repo.Create(ctx, "existing", wf))
+
+	// Creating again should fail
+	err := repo.Create(ctx, "existing", wf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestWorkflowRepo_Create_PathTraversalRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("evil")
+	err := repo.Create(ctx, "../escape", wf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_Create_LoadRoundTrip(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("roundtrip")
+	require.NoError(t, repo.Create(ctx, "roundtrip", wf))
+
+	loaded, err := repo.Load(ctx, "roundtrip")
+	require.NoError(t, err)
+	assert.Equal(t, wf.Name, loaded.Name)
+	assert.Equal(t, wf.Description, loaded.Description)
+	assert.Equal(t, wf.Author, loaded.Author)
+	assert.Len(t, loaded.Nodes, len(wf.Nodes))
+}
+
+func TestWorkflowRepo_Create_SpecialCharsInName(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	// Workflow names with dashes, numbers, underscores should be fine
+	wf := sampleWorkflow("my_workflow-2")
+	err := repo.Create(ctx, "my_workflow-2", wf)
+	require.NoError(t, err)
+
+	loaded, err := repo.Load(ctx, "my_workflow-2")
+	require.NoError(t, err)
+	assert.Equal(t, "my_workflow-2", loaded.Name)
 }
