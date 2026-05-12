@@ -532,3 +532,82 @@ func TestWorkflowRepo_WriteFile_OverwriteExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(data))
 }
+
+// ---------------------------------------------------------------------------
+// Tests: DeleteFile
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_DeleteFile_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-del", sampleWorkflow("wf-del")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-del", "script.sh", []byte("#!/bin/bash")))
+
+	err := repo.DeleteFile(ctx, "wf-del", "script.sh")
+	require.NoError(t, err)
+
+	_, err = os.Stat(filepath.Join(dir, "wf-del", "script.sh"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestWorkflowRepo_DeleteFile_FileNotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-del2", sampleWorkflow("wf-del2")))
+
+	err := repo.DeleteFile(ctx, "wf-del2", "nonexistent.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_DeleteFile_WorkflowNotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.DeleteFile(ctx, "ghost-wf", "file.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_DeleteFile_PathTraversalWorkflowName(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.DeleteFile(ctx, "../escape", "file.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_DeleteFile_PathTraversalRelativePath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-del3", sampleWorkflow("wf-del3")))
+
+	err := repo.DeleteFile(ctx, "wf-del3", "../workflow.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid file path")
+}
+
+func TestWorkflowRepo_DeleteFile_LeavesManifestIntact(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-del4", sampleWorkflow("wf-del4")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-del4", "only-file.txt", []byte("content")))
+
+	// Delete the only non-manifest file
+	require.NoError(t, repo.DeleteFile(ctx, "wf-del4", "only-file.txt"))
+
+	// Manifest should still be there
+	_, err := repo.Load(ctx, "wf-del4")
+	require.NoError(t, err)
+}

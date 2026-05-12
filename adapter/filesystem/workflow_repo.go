@@ -282,9 +282,35 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 
 // DeleteFile removes a single file from inside the named workflow directory.
 func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
-	_ = name
-	_ = relativePath
-	return fmt.Errorf("not implemented")
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workflow not found: %s", name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	// Path-traversal check on relativePath against the workflow directory.
+	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
+	targetPath := filepath.Join(wfDir, relativePath)
+	if !strings.HasPrefix(targetPath, wfRoot) {
+		return fmt.Errorf("invalid file path: %s", relativePath)
+	}
+
+	if err := os.Remove(targetPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s in workflow %s", relativePath, name)
+		}
+		return fmt.Errorf("deleting file %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	return nil
 }
 
 // ListFiles returns all file paths inside the named workflow directory,
