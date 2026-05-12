@@ -35,15 +35,16 @@ type QueueManagerPort interface {
 // Deps holds the domain dependencies injected into MCP tool handlers.
 // Each field corresponds to a port from the hexagonal architecture.
 type Deps struct {
-	Engine        EngineService
-	Workflows     workflow.WorkflowRepository
-	Instances     instance.InstanceRepository
-	NodeExecs     instance.NodeExecutionRepository
-	Snapshots     instance.VariableSnapshotRepository
-	FileReader    engine.FileReader
-	EventBus      engine.EventBus
-	Config        *config.Config
-	QueueManager  QueueManagerPort
-	QueueRepo     instance.QueueRepository
-	Notifications notification.Repository
+	Engine              EngineService
+	Workflows           workflow.WorkflowRepository
+	Instances           instance.InstanceRepository
+	NodeExecs           instance.NodeExecutionRepository
+	Snapshots           instance.VariableSnapshotRepository
+	FileReader          engine.FileReader
+	EventBus            engine.EventBus
+	Config              *config.Config
+	QueueManager        QueueManagerPort
+	QueueRepo           instance.QueueRepository
+	Notifications       notification.Repository
+	ConversationHandler engine.ConversationHandler
 }

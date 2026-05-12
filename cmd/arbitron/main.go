@@ -136,17 +136,18 @@ func (ds *domainStack) Close(ctx context.Context) {
 // mcpDeps builds the MCP adapter Deps from the shared domain stack.
 func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 	return &adaptmcp.Deps{
-		Engine:        ds.eng,
-		Workflows:     ds.workflowRepo,
-		Instances:     ds.instanceRepo,
-		NodeExecs:     ds.nodeExecRepo,
-		Snapshots:     ds.snapshotRepo,
-		FileReader:    ds.fileReader,
-		EventBus:      ds.bus,
-		Config:        ds.cfg,
-		QueueManager:  ds.queueMgr,
-		QueueRepo:     ds.queueRepo,
-		Notifications: ds.notifRepo,
+		Engine:              ds.eng,
+		Workflows:           ds.workflowRepo,
+		Instances:           ds.instanceRepo,
+		NodeExecs:           ds.nodeExecRepo,
+		Snapshots:           ds.snapshotRepo,
+		FileReader:          ds.fileReader,
+		EventBus:            ds.bus,
+		Config:              ds.cfg,
+		QueueManager:        ds.queueMgr,
+		QueueRepo:           ds.queueRepo,
+		Notifications:       ds.notifRepo,
+		ConversationHandler: ds.conversationHandler,
 	}
 }
 
