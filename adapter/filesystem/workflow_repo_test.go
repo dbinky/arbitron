@@ -611,3 +611,92 @@ func TestWorkflowRepo_DeleteFile_LeavesManifestIntact(t *testing.T) {
 	_, err := repo.Load(ctx, "wf-del4")
 	require.NoError(t, err)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: ListFiles
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_ListFiles_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-list", sampleWorkflow("wf-list")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list", "script.sh", []byte("#!/bin/bash")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list", "templates/prompt.md", []byte("# Hi")))
+
+	files, err := repo.ListFiles(ctx, "wf-list")
+	require.NoError(t, err)
+
+	// Should include script.sh and templates/prompt.md but NOT workflow.json
+	assert.Contains(t, files, "script.sh")
+	assert.Contains(t, files, "templates/prompt.md")
+	assert.NotContains(t, files, "workflow.json")
+	assert.Len(t, files, 2)
+}
+
+func TestWorkflowRepo_ListFiles_ExcludesWorkflowJSON(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-list2", sampleWorkflow("wf-list2")))
+
+	// Only workflow.json exists
+	files, err := repo.ListFiles(ctx, "wf-list2")
+	require.NoError(t, err)
+	assert.Empty(t, files)
+}
+
+func TestWorkflowRepo_ListFiles_WorkflowNotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	_, err := repo.ListFiles(ctx, "nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_ListFiles_PathTraversalRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	_, err := repo.ListFiles(ctx, "../escape")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_ListFiles_ForwardSlashes(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-list3", sampleWorkflow("wf-list3")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list3", "a/b/c/deep.txt", []byte("deep")))
+
+	files, err := repo.ListFiles(ctx, "wf-list3")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	// Paths must use forward slashes regardless of OS
+	assert.Equal(t, "a/b/c/deep.txt", files[0])
+}
+
+func TestWorkflowRepo_ListFiles_NestedDirs(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-list4", sampleWorkflow("wf-list4")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "scripts/run.sh", []byte("run")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "scripts/setup.sh", []byte("setup")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "templates/main.md", []byte("main")))
+
+	files, err := repo.ListFiles(ctx, "wf-list4")
+	require.NoError(t, err)
+	assert.Len(t, files, 3)
+	assert.Contains(t, files, "scripts/run.sh")
+	assert.Contains(t, files, "scripts/setup.sh")
+	assert.Contains(t, files, "templates/main.md")
+}

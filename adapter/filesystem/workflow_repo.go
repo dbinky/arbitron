@@ -317,6 +317,48 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath s
 // excluding workflow.json. Paths use forward slashes and are relative to the
 // workflow directory.
 func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
-	_ = name
-	return nil, fmt.Errorf("not implemented")
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return nil, fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("workflow not found: %s", name)
+		}
+		return nil, fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	var files []string
+	err := filepath.WalkDir(wfDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(wfDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Use forward slashes regardless of OS.
+		rel = filepath.ToSlash(rel)
+
+		// Exclude the manifest file.
+		if rel == "workflow.json" {
+			return nil
+		}
+
+		files = append(files, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing files in workflow %q: %w", name, err)
+	}
+
+	return files, nil
 }
