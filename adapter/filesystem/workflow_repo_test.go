@@ -357,3 +357,74 @@ func TestWorkflowRepo_Update_AtomicWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "atomically updated", loaded.Description)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Delete
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_Delete_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("doomed")
+	require.NoError(t, repo.Create(ctx, "doomed", wf))
+
+	// Verify it exists
+	_, err := repo.Load(ctx, "doomed")
+	require.NoError(t, err)
+
+	// Delete
+	err = repo.Delete(ctx, "doomed")
+	require.NoError(t, err)
+
+	// Verify it's gone
+	_, err = repo.Load(ctx, "doomed")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+
+	// Verify directory is removed
+	_, err = os.Stat(filepath.Join(dir, "doomed"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestWorkflowRepo_Delete_NotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.Delete(ctx, "nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_Delete_PathTraversalRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	err := repo.Delete(ctx, "../escape")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_Delete_WithExtraFiles(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("with-files")
+	require.NoError(t, repo.Create(ctx, "with-files", wf))
+
+	// Add extra files
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "with-files", "script.sh"), []byte("#!/bin/bash"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "with-files", "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "with-files", "sub", "data.txt"), []byte("data"), 0o644))
+
+	// Delete should remove everything
+	err := repo.Delete(ctx, "with-files")
+	require.NoError(t, err)
+
+	_, err = os.Stat(filepath.Join(dir, "with-files"))
+	assert.True(t, os.IsNotExist(err))
+}

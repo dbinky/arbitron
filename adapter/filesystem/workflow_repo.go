@@ -223,8 +223,24 @@ func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workf
 // Delete removes an entire workflow directory and all its contents.
 // It returns an error if the workflow does not exist.
 func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
-	_ = name
-	return fmt.Errorf("not implemented")
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workflow not found: %s", name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	if err := os.RemoveAll(wfDir); err != nil {
+		return fmt.Errorf("deleting workflow %q: %w", name, err)
+	}
+
+	return nil
 }
 
 // WriteFile writes content to a file at relativePath inside the named workflow
