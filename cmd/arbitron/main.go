@@ -178,9 +178,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	logNotifier := adaptnotif.NewLogNotifier(logger)
 	eng.SetExternalNotifier(logNotifier)
 
-	// 12c. Register the interactive executor now that notifRepo and logNotifier are available.
+	// 12c. Register the interactive executor. Notification creation is handled
+	// by the engine when it processes the IsWait result.
 	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr, notifRepo, logNotifier,
+		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr,
 	)
 
 	// 12d. Create the conversation handler for interactive sessions.

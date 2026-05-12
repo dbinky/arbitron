@@ -9,7 +9,6 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -79,8 +78,6 @@ func interactiveTestSetup() (
 	*mockFileReader,
 	*mockEventBus,
 	*mockQueueManager,
-	*mockNotificationRepo,
-	*mockExternalNotifierForInteractive,
 	uuid.UUID,
 ) {
 	instRepo := newMockInstanceRepo()
@@ -89,8 +86,6 @@ func interactiveTestSetup() (
 	fileReader := newMockFileReader()
 	eventBus := newMockEventBus()
 	queueMgr := newMockQueueManager()
-	notifRepo := newMockNotificationRepo()
-	extNotifier := newMockExternalNotifierForInteractive()
 
 	instanceID := uuid.New()
 	instRepo.mu.Lock()
@@ -100,36 +95,7 @@ func interactiveTestSetup() (
 	}
 	instRepo.mu.Unlock()
 
-	return instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID
-}
-
-// mockExternalNotifierForInteractive implements notification.ExternalNotifier.
-type mockExternalNotifierForInteractive struct {
-	mu       sync.Mutex
-	called   []notification.Notification
-	notifyFn func(ctx context.Context, n *notification.Notification) error
-}
-
-func newMockExternalNotifierForInteractive() *mockExternalNotifierForInteractive {
-	return &mockExternalNotifierForInteractive{}
-}
-
-func (m *mockExternalNotifierForInteractive) Notify(ctx context.Context, n *notification.Notification) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.called = append(m.called, *n)
-	if m.notifyFn != nil {
-		return m.notifyFn(ctx, n)
-	}
-	return nil
-}
-
-func (m *mockExternalNotifierForInteractive) getCalled() []notification.Notification {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cp := make([]notification.Notification, len(m.called))
-	copy(cp, m.called)
-	return cp
+	return instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID
 }
 
 func interactiveNode() workflow.Node {
@@ -160,8 +126,6 @@ func buildInteractiveExecutor(
 	fileReader *mockFileReader,
 	eventBus *mockEventBus,
 	queueMgr *mockQueueManager,
-	notifRepo *mockNotificationRepo,
-	extNotifier *mockExternalNotifierForInteractive,
 ) *engine.InteractiveExecutor {
 	return engine.NewInteractiveExecutor(
 		instRepo,
@@ -170,8 +134,6 @@ func buildInteractiveExecutor(
 		fileReader,
 		eventBus,
 		queueMgr,
-		notifRepo,
-		extNotifier,
 	)
 }
 
@@ -180,14 +142,14 @@ func buildInteractiveExecutor(
 // ---------------------------------------------------------------------------
 
 func TestInteractiveExecutor_ReadsOrchestrationFile(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration content here")
 	fileReader.files["test-wf/template.md"] = []byte("Template content")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Hello", " there"}, 10, 20)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -202,14 +164,14 @@ func TestInteractiveExecutor_ReadsOrchestrationFile(t *testing.T) {
 }
 
 func TestInteractiveExecutor_ReadsTemplateFile(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template content")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Response"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -221,7 +183,7 @@ func TestInteractiveExecutor_ReadsTemplateFile(t *testing.T) {
 }
 
 func TestInteractiveExecutor_VariableSubstitutionInTemplate(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Hello {{name}}, please review {{topic}}")
@@ -232,7 +194,7 @@ func TestInteractiveExecutor_VariableSubstitutionInTemplate(t *testing.T) {
 	vars.SetInput("name", "Alice")
 	vars.SetInput("topic", "Q3 report")
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), vars, "test-wf")
@@ -244,14 +206,14 @@ func TestInteractiveExecutor_VariableSubstitutionInTemplate(t *testing.T) {
 }
 
 func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration instructions")
 	fileReader.files["test-wf/template.md"] = []byte("Template data")
 
 	llmProvider.streamCallFn = cannedStream([]string{"response"}, 15, 25)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	node := interactiveNode()
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
@@ -292,14 +254,14 @@ func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
 }
 
 func TestInteractiveExecutor_PublishesTokenEvents(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Hello", " ", "world"}, 5, 15)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -320,14 +282,14 @@ func TestInteractiveExecutor_PublishesTokenEvents(t *testing.T) {
 }
 
 func TestInteractiveExecutor_WritesNodeExecutionRecord(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Full", " response"}, 10, 20)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -363,105 +325,20 @@ func TestInteractiveExecutor_WritesNodeExecutionRecord(t *testing.T) {
 	assert.Equal(t, 20, *exec.LLMTokensOut)
 }
 
-func TestInteractiveExecutor_CreatesNotification(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
-
-	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
-	fileReader.files["test-wf/template.md"] = []byte("Template")
-
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
-
-	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-
-	require.NoError(t, err)
-
-	notifications := notifRepo.getCreated()
-	require.Len(t, notifications, 1)
-
-	n := notifications[0]
-	assert.Equal(t, instanceID, n.InstanceID)
-	assert.Equal(t, "test-wf", n.WorkflowName)
-	assert.Equal(t, notification.TypeNeedsInteraction, n.Type)
-	assert.NotEqual(t, uuid.Nil, n.ID)
-}
-
-func TestInteractiveExecutor_CallsExternalNotifier(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
-
-	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
-	fileReader.files["test-wf/template.md"] = []byte("Template")
-
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
-
-	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-
-	require.NoError(t, err)
-
-	called := extNotifier.getCalled()
-	require.Len(t, called, 1)
-	assert.Equal(t, notification.TypeNeedsInteraction, called[0].Type)
-	assert.Equal(t, instanceID, called[0].InstanceID)
-}
-
-func TestInteractiveExecutor_ExternalNotifier_NotificationHasNonZeroCreatedAt(t *testing.T) {
-	// Boundary: the notification forwarded to the external notifier must have a
-	// non-zero CreatedAt. A zero value produces a "0001-01-01" timestamp in
-	// external systems and in the notification.created event payload.
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
-
-	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
-	fileReader.files["test-wf/template.md"] = []byte("Template")
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
-
-	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-	require.NoError(t, err)
-
-	called := extNotifier.getCalled()
-	require.Len(t, called, 1)
-	assert.False(t, called[0].CreatedAt.IsZero(), "notification.CreatedAt must not be zero when forwarded to external notifier")
-}
-
-func TestInteractiveExecutor_PublishesNotificationCreatedEvent(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
-
-	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
-	fileReader.files["test-wf/template.md"] = []byte("Template")
-
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
-
-	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-
-	require.NoError(t, err)
-
-	notifEvents := eventBus.eventsOfType(instanceID, "notification.created")
-	require.Len(t, notifEvents, 1)
-
-	data, ok := notifEvents[0].Data.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "needs_interaction", data["type"])
-}
+// Notification tests (CreatesNotification, CallsExternalNotifier,
+// ExternalNotifier_NotificationHasNonZeroCreatedAt, PublishesNotificationCreatedEvent)
+// were removed because notification creation is now handled by the engine
+// when it processes the IsWait result from the executor.
 
 func TestInteractiveExecutor_TransitionsToWaiting(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -474,14 +351,14 @@ func TestInteractiveExecutor_TransitionsToWaiting(t *testing.T) {
 }
 
 func TestInteractiveExecutor_NotifiesCapacityFreed(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -497,14 +374,14 @@ func TestInteractiveExecutor_NotifiesCapacityFreed(t *testing.T) {
 }
 
 func TestInteractiveExecutor_ReturnsIsWait(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -515,14 +392,14 @@ func TestInteractiveExecutor_ReturnsIsWait(t *testing.T) {
 }
 
 func TestInteractiveExecutor_ReturnsLLMMetadata(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Response"}, 42, 84)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -536,14 +413,14 @@ func TestInteractiveExecutor_ReturnsLLMMetadata(t *testing.T) {
 }
 
 func TestInteractiveExecutor_UserMessageCombinesOrchestrationAndTemplate(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Step 1: Do this\nStep 2: Do that")
 	fileReader.files["test-wf/template.md"] = []byte("Name: Bob\nAge: 30")
 
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -563,9 +440,9 @@ func TestInteractiveExecutor_UserMessageCombinesOrchestrationAndTemplate(t *test
 // ---------------------------------------------------------------------------
 
 func TestInteractiveExecutor_NoInstanceIDInContext_Fails(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, _ := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, _ := interactiveTestSetup()
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	// No instance ID embedded in context.
 	_, err := executor.Execute(context.Background(), interactiveNode(), variable.NewStore(), "test-wf")
@@ -574,12 +451,12 @@ func TestInteractiveExecutor_NoInstanceIDInContext_Fails(t *testing.T) {
 }
 
 func TestInteractiveExecutor_OrchestrationFileNotFound_Fails(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	// Only template file registered, no orchestration file
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -589,12 +466,12 @@ func TestInteractiveExecutor_OrchestrationFileNotFound_Fails(t *testing.T) {
 }
 
 func TestInteractiveExecutor_TemplateFileNotFound_Fails(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	// Only orchestration file registered, no template file
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -604,7 +481,7 @@ func TestInteractiveExecutor_TemplateFileNotFound_Fails(t *testing.T) {
 }
 
 func TestInteractiveExecutor_StreamCallError_Fails(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
@@ -613,7 +490,7 @@ func TestInteractiveExecutor_StreamCallError_Fails(t *testing.T) {
 		return nil, fmt.Errorf("LLM service unavailable")
 	}
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -623,7 +500,7 @@ func TestInteractiveExecutor_StreamCallError_Fails(t *testing.T) {
 }
 
 func TestInteractiveExecutor_StreamChunkError_Fails(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
@@ -636,7 +513,7 @@ func TestInteractiveExecutor_StreamChunkError_Fails(t *testing.T) {
 		return ch, nil
 	}
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -648,9 +525,9 @@ func TestInteractiveExecutor_StreamChunkError_Fails(t *testing.T) {
 func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 	// Use an instance repo that does NOT contain our instance ID so that
 	// UpdateState returns "instance not found". Every earlier step (file reads,
-	// LLM call, nodeExec.Create, notification.Create) succeeds — only the
-	// state transition fails, which must propagate as an error.
-	_, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, _ := interactiveTestSetup()
+	// LLM call, nodeExec.Create) succeeds — only the state transition fails,
+	// which must propagate as an error.
+	_, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, _ := interactiveTestSetup()
 
 	emptyInstRepo := newMockInstanceRepo() // no instances registered
 
@@ -659,7 +536,7 @@ func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
 	executor := engine.NewInteractiveExecutor(
-		emptyInstRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier,
+		emptyInstRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr,
 	)
 
 	instanceID := uuid.New()
@@ -671,14 +548,14 @@ func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 }
 
 func TestInteractiveExecutor_AccumulatesFullResponse(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	llmProvider.streamCallFn = cannedStream([]string{"Hello", " ", "World", "!"}, 5, 10)
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -697,7 +574,7 @@ func TestInteractiveExecutor_AccumulatesFullResponse(t *testing.T) {
 }
 
 func TestInteractiveExecutor_BuildsCompleteSessionTool(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
@@ -715,7 +592,7 @@ func TestInteractiveExecutor_BuildsCompleteSessionTool(t *testing.T) {
 	node := interactiveNode()
 	node.Config.OutputSchema = schema
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
@@ -737,7 +614,7 @@ func TestInteractiveExecutor_BuildsCompleteSessionTool(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInteractiveExecutor_EmptyStreamTokensSkipped(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
@@ -753,7 +630,7 @@ func TestInteractiveExecutor_EmptyStreamTokensSkipped(t *testing.T) {
 		return ch, nil
 	}
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
@@ -768,7 +645,7 @@ func TestInteractiveExecutor_EmptyStreamTokensSkipped(t *testing.T) {
 }
 
 func TestInteractiveExecutor_NoOutputSchema_NoTools(t *testing.T) {
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
@@ -778,7 +655,7 @@ func TestInteractiveExecutor_NoOutputSchema_NoTools(t *testing.T) {
 	node := interactiveNode()
 	node.Config.OutputSchema = nil // No output schema
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
@@ -790,19 +667,17 @@ func TestInteractiveExecutor_NoOutputSchema_NoTools(t *testing.T) {
 	assert.Empty(t, reqs[0].Tools)
 }
 
-func TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic(t *testing.T) {
-	// Edge: the executor must tolerate a nil ExternalNotifier. Callers that
-	// have not wired an external transport pass nil, and the executor's nil-
-	// guard must prevent a panic while still completing all other side effects.
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, _, instanceID := interactiveTestSetup()
+func TestInteractiveExecutor_NoNotificationDeps_DoesNotPanic(t *testing.T) {
+	// Notification creation is now handled by the engine when it processes
+	// the IsWait result. The executor must work without notification deps.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
-	// Pass nil explicitly as the ExternalNotifier.
 	executor := engine.NewInteractiveExecutor(
-		instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, nil,
+		instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr,
 	)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
@@ -812,42 +687,13 @@ func TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.IsWait)
 
-	// All non-external side effects must still occur.
-	notifications := notifRepo.getCreated()
-	require.Len(t, notifications, 1)
-	assert.Equal(t, notification.TypeNeedsInteraction, notifications[0].Type)
-
 	inst := instRepo.get(instanceID)
 	require.NotNil(t, inst)
 	assert.Equal(t, instance.StateWaiting, inst.State)
 }
 
-func TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution(t *testing.T) {
-	// Error: when the external notifier returns an error, the executor must
-	// log it but must not propagate it — the wait transition must still complete.
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
-
-	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
-	fileReader.files["test-wf/template.md"] = []byte("Template")
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	extNotifier.notifyFn = func(_ context.Context, _ *notification.Notification) error {
-		return fmt.Errorf("external service unavailable")
-	}
-
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
-
-	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsWait)
-
-	inst := instRepo.get(instanceID)
-	require.NotNil(t, inst)
-	assert.Equal(t, instance.StateWaiting, inst.State)
-}
+// TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution was
+// removed because notification creation is now handled by the engine.
 
 // ---------------------------------------------------------------------------
 // Tests: IsWait resumption idempotency
@@ -858,7 +704,7 @@ func TestInteractiveExecutor_ResumeAfterSessionComplete_ReturnsExistingOutput(t 
 	// re-starts the instance with CurrentNodeID still pointing at the interactive
 	// node. The executor must detect the existing NodeStatusSucceeded record and
 	// return the stored output without starting a new LLM conversation.
-	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier, instanceID := interactiveTestSetup()
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	// Pre-seed the completed node execution record that ConversationHandler leaves.
 	existingOutput := map[string]any{"summary": "session concluded"}
@@ -872,7 +718,7 @@ func TestInteractiveExecutor_ResumeAfterSessionComplete_ReturnsExistingOutput(t 
 	}
 	require.NoError(t, nodeExecRepo.Create(context.Background(), completedExec))
 
-	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, notifRepo, extNotifier)
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
 	result, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")

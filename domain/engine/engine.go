@@ -427,6 +427,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 					Timestamp: time.Now(),
 					Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 				})
+				// Emit a needs_interaction notification for interactive nodes.
+				if node.Type == workflow.NodeTypeInteractive {
+					e.emitNotification(ctx, instanceID, workflowName, notification.TypeNeedsInteraction)
+				}
 				capacityFreed = true
 				return
 			}

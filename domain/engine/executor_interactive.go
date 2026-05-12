@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -18,17 +17,16 @@ import (
 var _ NodeExecutor = (*InteractiveExecutor)(nil)
 
 // InteractiveExecutor handles interactive nodes by initiating an LLM
-// conversation, streaming the first response, creating a needs_interaction
-// notification, and transitioning the instance to the waiting state.
+// conversation, streaming the first response, and transitioning the instance
+// to the waiting state. Notification creation is handled by the engine after
+// the executor returns.
 type InteractiveExecutor struct {
-	instances        instance.InstanceRepository
-	nodeExecs        instance.NodeExecutionRepository
-	llmProvider      LLMProvider
-	fileReader       FileReader
-	eventBus         EventBus
-	queueMgr         QueueManager
-	notifications    notification.Repository
-	externalNotifier notification.ExternalNotifier
+	instances   instance.InstanceRepository
+	nodeExecs   instance.NodeExecutionRepository
+	llmProvider LLMProvider
+	fileReader  FileReader
+	eventBus    EventBus
+	queueMgr    QueueManager
 }
 
 // NewInteractiveExecutor constructs a new InteractiveExecutor with all required dependencies.
@@ -39,25 +37,20 @@ func NewInteractiveExecutor(
 	fileReader FileReader,
 	eventBus EventBus,
 	queueMgr QueueManager,
-	notifications notification.Repository,
-	externalNotifier notification.ExternalNotifier,
 ) *InteractiveExecutor {
 	return &InteractiveExecutor{
-		instances:        instances,
-		nodeExecs:        nodeExecs,
-		llmProvider:      llmProvider,
-		fileReader:       fileReader,
-		eventBus:         eventBus,
-		queueMgr:         queueMgr,
-		notifications:    notifications,
-		externalNotifier: externalNotifier,
+		instances:   instances,
+		nodeExecs:   nodeExecs,
+		llmProvider: llmProvider,
+		fileReader:  fileReader,
+		eventBus:    eventBus,
+		queueMgr:    queueMgr,
 	}
 }
 
 // Execute reads the orchestration and template files, resolves variable
 // substitutions, streams the first LLM response, writes the node execution
-// record, creates a needs_interaction notification, transitions the instance
-// to waiting, and returns a wait result.
+// record, transitions the instance to waiting, and returns a wait result.
 func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
 	// 1. Extract instance ID from context.
 	instanceID, ok := InstanceIDFromContext(ctx)
@@ -173,51 +166,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		slog.Error("interactive: failed to write node execution record", "instanceID", instanceID, "error", err)
 	}
 
-	// 12. Create notification.
-	n := &notification.Notification{
-		ID:           uuid.New(),
-		InstanceID:   instanceID,
-		WorkflowName: workflowName,
-		Type:         notification.TypeNeedsInteraction,
-		CreatedAt:    time.Now(),
-	}
-
-	// 13. Persist notification.
-	if err := e.notifications.Create(ctx, n); err != nil {
-		slog.Error("interactive: failed to create notification", "instanceID", instanceID, "error", err)
-	}
-
-	// 14. Call external notifier.
-	if e.externalNotifier != nil {
-		if err := e.externalNotifier.Notify(ctx, n); err != nil {
-			slog.Error("interactive: external notifier failed", "instanceID", instanceID, "error", err)
-		}
-	}
-
-	// 15. Publish notification.created event.
-	e.eventBus.Publish(instanceID, Event{
-		Type:      "notification.created",
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"id":           n.ID.String(),
-			"instanceId":   n.InstanceID.String(),
-			"workflowName": n.WorkflowName,
-			"type":         string(n.Type),
-			"read":         n.Read,
-			"dismissed":    n.Dismissed,
-			"createdAt":    n.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
-		},
-	})
-
-	// 16. Transition instance to waiting state.
+	// 12. Transition instance to waiting state.
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
 		return nil, fmt.Errorf("interactive %q: failed to set waiting state: %w", node.ID, err)
 	}
 
-	// 17. Notify capacity freed.
+	// 13. Notify capacity freed.
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
-	// 18. Return result with IsWait=true.
+	// 14. Return result with IsWait=true.
 	return &NodeResult{
 		IsWait:          true,
 		LLMConversation: conversation,
