@@ -18,11 +18,12 @@ When a client begins monitoring an instance (or subscribes to system-wide events
 
 Each domain event type maps to an MCP notification:
 
-- `node.started`, `node.completed`, `node.failed` — workflow progress notifications
+- `node.started`, `node.completed`, `node.failed` — workflow progress notifications. `node.completed` events include the updated instance variables so the client has the current variable state without a separate fetch.
 - `interactive.token` — LLM token streaming during interactive sessions
 - `interactive.message` — user or assistant message in an interactive session
 - `interactive.ended` — interactive session completed
-- `instance.completed`, `instance.failed`, `instance.cancelled` — instance lifecycle notifications
+- `instance.created`, `instance.started`, `instance.paused`, `instance.resumed`, `instance.retrying` — instance state transitions (used by the running skill for adaptive monitoring — e.g., detecting when an instance enters a waiting state to trigger detach)
+- `instance.completed`, `instance.failed`, `instance.cancelled` — terminal instance lifecycle notifications
 - `notification.created` — in-app notification (needs interaction, failed, completed)
 
 ### Subscription Lifecycle
