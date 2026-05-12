@@ -34,6 +34,11 @@ type interactiveErrorEvent struct {
 	} `json:"data"`
 }
 
+// wsMaxReadMessageSize is the maximum size (in bytes) of a single inbound
+// WebSocket message. Messages exceeding this limit are rejected by the
+// library, which prevents memory exhaustion from oversized payloads.
+const wsMaxReadMessageSize = 64 * 1024 // 64 KiB
+
 // StreamHandler handles WebSocket connections for streaming workflow events.
 type StreamHandler struct {
 	instances           instance.InstanceRepository
@@ -117,6 +122,9 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close(websocket.StatusInternalError, "unexpected close")
 
+	// Limit inbound message size to prevent memory exhaustion from oversized payloads.
+	conn.SetReadLimit(wsMaxReadMessageSize)
+
 	ctx := r.Context()
 
 	// If instance is already in a terminal state, send one state_changed event and close.
@@ -152,7 +160,7 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 			if err != nil {
 				return
 			}
-			h.handleInbound(ctx, conn, &writeMu, id, data)
+			h.handleInteractiveInbound(ctx, conn, &writeMu, id, data)
 		}
 	}()
 
@@ -185,9 +193,9 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleInbound parses an inbound JSON message and routes it to the appropriate
+// handleInteractiveInbound parses an inbound JSON message and routes it to the appropriate
 // handler. Unknown message types are silently ignored for forward compatibility.
-func (h *StreamHandler) handleInbound(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, instanceID uuid.UUID, data []byte) {
+func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, instanceID uuid.UUID, data []byte) {
 	var msg inboundMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		slog.Warn("stream: ignoring malformed inbound message", "error", err)

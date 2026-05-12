@@ -189,7 +189,7 @@ func TestRouter_InteractEndRoute(t *testing.T) {
 			return map[string]any{"result": "ok"}, nil
 		},
 	}
-	router := adapthttp.NewRouterWithConversation(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, convo)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, convo)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances/"+inst.ID.String()+"/interact/end", nil)
 	w := httptest.NewRecorder()

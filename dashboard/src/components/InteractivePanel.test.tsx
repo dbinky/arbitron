@@ -39,8 +39,8 @@ describe('InteractivePanel — happy path', () => {
   it('renders messages from session', () => {
     const session = makeSession({
       messages: [
-        { role: 'user', content: 'Hello' },
-        { role: 'assistant', content: 'Hi there' },
+        { role: 'user', content: 'Hello', key: 0 },
+        { role: 'assistant', content: 'Hi there', key: 1 },
       ],
     })
     render(<InteractivePanel session={session} nodeName="review-design" />)
@@ -117,7 +117,7 @@ describe('InteractivePanel — empty state', () => {
   })
 
   it('hides waiting message once messages are present', () => {
-    const session = makeSession({ messages: [{ role: 'user', content: 'hi' }] })
+    const session = makeSession({ messages: [{ role: 'user', content: 'hi', key: 0 }] })
     render(<InteractivePanel session={session} nodeName="review-design" />)
     expect(screen.queryByText(/waiting for the assistant/i)).not.toBeInTheDocument()
   })

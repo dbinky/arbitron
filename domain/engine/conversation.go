@@ -12,6 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// MaxConversationTurns is the documented upper bound for the number of
+// messages (user + assistant) in a single interactive session. This is not
+// enforced today — it exists as a documented constant so that future rate
+// limiting or auto-completion logic has a reference value. A "turn" is one
+// user message plus one assistant response (2 messages). The initial
+// orchestration message also counts.
+const MaxConversationTurns = 50
+
 // ConversationHandler is a domain service that processes user messages during
 // an active interactive session, manages the LLM conversation loop, detects
 // session completion via tool-use, and handles user-initiated session end.

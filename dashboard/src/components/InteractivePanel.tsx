@@ -32,8 +32,8 @@ export default function InteractivePanel({
         <button
           className={styles.endButton}
           onClick={session.endSession}
-          disabled={session.isEnding || !session.connected}
-          title="End the interactive session"
+          disabled={session.isEnding || session.isStreaming || !session.connected}
+          title={session.isStreaming ? 'Wait for the assistant to finish responding' : 'End the interactive session'}
         >
           End Session
         </button>
@@ -52,8 +52,8 @@ export default function InteractivePanel({
           </div>
         )}
 
-        {session.messages.map((msg, i) => (
-          <ChatMessage key={i} message={msg} />
+        {session.messages.map((msg) => (
+          <ChatMessage key={msg.key} message={msg} />
         ))}
 
         {/* Streaming content (partial assistant response) */}

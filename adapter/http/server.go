@@ -68,29 +68,8 @@ type ConversationHandlerPort = engine.ConversationHandler
 // NewRouter creates the chi router with all API routes wired up.
 // If dashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
+// conversationHandler may be nil if interactive messaging is not needed.
 func NewRouter(
-	svc EngineService,
-	workflows WorkflowRepo,
-	instances InstanceRepo,
-	nodeExecs NodeExecRepo,
-	snapshots SnapshotRepo,
-	fileReader FileReader,
-	eventBus EventBusPort,
-	cfg *config.Config,
-	queueManager QueueManagerPort,
-	queueRepo QueueRepoPort,
-	dashboardHandler http.Handler,
-	notifHandler *NotificationHandler,
-	webhookHandler ...*WebhookHandler,
-) chi.Router {
-	return NewRouterWithConversation(svc, workflows, instances, nodeExecs, snapshots, fileReader, eventBus, cfg, queueManager, queueRepo, dashboardHandler, notifHandler, nil, webhookHandler...)
-}
-
-// NewRouterWithConversation creates the chi router with all API routes wired up,
-// including the ConversationHandler for interactive WebSocket messaging.
-// If dashboardHandler is non-nil, unmatched routes fall through to the
-// embedded SPA instead of returning chi's default 404.
-func NewRouterWithConversation(
 	svc EngineService,
 	workflows WorkflowRepo,
 	instances InstanceRepo,
@@ -113,6 +92,11 @@ func NewRouterWithConversation(
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(securityHeaders)
+	// TODO(phase-6): Add authentication middleware here when multi-user support
+	// lands. Currently all endpoints (REST and WebSocket) are unauthenticated.
+	// The interactive session endpoints (WebSocket messaging and POST .../interact/end)
+	// are especially sensitive — without auth, any client can send messages to or
+	// terminate any instance's interactive session.
 
 	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
 	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)

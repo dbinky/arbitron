@@ -207,7 +207,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	dashHandler := dashboard.Handler()
 	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
 	notifHandler.SetEventBus(bus)
-	router := adapthttp.NewRouterWithConversation(
+	router := adapthttp.NewRouter(
 		eng,
 		workflowRepo,
 		instanceRepo,

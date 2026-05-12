@@ -134,6 +134,9 @@ export default function ExecutionView() {
     if (instance?.interactiveActive && instance.interactiveNodeId) {
       interactiveSession.seedFromInstance(instance.interactiveNodeId)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seedFromInstance is
+    // a stable useCallback with no deps; including interactiveSession would cause
+    // an infinite re-render loop since every state update creates a new object.
   }, [instance?.interactiveActive, instance?.interactiveNodeId])
 
   // Resolve the interactive session's nodeId to a human-readable label.

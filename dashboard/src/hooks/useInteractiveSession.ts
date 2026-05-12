@@ -6,10 +6,16 @@ import type {
 } from '../api/types'
 import { useInstanceWebSocket } from './useInstanceWebSocket'
 
+/** A message with a stable key for React list rendering. */
+export interface KeyedMessage extends InteractiveMessage {
+  /** Stable identifier for use as a React list key. */
+  key: number
+}
+
 /** State and actions returned by the useInteractiveSession hook. */
 export interface InteractiveSessionState {
   /** Complete messages in the conversation. */
-  messages: InteractiveMessage[]
+  messages: KeyedMessage[]
   /** Partial content being streamed (current assistant response). */
   streamingContent: string
   /** True while tokens are arriving. */
@@ -46,7 +52,7 @@ export interface InteractiveSessionState {
 export function useInteractiveSession(
   instanceId: string | undefined,
 ): InteractiveSessionState {
-  const [messages, setMessages] = useState<InteractiveMessage[]>([])
+  const [messages, setMessages] = useState<KeyedMessage[]>([])
   const [streamingContent, setStreamingContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [isActive, setIsActive] = useState(false)
@@ -54,14 +60,22 @@ export function useInteractiveSession(
   const [nodeId, setNodeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Counter for stable message keys, persists across re-renders.
+  const nextKeyRef = useRef(0)
+
   // Use a ref to hold the send function so event handler doesn't go stale
   const sendRef = useRef<(data: object) => void>(() => {})
+
+  const assignKey = useCallback((msg: InteractiveMessage): KeyedMessage => {
+    return { ...msg, key: nextKeyRef.current++ }
+  }, [])
 
   const handleEvent = useCallback((event: WebSocketEvent) => {
     const e = event as unknown as InteractiveEvent
     switch (e.type) {
       case 'interactive.history':
-        setMessages(e.data.messages)
+        nextKeyRef.current = 0
+        setMessages(e.data.messages.map((m) => ({ ...m, key: nextKeyRef.current++ })))
         setNodeId(e.data.nodeId)
         setIsActive(true)
         setError(null)
@@ -77,7 +91,7 @@ export function useInteractiveSession(
         }
         setMessages((prev) => [
           ...prev,
-          { role: e.data.role, content: e.data.content },
+          assignKey({ role: e.data.role, content: e.data.content }),
         ])
         break
 
@@ -105,7 +119,7 @@ export function useInteractiveSession(
         // Ignore non-interactive events (instance state changes, etc.)
         break
     }
-  }, [])
+  }, [assignKey])
 
   const { connected, send } = useInstanceWebSocket(instanceId, handleEvent)
   sendRef.current = send
