@@ -602,6 +602,24 @@ func TestWorkflowDeleteFile(t *testing.T) {
 		assert.Equal(t, "old.txt", capturedPath)
 	})
 
+	t.Run("missing name returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_delete_file", map[string]any{"path": "old.txt"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "name is required")
+	})
+
+	t.Run("missing path returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_delete_file", map[string]any{"name": "wf1"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "path is required")
+	})
+
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		repo := &stubWorkflowRepo{
 			deleteFileFn: func(_ context.Context, _, _ string) error {
@@ -612,5 +630,7 @@ func TestWorkflowDeleteFile(t *testing.T) {
 		result := callTool(t, srv, "workflow_delete_file", map[string]any{"name": "wf1", "path": "x"})
 
 		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
 	})
 }

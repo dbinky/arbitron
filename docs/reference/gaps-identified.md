@@ -4,11 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-- **[Area 4] `TestWorkflowDeleteFile` missing validation failure tests** — the handler validates both `name` and `path` before calling the repo, but there are no tests for "missing name returns error" or "missing path returns error". These are failure scenarios that leave the validation code paths untested.
-
 - **[Area 4] `TestWorkflowValidate` missing domain error test** — the handler calls `Load` before running validation; if `Load` returns an error the handler returns a tool error (`"failed to load workflow: ..."`), but there is no test for this code path. This is an error scenario gap.
 
 ## Fixed Previously
+
+- **[Area 4] `TestWorkflowDeleteFile` missing validation failure tests** — added "missing name returns error" and "missing path returns error" sub-cases; also tightened the existing domain error assertion to verify the error message text.
 
 - **[Area 4] Several workflow tool tests lacked full 5-category coverage** — `TestWorkflowUpdate` had no domain error test and no invalid-manifest-JSON test. `TestWorkflowDelete` had no domain error test. `TestWorkflowListFiles` and `TestWorkflowReadFile` had no missing-name test. All four gaps fixed by adding the missing test cases.
 
