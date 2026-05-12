@@ -422,6 +422,10 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.DeleteFile(r.Context(), name, filePath); err != nil {
+		if strings.Contains(err.Error(), "invalid file path") {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return

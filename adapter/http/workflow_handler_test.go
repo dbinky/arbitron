@@ -1435,6 +1435,26 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
+	t.Run("returns 400 for path traversal", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		repo.deleteFileFn = func(_ context.Context, _, _ string) error {
+			return fmt.Errorf("invalid file path: ../../etc/passwd")
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf/files/../../etc/passwd", nil)
+		req = withChiURLParam(req, "name", "test-wf")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("*", "../../etc/passwd")
+		w := httptest.NewRecorder()
+		h.DeleteFile(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "BAD_REQUEST", resp.Code)
+	})
+
 	t.Run("returns 500 for unexpected repo error", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.deleteFileFn = func(_ context.Context, _, _ string) error {

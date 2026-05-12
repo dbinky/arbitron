@@ -4,9 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-- **[Area 2] DeleteFile handler lacks path-traversal 400 response** — `DeleteFile` has no path-traversal detection branch. If the repo rejects a path with `"invalid file path: ..."`, the handler falls through to 500 instead of 400. Fix: add `strings.Contains(err.Error(), "invalid file path")` check before the catch-all 500, matching the pattern now used in `WriteFile`.
+_(none)_
 
 ## Fixed Previously
+
+- **[Area 2] DeleteFile handler lacked path-traversal 400 response** — `DeleteFile` had no check for `"invalid file path"` from the repo, so traversal attempts returned 500. Fixed by adding the check (matching `WriteFile`) and adding `TestWorkflowHandler_DeleteFile/returns_400_for_path_traversal`.
 
 - **[Area 2] WriteFile handler checked wrong error string for path traversal** — Handler used `strings.Contains(err.Error(), "traversal")` but the filesystem repo returns `"invalid file path: ..."`. Real traversal attempts returned 500. Fixed by changing the check to `"invalid file path"`. Test mock updated from `"path traversal detected"` to `"invalid file path: ../../etc/passwd"` to match actual repo behavior.
 
