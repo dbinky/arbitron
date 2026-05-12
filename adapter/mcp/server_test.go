@@ -5,6 +5,7 @@ import (
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/arbitron/arbitron/adapter/eventbus"
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,4 +64,37 @@ func TestServer_HTTPHandlerWithDeps(t *testing.T) {
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 	handler := srv.HTTPHandler()
 	require.NotNil(t, handler, "HTTPHandler must return a non-nil http.Handler for server with deps")
+}
+
+// Subscriptions() — failure/error/edge case tests.
+
+func TestServer_Subscriptions_NilWhenNoEventBus(t *testing.T) {
+	t.Run("NewServer returns nil Subscriptions", func(t *testing.T) {
+		// NewServer has no deps so Subscriptions must be nil.
+		srv := adaptmcp.NewServer("test", "0.0.0")
+		assert.Nil(t, srv.Subscriptions(), "Subscriptions must be nil when no EventBus provided")
+	})
+
+	t.Run("NewServerWithDeps nil deps returns nil Subscriptions", func(t *testing.T) {
+		// Nil deps must not panic and must yield nil Subscriptions.
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", nil)
+		require.NotNil(t, srv)
+		assert.Nil(t, srv.Subscriptions(), "Subscriptions must be nil when deps is nil")
+	})
+
+	t.Run("NewServerWithDeps nil EventBus returns nil Subscriptions", func(t *testing.T) {
+		// Deps provided but EventBus is the zero value (nil interface).
+		deps := &adaptmcp.Deps{} // EventBus field is nil
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		assert.Nil(t, srv.Subscriptions(), "Subscriptions must be nil when EventBus is nil")
+	})
+}
+
+func TestServer_Subscriptions_NonNilWithEventBus(t *testing.T) {
+	t.Run("NewServerWithDeps with valid EventBus returns non-nil Subscriptions", func(t *testing.T) {
+		bus := eventbus.New()
+		deps := &adaptmcp.Deps{EventBus: bus}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		require.NotNil(t, srv.Subscriptions(), "Subscriptions must be non-nil when EventBus is provided")
+	})
 }

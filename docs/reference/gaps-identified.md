@@ -4,9 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+- **[Area 3] `Listen` method has no test** — `Server.Listen(ctx, stdin, stdout)` is documented as "useful for testing (piped IO)" but is never exercised in any test. A basic smoke test sending an `initialize` JSON-RPC request over a pair of pipes would verify the transport wiring end-to-end.
 
 ## Fixed Previously
+
+- **[Area 3] `Subscriptions()` method was never tested** — Added `TestServer_Subscriptions_NilWhenNoEventBus` (nil deps, nil EventBus → nil SubscriptionManager) and `TestServer_Subscriptions_NonNilWithEventBus` (valid EventBus → non-nil SubscriptionManager) to `adapter/mcp/server_test.go`.
 
 - **[Area 2] DeleteFile handler lacked path-traversal 400 response** — `DeleteFile` had no check for `"invalid file path"` from the repo, so traversal attempts returned 500. Fixed by adding the check (matching `WriteFile`) and adding `TestWorkflowHandler_DeleteFile/returns_400_for_path_traversal`.
 
