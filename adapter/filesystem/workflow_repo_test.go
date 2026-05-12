@@ -285,3 +285,75 @@ func TestWorkflowRepo_Create_SpecialCharsInName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my_workflow-2", loaded.Name)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Update
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_Update_HappyPath(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("updatable")
+	require.NoError(t, repo.Create(ctx, "updatable", wf))
+
+	// Modify the workflow
+	wf.Description = "updated description"
+	wf.Author = "new-author"
+	err := repo.Update(ctx, "updatable", wf)
+	require.NoError(t, err)
+
+	// Verify changes persisted
+	loaded, err := repo.Load(ctx, "updatable")
+	require.NoError(t, err)
+	assert.Equal(t, "updated description", loaded.Description)
+	assert.Equal(t, "new-author", loaded.Author)
+}
+
+func TestWorkflowRepo_Update_NotFound(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("ghost")
+	err := repo.Update(ctx, "ghost", wf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestWorkflowRepo_Update_PathTraversalRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("evil")
+	err := repo.Update(ctx, "../escape", wf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_Update_AtomicWrite(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	wf := sampleWorkflow("atomic")
+	require.NoError(t, repo.Create(ctx, "atomic", wf))
+
+	// Update should not leave temp files behind
+	wf.Description = "atomically updated"
+	require.NoError(t, repo.Update(ctx, "atomic", wf))
+
+	// Verify no .tmp files remain
+	entries, err := os.ReadDir(filepath.Join(dir, "atomic"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
+	}
+
+	// Verify the update landed
+	loaded, err := repo.Load(ctx, "atomic")
+	require.NoError(t, err)
+	assert.Equal(t, "atomically updated", loaded.Description)
+}

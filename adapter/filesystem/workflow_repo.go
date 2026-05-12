@@ -187,9 +187,37 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 // Update atomically replaces the workflow.json manifest for an existing workflow.
 // It returns an error if the workflow does not exist.
 func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
-	_ = name
-	_ = wf
-	return fmt.Errorf("not implemented")
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return fmt.Errorf("invalid workflow name: %s", name)
+	}
+
+	manifestPath := filepath.Join(wfDir, "workflow.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("workflow not found: %s", name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	data, err := json.MarshalIndent(wf, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling workflow %q: %w", name, err)
+	}
+	data = append(data, '\n')
+
+	// Atomic write: temp file + rename.
+	tmp := manifestPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+	if err := os.Rename(tmp, manifestPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("committing workflow %q: %w", name, err)
+	}
+
+	return nil
 }
 
 // Delete removes an entire workflow directory and all its contents.
