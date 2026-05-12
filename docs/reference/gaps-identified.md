@@ -4,11 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+- **[Area 1] Create manifest write is not atomic** — `WorkflowRepo.Create` writes `workflow.json` directly with `os.WriteFile` (no temp-file-rename). Unlike `Update` and `SaveNodePositions`, a crash mid-write leaves a partial manifest. The directory still exists, so the next `Create` call returns "already exists" instead of succeeding. `Update` and `WriteFile` both use atomic writes. Fix: use temp-file-rename in `Create` as well.
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+- **[Area 1] WriteFile lacked atomic writes** — `WorkflowRepo.WriteFile` was using `os.WriteFile` directly, which can leave existing files in a corrupted state if the process crashes mid-overwrite. Fixed by switching to the temp-file-rename pattern already used by `Update` and `SaveNodePositions`. Test added: `TestWorkflowRepo_WriteFile_AtomicWrite` verifies no `.tmp` files remain and the correct content is written.
 
 ## Won't Fix (Beyond Current Scope)
 

@@ -273,8 +273,15 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 		return fmt.Errorf("creating directories for %q in workflow %q: %w", relativePath, name, err)
 	}
 
-	if err := os.WriteFile(targetPath, content, 0o644); err != nil {
+	// Atomic write: write to a temp file then rename so a crash mid-write
+	// never leaves an existing file in a truncated state.
+	tmp := targetPath + ".tmp"
+	if err := os.WriteFile(tmp, content, 0o644); err != nil {
 		return fmt.Errorf("writing file %q in workflow %q: %w", relativePath, name, err)
+	}
+	if err := os.Rename(tmp, targetPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("committing file %q in workflow %q: %w", relativePath, name, err)
 	}
 
 	return nil

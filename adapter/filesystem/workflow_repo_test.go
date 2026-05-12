@@ -683,6 +683,29 @@ func TestWorkflowRepo_ListFiles_ForwardSlashes(t *testing.T) {
 	assert.Equal(t, "a/b/c/deep.txt", files[0])
 }
 
+func TestWorkflowRepo_WriteFile_AtomicWrite(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "wf-atomic", sampleWorkflow("wf-atomic")))
+
+	// Overwrite to trigger the atomic path
+	require.NoError(t, repo.WriteFile(ctx, "wf-atomic", "data.txt", []byte("v1")))
+	require.NoError(t, repo.WriteFile(ctx, "wf-atomic", "data.txt", []byte("v2")))
+
+	// No .tmp files should remain after a successful write
+	entries, err := os.ReadDir(filepath.Join(dir, "wf-atomic"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "wf-atomic", "data.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(data))
+}
+
 func TestWorkflowRepo_ListFiles_NestedDirs(t *testing.T) {
 	dir := tmpWorkspace(t)
 	repo := filesystem.NewWorkflowRepo(dir)
