@@ -25,6 +25,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/postgres"
@@ -48,6 +49,7 @@ func main() {
 	}
 
 	rootCmd.AddCommand(newServeCmd())
+	rootCmd.AddCommand(newMCPCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -77,11 +79,22 @@ func redactDatabaseURL(raw string) string {
 }
 
 func newServeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the Arbitron server",
 		Long:  "Start the Arbitron HTTP server, connect to Postgres, and run migrations.",
 		RunE:  runServe,
+	}
+	cmd.Flags().Bool("mcp", false, "Also start the MCP stdio server alongside the HTTP server")
+	return cmd
+}
+
+func newMCPCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mcp",
+		Short: "Start the MCP stdio server",
+		Long:  "Start the Arbitron MCP server over stdin/stdout without the HTTP server.",
+		RunE:  runMCP,
 	}
 }
 
@@ -118,6 +131,23 @@ func (ds *domainStack) Close(ctx context.Context) {
 	}
 	ds.pool.Close()
 	ds.logCloser.Close()
+}
+
+// mcpDeps builds the MCP adapter Deps from the shared domain stack.
+func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
+	return &adaptmcp.Deps{
+		Engine:        ds.eng,
+		Workflows:     ds.workflowRepo,
+		Instances:     ds.instanceRepo,
+		NodeExecs:     ds.nodeExecRepo,
+		Snapshots:     ds.snapshotRepo,
+		FileReader:    ds.fileReader,
+		EventBus:      ds.bus,
+		Config:        ds.cfg,
+		QueueManager:  ds.queueMgr,
+		QueueRepo:     ds.queueRepo,
+		Notifications: ds.notifRepo,
+	}
 }
 
 // initDomain performs all shared initialisation: configuration, logging,
@@ -322,6 +352,19 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Optionally start MCP stdio server alongside the HTTP server.
+	mcpEnabled, _ := cmd.Flags().GetBool("mcp")
+	if mcpEnabled {
+		mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
+		adaptmcp.RegisterAllTools(mcpSrv)
+		go func() {
+			ds.logger.Info("MCP stdio server starting (alongside HTTP)")
+			if err := mcpSrv.ServeStdio(context.Background()); err != nil {
+				ds.logger.Error("MCP server error", "error", err)
+			}
+		}()
+	}
+
 	// 17. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
@@ -358,4 +401,20 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	ds.logger.Info("server stopped gracefully")
 	return nil
+}
+
+func runMCP(cmd *cobra.Command, _ []string) error {
+	ctx := cmd.Context()
+
+	ds, err := initDomain(ctx)
+	if err != nil {
+		return err
+	}
+	defer ds.Close(context.Background())
+
+	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
+	adaptmcp.RegisterAllTools(mcpSrv)
+
+	ds.logger.Info("MCP stdio server starting")
+	return mcpSrv.ServeStdio(ctx)
 }

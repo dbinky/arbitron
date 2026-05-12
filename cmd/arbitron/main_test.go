@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,4 +52,44 @@ func TestRedactDatabaseURL_EmptyPassword(t *testing.T) {
 	got := redactDatabaseURL(raw)
 	// Should not panic and should contain the username.
 	assert.Contains(t, got, "alice")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: CLI subcommands and flags
+// ---------------------------------------------------------------------------
+
+// Happy path: the "mcp" subcommand is registered on the root command.
+func TestRootCommand_HasMCPSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newServeCmd())
+	rootCmd.AddCommand(newMCPCmd())
+
+	mcpCmd, _, err := rootCmd.Find([]string{"mcp"})
+	assert.NoError(t, err)
+	assert.Equal(t, "mcp", mcpCmd.Name())
+}
+
+// Happy path: the --mcp flag exists on the serve subcommand with default false.
+func TestServeCommand_HasMCPFlag(t *testing.T) {
+	cmd := newServeCmd()
+	f := cmd.Flags().Lookup("mcp")
+	assert.NotNil(t, f, "--mcp flag must be registered on serve command")
+	assert.Equal(t, "false", f.DefValue, "--mcp flag default must be false")
+}
+
+// Happy path: the "mcp" subcommand has the expected short description.
+func TestMCPCommand_ShortDescription(t *testing.T) {
+	cmd := newMCPCmd()
+	assert.Equal(t, "Start the MCP stdio server", cmd.Short)
+}
+
+// Happy path: the "serve" subcommand is still present alongside "mcp".
+func TestRootCommand_HasServeSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newServeCmd())
+	rootCmd.AddCommand(newMCPCmd())
+
+	serveCmd, _, err := rootCmd.Find([]string{"serve"})
+	assert.NoError(t, err)
+	assert.Equal(t, "serve", serveCmd.Name())
 }
