@@ -239,17 +239,24 @@ type EngineService interface {
 	SetPriority(id uuid.UUID, priority string) error
 }
 
+// QueueManagerPort defines the queue manager operations needed by MCP tools.
+type QueueManagerPort interface {
+	UpdateConfig(globalCap, perUserCap int)
+	Evaluate(ctx context.Context) error
+}
+
 // Deps holds all domain dependencies needed by MCP tool handlers.
 type Deps struct {
-	Engine       EngineService
-	Workflows    workflow.WorkflowRepository
-	Instances    instance.InstanceRepository
-	NodeExecs    instance.NodeExecutionRepository
-	Snapshots    instance.VariableSnapshotRepository
-	FileReader   engine.FileReader
-	EventBus     engine.EventBus
-	Config       *config.Config
-	QueueRepo    instance.QueueRepository
+	Engine        EngineService
+	Workflows     workflow.WorkflowRepository
+	Instances     instance.InstanceRepository
+	NodeExecs     instance.NodeExecutionRepository
+	Snapshots     instance.VariableSnapshotRepository
+	FileReader    engine.FileReader
+	EventBus      engine.EventBus
+	Config        *config.Config
+	QueueManager  QueueManagerPort
+	QueueRepo     instance.QueueRepository
 	Notifications notification.Repository
 }
 ```
