@@ -11,6 +11,11 @@ import (
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
+// isValidPriority reports whether p is one of the three accepted priority values.
+func isValidPriority(p string) bool {
+	return p == string(instance.PriorityHigh) || p == string(instance.PriorityNormal) || p == string(instance.PriorityLow)
+}
+
 // RegisterInstanceTools registers all instance management tools with the server.
 func RegisterInstanceTools(srv *Server) {
 	srv.AddTool(
@@ -149,6 +154,9 @@ func instanceTriggerHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		priority, _ := args["priority"].(string)
+		if priority != "" && !isValidPriority(priority) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid priority %q: must be high, normal, or low", priority)), nil
+		}
 
 		id, queued, err := srv.deps.Engine.Trigger(wfName, vars, priority)
 		if err != nil {
@@ -251,6 +259,9 @@ func instanceSetPriorityHandler(srv *Server) server.ToolHandlerFunc {
 		priority, _ := args["priority"].(string)
 		if priority == "" {
 			return gomcp.NewToolResultError("priority is required"), nil
+		}
+		if !isValidPriority(priority) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid priority %q: must be high, normal, or low", priority)), nil
 		}
 
 		if err := srv.deps.Engine.SetPriority(id, priority); err != nil {

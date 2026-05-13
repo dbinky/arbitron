@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-INST-PRIO-001: instanceSetPriorityHandler and instanceTriggerHandler accept invalid priority strings
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
+**Fixed**: Iteration 19
+**Detail**: Both `instanceSetPriorityHandler` and `instanceTriggerHandler` passed the `priority` argument directly to the engine without validating it against the three valid values (`high`, `normal`, `low`). The engine performs only a type cast to `instance.Priority(priority)`, so an LLM passing `"urgent"` or `"CRITICAL"` would persist that invalid string to the database without error. Fixed by adding an `isValidPriority` helper and guarding both handlers before the engine call: `instanceSetPriorityHandler` rejects any non-empty value outside the valid set; `instanceTriggerHandler` rejects non-empty values outside the valid set (empty string still allowed as "no priority specified"). Tests added: "invalid priority value returns error" in both `TestInstanceTrigger` and `TestInstanceSetPriority`.
+
 ### MCP-WF-NIL-001: workflowGetHandler and workflowValidateHandler missing nil guards for Load returning (nil, nil)
 **Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 18

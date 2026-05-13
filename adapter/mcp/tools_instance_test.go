@@ -353,6 +353,20 @@ func TestInstanceTrigger(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow not found")
 	})
+
+	t.Run("invalid priority value returns error", func(t *testing.T) {
+		// Edge case: priority string not in {high, normal, low} must be rejected
+		// before reaching the engine; otherwise the invalid value is persisted to DB.
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_trigger", map[string]any{
+			"workflowName": "wf",
+			"priority":     "urgent",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid priority")
+	})
 }
 
 func TestInstancePause(t *testing.T) {
@@ -678,5 +692,19 @@ func TestInstanceSetPriority(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "instance not found")
+	})
+
+	t.Run("invalid priority value returns error", func(t *testing.T) {
+		// Edge case: priority not in {high, normal, low} must be rejected at the
+		// MCP layer before reaching the engine; otherwise invalid string is persisted.
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_set_priority", map[string]any{
+			"id":       uuid.New().String(),
+			"priority": "critical",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid priority")
 	})
 }
