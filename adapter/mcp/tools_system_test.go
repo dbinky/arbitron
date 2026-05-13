@@ -174,9 +174,29 @@ func TestSystemConfig(t *testing.T) {
 		assert.Contains(t, text, "5")
 	})
 
-	t.Run("queue count error returned as tool error", func(t *testing.T) {
+	t.Run("CountRunning error returned as tool error", func(t *testing.T) {
 		queueRepo := &stubQueueRepo{
 			countRunningFn: func(_ context.Context) (int, error) { return 0, errors.New("db down") },
+		}
+		srv := newSystemServer(&config.Config{}, queueRepo, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "system_config", nil)
+
+		assert.True(t, result.IsError)
+	})
+
+	t.Run("CountQueued error returned as tool error", func(t *testing.T) {
+		queueRepo := &stubQueueRepo{
+			countQueuedFn: func(_ context.Context) (int, error) { return 0, errors.New("db down") },
+		}
+		srv := newSystemServer(&config.Config{}, queueRepo, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "system_config", nil)
+
+		assert.True(t, result.IsError)
+	})
+
+	t.Run("CountWaiting error returned as tool error", func(t *testing.T) {
+		queueRepo := &stubQueueRepo{
+			countWaitingFn: func(_ context.Context) (int, error) { return 0, errors.New("db down") },
 		}
 		srv := newSystemServer(&config.Config{}, queueRepo, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
 		result := callTool(t, srv, "system_config", nil)
@@ -296,6 +316,17 @@ func TestNotificationList(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
+		// Edge case: zero notifications; handler must normalise nil to [] so
+		// LLM clients can iterate without hitting a null value.
+		srv := newSystemServer(&config.Config{}, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "notification_list", nil)
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
 }
 
 func TestNotificationUnreadCount(t *testing.T) {
@@ -309,6 +340,18 @@ func TestNotificationUnreadCount(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "7")
+	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		notifRepo := &stubNotificationRepo{
+			countUnreadFn: func(_ context.Context) (int, error) {
+				return 0, errors.New("db error")
+			},
+		}
+		srv := newSystemServer(&config.Config{}, &stubQueueRepo{}, &stubQueueManager{}, notifRepo, &stubInstanceRepo{})
+		result := callTool(t, srv, "notification_unread_count", nil)
+
+		assert.True(t, result.IsError)
 	})
 }
 
@@ -327,9 +370,30 @@ func TestNotificationMarkRead(t *testing.T) {
 		assert.False(t, result.IsError)
 		assert.True(t, called)
 	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		notifRepo := &stubNotificationRepo{
+			markAllReadFn: func(_ context.Context) error {
+				return errors.New("db error")
+			},
+		}
+		srv := newSystemServer(&config.Config{}, &stubQueueRepo{}, &stubQueueManager{}, notifRepo, &stubInstanceRepo{})
+		result := callTool(t, srv, "notification_mark_read", nil)
+
+		assert.True(t, result.IsError)
+	})
 }
 
 func TestNotificationDismiss(t *testing.T) {
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newSystemServer(&config.Config{}, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "notification_dismiss", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
+	})
+
 	t.Run("happy path dismisses notification", func(t *testing.T) {
 		expectedID := uuid.New()
 		var capturedID uuid.UUID

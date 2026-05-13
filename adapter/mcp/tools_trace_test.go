@@ -103,9 +103,37 @@ func TestTraceGet(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
+		// Edge case: no executions yet; handler must normalise nil to [] so
+		// LLM clients can iterate without hitting a null value.
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "trace_get", map[string]any{"id": uuid.New().String()})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
 }
 
 func TestTraceGetNode(t *testing.T) {
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		repo := &stubNodeExecRepo{
+			getByInstanceAndNode: func(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+				return nil, errors.New("exec not found")
+			},
+		}
+		srv := newTraceServer(repo, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "trace_get_node", map[string]any{
+			"instanceId": uuid.New().String(),
+			"nodeId":     "step1",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "exec not found")
+	})
+
 	t.Run("happy path returns node execution", func(t *testing.T) {
 		instID := uuid.New()
 		repo := &stubNodeExecRepo{
@@ -156,6 +184,24 @@ func TestTraceGetNode(t *testing.T) {
 }
 
 func TestVariablesGet(t *testing.T) {
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "variables_get", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
+	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "variables_get", map[string]any{"id": "not-a-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
 	t.Run("happy path returns instance variables", func(t *testing.T) {
 		instID := uuid.New()
 		instRepo := &stubInstanceRepo{
@@ -189,6 +235,25 @@ func TestVariablesGet(t *testing.T) {
 }
 
 func TestVariablesHistory(t *testing.T) {
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "variables_history", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
+	})
+
+	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
+		// Edge case: no snapshots yet; handler must normalise nil to [].
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "variables_history", map[string]any{"id": uuid.New().String()})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
+
 	t.Run("happy path returns snapshots", func(t *testing.T) {
 		instID := uuid.New()
 		snapRepo := &stubSnapshotRepo{

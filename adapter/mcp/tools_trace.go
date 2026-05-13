@@ -6,6 +6,8 @@ import (
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/arbitron/arbitron/domain/instance"
 )
 
 // RegisterTraceTools registers all trace and variable inspection tools with the server.
@@ -54,6 +56,9 @@ func traceGetHandler(srv *Server) server.ToolHandlerFunc {
 		execs, err := srv.deps.NodeExecs.ListByInstance(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get trace: %s", err)), nil
+		}
+		if execs == nil {
+			execs = []instance.NodeExecution{}
 		}
 		return MarshalResult(execs)
 	}
@@ -105,6 +110,9 @@ func variablesHistoryHandler(srv *Server) server.ToolHandlerFunc {
 		snapshots, err := srv.deps.Snapshots.ListByInstance(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get variable history: %s", err)), nil
+		}
+		if snapshots == nil {
+			snapshots = []instance.VariableSnapshot{}
 		}
 		return MarshalResult(snapshots)
 	}

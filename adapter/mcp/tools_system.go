@@ -143,6 +143,9 @@ func notificationListHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list notifications: %s", err)), nil
 		}
+		if notifications == nil {
+			notifications = []notification.Notification{}
+		}
 		return MarshalResult(notifications)
 	}
 }

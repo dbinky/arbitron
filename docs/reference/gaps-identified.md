@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-TRACE-001: Nil slice normalization missing in trace/system list handlers
+**Area**: MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go`)
+**Fixed**: Iteration 6
+**Detail**: Three handlers passed nil slices directly to `MarshalResult`, producing JSON `null` instead of `[]`: `traceGetHandler` (NodeExecution), `variablesHistoryHandler` (VariableSnapshot), `notificationListHandler` (Notification). Fixed by normalising nil to typed empty slices. Also added: UUID error tests for `variables_get`/`variables_history`, domain error test for `trace_get_node`, domain error tests for `notification_unread_count`/`notification_mark_read`, "missing id" test for `notification_dismiss`, and the two missing `system_config` CountQueued/CountWaiting error paths.
+
 ### MCP-INST-001: `instanceListHandler` returns JSON null instead of [] when repo returns nil slice
 **Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 5
