@@ -108,6 +108,9 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list instances: %s", err)), nil
 		}
+		if summaries == nil {
+			summaries = []instance.InstanceSummary{}
+		}
 		return MarshalResult(summaries)
 	}
 }

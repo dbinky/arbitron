@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-INST-001: `instanceListHandler` returns JSON null instead of [] when repo returns nil slice
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
+**Fixed**: Iteration 5
+**Detail**: `instanceListHandler` passed nil summaries directly to `MarshalResult`, producing JSON `null` instead of `[]`. Fixed by normalising nil to `[]instance.InstanceSummary{}` before marshalling. Also added missing nil-list edge case test in `TestInstanceList` (verifies `[]` output) and "missing id" test in `TestInstanceSetPriority`.
+
 ### MCP-WF-001: `workflowValidateHandler` and `workflowListFilesHandler` return JSON null instead of []
 **Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 4

@@ -202,6 +202,22 @@ func TestInstanceList(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
+		// Edge case: repo returns nil slice (zero instances); handler must normalise
+		// to [] so LLM clients can iterate without a nil-dereference on JSON null.
+		repo := &stubInstanceRepo{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := newInstanceServer(repo, &stubEngine{})
+		result := callTool(t, srv, "instance_list", nil)
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
 }
 
 func TestInstanceGet(t *testing.T) {
@@ -600,6 +616,17 @@ func TestInstanceSetPriority(t *testing.T) {
 
 		assert.False(t, result.IsError)
 		assert.Equal(t, "high", capturedPriority)
+	})
+
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_set_priority", map[string]any{
+			"priority": "high",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
 	})
 
 	t.Run("missing priority returns error", func(t *testing.T) {
