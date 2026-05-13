@@ -131,8 +131,8 @@ After triggering (or when the user asks to watch a running instance):
 
 ## Interactive participation flow
 
-When a workflow reaches an interactive step (detected via a notification or an
-`interactive.message` event):
+When a workflow reaches an interactive step (detected via a `notification.created`
+event with type `needs_interaction`, or directly via an `interactive.message` event):
 
 1. **Load history.** Call `interactive_get_history` to retrieve any prior
    messages in the session.
@@ -188,6 +188,7 @@ Map natural language to management tools:
 | "What happened?"                 | `trace_get`                                                            |
 | "Show node output"               | `trace_get_node`                                                       |
 | "Current variables?"             | `variables_get`                                                        |
+| "How did variables change?"      | `variables_history`                                                    |
 
 ## Behavioral guidelines
 

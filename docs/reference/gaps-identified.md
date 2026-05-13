@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### SKILL-RUN-001: Running skill interactive trigger lacked specific notification type
+**Area**: Scheduling & Running Skills (`plugin/skills/workflow-running.md`)
+**Fixed**: Iteration 13
+**Detail**: The "Interactive participation flow" trigger condition said "detected via a notification" without specifying the `needs_interaction` notification type. The design doc (phase-3.md §4) explicitly names `notification.created` with type `needs_interaction` as the signal. Without this specificity, Claude Code could respond to the wrong notifications. Fixed by updating the trigger condition to reference `notification.created` with type `needs_interaction`. Also added `variables_history` → "How did variables change?" to the instance management natural-language mapping table (it was listed in available tools but had no mapping).
+
 ### SKILL-AUTH-001: Authoring skill missing "propose and confirm" step before applying modifications
 **Area**: Plugin Package (`plugin/skills/workflow-authoring.md`)
 **Fixed**: Iteration 12

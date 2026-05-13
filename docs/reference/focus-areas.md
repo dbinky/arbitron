@@ -27,7 +27,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [x] | [ ] | |
 | 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [x] | [ ] | |
 | 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [x] | [ ] | |
-| 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [ ] | [ ] | |
+| 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [x] | [ ] | |
 | 14 | MCP-to-Domain Boundary (how MCP tool handlers translate arguments, call domain ports, and map errors — consistency across all 37 tools) | [ ] | [ ] | |
 | 15 | Test Coverage Quality (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [ ] | [ ] | |
 
