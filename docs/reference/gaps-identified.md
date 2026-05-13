@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HTTP-UPD-001: Update handler allowed body name to overwrite URL-authoritative name in workflow.json
+**Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
+**Fixed**: Iteration 16
+**Detail**: The `Update` handler decoded the request body into a `workflow.Workflow` and passed it directly to `repo.Update` without enforcing that `wf.Name` matches the URL path segment. A `PUT /workflows/prod-wf` request with body `{"name":"dev-wf", ...}` would write `workflow.json` containing `"name":"dev-wf"` inside the `prod-wf/` directory — a permanent name/directory mismatch visible on every subsequent `Load("prod-wf")` call. Fixed by setting `wf.Name = name` (from the URL param) before calling repo.Update. Added "URL name wins when body name differs" test that captures the workflow passed to the repo and asserts both the stored name and response body name equal the URL name.
+
 ### MCP-NIL-001: variablesGetHandler panics and instanceGetHandler returns null on nil-instance repo return
 **Area**: MCP Trace & Instance Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 15

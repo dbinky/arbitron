@@ -1075,6 +1075,33 @@ func TestWorkflowHandler_Update(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+
+	t.Run("URL name wins when body name differs", func(t *testing.T) {
+		// If the body contains a different name than the URL, the URL is authoritative.
+		// This prevents workflow.json from getting a name that diverges from its directory.
+		var capturedWF *workflow.Workflow
+		repo := newCrudWorkflowRepo()
+		repo.updateFn = func(_ context.Context, _ string, wf *workflow.Workflow) error {
+			capturedWF = wf
+			return nil
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		body := `{"name":"wrong-name","description":"updated"}`
+		req := httptest.NewRequest(http.MethodPut, "/workflows/real-name", strings.NewReader(body))
+		req = withChiURLParam(req, "name", "real-name")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Update(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		require.NotNil(t, capturedWF)
+		assert.Equal(t, "real-name", capturedWF.Name)
+
+		var resp workflow.Workflow
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "real-name", resp.Name)
+	})
 }
 
 // ---------------------------------------------------------------------------

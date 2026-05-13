@@ -290,6 +290,9 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
 		return
 	}
+	// URL path is authoritative for the workflow name; overwrite whatever the
+	// body contained so workflow.json stays consistent with its directory name.
+	wf.Name = name
 
 	if err := h.repo.Update(r.Context(), name, &wf); err != nil {
 		if strings.Contains(err.Error(), "not found") {
