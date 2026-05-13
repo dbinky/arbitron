@@ -255,7 +255,7 @@ func TestInteractiveGetHistory(t *testing.T) {
 		assert.Contains(t, text, "invalid instanceId")
 	})
 
-	t.Run("instance not found returns error", func(t *testing.T) {
+	t.Run("instance repo error returned as tool error", func(t *testing.T) {
 		instRepo := &stubInstanceRepo{
 			getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
 				return nil, errors.New("not found")
@@ -269,6 +269,19 @@ func TestInteractiveGetHistory(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "failed to get instance")
+	})
+
+	t.Run("nil instance without error returns not found", func(t *testing.T) {
+		// stubInstanceRepo.Get returns (nil, nil) by default — handler must guard
+		// against nil inst before accessing inst.CurrentNodeID, otherwise panics.
+		srv := newInteractiveServer(nil, &stubInstanceRepo{}, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_get_history", map[string]any{
+			"instanceId": uuid.New().String(),
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
 	})
 
 	t.Run("no current node returns error", func(t *testing.T) {

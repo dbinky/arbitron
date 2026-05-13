@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-INT-NIL-001: interactiveGetHistoryHandler missing nil guard for instance before CurrentNodeID access
+**Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
+**Fixed**: Iteration 21
+**Detail**: `interactiveGetHistoryHandler` called `inst.CurrentNodeID` without first checking if `inst` was nil. `Instances.Get` returns `(*Instance, error)`, and a repo returning `(nil, nil)` (the default stub behaviour) causes a nil pointer dereference on the field access, panicking the MCP server process. Fixed by adding a nil guard after the error check (same pattern as MCP-NIL-001, MCP-WF-NIL-001). Test added: "nil instance without error returns not found" in `TestInteractiveGetHistory`.
+
 ### MCP-INST-PRIO-001: instanceSetPriorityHandler and instanceTriggerHandler accept invalid priority strings
 **Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 19

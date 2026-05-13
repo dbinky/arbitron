@@ -90,6 +90,9 @@ func interactiveGetHistoryHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get instance: %s", err)), nil
 		}
+		if inst == nil {
+			return gomcp.NewToolResultError("instance not found"), nil
+		}
 
 		if inst.CurrentNodeID == nil || *inst.CurrentNodeID == "" {
 			return gomcp.NewToolResultError("instance has no current node"), nil
