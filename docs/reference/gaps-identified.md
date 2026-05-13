@@ -8,16 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
-
-<!--
-Example of a fixed issue entry:
-
-### MCP-WF-001: Input validation missing for empty strings
-**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
-**Fixed**: Iteration 3
-**Detail**: The `workflow_create` handler accepted empty workflow names without validation, which caused a downstream filesystem error. Added an early return with a tool error result. Added test for empty name input.
--->
+### FS-WR-001: Empty or "." workflow name bypasses path-traversal guard in write operations
+**Area**: Workflow Repository Write Ops (`adapter/filesystem/workflow_repo.go`)
+**Fixed**: Iteration 1
+**Detail**: The path-traversal guard checked `strings.HasPrefix(wfDir+sep, root)`. When `name=""` or `name="."`, `filepath.Join(basePath, name)` resolves to `basePath` itself; since `basePath+sep == root`, the guard passed. This meant `Delete("")` would call `os.RemoveAll(basePath)`, wiping the entire workspace. Fixed by adding `wfDir == filepath.Clean(r.basePath)` as an additional guard condition in all six write methods (Create, Update, Delete, WriteFile, DeleteFile, ListFiles). Added `TestWorkflowRepo_Delete_EmptyNameRejected` and `TestWorkflowRepo_Delete_DotNameRejected` to verify the fix, plus `TestWorkflowRepo_Update_PreservesOtherFiles` to cover a previously untested success scenario from the design doc.
 
 ## Won't Fix (Beyond Current Scope)
 

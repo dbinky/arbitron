@@ -154,7 +154,7 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workflow) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return fmt.Errorf("invalid workflow name: %s", name)
 	}
 
@@ -196,7 +196,7 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return fmt.Errorf("invalid workflow name: %s", name)
 	}
 
@@ -232,7 +232,7 @@ func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workf
 func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return fmt.Errorf("invalid workflow name: %s", name)
 	}
 
@@ -255,7 +255,7 @@ func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
 func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return fmt.Errorf("invalid workflow name: %s", name)
 	}
 
@@ -298,7 +298,7 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return fmt.Errorf("invalid workflow name: %s", name)
 	}
 
@@ -333,7 +333,7 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath s
 func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	wfDir := filepath.Join(r.basePath, name)
-	if !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return nil, fmt.Errorf("invalid workflow name: %s", name)
 	}
 

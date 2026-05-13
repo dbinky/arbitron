@@ -358,6 +358,32 @@ func TestWorkflowRepo_Update_PathTraversalRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
+func TestWorkflowRepo_Update_PreservesOtherFiles(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, "with-files", sampleWorkflow("with-files")))
+	require.NoError(t, repo.WriteFile(ctx, "with-files", "script.sh", []byte("#!/bin/bash")))
+	require.NoError(t, repo.WriteFile(ctx, "with-files", "templates/prompt.md", []byte("# prompt")))
+
+	// Update the manifest — other files must survive.
+	updated := sampleWorkflow("with-files")
+	updated.Description = "updated"
+	require.NoError(t, repo.Update(ctx, "with-files", updated))
+
+	// Manifest reflects the new description.
+	loaded, err := repo.Load(ctx, "with-files")
+	require.NoError(t, err)
+	assert.Equal(t, "updated", loaded.Description)
+
+	// Supporting files are untouched.
+	files, err := repo.ListFiles(ctx, "with-files")
+	require.NoError(t, err)
+	assert.Contains(t, files, "script.sh")
+	assert.Contains(t, files, "templates/prompt.md")
+}
+
 func TestWorkflowRepo_Update_AtomicWrite(t *testing.T) {
 	dir := tmpWorkspace(t)
 	repo := filesystem.NewWorkflowRepo(dir)
@@ -431,6 +457,36 @@ func TestWorkflowRepo_Delete_PathTraversalRejected(t *testing.T) {
 	err := repo.Delete(ctx, "../escape")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
+}
+
+func TestWorkflowRepo_Delete_EmptyNameRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	// An empty name resolves to the basePath itself; deleting it would wipe
+	// the entire workspace. The repo must reject this without touching anything.
+	err := repo.Delete(ctx, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+
+	// The workspace directory itself must still exist.
+	_, statErr := os.Stat(dir)
+	require.NoError(t, statErr, "basePath must not be removed by Delete with empty name")
+}
+
+func TestWorkflowRepo_Delete_DotNameRejected(t *testing.T) {
+	dir := tmpWorkspace(t)
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	// "." resolves to the basePath just like "".
+	err := repo.Delete(ctx, ".")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid workflow name")
+
+	_, statErr := os.Stat(dir)
+	require.NoError(t, statErr, "basePath must not be removed by Delete with dot name")
 }
 
 func TestWorkflowRepo_Delete_WithExtraFiles(t *testing.T) {
