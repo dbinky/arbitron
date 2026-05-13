@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### REPO-SNP-001: SaveNodePositions had no path-traversal or missing-nodes-field tests
+**Area**: Workflow Repository (`adapter/filesystem/workflow_repo_positions_test.go`)
+**Fixed**: Area 1 Pass 2
+**Detail**: All other `WorkflowRepo` methods had explicit path-traversal tests. `SaveNodePositions` was missing two: (1) `../escape` name must be rejected (the prefix check in the code is correct but untested), and (2) a `workflow.json` without a `"nodes"` key must be a no-op rather than panic/error (also correct but untested). Both tests added, both pass.
+
 ### SKILL-PARAM-001: workflow-running.md used "workflow ID" for instance_trigger instead of "workflowName"
 **Area**: Skills (`plugin/skills/workflow-running.md`)
 **Fixed**: Pair 26

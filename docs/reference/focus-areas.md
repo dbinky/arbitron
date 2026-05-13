@@ -15,7 +15,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Workflow Repository Write Ops (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go` — Create, Update, Delete, WriteFile, DeleteFile, ListFiles, path-traversal protection, atomic writes) | [x] | [ ] | |
+| 1 | Workflow Repository Write Ops (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go` — Create, Update, Delete, WriteFile, DeleteFile, ListFiles, path-traversal protection, atomic writes) | [x] | [x] | |
 | 2 | Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`, `adapter/http/server.go` — POST/PUT/DELETE /workflows, file management endpoints, input validation, error mapping) | [x] | [ ] | |
 | 3 | MCP Server Foundation (`adapter/mcp/server.go`, `adapter/mcp/deps.go`, `adapter/mcp/helpers.go` — Server construction, AddTool, ServeStdio, Listen, HTTPHandler, Deps wiring, MarshalResult, ParseUUID) | [x] | [ ] | |
 | 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [x] | [ ] | |

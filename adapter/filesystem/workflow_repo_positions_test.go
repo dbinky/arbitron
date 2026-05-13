@@ -192,3 +192,30 @@ func TestSaveNodePositions_PartialMatch(t *testing.T) {
 	_, hasC := nodeC["position"]
 	assert.True(t, hasC, "Node C should have a position")
 }
+
+func TestSaveNodePositions_PathTraversalRejected(t *testing.T) {
+	// A path-traversal name must not escape the workspace root.
+	// The repo rejects it before touching the filesystem.
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+
+	err := repo.SaveNodePositions(context.Background(), "../escape", map[string]workflow.NodePosition{
+		"A": {X: 1, Y: 2},
+	})
+	require.Error(t, err)
+	// Must not create or modify anything outside the workspace.
+	_, statErr := os.Stat(filepath.Join(filepath.Dir(base), "escape", "workflow.json"))
+	assert.True(t, os.IsNotExist(statErr), "traversal must not create files outside workspace")
+}
+
+func TestSaveNodePositions_NoNodesField(t *testing.T) {
+	// A workflow.json without a "nodes" key must return nil (no-op), not panic.
+	wfJSON := []byte(`{"name": "no-nodes", "description": "missing nodes field"}`)
+	base := newTempWorkflow(t, "no-nodes", wfJSON)
+	repo := filesystem.NewWorkflowRepo(base)
+
+	err := repo.SaveNodePositions(context.Background(), "no-nodes", map[string]workflow.NodePosition{
+		"A": {X: 10, Y: 20},
+	})
+	require.NoError(t, err, "missing nodes field must be a no-op, not an error")
+}
