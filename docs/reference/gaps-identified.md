@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HTTP-WH-001: `safeWorkflowName(".")` returns true, causing 500 on Create with name="."
+**Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: `safeWorkflowName` passed `"."` through all four guards: non-empty, no path separators, `filepath.Clean(".")` equals `"."`, and the explicit `name != ".."` check only blocked `".."`. A POST /workflows body with `{"name":"."}` reached the repo, which returned `"invalid workflow name: ."`, and the handler then returned 500 INTERNAL_ERROR instead of 400 BAD_REQUEST. Fixed by adding `name != "."` to `safeWorkflowName`. Also added missing edge-case tests: unsafe workflow name for ReadFile, WriteFile, DeleteFile, and ListFiles handlers; and a dot-name rejection test for Create.
+
 ### FS-WR-001: Empty or "." workflow name bypasses path-traversal guard in write operations
 **Area**: Workflow Repository Write Ops (`adapter/filesystem/workflow_repo.go`)
 **Fixed**: Iteration 1

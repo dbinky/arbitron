@@ -957,6 +957,24 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
+	t.Run("returns 400 for dot workflow name", func(t *testing.T) {
+		// "." resolves to the workspace root — must be rejected as a bad request,
+		// not allowed through to the repo where it would return an opaque 500.
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		body := `{"name":".","description":"dot name"}`
+		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Create(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "BAD_REQUEST", resp.Code)
+	})
+
 	t.Run("returns 500 for unexpected repo error", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.createFn = func(_ context.Context, _ string, _ *workflow.Workflow) error {
@@ -1205,6 +1223,18 @@ func TestWorkflowHandler_ListFiles(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+
+	t.Run("returns 404 for unsafe workflow name", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/workflows/../secret/files", nil)
+		req = withChiURLParam(req, "name", "../secret")
+		w := httptest.NewRecorder()
+		h.ListFiles(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,6 +1312,20 @@ func TestWorkflowHandler_ReadFile(t *testing.T) {
 		h.ReadFile(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("returns 404 for unsafe workflow name", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/workflows/../secret/files/data.txt", nil)
+		req = withChiURLParam(req, "name", "../secret")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("*", "data.txt")
+		w := httptest.NewRecorder()
+		h.ReadFile(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -1383,6 +1427,20 @@ func TestWorkflowHandler_WriteFile(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
+
+	t.Run("returns 404 for unsafe workflow name", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/workflows/../secret/files/data.txt", strings.NewReader("data"))
+		req = withChiURLParam(req, "name", "../secret")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("*", "data.txt")
+		w := httptest.NewRecorder()
+		h.WriteFile(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1470,5 +1528,19 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 		h.DeleteFile(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("returns 404 for unsafe workflow name", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/../secret/files/data.txt", nil)
+		req = withChiURLParam(req, "name", "../secret")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("*", "data.txt")
+		w := httptest.NewRecorder()
+		h.DeleteFile(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }

@@ -54,9 +54,11 @@ type triggerRequest struct {
 }
 
 // safeWorkflowName checks that a workflow name is a plain filename component
-// (no path separators, no dot-dot) to prevent directory traversal via the URL.
+// (no path separators, no dot-only names) to prevent directory traversal via
+// the URL. "." is rejected because filepath.Join(base, ".") resolves to base
+// itself, the same trap as ".." but not caught by the name != ".." check.
 func safeWorkflowName(name string) bool {
-	return name != "" && !strings.ContainsAny(name, "/\\") && filepath.Clean(name) == name && name != ".."
+	return name != "" && !strings.ContainsAny(name, "/\\") && filepath.Clean(name) == name && name != ".." && name != "."
 }
 
 // List handles GET /workflows and returns a JSON array of workflow summaries.
