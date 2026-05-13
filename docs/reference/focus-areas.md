@@ -23,7 +23,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [x] | [ ] | |
 | 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [x] | [ ] | |
 | 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [x] | [ ] | |
-| 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [ ] | [ ] | |
+| 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [x] | [ ] | |
 | 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [ ] | [ ] | |
 | 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [ ] | [ ] | |
 | 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [ ] | [ ] | |

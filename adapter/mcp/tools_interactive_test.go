@@ -169,6 +169,18 @@ func TestInteractiveEndSession(t *testing.T) {
 		assert.Contains(t, text, "not in interactive wait state")
 	})
 
+	t.Run("invalid UUID returns error", func(t *testing.T) {
+		conv := &mockConversationHandler{}
+		srv := newInteractiveServer(conv, &stubInstanceRepo{}, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_end_session", map[string]any{
+			"instanceId": "not-a-uuid",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid instanceId")
+	})
+
 	t.Run("nil ConversationHandler returns not available", func(t *testing.T) {
 		deps := &adaptmcp.Deps{
 			Instances: &stubInstanceRepo{},
@@ -230,6 +242,17 @@ func TestInteractiveGetHistory(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "instanceId is required")
+	})
+
+	t.Run("invalid UUID returns error", func(t *testing.T) {
+		srv := newInteractiveServer(nil, &stubInstanceRepo{}, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_get_history", map[string]any{
+			"instanceId": "not-a-uuid",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid instanceId")
 	})
 
 	t.Run("instance not found returns error", func(t *testing.T) {
@@ -310,5 +333,26 @@ func TestInteractiveGetHistory(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "failed to get node execution")
+	})
+
+	t.Run("nil exec without error returns not found", func(t *testing.T) {
+		nodeID := "interactive-1"
+		instRepo := &stubInstanceRepo{
+			getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+				return &instance.Instance{
+					ID:            uuid.New(),
+					CurrentNodeID: &nodeID,
+				}, nil
+			},
+		}
+		// stubNodeExecRepo default: returns (nil, nil) when getByInstanceAndNode is unset
+		srv := newInteractiveServer(nil, instRepo, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_get_history", map[string]any{
+			"instanceId": uuid.New().String(),
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
 	})
 }

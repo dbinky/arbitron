@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-INT-001: Nil exec dereference in interactiveGetHistoryHandler
+**Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
+**Fixed**: Iteration 9
+**Detail**: `interactiveGetHistoryHandler` called `exec.LLMConversation` without first checking if `exec` was nil. `GetByInstanceAndNode` returns `(*NodeExecution, error)`, and a repo that returns `(nil, nil)` (the default stub behaviour) would cause a nil pointer dereference, panicking the MCP server process. Fixed by adding a nil guard after the error check. Also added: invalid UUID test for `interactive_end_session`, invalid UUID test for `interactive_get_history`, and a "nil exec without error returns not found" edge case test.
+
 ### HTTP-MCP-001: Security headers not verified on /mcp endpoint responses
 **Area**: Streamable HTTP Transport (`adapter/http/server.go`)
 **Fixed**: Iteration 8
