@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-STRM-001: Streaming tools "not available" guard not tested for 3 of 4 handlers
+**Area**: MCP Event Streaming (`adapter/mcp/tools_streaming.go`, `adapter/mcp/tools_streaming_test.go`)
+**Fixed**: Iteration 7
+**Detail**: `TestStreamingToolsWithoutEventBus` only exercised the nil-guard path for `instance_subscribe`. Extended to cover all 4 tool handlers (instance_subscribe, instance_unsubscribe, system_subscribe, system_unsubscribe). Also added: missing instanceId test for instance_subscribe, invalid UUID test for instance_unsubscribe, and tightened text assertions on existing error tests.
+
 ### MCP-TRACE-001: Nil slice normalization missing in trace/system list handlers
 **Area**: MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go`)
 **Fixed**: Iteration 6

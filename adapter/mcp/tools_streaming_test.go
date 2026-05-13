@@ -72,6 +72,17 @@ func TestInstanceSubscribeRoundTrip(t *testing.T) {
 			"instanceId": "bad-uuid",
 		})
 		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid instanceId")
+	})
+
+	t.Run("subscribe with missing instanceId returns error", func(t *testing.T) {
+		srv := newStreamingServer()
+
+		result := callTool(t, srv, "instance_subscribe", map[string]any{})
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "instanceId is required")
 	})
 
 	t.Run("unsubscribe with missing UUID returns error", func(t *testing.T) {
@@ -79,6 +90,19 @@ func TestInstanceSubscribeRoundTrip(t *testing.T) {
 
 		result := callTool(t, srv, "instance_unsubscribe", map[string]any{})
 		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "instanceId is required")
+	})
+
+	t.Run("unsubscribe with invalid UUID returns error", func(t *testing.T) {
+		srv := newStreamingServer()
+
+		result := callTool(t, srv, "instance_unsubscribe", map[string]any{
+			"instanceId": "not-a-uuid",
+		})
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid instanceId")
 	})
 }
 
@@ -106,14 +130,44 @@ func TestSystemSubscribeRoundTrip(t *testing.T) {
 }
 
 func TestStreamingToolsWithoutEventBus(t *testing.T) {
-	t.Run("returns error when event bus not configured", func(t *testing.T) {
-		deps := &adaptmcp.Deps{}
+	newNobusSrv := func() *adaptmcp.Server {
+		deps := &adaptmcp.Deps{} // EventBus is nil
 		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 		adaptmcp.RegisterStreamingTools(srv)
+		return srv
+	}
 
+	t.Run("instance_subscribe returns error when event bus not configured", func(t *testing.T) {
+		srv := newNobusSrv()
 		result := callTool(t, srv, "instance_subscribe", map[string]any{
 			"instanceId": uuid.New().String(),
 		})
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not available")
+	})
+
+	t.Run("instance_unsubscribe returns error when event bus not configured", func(t *testing.T) {
+		srv := newNobusSrv()
+		result := callTool(t, srv, "instance_unsubscribe", map[string]any{
+			"instanceId": uuid.New().String(),
+		})
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not available")
+	})
+
+	t.Run("system_subscribe returns error when event bus not configured", func(t *testing.T) {
+		srv := newNobusSrv()
+		result := callTool(t, srv, "system_subscribe", nil)
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not available")
+	})
+
+	t.Run("system_unsubscribe returns error when event bus not configured", func(t *testing.T) {
+		srv := newNobusSrv()
+		result := callTool(t, srv, "system_unsubscribe", nil)
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "not available")
