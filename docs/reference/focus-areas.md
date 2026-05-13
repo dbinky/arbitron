@@ -16,20 +16,20 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
 | 1 | Workflow Repository Write Ops (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go` — Create, Update, Delete, WriteFile, DeleteFile, ListFiles, path-traversal protection, atomic writes) | [x] | [x] | |
-| 2 | Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`, `adapter/http/server.go` — POST/PUT/DELETE /workflows, file management endpoints, input validation, error mapping) | [x] | [ ] | |
-| 3 | MCP Server Foundation (`adapter/mcp/server.go`, `adapter/mcp/deps.go`, `adapter/mcp/helpers.go` — Server construction, AddTool, ServeStdio, Listen, HTTPHandler, Deps wiring, MarshalResult, ParseUUID) | [x] | [ ] | |
-| 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [x] | [ ] | |
-| 5 | MCP Instance Tools (`adapter/mcp/tools_instance.go` — 9 tools: list, get, trigger, pause, resume, cancel, retry, rerun, set_priority) | [x] | [ ] | |
-| 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [x] | [ ] | |
-| 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [x] | [ ] | |
-| 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [x] | [ ] | |
-| 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [x] | [ ] | |
-| 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [x] | [ ] | |
-| 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [x] | [ ] | |
-| 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [x] | [ ] | |
-| 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [x] | [ ] | |
-| 14 | MCP-to-Domain Boundary (how MCP tool handlers translate arguments, call domain ports, and map errors — consistency across all 37 tools) | [x] | [ ] | |
-| 15 | Test Coverage Quality (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [x] | [ ] | |
+| 2 | Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`, `adapter/http/server.go` — POST/PUT/DELETE /workflows, file management endpoints, input validation, error mapping) | [x] | [x] | |
+| 3 | MCP Server Foundation (`adapter/mcp/server.go`, `adapter/mcp/deps.go`, `adapter/mcp/helpers.go` — Server construction, AddTool, ServeStdio, Listen, HTTPHandler, Deps wiring, MarshalResult, ParseUUID) | [x] | [x] | |
+| 4 | MCP Workflow Tools (`adapter/mcp/tools_workflow.go` — 10 tools: list, get, create, update, delete, validate, list_files, read_file, write_file, delete_file) | [x] | [x] | |
+| 5 | MCP Instance Tools (`adapter/mcp/tools_instance.go` — 9 tools: list, get, trigger, pause, resume, cancel, retry, rerun, set_priority) | [x] | [x] | |
+| 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [x] | [x] | |
+| 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [x] | [x] | |
+| 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [x] | [x] | |
+| 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [x] | [x] | |
+| 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [x] | [x] | |
+| 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [x] | [x] | |
+| 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [x] | [x] | |
+| 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [x] | [x] | |
+| 14 | MCP-to-Domain Boundary (how MCP tool handlers translate arguments, call domain ports, and map errors — consistency across all 37 tools) | [x] | [x] | |
+| 15 | Test Coverage Quality (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [x] | [x] | |
 
 ---
 
