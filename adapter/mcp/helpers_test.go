@@ -29,6 +29,18 @@ func TestMarshalResult(t *testing.T) {
 		assert.Equal(t, "ok", parsed["status"])
 	})
 
+	t.Run("serializes nil to JSON null text result", func(t *testing.T) {
+		// nil marshals to "null" — must return a valid text result, not an error.
+		result, err := adaptmcp.MarshalResult(nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.False(t, result.IsError)
+		require.Len(t, result.Content, 1)
+		text, ok := result.Content[0].(gomcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "null", text.Text)
+	})
+
 	t.Run("returns error result for unmarshalable values", func(t *testing.T) {
 		// Channels cannot be marshaled to JSON.
 		result, err := adaptmcp.MarshalResult(make(chan int))
@@ -70,6 +82,29 @@ func TestParseUUID(t *testing.T) {
 	t.Run("returns error for nil arguments", func(t *testing.T) {
 		req := gomcp.CallToolRequest{}
 		// Arguments is nil (not set).
+
+		_, err := adaptmcp.ParseUUID(req, "id")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "id is required")
+	})
+
+	t.Run("returns type error when key exists with non-string value", func(t *testing.T) {
+		// An LLM might pass a JSON number for a UUID parameter. The old code
+		// emitted "id is required" (misleading). The new code says "expected string".
+		req := gomcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"id": float64(42)}
+
+		_, err := adaptmcp.ParseUUID(req, "id")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid id")
+		assert.Contains(t, err.Error(), "expected string")
+		assert.NotContains(t, err.Error(), "is required")
+	})
+
+	t.Run("returns error for empty string value", func(t *testing.T) {
+		// Key present, value is the empty string — still "required".
+		req := gomcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"id": ""}
 
 		_, err := adaptmcp.ParseUUID(req, "id")
 		require.Error(t, err)

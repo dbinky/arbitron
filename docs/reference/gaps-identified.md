@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-HLP-001: `ParseUUID` emits misleading "required" error when key exists with non-string value
+**Area**: MCP Server Foundation (`adapter/mcp/helpers.go`)
+**Fixed**: Iteration 3
+**Detail**: `ParseUUID` used a silent comma-ok type assertion (`str, _ := args[key].(string)`). When the key was present but held a non-string value (e.g., JSON number `{"instanceId": 42}`), the assertion failed silently, `str` became `""`, and the function returned `"instanceId is required"` — factually wrong. LLM clients receiving this error could not tell whether they omitted the parameter or used the wrong type. Fixed by separating key-presence check from type assertion: key absent/nil → "required", key present with wrong type → "invalid %s: expected string, got %T", key present with valid string → proceed. Added test cases for wrong-type value and empty-string value. Also added `MarshalResult(nil)` edge-case test (nil marshals to JSON "null" — must produce a text result, not an error).
+
 ### HTTP-WH-001: `safeWorkflowName(".")` returns true, causing 500 on Create with name="."
 **Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
 **Fixed**: Iteration 2

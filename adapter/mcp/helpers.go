@@ -20,11 +20,18 @@ func MarshalResult(v any) (*gomcp.CallToolResult, error) {
 }
 
 // ParseUUID extracts and validates a UUID string from a CallToolRequest
-// argument map. It returns a descriptive error if the key is missing or
-// the value is not a valid UUID.
+// argument map. It returns a descriptive error if the key is missing, the
+// value is not a string, or the string is not a valid UUID.
 func ParseUUID(request gomcp.CallToolRequest, key string) (uuid.UUID, error) {
 	args := request.GetArguments()
-	str, _ := args[key].(string)
+	val, ok := args[key]
+	if !ok || val == nil {
+		return uuid.Nil, fmt.Errorf("%s is required", key)
+	}
+	str, ok := val.(string)
+	if !ok {
+		return uuid.Nil, fmt.Errorf("invalid %s: expected string, got %T", key, val)
+	}
 	if str == "" {
 		return uuid.Nil, fmt.Errorf("%s is required", key)
 	}
