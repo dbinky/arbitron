@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### SKILL-AUTH-001: Authoring skill missing "propose and confirm" step before applying modifications
+**Area**: Plugin Package (`plugin/skills/workflow-authoring.md`)
+**Fixed**: Iteration 12
+**Detail**: The "Modifying an existing workflow" section jumped from "Understand the requested changes" directly to "Apply the changes" — skipping the design doc's explicit step 3: "Propose the changes and confirm with the user." For destructive operations (deleting files, removing nodes), this meant Claude Code could make irreversible changes without user confirmation. Added a new step 4: "Propose the changes and confirm" that requires describing what will be added, changed, or removed and getting the user's agreement before any destructive action.
+
 ### MCP-REG-001: RegisterAllTools had no test coverage
 **Area**: MCP Tool Registration (`adapter/mcp/register.go`)
 **Fixed**: Iteration 11

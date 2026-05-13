@@ -96,9 +96,11 @@ Follow these steps when the user wants to change a workflow:
 
 3. **Understand the requested changes.** Confirm exactly what the user wants to add, remove, or modify.
 
-4. **Apply the changes.** Use `workflow_update` for manifest changes and `workflow_write_file` or `workflow_delete_file` for associated files.
+4. **Propose the changes and confirm.** Describe what you are going to do — which nodes or files will be added, changed, or removed. Get the user's agreement before making any destructive changes such as deleting files or removing nodes.
 
-5. **Validate and report.** Call `workflow_validate` and share the results. Fix any errors before finishing.
+5. **Apply the changes.** Use `workflow_update` for manifest changes and `workflow_write_file` or `workflow_delete_file` for associated files.
+
+6. **Validate and report.** Call `workflow_validate` and share the results. Fix any errors before finishing.
 
 ## Behavioral guidelines
 
