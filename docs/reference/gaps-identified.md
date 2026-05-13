@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### SKILL-PARAM-001: workflow-running.md used "workflow ID" for instance_trigger instead of "workflowName"
+**Area**: Skills (`plugin/skills/workflow-running.md`)
+**Fixed**: Pair 26
+**Detail**: The running skill's trigger step said "Call `instance_trigger` with the workflow ID, inputs, and priority." The `instance_trigger` tool parameter is `workflowName` (a name string, not a UUID). An LLM reading the skill literally would pass the workflow's UUID, which the handler would reject or look up incorrectly. Fixed by updating the text to "workflow name (`workflowName`)".
+
 ### MCP-INST-ERR-001: TestInstancePause and TestInstanceRerun engine error tests lacked text assertions
 **Area**: MCP Instance Tools (`adapter/mcp/tools_instance_test.go`)
 **Fixed**: Pair 23
@@ -121,6 +126,10 @@ _(none)_
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
+
+### SKILL-W01: Five registered MCP tools not covered by any skill file
+**Area**: Skills (`plugin/skills/`)
+**Detail**: `system_config`, `system_update_queue_config`, `notification_mark_read`, `notification_dismiss`, and `workflow_stats` are registered and functional MCP tools with no skill file covering them. An LLM relying solely on the three existing skills will not know to use these tools. Adding coverage requires a new system/admin skill file — new functionality outside the current review scope.
 
 ### STRM-W01: SubscriptionManager.OnEvent never wired in production — events silently dropped
 **Area**: Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/server.go`)

@@ -97,7 +97,7 @@ Use this skill when the user wants to:
 4. **Ask about priority.** Default is Normal. Offer High or Low if the user
    wants to adjust.
 
-5. **Trigger.** Call `instance_trigger` with the workflow ID, inputs, and
+5. **Trigger.** Call `instance_trigger` with the workflow name (`workflowName`), inputs, and
    priority.
 
 6. **Report and transition.** Tell the user the instance ID and its initial

@@ -45,9 +45,9 @@ A review pass is only checked when the checklist produces a passing result for t
 | 21 | Interactive Tools + ConversationHandler (HandleMessage/EndSession call signatures, get_history node execution lookup, nil handler safety) | [x] | |
 | 22 | MCP-to-Domain Boundary + Workflow Repo (do MCP tool error strings match what the repo returns? does the MCP layer add or swallow errors?) | [x] | |
 | 23 | MCP-to-Domain Boundary + Engine Service (do MCP tool error results match engine sentinel errors? is error context preserved or lost?) | [x] | |
-| 24 | Streamable HTTP + Router Integration (NewRouter parameter threading, /mcp mount position, existing route collision check, nil handler fallthrough) | [ ] | |
-| 25 | CLI + MCP Server (initDomain → mcpDeps() → NewServerWithDeps flow, shared state between HTTP and MCP in --mcp mode, shutdown coordination) | [ ] | |
-| 26 | Skills + MCP Tool Names (every tool referenced in skill markdown exists in RegisterAllTools, no stale/renamed references, parameter names match) | [ ] | |
+| 24 | Streamable HTTP + Router Integration (NewRouter parameter threading, /mcp mount position, existing route collision check, nil handler fallthrough) | [x] | |
+| 25 | CLI + MCP Server (initDomain → mcpDeps() → NewServerWithDeps flow, shared state between HTTP and MCP in --mcp mode, shutdown coordination) | [x] | |
+| 26 | Skills + MCP Tool Names (every tool referenced in skill markdown exists in RegisterAllTools, no stale/renamed references, parameter names match) | [x] | |
 | 27 | Test Coverage Quality + All MCP Tool Files (do tests across all tool files follow the same 5-category pattern? are mocks consistent? are edge cases covered uniformly?) | [ ] | |
 
 ---
