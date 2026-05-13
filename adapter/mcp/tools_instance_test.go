@@ -237,6 +237,20 @@ func TestInstanceGet(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "id is required")
 	})
+
+	t.Run("domain error returned as tool error", func(t *testing.T) {
+		repo := &stubInstanceRepo{
+			getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+				return nil, errors.New("not found")
+			},
+		}
+		srv := newInstanceServer(repo, &stubEngine{})
+		result := callTool(t, srv, "instance_get", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
+	})
 }
 
 func TestInstanceTrigger(t *testing.T) {
@@ -342,6 +356,24 @@ func TestInstancePause(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_pause", map[string]any{"id": "not-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_pause", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
+	})
 }
 
 func TestInstanceResume(t *testing.T) {
@@ -356,6 +388,38 @@ func TestInstanceResume(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "resumed")
 	})
+
+	t.Run("engine error returned as tool error", func(t *testing.T) {
+		eng := &stubEngine{
+			resumeFn: func(_ uuid.UUID) error {
+				return errors.New("not paused")
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_resume", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not paused")
+	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_resume", map[string]any{"id": "not-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_resume", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
+	})
 }
 
 func TestInstanceCancel(t *testing.T) {
@@ -369,6 +433,38 @@ func TestInstanceCancel(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "cancelled")
+	})
+
+	t.Run("engine error returned as tool error", func(t *testing.T) {
+		eng := &stubEngine{
+			cancelFn: func(_ uuid.UUID) error {
+				return errors.New("already terminal")
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "already terminal")
+	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_cancel", map[string]any{"id": "not-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_cancel", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
 	})
 }
 
@@ -403,6 +499,41 @@ func TestInstanceRetry(t *testing.T) {
 
 		assert.False(t, result.IsError)
 	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_retry", map[string]any{"id": "not-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("invalid variables JSON returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_retry", map[string]any{
+			"id":        uuid.New().String(),
+			"variables": "not-json",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid variables JSON")
+	})
+
+	t.Run("engine error returned as tool error", func(t *testing.T) {
+		eng := &stubEngine{
+			retryFn: func(_ uuid.UUID, _ map[string]any) error {
+				return errors.New("not failed")
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_retry", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not failed")
+	})
 }
 
 func TestInstanceRerun(t *testing.T) {
@@ -431,6 +562,24 @@ func TestInstanceRerun(t *testing.T) {
 		result := callTool(t, srv, "instance_rerun", map[string]any{"id": uuid.New().String()})
 
 		assert.True(t, result.IsError)
+	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_rerun", map[string]any{"id": "not-uuid"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("missing id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_rerun", map[string]any{})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "id is required")
 	})
 }
 
@@ -462,5 +611,34 @@ func TestInstanceSetPriority(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "priority is required")
+	})
+
+	t.Run("invalid id returns error", func(t *testing.T) {
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_set_priority", map[string]any{
+			"id":       "not-uuid",
+			"priority": "high",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "invalid id")
+	})
+
+	t.Run("engine error returned as tool error", func(t *testing.T) {
+		eng := &stubEngine{
+			setPriorityFn: func(_ uuid.UUID, _ string) error {
+				return errors.New("instance not found")
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_set_priority", map[string]any{
+			"id":       uuid.New().String(),
+			"priority": "low",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "instance not found")
 	})
 }

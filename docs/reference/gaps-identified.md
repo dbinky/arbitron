@@ -4,9 +4,13 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none — all identified issues have been resolved)_
+- **[Area 5] Edge case category still thin for instance tools** — After fixing the error and failure category gaps, a few edge cases remain missing:
+  - `TestInstanceList`: no "empty results returns empty JSON array" edge case (verifies serialization of zero-item slice, not nil)
+  - `TestInstanceTrigger`: no "queued=true result is surfaced" edge case (verifies result when the queue is at capacity and execution is deferred)
 
 ## Fixed Previously
+
+- **[Area 5] Multiple instance tool tests lacked error and failure category coverage** — Added tests for: `TestInstanceGet` domain-not-found error; `TestInstancePause`/`Resume`/`Cancel`/`Rerun` invalid-UUID and missing-id error cases; `TestInstanceResume`/`Cancel`/`Retry`/`SetPriority` engine-error failure cases; `TestInstanceRetry` invalid-variables-JSON error case.
 
 - **[Area 4] `TestWorkflowValidate` missing domain error test** — added "load error returned as tool error" sub-test: repo stub returns an error from `Load`, verifying the handler surfaces it as a tool error with the original message.
 
