@@ -106,6 +106,23 @@ func TestInstanceSubscribeRoundTrip(t *testing.T) {
 	})
 }
 
+func TestInstanceSubscribeDuplicate(t *testing.T) {
+	t.Run("subscribing to same instance twice keeps active count at 1", func(t *testing.T) {
+		// Edge case: duplicate subscribe for the same instance ID must replace
+		// the existing subscription rather than accumulating goroutines/channels.
+		srv := newStreamingServer()
+		id := uuid.New()
+
+		result := callTool(t, srv, "instance_subscribe", map[string]any{"instanceId": id.String()})
+		require.False(t, result.IsError)
+		assert.Equal(t, 1, srv.Subscriptions().ActiveCount())
+
+		result = callTool(t, srv, "instance_subscribe", map[string]any{"instanceId": id.String()})
+		require.False(t, result.IsError)
+		assert.Equal(t, 1, srv.Subscriptions().ActiveCount(), "re-subscribing must not add a second subscription")
+	})
+}
+
 func TestSystemSubscribeRoundTrip(t *testing.T) {
 	t.Run("subscribe then unsubscribe", func(t *testing.T) {
 		srv := newStreamingServer()

@@ -107,6 +107,14 @@ _(none)_
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
 
+### STRM-W01: SubscriptionManager.OnEvent never wired in production — events silently dropped
+**Area**: Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/server.go`)
+**Detail**: The design doc (phase-2.md §1-2) requires that the MCP adapter translate domain EventBus events into MCP notifications sent to the client. The `SubscriptionManager.OnEvent` callback is the intended hook, but it is never set in production code. Events from the EventBus flow into the forward goroutines but are silently dropped (`if cb != nil` check). Implementing this requires MCP server-push notification support from the mcp-go library or a custom SSE-based mechanism — this is new functionality beyond the current Phase 5 review scope.
+
+### STRM-W02: CleanupAll not called on HTTP connection close — subscriptions persist after disconnect
+**Area**: Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/http/server.go`)
+**Detail**: The comment on `CleanupAll` says "Called on connection close" but no production code actually calls it. For the Streamable HTTP transport, when an HTTP client disconnects, forward goroutines continue running indefinitely until the process exits. For stdio mode this is moot (process exits on disconnect). Wiring `CleanupAll` to connection lifecycle requires hooks into the mcp-go StreamableHTTPServer that are not currently available or implemented.
+
 <!--
 Example of a won't-fix entry:
 

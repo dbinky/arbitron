@@ -41,7 +41,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 17 | MCP Foundation + Tool Implementation (Deps threading, handler closure pattern, MarshalResult/ParseUUID usage consistency, error result pattern across all tool files) | [x] | |
 | 18 | MCP Workflow Tools + Workflow Repo (tool args → repo method args, error strings match handler mapping, file operations round-trip) | [x] | |
 | 19 | MCP Instance Tools + Engine Service (tool args → engine method signatures, UUID parsing, priority/state string handling) | [x] | |
-| 20 | Event Streaming + Subscription Manager (subscribe/unsubscribe lifecycle, EventBus channel cleanup, goroutine leak safety, connection close cleanup) | [ ] | |
+| 20 | Event Streaming + Subscription Manager (subscribe/unsubscribe lifecycle, EventBus channel cleanup, goroutine leak safety, connection close cleanup) | [x] | |
 | 21 | Interactive Tools + ConversationHandler (HandleMessage/EndSession call signatures, get_history node execution lookup, nil handler safety) | [ ] | |
 | 22 | MCP-to-Domain Boundary + Workflow Repo (do MCP tool error strings match what the repo returns? does the MCP layer add or swallow errors?) | [ ] | |
 | 23 | MCP-to-Domain Boundary + Engine Service (do MCP tool error results match engine sentinel errors? is error context preserved or lost?) | [ ] | |
