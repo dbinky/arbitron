@@ -450,6 +450,30 @@ func TestWorkflowValidate(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow not found")
 	})
+
+	t.Run("valid workflow errors field is JSON array not null", func(t *testing.T) {
+		// Edge case: Validate returns nil on success; handler must normalize to []
+		// so LLM clients can iterate errors without a nil-dereference.
+		repo := &stubWorkflowRepo{
+			loadFn: func(_ context.Context, _ string) (*workflow.Workflow, error) {
+				return &workflow.Workflow{
+					Name: "ok-wf",
+					Nodes: []workflow.Node{
+						{ID: "start", Type: workflow.NodeTypeLLMCall, Entrypoint: true, Config: workflow.NodeConfig{TemplateFile: "t.txt"}},
+					},
+				}, nil
+			},
+		}
+		fr := &stubFileReader{fileExistsFn: func(_, _ string) bool { return true }}
+		srv := newWorkflowServer(repo, fr)
+		result := callTool(t, srv, "workflow_validate", map[string]any{"name": "ok-wf"})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		// Must serialize as [] not null so the client can iterate.
+		assert.Contains(t, text, `"errors": []`)
+		assert.NotContains(t, text, `"errors": null`)
+	})
 }
 
 func TestWorkflowListFiles(t *testing.T) {
@@ -487,6 +511,22 @@ func TestWorkflowListFiles(t *testing.T) {
 		result := callTool(t, srv, "workflow_list_files", map[string]any{"name": "x"})
 
 		assert.True(t, result.IsError)
+	})
+
+	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
+		// Edge case: repo returns nil slice (zero files); handler must normalize to
+		// [] so LLM clients can iterate without a nil-dereference on a JSON null.
+		repo := &stubWorkflowRepo{
+			listFilesFn: func(_ context.Context, _ string) ([]string, error) {
+				return nil, nil
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_list_files", map[string]any{"name": "empty-wf"})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
 	})
 }
 
@@ -537,6 +577,24 @@ func TestWorkflowReadFile(t *testing.T) {
 }
 
 func TestWorkflowWriteFile(t *testing.T) {
+	t.Run("missing name returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_write_file", map[string]any{"path": "x.txt", "content": "data"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "name is required")
+	})
+
+	t.Run("missing path returns error", func(t *testing.T) {
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_write_file", map[string]any{"name": "wf1", "content": "data"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "path is required")
+	})
+
 	t.Run("happy path writes file", func(t *testing.T) {
 		var capturedContent []byte
 		repo := &stubWorkflowRepo{

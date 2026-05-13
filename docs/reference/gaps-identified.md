@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-WF-001: `workflowValidateHandler` and `workflowListFilesHandler` return JSON null instead of []
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
+**Fixed**: Iteration 4
+**Detail**: `workflowValidateHandler` called `workflow.Validate()` which returns nil on success; the handler passed this directly to `MarshalResult`, producing `{"valid":true,"errors":null}`. Similarly, `workflowListFilesHandler` passed a nil `files` slice to `MarshalResult`, producing `null` instead of `[]`. LLM clients iterating over the errors/files arrays would fail with type errors on a null value. Fixed by normalising nil slices to empty slices before passing to `MarshalResult` in both handlers. Also added missing `workflow_write_file` tests for missing-name and missing-path cases, and edge-case tests asserting that both handlers emit JSON arrays (not null) when the domain returns nil.
+
 ### MCP-HLP-001: `ParseUUID` emits misleading "required" error when key exists with non-string value
 **Area**: MCP Server Foundation (`adapter/mcp/helpers.go`)
 **Fixed**: Iteration 3

@@ -197,6 +197,9 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		validationErrors := workflow.Validate(wf, srv.deps.FileReader)
+		if validationErrors == nil {
+			validationErrors = []workflow.ValidationError{}
+		}
 		result := map[string]any{
 			"valid":  len(validationErrors) == 0,
 			"errors": validationErrors,
@@ -216,6 +219,9 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 		files, err := srv.deps.Workflows.ListFiles(ctx, name)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list files: %s", err)), nil
+		}
+		if files == nil {
+			files = []string{}
 		}
 		return MarshalResult(files)
 	}
