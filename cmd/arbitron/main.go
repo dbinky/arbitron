@@ -275,6 +275,9 @@ func initDomain(ctx context.Context) (*domainStack, error) {
 	// 14. Recover any instances that were running when the process last crashed.
 	logger.Info("recovering crashed instances")
 	if err := eng.RecoverCrashedInstances(); err != nil {
+		if tracingShutdown != nil {
+			_ = tracingShutdown(ctx)
+		}
 		pool.Close()
 		logCloser.Close()
 		return nil, fmt.Errorf("recovering crashed instances: %w", err)

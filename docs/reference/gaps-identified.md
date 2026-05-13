@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### CLI-001: Tracing provider not shut down when RecoverCrashedInstances fails in initDomain
+**Area**: CLI Commands (`cmd/arbitron/main.go`)
+**Fixed**: Iteration 10
+**Detail**: When `RecoverCrashedInstances` fails after `SetupTracing` has already succeeded, the error path closed `pool` and `logCloser` but skipped calling `tracingShutdown`. This leaks the OTel tracer and forfeits any pending span flushes. Fixed by adding a nil-guarded `tracingShutdown(ctx)` call before closing pool/logger in that error path. Also added: `TestServeCommand_HasRunE` and `TestMCPCommand_HasRunE` to verify both commands have their `RunE` handler wired (a nil RunE silently does nothing).
+
 ### MCP-INT-001: Nil exec dereference in interactiveGetHistoryHandler
 **Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
 **Fixed**: Iteration 9

@@ -93,3 +93,15 @@ func TestRootCommand_HasServeSubcommand(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "serve", serveCmd.Name())
 }
+
+// Error path: serve command has RunE wired (not accidentally left nil).
+func TestServeCommand_HasRunE(t *testing.T) {
+	cmd := newServeCmd()
+	assert.NotNil(t, cmd.RunE, "serve command must have a RunE handler wired — a nil RunE silently does nothing")
+}
+
+// Error path: mcp command has RunE wired (not accidentally left nil).
+func TestMCPCommand_HasRunE(t *testing.T) {
+	cmd := newMCPCmd()
+	assert.NotNil(t, cmd.RunE, "mcp command must have a RunE handler wired — a nil RunE silently does nothing")
+}
