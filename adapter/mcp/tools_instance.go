@@ -126,6 +126,9 @@ func instanceGetHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get instance: %s", err)), nil
 		}
+		if inst == nil {
+			return gomcp.NewToolResultError("instance not found"), nil
+		}
 		return MarshalResult(inst)
 	}
 }

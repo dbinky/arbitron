@@ -246,6 +246,17 @@ func TestVariablesGet(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	t.Run("nil instance without error returns not found", func(t *testing.T) {
+		// stubInstanceRepo.Get returns (nil, nil) by default — handler must guard against
+		// nil inst before accessing inst.Variables, otherwise it panics.
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "variables_get", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
+	})
 }
 
 func TestVariablesHistory(t *testing.T) {

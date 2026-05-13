@@ -29,7 +29,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 12 | Plugin Package (`plugin/plugin.json`, `plugin/mcp/arbitron.json`, `plugin/skills/workflow-authoring.md` — metadata, MCP config, authoring skill completeness and tool references) | [x] | [ ] | |
 | 13 | Scheduling & Running Skills (`plugin/skills/workflow-scheduling.md`, `plugin/skills/workflow-running.md` — scheduling skill completeness, running skill flows, tool references, behavioral guidelines) | [x] | [ ] | |
 | 14 | MCP-to-Domain Boundary (how MCP tool handlers translate arguments, call domain ports, and map errors — consistency across all 37 tools) | [x] | [ ] | |
-| 15 | Test Coverage Quality (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [ ] | [ ] | |
+| 15 | Test Coverage Quality (`adapter/mcp/*_test.go`, `adapter/filesystem/workflow_repo_test.go`, `adapter/http/workflow_handler_test.go` — 5 scenario categories, mock quality, assertion specificity, edge cases) | [x] | [ ] | |
 
 ---
 

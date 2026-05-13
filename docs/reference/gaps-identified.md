@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-NIL-001: variablesGetHandler panics and instanceGetHandler returns null on nil-instance repo return
+**Area**: MCP Trace & Instance Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_instance.go`)
+**Fixed**: Iteration 15
+**Detail**: Two nil-guard omissions found during Test Coverage Quality review. (1) `variablesGetHandler` called `inst.Variables` without first checking if `inst` was nil. `Instances.Get` returns `(*Instance, error)`, and a repo returning `(nil, nil)` (default stub behaviour) causes a nil pointer dereference, panicking the MCP server process. (2) `instanceGetHandler` called `MarshalResult(inst)` without a nil guard — a `(nil, nil)` return produces JSON `null` rather than a not-found error, confusing LLM clients. Fixed by adding nil guards to both handlers (same pattern as MCP-INT-001 and MCP-BOUND-001). Tests added: "nil instance without error returns not found" in both `TestVariablesGet` and `TestInstanceGet`.
+
 ### MCP-BOUND-001: workflowListHandler and traceGetNodeHandler missing nil guards
 **Area**: MCP-to-Domain Boundary (`adapter/mcp/tools_workflow.go`, `adapter/mcp/tools_trace.go`)
 **Fixed**: Iteration 14

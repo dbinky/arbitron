@@ -267,6 +267,17 @@ func TestInstanceGet(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "not found")
 	})
+
+	t.Run("nil instance without error returns not found", func(t *testing.T) {
+		// stubInstanceRepo.Get returns (nil, nil) by default — handler must guard against
+		// nil inst before marshaling, otherwise it returns confusing JSON null.
+		srv := newInstanceServer(&stubInstanceRepo{}, &stubEngine{})
+		result := callTool(t, srv, "instance_get", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
+	})
 }
 
 func TestInstanceTrigger(t *testing.T) {
