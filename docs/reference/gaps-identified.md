@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-WF-NIL-001: workflowGetHandler and workflowValidateHandler missing nil guards for Load returning (nil, nil)
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
+**Fixed**: Iteration 18
+**Detail**: Two nil-guard omissions found during Pair 18 review. (1) `workflowGetHandler` called `MarshalResult(wf)` without a nil check — a repo returning `(nil, nil)` produces JSON `null` rather than a not-found error. (2) `workflowValidateHandler` passed `wf` directly to `workflow.Validate(wf, ...)` without a nil check — `Validate` dereferences `wf.Nodes` on line 65, causing a nil pointer panic. Both handlers now have nil guards (same pattern as MCP-NIL-001). Tests added: "nil workflow without error returns not found" in both `TestWorkflowGet` and `TestWorkflowValidate`.
+
 ### MCP-WF-UPD-001: workflowUpdateHandler allowed manifest name to overwrite tool-arg-authoritative name
 **Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 17

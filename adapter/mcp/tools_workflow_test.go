@@ -249,6 +249,17 @@ func TestWorkflowGet(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "not found")
 	})
+
+	t.Run("nil workflow without error returns not found", func(t *testing.T) {
+		// stubWorkflowRepo.Load returns (nil, nil) by default — handler must guard
+		// against nil wf before marshaling, otherwise it returns confusing JSON null.
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_get", map[string]any{"name": "ghost"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
+	})
 }
 
 func TestWorkflowCreate(t *testing.T) {
@@ -487,6 +498,17 @@ func TestWorkflowValidate(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow not found")
+	})
+
+	t.Run("nil workflow without error returns not found", func(t *testing.T) {
+		// stubWorkflowRepo.Load returns (nil, nil) by default — handler must guard
+		// against nil wf before passing to Validate, otherwise Validate panics.
+		srv := newWorkflowServer(&stubWorkflowRepo{}, &stubFileReader{})
+		result := callTool(t, srv, "workflow_validate", map[string]any{"name": "ghost"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
 	})
 
 	t.Run("valid workflow errors field is JSON array not null", func(t *testing.T) {

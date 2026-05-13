@@ -39,7 +39,7 @@ A review pass is only checked when the checklist produces a passing result for t
 |---|---|---|---|
 | 16 | Workflow Repo + REST Endpoints (Create/Update/Delete flow through handler → repo, error mapping consistency, path validation at both layers) | [x] | |
 | 17 | MCP Foundation + Tool Implementation (Deps threading, handler closure pattern, MarshalResult/ParseUUID usage consistency, error result pattern across all tool files) | [x] | |
-| 18 | MCP Workflow Tools + Workflow Repo (tool args → repo method args, error strings match handler mapping, file operations round-trip) | [ ] | |
+| 18 | MCP Workflow Tools + Workflow Repo (tool args → repo method args, error strings match handler mapping, file operations round-trip) | [x] | |
 | 19 | MCP Instance Tools + Engine Service (tool args → engine method signatures, UUID parsing, priority/state string handling) | [ ] | |
 | 20 | Event Streaming + Subscription Manager (subscribe/unsubscribe lifecycle, EventBus channel cleanup, goroutine leak safety, connection close cleanup) | [ ] | |
 | 21 | Interactive Tools + ConversationHandler (HandleMessage/EndSession call signatures, get_history node execution lookup, nil handler safety) | [ ] | |

@@ -123,6 +123,9 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to load workflow: %s", err)), nil
 		}
+		if wf == nil {
+			return gomcp.NewToolResultError("workflow not found"), nil
+		}
 		return MarshalResult(wf)
 	}
 }
@@ -200,6 +203,9 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 		wf, err := srv.deps.Workflows.Load(ctx, name)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to load workflow: %s", err)), nil
+		}
+		if wf == nil {
+			return gomcp.NewToolResultError("workflow not found"), nil
 		}
 
 		validationErrors := workflow.Validate(wf, srv.deps.FileReader)
