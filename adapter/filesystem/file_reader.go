@@ -25,11 +25,21 @@ func (r *FileReaderAdapter) containmentRoot() string {
 	return filepath.Clean(r.basePath) + string(os.PathSeparator)
 }
 
-// safeJoin builds the full path and checks that it is inside basePath.
+// safeJoin builds the full path and checks that it is (a) inside basePath and
+// (b) inside the specific workflow subdirectory. The two-level check prevents
+// both workspace-root escapes (e.g. workflowName="../../etc") and
+// cross-workflow reads (e.g. relativePath="../other-wf/secret.txt").
 func (r *FileReaderAdapter) safeJoin(workflowName, relativePath string) (string, error) {
-	full := filepath.Join(r.basePath, workflowName, relativePath)
+	wfDir := filepath.Join(r.basePath, workflowName)
+	full := filepath.Join(wfDir, relativePath)
+	// Must stay inside the workspace root (catches bad workflowName).
 	if !strings.HasPrefix(full, r.containmentRoot()) {
 		return "", fmt.Errorf("path %q escapes workspace root", relativePath)
+	}
+	// Must stay inside the specific workflow directory (catches bad relativePath).
+	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
+	if !strings.HasPrefix(full, wfRoot) {
+		return "", fmt.Errorf("path %q escapes workflow directory", relativePath)
 	}
 	return full, nil
 }

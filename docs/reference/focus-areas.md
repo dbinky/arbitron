@@ -43,7 +43,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 19 | MCP Instance Tools + Engine Service (tool args → engine method signatures, UUID parsing, priority/state string handling) | [x] | |
 | 20 | Event Streaming + Subscription Manager (subscribe/unsubscribe lifecycle, EventBus channel cleanup, goroutine leak safety, connection close cleanup) | [x] | |
 | 21 | Interactive Tools + ConversationHandler (HandleMessage/EndSession call signatures, get_history node execution lookup, nil handler safety) | [x] | |
-| 22 | MCP-to-Domain Boundary + Workflow Repo (do MCP tool error strings match what the repo returns? does the MCP layer add or swallow errors?) | [ ] | |
+| 22 | MCP-to-Domain Boundary + Workflow Repo (do MCP tool error strings match what the repo returns? does the MCP layer add or swallow errors?) | [x] | |
 | 23 | MCP-to-Domain Boundary + Engine Service (do MCP tool error results match engine sentinel errors? is error context preserved or lost?) | [ ] | |
 | 24 | Streamable HTTP + Router Integration (NewRouter parameter threading, /mcp mount position, existing route collision check, nil handler fallthrough) | [ ] | |
 | 25 | CLI + MCP Server (initDomain → mcpDeps() → NewServerWithDeps flow, shared state between HTTP and MCP in --mcp mode, shutdown coordination) | [ ] | |

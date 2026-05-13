@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### FS-FR-001: FileReader.safeJoin only checked workspace root — cross-workflow path traversal allowed
+**Area**: Workflow File Reading (`adapter/filesystem/file_reader.go`)
+**Fixed**: Iteration 22
+**Detail**: `safeJoin` verified that the resolved path starts with `basePath` (workspace root), but did not verify it stays within the specific workflow subdirectory. A relative path like `"../other-wf/secret.txt"` resolved to `basePath/other-wf/secret.txt`, which passes the workspace-root check but reads from a different workflow's files. An LLM calling `workflow_read_file(name="wf-a", path="../wf-b/secret.txt")` could access any file in any other workflow directory. Fixed by adding a second `strings.HasPrefix` check against the workflow-directory root (`wfDir+sep`) after the workspace-root check. Added test `TestFileReader_PathTraversal_CrossWorkflowRejected` that places a secret in a sibling workflow directory and verifies the traversal is rejected with "escapes workflow directory".
+
 ### MCP-INT-NIL-001: interactiveGetHistoryHandler missing nil guard for instance before CurrentNodeID access
 **Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
 **Fixed**: Iteration 21
