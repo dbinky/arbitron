@@ -10,7 +10,7 @@ You are a senior Go engineer specializing in protocol adapters and workflow orch
 
 Review and refine the implementation of the Arbitron Phase 5 MCP Server & Skills feature per the spec at `docs/specs/arbitron-phase5-spec.md`. This feature adds an MCP server that exposes all Arbitron operations as MCP tools, real-time event streaming, interactive session participation via MCP, Streamable HTTP transport, CLI commands (`arbitron mcp`, `arbitron serve --mcp`), and three Claude Code skills (workflow authoring, scheduling, running).
 
-The implementation spans: workflow CRUD extensions to the repository port and filesystem adapter, REST API endpoints for file management, a new `adapter/mcp/` package with 37 MCP tools across 6 tool files, subscription-based event streaming, Streamable HTTP transport mounted at `/mcp`, interactive session tools reusing the domain ConversationHandler, CLI refactoring with shared `initDomain`, and a plugin package with 3 skill markdown files.
+The implementation spans: workflow CRUD extensions to the repository port and filesystem adapter (`domain/workflow/ports.go`, `adapter/filesystem/workflow_repo.go`), REST API endpoints for file management (`adapter/http/workflow_handler.go`), a new `adapter/mcp/` package with 37 MCP tools across 6 tool files, subscription-based event streaming (`adapter/mcp/subscriptions.go`), Streamable HTTP transport mounted at `/mcp`, interactive session tools reusing the domain ConversationHandler, CLI refactoring with shared `initDomain` (`cmd/arbitron/main.go`), and a plugin package with 3 skill markdown files (`plugin/`).
 
 The loop should verify correctness against the spec and the three design docs (`docs/superpowers/specs/mcp-server-skills-design-phase-*.md`), ensure test coverage across all 5 scenario categories, fix gaps, and polish the implementation to production quality. "Done" means every focus area has been reviewed twice (single areas) or once (paired areas), all tests pass, and you would ship this with confidence.
 
@@ -23,21 +23,17 @@ The loop should verify correctness against the spec and the three design docs (`
 
 - **Do NOT use sub-agents for bulk generation.** When you modify or create code, do it by hand, one component at a time, with thought behind each decision.
 - **Read before you write.** Before modifying any file, read the relevant sections. Before claiming something is fine, read it and reason about quality.
-- **One focus area, one fix, one commit per iteration.** Pick a focus area. Find issues. Fix the ONE most important issue. Commit, push, and exit. Do not fix a second issue — the next iteration handles it. Small, granular iterations are more reliable than ambitious ones.
+- **One focus area per iteration.** Don't try to fix everything at once. Pick the most important remaining issue within the focus area, fix it well, then let the next iteration handle the next issue.
 - **Do NOT invent new functionality to fill perceived gaps.** Maintain a list of things you find that should be fixed at `docs/reference/gaps-identified.md` in the `## Open Issues` section. If you perceive there is new, missing functionality beyond the current scope, log it in the `## Won't Fix (Beyond Current Scope)` section. If something on the list has been fixed in a previous loop, move it to `## Fixed Previously`.
-- **Strict TDD.** All code must follow strict TDD with 5 scenario categories (happy path, success, failure, error, edge case). Write tests first, then implementation.
-- **Hexagonal architecture.** Domain interfaces in `domain/`, concrete implementations in `adapter/`. No adapter types in domain code.
 
 ## Iteration Structure
 
-An iteration is one atomic unit: review one area, fix ONE issue, test, commit, exit. Resist the urge to keep fixing — the next iteration picks up where you left off.
-
-1. **Read the Tracking File** — Read `docs/reference/focus-areas.md` and pick a review focus area that hasn't been completed yet. Progression order: complete all **Pass 1** single area reviews, then **paired area** reviews, then **Pass 2** single area reviews.
+1. **Read the Tracking File** — Read `docs/reference/focus-areas.md` and pick a review focus area that hasn't been completed yet. Complete single area reviews before moving to paired area reviews.
 2. **Read the Area's Code** — Deeply examine the code for the chosen focus area. Read every file. Understand the patterns.
 3. **Analyze findings and update the gaps list** — Cross-reference what you just read with the design doc and codebase conventions. Add any issues found to `docs/reference/gaps-identified.md` in the `## Open Issues` section.
-4. **Fix the single most important issue, then stop.** Fix it thoroughly — if it spans multiple files, fix all of them consistently. Once fixed, move the issue to `## Fixed Previously` in `docs/reference/gaps-identified.md`. **Then proceed immediately to step 5. Do not fix another issue in this iteration.**
+4. **Fix the single most important issue** — Fix it well. If the issue spans multiple files, fix all of them consistently. Once fixed, move the issue to `## Fixed Previously` in `docs/reference/gaps-identified.md`.
 5. **Run the tests** — Run `go test ./...`. Investigate and fix each failure.
-6. **Assess the checklist** — Evaluate honestly, then proceed immediately to the Wrap Up phase. Do not go back to step 4.
+6. **Assess the checklist** — Evaluate honestly, then proceed to the Wrap Up phase.
 
 ## The Checklist (be brutally honest)
 
@@ -53,8 +49,26 @@ Do NOT check a box unless you could defend it in a code review:
 
 ## Wrap Up
 
-**If all checklist items pass:** Mark the focus area's current pass as complete in `docs/reference/focus-areas.md`. Commit and push.
+This is the final phase of every iteration. Follow these steps in order.
 
-**If any checklist item fails:** Do NOT advance the pass. Log any remaining issues in `docs/reference/gaps-identified.md`. Commit and push.
+**Step A — Determine if this focus area passed review.**
 
-Then exit cleanly so the next iteration can pick up where you left off.
+All checklist boxes must be honestly checked for the focus area to pass. There is no partial credit. Don't feel bad if it didn't pass — that just means the next iteration will take another crack at it. Improving things each cycle is a successful outcome.
+
+**Step B — Update tracking (only if the focus area passed).**
+
+- If the focus area **passed**: Mark that focus area's review as complete in `docs/reference/focus-areas.md`.
+- If the focus area **did not pass**: Do NOT update `docs/reference/focus-areas.md`.
+
+**Step C — Commit and push your branch to remote.**
+
+Always commit and push, whether the focus area passed or not. Your work this iteration is valuable either way.
+
+**Step D — Output your promise tag and stop.**
+
+Check `docs/reference/focus-areas.md`. Are ALL reviews (single areas and paired areas) now marked complete?
+
+- If **all reviews are complete**: output `<promise>FINIT</promise>`
+- If **any reviews remain incomplete**: output `<promise>CLOSER</promise>`
+
+Output exactly one `<promise>` tag, then stop. Do not output anything after the tag. The next iteration will carry on your good work.
