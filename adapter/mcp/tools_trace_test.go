@@ -181,6 +181,20 @@ func TestTraceGetNode(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "invalid instanceId")
 	})
+
+	t.Run("nil exec without error returns not found", func(t *testing.T) {
+		// stubNodeExecRepo default returns (nil, nil) — handler must guard against nil exec
+		// before accessing exec fields, otherwise it returns confusing JSON null.
+		srv := newTraceServer(&stubNodeExecRepo{}, &stubSnapshotRepo{}, &stubInstanceRepo{})
+		result := callTool(t, srv, "trace_get_node", map[string]any{
+			"instanceId": uuid.New().String(),
+			"nodeId":     "step1",
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found")
+	})
 }
 
 func TestVariablesGet(t *testing.T) {

@@ -194,6 +194,22 @@ func TestWorkflowList(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "db down")
 	})
+
+	t.Run("nil summaries returns empty array not null", func(t *testing.T) {
+		// Empty workspace: List returns nil slice. Handler must normalise to []
+		// so LLM clients receive [] and can safely iterate without a null-check.
+		repo := &stubWorkflowRepo{
+			listFn: func(_ context.Context) ([]workflow.WorkflowSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_list", nil)
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "[]", "nil summaries must serialise as [] not null")
+	})
 }
 
 func TestWorkflowGet(t *testing.T) {

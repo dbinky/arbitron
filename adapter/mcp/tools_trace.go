@@ -81,6 +81,9 @@ func traceGetNodeHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get node execution: %s", err)), nil
 		}
+		if exec == nil {
+			return gomcp.NewToolResultError("node execution not found"), nil
+		}
 		return MarshalResult(exec)
 	}
 }

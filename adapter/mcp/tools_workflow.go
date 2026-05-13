@@ -104,6 +104,9 @@ func workflowListHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list workflows: %s", err)), nil
 		}
+		if summaries == nil {
+			summaries = []workflow.WorkflowSummary{}
+		}
 		return MarshalResult(summaries)
 	}
 }

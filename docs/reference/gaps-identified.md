@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-BOUND-001: workflowListHandler and traceGetNodeHandler missing nil guards
+**Area**: MCP-to-Domain Boundary (`adapter/mcp/tools_workflow.go`, `adapter/mcp/tools_trace.go`)
+**Fixed**: Iteration 14
+**Detail**: Two nil boundary issues found during cross-handler consistency review. (1) `workflowListHandler` passed nil summaries directly to `MarshalResult`, producing JSON `null` for empty workspaces instead of `[]` — an LLM client's first list call on a fresh installation would receive null and fail to iterate. Fixed by normalising nil to `[]workflow.WorkflowSummary{}`. (2) `traceGetNodeHandler` called `MarshalResult(exec)` without a nil guard — if `GetByInstanceAndNode` returns `(nil, nil)` (the default stub behaviour), the handler returns confusing JSON `null` rather than an error. Fixed by adding a nil guard (same pattern as MCP-INT-001). Tests added for both: "nil summaries returns empty array not null" and "nil exec without error returns not found".
+
 ### SKILL-RUN-001: Running skill interactive trigger lacked specific notification type
 **Area**: Scheduling & Running Skills (`plugin/skills/workflow-running.md`)
 **Fixed**: Iteration 13
