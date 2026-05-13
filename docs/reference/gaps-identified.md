@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-INST-ERR-001: TestInstancePause and TestInstanceRerun engine error tests lacked text assertions
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance_test.go`)
+**Fixed**: Pair 23
+**Detail**: Both `TestInstancePause` and `TestInstanceRerun` had an "engine error returned as tool error" sub-test that only asserted `result.IsError == true`. No assertion verified the error message text was propagated through the MCP layer. In contrast, `TestInstanceResume`, `TestInstanceCancel`, and `TestInstanceRetry` all asserted `assert.Contains(t, text, <error-keyword>)`. Fixed by adding `text := extractText(t, result)` and the corresponding `assert.Contains` assertion to both missing tests, confirming the error context (`"not running"`, `"cannot rerun"`) is preserved end-to-end.
+
 ### FS-FR-001: FileReader.safeJoin only checked workspace root — cross-workflow path traversal allowed
 **Area**: Workflow File Reading (`adapter/filesystem/file_reader.go`)
 **Fixed**: Iteration 22

@@ -396,6 +396,8 @@ func TestInstancePause(t *testing.T) {
 		result := callTool(t, srv, "instance_pause", map[string]any{"id": uuid.New().String()})
 
 		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "not running")
 	})
 
 	t.Run("invalid id returns error", func(t *testing.T) {
@@ -603,6 +605,8 @@ func TestInstanceRerun(t *testing.T) {
 		result := callTool(t, srv, "instance_rerun", map[string]any{"id": uuid.New().String()})
 
 		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "cannot rerun")
 	})
 
 	t.Run("invalid id returns error", func(t *testing.T) {
