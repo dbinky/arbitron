@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-REG-001: RegisterAllTools had no test coverage
+**Area**: MCP Tool Registration (`adapter/mcp/register.go`)
+**Fixed**: Iteration 11
+**Detail**: `register.go` had no test file. Created `register_test.go` with 4 tests: `TestRegisterAllTools_Count` (exactly 37 tools), `TestRegisterAllTools_NamesAreUnique` (no duplicates), `TestRegisterAllTools_APISurface` (all 37 design-doc names present), `TestRegisterAllTools_Idempotent` (double-call behavior documented). All 37 tool names verified against phase-1.md and phase-2.md design docs.
+
 ### CLI-001: Tracing provider not shut down when RecoverCrashedInstances fails in initDomain
 **Area**: CLI Commands (`cmd/arbitron/main.go`)
 **Fixed**: Iteration 10
