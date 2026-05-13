@@ -22,7 +22,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 5 | MCP Instance Tools (`adapter/mcp/tools_instance.go` — 9 tools: list, get, trigger, pause, resume, cancel, retry, rerun, set_priority) | [x] | [ ] | |
 | 6 | MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go` — trace_get, trace_get_node, variables_get, variables_history, system_config, system_update_queue_config, notification_list/unread/mark_read/dismiss, workflow_stats) | [x] | [ ] | |
 | 7 | MCP Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/tools_streaming.go` — SubscriptionManager, instance/system subscribe/unsubscribe, event forwarding, cleanup, goroutine safety) | [x] | [ ] | |
-| 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [ ] | [ ] | |
+| 8 | Streamable HTTP Transport (`adapter/mcp/server.go:HTTPHandler`, `adapter/http/server.go` — /mcp mount, StreamableHTTPServer wiring, router integration, parameter threading) | [x] | [ ] | |
 | 9 | Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go` — send_message, end_session, get_history, ConversationHandler integration, nil-safety) | [ ] | [ ] | |
 | 10 | CLI Commands (`cmd/arbitron/main.go` — initDomain extraction, domainStack, mcpDeps(), arbitron mcp subcommand, --mcp flag on serve, graceful shutdown) | [ ] | [ ] | |
 | 11 | MCP Tool Registration (`adapter/mcp/register.go` — RegisterAllTools, tool count, tool name uniqueness, complete API surface coverage) | [ ] | [ ] | |

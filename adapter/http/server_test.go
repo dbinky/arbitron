@@ -618,6 +618,25 @@ func TestRouter_MCPEndpoint_RealHandler(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"jsonrpc"`, "response should be valid JSON-RPC")
 }
 
+func TestRouter_MCPEndpoint_SecurityHeaders(t *testing.T) {
+	// Edge case: security headers middleware is applied via r.Use before any
+	// route, so it must wrap the mounted /mcp handler too. A missing header
+	// here means the middleware chain doesn't cover mounted sub-routers.
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	stubMCP := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, stubMCP)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "security header must be set on /mcp responses")
+	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+	assert.NotEmpty(t, w.Header().Get("Referrer-Policy"))
+}
+
 func TestRouter_GetConfig_ReflectsUpdatedQueueCaps(t *testing.T) {
 	// PUT /system/config/queue must update the values returned by GET /system/config.
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()

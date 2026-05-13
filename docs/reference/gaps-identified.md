@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HTTP-MCP-001: Security headers not verified on /mcp endpoint responses
+**Area**: Streamable HTTP Transport (`adapter/http/server.go`)
+**Fixed**: Iteration 8
+**Detail**: `securityHeaders` middleware is applied via `r.Use(...)` before routes so it wraps the `/mcp` mount — but this was untested. Added `TestRouter_MCPEndpoint_SecurityHeaders` to verify that X-Content-Type-Options, X-Frame-Options, and Referrer-Policy headers appear on MCP endpoint responses, confirming the middleware chain covers mounted sub-routers.
+
 ### MCP-STRM-001: Streaming tools "not available" guard not tested for 3 of 4 handlers
 **Area**: MCP Event Streaming (`adapter/mcp/tools_streaming.go`, `adapter/mcp/tools_streaming_test.go`)
 **Fixed**: Iteration 7
