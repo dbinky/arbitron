@@ -48,7 +48,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 24 | Streamable HTTP + Router Integration (NewRouter parameter threading, /mcp mount position, existing route collision check, nil handler fallthrough) | [x] | |
 | 25 | CLI + MCP Server (initDomain → mcpDeps() → NewServerWithDeps flow, shared state between HTTP and MCP in --mcp mode, shutdown coordination) | [x] | |
 | 26 | Skills + MCP Tool Names (every tool referenced in skill markdown exists in RegisterAllTools, no stale/renamed references, parameter names match) | [x] | |
-| 27 | Test Coverage Quality + All MCP Tool Files (do tests across all tool files follow the same 5-category pattern? are mocks consistent? are edge cases covered uniformly?) | [ ] | |
+| 27 | Test Coverage Quality + All MCP Tool Files (do tests across all tool files follow the same 5-category pattern? are mocks consistent? are edge cases covered uniformly?) | [x] | |
 
 ---
 
