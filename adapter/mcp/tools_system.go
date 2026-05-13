@@ -73,6 +73,9 @@ func RegisterSystemTools(srv *Server) {
 
 func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.QueueRepo == nil {
+			return gomcp.NewToolResultError("queue repository not available"), nil
+		}
 		running, err := srv.deps.QueueRepo.CountRunning(ctx)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count running: %s", err)), nil
@@ -100,6 +103,9 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 
 func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.QueueManager == nil {
+			return gomcp.NewToolResultError("queue manager not available"), nil
+		}
 		args := request.GetArguments()
 
 		globalCapStr, _ := args["globalCap"].(string)
@@ -107,22 +113,45 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid globalCap: %s", globalCapStr)), nil
 		}
+		if globalCap < 0 {
+			return gomcp.NewToolResultError("globalCap must be >= 0 (0 = unlimited)"), nil
+		}
 
 		perUserCapStr, _ := args["perUserCap"].(string)
 		perUserCap, err := strconv.Atoi(perUserCapStr)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid perUserCap: %s", perUserCapStr)), nil
 		}
+		if perUserCap < 0 {
+			return gomcp.NewToolResultError("perUserCap must be >= 0 (0 = unlimited)"), nil
+		}
+
+		// Record previous caps for conditional evaluation.
+		oldGlobalCap := srv.deps.Config.Queue.GlobalCap
+		oldPerUserCap := srv.deps.Config.Queue.PerUserCap
 
 		srv.deps.QueueManager.UpdateConfig(globalCap, perUserCap)
 
-		if err := srv.deps.QueueManager.Evaluate(ctx); err != nil {
-			return gomcp.NewToolResultError(fmt.Sprintf("config updated but evaluation failed: %s", err)), nil
+		// Keep the in-memory Config consistent so system_config reads reflect
+		// the new values.
+		srv.deps.Config.Queue.GlobalCap = globalCap
+		srv.deps.Config.Queue.PerUserCap = perUserCap
+
+		// Only evaluate the queue when the cap was raised, matching the HTTP
+		// handler's conditional logic. Lowering a cap does not free slots.
+		capRaised := (globalCap == 0 && oldGlobalCap > 0) ||
+			(globalCap > oldGlobalCap) ||
+			(perUserCap == 0 && oldPerUserCap > 0) ||
+			(perUserCap > oldPerUserCap)
+		if capRaised {
+			if err := srv.deps.QueueManager.Evaluate(ctx); err != nil {
+				return gomcp.NewToolResultError(fmt.Sprintf("config updated but evaluation failed: %s", err)), nil
+			}
 		}
 
 		return MarshalResult(map[string]any{
-			"status":    "updated",
-			"globalCap": globalCap,
+			"status":     "updated",
+			"globalCap":  globalCap,
 			"perUserCap": perUserCap,
 		})
 	}
@@ -130,6 +159,9 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 
 func notificationListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Notifications == nil {
+			return gomcp.NewToolResultError("notifications not available"), nil
+		}
 		args := request.GetArguments()
 
 		var filters notification.ListFilters
@@ -152,6 +184,9 @@ func notificationListHandler(srv *Server) server.ToolHandlerFunc {
 
 func notificationUnreadCountHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Notifications == nil {
+			return gomcp.NewToolResultError("notifications not available"), nil
+		}
 		count, err := srv.deps.Notifications.CountUnread(ctx)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count unread: %s", err)), nil
@@ -162,6 +197,9 @@ func notificationUnreadCountHandler(srv *Server) server.ToolHandlerFunc {
 
 func notificationMarkReadHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Notifications == nil {
+			return gomcp.NewToolResultError("notifications not available"), nil
+		}
 		if err := srv.deps.Notifications.MarkAllRead(ctx); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to mark read: %s", err)), nil
 		}
@@ -171,6 +209,9 @@ func notificationMarkReadHandler(srv *Server) server.ToolHandlerFunc {
 
 func notificationDismissHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Notifications == nil {
+			return gomcp.NewToolResultError("notifications not available"), nil
+		}
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil

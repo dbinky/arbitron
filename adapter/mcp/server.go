@@ -70,12 +70,13 @@ func (s *Server) HTTPHandler() http.Handler {
 	return server.NewStreamableHTTPServer(s.mcpServer)
 }
 
-// ServeStdio starts the MCP server on stdin/stdout with signal-based graceful
-// shutdown. This blocks until the client disconnects or a termination signal
-// is received. The ctx parameter is reserved for future use (e.g., parent
-// cancellation); the underlying mcp-go ServeStdio manages its own context.
-func (s *Server) ServeStdio(_ context.Context) error {
-	return server.ServeStdio(s.mcpServer)
+// ServeStdio starts the MCP server on stdin/stdout. This blocks until the
+// client disconnects, the context is cancelled, or a termination signal is
+// received. The ctx parameter controls the server's lifecycle; cancelling it
+// will shut down the stdio server.
+func (s *Server) ServeStdio(ctx context.Context) error {
+	stdio := server.NewStdioServer(s.mcpServer)
+	return stdio.Listen(ctx, os.Stdin, os.Stdout)
 }
 
 // Listen starts the MCP server on the provided reader/writer pair. This is

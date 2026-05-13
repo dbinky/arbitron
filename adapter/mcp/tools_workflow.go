@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
@@ -119,8 +120,15 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		wf, err := srv.deps.Workflows.Load(ctx, name)
 		if err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to load workflow: %s", err)), nil
 		}
 		if wf == nil {
@@ -143,7 +151,14 @@ func workflowCreateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid manifest JSON: %s", err)), nil
 		}
 
+		if !safeWorkflowName(wf.Name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", wf.Name)), nil
+		}
+
 		if err := srv.deps.Workflows.Create(ctx, wf.Name, &wf); err != nil {
+			if errors.Is(err, workflow.ErrAlreadyExists) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow already exists: %s", wf.Name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to create workflow: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "created", "name": wf.Name})
@@ -157,6 +172,11 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
+
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		manifest, _ := args["manifest"].(string)
 		if manifest == "" {
 			return gomcp.NewToolResultError("manifest is required"), nil
@@ -171,6 +191,9 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		wf.Name = name
 
 		if err := srv.deps.Workflows.Update(ctx, name, &wf); err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to update workflow: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "updated", "name": name})
@@ -185,7 +208,14 @@ func workflowDeleteHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		if err := srv.deps.Workflows.Delete(ctx, name); err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to delete workflow: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "deleted", "name": name})
@@ -200,8 +230,15 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		wf, err := srv.deps.Workflows.Load(ctx, name)
 		if err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to load workflow: %s", err)), nil
 		}
 		if wf == nil {
@@ -228,8 +265,15 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
 
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		files, err := srv.deps.Workflows.ListFiles(ctx, name)
 		if err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list files: %s", err)), nil
 		}
 		if files == nil {
@@ -246,6 +290,11 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
+
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		path, _ := args["path"].(string)
 		if path == "" {
 			return gomcp.NewToolResultError("path is required"), nil
@@ -259,6 +308,10 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 	}
 }
 
+// maxWriteFileContentBytes is the maximum content size accepted by the MCP
+// workflow_write_file tool, matching the HTTP handler's 10 MiB limit.
+const maxWriteFileContentBytes = 10 << 20 // 10 MiB
+
 func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		args := request.GetArguments()
@@ -266,6 +319,11 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
+
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		path, _ := args["path"].(string)
 		if path == "" {
 			return gomcp.NewToolResultError("path is required"), nil
@@ -276,7 +334,17 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		content, _ := rawContent.(string)
 
+		if len(content) > maxWriteFileContentBytes {
+			return gomcp.NewToolResultError(fmt.Sprintf("content too large: %d bytes exceeds %d byte limit", len(content), maxWriteFileContentBytes)), nil
+		}
+
 		if err := srv.deps.Workflows.WriteFile(ctx, name, path, []byte(content)); err != nil {
+			if errors.Is(err, workflow.ErrNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			}
+			if errors.Is(err, workflow.ErrInvalidFilePath) {
+				return gomcp.NewToolResultError(fmt.Sprintf("invalid file path: %s", path)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to write file: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "written", "name": name, "path": path})
@@ -290,12 +358,23 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
+
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+
 		path, _ := args["path"].(string)
 		if path == "" {
 			return gomcp.NewToolResultError("path is required"), nil
 		}
 
 		if err := srv.deps.Workflows.DeleteFile(ctx, name, path); err != nil {
+			if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
+				return gomcp.NewToolResultError(fmt.Sprintf("not found: %s", err)), nil
+			}
+			if errors.Is(err, workflow.ErrInvalidFilePath) {
+				return gomcp.NewToolResultError(fmt.Sprintf("invalid file path: %s", path)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to delete file: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "deleted", "name": name, "path": path})

@@ -39,7 +39,7 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
 	wf, ok := r.workflows[name]
 	if !ok {
-		return nil, fmt.Errorf("workflow not found: %s", name)
+		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 	return wf, nil
 }
@@ -366,7 +366,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		svc := &mockWorkflowService{
 			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
-				return uuid.Nil, false, fmt.Errorf("failed to load workflow: workflow not found: unknown")
+				return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", fmt.Errorf("%w: unknown", workflow.ErrNotFound))
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
@@ -633,7 +633,7 @@ func TestWorkflowHandler_SaveLayout(t *testing.T) {
 
 	t.Run("returns 404 when repo returns not-found error", func(t *testing.T) {
 		repo := newCapturingWorkflowRepo()
-		repo.saveErr = fmt.Errorf("workflow not found: test-wf")
+		repo.saveErr = fmt.Errorf("%w: test-wf", workflow.ErrNotFound)
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		body := `{"positions":{"A":{"x":10,"y":20}}}`
@@ -900,7 +900,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 	t.Run("returns 409 for duplicate workflow", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.createFn = func(_ context.Context, _ string, _ *workflow.Workflow) error {
-			return fmt.Errorf("workflow already exists: new-wf")
+			return fmt.Errorf("%w: new-wf", workflow.ErrAlreadyExists)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1017,7 +1017,7 @@ func TestWorkflowHandler_Update(t *testing.T) {
 	t.Run("returns 404 for non-existent workflow", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.updateFn = func(_ context.Context, _ string, _ *workflow.Workflow) error {
-			return fmt.Errorf("workflow not found: unknown")
+			return fmt.Errorf("%w: unknown", workflow.ErrNotFound)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1124,7 +1124,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 	t.Run("returns 404 for non-existent workflow", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.deleteFn = func(_ context.Context, _ string) error {
-			return fmt.Errorf("workflow not found: unknown")
+			return fmt.Errorf("%w: unknown", workflow.ErrNotFound)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1224,7 +1224,7 @@ func TestWorkflowHandler_ListFiles(t *testing.T) {
 	t.Run("returns 404 for non-existent workflow", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.listFilesFn = func(_ context.Context, _ string) ([]string, error) {
-			return nil, fmt.Errorf("workflow not found: unknown")
+			return nil, fmt.Errorf("%w: unknown", workflow.ErrNotFound)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1295,7 +1295,7 @@ func TestWorkflowHandler_ReadFile(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		fr := newContentFileReader()
 		fr.readFileFn = func(_, _ string) ([]byte, error) {
-			return nil, fmt.Errorf("file not found: missing.sh")
+			return nil, fmt.Errorf("%w: missing.sh", workflow.ErrFileNotFound)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, fr, nil)
 
@@ -1387,7 +1387,7 @@ func TestWorkflowHandler_WriteFile(t *testing.T) {
 	t.Run("returns 400 for path traversal", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.writeFileFn = func(_ context.Context, _, _ string, _ []byte) error {
-			return fmt.Errorf("invalid file path: ../../etc/passwd")
+			return fmt.Errorf("%w: ../../etc/passwd", workflow.ErrInvalidFilePath)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1492,7 +1492,7 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 	t.Run("returns 404 for non-existent file", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.deleteFileFn = func(_ context.Context, _, _ string) error {
-			return fmt.Errorf("file not found: missing.sh")
+			return fmt.Errorf("%w: missing.sh", workflow.ErrFileNotFound)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
@@ -1523,7 +1523,7 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 	t.Run("returns 400 for path traversal", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
 		repo.deleteFileFn = func(_ context.Context, _, _ string) error {
-			return fmt.Errorf("invalid file path: ../../etc/passwd")
+			return fmt.Errorf("%w: ../../etc/passwd", workflow.ErrInvalidFilePath)
 		}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 

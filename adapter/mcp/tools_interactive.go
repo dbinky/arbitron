@@ -81,6 +81,10 @@ func interactiveEndSessionHandler(srv *Server) server.ToolHandlerFunc {
 
 func interactiveGetHistoryHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.ConversationHandler == nil {
+			return gomcp.NewToolResultError("interactive sessions not available"), nil
+		}
+
 		id, err := ParseUUID(request, "instanceId")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil

@@ -178,6 +178,13 @@ func NewRouter(
 
 	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
 	// over HTTP instead of (or in addition to) the stdio transport.
+	//
+	// WARNING: The /mcp endpoint currently has NO authentication. It exposes
+	// 37 tools including destructive operations (workflow_delete, workflow_write_file,
+	// instance_cancel, system_update_queue_config). This endpoint MUST NOT be
+	// exposed on untrusted networks. The same non-loopback binding warning that
+	// applies to /api/v1/ applies here with even greater urgency. Authentication
+	// middleware should be added before any production or multi-user deployment.
 	if mcpHandler != nil {
 		r.Mount("/mcp", mcpHandler)
 	}

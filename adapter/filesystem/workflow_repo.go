@@ -27,18 +27,31 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 	return &WorkflowRepo{basePath: basePath}
 }
 
+// resolveWorkflowDir validates a workflow name and returns the absolute path
+// to its directory. It rejects names that resolve to the basePath itself or
+// escape it via path traversal (e.g., "../sibling", ".", "").
+func (r *WorkflowRepo) resolveWorkflowDir(name string) (string, error) {
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return "", fmt.Errorf("%w: %s", workflow.ErrInvalidName, name)
+	}
+	return wfDir, nil
+}
+
 // Load reads and parses the workflow.json file from the named subdirectory.
 func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
-	if !strings.HasPrefix(manifestPath, root) {
-		return nil, fmt.Errorf("workflow not found: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		// Load historically returns ErrNotFound for invalid names.
+		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 
+	manifestPath := filepath.Join(wfDir, "workflow.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("workflow not found: %s", name)
+			return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return nil, fmt.Errorf("reading workflow %q: %w", name, err)
 	}
@@ -87,16 +100,16 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 // manifest file. It reads the raw JSON (preserving unknown fields), patches
 // matching nodes, and writes the file back with indentation.
 func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
-	if !strings.HasPrefix(manifestPath, root) {
-		return fmt.Errorf("workflow not found: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 
+	manifestPath := filepath.Join(wfDir, "workflow.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("reading workflow %q: %w", name, err)
 	}
@@ -152,15 +165,14 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 // Create creates a new workflow directory and writes its workflow.json manifest.
 // It returns an error if the workflow already exists or the name is invalid.
 func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workflow) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
 	}
 
 	// Fail if the directory already exists.
 	if _, err := os.Stat(wfDir); err == nil {
-		return fmt.Errorf("workflow already exists: %s", name)
+		return fmt.Errorf("%w: %s", workflow.ErrAlreadyExists, name)
 	}
 
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -194,16 +206,15 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 // Update atomically replaces the workflow.json manifest for an existing workflow.
 // It returns an error if the workflow does not exist.
 func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
 	}
 
 	manifestPath := filepath.Join(wfDir, "workflow.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("checking workflow %q: %w", name, err)
 	}
@@ -230,15 +241,14 @@ func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workf
 // Delete removes an entire workflow directory and all its contents.
 // It returns an error if the workflow does not exist.
 func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(wfDir); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("checking workflow %q: %w", name, err)
 	}
@@ -253,16 +263,15 @@ func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
 // WriteFile writes content to a file at relativePath inside the named workflow
 // directory, creating intermediate directories as needed.
 func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
 	}
 
 	// Verify workflow directory exists.
 	if _, err := os.Stat(wfDir); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("checking workflow %q: %w", name, err)
 	}
@@ -271,7 +280,7 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
 	targetPath := filepath.Join(wfDir, relativePath)
 	if !strings.HasPrefix(targetPath, wfRoot) {
-		return fmt.Errorf("invalid file path: %s", relativePath)
+		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
 	}
 
 	// Create intermediate directories.
@@ -296,16 +305,15 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 
 // DeleteFile removes a single file from inside the named workflow directory.
 func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
 	}
 
 	// Verify workflow directory exists.
 	if _, err := os.Stat(wfDir); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("checking workflow %q: %w", name, err)
 	}
@@ -314,12 +322,12 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath s
 	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
 	targetPath := filepath.Join(wfDir, relativePath)
 	if !strings.HasPrefix(targetPath, wfRoot) {
-		return fmt.Errorf("invalid file path: %s", relativePath)
+		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
 	}
 
 	if err := os.Remove(targetPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("file not found: %s in workflow %s", relativePath, name)
+			return fmt.Errorf("%w: %s in workflow %s", workflow.ErrFileNotFound, relativePath, name)
 		}
 		return fmt.Errorf("deleting file %q in workflow %q: %w", relativePath, name, err)
 	}
@@ -328,25 +336,24 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath s
 }
 
 // ListFiles returns all file paths inside the named workflow directory,
-// excluding workflow.json. Paths use forward slashes and are relative to the
-// workflow directory.
+// excluding workflow.json and .tmp crash artifacts. Paths use forward slashes
+// and are relative to the workflow directory.
 func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
-		return nil, fmt.Errorf("invalid workflow name: %s", name)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Verify workflow directory exists.
 	if _, err := os.Stat(wfDir); err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("workflow not found: %s", name)
+			return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return nil, fmt.Errorf("checking workflow %q: %w", name, err)
 	}
 
 	var files []string
-	err := filepath.WalkDir(wfDir, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(wfDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -364,6 +371,11 @@ func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, erro
 
 		// Exclude the manifest file.
 		if rel == "workflow.json" {
+			return nil
+		}
+
+		// Exclude .tmp crash artifacts left by interrupted atomic writes.
+		if strings.HasSuffix(rel, ".tmp") {
 			return nil
 		}
 

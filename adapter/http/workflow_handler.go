@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -83,7 +84,7 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -102,7 +103,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -148,7 +149,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	id, started, err := h.service.Trigger(name, req.Variables, req.Priority)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 			return
 		}
@@ -198,7 +199,7 @@ func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -266,7 +267,7 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Create(r.Context(), wf.Name, &wf); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, workflow.ErrAlreadyExists) {
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
 		}
@@ -295,7 +296,7 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 	wf.Name = name
 
 	if err := h.repo.Update(r.Context(), name, &wf); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -314,7 +315,7 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Delete(r.Context(), name); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -335,7 +336,7 @@ func (h *WorkflowHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	files, err := h.repo.ListFiles(r.Context(), name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -364,7 +365,7 @@ func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.fileReader.ReadFile(name, filePath)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}
@@ -398,11 +399,11 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.WriteFile(r.Context(), name, filePath, data); err != nil {
-		if strings.Contains(err.Error(), "invalid file path") {
+		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -427,11 +428,11 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.DeleteFile(r.Context(), name, filePath); err != nil {
-		if strings.Contains(err.Error(), "invalid file path") {
+		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}

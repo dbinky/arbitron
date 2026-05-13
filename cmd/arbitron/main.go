@@ -360,22 +360,27 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// 17. Graceful shutdown on SIGINT/SIGTERM.
+	shutdownCh := make(chan os.Signal, 1)
+	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
+
 	// Optionally start MCP stdio server alongside the HTTP server.
 	// The mcpSrv is already created above and its HTTP handler is mounted
 	// at /mcp on the router; this only adds the stdio transport.
+	// Uses a cancellable context derived from the shutdown signal so the
+	// stdio server stops accepting requests during graceful shutdown.
+	mcpCtx, mcpCancel := context.WithCancel(ctx)
+	defer mcpCancel()
+
 	mcpEnabled, _ := cmd.Flags().GetBool("mcp")
 	if mcpEnabled {
 		go func() {
 			ds.logger.Info("MCP stdio server starting (alongside HTTP)")
-			if err := mcpSrv.ServeStdio(context.Background()); err != nil {
+			if err := mcpSrv.ServeStdio(mcpCtx); err != nil && mcpCtx.Err() == nil {
 				ds.logger.Error("MCP server error", "error", err)
 			}
 		}()
 	}
-
-	// 17. Graceful shutdown on SIGINT/SIGTERM.
-	shutdownCh := make(chan os.Signal, 1)
-	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -394,6 +399,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+
+	// Cancel the MCP stdio context so it stops accepting new requests.
+	mcpCancel()
 
 	// 18. Shutdown with a 15-second deadline.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

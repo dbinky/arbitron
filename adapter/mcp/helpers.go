@@ -3,10 +3,20 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 )
+
+// safeWorkflowName checks that a workflow name is a plain filename component
+// (no path separators, no dot-dot) to prevent directory traversal.
+// This mirrors the HTTP handler's safeWorkflowName validation for
+// defense-in-depth across transport adapters.
+func safeWorkflowName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, "/\\") && filepath.Clean(name) == name && name != ".."
+}
 
 // MarshalResult serializes any value as indented JSON and wraps it in a
 // CallToolResult. On marshal failure it returns a tool error result instead
