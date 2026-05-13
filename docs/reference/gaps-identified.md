@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### MCP-WF-UPD-001: workflowUpdateHandler allowed manifest name to overwrite tool-arg-authoritative name
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
+**Fixed**: Iteration 17
+**Detail**: `workflowUpdateHandler` decoded the `manifest` argument into a `workflow.Workflow` and passed it directly to `repo.Update` without enforcing that `wf.Name` matches the `name` tool arg. An LLM calling `workflow_update` with `name="prod-wf"` and a manifest containing `"name":"dev-wf"` would store `workflow.json` with `"name":"dev-wf"` inside the `prod-wf/` directory — the same name/directory mismatch bug fixed in the HTTP handler (HTTP-UPD-001). Fixed by setting `wf.Name = name` (from the tool arg) before calling `repo.Update`. Added "tool name arg wins when manifest name differs" test that captures the workflow passed to the repo and asserts its Name equals the tool arg name.
+
 ### HTTP-UPD-001: Update handler allowed body name to overwrite URL-authoritative name in workflow.json
 **Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
 **Fixed**: Iteration 16

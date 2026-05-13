@@ -163,6 +163,9 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		if err := json.Unmarshal([]byte(manifest), &wf); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid manifest JSON: %s", err)), nil
 		}
+		// The tool's "name" arg is authoritative; overwrite whatever the manifest
+		// contained so workflow.json stays consistent with its directory name.
+		wf.Name = name
 
 		if err := srv.deps.Workflows.Update(ctx, name, &wf); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to update workflow: %s", err)), nil

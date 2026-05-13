@@ -369,6 +369,28 @@ func TestWorkflowUpdate(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow locked")
 	})
+
+	t.Run("tool name arg wins when manifest name differs", func(t *testing.T) {
+		// The "name" tool arg identifies which workflow to update (authoritative).
+		// A conflicting "name" field in the manifest must be overwritten before
+		// the manifest is stored, otherwise workflow.json diverges from its directory.
+		var capturedWF *workflow.Workflow
+		repo := &stubWorkflowRepo{
+			updateFn: func(_ context.Context, _ string, wf *workflow.Workflow) error {
+				capturedWF = wf
+				return nil
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_update", map[string]any{
+			"name":     "real-name",
+			"manifest": `{"name":"wrong-name","description":"updated"}`,
+		})
+
+		assert.False(t, result.IsError)
+		require.NotNil(t, capturedWF)
+		assert.Equal(t, "real-name", capturedWF.Name)
+	})
 }
 
 func TestWorkflowDelete(t *testing.T) {
