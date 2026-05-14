@@ -117,6 +117,7 @@ func TestInstanceRepo_GetNotFound(t *testing.T) {
 
 	_, err := repo.Get(context.Background(), uuid.New())
 	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound)
 }
 
 func TestInstanceRepo_UpdateState(t *testing.T) {
@@ -456,7 +457,7 @@ func TestNodeExecutionRepo_GetByInstanceAndNode_NotFound(t *testing.T) {
 
 	_, err := repo.GetByInstanceAndNode(context.Background(), inst.ID, "nonexistent-node")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.ErrorIs(t, err, instance.ErrNotFound)
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/google/uuid"
@@ -61,22 +62,38 @@ LEFT JOIN instances i ON i.id = n.instance_id`
 	}
 	defer rows.Close()
 
-	var notifications []notification.Notification
+	notifications := make([]notification.Notification, 0)
 	for rows.Next() {
 		var idStr, instIDStr, wfName, nType, createdStr, updatedStr string
 		var readInt, dismissedInt int
 		if err := rows.Scan(&idStr, &instIDStr, &wfName, &nType, &readInt, &dismissedInt, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scanning notification row: %w", err)
 		}
+		id, err := parseUUID(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("converting notification row: %w", err)
+		}
+		instanceID, err := parseUUID(instIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("converting notification row: %w", err)
+		}
+		createdAt, err := parseTime(createdStr)
+		if err != nil {
+			return nil, fmt.Errorf("converting notification row: %w", err)
+		}
+		updatedAt, err := parseTime(updatedStr)
+		if err != nil {
+			return nil, fmt.Errorf("converting notification row: %w", err)
+		}
 		notifications = append(notifications, notification.Notification{
-			ID:           parseUUID(idStr),
-			InstanceID:   parseUUID(instIDStr),
+			ID:           id,
+			InstanceID:   instanceID,
 			WorkflowName: wfName,
 			Type:         notification.Type(nType),
 			Read:         readInt != 0,
 			Dismissed:    dismissedInt != 0,
-			CreatedAt:    parseTime(createdStr),
-			UpdatedAt:    parseTime(updatedStr),
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -96,8 +113,9 @@ func (r *NotificationRepo) CountUnread(ctx context.Context) (int, error) {
 }
 
 func (r *NotificationRepo) MarkAllRead(ctx context.Context) error {
-	query := `UPDATE notifications SET read = 1, updated_at = datetime('now') WHERE read = 0`
-	_, err := r.db.ExecContext(ctx, query)
+	now := timeToString(time.Now().UTC())
+	query := `UPDATE notifications SET read = 1, updated_at = ? WHERE read = 0`
+	_, err := r.db.ExecContext(ctx, query, now)
 	if err != nil {
 		return fmt.Errorf("marking all notifications read: %w", err)
 	}
@@ -105,8 +123,9 @@ func (r *NotificationRepo) MarkAllRead(ctx context.Context) error {
 }
 
 func (r *NotificationRepo) Dismiss(ctx context.Context, id uuid.UUID) error {
-	query := `UPDATE notifications SET dismissed = 1, updated_at = datetime('now') WHERE id = ?`
-	result, err := r.db.ExecContext(ctx, query, uuidToString(id))
+	now := timeToString(time.Now().UTC())
+	query := `UPDATE notifications SET dismissed = 1, updated_at = ? WHERE id = ?`
+	result, err := r.db.ExecContext(ctx, query, now, uuidToString(id))
 	if err != nil {
 		return fmt.Errorf("dismissing notification: %w", err)
 	}

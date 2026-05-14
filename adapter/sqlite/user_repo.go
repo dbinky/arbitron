@@ -26,5 +26,9 @@ func (r *UserRepo) GetDefaultUser(ctx context.Context) (uuid.UUID, error) {
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("getting default user: %w", err)
 	}
-	return parseUUID(user.ID), nil
+	id, err := parseUUID(user.ID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("getting default user: %w", err)
+	}
+	return id, nil
 }

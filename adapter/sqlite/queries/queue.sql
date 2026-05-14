@@ -31,4 +31,4 @@ SELECT * FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AN
 SELECT * FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL;
 
 -- name: SetQueued :exec
-UPDATE instances SET state = 'queued', queued_at = ?, updated_at = datetime('now') WHERE id = ?;
+UPDATE instances SET state = 'queued', queued_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?;

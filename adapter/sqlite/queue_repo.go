@@ -68,8 +68,7 @@ func (r *QueueRepo) NextEligible(ctx context.Context, globalCap int, perUserCap 
 		return nil, fmt.Errorf("getting next eligible instance: %w", err)
 	}
 
-	repo := &InstanceRepo{db: r.db, queries: r.queries}
-	return repo.rowToInstance(row)
+	return rowToInstance(row)
 }
 
 func (r *QueueRepo) SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error {
@@ -88,10 +87,9 @@ func (r *QueueRepo) ListWaitingWithTimer(ctx context.Context) ([]instance.Instan
 	if err != nil {
 		return nil, fmt.Errorf("listing waiting instances with timer: %w", err)
 	}
-	repo := &InstanceRepo{db: r.db, queries: r.queries}
 	instances := make([]instance.Instance, 0, len(rows))
 	for _, row := range rows {
-		inst, err := repo.rowToInstance(row)
+		inst, err := rowToInstance(row)
 		if err != nil {
 			return nil, err
 		}
@@ -105,10 +103,9 @@ func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Inst
 	if err != nil {
 		return nil, fmt.Errorf("listing waiting instances with webhook: %w", err)
 	}
-	repo := &InstanceRepo{db: r.db, queries: r.queries}
 	instances := make([]instance.Instance, 0, len(rows))
 	for _, row := range rows {
-		inst, err := repo.rowToInstance(row)
+		inst, err := rowToInstance(row)
 		if err != nil {
 			return nil, err
 		}

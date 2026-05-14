@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
@@ -10,6 +11,19 @@ import (
 // Open opens a SQLite database at the given path and configures it for
 // concurrent use with WAL mode. Use ":memory:" for in-memory databases.
 func Open(path string) (*sql.DB, error) {
+	// Pre-create the database file with restrictive permissions (0600) to
+	// prevent it from being world-readable under a permissive umask.
+	// Skip for in-memory databases.
+	if path != ":memory:" {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+			if err != nil {
+				return nil, fmt.Errorf("pre-creating database file: %w", err)
+			}
+			f.Close()
+		}
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database: %w", err)
@@ -23,6 +37,8 @@ func Open(path string) (*sql.DB, error) {
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA secure_delete=ON",
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {

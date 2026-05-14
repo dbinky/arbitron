@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     username   TEXT NOT NULL UNIQUE,
     role       TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ'))
 );
 
 INSERT OR IGNORE INTO users (id, username, role)
@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS instances (
     original_variables  TEXT NOT NULL DEFAULT '{}',
     current_node_id     TEXT,
     failed_node_id      TEXT,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ')),
     completed_at        TEXT,
     queued_at           TEXT,
     waiting_until       TEXT,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS node_executions (
     script_stdout    TEXT,
     script_stderr    TEXT,
     script_exit_code INTEGER,
-    started_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ')),
     completed_at     TEXT
 );
 
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS variable_snapshots (
     instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
     node_id     TEXT NOT NULL,
     variables   TEXT NOT NULL DEFAULT '{}',
-    captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+    captured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_variable_snapshots_instance_captured
@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     type        TEXT NOT NULL CHECK (type IN ('needs_interaction', 'failed', 'completed')),
     read        INTEGER NOT NULL DEFAULT 0,
     dismissed   INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_active

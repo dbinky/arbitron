@@ -11,6 +11,8 @@ services:
       - ARBITRON_WORKSPACE_PATH=/workspaces
       - ARBITRON_SERVER_HOST=0.0.0.0
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
 volumes:

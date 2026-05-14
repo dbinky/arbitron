@@ -38,7 +38,11 @@ func (r *VariableSnapshotRepo) Create(ctx context.Context, snapshot *instance.Va
 		return fmt.Errorf("creating variable snapshot: %w", err)
 	}
 
-	snapshot.CapturedAt = parseTime(row.CapturedAt)
+	capturedAt, err := parseTime(row.CapturedAt)
+	if err != nil {
+		return fmt.Errorf("parsing captured_at: %w", err)
+	}
+	snapshot.CapturedAt = capturedAt
 	return nil
 }
 
@@ -54,12 +58,24 @@ func (r *VariableSnapshotRepo) ListByInstance(ctx context.Context, instanceID uu
 		if err != nil {
 			return nil, fmt.Errorf("unmarshalling variables: %w", err)
 		}
+		id, err := parseUUID(row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("converting snapshot row: %w", err)
+		}
+		instanceID, err := parseUUID(row.InstanceID)
+		if err != nil {
+			return nil, fmt.Errorf("converting snapshot row: %w", err)
+		}
+		capturedAt, err := parseTime(row.CapturedAt)
+		if err != nil {
+			return nil, fmt.Errorf("converting snapshot row: %w", err)
+		}
 		snapshots = append(snapshots, instance.VariableSnapshot{
-			ID:         parseUUID(row.ID),
-			InstanceID: parseUUID(row.InstanceID),
+			ID:         id,
+			InstanceID: instanceID,
 			NodeID:     row.NodeID,
 			Variables:  vars,
-			CapturedAt: parseTime(row.CapturedAt),
+			CapturedAt: capturedAt,
 		})
 	}
 	return snapshots, nil

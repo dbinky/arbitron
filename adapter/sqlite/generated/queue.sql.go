@@ -193,7 +193,7 @@ func (q *Queries) NextEligible(ctx context.Context, arg NextEligibleParams) (Ins
 }
 
 const setQueued = `-- name: SetQueued :exec
-UPDATE instances SET state = 'queued', queued_at = ?, updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET state = 'queued', queued_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type SetQueuedParams struct {

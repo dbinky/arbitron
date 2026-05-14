@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const clearWaitingUntil = `-- name: ClearWaitingUntil :exec
+UPDATE instances SET waiting_until = NULL, updated_at = ? WHERE id = ?
+`
+
+type ClearWaitingUntilParams struct {
+	UpdatedAt string
+	ID        string
+}
+
+// Clears waiting_until without changing state. The caller is responsible for
+// state transitions (e.g. back to 'running'). Matches Postgres adapter behavior.
+func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilParams) error {
+	_, err := q.db.ExecContext(ctx, clearWaitingUntil, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const createInstance = `-- name: CreateInstance :one
 INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -210,7 +226,7 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 }
 
 const setInstanceCompleted = `-- name: SetInstanceCompleted :exec
-UPDATE instances SET state = 'completed', completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET state = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 func (q *Queries) SetInstanceCompleted(ctx context.Context, id string) error {
@@ -219,7 +235,7 @@ func (q *Queries) SetInstanceCompleted(ctx context.Context, id string) error {
 }
 
 const setInstanceFailed = `-- name: SetInstanceFailed :exec
-UPDATE instances SET state = 'failed', failed_node_id = ?, completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET state = 'failed', failed_node_id = ?, completed_at = strftime('%Y-%m-%dT%H:%M:%SZ'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type SetInstanceFailedParams struct {
@@ -232,8 +248,59 @@ func (q *Queries) SetInstanceFailed(ctx context.Context, arg SetInstanceFailedPa
 	return err
 }
 
+const setWaitingWithTimer = `-- name: SetWaitingWithTimer :exec
+UPDATE instances SET state = 'waiting', waiting_until = ?, updated_at = ? WHERE id = ?
+`
+
+type SetWaitingWithTimerParams struct {
+	WaitingUntil sql.NullString
+	UpdatedAt    string
+	ID           string
+}
+
+func (q *Queries) SetWaitingWithTimer(ctx context.Context, arg SetWaitingWithTimerParams) error {
+	_, err := q.db.ExecContext(ctx, setWaitingWithTimer, arg.WaitingUntil, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setWebhookFields = `-- name: SetWebhookFields :exec
+UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = ? WHERE id = ?
+`
+
+type SetWebhookFieldsParams struct {
+	WebhookToken      sql.NullString
+	WebhookSecretHash sql.NullString
+	UpdatedAt         string
+	ID                string
+}
+
+func (q *Queries) SetWebhookFields(ctx context.Context, arg SetWebhookFieldsParams) error {
+	_, err := q.db.ExecContext(ctx, setWebhookFields,
+		arg.WebhookToken,
+		arg.WebhookSecretHash,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const setWebhookReceived = `-- name: SetWebhookReceived :exec
+UPDATE instances SET webhook_received_at = ?, updated_at = ? WHERE id = ?
+`
+
+type SetWebhookReceivedParams struct {
+	WebhookReceivedAt sql.NullString
+	UpdatedAt         string
+	ID                string
+}
+
+func (q *Queries) SetWebhookReceived(ctx context.Context, arg SetWebhookReceivedParams) error {
+	_, err := q.db.ExecContext(ctx, setWebhookReceived, arg.WebhookReceivedAt, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const updateInstanceCurrentNode = `-- name: UpdateInstanceCurrentNode :exec
-UPDATE instances SET current_node_id = ?, updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET current_node_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type UpdateInstanceCurrentNodeParams struct {
@@ -247,7 +314,7 @@ func (q *Queries) UpdateInstanceCurrentNode(ctx context.Context, arg UpdateInsta
 }
 
 const updateInstancePriority = `-- name: UpdateInstancePriority :exec
-UPDATE instances SET priority = ?, updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET priority = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type UpdateInstancePriorityParams struct {
@@ -261,7 +328,7 @@ func (q *Queries) UpdateInstancePriority(ctx context.Context, arg UpdateInstance
 }
 
 const updateInstanceState = `-- name: UpdateInstanceState :exec
-UPDATE instances SET state = ?, updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET state = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type UpdateInstanceStateParams struct {
@@ -275,7 +342,7 @@ func (q *Queries) UpdateInstanceState(ctx context.Context, arg UpdateInstanceSta
 }
 
 const updateInstanceVariables = `-- name: UpdateInstanceVariables :exec
-UPDATE instances SET variables = ?, updated_at = datetime('now') WHERE id = ?
+UPDATE instances SET variables = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?
 `
 
 type UpdateInstanceVariablesParams struct {

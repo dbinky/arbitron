@@ -3,29 +3,34 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-const timeFormat = "2006-01-02 15:04:05"
-
 func uuidToString(id uuid.UUID) string {
 	return id.String()
 }
 
-func parseUUID(s string) uuid.UUID {
-	id, _ := uuid.Parse(s)
-	return id
+func parseUUID(s string) (uuid.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing uuid %q: %w", s, err)
+	}
+	return id, nil
 }
 
 func timeToString(t time.Time) string {
-	return t.UTC().Format(timeFormat)
+	return t.UTC().Format(time.RFC3339)
 }
 
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(timeFormat, s)
-	return t
+func parseTime(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing time %q: %w", s, err)
+	}
+	return t, nil
 }
 
 func timeToNullString(t *time.Time) sql.NullString {
@@ -35,12 +40,15 @@ func timeToNullString(t *time.Time) sql.NullString {
 	return sql.NullString{String: timeToString(*t), Valid: true}
 }
 
-func nullStringToTimePtr(ns sql.NullString) *time.Time {
+func nullStringToTimePtr(ns sql.NullString) (*time.Time, error) {
 	if !ns.Valid {
-		return nil
+		return nil, nil
 	}
-	t := parseTime(ns.String)
-	return &t
+	t, err := parseTime(ns.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func stringToNullString(s string) sql.NullString {

@@ -53,8 +53,16 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		return fmt.Errorf("creating instance: %w", err)
 	}
 
-	inst.CreatedAt = parseTime(row.CreatedAt)
-	inst.UpdatedAt = parseTime(row.UpdatedAt)
+	createdAt, err := parseTime(row.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("parsing created_at: %w", err)
+	}
+	updatedAt, err := parseTime(row.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("parsing updated_at: %w", err)
+	}
+	inst.CreatedAt = createdAt
+	inst.UpdatedAt = updatedAt
 	return nil
 }
 
@@ -62,11 +70,11 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 	row, err := r.queries.GetInstance(ctx, uuidToString(id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("instance not found: %s", id)
+			return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting instance: %w", err)
 	}
-	return r.rowToInstance(row)
+	return rowToInstance(row)
 }
 
 func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
@@ -95,16 +103,36 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 
 	summaries := make([]instance.InstanceSummary, len(rows))
 	for i, row := range rows {
+		id, err := parseUUID(row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+		createdAt, err := parseTime(row.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+		updatedAt, err := parseTime(row.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+		completedAt, err := nullStringToTimePtr(row.CompletedAt)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+		queuedAt, err := nullStringToTimePtr(row.QueuedAt)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
 		summaries[i] = instance.InstanceSummary{
-			ID:            parseUUID(row.ID),
+			ID:            id,
 			WorkflowName:  row.WorkflowName,
 			State:         instance.State(row.State),
 			Priority:      instance.Priority(row.Priority),
 			CurrentNodeID: nullStringToPtr(row.CurrentNodeID),
-			CreatedAt:     parseTime(row.CreatedAt),
-			UpdatedAt:     parseTime(row.UpdatedAt),
-			CompletedAt:   nullStringToTimePtr(row.CompletedAt),
-			QueuedAt:      nullStringToTimePtr(row.QueuedAt),
+			CreatedAt:     createdAt,
+			UpdatedAt:     updatedAt,
+			CompletedAt:   completedAt,
+			QueuedAt:      queuedAt,
 		}
 	}
 	return summaries, nil
@@ -174,7 +202,7 @@ func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, er
 
 	instances := make([]instance.Instance, 0, len(rows))
 	for _, row := range rows {
-		inst, err := r.rowToInstance(row)
+		inst, err := rowToInstance(row)
 		if err != nil {
 			return nil, err
 		}
@@ -195,18 +223,25 @@ func (r *InstanceRepo) UpdatePriority(ctx context.Context, id uuid.UUID, priorit
 }
 
 func (r *InstanceRepo) SetWaiting(ctx context.Context, id uuid.UUID, waitingUntil *time.Time) error {
+	now := timeToString(time.Now().UTC())
 	idStr := uuidToString(id)
 	if waitingUntil != nil {
-		_, err := r.db.ExecContext(ctx,
-			`UPDATE instances SET state = 'waiting', waiting_until = ?, updated_at = datetime('now') WHERE id = ?`,
-			timeToString(*waitingUntil), idStr)
+		err := r.queries.SetWaitingWithTimer(ctx, generated.SetWaitingWithTimerParams{
+			WaitingUntil: timeToNullString(waitingUntil),
+			UpdatedAt:    now,
+			ID:           idStr,
+		})
 		if err != nil {
 			return fmt.Errorf("setting instance waiting: %w", err)
 		}
 	} else {
-		_, err := r.db.ExecContext(ctx,
-			`UPDATE instances SET waiting_until = NULL, updated_at = datetime('now') WHERE id = ?`,
-			idStr)
+		// When clearing waiting_until, we intentionally do NOT change the state.
+		// The caller is responsible for state transitions (e.g. back to 'running').
+		// This matches the Postgres adapter behavior.
+		err := r.queries.ClearWaitingUntil(ctx, generated.ClearWaitingUntilParams{
+			UpdatedAt: now,
+			ID:        idStr,
+		})
 		if err != nil {
 			return fmt.Errorf("clearing waiting_until: %w", err)
 		}
@@ -215,9 +250,13 @@ func (r *InstanceRepo) SetWaiting(ctx context.Context, id uuid.UUID, waitingUnti
 }
 
 func (r *InstanceRepo) SetWebhookFields(ctx context.Context, id uuid.UUID, token *string, secretHash *string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = datetime('now') WHERE id = ?`,
-		token, secretHash, uuidToString(id))
+	now := timeToString(time.Now().UTC())
+	err := r.queries.SetWebhookFields(ctx, generated.SetWebhookFieldsParams{
+		WebhookToken:      ptrToNullString(token),
+		WebhookSecretHash: ptrToNullString(secretHash),
+		UpdatedAt:         now,
+		ID:                uuidToString(id),
+	})
 	if err != nil {
 		return fmt.Errorf("setting webhook fields: %w", err)
 	}
@@ -225,9 +264,12 @@ func (r *InstanceRepo) SetWebhookFields(ctx context.Context, id uuid.UUID, token
 }
 
 func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, receivedAt time.Time) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE instances SET webhook_received_at = ?, updated_at = datetime('now') WHERE id = ?`,
-		timeToString(receivedAt), uuidToString(id))
+	now := timeToString(time.Now().UTC())
+	err := r.queries.SetWebhookReceived(ctx, generated.SetWebhookReceivedParams{
+		WebhookReceivedAt: stringToNullString(timeToString(receivedAt)),
+		UpdatedAt:         now,
+		ID:                uuidToString(id),
+	})
 	if err != nil {
 		return fmt.Errorf("setting webhook received: %w", err)
 	}
@@ -261,7 +303,10 @@ WHERE workflow_name = ?
 	return &stats, nil
 }
 
-func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance, error) {
+// rowToInstance converts a sqlc-generated Instance row into a domain Instance.
+// This is a package-level function so both InstanceRepo and QueueRepo can use
+// it without hidden coupling between the two repos.
+func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	snapshot, err := fromJSONString(row.WorkflowSnapshot)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling workflow snapshot: %w", err)
@@ -275,9 +320,42 @@ func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance
 		return nil, fmt.Errorf("unmarshalling original variables: %w", err)
 	}
 
+	id, err := parseUUID(row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	ownerID, err := parseUUID(row.OwnerID)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	createdAt, err := parseTime(row.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	updatedAt, err := parseTime(row.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	completedAt, err := nullStringToTimePtr(row.CompletedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	queuedAt, err := nullStringToTimePtr(row.QueuedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	waitingUntil, err := nullStringToTimePtr(row.WaitingUntil)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+	webhookReceivedAt, err := nullStringToTimePtr(row.WebhookReceivedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
+
 	return &instance.Instance{
-		ID:                parseUUID(row.ID),
-		OwnerID:           parseUUID(row.OwnerID),
+		ID:                id,
+		OwnerID:           ownerID,
 		WorkflowName:      row.WorkflowName,
 		WorkflowSnapshot:  snapshot,
 		State:             instance.State(row.State),
@@ -286,13 +364,13 @@ func (r *InstanceRepo) rowToInstance(row generated.Instance) (*instance.Instance
 		OriginalVariables: origVars,
 		CurrentNodeID:     nullStringToPtr(row.CurrentNodeID),
 		FailedNodeID:      nullStringToPtr(row.FailedNodeID),
-		CreatedAt:         parseTime(row.CreatedAt),
-		UpdatedAt:         parseTime(row.UpdatedAt),
-		CompletedAt:       nullStringToTimePtr(row.CompletedAt),
-		QueuedAt:          nullStringToTimePtr(row.QueuedAt),
-		WaitingUntil:      nullStringToTimePtr(row.WaitingUntil),
+		CreatedAt:         createdAt,
+		UpdatedAt:         updatedAt,
+		CompletedAt:       completedAt,
+		QueuedAt:          queuedAt,
+		WaitingUntil:      waitingUntil,
 		WebhookToken:      nullStringToPtr(row.WebhookToken),
 		WebhookSecretHash: nullStringToPtr(row.WebhookSecretHash),
-		WebhookReceivedAt: nullStringToTimePtr(row.WebhookReceivedAt),
+		WebhookReceivedAt: webhookReceivedAt,
 	}, nil
 }

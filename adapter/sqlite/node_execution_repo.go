@@ -64,8 +64,16 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 		return fmt.Errorf("creating node execution: %w", err)
 	}
 
-	exec.StartedAt = parseTime(row.StartedAt)
-	exec.CompletedAt = nullStringToTimePtr(row.CompletedAt)
+	startedAt, err := parseTime(row.StartedAt)
+	if err != nil {
+		return fmt.Errorf("parsing started_at: %w", err)
+	}
+	completedAt, err := nullStringToTimePtr(row.CompletedAt)
+	if err != nil {
+		return fmt.Errorf("parsing completed_at: %w", err)
+	}
+	exec.StartedAt = startedAt
+	exec.CompletedAt = completedAt
 	return nil
 }
 
@@ -127,7 +135,7 @@ func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("node execution not found: instance=%s node=%s", instanceID, nodeID)
+			return nil, fmt.Errorf("node execution instance=%s node=%s: %w", instanceID, nodeID, instance.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting node execution: %w", err)
 	}
@@ -152,9 +160,26 @@ func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*in
 		return nil, fmt.Errorf("unmarshalling llm conversation: %w", err)
 	}
 
+	id, err := parseUUID(row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("converting node execution row: %w", err)
+	}
+	instanceID, err := parseUUID(row.InstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("converting node execution row: %w", err)
+	}
+	startedAt, err := parseTime(row.StartedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting node execution row: %w", err)
+	}
+	completedAt, err := nullStringToTimePtr(row.CompletedAt)
+	if err != nil {
+		return nil, fmt.Errorf("converting node execution row: %w", err)
+	}
+
 	return &instance.NodeExecution{
-		ID:              parseUUID(row.ID),
-		InstanceID:      parseUUID(row.InstanceID),
+		ID:              id,
+		InstanceID:      instanceID,
 		NodeID:          row.NodeID,
 		Attempt:         int(row.Attempt),
 		Status:          instance.NodeExecutionStatus(row.Status),
@@ -168,7 +193,7 @@ func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*in
 		ScriptStdout:    nullStringToPtr(row.ScriptStdout),
 		ScriptStderr:    nullStringToPtr(row.ScriptStderr),
 		ScriptExitCode:  nullInt64ToIntPtr(row.ScriptExitCode),
-		StartedAt:       parseTime(row.StartedAt),
-		CompletedAt:     nullStringToTimePtr(row.CompletedAt),
+		StartedAt:       startedAt,
+		CompletedAt:     completedAt,
 	}, nil
 }

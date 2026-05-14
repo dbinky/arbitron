@@ -16,7 +16,7 @@ var migrationsFS embed.FS
 func RunMigrations(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+		applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ'))
 	)`)
 	if err != nil {
 		return fmt.Errorf("creating schema_migrations table: %w", err)
