@@ -114,7 +114,7 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 	bus := eventbus.NewNoOp()
 	cfg := &config.Config{
 		Server:   config.ServerConfig{Host: "localhost", Port: 8080},
-		Database: config.DatabaseConfig{URL: "postgres://user:pass@localhost/arbitron"},
+		Database: config.DatabaseConfig{Path: "./arbitron.db"},
 		LLM:      config.LLMConfig{Provider: "anthropic", APIKey: "sk-secret-key-12345"},
 		Logging:  config.LoggingConfig{Level: "info"},
 		Queue:    config.QueueConfig{GlobalCap: 20, PerUserCap: 5},

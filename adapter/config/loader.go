@@ -23,7 +23,7 @@ func defaults() map[string]interface{} {
 	return map[string]interface{}{
 		"server.host":       "127.0.0.1",
 		"server.port":       8080,
-		"database.url":      "postgres://localhost:5432/arbitron?sslmode=disable",
+		"database.path":     "./arbitron.db",
 		"workspace.path":    "./workspaces",
 		"llm.provider":      "anthropic",
 		"llm.apikey":        "",
@@ -43,7 +43,7 @@ func defaultYAMLContent() string {
   host: "127.0.0.1"
   port: 8080
 database:
-  url: "postgres://localhost:5432/arbitron?sslmode=disable"
+  path: "./arbitron.db"
 workspace:
   path: "./workspaces"
 llm:

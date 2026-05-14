@@ -211,7 +211,7 @@ type serverConfigResponse struct {
 }
 
 type databaseConfigResponse struct {
-	Connected bool `json:"connected"`
+	Configured bool `json:"configured"`
 }
 
 type workspaceConfigResponse struct {
@@ -261,7 +261,7 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 			Port: h.config.Server.Port,
 		},
 		Database: databaseConfigResponse{
-			Connected: h.config.Database.URL != "",
+			Configured: h.config.Database.Path != "",
 		},
 		Workspace: workspaceConfigResponse{
 			Path: h.config.Workspace.Path,

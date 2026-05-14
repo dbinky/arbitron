@@ -19,7 +19,7 @@ func expectedDefaults() domainconfig.Config {
 			Port: 8080,
 		},
 		Database: domainconfig.DatabaseConfig{
-			URL: "postgres://localhost:5432/arbitron?sslmode=disable",
+			Path: "./arbitron.db",
 		},
 		Workspace: domainconfig.WorkspaceConfig{
 			Path: "./workspaces",
@@ -55,7 +55,7 @@ func TestLoad_Defaults(t *testing.T) {
 	expected := expectedDefaults()
 	assert.Equal(t, expected.Server.Host, cfg.Server.Host)
 	assert.Equal(t, expected.Server.Port, cfg.Server.Port)
-	assert.Equal(t, expected.Database.URL, cfg.Database.URL)
+	assert.Equal(t, expected.Database.Path, cfg.Database.Path)
 	assert.Equal(t, expected.Workspace.Path, cfg.Workspace.Path)
 	assert.Equal(t, expected.LLM.Provider, cfg.LLM.Provider)
 	assert.Equal(t, expected.LLM.APIKey, cfg.LLM.APIKey)
@@ -80,7 +80,7 @@ server:
   host: "127.0.0.1"
   port: 9090
 database:
-  url: "postgres://db.example.com:5432/arbitron_prod"
+  path: "/data/arbitron.db"
 workspace:
   path: "/data/workspaces"
 llm:
@@ -102,7 +102,7 @@ tracing:
 
 	assert.Equal(t, "127.0.0.1", cfg.Server.Host)
 	assert.Equal(t, 9090, cfg.Server.Port)
-	assert.Equal(t, "postgres://db.example.com:5432/arbitron_prod", cfg.Database.URL)
+	assert.Equal(t, "/data/arbitron.db", cfg.Database.Path)
 	assert.Equal(t, "/data/workspaces", cfg.Workspace.Path)
 	assert.Equal(t, "openai", cfg.LLM.Provider)
 	assert.Equal(t, "yaml-api-key", cfg.LLM.APIKey)
@@ -122,7 +122,7 @@ func TestLoad_EnvVarOverride(t *testing.T) {
 
 	t.Setenv("ARBITRON_SERVER_HOST", "env-host")
 	t.Setenv("ARBITRON_SERVER_PORT", "3000")
-	t.Setenv("ARBITRON_DATABASE_URL", "postgres://envdb:5432/arbitron")
+	t.Setenv("ARBITRON_DATABASE_PATH", "/tmp/env-arbitron.db")
 	t.Setenv("ARBITRON_LOGGING_LEVEL", "warn")
 
 	cfg, err := adapterconfig.Load(configPath)
@@ -131,7 +131,7 @@ func TestLoad_EnvVarOverride(t *testing.T) {
 
 	assert.Equal(t, "env-host", cfg.Server.Host)
 	assert.Equal(t, 3000, cfg.Server.Port)
-	assert.Equal(t, "postgres://envdb:5432/arbitron", cfg.Database.URL)
+	assert.Equal(t, "/tmp/env-arbitron.db", cfg.Database.Path)
 	assert.Equal(t, "warn", cfg.Logging.Level)
 
 	// Non-overridden fields should remain at defaults.
@@ -247,7 +247,7 @@ server:
 	assert.Equal(t, 9090, cfg.Server.Port)
 	// Non-overridden fields get defaults.
 	assert.Equal(t, "127.0.0.1", cfg.Server.Host)
-	assert.Equal(t, "postgres://localhost:5432/arbitron?sslmode=disable", cfg.Database.URL)
+	assert.Equal(t, "./arbitron.db", cfg.Database.Path)
 	assert.Equal(t, "info", cfg.Logging.Level)
 }
 

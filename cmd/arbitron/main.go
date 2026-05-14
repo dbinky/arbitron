@@ -7,15 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
 	"github.com/arbitron/arbitron/adapter/anthropic"
@@ -26,8 +23,8 @@ import (
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
-	"github.com/arbitron/arbitron/adapter/postgres"
 	"github.com/arbitron/arbitron/adapter/process"
+	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -50,40 +47,16 @@ func main() {
 	}
 }
 
-// redactDatabaseURL replaces the password in a database URL with "***".
-// Returns the original string on parse error so startup is never blocked.
-// Uses manual string reconstruction instead of url.String() to prevent
-// url.String() from percent-encoding "***" to "%2A%2A%2A" in log output.
-func redactDatabaseURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	_, hasPassword := u.User.Password()
-	if !hasPassword {
-		return raw
-	}
-	username := u.User.Username()
-	u.User = nil
-	// Reconstruct with literal *** by prepending user:***@ after the scheme.
-	base := u.String()
-	scheme := u.Scheme + "://"
-	after := strings.TrimPrefix(base, scheme)
-	return scheme + username + ":***@" + after
-}
-
 func newServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
 		Short: "Start the Arbitron server",
-		Long:  "Start the Arbitron HTTP server, connect to Postgres, and run migrations.",
+		Long:  "Start the Arbitron HTTP server, open the SQLite database, and run migrations.",
 		RunE:  runServe,
 	}
 }
 
-func runServe(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
-
+func runServe(_ *cobra.Command, _ []string) error {
 	// 1. Load configuration.
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -104,32 +77,27 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 	defer logCloser.Close()
 
-	// 3. Connect to Postgres.
-	logger.Info("connecting to database", "url", redactDatabaseURL(cfg.Database.URL))
-	pool, err := pgxpool.New(ctx, cfg.Database.URL)
+	// 3. Open SQLite database.
+	logger.Info("opening database", "path", cfg.Database.Path)
+	db, err := adaptsqlite.Open(cfg.Database.Path)
 	if err != nil {
-		return fmt.Errorf("creating database pool: %w", err)
+		return fmt.Errorf("opening database: %w", err)
 	}
-	defer pool.Close()
-
-	// Ping database to verify connectivity.
-	if err := pool.Ping(ctx); err != nil {
-		return fmt.Errorf("pinging database: %w", err)
-	}
+	defer db.Close()
 	logger.Info("database connection established")
 
 	// 4. Run migrations.
 	logger.Info("running database migrations")
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+	if err := adaptsqlite.RunMigrations(db); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 	logger.Info("database migrations complete")
 
 	// 5. Initialize adapters.
-	instanceRepo := postgres.NewInstanceRepo(pool)
-	nodeExecRepo := postgres.NewNodeExecutionRepo(pool)
-	snapshotRepo := postgres.NewVariableSnapshotRepo(pool)
-	userRepo := postgres.NewUserRepo(pool)
+	instanceRepo := adaptsqlite.NewInstanceRepo(db)
+	nodeExecRepo := adaptsqlite.NewNodeExecutionRepo(db)
+	snapshotRepo := adaptsqlite.NewVariableSnapshotRepo(db)
+	userRepo := adaptsqlite.NewUserRepo(db)
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
@@ -151,7 +119,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 10. Create the queue repository.
-	queueRepo := postgres.NewQueueRepo(pool)
+	queueRepo := adaptsqlite.NewQueueRepo(db)
 
 	// 11. Create the workflow engine (queue manager wired below).
 	eng := engine.NewEngine(
@@ -171,7 +139,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	eng.SetQueueManager(queueMgr)
 
 	// 12a. Create notification repo and wire it to the engine.
-	notifRepo := postgres.NewNotificationRepo(pool)
+	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
 	// 12b. Create external notifier (logging-only) and wire it to the engine.

@@ -1,0 +1,130 @@
+package sqlite
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+func uuidToString(id uuid.UUID) string {
+	return id.String()
+}
+
+func parseUUID(s string) (uuid.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing uuid %q: %w", s, err)
+	}
+	return id, nil
+}
+
+func timeToString(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+func parseTime(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing time %q: %w", s, err)
+	}
+	return t, nil
+}
+
+func timeToNullString(t *time.Time) sql.NullString {
+	if t == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: timeToString(*t), Valid: true}
+}
+
+func nullStringToTimePtr(ns sql.NullString) (*time.Time, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	t, err := parseTime(ns.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func stringToNullString(s string) sql.NullString {
+	return sql.NullString{String: s, Valid: true}
+}
+
+func ptrToNullString(s *string) sql.NullString {
+	if s == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *s, Valid: true}
+}
+
+func nullStringToPtr(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	s := ns.String
+	return &s
+}
+
+func intPtrToNullInt64(i *int) sql.NullInt64 {
+	if i == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*i), Valid: true}
+}
+
+func nullInt64ToIntPtr(ni sql.NullInt64) *int {
+	if !ni.Valid {
+		return nil
+	}
+	v := int(ni.Int64)
+	return &v
+}
+
+func toJSONString(m map[string]any) (string, error) {
+	if m == nil {
+		return "{}", nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func fromJSONString(s string) (map[string]any, error) {
+	if s == "" || s == "{}" {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func toNullJSONString(m map[string]any) (sql.NullString, error) {
+	if m == nil {
+		return sql.NullString{}, nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: string(b), Valid: true}, nil
+}
+
+func fromNullJSONString(ns sql.NullString) (map[string]any, error) {
+	if !ns.Valid || ns.String == "" {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(ns.String), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
