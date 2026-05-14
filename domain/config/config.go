@@ -26,7 +26,7 @@ type ServerConfig struct {
 
 // DatabaseConfig holds database connection settings.
 type DatabaseConfig struct {
-	URL string
+	Path string
 }
 
 // WorkspaceConfig holds workspace directory settings.

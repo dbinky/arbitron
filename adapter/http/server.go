@@ -261,7 +261,7 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 			Port: h.config.Server.Port,
 		},
 		Database: databaseConfigResponse{
-			Connected: h.config.Database.URL != "",
+			Connected: h.config.Database.Path != "",
 		},
 		Workspace: workspaceConfigResponse{
 			Path: h.config.Workspace.Path,

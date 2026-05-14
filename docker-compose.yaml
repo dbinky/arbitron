@@ -1,0 +1,17 @@
+services:
+  arbitron:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - arbitron-data:/data
+      - ./workspaces:/workspaces
+    environment:
+      - ARBITRON_DATABASE_PATH=/data/arbitron.db
+      - ARBITRON_WORKSPACE_PATH=/workspaces
+      - ARBITRON_SERVER_HOST=0.0.0.0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+
+volumes:
+  arbitron-data:
