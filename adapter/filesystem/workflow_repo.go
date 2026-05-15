@@ -32,13 +32,13 @@ func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow,
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
 	if !strings.HasPrefix(manifestPath, root) {
-		return nil, fmt.Errorf("workflow not found: %s", name)
+		return nil, fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
 	}
 
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("workflow not found: %s", name)
+			return nil, fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
 		}
 		return nil, fmt.Errorf("reading workflow %q: %w", name, err)
 	}
@@ -90,13 +90,13 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
 	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
 	if !strings.HasPrefix(manifestPath, root) {
-		return fmt.Errorf("workflow not found: %s", name)
+		return fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
 	}
 
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("workflow not found: %s", name)
+			return fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
 		}
 		return fmt.Errorf("reading workflow %q: %w", name, err)
 	}

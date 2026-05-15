@@ -293,21 +293,13 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		// Check for pause/cancel by re-reading instance state.
 		freshInst, err := e.instances.Get(ctx, instanceID)
 		if err != nil {
-			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-			}
+			e.failInstance(ctx, instanceID, currentNodeID)
 			return
 		}
 
-		if freshInst.State == instance.StatePaused {
-			// The instance was paused externally. Stop execution.
-			// Pause() already called NotifyCapacityFreed.
-			capacityFreed = true
-			return
-		}
-		if freshInst.State == instance.StateCancelled {
-			// The instance was cancelled externally. Stop execution.
-			// Cancel() already called NotifyCapacityFreed.
+		if freshInst.State == instance.StatePaused || freshInst.State == instance.StateCancelled {
+			// The instance was paused/cancelled externally. Stop execution.
+			// The caller already called NotifyCapacityFreed.
 			capacityFreed = true
 			return
 		}
@@ -315,7 +307,6 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		// Check context cancellation.
 		select {
 		case <-ctx.Done():
-			// Context cancelled externally (Cancel() already notified).
 			capacityFreed = true
 			return
 		default:
@@ -323,9 +314,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		node, exists := nodeMap[currentNodeID]
 		if !exists {
-			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-			}
+			e.failInstance(ctx, instanceID, currentNodeID)
 			return
 		}
 
@@ -342,9 +331,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 		// Update current node.
 		if err := e.instances.UpdateCurrentNode(ctx, instanceID, currentNodeID); err != nil {
-			if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-				slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-			}
+			e.failInstance(ctx, instanceID, currentNodeID)
 			return
 		}
 
@@ -359,105 +346,17 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		result, nodeExec, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
 		if execErr != nil {
-			e.eventBus.Publish(instanceID, Event{
-				Type:      EventTypeNodeFailed,
-				Timestamp: time.Now(),
-				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
-			})
-
-			// Handle error behavior.
-			eb := resolveErrorBehavior(node, *wf)
-
-			switch eb.Type {
-			case "skip":
-				// Persist the skipped status.
-				if nodeExec != nil {
-					nodeExec.Status = instance.NodeStatusSkipped
-					_ = e.nodeExecutions.Update(ctx, nodeExec)
-				}
-				if eb.DefaultOutput != nil {
-					vars.SetNodeOutput(currentNodeID, eb.DefaultOutput)
-				}
-				if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
-					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-					}
-					return
-				}
-				// Conditional nodes route via their declared default output port so
-				// the skip path is deterministic rather than arbitrary-first-edge.
-				skipPort := ""
-				if node.Type == workflow.NodeTypeConditional {
-					skipPort = node.Config.DefaultOutput
-				}
-				currentNodeID = e.findNextNode(currentNodeID, skipPort, adj)
-
-			case "route":
-				// Jump to the error node.
-				if eb.ErrorNodeID != "" {
-					currentNodeID = eb.ErrorNodeID
-				} else {
-					if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-						slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-					}
-					return
-				}
-
-			default: // "halt" or unrecognized
-				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-				} else {
-					e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
-				}
-				e.eventBus.Publish(instanceID, Event{
-					Type:      EventTypeInstanceFailed,
-					Timestamp: time.Now(),
-					Data:      map[string]any{"failedNodeId": currentNodeID, "error": execErr.Error()},
-				})
+			nextNodeID, halt := e.handleNodeError(ctx, instanceID, workflowName, currentNodeID, node, *wf, nodeExec, execErr, vars, adj)
+			if halt {
 				return
 			}
+			currentNodeID = nextNodeID
 		} else {
-			// Check if this is a wait result (timer delay, webhook wait, etc.)
-			if result != nil && result.IsWait {
-				// Instance has transitioned to waiting. Exit the run loop cleanly.
-				// Do NOT mark as completed or failed — the executor already handled
-				// state transition and called NotifyCapacityFreed.
-				e.eventBus.Publish(instanceID, Event{
-					Type:      EventTypeNodeCompleted,
-					Timestamp: time.Now(),
-					Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
-				})
-				// Emit a needs_interaction notification for interactive nodes.
-				if node.Type == workflow.NodeTypeInteractive {
-					e.emitNotification(ctx, instanceID, workflowName, notification.TypeNeedsInteraction)
-				}
-				capacityFreed = true
+			nextNodeID, halt := e.handleNodeSuccess(ctx, instanceID, workflowName, currentNodeID, node, result, vars, adj, &capacityFreed)
+			if halt {
 				return
 			}
-
-			e.eventBus.Publish(instanceID, Event{
-				Type:      EventTypeNodeCompleted,
-				Timestamp: time.Now(),
-				Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
-			})
-
-			// Success: update variables with node output.
-			if result != nil && result.Output != nil {
-				vars.SetNodeOutput(currentNodeID, result.Output)
-			}
-			if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
-				if err := e.instances.SetFailed(ctx, instanceID, currentNodeID); err != nil {
-					slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
-				}
-				return
-			}
-
-			// Find next node.
-			outputPort := ""
-			if result != nil {
-				outputPort = result.OutputPort
-			}
-			currentNodeID = e.findNextNode(currentNodeID, outputPort, adj)
+			currentNodeID = nextNodeID
 		}
 	}
 
@@ -471,6 +370,132 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		Type:      EventTypeInstanceCompleted,
 		Timestamp: time.Now(),
 	})
+}
+
+// failInstance marks an instance as failed and logs errors. It consolidates
+// the repeated SetFailed + slog.Error pattern used throughout the run loop.
+// It returns true if the state change succeeded, false otherwise.
+func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
+	if err := e.instances.SetFailed(ctx, instanceID, nodeID); err != nil {
+		slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+		return false
+	}
+	return true
+}
+
+// handleNodeError processes a node execution failure according to the resolved
+// error behavior. It returns the next node ID to execute and whether the run
+// loop should halt.
+func (e *Engine) handleNodeError(
+	ctx context.Context,
+	instanceID uuid.UUID,
+	workflowName string,
+	currentNodeID string,
+	node workflow.Node,
+	wf workflow.Workflow,
+	nodeExec *instance.NodeExecution,
+	execErr error,
+	vars *variable.VariableStore,
+	adj map[string][]edgeTarget,
+) (nextNodeID string, halt bool) {
+	e.eventBus.Publish(instanceID, Event{
+		Type:      EventTypeNodeFailed,
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
+	})
+
+	eb := resolveErrorBehavior(node, wf)
+
+	switch eb.Type {
+	case "skip":
+		if nodeExec != nil {
+			nodeExec.Status = instance.NodeStatusSkipped
+			_ = e.nodeExecutions.Update(ctx, nodeExec)
+		}
+		if eb.DefaultOutput != nil {
+			vars.SetNodeOutput(currentNodeID, eb.DefaultOutput)
+		}
+		if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
+			e.failInstance(ctx, instanceID, currentNodeID)
+			return "", true
+		}
+		// Conditional nodes route via their declared default output port so
+		// the skip path is deterministic rather than arbitrary-first-edge.
+		skipPort := ""
+		if node.Type == workflow.NodeTypeConditional {
+			skipPort = node.Config.DefaultOutput
+		}
+		return e.findNextNode(currentNodeID, skipPort, adj), false
+
+	case "route":
+		if eb.ErrorNodeID != "" {
+			return eb.ErrorNodeID, false
+		}
+		e.failInstance(ctx, instanceID, currentNodeID)
+		return "", true
+
+	default: // "halt" or unrecognized
+		if e.failInstance(ctx, instanceID, currentNodeID) {
+			e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
+		}
+		e.eventBus.Publish(instanceID, Event{
+			Type:      EventTypeInstanceFailed,
+			Timestamp: time.Now(),
+			Data:      map[string]any{"failedNodeId": currentNodeID, "error": execErr.Error()},
+		})
+		return "", true
+	}
+}
+
+// handleNodeSuccess processes a successful node execution, updating variables
+// and determining the next node. It returns the next node ID and whether the
+// run loop should halt (e.g., for wait results).
+func (e *Engine) handleNodeSuccess(
+	ctx context.Context,
+	instanceID uuid.UUID,
+	workflowName string,
+	currentNodeID string,
+	node workflow.Node,
+	result *NodeResult,
+	vars *variable.VariableStore,
+	adj map[string][]edgeTarget,
+	capacityFreed *bool,
+) (nextNodeID string, halt bool) {
+	// Check if this is a wait result (timer delay, webhook wait, etc.)
+	if result != nil && result.IsWait {
+		e.eventBus.Publish(instanceID, Event{
+			Type:      EventTypeNodeCompleted,
+			Timestamp: time.Now(),
+			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+		})
+		if node.Type == workflow.NodeTypeInteractive {
+			e.emitNotification(ctx, instanceID, workflowName, notification.TypeNeedsInteraction)
+		}
+		*capacityFreed = true
+		return "", true
+	}
+
+	e.eventBus.Publish(instanceID, Event{
+		Type:      EventTypeNodeCompleted,
+		Timestamp: time.Now(),
+		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+	})
+
+	// Update variables with node output.
+	if result != nil && result.Output != nil {
+		vars.SetNodeOutput(currentNodeID, result.Output)
+	}
+	if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
+		e.failInstance(ctx, instanceID, currentNodeID)
+		return "", true
+	}
+
+	// Find next node.
+	outputPort := ""
+	if result != nil {
+		outputPort = result.OutputPort
+	}
+	return e.findNextNode(currentNodeID, outputPort, adj), false
 }
 
 // executeWithRetry executes a node, applying retry logic from the error behavior.
@@ -533,31 +558,7 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 			StartedAt:      startedAt,
 			CompletedAt:    &completedAt,
 		}
-		if result != nil {
-			if result.LLMConversation != nil {
-				if m, ok := result.LLMConversation.(map[string]any); ok {
-					nodeExec.LLMConversation = m
-				}
-			}
-			if result.LLMModel != "" {
-				nodeExec.LLMModel = &result.LLMModel
-			}
-			if result.LLMTokensIn > 0 {
-				nodeExec.LLMTokensIn = &result.LLMTokensIn
-			}
-			if result.LLMTokensOut > 0 {
-				nodeExec.LLMTokensOut = &result.LLMTokensOut
-			}
-			if result.ScriptStdout != "" {
-				nodeExec.ScriptStdout = &result.ScriptStdout
-			}
-			if result.ScriptStderr != "" {
-				nodeExec.ScriptStderr = &result.ScriptStderr
-			}
-			if result.ScriptExitCode != 0 {
-				nodeExec.ScriptExitCode = &result.ScriptExitCode
-			}
-		}
+		nodeResultToExecution(result, nodeExec)
 		// Skip writing when the executor itself already wrote the record (IsWait path).
 		if result == nil || !result.IsWait {
 			_ = e.nodeExecutions.Create(ctx, nodeExec)
@@ -571,6 +572,41 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 	}
 
 	return nil, lastExec, lastErr
+}
+
+// nodeResultToExecution maps optional NodeResult fields onto a NodeExecution
+// record. This consolidates the repeated field-copying logic from executeWithRetry.
+func nodeResultToExecution(result *NodeResult, exec *instance.NodeExecution) {
+	if result == nil {
+		return
+	}
+	// LLMConversation is typed as any in NodeResult because different LLM
+	// providers return different shapes. Only map[string]any values are stored;
+	// non-map values (e.g., from a provider returning a typed struct that was
+	// not JSON-round-tripped) are silently dropped since the DB column is JSONB.
+	if result.LLMConversation != nil {
+		if m, ok := result.LLMConversation.(map[string]any); ok {
+			exec.LLMConversation = m
+		}
+	}
+	if result.LLMModel != "" {
+		exec.LLMModel = &result.LLMModel
+	}
+	if result.LLMTokensIn > 0 {
+		exec.LLMTokensIn = &result.LLMTokensIn
+	}
+	if result.LLMTokensOut > 0 {
+		exec.LLMTokensOut = &result.LLMTokensOut
+	}
+	if result.ScriptStdout != "" {
+		exec.ScriptStdout = &result.ScriptStdout
+	}
+	if result.ScriptStderr != "" {
+		exec.ScriptStderr = &result.ScriptStderr
+	}
+	if result.ScriptExitCode != 0 {
+		exec.ScriptExitCode = &result.ScriptExitCode
+	}
 }
 
 // emitNotification creates a notification and publishes a notification.created event.
@@ -745,83 +781,82 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
 
-	// Check if the instance was waiting on a webhook.
 	if inst.WebhookToken != nil {
-		if inst.WebhookReceivedAt != nil {
-			// Webhook received while paused -> go to queued.
-			now := time.Now()
-			if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
-				return fmt.Errorf("failed to set queued: %w", err)
-			}
-			e.eventBus.Publish(instanceID, Event{
-				Type:      "instance.resumed",
-				Timestamp: time.Now(),
-			})
-			e.queueManager.NotifyCapacityFreed(context.Background())
-			return nil
-		}
-		// Check if webhook timeout expired while paused (timer fired, no-oped, is now gone).
-		if inst.WaitingUntil != nil && time.Now().After(*inst.WaitingUntil) {
-			// Deactivate the token so no stale webhook can arrive after this point.
-			if e.webhookRegistry != nil {
-				e.webhookRegistry.Deactivate(*inst.WebhookToken)
-			}
-			failedNodeID := ""
-			if inst.CurrentNodeID != nil {
-				failedNodeID = *inst.CurrentNodeID
-			}
-			if err := e.instances.SetFailed(ctx, instanceID, failedNodeID); err != nil {
-				return fmt.Errorf("failed to fail expired webhook instance on resume: %w", err)
-			}
-			e.eventBus.Publish(instanceID, Event{
-				Type:      EventTypeInstanceFailed,
-				Timestamp: time.Now(),
-				Data:      map[string]any{"reason": "webhook timeout expired while paused"},
-			})
-			return nil
-		}
-		// No webhook received and timeout not expired -> go back to waiting.
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
-			return fmt.Errorf("failed to update state: %w", err)
-		}
-		e.eventBus.Publish(instanceID, Event{
-			Type:      "instance.resumed",
-			Timestamp: time.Now(),
-		})
-		return nil
+		return e.resumeFromWebhookWait(ctx, instanceID, inst)
 	}
-
-	// Check if the instance was waiting on a timer delay.
 	if inst.WaitingUntil != nil {
-		if time.Now().After(*inst.WaitingUntil) {
-			// Timer expired while paused -> go to queued.
-			now := time.Now()
-			if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
-				return fmt.Errorf("failed to set queued: %w", err)
-			}
-			// Clear waitingUntil.
-			if err := e.instances.SetWaiting(ctx, instanceID, nil); err != nil {
-				return fmt.Errorf("failed to clear waiting_until: %w", err)
-			}
-			e.eventBus.Publish(instanceID, Event{
-				Type:      "instance.resumed",
-				Timestamp: time.Now(),
-			})
-			e.queueManager.NotifyCapacityFreed(context.Background())
-			return nil
+		return e.resumeFromTimerWait(ctx, instanceID, inst)
+	}
+	return e.resumeFromRunning(ctx, instanceID)
+}
+
+// resumeFromWebhookWait handles resume for instances paused during a webhook wait.
+func (e *Engine) resumeFromWebhookWait(ctx context.Context, instanceID uuid.UUID, inst *instance.Instance) error {
+	// Webhook received while paused -> go to queued.
+	if inst.WebhookReceivedAt != nil {
+		now := time.Now()
+		if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
+			return fmt.Errorf("failed to set queued: %w", err)
 		}
-		// Timer has not expired -> go back to waiting.
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
-			return fmt.Errorf("failed to update state: %w", err)
+		e.publishResumedEvent(instanceID)
+		e.queueManager.NotifyCapacityFreed(context.Background())
+		return nil
+	}
+
+	// Webhook timeout expired while paused -> fail.
+	if inst.WaitingUntil != nil && time.Now().After(*inst.WaitingUntil) {
+		if e.webhookRegistry != nil {
+			e.webhookRegistry.Deactivate(*inst.WebhookToken)
+		}
+		failedNodeID := ""
+		if inst.CurrentNodeID != nil {
+			failedNodeID = *inst.CurrentNodeID
+		}
+		if err := e.instances.SetFailed(ctx, instanceID, failedNodeID); err != nil {
+			return fmt.Errorf("failed to fail expired webhook instance on resume: %w", err)
 		}
 		e.eventBus.Publish(instanceID, Event{
-			Type:      "instance.resumed",
+			Type:      EventTypeInstanceFailed,
 			Timestamp: time.Now(),
+			Data:      map[string]any{"reason": "webhook timeout expired while paused"},
 		})
 		return nil
 	}
 
-	// Normal resume (was running when paused) -> go back to running.
+	// No webhook received and timeout not expired -> go back to waiting.
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+		return fmt.Errorf("failed to update state: %w", err)
+	}
+	e.publishResumedEvent(instanceID)
+	return nil
+}
+
+// resumeFromTimerWait handles resume for instances paused during a timer delay.
+func (e *Engine) resumeFromTimerWait(ctx context.Context, instanceID uuid.UUID, inst *instance.Instance) error {
+	// Timer expired while paused -> go to queued.
+	if time.Now().After(*inst.WaitingUntil) {
+		now := time.Now()
+		if err := e.queueRepo.SetQueued(ctx, instanceID, now); err != nil {
+			return fmt.Errorf("failed to set queued: %w", err)
+		}
+		if err := e.instances.SetWaiting(ctx, instanceID, nil); err != nil {
+			return fmt.Errorf("failed to clear waiting_until: %w", err)
+		}
+		e.publishResumedEvent(instanceID)
+		e.queueManager.NotifyCapacityFreed(context.Background())
+		return nil
+	}
+
+	// Timer has not expired -> go back to waiting.
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+		return fmt.Errorf("failed to update state: %w", err)
+	}
+	e.publishResumedEvent(instanceID)
+	return nil
+}
+
+// resumeFromRunning handles resume for instances that were running when paused.
+func (e *Engine) resumeFromRunning(ctx context.Context, instanceID uuid.UUID) error {
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
 		return fmt.Errorf("failed to update state: %w", err)
 	}
@@ -831,14 +866,19 @@ func (e *Engine) Resume(instanceID uuid.UUID) error {
 	e.contexts[instanceID] = cancel
 	e.mu.Unlock()
 
-	e.eventBus.Publish(instanceID, Event{
-		Type:      "instance.resumed",
-		Timestamp: time.Now(),
-	})
+	e.publishResumedEvent(instanceID)
 
 	e.wg.Add(1)
 	go e.run(runCtx, instanceID)
 	return nil
+}
+
+// publishResumedEvent emits a standard instance.resumed event.
+func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
+	e.eventBus.Publish(instanceID, Event{
+		Type:      "instance.resumed",
+		Timestamp: time.Now(),
+	})
 }
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
@@ -860,51 +900,47 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 			cancelFn()
 		}
 		e.mu.Unlock()
-		e.eventBus.Publish(instanceID, Event{
-			Type:      EventTypeInstanceCancelled,
-			Timestamp: time.Now(),
-		})
+		e.publishCancelledEvent(instanceID)
 		e.queueManager.NotifyCapacityFreed(context.Background())
 
 	case instance.StateWaiting:
-		// Deactivate webhook endpoint if this was a webhook wait.
-		if e.webhookRegistry != nil && inst.WebhookToken != nil {
-			e.webhookRegistry.Deactivate(*inst.WebhookToken)
-		}
-		// Cancel the pending timer.
-		if e.scheduler != nil {
-			e.scheduler.Cancel(instanceID)
-		}
+		e.deactivateWaitResources(instanceID, inst)
 		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
 			return fmt.Errorf("failed to update state: %w", err)
 		}
-		e.eventBus.Publish(instanceID, Event{
-			Type:      EventTypeInstanceCancelled,
-			Timestamp: time.Now(),
-		})
+		e.publishCancelledEvent(instanceID)
 		e.queueManager.NotifyCapacityFreed(context.Background())
 
 	case instance.StatePaused, instance.StateQueued:
-		// Deactivate webhook endpoint if present (paused from webhook wait).
-		if e.webhookRegistry != nil && inst.WebhookToken != nil {
-			e.webhookRegistry.Deactivate(*inst.WebhookToken)
-		}
+		e.deactivateWaitResources(instanceID, inst)
 		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
 			return fmt.Errorf("failed to update state: %w", err)
 		}
-		// Cancel any timer that might still be running (for paused-from-waiting).
-		if e.scheduler != nil && (inst.WaitingUntil != nil || inst.WebhookToken != nil) {
-			e.scheduler.Cancel(instanceID)
-		}
-		e.eventBus.Publish(instanceID, Event{
-			Type:      EventTypeInstanceCancelled,
-			Timestamp: time.Now(),
-		})
+		e.publishCancelledEvent(instanceID)
 
 	default:
 		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
 	return nil
+}
+
+// deactivateWaitResources cleans up webhook tokens and timers associated with a
+// waiting or paused-from-waiting instance.
+func (e *Engine) deactivateWaitResources(instanceID uuid.UUID, inst *instance.Instance) {
+	if e.webhookRegistry != nil && inst.WebhookToken != nil {
+		e.webhookRegistry.Deactivate(*inst.WebhookToken)
+	}
+	if e.scheduler != nil && (inst.WaitingUntil != nil || inst.WebhookToken != nil) {
+		e.scheduler.Cancel(instanceID)
+	}
+}
+
+// publishCancelledEvent emits a standard instance.cancelled event.
+func (e *Engine) publishCancelledEvent(instanceID uuid.UUID) {
+	e.eventBus.Publish(instanceID, Event{
+		Type:      EventTypeInstanceCancelled,
+		Timestamp: time.Now(),
+	})
 }
 
 // Retry resumes a failed instance from the failed node, optionally

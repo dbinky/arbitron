@@ -85,31 +85,34 @@ export default function NotificationBell() {
   useSystemWebSocket(handleWsEvent)
 
   // --- open / close popover ---
-  const handleToggle = useCallback(() => {
-    setOpen((prev) => {
-      const next = !prev
-      if (next) {
-        // Opening: fetch fresh list, then mark-read once the list is loaded
-        // to avoid a race where markRead fires before the list renders.
-        void fetchActive().then(() => {
-          if (unreadCount > 0) {
-            void api.notifications.markRead().catch((err: unknown) => {
-              console.error('failed to mark notifications read', err)
-            })
-            setUnreadCount(0)
-            setItems((prev) => prev.map((n) => ({ ...n, read: true })))
-          }
+  const closePopover = useCallback(() => {
+    setOpen(false)
+    setShowDismissed(false)
+    setDismissedItems([])
+    setDismissedOffset(0)
+    setHasMoreDismissed(false)
+  }, [])
+
+  const openPopover = useCallback(() => {
+    setOpen(true)
+    void fetchActive().then(() => {
+      if (unreadCount > 0) {
+        void api.notifications.markRead().catch((err: unknown) => {
+          console.error('failed to mark notifications read', err)
         })
-      } else {
-        // Closing: reset dismissed section
-        setShowDismissed(false)
-        setDismissedItems([])
-        setDismissedOffset(0)
-        setHasMoreDismissed(false)
+        setUnreadCount(0)
+        setItems((prev) => prev.map((n) => ({ ...n, read: true })))
       }
-      return next
     })
   }, [fetchActive, unreadCount])
+
+  const handleToggle = useCallback(() => {
+    if (open) {
+      closePopover()
+    } else {
+      openPopover()
+    }
+  }, [open, openPopover, closePopover])
 
   // --- click outside closes popover ---
   useEffect(() => {
@@ -120,17 +123,13 @@ export default function NotificationBell() {
         wrapperRef.current &&
         !wrapperRef.current.contains(e.target as Node)
       ) {
-        setOpen(false)
-        setShowDismissed(false)
-        setDismissedItems([])
-        setDismissedOffset(0)
-        setHasMoreDismissed(false)
+        closePopover()
       }
     }
 
     document.addEventListener('mousedown', handleMouseDown)
     return () => document.removeEventListener('mousedown', handleMouseDown)
-  }, [open])
+  }, [open, closePopover])
 
   // --- dismiss ---
   const handleDismiss = useCallback(

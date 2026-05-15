@@ -62,7 +62,7 @@ func (h *SystemStreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Req
 				conn.Close(websocket.StatusNormalClosure, "event stream ended")
 				return
 			}
-			if err := h.writeEvent(ctx, conn, evt); err != nil {
+			if err := writeWSEvent(ctx, conn, evt); err != nil {
 				return
 			}
 		case <-clientDone:
@@ -74,9 +74,10 @@ func (h *SystemStreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Req
 	}
 }
 
-// writeEvent serializes an event as JSON and sends it as a WebSocket text message
-// with a write deadline to prevent goroutine leaks from slow/frozen clients.
-func (h *SystemStreamHandler) writeEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
+// writeWSEvent serializes an event as JSON and sends it as a WebSocket text
+// message with a write deadline to prevent goroutine leaks from slow/frozen
+// clients. Shared by StreamHandler and SystemStreamHandler.
+func writeWSEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
 	data, err := json.Marshal(evt)
 	if err != nil {
 		return err

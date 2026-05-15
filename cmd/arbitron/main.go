@@ -138,6 +138,29 @@ func runServe(_ *cobra.Command, _ []string) error {
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
 	eng.SetQueueManager(queueMgr)
 
+	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
+	scheduler := queue.NewScheduler(queueMgr)
+	queueMgr.SetScheduler(scheduler)
+	eng.SetScheduler(scheduler)
+
+	// 12-wh. Create the webhook registry, wire it to the queue manager and engine.
+	webhookRegistry := adapthttp.NewWebhookRegistry()
+	queueMgr.SetWebhookRegistry(webhookRegistry)
+	eng.SetWebhookRegistry(webhookRegistry)
+
+	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are available.
+	// These executors are added after engine construction because they depend on
+	// the scheduler and webhook registry, which in turn depend on the queue
+	// manager, creating a circular dependency. This works because the engine
+	// stores a reference to the executors map (not a copy), so mutations here
+	// are visible to the engine at execution time.
+	executors[workflow.NodeTypeTimerDelay] = engine.NewTimerDelayExecutor(
+		instanceRepo, nodeExecRepo, scheduler, queueMgr,
+	)
+	executors[workflow.NodeTypeWebhookWait] = engine.NewWebhookWaitExecutor(
+		instanceRepo, nodeExecRepo, webhookRegistry, scheduler, queueMgr,
+	)
+
 	// 12a. Create notification repo and wire it to the engine.
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
@@ -165,31 +188,50 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up tracing: %w", err)
 	}
 
+	// 13a. Start the timer scheduler so recovery can register timers.
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	scheduler.Start(schedulerCtx)
+
 	// 14. Recover any instances that were running when the process last crashed.
 	logger.Info("recovering crashed instances")
 	if err := eng.RecoverCrashedInstances(); err != nil {
 		return fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
+	// 14a. Recover pending timers and webhook endpoints from the database.
+	logger.Info("recovering pending timers")
+	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
+		return fmt.Errorf("recovering timers: %w", err)
+	}
+	logger.Info("recovering webhook endpoints")
+	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
+		return fmt.Errorf("recovering webhooks: %w", err)
+	}
+
 	// 15. Create the full API router with embedded dashboard.
 	dashHandler := dashboard.Handler()
 	notifHandler := adapthttp.NewNotificationHandler(notifRepo)
 	notifHandler.SetEventBus(bus)
-	router := adapthttp.NewRouter(
-		eng,
-		workflowRepo,
-		instanceRepo,
-		nodeExecRepo,
-		snapshotRepo,
-		fileReader,
-		bus,
-		cfg,
-		queueMgr,
-		queueRepo,
-		dashHandler,
-		notifHandler,
-		conversationHandler,
+	webhookHandler := adapthttp.NewWebhookHandler(
+		webhookRegistry, instanceRepo, nodeExecRepo, scheduler, queueRepo, queueMgr,
 	)
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:             eng,
+		Workflows:           workflowRepo,
+		Instances:           instanceRepo,
+		NodeExecs:           nodeExecRepo,
+		Snapshots:           snapshotRepo,
+		FileReader:          fileReader,
+		EventBus:            bus,
+		Config:              cfg,
+		QueueManager:        queueMgr,
+		QueueRepo:           queueRepo,
+		DashboardHandler:    dashHandler,
+		NotifHandler:        notifHandler,
+		ConversationHandler: conversationHandler,
+		WebhookHandler:      webhookHandler,
+	})
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(logger)(router)
@@ -246,9 +288,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
-	// Wait for in-flight workflow goroutines to finish before closing the pool.
+	// Wait for in-flight workflow goroutines to finish before stopping the
+	// scheduler. This ensures a running workflow cannot register a timer that
+	// never fires because the scheduler has already been torn down.
 	logger.Info("waiting for in-flight workflows to complete")
 	eng.Shutdown()
+
+	// Stop the timer scheduler after in-flight workflows have drained.
+	schedulerCancel()
+	scheduler.Stop()
 
 	// Flush OTel spans.
 	if err := tracingShutdown(shutdownCtx); err != nil {

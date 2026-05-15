@@ -7,7 +7,6 @@ import type {
   Priority,
   QueueConfigUpdate,
   SystemConfig,
-  VariableSnapshot,
   WorkflowStats,
   WorkflowSummary,
 } from './types'
@@ -114,10 +113,6 @@ export const api = {
       return request(`/api/v1/instances/${id}/variables`)
     },
 
-    /** Get variable snapshot history for an instance. */
-    getVariableHistory(id: string): Promise<VariableSnapshot[]> {
-      return request(`/api/v1/instances/${id}/variables/history`)
-    },
   },
 
   workflows: {

@@ -9,11 +9,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// UserRepo implements instance.UserRepository backed by SQLite.
 type UserRepo struct {
 	db      *sql.DB
 	queries *generated.Queries
 }
 
+// NewUserRepo creates a UserRepo using the given database connection.
 func NewUserRepo(db *sql.DB) *UserRepo {
 	return &UserRepo{
 		db:      db,

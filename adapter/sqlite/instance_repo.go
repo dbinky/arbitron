@@ -12,11 +12,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// InstanceRepo implements instance.InstanceRepository backed by SQLite.
 type InstanceRepo struct {
 	db      *sql.DB
 	queries *generated.Queries
 }
 
+// NewInstanceRepo creates an InstanceRepo using the given database connection.
 func NewInstanceRepo(db *sql.DB) *InstanceRepo {
 	return &InstanceRepo{
 		db:      db,

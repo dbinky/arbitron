@@ -15,7 +15,6 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // inboundMessage represents a JSON message received from the WebSocket client.
@@ -134,7 +133,7 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 			Timestamp: time.Now().UTC(),
 			Data:      map[string]any{"state": string(inst.State)},
 		}
-		h.writeEvent(ctx, conn, terminalEvt)
+		writeWSEvent(ctx, conn, terminalEvt)
 		conn.Close(websocket.StatusNormalClosure, "instance is terminal")
 		return
 	}
@@ -174,7 +173,7 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			writeMu.Lock()
-			err := h.writeEvent(ctx, conn, evt)
+			err := writeWSEvent(ctx, conn, evt)
 			writeMu.Unlock()
 			if err != nil {
 				return
@@ -302,30 +301,8 @@ func (h *StreamHandler) sendInteractiveHistory(ctx context.Context, conn *websoc
 			"messages": messages,
 		},
 	}
-	if err := h.writeEvent(ctx, conn, historyEvt); err != nil {
+	if err := writeWSEvent(ctx, conn, historyEvt); err != nil {
 		slog.Warn("stream: failed to send interactive.history", "instanceId", inst.ID, "error", err)
 	}
 }
 
-// isInteractiveNode checks if the specified node in the workflow snapshot is
-// of type "interactive". Uses the shared engine.FindNodeByID helper.
-func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
-	node, err := engine.FindNodeByID(snapshot, nodeID)
-	if err != nil {
-		return false
-	}
-	return node.Type == workflow.NodeTypeInteractive
-}
-
-// writeEvent serializes an event as JSON and sends it as a WebSocket text message
-// with a write deadline to prevent goroutine leaks from slow/frozen clients.
-// Callers must hold writeMu if concurrent writes are possible.
-func (h *StreamHandler) writeEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
-	data, err := json.Marshal(evt)
-	if err != nil {
-		return err
-	}
-	writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
-	defer cancel()
-	return conn.Write(writeCtx, websocket.MessageText, data)
-}

@@ -12,11 +12,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// QueueRepo implements instance.QueueRepository backed by SQLite.
 type QueueRepo struct {
 	db      *sql.DB
 	queries *generated.Queries
 }
 
+// NewQueueRepo creates a QueueRepo using the given database connection.
 func NewQueueRepo(db *sql.DB) *QueueRepo {
 	return &QueueRepo{
 		db:      db,

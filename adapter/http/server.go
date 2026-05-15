@@ -13,7 +13,6 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -31,60 +30,77 @@ type FileReader interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
-// The following type aliases are used as parameter types for NewRouter. They
-// allow callers within this package to reference the domain ports by short
-// names without each handler file importing the domain packages directly.
-
-// WorkflowRepo is a type alias for the domain workflow repository port.
-type WorkflowRepo = workflow.WorkflowRepository
-
-// InstanceRepo is a type alias for the domain instance repository port.
-type InstanceRepo = instance.InstanceRepository
-
-// NodeExecRepo is a type alias for the domain node execution repository port.
-type NodeExecRepo = instance.NodeExecutionRepository
-
-// SnapshotRepo is a type alias for the domain variable snapshot repository port.
-type SnapshotRepo = instance.VariableSnapshotRepository
-
-// EventBusPort is a type alias for the domain event bus port.
-type EventBusPort = engine.EventBus
-
 // QueueManagerPort defines the queue manager operations used by the API layer.
 type QueueManagerPort interface {
 	UpdateConfig(globalCap, perUserCap int)
 	Evaluate(ctx context.Context) error
 }
 
-// QueueRepoPort is a type alias for the domain queue repository port.
-type QueueRepoPort = instance.QueueRepository
-
-// NotificationRepoPort is a type alias for the domain notification repository port.
-type NotificationRepoPort = notification.Repository
-
-// ConversationHandlerPort is a type alias for the domain ConversationHandler port.
-type ConversationHandlerPort = engine.ConversationHandler
+// RouterDeps bundles all dependencies required by NewRouter, replacing
+// the previous 14-parameter function signature.
+type RouterDeps struct {
+	Service             EngineService
+	Workflows           workflow.WorkflowRepository
+	Instances           instance.InstanceRepository
+	NodeExecs           instance.NodeExecutionRepository
+	Snapshots           instance.VariableSnapshotRepository
+	FileReader          FileReader
+	EventBus            engine.EventBus
+	Config              *config.Config
+	QueueManager        QueueManagerPort
+	QueueRepo           instance.QueueRepository
+	DashboardHandler    http.Handler
+	NotifHandler        *NotificationHandler
+	ConversationHandler engine.ConversationHandler
+	WebhookHandler      *WebhookHandler
+}
 
 // NewRouter creates the chi router with all API routes wired up.
-// If dashboardHandler is non-nil, unmatched routes fall through to the
+// If DashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
-// conversationHandler may be nil if interactive messaging is not needed.
+// ConversationHandler may be nil if interactive messaging is not needed.
+//
+// Deprecated: Use NewRouterFromDeps instead.
 func NewRouter(
 	svc EngineService,
-	workflows WorkflowRepo,
-	instances InstanceRepo,
-	nodeExecs NodeExecRepo,
-	snapshots SnapshotRepo,
+	workflows workflow.WorkflowRepository,
+	instances instance.InstanceRepository,
+	nodeExecs instance.NodeExecutionRepository,
+	snapshots instance.VariableSnapshotRepository,
 	fileReader FileReader,
-	eventBus EventBusPort,
+	eventBus engine.EventBus,
 	cfg *config.Config,
 	queueManager QueueManagerPort,
-	queueRepo QueueRepoPort,
+	queueRepo instance.QueueRepository,
 	dashboardHandler http.Handler,
 	notifHandler *NotificationHandler,
-	conversationHandler ConversationHandlerPort,
+	conversationHandler engine.ConversationHandler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
+	var wh *WebhookHandler
+	if len(webhookHandler) > 0 {
+		wh = webhookHandler[0]
+	}
+	return NewRouterFromDeps(RouterDeps{
+		Service:             svc,
+		Workflows:           workflows,
+		Instances:           instances,
+		NodeExecs:           nodeExecs,
+		Snapshots:           snapshots,
+		FileReader:          fileReader,
+		EventBus:            eventBus,
+		Config:              cfg,
+		QueueManager:        queueManager,
+		QueueRepo:           queueRepo,
+		DashboardHandler:    dashboardHandler,
+		NotifHandler:        notifHandler,
+		ConversationHandler: conversationHandler,
+		WebhookHandler:      wh,
+	})
+}
+
+// NewRouterFromDeps creates the chi router from a RouterDeps struct.
+func NewRouterFromDeps(d RouterDeps) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -98,15 +114,15 @@ func NewRouter(
 	// are especially sensitive — without auth, any client can send messages to or
 	// terminate any instance's interactive session.
 
-	wfHandler := NewWorkflowHandler(workflows, svc, fileReader, instances)
-	instHandler := NewInstanceHandler(instances, nodeExecs, snapshots, svc)
-	streamHandler := NewStreamHandler(instances, nodeExecs, eventBus, conversationHandler)
-	sysStreamHandler := NewSystemStreamHandler(eventBus)
-	sysHandler := &SystemHandler{config: cfg, queueManager: queueManager, queueRepo: queueRepo}
+	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances)
+	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
+	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
+	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
+	sysHandler := &SystemHandler{config: d.Config, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
 
 	var interactiveHandler *InteractiveHandler
-	if conversationHandler != nil {
-		interactiveHandler = NewInteractiveHandler(conversationHandler, instances, nodeExecs)
+	if d.ConversationHandler != nil {
+		interactiveHandler = NewInteractiveHandler(d.ConversationHandler, d.Instances, d.NodeExecs)
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -132,18 +148,18 @@ func NewRouter(
 		})
 
 		// Notification endpoints
-		if notifHandler != nil {
+		if d.NotifHandler != nil {
 			r.Route("/notifications", func(r chi.Router) {
-				r.Get("/", notifHandler.List)
-				r.Get("/unread-count", notifHandler.UnreadCount)
-				r.Post("/mark-read", notifHandler.MarkRead)
-				r.Post("/{id}/dismiss", notifHandler.Dismiss)
+				r.Get("/", d.NotifHandler.List)
+				r.Get("/unread-count", d.NotifHandler.UnreadCount)
+				r.Post("/mark-read", d.NotifHandler.MarkRead)
+				r.Post("/{id}/dismiss", d.NotifHandler.Dismiss)
 			})
 		}
 
 		// Webhook endpoints
-		if len(webhookHandler) > 0 && webhookHandler[0] != nil {
-			r.Post("/webhooks/wait/{token}", webhookHandler[0].ReceiveWebhook)
+		if d.WebhookHandler != nil {
+			r.Post("/webhooks/wait/{token}", d.WebhookHandler.ReceiveWebhook)
 		}
 
 		// Instance endpoints
@@ -168,8 +184,8 @@ func NewRouter(
 	})
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
-	if dashboardHandler != nil {
-		r.NotFound(dashboardHandler.ServeHTTP)
+	if d.DashboardHandler != nil {
+		r.NotFound(d.DashboardHandler.ServeHTTP)
 	}
 
 	return r
@@ -190,7 +206,7 @@ type SystemHandler struct {
 	mu           sync.Mutex
 	config       *config.Config
 	queueManager QueueManagerPort
-	queueRepo    QueueRepoPort
+	queueRepo    instance.QueueRepository
 }
 
 // systemConfigResponse is the JSON representation of system configuration

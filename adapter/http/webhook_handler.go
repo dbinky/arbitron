@@ -64,19 +64,16 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 	// 2. Lookup in registry.
 	entry, ok := h.registry.Lookup(token)
 	if !ok {
-		http.Error(w, "Not Found", http.StatusNotFound)
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "webhook token not found")
 		return
 	}
 
-	// 3. Deactivate token immediately to close the double-fire window.
-	h.registry.Deactivate(token)
-
-	// 4. Validate secret if configured (before any state check to prevent
-	// unauthenticated callers from probing instance lifecycle state).
+	// 3. Validate secret if configured (before deactivation to prevent
+	// unauthenticated callers from consuming one-time tokens).
 	if entry.SecretHash != nil {
 		secret := r.Header.Get("X-Webhook-Secret")
 		if secret == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing webhook secret")
 			return
 		}
 		// Recompute HMAC: HMAC-SHA256(key=token, message=secret).
@@ -84,20 +81,23 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		mac.Write([]byte(secret))
 		computedHash := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 		if !hmac.Equal([]byte(computedHash), []byte(*entry.SecretHash)) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid webhook secret")
 			return
 		}
 	}
 
+	// 4. Deactivate token after successful authentication to close the double-fire window.
+	h.registry.Deactivate(token)
+
 	// 5. Verify instance state (database check).
 	inst, err := h.instances.Get(r.Context(), entry.InstanceID)
 	if err != nil {
-		http.Error(w, "Not Found", http.StatusNotFound)
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found")
 		return
 	}
 	if inst.State != instance.StateWaiting && inst.State != instance.StatePaused {
 		// Instance is no longer waiting (cancelled, completed, failed).
-		http.Error(w, "Gone", http.StatusGone)
+		WriteError(w, http.StatusGone, "GONE", "instance is no longer waiting")
 		return
 	}
 
@@ -145,7 +145,5 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 	// If paused: payload stored, endpoint deactivated. Resume logic handles transition.
 
 	// 11. Return 200 OK.
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
 }

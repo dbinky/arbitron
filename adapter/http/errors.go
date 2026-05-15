@@ -5,7 +5,15 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 )
+
+// APITimeFormat is the canonical time format for all JSON API responses.
+const APITimeFormat = time.RFC3339
+
+// APITimeFormatMillis includes millisecond precision, used where the frontend
+// needs sub-second display (e.g., notifications).
+const APITimeFormatMillis = "2006-01-02T15:04:05.000Z07:00"
 
 // ErrorResponse represents a structured error returned by the API.
 type ErrorResponse struct {

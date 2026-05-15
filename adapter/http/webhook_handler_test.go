@@ -382,6 +382,10 @@ func TestWebhookHandler_InvalidSecret_401(t *testing.T) {
 
 	rr := makeWebhookRequest(handler, token, nil, map[string]string{"X-Webhook-Secret": "wrong-secret"})
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+
+	// Token must still be active — failed auth must not consume the one-time token.
+	_, ok := registry.Lookup(token)
+	assert.True(t, ok, "token should remain active after failed authentication")
 }
 
 func TestWebhookHandler_MissingSecretHeader_401(t *testing.T) {
@@ -406,6 +410,10 @@ func TestWebhookHandler_MissingSecretHeader_401(t *testing.T) {
 
 	rr := makeWebhookRequest(handler, token, nil, nil)
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+
+	// Token must still be active — failed auth must not consume the one-time token.
+	_, ok := registry.Lookup(token)
+	assert.True(t, ok, "token should remain active after missing secret header")
 }
 
 func TestWebhookHandler_NoSecretConfigured_SkipsValidation(t *testing.T) {

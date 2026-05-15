@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -84,20 +83,20 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 		OriginalVariables: inst.OriginalVariables,
 		CurrentNodeID:     inst.CurrentNodeID,
 		FailedNodeID:      inst.FailedNodeID,
-		CreatedAt:         inst.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:         inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		CreatedAt:         inst.CreatedAt.Format(APITimeFormat),
+		UpdatedAt:         inst.UpdatedAt.Format(APITimeFormat),
 	}
 	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	if inst.CompletedAt != nil {
-		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.CompletedAt.Format(APITimeFormat)
 		resp.CompletedAt = &s
 	}
 	if inst.QueuedAt != nil {
-		s := inst.QueuedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.QueuedAt.Format(APITimeFormat)
 		resp.QueuedAt = &s
 	}
 	if inst.WaitingUntil != nil {
-		s := inst.WaitingUntil.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.WaitingUntil.Format(APITimeFormat)
 		resp.WaitingUntil = &s
 	}
 	if inst.WebhookToken != nil {
@@ -110,7 +109,7 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 
 	// Derive interactive state fields.
 	if inst.State == instance.StateWaiting && inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
-		if isCurrentNodeInteractive(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
+		if isInteractiveNode(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
 			nodeID := *inst.CurrentNodeID
 			resp.InteractiveNodeID = &nodeID
 			resp.InteractiveActive = true
@@ -120,9 +119,9 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	return resp
 }
 
-// isCurrentNodeInteractive checks if the specified node in the workflow
-// snapshot is of type "interactive". Uses the shared engine.FindNodeByID helper.
-func isCurrentNodeInteractive(snapshot map[string]any, nodeID string) bool {
+// isInteractiveNode checks if the specified node in the workflow snapshot is
+// of type "interactive". Uses the shared engine.FindNodeByID helper.
+func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 	node, err := engine.FindNodeByID(snapshot, nodeID)
 	if err != nil {
 		return false
@@ -143,7 +142,6 @@ func parseInstanceID(r *http.Request) (uuid.UUID, error) {
 
 // mapEngineError maps an engine error to the appropriate HTTP status code.
 func mapEngineError(err error) int {
-	// Check sentinel errors first (preferred path).
 	if errors.Is(err, instance.ErrNotFound) {
 		return http.StatusNotFound
 	}
@@ -154,18 +152,6 @@ func mapEngineError(err error) int {
 		errors.Is(err, instance.ErrNotWaiting) ||
 		errors.Is(err, instance.ErrCannotCancel) ||
 		errors.Is(err, instance.ErrCannotRerun) {
-		return http.StatusConflict
-	}
-	// Fallback to string matching for errors that don't yet wrap sentinels.
-	msg := err.Error()
-	if strings.Contains(msg, "not found") {
-		return http.StatusNotFound
-	}
-	if strings.Contains(msg, "is not running") ||
-		strings.Contains(msg, "is not paused") ||
-		strings.Contains(msg, "is not failed") ||
-		strings.Contains(msg, "cannot be cancelled") ||
-		strings.Contains(msg, "cannot be rerun") {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
@@ -244,7 +230,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -391,10 +377,10 @@ func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse
 		ScriptStdout:    exec.ScriptStdout,
 		ScriptStderr:    exec.ScriptStderr,
 		ScriptExitCode:  exec.ScriptExitCode,
-		StartedAt:       exec.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+		StartedAt:       exec.StartedAt.Format(APITimeFormat),
 	}
 	if exec.CompletedAt != nil {
-		s := exec.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := exec.CompletedAt.Format(APITimeFormat)
 		resp.CompletedAt = &s
 	}
 	return resp
@@ -409,7 +395,7 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -439,7 +425,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -450,7 +436,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	exec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, nodeID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
 			return
 		}
@@ -476,7 +462,7 @@ func toVariableSnapshotResponse(snap *instance.VariableSnapshot) variableSnapsho
 		InstanceID: snap.InstanceID.String(),
 		NodeID:     snap.NodeID,
 		Variables:  snap.Variables,
-		CapturedAt: snap.CapturedAt.Format("2006-01-02T15:04:05Z07:00"),
+		CapturedAt: snap.CapturedAt.Format(APITimeFormat),
 	}
 }
 
@@ -490,7 +476,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -511,7 +497,7 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}

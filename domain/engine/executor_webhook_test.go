@@ -218,6 +218,40 @@ func TestWebhookWaitExecutor_TimeoutParsing(t *testing.T) {
 	assert.WithinDuration(t, expected, calls[0].WaitingUntil, 2*time.Second)
 }
 
+func TestWebhookWaitExecutor_ExceedsMaxTimeout_Fails(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+	registry := &mockWebhookRegistrar{}
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewWebhookWaitExecutor(instRepo, nodeExecRepo, registry, scheduler, qm)
+
+	vars := variable.NewStore()
+
+	// 8 days in seconds exceeds the 7-day maximum.
+	node := workflow.Node{
+		ID:   "webhook-node",
+		Type: workflow.NodeTypeWebhookWait,
+		Config: workflow.NodeConfig{
+			WaitTimeoutSeconds: "691200",
+		},
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum")
+}
+
 func TestWebhookWaitExecutor_NonNumericTimeout_Fails(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()

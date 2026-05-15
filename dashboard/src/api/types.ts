@@ -190,13 +190,3 @@ export type InteractiveEvent =
   | InteractiveEndedEvent
   | InteractiveErrorEvent
 
-/** Outbound message sent by the user to the interactive session. */
-export interface InteractiveSendCommand {
-  type: 'interactive.send'
-  content: string
-}
-
-/** Outbound command to end the interactive session. */
-export interface InteractiveEndCommand {
-  type: 'interactive.end'
-}

@@ -10,10 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// NotificationRepo implements notification.Repository backed by SQLite.
 type NotificationRepo struct {
 	db *sql.DB
 }
 
+// NewNotificationRepo creates a NotificationRepo using the given database connection.
 func NewNotificationRepo(db *sql.DB) *NotificationRepo {
 	return &NotificationRepo{db: db}
 }
