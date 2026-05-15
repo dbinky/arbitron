@@ -10,11 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// VariableSnapshotRepo implements instance.VariableSnapshotRepository backed by SQLite.
 type VariableSnapshotRepo struct {
 	db      *sql.DB
 	queries *generated.Queries
 }
 
+// NewVariableSnapshotRepo creates a VariableSnapshotRepo using the given database connection.
 func NewVariableSnapshotRepo(db *sql.DB) *VariableSnapshotRepo {
 	return &VariableSnapshotRepo{
 		db:      db,

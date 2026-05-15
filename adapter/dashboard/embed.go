@@ -10,9 +10,9 @@ import (
 //go:embed dist/*
 var distFS embed.FS
 
-// Assets returns the embedded dist/ sub-filesystem. Callers can use fs.ReadDir
+// assets returns the embedded dist/ sub-filesystem. Callers can use fs.ReadDir
 // to discover the actual (content-hashed) asset filenames at runtime.
-func Assets() fs.FS {
+func assets() fs.FS {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic("failed to create sub filesystem: " + err.Error())

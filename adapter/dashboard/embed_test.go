@@ -36,7 +36,7 @@ func TestHandler_SPAFallback(t *testing.T) {
 func TestHandler_ServesStaticAsset(t *testing.T) {
 	// Discover the actual CSS asset name at test time — Vite content-hashes
 	// filenames on every build, so hardcoding the name would break on rebuild.
-	entries, err := fs.ReadDir(dashboard.Assets(), "assets")
+	entries, err := fs.ReadDir(dashboard.AssetsForTest(), "assets")
 	if err != nil {
 		t.Fatalf("reading assets dir: %v", err)
 	}

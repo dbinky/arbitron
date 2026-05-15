@@ -11,11 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// NodeExecutionRepo implements instance.NodeExecutionRepository backed by SQLite.
 type NodeExecutionRepo struct {
 	db      *sql.DB
 	queries *generated.Queries
 }
 
+// NewNodeExecutionRepo creates a NodeExecutionRepo using the given database connection.
 func NewNodeExecutionRepo(db *sql.DB) *NodeExecutionRepo {
 	return &NodeExecutionRepo{
 		db:      db,

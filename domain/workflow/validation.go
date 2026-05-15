@@ -1,5 +1,7 @@
 package workflow
 
+import "strings"
+
 // FileChecker is a minimal subset of the engine.FileReader port used for
 // validating file references within a workflow definition. Keeping this as a
 // domain-level interface avoids an import dependency on the engine package.
@@ -368,11 +370,21 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 	return errs
 }
 
+// countOutgoingEdges counts the number of edges originating from a given node.
+func countOutgoingEdges(nodeID string, edges []Edge) int {
+	count := 0
+	for _, e := range edges {
+		if e.Source == nodeID {
+			count++
+		}
+	}
+	return count
+}
+
 // validateTimerDelayNode checks timer_delay-specific validation rules.
 func validateTimerDelayNode(node Node, edges []Edge) []ValidationError {
 	var errs []ValidationError
 
-	// Rule 1: Timer delay nodes cannot be entry points.
 	if node.Entrypoint {
 		errs = append(errs, ValidationError{
 			Code:    "INVALID_TIMER_DELAY",
@@ -381,7 +393,6 @@ func validateTimerDelayNode(node Node, edges []Edge) []ValidationError {
 		})
 	}
 
-	// Rule 2: DurationSeconds is required (must not be empty).
 	if node.Config.DurationSeconds == "" {
 		errs = append(errs, ValidationError{
 			Code:    "MISSING_REQUIRED_CONFIG",
@@ -390,14 +401,7 @@ func validateTimerDelayNode(node Node, edges []Edge) []ValidationError {
 		})
 	}
 
-	// Rule 3: Timer delay nodes must have exactly one outgoing edge.
-	outgoing := 0
-	for _, e := range edges {
-		if e.Source == node.ID {
-			outgoing++
-		}
-	}
-	if outgoing != 1 {
+	if countOutgoingEdges(node.ID, edges) != 1 {
 		errs = append(errs, ValidationError{
 			Code:    "INVALID_TIMER_DELAY",
 			Message: "timer_delay node " + node.ID + " must have exactly one outgoing edge",
@@ -412,7 +416,6 @@ func validateTimerDelayNode(node Node, edges []Edge) []ValidationError {
 func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 	var errs []ValidationError
 
-	// Rule 1: Webhook wait nodes cannot be entry points.
 	if node.Entrypoint {
 		errs = append(errs, ValidationError{
 			Code:    "INVALID_WEBHOOK_WAIT",
@@ -421,14 +424,7 @@ func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 		})
 	}
 
-	// Rule 2: Must have exactly one outgoing edge.
-	outgoing := 0
-	for _, e := range edges {
-		if e.Source == node.ID {
-			outgoing++
-		}
-	}
-	if outgoing != 1 {
+	if countOutgoingEdges(node.ID, edges) != 1 {
 		errs = append(errs, ValidationError{
 			Code:    "INVALID_WEBHOOK_WAIT",
 			Message: "webhook_wait node " + node.ID + " must have exactly one outgoing edge",
@@ -489,12 +485,5 @@ func validateErrorBehaviors(wf *Workflow) []ValidationError {
 
 // joinIDs concatenates a slice of strings with commas.
 func joinIDs(ids []string) string {
-	result := ""
-	for i, id := range ids {
-		if i > 0 {
-			result += ", "
-		}
-		result += id
-	}
-	return result
+	return strings.Join(ids, ", ")
 }
