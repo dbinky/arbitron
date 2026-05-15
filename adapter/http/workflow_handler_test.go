@@ -39,7 +39,7 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
 	wf, ok := r.workflows[name]
 	if !ok {
-		return nil, fmt.Errorf("workflow not found: %s", name)
+		return nil, fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
 	}
 	return wf, nil
 }
@@ -345,7 +345,7 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		repo := newMockWorkflowRepo()
 		svc := &mockWorkflowService{
 			triggerFn: func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
-				return uuid.Nil, false, fmt.Errorf("failed to load workflow: workflow not found: unknown")
+				return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", workflow.ErrNotFound)
 			},
 		}
 		h := adapthttp.NewWorkflowHandler(repo, svc, newMockFileReader(), nil)
@@ -612,7 +612,7 @@ func TestWorkflowHandler_SaveLayout(t *testing.T) {
 
 	t.Run("returns 404 when repo returns not-found error", func(t *testing.T) {
 		repo := newCapturingWorkflowRepo()
-		repo.saveErr = fmt.Errorf("workflow not found: test-wf")
+		repo.saveErr = fmt.Errorf("test-wf: %w", workflow.ErrNotFound)
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		body := `{"positions":{"A":{"x":10,"y":20}}}`

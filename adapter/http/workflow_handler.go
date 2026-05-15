@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -80,7 +81,7 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -99,7 +100,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 	wf, err := h.repo.Load(r.Context(), name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}
@@ -144,7 +145,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	id, started, err := h.service.Trigger(name, req.Variables, req.Priority)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 			return
 		}
@@ -194,7 +195,7 @@ func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
 		}

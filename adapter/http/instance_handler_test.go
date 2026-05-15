@@ -243,7 +243,7 @@ func (r *mockNodeExecRepo) GetByInstanceAndNode(_ context.Context, instanceID uu
 			return e, nil
 		}
 	}
-	return nil, fmt.Errorf("node execution not found for instance %s node %s", instanceID, nodeID)
+	return nil, fmt.Errorf("node execution instance=%s node=%s: %w", instanceID, nodeID, instance.ErrNotFound)
 }
 
 // mockSnapshotRepo for InstanceHandler
@@ -511,7 +511,7 @@ func TestInstanceHandler_Pause(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.pauseFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("instance %s is not running (state: completed)", gotID)
+			return fmt.Errorf("instance %s is not running (state: completed): %w", gotID, instance.ErrNotRunning)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
@@ -526,7 +526,7 @@ func TestInstanceHandler_Pause(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.pauseFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+			return fmt.Errorf("failed to get instance: %w", instance.ErrNotFound)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
@@ -574,7 +574,7 @@ func TestInstanceHandler_Resume(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.resumeFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("instance %s is not paused (state: running)", gotID)
+			return fmt.Errorf("instance %s is not paused (state: running): %w", gotID, instance.ErrNotPaused)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
@@ -598,7 +598,7 @@ func TestInstanceHandler_Resume(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.resumeFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+			return fmt.Errorf("failed to get instance: %w", instance.ErrNotFound)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
@@ -634,7 +634,7 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.cancelFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("instance %s cannot be cancelled (state: completed)", gotID)
+			return fmt.Errorf("instance %s cannot be cancelled (state: completed): %w", gotID, instance.ErrCannotCancel)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
@@ -658,7 +658,7 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.cancelFn = func(gotID uuid.UUID) error {
-			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+			return fmt.Errorf("failed to get instance: %w", instance.ErrNotFound)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
@@ -713,7 +713,7 @@ func TestInstanceHandler_Retry(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.retryFn = func(gotID uuid.UUID, variableEdits map[string]any) error {
-			return fmt.Errorf("instance %s is not failed (state: running)", gotID)
+			return fmt.Errorf("instance %s is not failed (state: running): %w", gotID, instance.ErrNotFailed)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
@@ -749,7 +749,7 @@ func TestInstanceHandler_Retry(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.retryFn = func(gotID uuid.UUID, variableEdits map[string]any) error {
-			return fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+			return fmt.Errorf("failed to get instance: %w", instance.ErrNotFound)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
@@ -792,7 +792,7 @@ func TestInstanceHandler_Rerun(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.rerunFn = func(gotID uuid.UUID) (uuid.UUID, error) {
-			return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: running)", gotID)
+			return uuid.Nil, fmt.Errorf("instance %s cannot be rerun (state: running): %w", gotID, instance.ErrCannotRerun)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/rerun", nil)
@@ -807,7 +807,7 @@ func TestInstanceHandler_Rerun(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
 		svc.rerunFn = func(gotID uuid.UUID) (uuid.UUID, error) {
-			return uuid.Nil, fmt.Errorf("failed to get instance: instance not found: %s", gotID)
+			return uuid.Nil, fmt.Errorf("failed to get instance: %w", instance.ErrNotFound)
 		}
 
 		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/rerun", nil)

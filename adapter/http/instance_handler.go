@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -143,7 +142,6 @@ func parseInstanceID(r *http.Request) (uuid.UUID, error) {
 
 // mapEngineError maps an engine error to the appropriate HTTP status code.
 func mapEngineError(err error) int {
-	// Check sentinel errors first (preferred path).
 	if errors.Is(err, instance.ErrNotFound) {
 		return http.StatusNotFound
 	}
@@ -154,18 +152,6 @@ func mapEngineError(err error) int {
 		errors.Is(err, instance.ErrNotWaiting) ||
 		errors.Is(err, instance.ErrCannotCancel) ||
 		errors.Is(err, instance.ErrCannotRerun) {
-		return http.StatusConflict
-	}
-	// Fallback to string matching for errors that don't yet wrap sentinels.
-	msg := err.Error()
-	if strings.Contains(msg, "not found") {
-		return http.StatusNotFound
-	}
-	if strings.Contains(msg, "is not running") ||
-		strings.Contains(msg, "is not paused") ||
-		strings.Contains(msg, "is not failed") ||
-		strings.Contains(msg, "cannot be cancelled") ||
-		strings.Contains(msg, "cannot be rerun") {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
@@ -244,7 +230,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -409,7 +395,7 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -439,7 +425,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -450,7 +436,7 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 	nodeID := chi.URLParam(r, "nodeId")
 	exec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, nodeID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
 			return
 		}
@@ -490,7 +476,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
@@ -511,7 +497,7 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 	}
 
 	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}

@@ -1,6 +1,12 @@
 package workflow
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound is returned when a workflow does not exist.
+var ErrNotFound = errors.New("workflow not found")
 
 // WorkflowRepository defines the port for loading and listing workflow definitions.
 type WorkflowRepository interface {
