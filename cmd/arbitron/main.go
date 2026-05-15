@@ -185,6 +185,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	// 13a. Start the timer scheduler so recovery can register timers.
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
 	scheduler.Start(schedulerCtx)
 
 	// 14. Recover any instances that were running when the process last crashed.
