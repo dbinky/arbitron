@@ -13,7 +13,6 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -31,56 +30,28 @@ type FileReader interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
-// The following type aliases are used as parameter types for NewRouter. They
-// allow callers within this package to reference the domain ports by short
-// names without each handler file importing the domain packages directly.
-
-// WorkflowRepo is a type alias for the domain workflow repository port.
-type WorkflowRepo = workflow.WorkflowRepository
-
-// InstanceRepo is a type alias for the domain instance repository port.
-type InstanceRepo = instance.InstanceRepository
-
-// NodeExecRepo is a type alias for the domain node execution repository port.
-type NodeExecRepo = instance.NodeExecutionRepository
-
-// SnapshotRepo is a type alias for the domain variable snapshot repository port.
-type SnapshotRepo = instance.VariableSnapshotRepository
-
-// EventBusPort is a type alias for the domain event bus port.
-type EventBusPort = engine.EventBus
-
 // QueueManagerPort defines the queue manager operations used by the API layer.
 type QueueManagerPort interface {
 	UpdateConfig(globalCap, perUserCap int)
 	Evaluate(ctx context.Context) error
 }
 
-// QueueRepoPort is a type alias for the domain queue repository port.
-type QueueRepoPort = instance.QueueRepository
-
-// NotificationRepoPort is a type alias for the domain notification repository port.
-type NotificationRepoPort = notification.Repository
-
-// ConversationHandlerPort is a type alias for the domain ConversationHandler port.
-type ConversationHandlerPort = engine.ConversationHandler
-
 // RouterDeps bundles all dependencies required by NewRouter, replacing
 // the previous 14-parameter function signature.
 type RouterDeps struct {
 	Service             EngineService
-	Workflows           WorkflowRepo
-	Instances           InstanceRepo
-	NodeExecs           NodeExecRepo
-	Snapshots           SnapshotRepo
+	Workflows           workflow.WorkflowRepository
+	Instances           instance.InstanceRepository
+	NodeExecs           instance.NodeExecutionRepository
+	Snapshots           instance.VariableSnapshotRepository
 	FileReader          FileReader
-	EventBus            EventBusPort
+	EventBus            engine.EventBus
 	Config              *config.Config
 	QueueManager        QueueManagerPort
-	QueueRepo           QueueRepoPort
+	QueueRepo           instance.QueueRepository
 	DashboardHandler    http.Handler
 	NotifHandler        *NotificationHandler
-	ConversationHandler ConversationHandlerPort
+	ConversationHandler engine.ConversationHandler
 	WebhookHandler      *WebhookHandler
 }
 
@@ -90,18 +61,18 @@ type RouterDeps struct {
 // ConversationHandler may be nil if interactive messaging is not needed.
 func NewRouter(
 	svc EngineService,
-	workflows WorkflowRepo,
-	instances InstanceRepo,
-	nodeExecs NodeExecRepo,
-	snapshots SnapshotRepo,
+	workflows workflow.WorkflowRepository,
+	instances instance.InstanceRepository,
+	nodeExecs instance.NodeExecutionRepository,
+	snapshots instance.VariableSnapshotRepository,
 	fileReader FileReader,
-	eventBus EventBusPort,
+	eventBus engine.EventBus,
 	cfg *config.Config,
 	queueManager QueueManagerPort,
-	queueRepo QueueRepoPort,
+	queueRepo instance.QueueRepository,
 	dashboardHandler http.Handler,
 	notifHandler *NotificationHandler,
-	conversationHandler ConversationHandlerPort,
+	conversationHandler engine.ConversationHandler,
 	webhookHandler ...*WebhookHandler,
 ) chi.Router {
 	var wh *WebhookHandler
@@ -233,7 +204,7 @@ type SystemHandler struct {
 	mu           sync.Mutex
 	config       *config.Config
 	queueManager QueueManagerPort
-	queueRepo    QueueRepoPort
+	queueRepo    instance.QueueRepository
 }
 
 // systemConfigResponse is the JSON representation of system configuration

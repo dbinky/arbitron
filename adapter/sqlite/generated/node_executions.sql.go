@@ -25,10 +25,10 @@ type CreateNodeExecutionParams struct {
 	ResolvedInputs  sql.NullString
 	Output          sql.NullString
 	Error           sql.NullString
-	LlmConversation sql.NullString
-	LlmModel        sql.NullString
-	LlmTokensIn     sql.NullInt64
-	LlmTokensOut    sql.NullInt64
+	LLMConversation sql.NullString
+	LLMModel        sql.NullString
+	LLMTokensIn     sql.NullInt64
+	LLMTokensOut    sql.NullInt64
 	ScriptStdout    sql.NullString
 	ScriptStderr    sql.NullString
 	ScriptExitCode  sql.NullInt64
@@ -46,10 +46,10 @@ func (q *Queries) CreateNodeExecution(ctx context.Context, arg CreateNodeExecuti
 		arg.ResolvedInputs,
 		arg.Output,
 		arg.Error,
-		arg.LlmConversation,
-		arg.LlmModel,
-		arg.LlmTokensIn,
-		arg.LlmTokensOut,
+		arg.LLMConversation,
+		arg.LLMModel,
+		arg.LLMTokensIn,
+		arg.LLMTokensOut,
 		arg.ScriptStdout,
 		arg.ScriptStderr,
 		arg.ScriptExitCode,
@@ -66,10 +66,10 @@ func (q *Queries) CreateNodeExecution(ctx context.Context, arg CreateNodeExecuti
 		&i.ResolvedInputs,
 		&i.Output,
 		&i.Error,
-		&i.LlmConversation,
-		&i.LlmModel,
-		&i.LlmTokensIn,
-		&i.LlmTokensOut,
+		&i.LLMConversation,
+		&i.LLMModel,
+		&i.LLMTokensIn,
+		&i.LLMTokensOut,
 		&i.ScriptStdout,
 		&i.ScriptStderr,
 		&i.ScriptExitCode,
@@ -100,10 +100,10 @@ func (q *Queries) GetNodeExecutionByInstanceAndNode(ctx context.Context, arg Get
 		&i.ResolvedInputs,
 		&i.Output,
 		&i.Error,
-		&i.LlmConversation,
-		&i.LlmModel,
-		&i.LlmTokensIn,
-		&i.LlmTokensOut,
+		&i.LLMConversation,
+		&i.LLMModel,
+		&i.LLMTokensIn,
+		&i.LLMTokensOut,
 		&i.ScriptStdout,
 		&i.ScriptStderr,
 		&i.ScriptExitCode,
@@ -135,10 +135,10 @@ func (q *Queries) ListNodeExecutionsByInstance(ctx context.Context, instanceID s
 			&i.ResolvedInputs,
 			&i.Output,
 			&i.Error,
-			&i.LlmConversation,
-			&i.LlmModel,
-			&i.LlmTokensIn,
-			&i.LlmTokensOut,
+			&i.LLMConversation,
+			&i.LLMModel,
+			&i.LLMTokensIn,
+			&i.LLMTokensOut,
 			&i.ScriptStdout,
 			&i.ScriptStderr,
 			&i.ScriptExitCode,
@@ -167,10 +167,10 @@ type UpdateNodeExecutionParams struct {
 	Status          string
 	Output          sql.NullString
 	Error           sql.NullString
-	LlmConversation sql.NullString
-	LlmModel        sql.NullString
-	LlmTokensIn     sql.NullInt64
-	LlmTokensOut    sql.NullInt64
+	LLMConversation sql.NullString
+	LLMModel        sql.NullString
+	LLMTokensIn     sql.NullInt64
+	LLMTokensOut    sql.NullInt64
 	ScriptStdout    sql.NullString
 	ScriptStderr    sql.NullString
 	ScriptExitCode  sql.NullInt64
@@ -183,10 +183,10 @@ func (q *Queries) UpdateNodeExecution(ctx context.Context, arg UpdateNodeExecuti
 		arg.Status,
 		arg.Output,
 		arg.Error,
-		arg.LlmConversation,
-		arg.LlmModel,
-		arg.LlmTokensIn,
-		arg.LlmTokensOut,
+		arg.LLMConversation,
+		arg.LLMModel,
+		arg.LLMTokensIn,
+		arg.LLMTokensOut,
 		arg.ScriptStdout,
 		arg.ScriptStderr,
 		arg.ScriptExitCode,

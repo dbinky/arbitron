@@ -38,10 +38,10 @@ type NodeExecution struct {
 	ResolvedInputs  sql.NullString
 	Output          sql.NullString
 	Error           sql.NullString
-	LlmConversation sql.NullString
-	LlmModel        sql.NullString
-	LlmTokensIn     sql.NullInt64
-	LlmTokensOut    sql.NullInt64
+	LLMConversation sql.NullString
+	LLMModel        sql.NullString
+	LLMTokensIn     sql.NullInt64
+	LLMTokensOut    sql.NullInt64
 	ScriptStdout    sql.NullString
 	ScriptStderr    sql.NullString
 	ScriptExitCode  sql.NullInt64

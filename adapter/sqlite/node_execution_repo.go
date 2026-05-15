@@ -52,10 +52,10 @@ func (r *NodeExecutionRepo) Create(ctx context.Context, exec *instance.NodeExecu
 		ResolvedInputs:  resolvedInputsJSON,
 		Output:          outputJSON,
 		Error:           errorJSON,
-		LlmConversation: llmConvJSON,
-		LlmModel:        ptrToNullString(exec.LLMModel),
-		LlmTokensIn:     intPtrToNullInt64(exec.LLMTokensIn),
-		LlmTokensOut:    intPtrToNullInt64(exec.LLMTokensOut),
+		LLMConversation: llmConvJSON,
+		LLMModel:        ptrToNullString(exec.LLMModel),
+		LLMTokensIn:     intPtrToNullInt64(exec.LLMTokensIn),
+		LLMTokensOut:    intPtrToNullInt64(exec.LLMTokensOut),
 		ScriptStdout:    ptrToNullString(exec.ScriptStdout),
 		ScriptStderr:    ptrToNullString(exec.ScriptStderr),
 		ScriptExitCode:  intPtrToNullInt64(exec.ScriptExitCode),
@@ -98,10 +98,10 @@ func (r *NodeExecutionRepo) Update(ctx context.Context, exec *instance.NodeExecu
 		Status:          string(exec.Status),
 		Output:          outputJSON,
 		Error:           errorJSON,
-		LlmConversation: llmConvJSON,
-		LlmModel:        ptrToNullString(exec.LLMModel),
-		LlmTokensIn:     intPtrToNullInt64(exec.LLMTokensIn),
-		LlmTokensOut:    intPtrToNullInt64(exec.LLMTokensOut),
+		LLMConversation: llmConvJSON,
+		LLMModel:        ptrToNullString(exec.LLMModel),
+		LLMTokensIn:     intPtrToNullInt64(exec.LLMTokensIn),
+		LLMTokensOut:    intPtrToNullInt64(exec.LLMTokensOut),
 		ScriptStdout:    ptrToNullString(exec.ScriptStdout),
 		ScriptStderr:    ptrToNullString(exec.ScriptStderr),
 		ScriptExitCode:  intPtrToNullInt64(exec.ScriptExitCode),
@@ -157,7 +157,7 @@ func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*in
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling error: %w", err)
 	}
-	llmConv, err := fromNullJSONString(row.LlmConversation)
+	llmConv, err := fromNullJSONString(row.LLMConversation)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling llm conversation: %w", err)
 	}
@@ -189,9 +189,9 @@ func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*in
 		Output:          output,
 		Error:           execError,
 		LLMConversation: llmConv,
-		LLMModel:        nullStringToPtr(row.LlmModel),
-		LLMTokensIn:     nullInt64ToIntPtr(row.LlmTokensIn),
-		LLMTokensOut:    nullInt64ToIntPtr(row.LlmTokensOut),
+		LLMModel:        nullStringToPtr(row.LLMModel),
+		LLMTokensIn:     nullInt64ToIntPtr(row.LLMTokensIn),
+		LLMTokensOut:    nullInt64ToIntPtr(row.LLMTokensOut),
 		ScriptStdout:    nullStringToPtr(row.ScriptStdout),
 		ScriptStderr:    nullStringToPtr(row.ScriptStderr),
 		ScriptExitCode:  nullInt64ToIntPtr(row.ScriptExitCode),
