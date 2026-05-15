@@ -210,22 +210,22 @@ func runServe(_ *cobra.Command, _ []string) error {
 	webhookHandler := adapthttp.NewWebhookHandler(
 		webhookRegistry, instanceRepo, nodeExecRepo, scheduler, queueRepo, queueMgr,
 	)
-	router := adapthttp.NewRouter(
-		eng,
-		workflowRepo,
-		instanceRepo,
-		nodeExecRepo,
-		snapshotRepo,
-		fileReader,
-		bus,
-		cfg,
-		queueMgr,
-		queueRepo,
-		dashHandler,
-		notifHandler,
-		conversationHandler,
-		webhookHandler,
-	)
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:             eng,
+		Workflows:           workflowRepo,
+		Instances:           instanceRepo,
+		NodeExecs:           nodeExecRepo,
+		Snapshots:           snapshotRepo,
+		FileReader:          fileReader,
+		EventBus:            bus,
+		Config:              cfg,
+		QueueManager:        queueMgr,
+		QueueRepo:           queueRepo,
+		DashboardHandler:    dashHandler,
+		NotifHandler:        notifHandler,
+		ConversationHandler: conversationHandler,
+		WebhookHandler:      webhookHandler,
+	})
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(logger)(router)

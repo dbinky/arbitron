@@ -109,7 +109,7 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 
 	// Derive interactive state fields.
 	if inst.State == instance.StateWaiting && inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
-		if isCurrentNodeInteractive(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
+		if isInteractiveNode(inst.WorkflowSnapshot, *inst.CurrentNodeID) {
 			nodeID := *inst.CurrentNodeID
 			resp.InteractiveNodeID = &nodeID
 			resp.InteractiveActive = true
@@ -119,9 +119,9 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 	return resp
 }
 
-// isCurrentNodeInteractive checks if the specified node in the workflow
-// snapshot is of type "interactive". Uses the shared engine.FindNodeByID helper.
-func isCurrentNodeInteractive(snapshot map[string]any, nodeID string) bool {
+// isInteractiveNode checks if the specified node in the workflow snapshot is
+// of type "interactive". Uses the shared engine.FindNodeByID helper.
+func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 	node, err := engine.FindNodeByID(snapshot, nodeID)
 	if err != nil {
 		return false
