@@ -59,6 +59,8 @@ type RouterDeps struct {
 // If DashboardHandler is non-nil, unmatched routes fall through to the
 // embedded SPA instead of returning chi's default 404.
 // ConversationHandler may be nil if interactive messaging is not needed.
+//
+// Deprecated: Use NewRouterFromDeps instead.
 func NewRouter(
 	svc EngineService,
 	workflows workflow.WorkflowRepository,

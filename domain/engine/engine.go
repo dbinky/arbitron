@@ -374,10 +374,13 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 
 // failInstance marks an instance as failed and logs errors. It consolidates
 // the repeated SetFailed + slog.Error pattern used throughout the run loop.
-func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) {
+// It returns true if the state change succeeded, false otherwise.
+func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
 	if err := e.instances.SetFailed(ctx, instanceID, nodeID); err != nil {
 		slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
+		return false
 	}
+	return true
 }
 
 // handleNodeError processes a node execution failure according to the resolved
@@ -432,8 +435,9 @@ func (e *Engine) handleNodeError(
 		return "", true
 
 	default: // "halt" or unrecognized
-		e.failInstance(ctx, instanceID, currentNodeID)
-		e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
+		if e.failInstance(ctx, instanceID, currentNodeID) {
+			e.emitNotification(ctx, instanceID, workflowName, notification.TypeFailed)
+		}
 		e.eventBus.Publish(instanceID, Event{
 			Type:      EventTypeInstanceFailed,
 			Timestamp: time.Now(),
@@ -576,6 +580,10 @@ func nodeResultToExecution(result *NodeResult, exec *instance.NodeExecution) {
 	if result == nil {
 		return
 	}
+	// LLMConversation is typed as any in NodeResult because different LLM
+	// providers return different shapes. Only map[string]any values are stored;
+	// non-map values (e.g., from a provider returning a typed struct that was
+	// not JSON-round-tripped) are silently dropped since the DB column is JSONB.
 	if result.LLMConversation != nil {
 		if m, ok := result.LLMConversation.(map[string]any); ok {
 			exec.LLMConversation = m

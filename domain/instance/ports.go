@@ -8,6 +8,9 @@ import (
 )
 
 // InstanceRepository defines the port for persisting and querying workflow instances.
+// Implementations must wrap domain sentinel errors (e.g., ErrNotFound) via
+// fmt.Errorf %w so that the HTTP adapter's errors.Is-based error mapping works
+// correctly.
 type InstanceRepository interface {
 	Create(ctx context.Context, inst *Instance) error
 	Get(ctx context.Context, id uuid.UUID) (*Instance, error)

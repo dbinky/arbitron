@@ -68,11 +68,8 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 3. Deactivate token immediately to close the double-fire window.
-	h.registry.Deactivate(token)
-
-	// 4. Validate secret if configured (before any state check to prevent
-	// unauthenticated callers from probing instance lifecycle state).
+	// 3. Validate secret if configured (before deactivation to prevent
+	// unauthenticated callers from consuming one-time tokens).
 	if entry.SecretHash != nil {
 		secret := r.Header.Get("X-Webhook-Secret")
 		if secret == "" {
@@ -88,6 +85,9 @@ func (h *WebhookHandler) ReceiveWebhook(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+
+	// 4. Deactivate token after successful authentication to close the double-fire window.
+	h.registry.Deactivate(token)
 
 	// 5. Verify instance state (database check).
 	inst, err := h.instances.Get(r.Context(), entry.InstanceID)

@@ -16,6 +16,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxWebhookTimeout is the upper bound for webhook wait timeout durations.
+// Durations exceeding this are rejected to prevent resource exhaustion via
+// accumulated never-firing timers.
+const maxWebhookTimeout = 7 * 24 * time.Hour
+
 // WebhookWaitExecutor handles webhook_wait nodes by generating a unique token,
 // transitioning instances to the waiting state, and registering with the webhook
 // registry for incoming POST requests.
@@ -77,6 +82,9 @@ func (e *WebhookWaitExecutor) Execute(ctx context.Context, node workflow.Node, v
 		timeoutSec, err := strconv.ParseFloat(timeoutStr, 64)
 		if err != nil {
 			return nil, fmt.Errorf("waitTimeoutSeconds is not numeric: %q", timeoutStr)
+		}
+		if timeoutSec > maxWebhookTimeout.Seconds() {
+			return nil, fmt.Errorf("waitTimeoutSeconds exceeds maximum allowed (%s): %v", maxWebhookTimeout, timeoutSec)
 		}
 		d := time.Now().Add(time.Duration(timeoutSec * float64(time.Second)))
 		deadline = &d

@@ -137,6 +137,39 @@ func TestTimerDelayExecutor_NonNumericDuration_Fails(t *testing.T) {
 	assert.Contains(t, err.Error(), "not numeric")
 }
 
+func TestTimerDelayExecutor_ExceedsMaxDuration_Fails(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	scheduler := &mockTimerScheduler{}
+	qm := newMockQueueManager()
+
+	instanceID := uuid.New()
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:    instanceID,
+		State: instance.StateRunning,
+	}
+	instRepo.mu.Unlock()
+
+	executor := engine.NewTimerDelayExecutor(instRepo, nodeExecRepo, scheduler, qm)
+
+	vars := variable.NewStore()
+
+	// 8 days in seconds exceeds the 7-day maximum.
+	node := workflow.Node{
+		ID:   "timer-node",
+		Type: workflow.NodeTypeTimerDelay,
+		Config: workflow.NodeConfig{
+			DurationSeconds: "691200",
+		},
+	}
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, vars, "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds maximum")
+}
+
 func TestTimerDelayExecutor_ZeroDuration_ImmediateEligibility(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()

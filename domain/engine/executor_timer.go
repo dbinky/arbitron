@@ -28,6 +28,11 @@ func InstanceIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return id, ok
 }
 
+// maxTimerDelay is the upper bound for timer delay durations. Durations
+// exceeding this are rejected to prevent resource exhaustion via accumulated
+// never-firing timers.
+const maxTimerDelay = 7 * 24 * time.Hour
+
 // TimerDelayExecutor handles timer_delay nodes by transitioning instances to
 // the waiting state and scheduling a timer for re-queueing.
 type TimerDelayExecutor struct {
@@ -72,6 +77,9 @@ func (e *TimerDelayExecutor) Execute(ctx context.Context, node workflow.Node, va
 	}
 	if math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return nil, fmt.Errorf("durationSeconds is not a finite number: %q", durationStr)
+	}
+	if duration > maxTimerDelay.Seconds() {
+		return nil, fmt.Errorf("durationSeconds exceeds maximum allowed (%s): %v", maxTimerDelay, duration)
 	}
 
 	// 3. Calculate waitingUntil.

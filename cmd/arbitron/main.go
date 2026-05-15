@@ -149,6 +149,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 	eng.SetWebhookRegistry(webhookRegistry)
 
 	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are available.
+	// These executors are added after engine construction because they depend on
+	// the scheduler and webhook registry, which in turn depend on the queue
+	// manager, creating a circular dependency. This works because the engine
+	// stores a reference to the executors map (not a copy), so mutations here
+	// are visible to the engine at execution time.
 	executors[workflow.NodeTypeTimerDelay] = engine.NewTimerDelayExecutor(
 		instanceRepo, nodeExecRepo, scheduler, queueMgr,
 	)
@@ -283,13 +288,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
-	// Stop the timer scheduler before waiting for in-flight workflows.
-	schedulerCancel()
-	scheduler.Stop()
-
-	// Wait for in-flight workflow goroutines to finish before closing the pool.
+	// Wait for in-flight workflow goroutines to finish before stopping the
+	// scheduler. This ensures a running workflow cannot register a timer that
+	// never fires because the scheduler has already been torn down.
 	logger.Info("waiting for in-flight workflows to complete")
 	eng.Shutdown()
+
+	// Stop the timer scheduler after in-flight workflows have drained.
+	schedulerCancel()
+	scheduler.Stop()
 
 	// Flush OTel spans.
 	if err := tracingShutdown(shutdownCtx); err != nil {
