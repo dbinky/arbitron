@@ -83,20 +83,20 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 		OriginalVariables: inst.OriginalVariables,
 		CurrentNodeID:     inst.CurrentNodeID,
 		FailedNodeID:      inst.FailedNodeID,
-		CreatedAt:         inst.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:         inst.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		CreatedAt:         inst.CreatedAt.Format(APITimeFormat),
+		UpdatedAt:         inst.UpdatedAt.Format(APITimeFormat),
 	}
 	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	if inst.CompletedAt != nil {
-		s := inst.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.CompletedAt.Format(APITimeFormat)
 		resp.CompletedAt = &s
 	}
 	if inst.QueuedAt != nil {
-		s := inst.QueuedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.QueuedAt.Format(APITimeFormat)
 		resp.QueuedAt = &s
 	}
 	if inst.WaitingUntil != nil {
-		s := inst.WaitingUntil.Format("2006-01-02T15:04:05Z07:00")
+		s := inst.WaitingUntil.Format(APITimeFormat)
 		resp.WaitingUntil = &s
 	}
 	if inst.WebhookToken != nil {
@@ -377,10 +377,10 @@ func toNodeExecutionResponse(exec *instance.NodeExecution) nodeExecutionResponse
 		ScriptStdout:    exec.ScriptStdout,
 		ScriptStderr:    exec.ScriptStderr,
 		ScriptExitCode:  exec.ScriptExitCode,
-		StartedAt:       exec.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+		StartedAt:       exec.StartedAt.Format(APITimeFormat),
 	}
 	if exec.CompletedAt != nil {
-		s := exec.CompletedAt.Format("2006-01-02T15:04:05Z07:00")
+		s := exec.CompletedAt.Format(APITimeFormat)
 		resp.CompletedAt = &s
 	}
 	return resp
@@ -462,7 +462,7 @@ func toVariableSnapshotResponse(snap *instance.VariableSnapshot) variableSnapsho
 		InstanceID: snap.InstanceID.String(),
 		NodeID:     snap.NodeID,
 		Variables:  snap.Variables,
-		CapturedAt: snap.CapturedAt.Format("2006-01-02T15:04:05Z07:00"),
+		CapturedAt: snap.CapturedAt.Format(APITimeFormat),
 	}
 }
 

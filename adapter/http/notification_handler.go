@@ -105,7 +105,7 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 			Type:         string(n.Type),
 			Read:         n.Read,
 			Dismissed:    n.Dismissed,
-			CreatedAt:    n.CreatedAt.Format("2006-01-02T15:04:05.000Z07:00"),
+			CreatedAt:    n.CreatedAt.Format(APITimeFormatMillis),
 		}
 	}
 
