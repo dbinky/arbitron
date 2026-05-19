@@ -9,6 +9,7 @@ services:
     environment:
       - ARBITRON_DATABASE_PATH=/data/arbitron.db
       - ARBITRON_WORKSPACE_PATH=/workspaces
+      - ARBITRON_LOGGING_FILE=/data/arbitron.log
       - ARBITRON_SERVER_HOST=0.0.0.0
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     security_opt:
