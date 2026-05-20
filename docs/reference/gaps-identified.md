@@ -8,218 +8,146 @@ _(none)_
 
 ## Fixed Previously
 
-### MAIN14-P2-001: redactDatabaseURL logged %2A%2A%2A instead of *** — url.String() percent-encodes asterisks
-**Area**: Main Wiring (`cmd/arbitron/main.go`)
-**Fixed**: Iteration 40
-**Detail**: `redactDatabaseURL` used `url.UserPassword(username, "***")` then called `u.String()` to rebuild the URL. `url.String()` percent-encodes `*` to `%2A`, so startup logs showed `alice:%2A%2A%2A@localhost:5432/...` instead of `alice:***@localhost:5432/...`. The original intent was human-readable redaction. Fixed by clearing `u.User = nil`, calling `u.String()` to get a clean base URL, then manually prepending `username:***@` after the scheme using `strings.TrimPrefix`. Added five-scenario test file (`cmd/arbitron/main_test.go`): happy path (password replaced with `***`), malformed URL returned unchanged, no-password URL unchanged, no-user-info URL unchanged, and empty-password URL handled without panic.
+### REPO-SNP-001: SaveNodePositions had no path-traversal or missing-nodes-field tests
+**Area**: Workflow Repository (`adapter/filesystem/workflow_repo_positions_test.go`)
+**Fixed**: Area 1 Pass 2
+**Detail**: All other `WorkflowRepo` methods had explicit path-traversal tests. `SaveNodePositions` was missing two: (1) `../escape` name must be rejected (the prefix check in the code is correct but untested), and (2) a `workflow.json` without a `"nodes"` key must be a no-op rather than panic/error (also correct but untested). Both tests added, both pass.
 
-### EXEC13-P2-001: SidePanel fallback-tab test never actually put activeTab in 'transcript' state
-**Area**: Execution View Integration (`dashboard/src/components/SidePanel.test.tsx`)
-**Fixed**: Iteration 39
-**Detail**: The test `'falls back to output tab when transcript tab is removed (node deselected)'` rendered an interactive node with `execution=null` (no transcript data). Because `transcript=null`, the effect's first condition (`transcript && showTranscriptTab`) was false, so `activeTab` was never changed from its initial 'output' value. Deselecting the node set `showTranscriptTab=false`, but the else-if fallback (`activeTab === 'transcript' && !showTranscriptTab`) was also false. The test asserted the Output tab was visible — trivially true since it was never left. The `setActiveTab('output')` branch could be deleted without the test failing. Added `'reverts to Output tab when the user is on Transcript and then selects a non-interactive node'`: starts with a completed interactive node with real transcript data (auto-switches to Transcript), then re-renders with an LLM node — verifying the Transcript button disappears and Output content is shown.
+### SKILL-PARAM-001: workflow-running.md used "workflow ID" for instance_trigger instead of "workflowName"
+**Area**: Skills (`plugin/skills/workflow-running.md`)
+**Fixed**: Pair 26
+**Detail**: The running skill's trigger step said "Call `instance_trigger` with the workflow ID, inputs, and priority." The `instance_trigger` tool parameter is `workflowName` (a name string, not a UUID). An LLM reading the skill literally would pass the workflow's UUID, which the handler would reject or look up incorrectly. Fixed by updating the text to "workflow name (`workflowName`)".
 
-### RESIZE12-P2-001: drag-resize test only verified CSS class, never the resulting width
-**Area**: Callout Connector & Panel Resizing (`dashboard/src/components/ResizablePanel.test.tsx`)
-**Fixed**: Iteration 38
-**Detail**: The existing drag test (`adds active class to divider while dragging`) only asserted that the CSS `dividerActive` class toggled on mouseDown/mouseUp — it never fired a `mouseMove` event or checked the right panel's `style.width`. If the `onMouseMove` calculation were wrong (e.g., off-by-one in the right-width formula, or clamping applied incorrectly), no test would catch it. Added three integration tests under `ResizablePanel — drag resize integration`: mid-range drag (clientX=400 → 598px), drag past minRightWidth (clientX=900 → 200px clamp), drag past maxRight (clientX=10 → 796px clamp). Each uses `mockContainerRect(1000)` for deterministic coordinates.
+### MCP-INST-ERR-001: TestInstancePause and TestInstanceRerun engine error tests lacked text assertions
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance_test.go`)
+**Fixed**: Pair 23
+**Detail**: Both `TestInstancePause` and `TestInstanceRerun` had an "engine error returned as tool error" sub-test that only asserted `result.IsError == true`. No assertion verified the error message text was propagated through the MCP layer. In contrast, `TestInstanceResume`, `TestInstanceCancel`, and `TestInstanceRetry` all asserted `assert.Contains(t, text, <error-keyword>)`. Fixed by adding `text := extractText(t, result)` and the corresponding `assert.Contains` assertion to both missing tests, confirming the error context (`"not running"`, `"cannot rerun"`) is preserved end-to-end.
 
-### PANEL11-P2-001: End Session button not disabled when WebSocket disconnected — silent no-op on click
-**Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
-**Fixed**: Iteration 37
-**Detail**: `endSession()` sends `interactive.end` over WebSocket. When disconnected (`connected=false`), the WebSocket send is a no-op, but the End Session button remained enabled and showed no feedback to the user. The chat input was already disabled when `!session.connected`, creating an inconsistency: users could click End Session and get no response while unable to type. Fixed by adding `|| !session.connected` to the button's `disabled` prop, consistent with how the chat input handles the disconnected state. Added a regression test.
-
-### HOOK10-P2-001: isEnding not reset on interactive.error — End Session button permanently disabled on backend failure
-**Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)
-**Fixed**: Iteration 36
-**Detail**: `endSession()` sets `isEnding = true` to disable the End Session button during the in-flight request. But the `interactive.error` handler only cleared `error`, `isStreaming`, and `streamingContent` — it never reset `isEnding`. If the backend failed to end the session (e.g., instance was no longer in interactive wait state) and sent back `interactive.error`, `isEnding` would stay `true` indefinitely. The button would remain disabled with no recovery path except a page reload. Fixed by adding `setIsEnding(false)` to the `interactive.error` handler and added a regression test that verifies the End Session button can be retried after a failure.
-
-### INTEG9-P2-001: multi-message integration test did not verify response content per request
-**Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
-**Fixed**: Iteration 35
-**Detail**: `TestIntegration_InteractiveMultipleMessages` sent 3 messages and read 3 responses, but only asserted `data["role"] == "assistant"` — it never checked `data["content"]`. The mock returns `"Response " + content` for each message, so if messages were processed out of order, responses swapped, or content dropped, the test would still pass. Added `assert.Equal(t, "Response msg"+msgLabel, data["content"], ...)` inside the loop to bind each response to its corresponding request. Also removed dead `msgCount` variable that was incremented but never asserted on.
-
-### REST8-P2-001: success test asserted NotNil output and never verified EndSession was called
-**Area**: Interactive REST Endpoint (`adapter/http/interactive_handler_test.go`)
-**Fixed**: Iteration 34
-**Detail**: `TestInteractiveHandler_EndSession_Success` used `assert.NotNil(t, resp["output"])` — this passes when `output` is an empty map `{}`, meaning any regression in the output-loading path (node exec not found, output nil) would be invisible. The test also never checked `convo.endCalls`, so a handler that returned early without calling EndSession would pass. Strengthened the test to type-assert `resp["output"]` as `map[string]any`, assert the `"approved": true` field, and verify `convo.endCalls` has exactly one entry matching `inst.ID`. Applied the same output content assertion to `TestRouter_InteractEndRoute`.
-
-### HIST7-P2-001: interactive.history message content not verified — field transformation would pass undetected
-**Area**: History Hydration & Instance Detail (`adapter/http/stream_handler_test.go`)
-**Fixed**: Iteration 33
-**Detail**: `TestStreamHandler_HistoryHydration_InteractiveWait` asserted `assert.Len(t, messages, 2)` but did not verify the `role` or `content` fields of individual messages. The mock node execution set up messages with `{"role":"user","content":"hello"}` and `{"role":"assistant","content":"hi there"}`. If `sendInteractiveHistory` were modified to accidentally transform, filter, or reorder messages (e.g., dropping content, swapping roles, or re-mapping field names), the length check would still pass. Added assertions for each message's `role` and `content` using `map[string]any` type assertions with `require.True` on the type guard, matching the pattern used in the error event timestamp tests.
-
-### WS6-P2-001: interactive.error event timestamp not verified — zero timestamp would pass undetected
-**Area**: WebSocket Bidirectional Messaging (`adapter/http/stream_handler_test.go`)
-**Fixed**: Iteration 32
-**Detail**: `TestStreamHandler_InteractiveSend_ErrorReturnsInteractiveError` and `TestStreamHandler_InteractiveEnd_ErrorReturnsInteractiveError` verified `evt["type"]` and `data["message"]` but not the `timestamp` field. The `interactiveErrorEvent` struct explicitly sets `Timestamp: time.Now().UTC()` — if this were accidentally dropped (or the struct were created without the field), the frontend would receive `"0001-01-01T00:00:00Z"` on every error message, but both tests would still pass. Added RFC3339 timestamp parsing assertions to both tests: require that `evt["timestamp"]` is a present string, parses as RFC3339Nano, and is not the zero time. Matches the same pattern as NOTIF4-P2-001.
-
-### LLM5-P2-001: Prompt vs Messages contract not asserted — accidental population of the wrong field would be undetected
-**Area**: LLM Provider Extensions (`domain/engine/executor_interactive_test.go`, `domain/engine/conversation_test.go`)
-**Fixed**: Iteration 31
-**Detail**: `LLMRequest` documents that `Messages` takes precedence over `Prompt`. Two call sites build `LLMRequest` with different fields: the `InteractiveExecutor` uses `Prompt` for the initial turn; `ConversationHandler` uses `Messages` for all subsequent turns. Neither test verified the OTHER field was absent. If `Messages` were accidentally populated in the executor (e.g., by copying code from the conversation handler), the `Prompt` would be silently ignored and the LLM would receive unexpected history on the first turn — with no test failure. Symmetrically, an accidental `Prompt` in the conversation handler would be masked by `Messages` in providers that check precedence, but would expose data in providers that don't. Added `assert.Empty(t, req.Messages, ...)` to `TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest` and `assert.Empty(t, req.Prompt, ...)` to `TestConversationHandler_HandleMessage_SendsFullConversationToLLM`.
-
-### NOTIF4-P2-001: LogNotifier timestamp assertion used NotEmpty — ISO 8601 millisecond format not verified
-**Area**: External Notification Interface (`adapter/notification/log_notifier_test.go`)
-**Fixed**: Iteration 30
-**Detail**: `TestLogNotifier_Notify_LogsStructuredFields` asserted `assert.NotEmpty(t, logEntry["timestamp"])` — this passes for any non-empty string, including a Unix timestamp integer serialized as a string or an RFC3339 timestamp without milliseconds. The `Notify` implementation formats `n.CreatedAt` as `"2006-01-02T15:04:05.000Z07:00"` (ISO 8601 with milliseconds), but no test verified this contract. Added `TestLogNotifier_Notify_TimestampFormatIsISO8601WithMilliseconds`: uses a fixed time with 500ms sub-second precision, then parses the log entry's timestamp string with `time.Parse("2006-01-02T15:04:05.000Z07:00", ...)`, asserting both that parsing succeeds and that the parsed value equals the original `CreatedAt`. If the format string in `Notify` is changed to `time.RFC3339` (drops milliseconds) or a Unix integer, this test now fails.
-
-### CONV3-P2-001: parseConversation []any branch untested — Postgres JSONB round-trip path never exercised
-**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
-**Fixed**: Iteration 29
-**Detail**: `parseConversation` has two branches: `[]map[string]any` (in-memory) and `[]any` (after Postgres JSONB deserialization, where `json.Unmarshal` into `map[string]any` always produces `[]interface{}`). All 29 existing tests set `LLMConversation` directly on the mock without a JSON round-trip, so only the first branch was ever reached. The production path goes through `[]any` on every turn after the first (the first persist stores `[]map[string]any`; subsequent reads from sqlc return `[]any`). Added `TestConversationHandler_HandleMessage_JsonRoundTripHistory_ParsesMessages`: JSON-marshals and unmarshals the initial conversation to force `[]any` typing, then verifies the LLM receives all 3 messages (2 prior + 1 new) — not just the new one. A silent bug in the `[]any` branch would now be caught.
-
-### EXEC2-P2-001: WritesNodeExecutionRecord test had weak assertions — conversation structure, LLM metadata, and StartedAt not verified
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
-**Fixed**: Iteration 28
-**Detail**: `TestInteractiveExecutor_WritesNodeExecutionRecord` had a comment "Verify the conversation contains user and assistant messages" but only asserted `NotNil` twice (redundantly). It also never checked `LLMModel`, `LLMTokensIn`, `LLMTokensOut`, or `StartedAt` on the persisted record — all real regression risks. Strengthened assertions now verify: conversation `messages` array has exactly two entries with the correct `role` values (guards `ConversationHandler` history load on reconnect), all LLM metadata fields are non-nil and correct (guards execution-view display), and `StartedAt` is non-zero.
-
-### NODE1-P2-001: Interactive nodes passed validation without required orchestrationFile and templateFile
-**Area**: Interactive Node Type (`domain/workflow/validation.go`, `domain/workflow/validation_test.go`)
-**Fixed**: Iteration 27
-**Detail**: `InteractiveExecutor.Execute()` reads `OrchestrationFile` and `TemplateFile` unconditionally via `fileReader.ReadFile()` — empty values produce a runtime error. However, `validateNodeConfigs` had no `case NodeTypeInteractive:` so interactive nodes with empty required fields silently passed workflow validation and only failed at execution time. Added `validateInteractiveNode()` which emits `MISSING_REQUIRED_CONFIG` for each missing field, wired into the switch. Updated `TestValidateInteractive_AcceptsNodeType` to provide the required config (renaming it to `TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig`). Added two new tests: `TestValidateInteractive_RequiresOrchestrationFile` and `TestValidateInteractive_RequiresTemplateFile`.
-
-### PAIR24-002: Instance type missing interactiveActive/interactiveNodeId; panel flashed on page load
-**Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/api/types.ts`, `dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/routes/ExecutionView.tsx`)
-**Fixed**: Iteration 26
-**Detail**: The design doc (Phase 3, section 2) states: "If `interactiveActive` is true, render the chat panel immediately." Both `interactiveActive: boolean` and `interactiveNodeId: string | null` were missing from the TypeScript `Instance` type, and `ExecutionView` never read them — the panel only activated after `interactive.history` arrived over WebSocket, causing a brief flash of the normal side panel on page load. Added the two fields to the `Instance` type. Added `seedFromInstance(nodeId)` action to `useInteractiveSession` that sets `isActive=true` and `nodeId` immediately from the REST response. `ExecutionView` calls `seedFromInstance` in a `useEffect` when `instance.interactiveActive` is true. `interactive.history` still updates messages normally; `interactive.ended` deactivates the seeded session correctly. Three new tests: seed activates panel, history's nodeId takes precedence over seed, and `interactive.ended` deactivates a seeded session.
-
-### PAIR24-001: End Session button had no disabled/loading state while interactive.end is in flight
-**Area**: Spec Alignment: Product Spec + All Dashboard (`dashboard/src/hooks/useInteractiveSession.ts`, `dashboard/src/components/InteractivePanel.tsx`)
-**Fixed**: Iteration 25
-**Detail**: Design doc section 8 specifies: "Button enters a disabled/loading state until `interactive.ended` is received." The `InteractiveSessionState` interface had no `isEnding` field, `endSession()` sent the WebSocket message without setting any loading state, and the End Session button had no `disabled` prop — leaving the button clickable (and re-sendable) for the full round-trip duration. Added `isEnding: boolean` to `InteractiveSessionState`, set it `true` in `endSession()`, reset it `false` in the `interactive.ended` handler, and added `disabled={session.isEnding}` to the button. Tests: initial `isEnding` is `false` (initial state assertion), `endSession()` sets `isEnding` to `true`, `interactive.ended` resets `isEnding` to `false`, and button is disabled when `isEnding` is `true`.
-
-### PAIR23-001: complete_session tool description weaker than design doc specifies
-**Area**: Spec Alignment: Product Spec + All Backend (`domain/engine/ports.go`)
-**Fixed**: Iteration 24
-**Detail**: The `InteractiveCompletionToolDescription` constant said "Complete the interactive session with structured output." — telling the LLM WHAT the tool does but not WHEN to call it. The design doc specifies "Call this tool when the conversation has reached its natural conclusion and you have the final output ready." which gives the LLM explicit guidance on when to invoke the tool, reducing premature or missed session completions. No test previously asserted the description value. Updated the constant and added description assertions to `TestInteractiveExecutor_BuildsCompleteSessionTool` and `TestConversationHandler_HandleMessage_SendsFullConversationToLLM`.
-
-### PAIR22-001: No test for unknown tool name in ConversationHandler (name check is load-bearing)
-**Area**: LLM Provider Extensions + InteractiveExecutor + ConversationHandler (`domain/engine/conversation.go`, `domain/engine/conversation_test.go`)
-**Fixed**: Iteration 23
-**Detail**: The condition `toolUse.Name == InteractiveCompletionToolName` in `HandleMessage` is the gate that prevents arbitrary LLM tool calls from terminating the interactive session. Every existing test used `cannedToolStream` which hard-codes `Name: "complete_session"`, so the failure branch (unknown name → fall through to `handleNormalResponse`) was completely untested. If the check were simplified to just `toolUse != nil`, all tests would still pass but any LLM tool call would silently end the session. Added `TestConversationHandler_HandleMessage_UnknownToolName_TreatsAsNormalResponse` which fires a ToolUse with `Name="some_other_tool"`, then asserts: no `interactive.ended` event, instance remains `StateWaiting`, and the assistant text response is published as `interactive.message`.
-
-### CONN-002: CalloutConnector tests missing integration category (visible prop transitions)
-**Area**: Chat Panel + Callout Connector (`dashboard/src/graph/CalloutConnector.tsx`)
+### FS-FR-001: FileReader.safeJoin only checked workspace root — cross-workflow path traversal allowed
+**Area**: Workflow File Reading (`adapter/filesystem/file_reader.go`)
 **Fixed**: Iteration 22
-**Detail**: The CalloutConnector tests covered happy path, not-visible, missing node, and geometry guard — but had no integration category test verifying dynamic visible transitions (panel takeover: false→true, snap-back: true→false). These transitions are the core behavior of the pair: when the interactive session starts, the connector must appear; when it ends, the connector must disappear. Added two integration tests using `rerender()` to verify both transitions work correctly.
+**Detail**: `safeJoin` verified that the resolved path starts with `basePath` (workspace root), but did not verify it stays within the specific workflow subdirectory. A relative path like `"../other-wf/secret.txt"` resolved to `basePath/other-wf/secret.txt`, which passes the workspace-root check but reads from a different workflow's files. An LLM calling `workflow_read_file(name="wf-a", path="../wf-b/secret.txt")` could access any file in any other workflow directory. Fixed by adding a second `strings.HasPrefix` check against the workflow-directory root (`wfDir+sep`) after the workspace-root check. Added test `TestFileReader_PathTraversal_CrossWorkflowRejected` that places a secret in a sibling workflow directory and verifies the traversal is rejected with "escapes workflow directory".
 
-### HIST-002: useInteractiveSession did not clear streaming state on interactive.history (reconnect gap)
-**Area**: History Hydration + useInteractiveSession (`dashboard/src/hooks/useInteractiveSession.ts`)
+### MCP-INT-NIL-001: interactiveGetHistoryHandler missing nil guard for instance before CurrentNodeID access
+**Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
 **Fixed**: Iteration 21
-**Detail**: The `interactive.history` handler set `messages`, `nodeId`, `isActive`, and `error`, but did not clear `streamingContent` or `isStreaming`. If a WebSocket reconnect occurred mid-stream, the client would retain the pre-disconnect partial content and the typing indicator (`isStreaming=true`), resulting in a phantom streaming UI alongside the hydrated history. Fixed by adding `setStreamingContent('')` and `setIsStreaming(false)` to the history handler. Test: `'clears streaming state when history arrives mid-stream (reconnect)'`.
+**Detail**: `interactiveGetHistoryHandler` called `inst.CurrentNodeID` without first checking if `inst` was nil. `Instances.Get` returns `(*Instance, error)`, and a repo returning `(nil, nil)` (the default stub behaviour) causes a nil pointer dereference on the field access, panicking the MCP server process. Fixed by adding a nil guard after the error check (same pattern as MCP-NIL-001, MCP-WF-NIL-001). Test added: "nil instance without error returns not found" in `TestInteractiveGetHistory`.
 
-### NOTIF-002: Zero CreatedAt on notifications forwarded to external notifier and event bus
-**Area**: External Notification + Engine (`domain/engine/engine.go`, `domain/engine/executor_interactive.go`)
-**Fixed**: Iteration 20
-**Detail**: Both `emitNotification` (for TypeFailed/TypeCompleted) and `InteractiveExecutor` (for TypeNeedsInteraction) created `notification.Notification` structs without setting `CreatedAt`. The Postgres `Create` method uses a DB default (`NOW()`) but does not read it back, so the in-memory struct's `CreatedAt` remains at zero value (`time.Time{}`). This zero value was then serialized as `"0001-01-01T00:00:00.000Z"` in both the `notification.created` event payload (used by the frontend) and in external notifier calls (e.g., LogNotifier logs a bogus timestamp). Fixed by setting `CreatedAt: time.Now()` on notification creation in both code paths. Tests: `TestEngine_ExternalNotifier_NotificationHasNonZeroCreatedAt` and `TestInteractiveExecutor_ExternalNotifier_NotificationHasNonZeroCreatedAt`.
-
-### PAIR15-001: complete_session tool name duplicated as string literal in 3 production-code locations
-**Area**: InteractiveExecutor + ConversationHandler (`domain/engine/executor_interactive.go`, `domain/engine/conversation.go`, `domain/engine/ports.go`)
+### MCP-INST-PRIO-001: instanceSetPriorityHandler and instanceTriggerHandler accept invalid priority strings
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 19
-**Detail**: The `"complete_session"` tool name was a string literal in (1) the executor's tool definition, (2) the conversation handler's tool definition, and (3) the conversation handler's detection check `toolUse.Name == "complete_session"`. A mismatch would cause session completion to silently break — the LLM calls the tool but the handler never detects it, leaving the session in waiting state indefinitely. Added `InteractiveCompletionToolName = "complete_session"` and `InteractiveCompletionToolDescription = "..."` constants to `ports.go` alongside the existing EventType constants. Updated both executor and handler to use the constants.
+**Detail**: Both `instanceSetPriorityHandler` and `instanceTriggerHandler` passed the `priority` argument directly to the engine without validating it against the three valid values (`high`, `normal`, `low`). The engine performs only a type cast to `instance.Priority(priority)`, so an LLM passing `"urgent"` or `"CRITICAL"` would persist that invalid string to the database without error. Fixed by adding an `isValidPriority` helper and guarding both handlers before the engine call: `instanceSetPriorityHandler` rejects any non-empty value outside the valid set; `instanceTriggerHandler` rejects non-empty values outside the valid set (empty string still allowed as "no priority specified"). Tests added: "invalid priority value returns error" in both `TestInstanceTrigger` and `TestInstanceSetPriority`.
 
-### MAIN-001: Missing compile-time assertions for *InteractiveExecutor / NodeExecutor and *LogNotifier / ExternalNotifier
-**Area**: Main Wiring (`domain/engine/executor_interactive.go`, `adapter/notification/log_notifier.go`)
+### MCP-WF-NIL-001: workflowGetHandler and workflowValidateHandler missing nil guards for Load returning (nil, nil)
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 18
-**Detail**: Project convention (established in `adapter/postgres/assert.go`, `adapter/anthropic/provider.go`, `adapter/filesystem/workflow_repo.go`) is to add `var _ Interface = (*Impl)(nil)` in each implementation file so interface drift is caught at compile time with a clear error message. Neither `*InteractiveExecutor` (satisfies `engine.NodeExecutor`) nor `*LogNotifier` (satisfies `notification.ExternalNotifier`) had these assertions. Added `var _ NodeExecutor = (*InteractiveExecutor)(nil)` to `executor_interactive.go` and `var _ notification.ExternalNotifier = (*LogNotifier)(nil)` to `log_notifier.go`. While usage patterns already provide implicit compile-time checking, the explicit assertions document intent and produce clearer diagnostics on interface changes.
+**Detail**: Two nil-guard omissions found during Pair 18 review. (1) `workflowGetHandler` called `MarshalResult(wf)` without a nil check — a repo returning `(nil, nil)` produces JSON `null` rather than a not-found error. (2) `workflowValidateHandler` passed `wf` directly to `workflow.Validate(wf, ...)` without a nil check — `Validate` dereferences `wf.Nodes` on line 65, causing a nil pointer panic. Both handlers now have nil guards (same pattern as MCP-NIL-001). Tests added: "nil workflow without error returns not found" in both `TestWorkflowGet` and `TestWorkflowValidate`.
 
-### EXEC-001: No tests for SidePanel — transcript extraction, tab switching, interactive detection
-**Area**: Execution View Integration (`dashboard/src/components/SidePanel.tsx`)
+### MCP-WF-UPD-001: workflowUpdateHandler allowed manifest name to overwrite tool-arg-authoritative name
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 17
-**Detail**: Added 22 tests for `SidePanel` covering all 5 scenario categories. Key scenarios: `extractTranscript` with all 3 code paths (output.interactiveMessages, llmConversation direct array, llmConversation.messages object), auto-switch to Transcript tab when transcript found, interactive node detection via type ('interactive', 'interactive_call') and config flag, fall-back to output tab when node deselected, empty/null edge cases, tab interaction boundaries. Child components (NodeOutput, VariablesPanel, InteractiveTranscript) mocked to keep tests focused on SidePanel logic.
+**Detail**: `workflowUpdateHandler` decoded the `manifest` argument into a `workflow.Workflow` and passed it directly to `repo.Update` without enforcing that `wf.Name` matches the `name` tool arg. An LLM calling `workflow_update` with `name="prod-wf"` and a manifest containing `"name":"dev-wf"` would store `workflow.json` with `"name":"dev-wf"` inside the `prod-wf/` directory — the same name/directory mismatch bug fixed in the HTTP handler (HTTP-UPD-001). Fixed by setting `wf.Name = name` (from the tool arg) before calling `repo.Update`. Added "tool name arg wins when manifest name differs" test that captures the workflow passed to the repo and asserts its Name equals the tool arg name.
 
-### CONN-001: No tests for Callout Connector, ResizablePanel, InteractiveCallout components
-**Area**: Callout Connector & Panel Resizing (`dashboard/src/graph/CalloutConnector.tsx`, `dashboard/src/components/ResizablePanel.tsx`, `dashboard/src/graph/nodes/InteractiveCallout.tsx`)
+### HTTP-UPD-001: Update handler allowed body name to overwrite URL-authoritative name in workflow.json
+**Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
 **Fixed**: Iteration 16
-**Detail**: Added tests for all three components: `InteractiveCallout` (7 tests — renders children, waiting class toggled, rerender removes class, nested children), `ResizablePanel` (8 tests — renders L/R content, divider present, defaultRightWidth applied, fraction width computation, clamping to minRightWidth, snap-back to saved width, drag activates class, boundary constraints), `CalloutConnector` (4 tests via mocked @xyflow/react — SVG rendered when visible+node exists, null when not visible, null when node missing, null when geometry guard fires).
+**Detail**: The `Update` handler decoded the request body into a `workflow.Workflow` and passed it directly to `repo.Update` without enforcing that `wf.Name` matches the URL path segment. A `PUT /workflows/prod-wf` request with body `{"name":"dev-wf", ...}` would write `workflow.json` containing `"name":"dev-wf"` inside the `prod-wf/` directory — a permanent name/directory mismatch visible on every subsequent `Load("prod-wf")` call. Fixed by setting `wf.Name = name` (from the URL param) before calling repo.Update. Added "URL name wins when body name differs" test that captures the workflow passed to the repo and asserts both the stored name and response body name equal the URL name.
 
-### PANEL-002: No tests for ChatInput, ChatMessage, and InteractiveTranscript components
-**Area**: Chat Panel Components (`dashboard/src/components/`)
+### MCP-NIL-001: variablesGetHandler panics and instanceGetHandler returns null on nil-instance repo return
+**Area**: MCP Trace & Instance Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 15
-**Detail**: Added 44 tests across ChatInput (11), ChatMessage (7), and InteractiveTranscript (8) covering all 5 scenario categories. ChatInput tests cover Enter-to-send, Shift+Enter newline, whitespace guard, disabled state, and sequential sends. ChatMessage tests cover role labels, markdown rendering (bold, inline code, multi-paragraph), empty content, and distinct role classes. InteractiveTranscript tests cover message rendering, empty/null state, singular/plural count, and role label delegation to ChatMessage.
+**Detail**: Two nil-guard omissions found during Test Coverage Quality review. (1) `variablesGetHandler` called `inst.Variables` without first checking if `inst` was nil. `Instances.Get` returns `(*Instance, error)`, and a repo returning `(nil, nil)` (default stub behaviour) causes a nil pointer dereference, panicking the MCP server process. (2) `instanceGetHandler` called `MarshalResult(inst)` without a nil guard — a `(nil, nil)` return produces JSON `null` rather than a not-found error, confusing LLM clients. Fixed by adding nil guards to both handlers (same pattern as MCP-INT-001 and MCP-BOUND-001). Tests added: "nil instance without error returns not found" in both `TestVariablesGet` and `TestInstanceGet`.
 
-### PANEL-001: Missing typing indicator when streaming starts (spec-required feature)
-**Area**: Chat Panel Components (`dashboard/src/components/InteractivePanel.tsx`)
+### MCP-BOUND-001: workflowListHandler and traceGetNodeHandler missing nil guards
+**Area**: MCP-to-Domain Boundary (`adapter/mcp/tools_workflow.go`, `adapter/mcp/tools_trace.go`)
 **Fixed**: Iteration 14
-**Detail**: The design spec requires a pulsing "Thinking..." indicator when `isStreaming=true` but no tokens have arrived yet. `InteractivePanel` only used `isStreaming` to disable the input — users had no feedback for several seconds until the first token arrived. Fixed: added typing indicator (pulsing dot + "Thinking..." text with CSS keyframe animation) shown when `isStreaming && !streamingContent`. Also fixed the empty state condition to exclude the `isStreaming` case. Added 15 tests for `InteractivePanel` covering all 5 scenario categories.
+**Detail**: Two nil boundary issues found during cross-handler consistency review. (1) `workflowListHandler` passed nil summaries directly to `MarshalResult`, producing JSON `null` for empty workspaces instead of `[]` — an LLM client's first list call on a fresh installation would receive null and fail to iterate. Fixed by normalising nil to `[]workflow.WorkflowSummary{}`. (2) `traceGetNodeHandler` called `MarshalResult(exec)` without a nil guard — if `GetByInstanceAndNode` returns `(nil, nil)` (the default stub behaviour), the handler returns confusing JSON `null` rather than an error. Fixed by adding a nil guard (same pattern as MCP-INT-001). Tests added for both: "nil summaries returns empty array not null" and "nil exec without error returns not found".
 
-### HOOK-001: No test framework and streaming state not cleared on interactive.error
-**Area**: useInteractiveSession Hook (`dashboard/src/hooks/useInteractiveSession.ts`)
+### SKILL-RUN-001: Running skill interactive trigger lacked specific notification type
+**Area**: Scheduling & Running Skills (`plugin/skills/workflow-running.md`)
 **Fixed**: Iteration 13
-**Detail**: The dashboard had no test runner configured. Additionally, the `interactive.error` event handler did not clear `isStreaming` or `streamingContent` — if an error fired mid-stream, the UI would show a typing indicator alongside an error message simultaneously. Set up vitest + @testing-library/react + jsdom with 16 tests covering all 5 scenario categories. The streaming-state test failed first (proving the bug), then fixed by adding `setIsStreaming(false)` and `setStreamingContent('')` to the error handler.
+**Detail**: The "Interactive participation flow" trigger condition said "detected via a notification" without specifying the `needs_interaction` notification type. The design doc (phase-3.md §4) explicitly names `notification.created` with type `needs_interaction` as the signal. Without this specificity, Claude Code could respond to the wrong notifications. Fixed by updating the trigger condition to reference `notification.created` with type `needs_interaction`. Also added `variables_history` → "How did variables change?" to the instance management natural-language mapping table (it was listed in available tools but had no mapping).
 
-### INT-001: No integration test for EndSession (interactive.end) error path
-**Area**: Integration Tests (`adapter/http/interactive_integration_test.go`)
+### SKILL-AUTH-001: Authoring skill missing "propose and confirm" step before applying modifications
+**Area**: Plugin Package (`plugin/skills/workflow-authoring.md`)
 **Fixed**: Iteration 12
-**Detail**: `TestIntegration_InteractiveError_FlowsBackOverWebSocket` proved that `HandleMessage` errors reach the client as `interactive.error` events, but there was no corresponding test for `EndSession` errors. The `handleInbound` function routes both `interactive.send` and `interactive.end` through the same error-event path (stream_handler.go:203–235). Added `TestIntegration_InteractiveEndSession_ErrorFlowsBack` which wires `endSessionFn` to return `assert.AnError`, then verifies the client receives an `interactive.error` event with a non-empty message field. This closes the gap where a future refactor of the EndSession branch could silently break error propagation.
+**Detail**: The "Modifying an existing workflow" section jumped from "Understand the requested changes" directly to "Apply the changes" — skipping the design doc's explicit step 3: "Propose the changes and confirm with the user." For destructive operations (deleting files, removing nodes), this meant Claude Code could make irreversible changes without user confirmation. Added a new step 4: "Propose the changes and confirm" that requires describing what will be added, changed, or removed and getting the user's agreement before any destructive action.
 
-### REST-001: No test for 500 response when EndSession returns unexpected error
-**Area**: InteractiveHandler (`adapter/http/interactive_handler_test.go`)
+### MCP-REG-001: RegisterAllTools had no test coverage
+**Area**: MCP Tool Registration (`adapter/mcp/register.go`)
 **Fixed**: Iteration 11
-**Detail**: Added `TestInteractiveHandler_EndSession_InternalError` which injects a database-style error (`fmt.Errorf("db: connection reset by peer")`) that matches neither the "not found" nor "not in interactive wait state" patterns. Verifies the handler returns 500 with `"code": "INTERNAL_ERROR"`. Completes the error-response coverage: 400, 404, 409, 500 are all now tested.
+**Detail**: `register.go` had no test file. Created `register_test.go` with 4 tests: `TestRegisterAllTools_Count` (exactly 37 tools), `TestRegisterAllTools_NamesAreUnique` (no duplicates), `TestRegisterAllTools_APISurface` (all 37 design-doc names present), `TestRegisterAllTools_Idempotent` (double-call behavior documented). All 37 tool names verified against phase-1.md and phase-2.md design docs.
 
-### HIST-001: No test for history hydration when node execution record is missing
-**Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
+### CLI-001: Tracing provider not shut down when RecoverCrashedInstances fails in initDomain
+**Area**: CLI Commands (`cmd/arbitron/main.go`)
 **Fixed**: Iteration 10
-**Detail**: Added `TestStreamHandler_HistoryHydration_NodeExecNotFound_SkipsHistory`. Uses an empty `mockNodeExecRepo` so `GetByInstanceAndNode` returns "not found". Verifies the connection stays open (normal bus event is received as first message) and no `interactive.history` event is sent. Covers the crash-recovery scenario where an instance reaches waiting state but the executor never persisted the node execution record.
+**Detail**: When `RecoverCrashedInstances` fails after `SetupTracing` has already succeeded, the error path closed `pool` and `logCloser` but skipped calling `tracingShutdown`. This leaks the OTel tracer and forfeits any pending span flushes. Fixed by adding a nil-guarded `tracingShutdown(ctx)` call before closing pool/logger in that error path. Also added: `TestServeCommand_HasRunE` and `TestMCPCommand_HasRunE` to verify both commands have their `RunE` handler wired (a nil RunE silently does nothing).
 
-### WS-001: Typed-nil interface trap in newStreamTestServerFull masked nil nodeExecRepo guard
-**Area**: WebSocket StreamHandler (`adapter/http/stream_handler_test.go`)
+### MCP-INT-001: Nil exec dereference in interactiveGetHistoryHandler
+**Area**: Interactive Session MCP Tools (`adapter/mcp/tools_interactive.go`)
 **Fixed**: Iteration 9
-**Detail**: `newStreamTestServerFull` had parameter type `*mockNodeExecRepo`. Passing `nil` for that parameter created a typed nil, which when assigned to the `instance.NodeExecutionRepository` interface inside `NewStreamHandler` produced a non-nil interface — bypassing the `if h.nodeExecs == nil` nil guard in `sendInteractiveHistory`. Changed the parameter type to `instance.NodeExecutionRepository` so that passing `nil` creates a true nil interface. Added `TestStreamHandler_HistoryHydration_NilNodeExecRepo_SkipsHistory` to prove the guard works for a waiting interactive instance, which previously panicked.
+**Detail**: `interactiveGetHistoryHandler` called `exec.LLMConversation` without first checking if `exec` was nil. `GetByInstanceAndNode` returns `(*NodeExecution, error)`, and a repo that returns `(nil, nil)` (the default stub behaviour) would cause a nil pointer dereference, panicking the MCP server process. Fixed by adding a nil guard after the error check. Also added: invalid UUID test for `interactive_end_session`, invalid UUID test for `interactive_get_history`, and a "nil exec without error returns not found" edge case test.
 
-### LLMPX-001: anthropic.Provider had no tests and no compile-time interface assertion
-**Area**: LLM Provider Adapter (`adapter/anthropic/provider.go`)
+### HTTP-MCP-001: Security headers not verified on /mcp endpoint responses
+**Area**: Streamable HTTP Transport (`adapter/http/server.go`)
 **Fixed**: Iteration 8
-**Detail**: Added `var _ engine.LLMProvider = (*Provider)(nil)` to `provider.go` (matching project convention in postgres/assert.go, filesystem/workflow_repo.go). Created `adapter/anthropic/provider_test.go` with 4 tests covering: empty key → `ErrNotConfigured` for both `Call` and `StreamCall`, non-empty key → stub error (not ErrNotConfigured) for both methods, and a package-level compile-time assertion. Prevents silent interface drift when new methods are added to `engine.LLMProvider`.
+**Detail**: `securityHeaders` middleware is applied via `r.Use(...)` before routes so it wraps the `/mcp` mount — but this was untested. Added `TestRouter_MCPEndpoint_SecurityHeaders` to verify that X-Content-Type-Options, X-Frame-Options, and Referrer-Policy headers appear on MCP endpoint responses, confirming the middleware chain covers mounted sub-routers.
 
-### NOTIF-001: Missing test for ExternalNotifier error non-propagation in InteractiveExecutor
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+### MCP-STRM-001: Streaming tools "not available" guard not tested for 3 of 4 handlers
+**Area**: MCP Event Streaming (`adapter/mcp/tools_streaming.go`, `adapter/mcp/tools_streaming_test.go`)
 **Fixed**: Iteration 7
-**Detail**: When `externalNotifier.Notify` returns an error, the executor logs it but must not propagate it — the instance must still transition to waiting and return `IsWait: true`. Added `notifyFn` hook to `mockExternalNotifierForInteractive` (matching the engine's mock pattern) and added `TestInteractiveExecutor_ExternalNotifier_ErrorDoesNotAbortExecution` to verify the executor returns `IsWait: true` and the instance reaches `StateWaiting` even when the notifier fails.
+**Detail**: `TestStreamingToolsWithoutEventBus` only exercised the nil-guard path for `instance_subscribe`. Extended to cover all 4 tool handlers (instance_subscribe, instance_unsubscribe, system_subscribe, system_unsubscribe). Also added: missing instanceId test for instance_subscribe, invalid UUID test for instance_unsubscribe, and tightened text assertions on existing error tests.
 
-### CONV-002: Missing edge test for empty conversation history in HandleMessage
-**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+### MCP-TRACE-001: Nil slice normalization missing in trace/system list handlers
+**Area**: MCP Trace & System Tools (`adapter/mcp/tools_trace.go`, `adapter/mcp/tools_system.go`)
 **Fixed**: Iteration 6
-**Detail**: Added `TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMessage`. Clears `LLMConversation` on the existing nodeExec to nil, then verifies: no error, LLM receives exactly 1 message (the user message), and the conversation is persisted with user + assistant. Covers the crash-recovery scenario where an instance is in waiting state but the executor never wrote its conversation record.
+**Detail**: Three handlers passed nil slices directly to `MarshalResult`, producing JSON `null` instead of `[]`: `traceGetHandler` (NodeExecution), `variablesHistoryHandler` (VariableSnapshot), `notificationListHandler` (Notification). Fixed by normalising nil to typed empty slices. Also added: UUID error tests for `variables_get`/`variables_history`, domain error test for `trace_get_node`, domain error tests for `notification_unread_count`/`notification_mark_read`, "missing id" test for `notification_dismiss`, and the two missing `system_config` CountQueued/CountWaiting error paths.
 
-### CONV-001: Missing error tests for `GetByInstanceAndNode` failure in ConversationHandler
-**Area**: ConversationHandler (`domain/engine/conversation_test.go`)
+### MCP-INST-001: `instanceListHandler` returns JSON null instead of [] when repo returns nil slice
+**Area**: MCP Instance Tools (`adapter/mcp/tools_instance.go`)
 **Fixed**: Iteration 5
-**Detail**: Added `TestConversationHandler_HandleMessage_NodeExecNotFound_ReturnsError` and `TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError`. Both use an empty nodeExec repo so `GetByInstanceAndNode` returns "not found", verifying the error message contains "load node execution".
+**Detail**: `instanceListHandler` passed nil summaries directly to `MarshalResult`, producing JSON `null` instead of `[]`. Fixed by normalising nil to `[]instance.InstanceSummary{}` before marshalling. Also added missing nil-list edge case test in `TestInstanceList` (verifies `[]` output) and "missing id" test in `TestInstanceSetPriority`.
 
-### EXEC-002: Missing test for nil external notifier in InteractiveExecutor
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+### MCP-WF-001: `workflowValidateHandler` and `workflowListFilesHandler` return JSON null instead of []
+**Area**: MCP Workflow Tools (`adapter/mcp/tools_workflow.go`)
 **Fixed**: Iteration 4
-**Detail**: Added `TestInteractiveExecutor_NilExternalNotifier_DoesNotPanic` which passes `nil` as the ExternalNotifier and verifies no panic occurs, IsWait is true, the notification is still created in the in-app repo, and the instance transitions to waiting — confirming all non-external side effects still complete correctly.
+**Detail**: `workflowValidateHandler` called `workflow.Validate()` which returns nil on success; the handler passed this directly to `MarshalResult`, producing `{"valid":true,"errors":null}`. Similarly, `workflowListFilesHandler` passed a nil `files` slice to `MarshalResult`, producing `null` instead of `[]`. LLM clients iterating over the errors/files arrays would fail with type errors on a null value. Fixed by normalising nil slices to empty slices before passing to `MarshalResult` in both handlers. Also added missing `workflow_write_file` tests for missing-name and missing-path cases, and edge-case tests asserting that both handlers emit JSON arrays (not null) when the domain returns nil.
 
-### EXEC-001: Missing test for `UpdateState()` failure in InteractiveExecutor
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive_test.go`)
+### MCP-HLP-001: `ParseUUID` emits misleading "required" error when key exists with non-string value
+**Area**: MCP Server Foundation (`adapter/mcp/helpers.go`)
 **Fixed**: Iteration 3
-**Detail**: The executor returns an error when `instances.UpdateState()` fails but no test covered this path. Added `TestInteractiveExecutor_UpdateStateFailure_ReturnsError` which uses an empty instance repo (so UpdateState returns "instance not found") to verify that the error propagates correctly with the expected message.
+**Detail**: `ParseUUID` used a silent comma-ok type assertion (`str, _ := args[key].(string)`). When the key was present but held a non-string value (e.g., JSON number `{"instanceId": 42}`), the assertion failed silently, `str` became `""`, and the function returned `"instanceId is required"` — factually wrong. LLM clients receiving this error could not tell whether they omitted the parameter or used the wrong type. Fixed by separating key-presence check from type assertion: key absent/nil → "required", key present with wrong type → "invalid %s: expected string, got %T", key present with valid string → proceed. Added test cases for wrong-type value and empty-string value. Also added `MarshalResult(nil)` edge-case test (nil marshals to JSON "null" — must produce a text result, not an error).
 
-### WFVAL-001: `validateFileReferences` did not check `OrchestrationFile` for interactive nodes
-**Area**: Interactive Node Type (`domain/workflow/validation.go`)
+### HTTP-WH-001: `safeWorkflowName(".")` returns true, causing 500 on Create with name="."
+**Area**: Workflow CRUD REST Endpoints (`adapter/http/workflow_handler.go`)
+**Fixed**: Iteration 2
+**Detail**: `safeWorkflowName` passed `"."` through all four guards: non-empty, no path separators, `filepath.Clean(".")` equals `"."`, and the explicit `name != ".."` check only blocked `".."`. A POST /workflows body with `{"name":"."}` reached the repo, which returned `"invalid workflow name: ."`, and the handler then returned 500 INTERNAL_ERROR instead of 400 BAD_REQUEST. Fixed by adding `name != "."` to `safeWorkflowName`. Also added missing edge-case tests: unsafe workflow name for ReadFile, WriteFile, DeleteFile, and ListFiles handlers; and a dot-name rejection test for Create.
+
+### FS-WR-001: Empty or "." workflow name bypasses path-traversal guard in write operations
+**Area**: Workflow Repository Write Ops (`adapter/filesystem/workflow_repo.go`)
 **Fixed**: Iteration 1
-**Detail**: The `validateFileReferences` function validated `TemplateFile` and `ScriptFile` but silently ignored `OrchestrationFile`. An interactive node with a nonexistent orchestration file would pass validation and fail at runtime in the executor. Added the check alongside the existing file checks, plus two new tests: one verifying the error is produced when the file is missing (with a FileChecker), and one verifying the check is skipped when the checker is nil._
-
-<!--
-Example of a fixed issue entry:
-
-### EXEC-001: InteractiveExecutor missing error handling for empty orchestration file
-**Area**: InteractiveExecutor (`domain/engine/executor_interactive.go`)
-**Fixed**: Iteration 3
-**Detail**: The executor did not check for empty orchestration file content after reading. Added validation that returns a descriptive error. Added test case for empty file content.
--->
+**Detail**: The path-traversal guard checked `strings.HasPrefix(wfDir+sep, root)`. When `name=""` or `name="."`, `filepath.Join(basePath, name)` resolves to `basePath` itself; since `basePath+sep == root`, the guard passed. This meant `Delete("")` would call `os.RemoveAll(basePath)`, wiping the entire workspace. Fixed by adding `wfDir == filepath.Clean(r.basePath)` as an additional guard condition in all six write methods (Create, Update, Delete, WriteFile, DeleteFile, ListFiles). Added `TestWorkflowRepo_Delete_EmptyNameRejected` and `TestWorkflowRepo_Delete_DotNameRejected` to verify the fix, plus `TestWorkflowRepo_Update_PreservesOtherFiles` to cover a previously untested success scenario from the design doc.
 
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
 
+### SKILL-W01: Five registered MCP tools not covered by any skill file
+**Area**: Skills (`plugin/skills/`)
+**Detail**: `system_config`, `system_update_queue_config`, `notification_mark_read`, `notification_dismiss`, and `workflow_stats` are registered and functional MCP tools with no skill file covering them. An LLM relying solely on the three existing skills will not know to use these tools. Adding coverage requires a new system/admin skill file — new functionality outside the current review scope.
+
+### STRM-W01: SubscriptionManager.OnEvent never wired in production — events silently dropped
+**Area**: Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/mcp/server.go`)
+**Detail**: The design doc (phase-2.md §1-2) requires that the MCP adapter translate domain EventBus events into MCP notifications sent to the client. The `SubscriptionManager.OnEvent` callback is the intended hook, but it is never set in production code. Events from the EventBus flow into the forward goroutines but are silently dropped (`if cb != nil` check). Implementing this requires MCP server-push notification support from the mcp-go library or a custom SSE-based mechanism — this is new functionality beyond the current Phase 5 review scope.
+
+### STRM-W02: CleanupAll not called on HTTP connection close — subscriptions persist after disconnect
+**Area**: Event Streaming (`adapter/mcp/subscriptions.go`, `adapter/http/server.go`)
+**Detail**: The comment on `CleanupAll` says "Called on connection close" but no production code actually calls it. For the Streamable HTTP transport, when an HTTP client disconnects, forward goroutines continue running indefinitely until the process exits. For stdio mode this is moot (process exits on disconnect). Wiring `CleanupAll` to connection lifecycle requires hooks into the mcp-go StreamableHTTPServer that are not currently available or implemented.
+
 <!--
 Example of a won't-fix entry:
 
-### CONV-W01: No rate limiting on interactive message sends
-**Area**: ConversationHandler (`domain/engine/conversation.go`)
-**Detail**: Users can send messages as fast as they want during an interactive session. Rate limiting would prevent abuse but is an enhancement beyond the Phase 4 scope.
+### MCP-AUTH-W01: No role-based access control on MCP tools
+**Area**: MCP Server (`adapter/mcp/`)
+**Detail**: MCP tools have no auth gating — any connected client can call any tool including admin operations. This is by design for Phase 5 (local mode). Phase 6 will add multi-user auth and role enforcement.
 -->

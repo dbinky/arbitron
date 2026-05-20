@@ -1,0 +1,9 @@
+{
+  "name": "arbitron",
+  "transport": {
+    "stdio": {
+      "command": "arbitron",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -27,18 +27,31 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 	return &WorkflowRepo{basePath: basePath}
 }
 
+// resolveWorkflowDir validates a workflow name and returns the absolute path
+// to its directory. It rejects names that resolve to the basePath itself or
+// escape it via path traversal (e.g., "../sibling", ".", "").
+func (r *WorkflowRepo) resolveWorkflowDir(name string) (string, error) {
+	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
+	wfDir := filepath.Join(r.basePath, name)
+	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+		return "", fmt.Errorf("%w: %s", workflow.ErrInvalidName, name)
+	}
+	return wfDir, nil
+}
+
 // Load reads and parses the workflow.json file from the named subdirectory.
 func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
-	if !strings.HasPrefix(manifestPath, root) {
-		return nil, fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		// Load historically returns ErrNotFound for invalid names.
+		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 
+	manifestPath := filepath.Join(wfDir, "workflow.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
+			return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return nil, fmt.Errorf("reading workflow %q: %w", name, err)
 	}
@@ -87,16 +100,16 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 // manifest file. It reads the raw JSON (preserving unknown fields), patches
 // matching nodes, and writes the file back with indentation.
 func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	manifestPath := filepath.Join(r.basePath, name, "workflow.json")
-	if !strings.HasPrefix(manifestPath, root) {
-		return fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 
+	manifestPath := filepath.Join(wfDir, "workflow.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%s: %w", name, workflow.ErrNotFound)
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 		}
 		return fmt.Errorf("reading workflow %q: %w", name, err)
 	}
@@ -147,4 +160,231 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 	}
 
 	return nil
+}
+
+// Create creates a new workflow directory and writes its workflow.json manifest.
+// It returns an error if the workflow already exists or the name is invalid.
+func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workflow) error {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
+	}
+
+	// Fail if the directory already exists.
+	if _, err := os.Stat(wfDir); err == nil {
+		return fmt.Errorf("%w: %s", workflow.ErrAlreadyExists, name)
+	}
+
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		return fmt.Errorf("creating workflow directory %q: %w", name, err)
+	}
+
+	data, err := json.MarshalIndent(wf, "", "  ")
+	if err != nil {
+		// Rollback: remove the directory we just created.
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("marshalling workflow %q: %w", name, err)
+	}
+	data = append(data, '\n')
+
+	// Atomic write: write to a temp file then rename so a crash mid-write
+	// never leaves a partial manifest visible to readers.
+	manifestPath := filepath.Join(wfDir, "workflow.json")
+	tmp := manifestPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+	if err := os.Rename(tmp, manifestPath); err != nil {
+		_ = os.RemoveAll(wfDir)
+		return fmt.Errorf("committing workflow %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// Update atomically replaces the workflow.json manifest for an existing workflow.
+// It returns an error if the workflow does not exist.
+func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
+	}
+
+	manifestPath := filepath.Join(wfDir, "workflow.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	data, err := json.MarshalIndent(wf, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshalling workflow %q: %w", name, err)
+	}
+	data = append(data, '\n')
+
+	// Atomic write: temp file + rename.
+	tmp := manifestPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("writing workflow %q: %w", name, err)
+	}
+	if err := os.Rename(tmp, manifestPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("committing workflow %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// Delete removes an entire workflow directory and all its contents.
+// It returns an error if the workflow does not exist.
+func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	if err := os.RemoveAll(wfDir); err != nil {
+		return fmt.Errorf("deleting workflow %q: %w", name, err)
+	}
+
+	return nil
+}
+
+// WriteFile writes content to a file at relativePath inside the named workflow
+// directory, creating intermediate directories as needed.
+func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	// Path-traversal check on relativePath against the workflow directory.
+	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
+	targetPath := filepath.Join(wfDir, relativePath)
+	if !strings.HasPrefix(targetPath, wfRoot) {
+		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
+	}
+
+	// Create intermediate directories.
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating directories for %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	// Atomic write: write to a temp file then rename so a crash mid-write
+	// never leaves an existing file in a truncated state.
+	tmp := targetPath + ".tmp"
+	if err := os.WriteFile(tmp, content, 0o644); err != nil {
+		return fmt.Errorf("writing file %q in workflow %q: %w", relativePath, name, err)
+	}
+	if err := os.Rename(tmp, targetPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("committing file %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	return nil
+}
+
+// DeleteFile removes a single file from inside the named workflow directory.
+func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return err
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
+		}
+		return fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	// Path-traversal check on relativePath against the workflow directory.
+	wfRoot := filepath.Clean(wfDir) + string(os.PathSeparator)
+	targetPath := filepath.Join(wfDir, relativePath)
+	if !strings.HasPrefix(targetPath, wfRoot) {
+		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
+	}
+
+	if err := os.Remove(targetPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s in workflow %s", workflow.ErrFileNotFound, relativePath, name)
+		}
+		return fmt.Errorf("deleting file %q in workflow %q: %w", relativePath, name, err)
+	}
+
+	return nil
+}
+
+// ListFiles returns all file paths inside the named workflow directory,
+// excluding workflow.json and .tmp crash artifacts. Paths use forward slashes
+// and are relative to the workflow directory.
+func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
+	wfDir, err := r.resolveWorkflowDir(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify workflow directory exists.
+	if _, err := os.Stat(wfDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
+		}
+		return nil, fmt.Errorf("checking workflow %q: %w", name, err)
+	}
+
+	var files []string
+	err = filepath.WalkDir(wfDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(wfDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Use forward slashes regardless of OS.
+		rel = filepath.ToSlash(rel)
+
+		// Exclude the manifest file.
+		if rel == "workflow.json" {
+			return nil
+		}
+
+		// Exclude .tmp crash artifacts left by interrupted atomic writes.
+		if strings.HasSuffix(rel, ".tmp") {
+			return nil
+		}
+
+		files = append(files, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing files in workflow %q: %w", name, err)
+	}
+
+	return files, nil
 }

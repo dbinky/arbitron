@@ -53,6 +53,9 @@ type RouterDeps struct {
 	NotifHandler        *NotificationHandler
 	ConversationHandler engine.ConversationHandler
 	WebhookHandler      *WebhookHandler
+	// MCPHandler, when non-nil, is mounted at /mcp for the MCP Streamable
+	// HTTP transport so LLM clients can call tools over HTTP.
+	MCPHandler http.Handler
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -140,11 +143,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		// Workflow endpoints
 		r.Route("/workflows", func(r chi.Router) {
 			r.Get("/", wfHandler.List)
+			r.Post("/", wfHandler.Create)
 			r.Get("/{name}", wfHandler.Get)
+			r.Put("/{name}", wfHandler.Update)
+			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
 			r.Put("/{name}/layout", wfHandler.SaveLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
+			r.Get("/{name}/files", wfHandler.ListFiles)
+			r.Get("/{name}/files/*", wfHandler.ReadFile)
+			r.Put("/{name}/files/*", wfHandler.WriteFile)
+			r.Delete("/{name}/files/*", wfHandler.DeleteFile)
 		})
 
 		// Notification endpoints
@@ -182,6 +192,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			}
 		})
 	})
+
+	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
+	// over HTTP instead of (or in addition to) the stdio transport.
+	//
+	// WARNING: The /mcp endpoint currently has NO authentication. It exposes
+	// destructive tools (workflow_delete, workflow_write_file, instance_cancel,
+	// system_update_queue_config). This endpoint MUST NOT be exposed on untrusted
+	// networks. Authentication middleware should be added before any production
+	// or multi-user deployment.
+	if d.MCPHandler != nil {
+		r.Mount("/mcp", d.MCPHandler)
+	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
 	if d.DashboardHandler != nil {

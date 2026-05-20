@@ -135,6 +135,8 @@ type Event struct {
 }
 
 // EventBus defines the port for publishing and subscribing to workflow execution events.
+// The unsubscribe function returned by Subscribe and SubscribeAll MUST close
+// the returned channel so that consumers ranging over the channel terminate.
 type EventBus interface {
 	Publish(instanceID uuid.UUID, event Event)
 	Subscribe(instanceID uuid.UUID) (<-chan Event, func())

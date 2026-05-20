@@ -134,3 +134,23 @@ func TestFileReader_PathTraversal_FileExistsRejected(t *testing.T) {
 	assert.False(t, reader.FileExists("my-workflow", "../../secret.txt"),
 		"path traversal via FileExists must return false, not expose the file")
 }
+
+func TestFileReader_PathTraversal_CrossWorkflowRejected(t *testing.T) {
+	// Edge case: relativePath uses ".." to escape the workflow directory but
+	// stay within the workspace root — e.g. "../other-wf/secret.txt". The
+	// old safeJoin only checked workspace containment; this tests the tighter
+	// per-workflow-directory check added to prevent cross-workflow reads.
+	base, cleanup := setupFileReaderTestdata(t)
+	defer cleanup()
+
+	// Place a secret in a sibling workflow directory.
+	otherDir := filepath.Join(base, "other-wf")
+	require.NoError(t, os.MkdirAll(otherDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "secret.txt"), []byte("sensitive"), 0o644))
+
+	reader := filesystem.NewFileReader(base)
+
+	_, err := reader.ReadFile("my-workflow", "../other-wf/secret.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escapes workflow directory")
+}

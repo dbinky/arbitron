@@ -1,0 +1,8 @@
+{
+  "name": "arbitron",
+  "displayName": "Arbitron Workflow Engine",
+  "description": "Build, run, and manage Arbitron workflows from Claude Code",
+  "version": "0.1.0",
+  "author": "dbinky",
+  "repository": "https://github.com/dbinky/arbitron"
+}

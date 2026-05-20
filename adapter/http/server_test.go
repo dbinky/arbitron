@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/config"
@@ -130,7 +132,7 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 
 func TestRouter_Health(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -150,7 +152,7 @@ func TestRouter_Health(t *testing.T) {
 
 func TestRouter_SystemConfig(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -187,7 +189,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
@@ -238,7 +240,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 		UpdatedAt:         time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	t.Run("GET /api/v1/instances", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -334,7 +336,7 @@ func TestRouter_InstanceRoutes(t *testing.T) {
 
 func TestRouter_NotFound(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -351,7 +353,7 @@ func TestRouter_GetConfig_IncludesQueueSection(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, _ := newRouterTestDeps()
 	// Use a queue repo that returns non-zero counts.
 	qr := &mockCountingQueueRepo{running: 3, queued: 5, waiting: 2}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, &mockQueueManagerForRouter{}, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, &mockQueueManagerForRouter{}, qr, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
 	w := httptest.NewRecorder()
@@ -373,7 +375,7 @@ func TestRouter_GetConfig_IncludesQueueSection(t *testing.T) {
 func TestRouter_UpdateQueueConfig_UpdatesBothCaps(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
 	qm := &mockCapturingQueueManager{}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	body := `{"globalCap":30,"perUserCap":10}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -398,7 +400,7 @@ func TestRouter_UpdateQueueConfig_CapRaised_TriggersEvaluate(t *testing.T) {
 	evaluateCh := make(chan struct{}, 1)
 	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
 	cfg.Queue.GlobalCap = 20 // old cap
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	// Raise cap from 20 → 30.
 	body := `{"globalCap":30}`
@@ -419,7 +421,7 @@ func TestRouter_UpdateQueueConfig_CapRaised_TriggersEvaluate(t *testing.T) {
 
 func TestRouter_UpdateQueueConfig_NegativeCap_400(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	body := `{"globalCap":-1}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -432,7 +434,7 @@ func TestRouter_UpdateQueueConfig_NegativeCap_400(t *testing.T) {
 
 func TestRouter_UpdateQueueConfig_InvalidBody_400(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	body := `{not json`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/queue", strings.NewReader(body))
@@ -454,7 +456,7 @@ func TestRouter_InstanceRoutes_SetPriority(t *testing.T) {
 		UpdatedAt:    time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	body := `{"priority":"high"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/instances/"+inst.ID.String()+"/priority", strings.NewReader(body))
@@ -512,7 +514,7 @@ func TestRouter_UpdateQueueConfig_OnlyPerUserCap_PartialUpdate(t *testing.T) {
 	qm := &mockCapturingQueueManager{}
 	cfg.Queue.GlobalCap = 20
 	cfg.Queue.PerUserCap = 5
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	// Update only perUserCap — globalCap should stay at 20.
 	body := `{"perUserCap":15}`
@@ -538,7 +540,7 @@ func TestRouter_UpdateQueueConfig_CapLowered_NoEvaluate(t *testing.T) {
 	evaluateCh := make(chan struct{}, 1)
 	qm := &mockCapturingQueueManager{evaluateCh: evaluateCh}
 	cfg.Queue.GlobalCap = 30 // old cap — higher than new
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	// Lower cap from 30 → 10 — should NOT trigger Evaluate.
 	body := `{"globalCap":10}`
@@ -559,13 +561,125 @@ func TestRouter_UpdateQueueConfig_CapLowered_NoEvaluate(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Tests: MCP endpoint mounted at /mcp
+// ---------------------------------------------------------------------------
+
+func TestRouter_MCPEndpoint_NotMounted_WhenNil(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// With no MCP handler and no dashboard fallthrough, chi returns 404.
+	assert.Equal(t, http.StatusNotFound, w.Code, "POST /mcp should 404 when MCP handler is nil")
+}
+
+func TestRouter_MCPEndpoint_Mounted(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+
+	// Use a minimal stub handler that proves the route is mounted.
+	stubMCP := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0"}`))
+	})
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+		MCPHandler:   stubMCP,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, "POST /mcp should be handled by the mounted MCP handler")
+}
+
+func TestRouter_MCPEndpoint_RealHandler(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+
+	// Use the real mcp-go StreamableHTTPServer to verify integration.
+	mcpServer := server.NewMCPServer("test", "0.0.0", server.WithToolCapabilities(true))
+	mcpHTTP := server.NewStreamableHTTPServer(mcpServer)
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+		MCPHandler:   mcpHTTP,
+	})
+
+	// Send a valid JSON-RPC initialize request.
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0.0.1"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// The MCP server should return 200 with a JSON-RPC response (not 404 or 405).
+	assert.Equal(t, http.StatusOK, w.Code, "MCP initialize should succeed")
+	assert.Contains(t, w.Body.String(), `"jsonrpc"`, "response should be valid JSON-RPC")
+}
+
+func TestRouter_MCPEndpoint_SecurityHeaders(t *testing.T) {
+	// Edge case: security headers middleware is applied via r.Use before any
+	// route, so it must wrap the mounted /mcp handler too. A missing header
+	// here means the middleware chain doesn't cover mounted sub-routers.
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	stubMCP := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+		MCPHandler:   stubMCP,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"), "security header must be set on /mcp responses")
+	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+	assert.NotEmpty(t, w.Header().Get("Referrer-Policy"))
+}
+
 func TestRouter_GetConfig_ReflectsUpdatedQueueCaps(t *testing.T) {
 	// PUT /system/config/queue must update the values returned by GET /system/config.
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, _, qr := newRouterTestDeps()
 	qm := &mockCapturingQueueManager{}
 	cfg.Queue.GlobalCap = 20
 	cfg.Queue.PerUserCap = 5
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil)
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
 
 	// Confirm initial GET values.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)

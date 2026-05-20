@@ -59,6 +59,17 @@ func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[
 	return nil
 }
 
+func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
+func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
+func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error                      { return nil }
+func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+	return nil
+}
+func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return nil }
+func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
