@@ -267,8 +267,8 @@ func cannedSentinelStream(prefix string, result map[string]any, sessionID string
 func TestConversationHandler_HandleMessage_SessionCompletion_ExtractsOutput(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "Meeting went well"}
-	llmProvider.streamCallFn = cannedSentinelStream("Let me complete\n", toolInput, "s-final")
+	result := map[string]any{"summary": "Meeting went well"}
+	llmProvider.streamCallFn = cannedSentinelStream("Let me complete\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -285,8 +285,8 @@ func TestConversationHandler_HandleMessage_SessionCompletion_ExtractsOutput(t *t
 func TestConversationHandler_HandleMessage_SessionCompletion_UpdatesInstanceVariables(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "All good"}
-	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
+	result := map[string]any{"summary": "All good"}
+	llmProvider.streamCallFn = cannedSentinelStream("\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -306,8 +306,8 @@ func TestConversationHandler_HandleMessage_SessionCompletion_UpdatesInstanceVari
 func TestConversationHandler_HandleMessage_SessionCompletion_TransitionsToQueued(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "Done"}
-	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
+	result := map[string]any{"summary": "Done"}
+	llmProvider.streamCallFn = cannedSentinelStream("\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -322,8 +322,8 @@ func TestConversationHandler_HandleMessage_SessionCompletion_TransitionsToQueued
 func TestConversationHandler_HandleMessage_SessionCompletion_PublishesEndedEvent(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "Complete"}
-	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
+	result := map[string]any{"summary": "Complete"}
+	llmProvider.streamCallFn = cannedSentinelStream("\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -342,8 +342,8 @@ func TestConversationHandler_HandleMessage_SessionCompletion_PublishesEndedEvent
 func TestConversationHandler_HandleMessage_SessionCompletion_NotifiesCapacityFreed(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "Done"}
-	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
+	result := map[string]any{"summary": "Done"}
+	llmProvider.streamCallFn = cannedSentinelStream("\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -362,8 +362,8 @@ func TestConversationHandler_HandleMessage_SessionCompletion_NotifiesCapacityFre
 func TestConversationHandler_HandleMessage_SessionCompletion_PersistsConversation(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	toolInput := map[string]any{"summary": "Complete"}
-	llmProvider.streamCallFn = cannedSentinelStream("Completing\n", toolInput, "s-final")
+	result := map[string]any{"summary": "Complete"}
+	llmProvider.streamCallFn = cannedSentinelStream("Completing\n", result, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -707,6 +707,11 @@ func TestConversationHandler_HandleMessage_ResumesViaStoredSessionID(t *testing.
 	assert.Equal(t, "s-prev", reqs[0].SessionID)
 	assert.Equal(t, "next message", reqs[0].Prompt)
 	assert.Empty(t, reqs[0].Messages)
+
+	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
+	require.NoError(t, err)
+	assert.Equal(t, "s-prev", nodeExec.LLMConversation["sessionId"],
+		"stored session id must be preserved when the stream carries none")
 }
 
 func TestConversationHandler_HandleMessage_SentinelCompletesSession(t *testing.T) {
@@ -721,6 +726,8 @@ func TestConversationHandler_HandleMessage_SentinelCompletesSession(t *testing.T
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
 	require.NoError(t, err)
 	assert.Equal(t, []any{"a", "b"}, nodeExec.Output["picked"])
+	assert.Equal(t, "s-final", nodeExec.LLMConversation["sessionId"],
+		"session id from the stream must be persisted")
 
 	inst := instRepo.get(instanceID)
 	require.NotNil(t, inst)

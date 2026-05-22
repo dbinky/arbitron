@@ -113,6 +113,13 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		return err
 	}
 
+	// claude returns a session id on each turn; if the stream did not carry
+	// one, keep the existing id so the next turn can still resume.
+	persistSessionID := newSessionID
+	if persistSessionID == "" {
+		persistSessionID = req.SessionID
+	}
+
 	// 8. Detect completion via the result sentinel.
 	sentinelOutput, completed, sentErr := extractSentinelResult(fullResponse)
 	if sentErr != nil {
@@ -126,9 +133,9 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	})
 
 	if completed {
-		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, newSessionID, sentinelOutput)
+		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput)
 	}
-	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, newSessionID, fullResponse)
+	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse)
 }
 
 // EndSession handles user-initiated session termination. It captures existing
