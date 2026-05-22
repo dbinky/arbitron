@@ -224,7 +224,7 @@ func TestConversationHandler_HandleMessage_PublishesAssistantMessageEvent(t *tes
 	assert.Equal(t, "Done", data["content"])
 }
 
-func TestConversationHandler_HandleMessage_SendsFullConversationToLLM(t *testing.T) {
+func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
@@ -238,57 +238,27 @@ func TestConversationHandler_HandleMessage_SendsFullConversationToLLM(t *testing
 	require.Len(t, reqs, 1)
 	req := reqs[0]
 
-	// Should have system prompt.
 	assert.Equal(t, "You are a helpful assistant.", req.SystemPrompt)
-
-	// Should have the full conversation history as Messages.
-	// Initial user + initial assistant + new user = 3 messages.
-	require.Len(t, req.Messages, 3)
-	assert.Equal(t, "user", req.Messages[0].Role)
-	assert.Equal(t, "Initial orchestration prompt", req.Messages[0].Content)
-	assert.Equal(t, "assistant", req.Messages[1].Role)
-	assert.Equal(t, "Hello! How can I help you?", req.Messages[1].Content)
-	assert.Equal(t, "user", req.Messages[2].Role)
-	assert.Equal(t, "New question", req.Messages[2].Content)
-
-	// Should have the complete_session tool with the correct name and description.
-	require.Len(t, req.Tools, 1)
-	assert.Equal(t, "complete_session", req.Tools[0].Name)
-	assert.Equal(t, "Call this tool when the conversation has reached its natural conclusion and you have the final output ready.", req.Tools[0].Description)
-
-	// Subsequent conversation turns must use Messages, not Prompt.
-	// LLMRequest documents that Messages takes precedence over Prompt — an
-	// accidental non-empty Prompt here would be masked by Messages, but a
-	// provider that ignores Messages would silently fall back to the Prompt.
-	assert.Empty(t, req.Prompt, "conversation handler must use Messages not Prompt")
-
-	// Should have model settings.
+	// Resumed turns send only the new user message via Prompt — no history, no tools.
+	assert.Empty(t, req.Messages, "resumed turns must use Prompt, not Messages")
+	assert.Equal(t, "New question", req.Prompt)
+	assert.Empty(t, req.Tools, "claude-cli has no injectable tools")
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
-	assert.Equal(t, 4096, req.MaxTokens)
-	assert.Equal(t, 0.7, req.Temperature)
 }
 
 // ---------------------------------------------------------------------------
 // HandleMessage Tests: Session completion (tool call)
 // ---------------------------------------------------------------------------
 
-// cannedToolStream returns a StreamCall function that emits tokens then a final
-// Done chunk with a ToolUse indicating the complete_session tool was called.
-func cannedToolStream(tokens []string, toolInput map[string]any, tokensIn, tokensOut int) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+// cannedSentinelStream emits a response whose text contains a completion
+// sentinel block carrying result, plus a Done chunk with a session id.
+func cannedSentinelStream(prefix string, result map[string]any, sessionID string) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
 	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, len(tokens)+1)
-		for _, t := range tokens {
-			ch <- engine.LLMStreamChunk{Token: t}
-		}
-		ch <- engine.LLMStreamChunk{
-			Done:      true,
-			TokensIn:  tokensIn,
-			TokensOut: tokensOut,
-			ToolUse: &engine.LLMToolUse{
-				Name:  "complete_session",
-				Input: toolInput,
-			},
-		}
+		payload, _ := json.Marshal(result)
+		body := prefix + engine.InteractiveResultSentinelOpen + string(payload) + engine.InteractiveResultSentinelClose
+		ch := make(chan engine.LLMStreamChunk, 2)
+		ch <- engine.LLMStreamChunk{Token: body}
+		ch <- engine.LLMStreamChunk{Done: true, SessionID: sessionID}
 		close(ch)
 		return ch, nil
 	}
@@ -298,7 +268,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_ExtractsOutput(t *t
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "Meeting went well"}
-	llmProvider.streamCallFn = cannedToolStream([]string{"Let me complete"}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("Let me complete\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -316,7 +286,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_UpdatesInstanceVari
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "All good"}
-	llmProvider.streamCallFn = cannedToolStream([]string{""}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -337,7 +307,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_TransitionsToQueued
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "Done"}
-	llmProvider.streamCallFn = cannedToolStream([]string{""}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -353,7 +323,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_PublishesEndedEvent
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "Complete"}
-	llmProvider.streamCallFn = cannedToolStream([]string{""}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -373,7 +343,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_NotifiesCapacityFre
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "Done"}
-	llmProvider.streamCallFn = cannedToolStream([]string{""}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -393,7 +363,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_PersistsConversatio
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
 	toolInput := map[string]any{"summary": "Complete"}
-	llmProvider.streamCallFn = cannedToolStream([]string{"Completing"}, toolInput, 10, 20)
+	llmProvider.streamCallFn = cannedSentinelStream("Completing\n", toolInput, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
@@ -699,12 +669,11 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 	err := handler.HandleMessage(context.Background(), instanceID, "Hello from scratch")
 	require.NoError(t, err)
 
-	// LLM should have received exactly one message: the user message.
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
-	require.Len(t, reqs[0].Messages, 1)
-	assert.Equal(t, "user", reqs[0].Messages[0].Role)
-	assert.Equal(t, "Hello from scratch", reqs[0].Messages[0].Content)
+	assert.Empty(t, reqs[0].Messages)
+	assert.Equal(t, "Hello from scratch", reqs[0].Prompt)
+	assert.Empty(t, reqs[0].SessionID, "no stored session id yet")
 
 	// Conversation should now have user + assistant messages.
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
@@ -716,94 +685,64 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 	assert.Equal(t, "assistant", messages[1]["role"])
 }
 
-func TestConversationHandler_HandleMessage_JsonRoundTripHistory_ParsesMessages(t *testing.T) {
-	// Edge: after a Postgres JSONB round-trip, json.Unmarshal into map[string]any
-	// produces []any for JSON arrays — NOT []map[string]any. parseConversation
-	// must handle the []any branch correctly or multi-turn conversations silently
-	// drop all prior history (every message appears as a fresh send with no context).
+// ---------------------------------------------------------------------------
+// HandleMessage Tests: Session resumption and sentinel completion
+// ---------------------------------------------------------------------------
+
+func TestConversationHandler_HandleMessage_ResumesViaStoredSessionID(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	// Simulate the JSON round-trip that happens when sqlc reads JSONB from Postgres.
+	// Seed a stored claude session id on the existing node execution.
 	nodeExecRepo.mu.Lock()
-	if len(nodeExecRepo.executions) > 0 {
-		conv := nodeExecRepo.executions[0].LLMConversation
-		convBytes, err := json.Marshal(conv)
-		require.NoError(t, err)
-		var roundTripped map[string]any
-		require.NoError(t, json.Unmarshal(convBytes, &roundTripped))
-		nodeExecRepo.executions[0].LLMConversation = roundTripped
-	}
+	nodeExecRepo.executions[0].LLMConversation["sessionId"] = "s-prev"
 	nodeExecRepo.mu.Unlock()
 
-	llmProvider.streamCallFn = cannedStream([]string{"Got it"}, 5, 10)
+	llmProvider.streamCallFn = cannedStream([]string{"resumed reply"}, 5, 10)
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "next message"))
 
-	err := handler.HandleMessage(context.Background(), instanceID, "After DB round-trip")
-	require.NoError(t, err)
-
-	// The LLM must receive the full prior history — not just the new message.
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
-	// Initial user + initial assistant + new user = 3 messages.
-	require.Len(t, reqs[0].Messages, 3, "prior messages must survive []any round-trip in parseConversation")
-	assert.Equal(t, "user", reqs[0].Messages[0].Role)
-	assert.Equal(t, "Initial orchestration prompt", reqs[0].Messages[0].Content)
-	assert.Equal(t, "assistant", reqs[0].Messages[1].Role)
-	assert.Equal(t, "Hello! How can I help you?", reqs[0].Messages[1].Content)
-	assert.Equal(t, "user", reqs[0].Messages[2].Role)
-	assert.Equal(t, "After DB round-trip", reqs[0].Messages[2].Content)
+	assert.Equal(t, "s-prev", reqs[0].SessionID)
+	assert.Equal(t, "next message", reqs[0].Prompt)
+	assert.Empty(t, reqs[0].Messages)
 }
 
-// ---------------------------------------------------------------------------
-// HandleMessage Tests: Unknown tool name (boundary — name check is load-bearing)
-// ---------------------------------------------------------------------------
-
-func TestConversationHandler_HandleMessage_UnknownToolName_TreatsAsNormalResponse(t *testing.T) {
-	// Boundary: when the LLM returns a ToolUse whose name is NOT
-	// InteractiveCompletionToolName, the handler must NOT complete the session.
-	// The condition `toolUse.Name == InteractiveCompletionToolName` is the gate
-	// that prevents arbitrary tool calls from terminating the interactive session.
-	// This test verifies the name check is load-bearing and not redundant.
+func TestConversationHandler_HandleMessage_SentinelCompletesSession(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	unknownToolInput := map[string]any{"some": "data"}
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, 2)
-		ch <- engine.LLMStreamChunk{Token: "Let me look that up."}
-		ch <- engine.LLMStreamChunk{
-			Done: true,
-			ToolUse: &engine.LLMToolUse{
-				Name:  "some_other_tool", // NOT complete_session
-				Input: unknownToolInput,
-			},
-		}
-		close(ch)
-		return ch, nil
-	}
+	llmProvider.streamCallFn = cannedSentinelStream("All set.\n",
+		map[string]any{"picked": []any{"a", "b"}}, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "choose"))
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Search for something")
+	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
 	require.NoError(t, err)
+	assert.Equal(t, []any{"a", "b"}, nodeExec.Output["picked"])
 
-	// Session must NOT have ended — no interactive.ended event.
-	endedEvents := eventBus.eventsOfType(instanceID, "interactive.ended")
-	assert.Empty(t, endedEvents, "unknown tool name must not complete the session")
-
-	// Instance must still be waiting — not transitioned to queued.
 	inst := instRepo.get(instanceID)
 	require.NotNil(t, inst)
-	assert.Equal(t, instance.StateWaiting, inst.State, "instance must remain in waiting state when unknown tool is called")
+	assert.Equal(t, instance.StateQueued, inst.State)
+}
 
-	// The assistant's text response must have been published as an interactive.message.
-	msgEvents := eventBus.eventsOfType(instanceID, "interactive.message")
-	require.GreaterOrEqual(t, len(msgEvents), 1, "assistant message event should be published")
-	assistantEvent := msgEvents[len(msgEvents)-1]
-	data, ok := assistantEvent.Data.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "assistant", data["role"])
-	assert.Equal(t, "Let me look that up.", data["content"])
+func TestConversationHandler_HandleMessage_NoSentinelIsNormalTurn(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	llmProvider.streamCallFn = cannedStream([]string{"just chatting"}, 5, 10)
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "hi"))
+
+	inst := instRepo.get(instanceID)
+	require.NotNil(t, inst)
+	assert.Equal(t, instance.StateWaiting, inst.State, "no sentinel: session stays open")
+
+	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
+	require.NoError(t, err)
+	messages := extractMessages(t, nodeExec.LLMConversation)
+	assert.Equal(t, "assistant", messages[len(messages)-1]["role"])
 }
 
 // ---------------------------------------------------------------------------

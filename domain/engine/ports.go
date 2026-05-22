@@ -140,13 +140,6 @@ const (
 	EventTypeInteractiveEnded   = "interactive.ended"
 	EventTypeInteractiveHistory = "interactive.history"
 	EventTypeInteractiveError   = "interactive.error"
-
-	// InteractiveCompletionToolName is the tool name the LLM must call to end an
-	// interactive session with structured output. Both InteractiveExecutor and
-	// ConversationHandler must agree on this value — a mismatch causes silent
-	// session hang (tool called but never detected).
-	InteractiveCompletionToolName        = "complete_session"
-	InteractiveCompletionToolDescription = "Call this tool when the conversation has reached its natural conclusion and you have the final output ready."
 )
 
 // Event represents a domain event emitted during workflow execution.
