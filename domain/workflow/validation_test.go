@@ -842,6 +842,36 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
 }
 
+func TestValidateReservedInputName(t *testing.T) {
+	t.Run("input named workspace is rejected", func(t *testing.T) {
+		wf := &workflow.Workflow{
+			Nodes: []workflow.Node{{ID: "n1", Type: workflow.NodeTypeTransform, Entrypoint: true,
+				Config: workflow.NodeConfig{Operations: []workflow.Operation{{Variable: "x", Operation: "set", Value: "y"}}}}},
+			Inputs: []workflow.InputField{{Name: "workspace", Type: "string"}},
+		}
+		errs := workflow.Validate(wf, nil)
+		var found bool
+		for _, e := range errs {
+			if e.Code == "RESERVED_INPUT_NAME" {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected RESERVED_INPUT_NAME error")
+	})
+
+	t.Run("non-reserved input names are accepted", func(t *testing.T) {
+		wf := &workflow.Workflow{
+			Nodes: []workflow.Node{{ID: "n1", Type: workflow.NodeTypeTransform, Entrypoint: true,
+				Config: workflow.NodeConfig{Operations: []workflow.Operation{{Variable: "x", Operation: "set", Value: "y"}}}}},
+			Inputs: []workflow.InputField{{Name: "prNumber", Type: "string"}},
+		}
+		errs := workflow.Validate(wf, nil)
+		for _, e := range errs {
+			assert.NotEqual(t, "RESERVED_INPUT_NAME", e.Code)
+		}
+	})
+}
+
 func TestValidateInteractive_BothFilesMissing(t *testing.T) {
 	// Boundary: both TemplateFile and OrchestrationFile reference nonexistent
 	// files. Validation must report MISSING_FILE for each independently — the
