@@ -2746,15 +2746,19 @@ func TestEngine_ExternalNotifier_NotificationHasNonZeroCreatedAt(t *testing.T) {
 
 // fakeWorkspaceManager records workspace lifecycle calls.
 type fakeWorkspaceManager struct {
-	mu      sync.Mutex
-	ensured []uuid.UUID
-	removed []uuid.UUID
+	mu        sync.Mutex
+	ensured   []uuid.UUID
+	removed   []uuid.UUID
+	ensureErr error
 }
 
 func (f *fakeWorkspaceManager) EnsureInstanceDir(id uuid.UUID) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensured = append(f.ensured, id)
+	if f.ensureErr != nil {
+		return "", f.ensureErr
+	}
 	return "/tmp/arbitron-test-ws/" + id.String(), nil
 }
 
@@ -2834,4 +2838,18 @@ func TestEngine_WorkspaceSeededAsVariable(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
 	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), seenWorkspace)
+}
+
+func TestEngine_WorkspaceEnsureFailure_FailsInstance(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{ensureErr: fmt.Errorf("disk full")}
+	f.engine.SetWorkspaceManager(fwm)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Equal(t, instance.StateFailed, inst.State)
+	assert.Empty(t, f.executor.getCalls(), "no nodes should run when workspace creation fails")
 }

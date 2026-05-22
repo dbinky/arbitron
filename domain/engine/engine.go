@@ -382,6 +382,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
 	} else {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
+		// Workspace is removed only after SetCompleted succeeds; if persistence fails the workspace is kept for debugging/retry.
 		if e.workspaceManager != nil {
 			if rmErr := e.workspaceManager.RemoveInstanceDir(instanceID); rmErr != nil {
 				slog.Warn("failed to remove instance workspace", "instanceID", instanceID, "error", rmErr)
