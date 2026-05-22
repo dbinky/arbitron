@@ -298,6 +298,14 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			return
 		}
 		vars.SetInput("workspace", workspacePath)
+		// Persist immediately so the workspace path is in inst.Variables before
+		// any node runs — ConversationHandler reads it from the DB for resumed
+		// interactive turns.
+		if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
+			slog.Error("failed to persist seeded workspace variable", "instanceID", instanceID, "error", err)
+			e.failInstance(ctx, instanceID, currentNodeID)
+			return
+		}
 	}
 
 	for currentNodeID != "" {

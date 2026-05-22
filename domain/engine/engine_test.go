@@ -2853,3 +2853,27 @@ func TestEngine_WorkspaceEnsureFailure_FailsInstance(t *testing.T) {
 	assert.Equal(t, instance.StateFailed, inst.State)
 	assert.Empty(t, f.executor.getCalls(), "no nodes should run when workspace creation fails")
 }
+
+func TestEngine_WorkspacePersistedBeforeNodes(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{}
+	f.engine.SetWorkspaceManager(fwm)
+
+	var persistedWorkspace any
+	f.executor.onNode("A", func(ctx context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		id, _ := engine.InstanceIDFromContext(ctx)
+		inst, _ := f.instanceRepo.Get(ctx, id)
+		if inst != nil {
+			persistedWorkspace = inst.Variables["workspace"]
+		}
+		return &engine.NodeResult{}, nil
+	})
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), persistedWorkspace,
+		"workspace must be persisted to inst.Variables before the first node runs")
+}
