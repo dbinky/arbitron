@@ -97,3 +97,89 @@ func TestProviderCall(t *testing.T) {
 func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.LLMProvider = (*Provider)(nil)
 }
+
+func collectChunks(t *testing.T, ch <-chan engine.LLMStreamChunk) []engine.LLMStreamChunk {
+	t.Helper()
+	var out []engine.LLMStreamChunk
+	for c := range ch {
+		out = append(out, c)
+	}
+	return out
+}
+
+func TestProviderStreamCall(t *testing.T) {
+	t.Run("emits assistant text then a terminal chunk", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"system","subtype":"init","session_id":"s1"}`,
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"part one "}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"part two"}]}}`,
+			`{"type":"result","is_error":false,"result":"part one part two","session_id":"s1","usage":{"input_tokens":4,"output_tokens":9}}`,
+		}}
+		p := New("claude", "", 0, fr)
+
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+
+		require.NotEmpty(t, chunks)
+		var text string
+		for _, c := range chunks {
+			text += c.Token
+		}
+		assert.Equal(t, "part one part two", text)
+
+		last := chunks[len(chunks)-1]
+		assert.True(t, last.Done)
+		assert.Equal(t, "s1", last.SessionID)
+		assert.Equal(t, 4, last.TokensIn)
+		assert.Equal(t, 9, last.TokensOut)
+	})
+
+	t.Run("captures session id even without a system event", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"done","session_id":"s2"}`,
+		}}
+		p := New("claude", "", 0, fr)
+
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+		assert.Equal(t, "s2", chunks[len(chunks)-1].SessionID)
+	})
+
+	t.Run("malformed line yields an error chunk and still drains", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{bad`,
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		p := New("claude", "", 0, fr)
+
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+
+		require.NotEmpty(t, chunks)
+		assert.Error(t, chunks[len(chunks)-1].Error)
+	})
+
+	t.Run("process exit error yields an error chunk", func(t *testing.T) {
+		fr := &fakeRunner{
+			lines:   []string{`{"type":"result","result":"ok","session_id":"s"}`},
+			waitErr: errors.New("exit status 1"),
+		}
+		p := New("claude", "", 0, fr)
+
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+		assert.Error(t, chunks[len(chunks)-1].Error)
+	})
+
+	t.Run("start failure returns an error from StreamCall itself", func(t *testing.T) {
+		fr := &fakeRunner{startErr: errors.New("no binary")}
+		p := New("claude", "", 0, fr)
+
+		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.Error(t, err)
+	})
+}

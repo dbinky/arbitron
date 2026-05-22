@@ -101,7 +101,78 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 	}, nil
 }
 
-// StreamCall is implemented in Task 6.
-func (p *Provider) StreamCall(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-	return nil, fmt.Errorf("claudecli: StreamCall not yet implemented")
+// StreamCall runs claude and streams assistant text as it arrives. The final
+// chunk has Done=true and carries the session id and token counts. Any failure
+// is reported as a chunk with a non-nil Error. The internal goroutine always
+// drains the runner's lines channel and calls wait(), honouring the
+// CommandRunner contract even when an error is encountered mid-stream.
+func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+	runCtx, cancel := p.withTimeout(ctx)
+
+	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("claudecli: stream call: %w", err)
+	}
+
+	out := make(chan engine.LLMStreamChunk)
+	go func() {
+		defer cancel()
+		defer close(out)
+
+		var sessionID string
+		var tokensIn, tokensOut int
+		var failed bool // once true, keep draining lines without processing
+
+		for line := range lines {
+			if failed {
+				continue
+			}
+			ev, ok, parseErr := parseEvent([]byte(line))
+			if parseErr != nil {
+				out <- engine.LLMStreamChunk{Error: parseErr}
+				failed = true
+				continue
+			}
+			if !ok {
+				continue
+			}
+			if ev.SessionID != "" {
+				sessionID = ev.SessionID
+			}
+			switch ev.Kind {
+			case eventAssistant:
+				if ev.Text != "" {
+					out <- engine.LLMStreamChunk{Token: ev.Text}
+				}
+			case eventResult:
+				tokensIn, tokensOut = ev.TokensIn, ev.TokensOut
+				if ev.IsError {
+					out <- engine.LLMStreamChunk{Error: fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)}
+					failed = true
+					continue
+				}
+			}
+		}
+
+		// lines is fully drained; reap the process.
+		waitErr := wait()
+		if failed {
+			// An error chunk was already emitted; just finish.
+			return
+		}
+		if waitErr != nil {
+			out <- engine.LLMStreamChunk{Error: fmt.Errorf("claudecli: claude exited with error: %w", waitErr)}
+			return
+		}
+
+		out <- engine.LLMStreamChunk{
+			Done:      true,
+			SessionID: sessionID,
+			TokensIn:  tokensIn,
+			TokensOut: tokensOut,
+		}
+	}()
+
+	return out, nil
 }
