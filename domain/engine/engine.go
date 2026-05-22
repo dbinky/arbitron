@@ -28,9 +28,10 @@ type Engine struct {
 	queueManager    QueueManager
 	queueRepo       instance.QueueRepository
 	scheduler       TimerScheduler
-	webhookRegistry WebhookRegistrar
+	webhookRegistry  WebhookRegistrar
 	notifications    notification.Repository
 	externalNotifier notification.ExternalNotifier
+	workspaceManager WorkspaceManager
 	mu               sync.Mutex
 	contexts        map[uuid.UUID]context.CancelFunc
 	wg              sync.WaitGroup
@@ -82,6 +83,12 @@ func (e *Engine) SetNotifications(repo notification.Repository) {
 // notifier (e.g., for email, Slack, or logging).
 func (e *Engine) SetExternalNotifier(n notification.ExternalNotifier) {
 	e.externalNotifier = n
+}
+
+// SetWorkspaceManager wires the per-instance workspace manager. When unset,
+// workspace directories are not created and {{workspace}} is not seeded.
+func (e *Engine) SetWorkspaceManager(wm WorkspaceManager) {
+	e.workspaceManager = wm
 }
 
 // edgeTarget describes a destination from a graph edge.
@@ -283,6 +290,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 	vars := variable.FromSnapshotWithNodeIDs(inst.Variables, nodeIDs)
 
+	if e.workspaceManager != nil {
+		workspacePath, wsErr := e.workspaceManager.EnsureInstanceDir(instanceID)
+		if wsErr != nil {
+			slog.Error("failed to ensure instance workspace", "instanceID", instanceID, "error", wsErr)
+			e.failInstance(ctx, instanceID, currentNodeID)
+			return
+		}
+		vars.SetInput("workspace", workspacePath)
+	}
+
 	for currentNodeID != "" {
 		// TODO(race): There is a TOCTOU race between Pause() writing StatePaused
 		// and this loop reading the fresh state. If the pause arrives between Get()
@@ -365,6 +382,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
 	} else {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
+		if e.workspaceManager != nil {
+			if rmErr := e.workspaceManager.RemoveInstanceDir(instanceID); rmErr != nil {
+				slog.Warn("failed to remove instance workspace", "instanceID", instanceID, "error", rmErr)
+			}
+		}
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInstanceCompleted,
