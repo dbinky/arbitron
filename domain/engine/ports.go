@@ -38,6 +38,12 @@ type LLMRequest struct {
 	Temperature  float64
 	OutputSchema any
 	Tools        []LLMTool
+	// WorkDir is the working directory for subprocess-backed providers
+	// (e.g. claude-cli). Empty means the provider's default.
+	WorkDir string
+	// SessionID, when non-empty, resumes an existing provider session
+	// (claude-cli: `--resume`).
+	SessionID string
 }
 
 // LLMTool describes a tool definition passed to the LLM provider.
@@ -54,6 +60,9 @@ type LLMResponse struct {
 	Model        string
 	TokensIn     int
 	TokensOut    int
+	// SessionID identifies the provider session for resumption. Empty for
+	// providers without session support.
+	SessionID string
 }
 
 // LLMStreamChunk is one piece of a streaming LLM response.
@@ -66,6 +75,9 @@ type LLMStreamChunk struct {
 	// ToolUse is set on the final chunk when the LLM invokes a tool instead
 	// of producing a plain-text response.
 	ToolUse *LLMToolUse
+	// SessionID is set on the terminal chunk for providers with session
+	// support, so callers can persist it for resumption.
+	SessionID string
 }
 
 // LLMToolUse describes a tool invocation detected in a streaming response.
