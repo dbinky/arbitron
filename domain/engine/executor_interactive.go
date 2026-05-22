@@ -84,25 +84,22 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// 5. Resolve {{variable}} substitutions in the template content.
 	resolvedTemplate := variable.Resolve(string(templateBytes), vars)
 
-	// 6. Build the complete_session tool definition from outputSchema.
-	var tools []LLMTool
-	if node.Config.OutputSchema != nil {
-		tools = append(tools, LLMTool{
-			Name:        InteractiveCompletionToolName,
-			Description: InteractiveCompletionToolDescription,
-			InputSchema: node.Config.OutputSchema,
-		})
-	}
+	// 6. Compose the LLM request. The completion-sentinel instruction is
+	// appended to the prompt instead of injecting a complete_session tool, and
+	// the working directory is read from the {{workspace}} variable.
+	workDir, _ := vars.Get("workspace")
+	workDirStr, _ := workDir.(string)
 
-	// 7. Compose the LLM request.
-	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate
+	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
+		sentinelInstruction(node.Config.OutputSchema)
+
 	req := LLMRequest{
 		SystemPrompt: node.Config.SystemPrompt,
 		Prompt:       userMessage,
 		Model:        node.Config.Model,
 		MaxTokens:    node.Config.MaxTokens,
 		Temperature:  node.Config.Temperature,
-		Tools:        tools,
+		WorkDir:      workDirStr,
 	}
 
 	// 8. Call the LLM provider with streaming.
@@ -114,10 +111,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// 9. Consume the stream channel.
 	var responseBuilder strings.Builder
 	var tokensIn, tokensOut int
+	var sessionID string
 
 	for chunk := range stream {
 		if chunk.Error != nil {
 			return nil, fmt.Errorf("interactive %q: stream error: %w", node.ID, chunk.Error)
+		}
+
+		if chunk.SessionID != "" {
+			sessionID = chunk.SessionID
 		}
 
 		if chunk.Token != "" {
@@ -140,6 +142,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	// 10. Build the initial conversation array.
 	conversation := map[string]any{
+		"sessionId": sessionID,
 		"messages": []map[string]any{
 			{"role": "user", "content": userMessage},
 			{"role": "assistant", "content": fullResponse},

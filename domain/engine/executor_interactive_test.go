@@ -67,6 +67,19 @@ func cannedStream(tokens []string, tokensIn, tokensOut int) func(ctx context.Con
 	}
 }
 
+// cannedStreamWithSession is cannedStream plus a session id on the Done chunk.
+func cannedStreamWithSession(tokens []string, sessionID string) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+		ch := make(chan engine.LLMStreamChunk, len(tokens)+1)
+		for _, tok := range tokens {
+			ch <- engine.LLMStreamChunk{Token: tok}
+		}
+		ch <- engine.LLMStreamChunk{Done: true, SessionID: sessionID}
+		close(ch)
+		return ch, nil
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -241,10 +254,8 @@ func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
 	// Verify temperature
 	assert.Equal(t, 0.7, req.Temperature)
 
-	// Verify tools: complete_session tool built from outputSchema
-	require.Len(t, req.Tools, 1)
-	assert.Equal(t, "complete_session", req.Tools[0].Name)
-	assert.Equal(t, node.Config.OutputSchema, req.Tools[0].InputSchema)
+	// The reworked executor sends no tools — claude-cli has no injectable tools.
+	assert.Empty(t, req.Tools)
 
 	// The initial interactive call must use Prompt, not Messages.
 	// LLMRequest documents that Messages takes precedence over Prompt — an
@@ -430,9 +441,10 @@ func TestInteractiveExecutor_UserMessageCombinesOrchestrationAndTemplate(t *test
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
 
-	// User message should be orchestration + "\n\n" + resolved template
-	expected := "Step 1: Do this\nStep 2: Do that\n\nName: Bob\nAge: 30"
-	assert.Equal(t, expected, reqs[0].Prompt)
+	// User message = orchestration + "\n\n" + resolved template, followed by
+	// the completion-sentinel instruction.
+	assert.Contains(t, reqs[0].Prompt, "Step 1: Do this\nStep 2: Do that\n\nName: Bob\nAge: 30")
+	assert.Contains(t, reqs[0].Prompt, engine.InteractiveResultSentinelOpen)
 }
 
 // ---------------------------------------------------------------------------
@@ -573,40 +585,32 @@ func TestInteractiveExecutor_AccumulatesFullResponse(t *testing.T) {
 	assert.Equal(t, "Hello World!", messages[1]["content"])
 }
 
-func TestInteractiveExecutor_BuildsCompleteSessionTool(t *testing.T) {
+func TestInteractiveExecutor_CapturesSessionIDAndWorkDir(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
+	llmProvider.streamCallFn = cannedStreamWithSession([]string{"hello"}, "isess-1")
 
-	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
-
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"rating":  map[string]any{"type": "number"},
-			"comment": map[string]any{"type": "string"},
-		},
-	}
-
-	node := interactiveNode()
-	node.Config.OutputSchema = schema
+	vars := variable.NewStore()
+	vars.SetInput("workspace", "/tmp/ws")
 
 	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
-
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
-	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
-
+	_, err := executor.Execute(ctx, interactiveNode(), vars, "test-wf")
 	require.NoError(t, err)
 
+	// WorkDir flows from the seeded {{workspace}} variable; no tools; sentinel present.
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
-	require.Len(t, reqs[0].Tools, 1)
+	assert.Equal(t, "/tmp/ws", reqs[0].WorkDir)
+	assert.Empty(t, reqs[0].Tools)
+	assert.Contains(t, reqs[0].Prompt, engine.InteractiveResultSentinelOpen)
 
-	tool := reqs[0].Tools[0]
-	assert.Equal(t, "complete_session", tool.Name)
-	assert.Equal(t, "Call this tool when the conversation has reached its natural conclusion and you have the final output ready.", tool.Description)
-	assert.Equal(t, schema, tool.InputSchema)
+	// Session id is persisted under LLMConversation["sessionId"] for resumption.
+	execs, _ := nodeExecRepo.ListByInstance(context.Background(), instanceID)
+	require.Len(t, execs, 1)
+	assert.Equal(t, "isess-1", execs[0].LLMConversation["sessionId"])
 }
 
 // ---------------------------------------------------------------------------
