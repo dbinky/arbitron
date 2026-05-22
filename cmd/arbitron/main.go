@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arbitron/arbitron/adapter/anthropic"
+	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
@@ -192,8 +193,19 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
 
-	// 7. Create Anthropic LLM provider.
-	llmProvider := anthropic.New(cfg.LLM.APIKey)
+	// 7. Create the LLM provider based on config.
+	var llmProvider engine.LLMProvider
+	switch cfg.LLM.Provider {
+	case "claude-cli":
+		llmProvider = claudecli.New(
+			cfg.LLM.BinaryPath,
+			cfg.LLM.Model,
+			time.Duration(cfg.LLM.TimeoutSeconds)*time.Second,
+			nil, // production os/exec runner
+		)
+	default:
+		llmProvider = anthropic.New(cfg.LLM.APIKey)
+	}
 
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
@@ -222,6 +234,9 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		nil, // queueManager set below after creation
 		queueRepo,
 	)
+
+	// 11a. Wire the per-instance workspace manager.
+	eng.SetWorkspaceManager(filesystem.NewWorkspaceManager(cfg.Workspace.Path))
 
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
