@@ -162,6 +162,21 @@ func TestProviderStreamCall(t *testing.T) {
 		assert.Error(t, chunks[len(chunks)-1].Error)
 	})
 
+	t.Run("result event with is_error true yields an error chunk", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","is_error":true,"result":"model failure","session_id":"s"}`,
+		}}
+		p := New("claude", "", 0, fr)
+
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+		require.NotEmpty(t, chunks)
+		last := chunks[len(chunks)-1]
+		require.Error(t, last.Error)
+		assert.Contains(t, last.Error.Error(), "model failure")
+	})
+
 	t.Run("process exit error yields an error chunk", func(t *testing.T) {
 		fr := &fakeRunner{
 			lines:   []string{`{"type":"result","result":"ok","session_id":"s"}`},
