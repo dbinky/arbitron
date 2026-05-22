@@ -83,7 +83,10 @@ func TestProviderCall(t *testing.T) {
 	})
 
 	t.Run("malformed stream-json line returns an error", func(t *testing.T) {
-		fr := &fakeRunner{lines: []string{`{bad json`}}
+		fr := &fakeRunner{lines: []string{
+			`{bad json`,
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
 		p := New("claude", "", 0, fr)
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})

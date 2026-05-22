@@ -65,10 +65,15 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 
 	var result streamEvent
 	var haveResult bool
+	var parseErr error
 	for line := range lines {
-		ev, ok, parseErr := parseEvent([]byte(line))
 		if parseErr != nil {
-			return nil, parseErr
+			continue // keep draining; don't process further
+		}
+		ev, ok, err := parseEvent([]byte(line))
+		if err != nil {
+			parseErr = err
+			continue
 		}
 		if ok && ev.Kind == eventResult {
 			result, haveResult = ev, true
@@ -76,6 +81,9 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 	}
 	if waitErr := wait(); waitErr != nil {
 		return nil, fmt.Errorf("claudecli: claude exited with error: %w", waitErr)
+	}
+	if parseErr != nil {
+		return nil, parseErr
 	}
 	if !haveResult {
 		return nil, fmt.Errorf("claudecli: no result event in claude output")
