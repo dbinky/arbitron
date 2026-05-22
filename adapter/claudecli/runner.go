@@ -23,6 +23,10 @@ type RunSpec struct {
 // CommandRunner starts a subprocess and streams its stdout line by line.
 // The lines channel is closed when stdout reaches EOF; wait then blocks until
 // the process exits and returns its exit error (nil on success).
+//
+// Contract: callers MUST drain the lines channel to completion (until it is
+// closed) before calling wait. Draining establishes the happens-before edge
+// that lets wait observe any stdout read error.
 type CommandRunner interface {
 	Run(ctx context.Context, spec RunSpec) (lines <-chan string, wait func() error, err error)
 }
@@ -52,6 +56,7 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 	}
 
 	lines := make(chan string)
+	var scanErr error
 	go func() {
 		defer close(lines)
 		scanner := bufio.NewScanner(stdout)
@@ -59,8 +64,15 @@ func (r *execRunner) Run(ctx context.Context, spec RunSpec) (<-chan string, func
 		for scanner.Scan() {
 			lines <- scanner.Text()
 		}
+		scanErr = scanner.Err()
 	}()
 
-	wait := func() error { return cmd.Wait() }
+	wait := func() error {
+		waitErr := cmd.Wait()
+		if scanErr != nil {
+			return fmt.Errorf("claudecli: read stdout: %w", scanErr)
+		}
+		return waitErr
+	}
 	return lines, wait, nil
 }

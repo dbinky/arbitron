@@ -52,4 +52,16 @@ func TestExecRunner(t *testing.T) {
 		require.NoError(t, wait())
 		assert.Equal(t, "piped-input", got)
 	})
+
+	t.Run("context cancellation kills the process and closes lines", func(t *testing.T) {
+		r := newExecRunner()
+		ctx, cancel := context.WithCancel(context.Background())
+		lines, wait, err := r.Run(ctx, RunSpec{Bin: "sleep", Args: []string{"30"}})
+		require.NoError(t, err)
+
+		cancel()
+		for range lines { //nolint:revive // drain
+		}
+		assert.Error(t, wait())
+	})
 }
