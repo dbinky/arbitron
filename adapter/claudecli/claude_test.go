@@ -1,6 +1,8 @@
 package claudecli
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,6 +52,45 @@ func TestBuildArgs(t *testing.T) {
 		args := buildArgs(engine.LLMRequest{SystemPrompt: "be terse"}, "")
 		assert.Contains(t, args, "--append-system-prompt")
 		assert.Contains(t, args, "be terse")
+	})
+}
+
+func TestAugmentedEnv(t *testing.T) {
+	t.Run("appends a standard dir even when a substring-prefix dir is present", func(t *testing.T) {
+		// PATH contains /usr/local/bin-custom, which substring-contains
+		// "/usr/local/bin" but is NOT the same entry.
+		t.Setenv("PATH", "/usr/local/bin-custom")
+		env := augmentedEnv()
+
+		var pathVal string
+		for _, e := range env {
+			if strings.HasPrefix(e, "PATH=") {
+				pathVal = strings.TrimPrefix(e, "PATH=")
+			}
+		}
+		entries := filepath.SplitList(pathVal)
+		assert.Contains(t, entries, "/usr/local/bin",
+			"/usr/local/bin must be added as a distinct entry")
+		assert.Contains(t, entries, "/usr/local/bin-custom")
+	})
+
+	t.Run("does not duplicate a dir already present as an exact entry", func(t *testing.T) {
+		t.Setenv("PATH", "/usr/local/bin")
+		env := augmentedEnv()
+
+		var pathVal string
+		for _, e := range env {
+			if strings.HasPrefix(e, "PATH=") {
+				pathVal = strings.TrimPrefix(e, "PATH=")
+			}
+		}
+		count := 0
+		for _, p := range filepath.SplitList(pathVal) {
+			if p == "/usr/local/bin" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "/usr/local/bin must appear exactly once")
 	})
 }
 

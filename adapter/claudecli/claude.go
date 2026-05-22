@@ -69,9 +69,14 @@ func augmentedEnv() []string {
 			continue
 		}
 		path := strings.TrimPrefix(e, "PATH=")
+		existing := make(map[string]bool)
+		for _, p := range filepath.SplitList(path) {
+			existing[p] = true
+		}
 		for _, d := range extra {
-			if !strings.Contains(path, d) {
+			if !existing[d] {
 				path += string(os.PathListSeparator) + d
+				existing[d] = true
 			}
 		}
 		env[i] = "PATH=" + path
