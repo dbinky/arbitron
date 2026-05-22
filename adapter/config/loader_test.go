@@ -322,3 +322,14 @@ queue:
 	assert.Equal(t, 100, cfg.Queue.GlobalCap, "YAML globalcap must override default 20")
 	assert.Equal(t, 25, cfg.Queue.PerUserCap, "YAML perusercap must override default 5")
 }
+
+func TestLoadClaudeCLIDefaults(t *testing.T) {
+	t.Run("claude-cli config fields have defaults", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, 0, cfg.LLM.TimeoutSeconds) // default: no timeout
+		assert.Equal(t, "", cfg.LLM.BinaryPath)    // default: auto-resolve
+		assert.Equal(t, "", cfg.LLM.Model)         // default: provider default
+	})
+}

@@ -38,6 +38,14 @@ type WorkspaceConfig struct {
 type LLMConfig struct {
 	Provider string
 	APIKey   string
+	// BinaryPath is the path to the `claude` binary (claude-cli provider).
+	// Empty means auto-resolve from PATH.
+	BinaryPath string
+	// Model is the default model passed to the provider when a node does not
+	// specify one.
+	Model string
+	// TimeoutSeconds bounds a single provider call. 0 means no timeout.
+	TimeoutSeconds int
 }
 
 // LoggingConfig holds logging settings.
