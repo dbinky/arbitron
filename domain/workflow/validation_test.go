@@ -844,31 +844,21 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 
 func TestValidateReservedInputName(t *testing.T) {
 	t.Run("input named workspace is rejected", func(t *testing.T) {
-		wf := &workflow.Workflow{
-			Nodes: []workflow.Node{{ID: "n1", Type: workflow.NodeTypeTransform, Entrypoint: true,
-				Config: workflow.NodeConfig{Operations: []workflow.Operation{{Variable: "x", Operation: "set", Value: "y"}}}}},
-			Inputs: []workflow.InputField{{Name: "workspace", Type: "string"}},
-		}
+		wf := minimalValidWorkflow()
+		wf.Inputs = []workflow.InputField{{Name: "workspace", Type: "string"}}
+
 		errs := workflow.Validate(wf, nil)
-		var found bool
-		for _, e := range errs {
-			if e.Code == "RESERVED_INPUT_NAME" {
-				found = true
-			}
-		}
-		assert.True(t, found, "expected RESERVED_INPUT_NAME error")
+		codes := extractCodes(errs)
+		assert.Contains(t, codes, "RESERVED_INPUT_NAME")
 	})
 
 	t.Run("non-reserved input names are accepted", func(t *testing.T) {
-		wf := &workflow.Workflow{
-			Nodes: []workflow.Node{{ID: "n1", Type: workflow.NodeTypeTransform, Entrypoint: true,
-				Config: workflow.NodeConfig{Operations: []workflow.Operation{{Variable: "x", Operation: "set", Value: "y"}}}}},
-			Inputs: []workflow.InputField{{Name: "prNumber", Type: "string"}},
-		}
+		wf := minimalValidWorkflow()
+		wf.Inputs = []workflow.InputField{{Name: "prNumber", Type: "string"}}
+
 		errs := workflow.Validate(wf, nil)
-		for _, e := range errs {
-			assert.NotEqual(t, "RESERVED_INPUT_NAME", e.Code)
-		}
+		codes := extractCodes(errs)
+		assert.NotContains(t, codes, "RESERVED_INPUT_NAME")
 	})
 }
 
