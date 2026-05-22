@@ -21,21 +21,21 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":       "127.0.0.1",
-		"server.port":       8080,
-		"database.path":     "./arbitron.db",
-		"workspace.path":    "./workspaces",
-		"llm.provider":      "anthropic",
-		"llm.apikey":        "",
+		"server.host":        "127.0.0.1",
+		"server.port":        8080,
+		"database.path":      "./arbitron.db",
+		"workspace.path":     "./workspaces",
+		"llm.provider":       "anthropic",
+		"llm.apikey":         "",
 		"llm.binarypath":     "",
 		"llm.model":          "",
 		"llm.timeoutseconds": 0,
-		"logging.level":     "info",
-		"logging.file":      "arbitron.log",
-		"tracing.enabled":   false,
-		"tracing.exportdir": "./traces",
-		"queue.globalcap":   20,
-		"queue.perusercap":  5,
+		"logging.level":      "info",
+		"logging.file":       "arbitron.log",
+		"tracing.enabled":    false,
+		"tracing.exportdir":  "./traces",
+		"queue.globalcap":    20,
+		"queue.perusercap":   5,
 	}
 }
 
