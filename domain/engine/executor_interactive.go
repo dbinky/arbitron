@@ -102,13 +102,13 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		WorkDir:      workDirStr,
 	}
 
-	// 8. Call the LLM provider with streaming.
+	// 7. Call the LLM provider with streaming.
 	stream, err := e.llmProvider.StreamCall(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
 	}
 
-	// 9. Consume the stream channel.
+	// 8. Consume the stream channel.
 	var responseBuilder strings.Builder
 	var tokensIn, tokensOut int
 	var sessionID string
@@ -140,7 +140,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	fullResponse := responseBuilder.String()
 
-	// 10. Build the initial conversation array.
+	// 9. Build the initial conversation array.
 	conversation := map[string]any{
 		"sessionId": sessionID,
 		"messages": []map[string]any{
@@ -149,7 +149,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		},
 	}
 
-	// 11. Write node execution record with succeeded status.
+	// 10. Write node execution record with succeeded status.
 	now := time.Now()
 	model := node.Config.Model
 	nodeExec := &instance.NodeExecution{
@@ -169,15 +169,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		slog.Error("interactive: failed to write node execution record", "instanceID", instanceID, "error", err)
 	}
 
-	// 12. Transition instance to waiting state.
+	// 11. Transition instance to waiting state.
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
 		return nil, fmt.Errorf("interactive %q: failed to set waiting state: %w", node.ID, err)
 	}
 
-	// 13. Notify capacity freed.
+	// 12. Notify capacity freed.
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
-	// 14. Return result with IsWait=true.
+	// 13. Return result with IsWait=true.
 	return &NodeResult{
 		IsWait:          true,
 		LLMConversation: conversation,
