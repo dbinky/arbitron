@@ -16,6 +16,16 @@ type FileReader interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
+// WorkspaceManager provides per-instance working directories for agent nodes.
+type WorkspaceManager interface {
+	// EnsureInstanceDir creates (idempotently) the working directory for an
+	// instance and returns its absolute path.
+	EnsureInstanceDir(instanceID uuid.UUID) (string, error)
+	// RemoveInstanceDir deletes an instance's working directory. Removing a
+	// directory that does not exist is not an error.
+	RemoveInstanceDir(instanceID uuid.UUID) error
+}
+
 // LLMProvider abstracts large-language-model calls for use by LLM nodes.
 type LLMProvider interface {
 	Call(ctx context.Context, request LLMRequest) (*LLMResponse, error)
