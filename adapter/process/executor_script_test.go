@@ -83,7 +83,7 @@ echo '{"result": "ok"}'
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ exit 1
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -145,7 +145,7 @@ echo '{"result": "late"}'
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -176,7 +176,7 @@ echo "not json"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -208,7 +208,7 @@ echo "{\"arg\": \"$1\"}"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -243,7 +243,7 @@ echo "$INPUT"
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -266,8 +266,92 @@ func TestScriptExecutor_FileNotFound(t *testing.T) {
 		},
 	}
 
-	exec := process.NewScriptExecutor(fr)
+	exec := process.NewScriptExecutor(fr, nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
+}
+
+func TestScriptExecutor_PerNodeEnvAvailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts not supported on Windows")
+	}
+	scriptPath := writeTempScript(t, `#!/bin/sh
+echo "{\"model\": \"$LLM_MODEL\"}"
+`)
+	fr := newMockFileReader()
+	fr.paths["test-wf/e.sh"] = scriptPath
+	vars := variable.NewStore()
+	require.NoError(t, vars.SetInput("m", "opus"))
+	node := workflow.Node{
+		ID: "s1", Type: workflow.NodeTypeScript,
+		Config: workflow.NodeConfig{
+			ScriptFile: "e.sh", Interpreter: "/bin/sh",
+			Env: map[string]string{"LLM_MODEL": "{{m}}"},
+		},
+	}
+	exec := process.NewScriptExecutor(fr, nil)
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"model": "opus"}, result.Output)
+}
+
+func TestScriptExecutor_PassthroughSecretAvailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts not supported on Windows")
+	}
+	t.Setenv("LLM_API_KEY", "sk-xyz")
+	scriptPath := writeTempScript(t, `#!/bin/sh
+echo "{\"k\": \"$LLM_API_KEY\"}"
+`)
+	fr := newMockFileReader()
+	fr.paths["test-wf/k.sh"] = scriptPath
+	node := workflow.Node{
+		ID: "s1", Type: workflow.NodeTypeScript,
+		Config: workflow.NodeConfig{ScriptFile: "k.sh", Interpreter: "/bin/sh"},
+	}
+	exec := process.NewScriptExecutor(fr, []string{"LLM_API_KEY"})
+	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"k": "sk-xyz"}, result.Output)
+}
+
+func TestScriptExecutor_EnvCollisionFailsNode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts not supported on Windows")
+	}
+	scriptPath := writeTempScript(t, "#!/bin/sh\necho '{}'\n")
+	fr := newMockFileReader()
+	fr.paths["test-wf/c.sh"] = scriptPath
+	node := workflow.Node{
+		ID: "s1", Type: workflow.NodeTypeScript,
+		Config: workflow.NodeConfig{
+			ScriptFile: "c.sh", Interpreter: "/bin/sh",
+			Env: map[string]string{"PATH": "/evil"},
+		},
+	}
+	exec := process.NewScriptExecutor(fr, nil)
+	_, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "collides")
+}
+
+func TestScriptExecutor_SecretNotLeakedWithoutPassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell scripts not supported on Windows")
+	}
+	t.Setenv("MY_SECRET", "leak")
+	scriptPath := writeTempScript(t, `#!/bin/sh
+echo "{\"s\": \"${MY_SECRET:-absent}\"}"
+`)
+	fr := newMockFileReader()
+	fr.paths["test-wf/leak.sh"] = scriptPath
+	node := workflow.Node{
+		ID: "s1", Type: workflow.NodeTypeScript,
+		Config: workflow.NodeConfig{ScriptFile: "leak.sh", Interpreter: "/bin/sh"},
+	}
+	exec := process.NewScriptExecutor(fr, nil)
+	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"s": "absent"}, result.Output)
 }

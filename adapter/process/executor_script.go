@@ -4,14 +4,11 @@
 package process
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/variable"
@@ -23,112 +20,80 @@ import (
 // process. There is no sandboxing, no allow-list of commands, and no filesystem isolation.
 // Before opening workflow authoring to untrusted users, a sandbox (e.g., container-based
 // execution, seccomp profiles, or a dedicated unprivileged user) must be implemented.
-
-// TODO(refactor): Extract a CommandRunner interface the moment this executor is
-// touched for any reason. Both ScriptExecutor and ToolCallExecutor share identical
-// process lifecycle logic (start, wait, kill-on-timeout, capture stdout/stderr).
-// A shared CommandRunner would eliminate this duplication and simplify testing by
-// allowing process execution to be mocked.
 //
-// Trigger condition: any modification to this file.
+// The subprocess environment is strictly controlled: only the base allowlist, operator-
+// approved passthrough vars, and per-node env keys are forwarded (see buildEnv). The
+// engine's full environment is NOT inherited, preventing accidental secret leakage.
 
-// ScriptExecutor runs external scripts via os/exec, piping the variable
-// store as JSON to stdin and parsing stdout as JSON.
+// ScriptExecutor runs external scripts via os/exec, piping the variable store
+// as JSON to stdin and parsing stdout as JSON. The subprocess environment is
+// the base allowlist + configured passthrough + per-node env (see buildEnv);
+// it does NOT inherit the engine's full environment.
 type ScriptExecutor struct {
-	fileReader engine.FileReader
+	fileReader  engine.FileReader
+	passthrough []string
 }
 
-// NewScriptExecutor creates a ScriptExecutor that uses the given FileReader
-// to resolve script paths.
-func NewScriptExecutor(fr engine.FileReader) *ScriptExecutor {
-	return &ScriptExecutor{fileReader: fr}
+// NewScriptExecutor creates a ScriptExecutor. envPassthrough names the engine
+// env vars (e.g. LLM_API_KEY) that script nodes may inherit beyond the base
+// allowlist; pass nil for none.
+func NewScriptExecutor(fr engine.FileReader, envPassthrough []string) *ScriptExecutor {
+	return &ScriptExecutor{fileReader: fr, passthrough: envPassthrough}
 }
 
 // Execute resolves the script path, runs it with the configured interpreter,
 // pipes the variable store as JSON to stdin, and parses stdout as JSON.
 func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*engine.NodeResult, error) {
-	// Resolve script path.
 	scriptPath, err := e.fileReader.ResolvePath(workflowName, node.Config.ScriptFile)
 	if err != nil {
 		return nil, fmt.Errorf("script %q: resolve path: %w", node.ID, err)
 	}
 
-	// Resolve substitution in args.
 	args := make([]string, len(node.Config.Args))
 	for i, arg := range node.Config.Args {
 		args[i] = variable.Resolve(arg, vars)
 	}
 
-	// Build command: interpreter + script + args.
-	cmdArgs := append([]string{scriptPath}, args...)
 	interpreter := node.Config.Interpreter
 	if interpreter == "" {
 		interpreter = "/bin/sh"
 	}
 
-	// Apply timeout if configured.
-	execCtx := ctx
-	var cancel context.CancelFunc
-	if node.Config.TimeoutSeconds > 0 {
-		execCtx, cancel = context.WithTimeout(ctx, time.Duration(node.Config.TimeoutSeconds)*time.Second)
-		defer cancel()
+	env, err := buildEnv(e.passthrough, node.Config.Env, vars)
+	if err != nil {
+		return nil, fmt.Errorf("script %q: %w", node.ID, err)
 	}
 
-	cmd := exec.Command(interpreter, cmdArgs...)
-	cmd.Dir = filepath.Dir(scriptPath) // run script from its own directory so relative paths work
-	setProcGroup(cmd)
-
-	// Pipe variables as JSON to stdin.
-	snapshot := vars.Snapshot()
-	stdinData, err := json.Marshal(snapshot)
+	stdinData, err := json.Marshal(vars.Snapshot())
 	if err != nil {
 		return nil, fmt.Errorf("script %q: marshal variables: %w", node.ID, err)
 	}
-	cmd.Stdin = bytes.NewReader(stdinData)
 
-	// Capture stdout and stderr with bounded writers to prevent unbounded memory use.
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
-	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
-
-	// Run with context-aware waiting.
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("script %q: start: %w", node.ID, err)
-	}
-
-	// Wait for completion or context cancellation.
-	doneCh := make(chan error, 1)
-	go func() {
-		doneCh <- cmd.Wait()
-	}()
-
-	var runErr error
-	select {
-	case <-execCtx.Done():
-		killProcGroup(cmd)
-		<-doneCh // wait for Wait() to return
-		runErr = execCtx.Err()
-	case runErr = <-doneCh:
-	}
+	res, runErr := run(ctx, commandSpec{
+		Name:        interpreter,
+		Args:        append([]string{scriptPath}, args...),
+		Dir:         filepath.Dir(scriptPath),
+		Stdin:       stdinData,
+		Env:         env,
+		TimeoutSecs: node.Config.TimeoutSeconds,
+	})
 
 	result := &engine.NodeResult{
-		ScriptStdout: stdout.String(),
-		ScriptStderr: stderr.String(),
+		ScriptStdout:   res.Stdout,
+		ScriptStderr:   res.Stderr,
+		ScriptExitCode: res.ExitCode,
 	}
-
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			result.ScriptExitCode = exitErr.ExitCode()
-		}
-		return result, fmt.Errorf("script %q: exit status %d: %s", node.ID, result.ScriptExitCode, strings.TrimSpace(stderr.String()))
+		return result, fmt.Errorf("script %q: %w", node.ID, runErr)
+	}
+	if res.ExitCode != 0 {
+		return result, fmt.Errorf("script %q: exit status %d: %s", node.ID, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 
-	// Parse stdout as JSON.
 	var output any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &output); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Stdout)), &output); err != nil {
 		return result, fmt.Errorf("script %q: stdout is not valid JSON: %w", node.ID, err)
 	}
-
 	result.Output = output
 	return result, nil
 }
