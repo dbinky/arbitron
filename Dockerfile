@@ -6,7 +6,11 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /arbitron ./cmd/arbitron
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates nodejs npm git github-cli make \
+# bash + coreutils are required by the claude-cli Bash tool: the agent harness
+# probes for a real POSIX shell and refuses to run with busybox-only `sh`
+# ("No suitable shell found"). coreutils gives GNU date/timeout/etc. that the
+# review-persona prompts and gh scripting expect.
+RUN apk add --no-cache ca-certificates bash coreutils nodejs npm git github-cli make \
  && npm install -g @anthropic-ai/claude-code \
  && addgroup -S arbitron \
  && adduser -S -h /home/arbitron -s /bin/sh -G arbitron arbitron \
@@ -21,6 +25,9 @@ COPY --from=builder /arbitron /usr/local/bin/arbitron
 COPY --from=builder /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:/home/arbitron/go/bin:$PATH
 ENV GOPATH=/home/arbitron/go
+# SHELL is on the claude-cli env allowlist; set it so the agent harness selects
+# bash deterministically rather than probing.
+ENV SHELL=/bin/bash
 VOLUME /data
 USER arbitron
 EXPOSE 8080
