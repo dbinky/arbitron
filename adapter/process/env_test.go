@@ -39,6 +39,9 @@ func TestBuildEnv_PassthroughPresentWhenSet(t *testing.T) {
 }
 
 func TestBuildEnv_PassthroughAbsentWhenUnset(t *testing.T) {
+	if orig, had := os.LookupEnv("LLM_ROUTER_URL"); had {
+		t.Cleanup(func() { os.Setenv("LLM_ROUTER_URL", orig) })
+	}
 	os.Unsetenv("LLM_ROUTER_URL")
 	env, err := buildEnv([]string{"LLM_ROUTER_URL"}, nil, variable.NewStore())
 	require.NoError(t, err)
@@ -62,6 +65,12 @@ func TestBuildEnv_RejectsCollisionWithBase(t *testing.T) {
 
 func TestBuildEnv_RejectsCollisionWithPassthrough(t *testing.T) {
 	_, err := buildEnv([]string{"LLM_API_KEY"}, map[string]string{"LLM_API_KEY": "fake"}, variable.NewStore())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "collides")
+}
+
+func TestBuildEnv_RejectsCollisionWithLCPrefix(t *testing.T) {
+	_, err := buildEnv(nil, map[string]string{"LC_ALL": "en_US.UTF-8"}, variable.NewStore())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collides")
 }
