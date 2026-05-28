@@ -26,9 +26,7 @@ import (
 // engine's full environment is NOT inherited, preventing accidental secret leakage.
 
 // ScriptExecutor runs external scripts via os/exec, piping the variable store
-// as JSON to stdin and parsing stdout as JSON. The subprocess environment is
-// the base allowlist + configured passthrough + per-node env (see buildEnv);
-// it does NOT inherit the engine's full environment.
+// as JSON to stdin and parsing stdout as JSON.
 type ScriptExecutor struct {
 	fileReader  engine.FileReader
 	passthrough []string

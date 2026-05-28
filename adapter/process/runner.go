@@ -21,7 +21,7 @@ type commandSpec struct {
 
 // commandResult is the outcome of a completed (or attempted) subprocess.
 type commandResult struct {
-	Stdout   string
+	Stdout   string // bounded head (first maxOutputBytes)
 	Stderr   string // bounded head (first maxOutputBytes)
 	ExitCode int
 }

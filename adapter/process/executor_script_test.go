@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,10 +116,11 @@ exit 1
 	}
 
 	exec := process.NewScriptExecutor(fr, nil)
-	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
-
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit")
+	assert.Equal(t, 1, result.ScriptExitCode, "exit code must be populated even on error")
+	assert.Equal(t, "something went wrong", strings.TrimSpace(result.ScriptStderr))
 }
 
 func TestScriptExecutor_Timeout(t *testing.T) {
@@ -151,6 +153,7 @@ echo '{"result": "late"}'
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deadline")
 	assert.Less(t, elapsed, 5*time.Second)
 }
 
