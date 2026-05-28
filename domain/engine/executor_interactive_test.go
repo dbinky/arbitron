@@ -593,7 +593,9 @@ func TestInteractiveExecutor_CapturesSessionIDAndWorkDir(t *testing.T) {
 	llmProvider.streamCallFn = cannedStreamWithSession([]string{"hello"}, "isess-1")
 
 	vars := variable.NewStore()
-	vars.SetInput("workspace", "/tmp/ws")
+	// "workspace" is engine-reserved; use SetReserved to bypass the runtime
+	// mutability check (SF12).
+	vars.SetReserved("workspace", "/tmp/ws")
 
 	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)

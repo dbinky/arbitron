@@ -93,8 +93,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// contents look like a completed session and have the agent echo it
 	// back. PR #8 security HIGH thread 3291943275.
 	nonce := uuid.NewString()
-	workDir, _ := vars.Get("workspace")
-	workDirStr, _ := workDir.(string)
+	workDirStr, _ := WorkDirFromVars(vars)
 
 	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
 		sentinelInstruction(nonce, node.Config.OutputSchema)
@@ -150,9 +149,9 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// resumed turns (ConversationHandler.HandleMessage) can scope their
 	// sentinel parsing to the same per-instance value.
 	conversation := map[string]any{
-		"sessionId": sessionID,
-		"nonce":     nonce,
-		"messages": []map[string]any{
+		ConversationKeySessionID: sessionID,
+		ConversationKeyNonce:     nonce,
+		ConversationKeyMessages: []map[string]any{
 			{"role": "user", "content": userMessage},
 			{"role": "assistant", "content": fullResponse},
 		},

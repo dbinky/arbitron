@@ -118,17 +118,26 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 				return uuid.Nil, false, fmt.Errorf("missing required input: %s", inp.Name)
 			}
 			if inp.Default != nil {
-				vars.SetInput(inp.Name, inp.Default)
+				if err := vars.SetInput(inp.Name, inp.Default); err != nil {
+					return uuid.Nil, false, fmt.Errorf("seed input default %q: %w", inp.Name, err)
+				}
 			}
 		} else {
-			vars.SetInput(inp.Name, val)
+			if err := vars.SetInput(inp.Name, val); err != nil {
+				return uuid.Nil, false, fmt.Errorf("seed input %q: %w", inp.Name, err)
+			}
 		}
 	}
 
 	// Also set any extra variables that don't match input definitions.
+	// SECURITY: this path accepts arbitrary caller-supplied keys; SetInput's
+	// reserved-name guard prevents writing to engine-seeded variables like
+	// "workspace".
 	for k, v := range variables {
 		if _, exists := vars.Get(k); !exists {
-			vars.SetInput(k, v)
+			if err := vars.SetInput(k, v); err != nil {
+				return uuid.Nil, false, fmt.Errorf("seed extra variable %q: %w", k, err)
+			}
 		}
 	}
 
@@ -297,7 +306,9 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			e.failInstance(ctx, instanceID, currentNodeID)
 			return
 		}
-		vars.SetInput("workspace", workspacePath)
+		// SetReserved bypasses the reserved-name check; the engine is the
+		// authoritative seeder for "workspace". See variable.ReservedInputNames.
+		vars.SetReserved(ReservedVarWorkspace, workspacePath)
 		// Persist immediately so the workspace path is in inst.Variables before
 		// any node runs — ConversationHandler reads it from the DB for resumed
 		// interactive turns.

@@ -96,12 +96,12 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 
 	// 6. Build the request: resume the stored session, send only the new
 	//    user message. WorkDir comes from the instance's seeded workspace.
-	workDir, _ := inst.Variables["workspace"].(string)
+	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
 	req := LLMRequest{
 		SystemPrompt: nodeConfig.SystemPrompt,
 		Prompt:       content,
 		Model:        nodeConfig.Model,
-		SessionID:    conversationSessionID(nodeExec.LLMConversation),
+		SessionID:    SessionID(nodeExec.LLMConversation),
 		WorkDir:      workDir,
 	}
 
@@ -330,15 +330,6 @@ func FindNodeByID(snapshot map[string]any, nodeID string) (*workflow.Node, error
 	return nil, fmt.Errorf("node %s not found in workflow snapshot", nodeID)
 }
 
-// conversationSessionID extracts the stored claude session id, if any.
-func conversationSessionID(conv map[string]any) string {
-	if conv == nil {
-		return ""
-	}
-	id, _ := conv["sessionId"].(string)
-	return id
-}
-
 // conversationNonce extracts the per-instance sentinel nonce persisted by
 // InteractiveExecutor on the first turn. Empty when the conversation was
 // created before the nonce was introduced — extractSentinelResult will refuse
@@ -348,7 +339,7 @@ func conversationNonce(conv map[string]any) string {
 	if conv == nil {
 		return ""
 	}
-	n, _ := conv["nonce"].(string)
+	n, _ := conv[ConversationKeyNonce].(string)
 	return n
 }
 
@@ -358,7 +349,7 @@ func parseConversation(conv map[string]any) []map[string]any {
 		return nil
 	}
 
-	rawMessages, ok := conv["messages"]
+	rawMessages, ok := conv[ConversationKeyMessages]
 	if !ok {
 		return nil
 	}
@@ -398,9 +389,9 @@ func (h *conversationHandler) handleSessionCompletion(
 	//    subsequent turns continue to scope sentinel parsing.
 	nonce := conversationNonce(nodeExec.LLMConversation)
 	nodeExec.LLMConversation = map[string]any{
-		"sessionId": sessionID,
-		"nonce":     nonce,
-		"messages":  messages,
+		ConversationKeySessionID: sessionID,
+		ConversationKeyNonce:     nonce,
+		ConversationKeyMessages:  messages,
 	}
 
 	// 2. Store structured output on node execution.
@@ -435,9 +426,9 @@ func (h *conversationHandler) handleNormalResponse(
 	//    nonce forward so subsequent turns continue to scope sentinel parsing.
 	nonce := conversationNonce(nodeExec.LLMConversation)
 	nodeExec.LLMConversation = map[string]any{
-		"sessionId": sessionID,
-		"nonce":     nonce,
-		"messages":  messages,
+		ConversationKeySessionID: sessionID,
+		ConversationKeyNonce:     nonce,
+		ConversationKeyMessages:  messages,
 	}
 
 	// 2. Persist.

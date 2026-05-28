@@ -3,9 +3,29 @@
 package variable
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
+
+// ReservedInputNames lists keys the engine seeds itself and that runtime
+// callers MUST NOT overwrite via SetInput. Engine-internal seeding uses
+// SetReserved to bypass this check.
+//
+// SECURITY (PR #8 thread 3291944671 fix #3): "workspace" is consumed by the
+// claude-cli provider as the subprocess WorkDir. A transform node that
+// rewrote {{workspace}} to "/etc" would reroute the agent out of its
+// sandbox. This map prevents that, alongside the workflow-validation check
+// (domain/workflow/validation.go) that already blocks reserved names in
+// workflow-declared inputs.
+var ReservedInputNames = map[string]bool{
+	"workspace": true,
+}
+
+// ErrReservedInputName is returned by SetInput when the caller tries to write
+// a runtime value into a reserved key.
+var ErrReservedInputName = errors.New("variable: reserved input name")
 
 // VariableStore holds workflow inputs and node outputs, providing dot-path
 // access to arbitrarily nested values.
@@ -74,8 +94,21 @@ func walk(current any, segments []string) (any, bool) {
 	return current, true
 }
 
-// SetInput stores a value in the inputs namespace.
-func (s *VariableStore) SetInput(key string, value any) {
+// SetInput stores a value in the inputs namespace. Returns ErrReservedInputName
+// when key is in ReservedInputNames — use SetReserved for engine-internal
+// seeding of reserved keys.
+func (s *VariableStore) SetInput(key string, value any) error {
+	if ReservedInputNames[key] {
+		return fmt.Errorf("%w: %q", ErrReservedInputName, key)
+	}
+	s.inputs[key] = value
+	return nil
+}
+
+// SetReserved stores a value in the inputs namespace without the reserved-
+// name check. Intended for engine-internal seeding of keys like "workspace"
+// where the engine, not a workflow author, is the source of truth.
+func (s *VariableStore) SetReserved(key string, value any) {
 	s.inputs[key] = value
 }
 

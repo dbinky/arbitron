@@ -4,10 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
 )
+
+// ErrWorkDirRequired is returned by Call/StreamCall when req.WorkDir is empty.
+// SECURITY: an empty Dir on cmd.Exec means "inherit parent cwd" — i.e., the
+// engine launch directory containing arbitron.db, config.yaml, and other
+// secrets. PR #8 security MEDIUM thread 3291944671 item 1.
+var ErrWorkDirRequired = fmt.Errorf("claudecli: WorkDir is required")
+
+// ErrWorkDirEscapesRoot is returned when req.WorkDir resolves outside the
+// configured workspace root. SECURITY: PR #8 thread 3291944671 item 2.
+var ErrWorkDirEscapesRoot = fmt.Errorf("claudecli: WorkDir is outside the configured workspace root")
 
 // Config configures a claude-cli Provider.
 //
@@ -92,6 +104,32 @@ func (p *Provider) spec(req engine.LLMRequest) RunSpec {
 	}
 }
 
+// validateWorkDir enforces the per-request WorkDir invariants:
+//   - non-empty (avoid the silent "inherit engine cwd" fallback)
+//   - resolves to an absolute path under p.workspaceRoot when one is configured
+//
+// An empty WorkspaceRoot disables the pin check (test convenience only).
+func (p *Provider) validateWorkDir(workDir string) error {
+	if workDir == "" {
+		return ErrWorkDirRequired
+	}
+	if p.workspaceRoot == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(workDir)
+	if err != nil {
+		return fmt.Errorf("claudecli: resolve WorkDir: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	root := filepath.Clean(p.workspaceRoot)
+	// Allow root itself, or any subdir of root. Use a separator-terminated
+	// prefix check to avoid /root/wsX shadowing /root/ws.
+	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %q not under %q", ErrWorkDirEscapesRoot, abs, root)
+	}
+	return nil
+}
+
 // withTimeout derives a context honouring the provider timeout.
 func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if p.timeout <= 0 {
@@ -102,6 +140,10 @@ func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.Ca
 
 // Call runs claude to completion and returns the terminal result event.
 func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+	if err := p.validateWorkDir(req.WorkDir); err != nil {
+		return nil, err
+	}
+
 	runCtx, cancel := p.withTimeout(ctx)
 	defer cancel()
 
@@ -154,6 +196,10 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 // drains the runner's lines channel and calls wait(), honouring the
 // CommandRunner contract even when an error is encountered mid-stream.
 func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+	if err := p.validateWorkDir(req.WorkDir); err != nil {
+		return nil, err
+	}
+
 	runCtx, cancel := p.withTimeout(ctx)
 
 	lines, wait, err := p.runner.Run(runCtx, p.spec(req))

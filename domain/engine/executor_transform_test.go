@@ -291,3 +291,26 @@ func TestTransformExecutor_EmptyVariableNameReturnsError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "variable name is required")
 }
+
+func TestTransformExecutor_RejectsReservedWorkspaceVariable(t *testing.T) {
+	// SF12 / PR #8 thread 3291944671 fix #3: a transform that tries to
+	// rewrite the engine-seeded "workspace" variable (which becomes the
+	// agent's WorkDir) fails the node instead of silently rerouting the
+	// agent out of its sandbox.
+	vars := variable.NewStore()
+	vars.SetReserved("workspace", "/seeded/path")
+
+	node := transformNode([]workflow.Operation{
+		{Variable: "workspace", Operation: "set", Value: "/etc"},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, variable.ErrReservedInputName)
+
+	// Original value must be preserved.
+	val, ok := vars.Get("workspace")
+	require.True(t, ok)
+	assert.Equal(t, "/seeded/path", val)
+}

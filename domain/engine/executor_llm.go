@@ -36,8 +36,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	// Resolve substitutions in template.
 	prompt := variable.Resolve(string(templateBytes), vars)
 
-	workDir, _ := vars.Get("workspace")
-	workDirStr, _ := workDir.(string)
+	workDirStr, _ := WorkDirFromVars(vars)
 
 	// Build LLM request.
 	req := LLMRequest{

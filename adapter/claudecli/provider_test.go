@@ -20,7 +20,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		resp, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "hi"})
+		resp, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "hi", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		assert.Equal(t, "final answer", resp.Output)
 		assert.Equal(t, "s1", resp.SessionID)
@@ -46,7 +46,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "model failure")
 	})
@@ -57,7 +57,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no result event")
 	})
@@ -69,7 +69,7 @@ func TestProviderCall(t *testing.T) {
 		}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 
@@ -77,7 +77,7 @@ func TestProviderCall(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("binary not found")}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "binary not found")
 	})
@@ -89,13 +89,103 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 }
 
 func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.LLMProvider = (*Provider)(nil)
+}
+
+func TestProviderWorkDirValidation(t *testing.T) {
+	// SECURITY MF6 / PR #8 thread 3291944671.
+	t.Run("Call rejects empty WorkDir", func(t *testing.T) {
+		fr := &fakeRunner{}
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
+
+		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirRequired)
+		assert.False(t, fr.runCalled, "runner must not be invoked")
+	})
+
+	t.Run("StreamCall rejects empty WorkDir", func(t *testing.T) {
+		fr := &fakeRunner{}
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
+
+		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "x"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirRequired)
+		assert.False(t, fr.runCalled)
+	})
+
+	t.Run("Call rejects WorkDir outside WorkspaceRoot", func(t *testing.T) {
+		fr := &fakeRunner{}
+		p := New(Config{
+			BinaryPath:      "claude",
+			SkipPermissions: true,
+			WorkspaceRoot:   "/var/lib/arbitron/workspaces",
+			Runner:          fr,
+		})
+
+		_, err := p.Call(context.Background(), engine.LLMRequest{
+			Prompt:  "x",
+			WorkDir: "/etc",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirEscapesRoot)
+		assert.False(t, fr.runCalled)
+	})
+
+	t.Run("Call accepts WorkDir under WorkspaceRoot", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{`{"type":"result","result":"ok","session_id":"s"}`}}
+		p := New(Config{
+			BinaryPath:      "claude",
+			SkipPermissions: true,
+			WorkspaceRoot:   "/var/lib/arbitron/workspaces",
+			Runner:          fr,
+		})
+
+		_, err := p.Call(context.Background(), engine.LLMRequest{
+			Prompt:  "x",
+			WorkDir: "/var/lib/arbitron/workspaces/instances/abc",
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("WorkDir that is a sibling of root is rejected (no prefix shadowing)", func(t *testing.T) {
+		fr := &fakeRunner{}
+		p := New(Config{
+			BinaryPath:      "claude",
+			SkipPermissions: true,
+			WorkspaceRoot:   "/var/lib/arbitron/ws",
+			Runner:          fr,
+		})
+
+		_, err := p.Call(context.Background(), engine.LLMRequest{
+			Prompt:  "x",
+			WorkDir: "/var/lib/arbitron/ws-other/x",
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirEscapesRoot)
+	})
+
+	t.Run("empty WorkspaceRoot disables the pin check (test convenience)", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{`{"type":"result","result":"ok","session_id":"s"}`}}
+		p := New(Config{
+			BinaryPath:      "claude",
+			SkipPermissions: true,
+			Runner:          fr,
+			// no WorkspaceRoot
+		})
+
+		_, err := p.Call(context.Background(), engine.LLMRequest{
+			Prompt:  "x",
+			WorkDir: "/anywhere",
+		})
+		require.NoError(t, err)
+	})
 }
 
 func collectChunks(t *testing.T, ch <-chan engine.LLMStreamChunk) []engine.LLMStreamChunk {
@@ -117,7 +207,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 
@@ -141,7 +231,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		assert.Equal(t, "s2", chunks[len(chunks)-1].SessionID)
@@ -154,7 +244,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 
@@ -168,7 +258,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		require.NotEmpty(t, chunks)
@@ -184,7 +274,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		assert.Error(t, chunks[len(chunks)-1].Error)
@@ -194,7 +284,7 @@ func TestProviderStreamCall(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("no binary")}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
+		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 }
