@@ -21,9 +21,7 @@ import (
 // engine's full environment is NOT inherited, preventing accidental secret leakage.
 
 // ToolCallExecutor runs an external command with arguments. Unlike
-// ScriptExecutor it does NOT pipe variables to stdin. The subprocess
-// environment is the base allowlist + configured passthrough + per-node env
-// (see buildEnv); it does NOT inherit the engine's full environment.
+// ScriptExecutor it does NOT pipe variables to stdin.
 type ToolCallExecutor struct {
 	passthrough []string
 }
@@ -35,6 +33,9 @@ func NewToolCallExecutor(envPassthrough []string) *ToolCallExecutor {
 	return &ToolCallExecutor{passthrough: envPassthrough}
 }
 
+// Execute runs the configured command with resolved args under a controlled
+// environment (see buildEnv), captures stdout (parsed as JSON) and stderr, and
+// fails the node on a non-zero exit.
 func (e *ToolCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, _ string) (*engine.NodeResult, error) {
 	args := make([]string, len(node.Config.Args))
 	for i, arg := range node.Config.Args {
