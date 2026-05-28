@@ -300,21 +300,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	vars := variable.FromSnapshotWithNodeIDs(inst.Variables, nodeIDs)
 
 	if e.workspaceManager != nil {
-		workspacePath, wsErr := e.workspaceManager.EnsureInstanceDir(instanceID)
-		if wsErr != nil {
-			slog.Error("failed to ensure instance workspace", "instanceID", instanceID, "error", wsErr)
-			e.failInstance(ctx, instanceID, currentNodeID)
-			return
-		}
-		// SetReserved bypasses the reserved-name check; the engine is the
-		// authoritative seeder for "workspace". See variable.ReservedInputNames.
-		vars.SetReserved(ReservedVarWorkspace, workspacePath)
-		// Persist immediately so the workspace path is in inst.Variables before
-		// any node runs — ConversationHandler reads it from the DB for resumed
-		// interactive turns.
-		if err := e.instances.UpdateVariables(ctx, instanceID, vars.Snapshot()); err != nil {
-			slog.Error("failed to persist seeded workspace variable", "instanceID", instanceID, "error", err)
-			e.failInstance(ctx, instanceID, currentNodeID)
+		if !e.prepareWorkspace(ctx, instanceID, currentNodeID, vars) {
 			return
 		}
 	}
@@ -399,14 +385,14 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// All nodes executed successfully.
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
+		// Persistence failed: keep the workspace for debugging/retry. Log
+		// the retention with size/file-count so the operator can see how
+		// much sensitive data is sitting on disk.
+		e.warnWorkspaceRetained(instanceID, "set_completed_failed")
 	} else {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
-		// Workspace is removed only after SetCompleted succeeds; if persistence fails the workspace is kept for debugging/retry.
-		if e.workspaceManager != nil {
-			if rmErr := e.workspaceManager.RemoveInstanceDir(instanceID); rmErr != nil {
-				slog.Warn("failed to remove instance workspace", "instanceID", instanceID, "error", rmErr)
-			}
-		}
+		// Workspace is removed only after SetCompleted succeeds.
+		e.cleanupWorkspace(instanceID)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInstanceCompleted,
@@ -417,11 +403,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 // failInstance marks an instance as failed and logs errors. It consolidates
 // the repeated SetFailed + slog.Error pattern used throughout the run loop.
 // It returns true if the state change succeeded, false otherwise.
+//
+// SF9: on success, the workspace is intentionally NOT removed (retain on
+// failure for debugging); a slog.Warn with size/file-count is emitted so the
+// sensitive-data-retention surface is visible to operators.
 func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
 	if err := e.instances.SetFailed(ctx, instanceID, nodeID); err != nil {
 		slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 		return false
 	}
+	e.warnWorkspaceRetained(instanceID, "instance_failed")
 	return true
 }
 

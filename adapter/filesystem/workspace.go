@@ -74,3 +74,34 @@ func (w *WorkspaceManagerAdapter) RemoveInstanceDir(instanceID uuid.UUID) error 
 	}
 	return nil
 }
+
+// InstanceDirStats walks the instance directory and returns the cumulative
+// size and file count. A missing directory returns (0, 0, nil) so callers
+// (engine cleanup paths) don't have to handle a special "no workspace" case.
+func (w *WorkspaceManagerAdapter) InstanceDirStats(instanceID uuid.UUID) (int64, int, error) {
+	dir := w.instanceDir(instanceID)
+	var bytes int64
+	var files int
+	err := filepath.Walk(dir, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		bytes += info.Size()
+		files++
+		return nil
+	})
+	if err != nil {
+		// Root not-existing is fine: nothing to report.
+		if os.IsNotExist(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("filesystem: stat instance dir: %w", err)
+	}
+	return bytes, files, nil
+}

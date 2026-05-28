@@ -2750,6 +2750,9 @@ type fakeWorkspaceManager struct {
 	ensured   []uuid.UUID
 	removed   []uuid.UUID
 	ensureErr error
+	// statsFn overrides the default (0, 0, nil) InstanceDirStats response
+	// so tests can simulate a retain-on-failure workspace with content.
+	statsFn func(uuid.UUID) (int64, int, error)
 }
 
 func (f *fakeWorkspaceManager) EnsureInstanceDir(id uuid.UUID) (string, error) {
@@ -2767,6 +2770,19 @@ func (f *fakeWorkspaceManager) RemoveInstanceDir(id uuid.UUID) error {
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, id)
 	return nil
+}
+
+// InstanceDirStats returns (0, 0, nil) for the fake — the engine's retain-
+// on-failure warning then no-ops because there's "nothing to retain". Tests
+// that want to assert the warning fires can override this via the
+// statsFn field below.
+func (f *fakeWorkspaceManager) InstanceDirStats(id uuid.UUID) (int64, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statsFn != nil {
+		return f.statsFn(id)
+	}
+	return 0, 0, nil
 }
 
 func (f *fakeWorkspaceManager) ensuredIDs() []uuid.UUID {

@@ -24,6 +24,12 @@ type WorkspaceManager interface {
 	// RemoveInstanceDir deletes an instance's working directory. Removing a
 	// directory that does not exist is not an error.
 	RemoveInstanceDir(instanceID uuid.UUID) error
+	// InstanceDirStats returns the cumulative byte size and file count of
+	// an instance directory, used by the engine to log sensitive-data
+	// retention when a workspace is kept past instance completion (SF9 /
+	// PR #8 security MEDIUM thread 3291941512). A missing directory
+	// returns (0, 0, nil).
+	InstanceDirStats(instanceID uuid.UUID) (bytes int64, files int, err error)
 }
 
 // LLMProvider abstracts large-language-model calls for use by LLM nodes.

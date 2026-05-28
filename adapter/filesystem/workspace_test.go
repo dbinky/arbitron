@@ -95,4 +95,33 @@ func TestWorkspaceManager(t *testing.T) {
 		require.NoError(t, err)
 		assert.NoError(t, wm.RemoveInstanceDir(uuid.New()))
 	})
+
+	t.Run("InstanceDirStats counts bytes and files recursively", func(t *testing.T) {
+		// SF9 / PR #8 thread 3291941512: engine uses these stats to emit a
+		// retain-on-failure warning showing how much agent-generated data
+		// is sitting on disk.
+		wm, err := NewWorkspaceManager(t.TempDir())
+		require.NoError(t, err)
+		id := uuid.New()
+		dir, err := wm.EnsureInstanceDir(id)
+		require.NoError(t, err)
+
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o600))
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("world!"), 0o600))
+
+		bytesTotal, files, err := wm.InstanceDirStats(id)
+		require.NoError(t, err)
+		assert.Equal(t, int64(11), bytesTotal) // 5 + 6
+		assert.Equal(t, 2, files)
+	})
+
+	t.Run("InstanceDirStats returns zeros for a missing dir", func(t *testing.T) {
+		wm, err := NewWorkspaceManager(t.TempDir())
+		require.NoError(t, err)
+		bytesTotal, files, err := wm.InstanceDirStats(uuid.New())
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), bytesTotal)
+		assert.Equal(t, 0, files)
+	})
 }
