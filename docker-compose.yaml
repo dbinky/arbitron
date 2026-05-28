@@ -6,15 +6,34 @@ services:
     volumes:
       - arbitron-data:/data
       - ./workspaces:/workspaces
+      - claude-config:/claude-config
+      - gh-config:/home/arbitron/.config/gh
+      # Bind-mount host ~/Repos so the in-container path matches the host's
+      # tilde-expanded path. Required by the pr-review workflow so cloned
+      # repos are reachable at the same ~/Repos/<owner>/<name> path the host
+      # uses.
+      - ${HOME}/Repos:/home/arbitron/Repos
     environment:
       - ARBITRON_DATABASE_PATH=/data/arbitron.db
       - ARBITRON_WORKSPACE_PATH=/workspaces
       - ARBITRON_LOGGING_FILE=/data/arbitron.log
       - ARBITRON_SERVER_HOST=0.0.0.0
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ARBITRON_LLM_PROVIDER=claude-cli
+      - ARBITRON_LLM_BINARYPATH=/usr/local/bin/claude
+      # SECURITY: skip-permissions is a CRITICAL knob (see PR #8 security
+      # thread 3291940088). Enabled here because the container is the security
+      # boundary in this test setup and the agent needs unattended tool
+      # execution. Do NOT carry this default to a multi-tenant production.
+      - ARBITRON_LLM_SKIPPERMISSIONS=true
+      # Persist claude's OAuth credentials in the claude-config named volume so
+      # `claude /login` only has to be run once. CLAUDE_CONFIG_DIR is on the
+      # subprocess env allowlist.
+      - CLAUDE_CONFIG_DIR=/claude-config
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
 
 volumes:
   arbitron-data:
+  claude-config:
+  gh-config:
