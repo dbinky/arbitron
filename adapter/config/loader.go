@@ -41,13 +41,14 @@ func defaults() map[string]interface{} {
 		// SECURITY: 256 MB per-request stdout cap; bounds the OOM DoS from
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
-		"llm.maxresponsebytes": int64(256 * 1024 * 1024),
-		"logging.level":        "info",
-		"logging.file":         "arbitron.log",
-		"tracing.enabled":      false,
-		"tracing.exportdir":    "./traces",
-		"queue.globalcap":      20,
-		"queue.perusercap":     5,
+		"llm.maxresponsebytes":  int64(256 * 1024 * 1024),
+		"logging.level":         "info",
+		"logging.file":          "arbitron.log",
+		"tracing.enabled":       false,
+		"tracing.exportdir":     "./traces",
+		"queue.globalcap":       20,
+		"queue.perusercap":      5,
+		"script.envpassthrough": []string{},
 	}
 }
 
@@ -143,6 +144,16 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		}
 	}
 
+	// ARBITRON_SCRIPT_ENVPASSTHROUGH arrives as a comma string via the env
+	// provider; overlay it as a real slice so it unmarshals into []string.
+	if raw := os.Getenv("ARBITRON_SCRIPT_ENVPASSTHROUGH"); raw != "" {
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"script.envpassthrough": splitCSV(raw),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading script.envpassthrough: %w", err)
+		}
+	}
+
 	// Unmarshal into the domain config struct.
 	var cfg domainconfig.Config
 	if err := k.Unmarshal("", &cfg); err != nil {
@@ -150,4 +161,15 @@ func Load(configPath string) (*domainconfig.Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// splitCSV splits a comma-separated list, trimming spaces and dropping empties.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

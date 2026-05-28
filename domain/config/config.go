@@ -10,6 +10,16 @@ type Config struct {
 	Logging   LoggingConfig
 	Tracing   TracingConfig
 	Queue     QueueConfig
+	Script    ScriptConfig
+}
+
+// ScriptConfig holds settings for script/tool_call process nodes.
+type ScriptConfig struct {
+	// EnvPassthrough lists engine-env variable NAMES (not values) that script
+	// and tool_call nodes may inherit, in addition to the base allowlist.
+	// SECURITY: secrets stay in the deploy environment; only names live here.
+	// Without this, a process node sees only the base allowlist.
+	EnvPassthrough []string
 }
 
 // QueueConfig holds queue management settings.
