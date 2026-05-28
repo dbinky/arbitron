@@ -131,7 +131,11 @@ func (p *Provider) validateWorkDir(workDir string) error {
 	return nil
 }
 
-// withTimeout derives a context honouring the provider timeout.
+// withTimeout derives a context honouring the provider timeout. Parent ctx
+// cancellation propagates regardless (context.WithTimeout derives from
+// parent), so callers don't need a separate cancel path for caller-side
+// shutdown — the no-op cancel returned when timeout <= 0 still gives a
+// uniform call shape at the call site. PR #8 thread 3291907737.
 func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if p.timeout <= 0 {
 		return ctx, func() {}
