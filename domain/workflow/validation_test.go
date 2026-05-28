@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -860,6 +861,24 @@ func TestValidateReservedInputName(t *testing.T) {
 		codes := extractCodes(errs)
 		assert.NotContains(t, codes, "RESERVED_INPUT_NAME")
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: NodeConfig JSON round-trip
+// ---------------------------------------------------------------------------
+
+func TestNodeConfig_EnvJSONRoundTrip(t *testing.T) {
+	in := workflow.NodeConfig{
+		ScriptFile: "run.sh",
+		Env:        map[string]string{"LLM_MODEL": "{{model}}"},
+	}
+	b, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"env":{"LLM_MODEL":"{{model}}"}`)
+
+	var out workflow.NodeConfig
+	require.NoError(t, json.Unmarshal(b, &out))
+	assert.Equal(t, "{{model}}", out.Env["LLM_MODEL"])
 }
 
 func TestValidateInteractive_BothFilesMissing(t *testing.T) {
