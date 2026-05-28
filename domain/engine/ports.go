@@ -32,35 +32,27 @@ type LLMProvider interface {
 	StreamCall(ctx context.Context, request LLMRequest) (<-chan LLMStreamChunk, error)
 }
 
-// LLMMessage represents a single message in a multi-turn LLM conversation.
-type LLMMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 // LLMRequest describes a single LLM invocation.
+//
+// History: the multi-turn Messages/Tools/LLMMessage/LLMTool/LLMToolUse types
+// were removed in the PR #8 cleanup (Should Fix #8 / thread 3291907744). The
+// current claude-cli provider does not consume them — resumed turns use
+// SessionID + a Prompt, not a Messages array — and the Anthropic Messages-API
+// adapter ships as a stub. Reintroduce only if/when a real Messages-API
+// adapter lands.
 type LLMRequest struct {
 	Model        string
 	SystemPrompt string
-	Prompt       string       // Single-turn prompt (used when Messages is empty).
-	Messages     []LLMMessage // Multi-turn conversation history (takes precedence over Prompt).
+	Prompt       string
 	MaxTokens    int
 	Temperature  float64
 	OutputSchema any
-	Tools        []LLMTool
 	// WorkDir is the working directory for subprocess-backed providers
 	// (e.g. claude-cli). Empty means the provider's default.
 	WorkDir string
 	// SessionID, when non-empty, resumes an existing provider session
 	// (claude-cli: `--resume`).
 	SessionID string
-}
-
-// LLMTool describes a tool definition passed to the LLM provider.
-type LLMTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	InputSchema any    `json:"input_schema"`
 }
 
 // LLMResponse holds the result of a non-streaming LLM call.
@@ -82,18 +74,9 @@ type LLMStreamChunk struct {
 	Error     error
 	TokensIn  int
 	TokensOut int
-	// ToolUse is set on the final chunk when the LLM invokes a tool instead
-	// of producing a plain-text response.
-	ToolUse *LLMToolUse
 	// SessionID is set on the terminal chunk for providers with session
 	// support, so callers can persist it for resumption.
 	SessionID string
-}
-
-// LLMToolUse describes a tool invocation detected in a streaming response.
-type LLMToolUse struct {
-	Name  string         `json:"name"`
-	Input map[string]any `json:"input"`
 }
 
 // QueueManager defines the queue operations the engine needs.

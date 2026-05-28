@@ -254,14 +254,9 @@ func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
 	// Verify temperature
 	assert.Equal(t, 0.7, req.Temperature)
 
-	// The reworked executor sends no tools — claude-cli has no injectable tools.
-	assert.Empty(t, req.Tools)
-
-	// The initial interactive call must use Prompt, not Messages.
-	// LLMRequest documents that Messages takes precedence over Prompt — an
-	// accidental non-nil Messages would silently override the Prompt and send
-	// an unexpected conversation history to the LLM on the first turn.
-	assert.Empty(t, req.Messages, "initial interactive call must use Prompt, not Messages")
+	// SF8 / PR #8 thread 3291907744: Tools and Messages were removed from
+	// LLMRequest. The initial interactive call uses Prompt; the dead
+	// invariants are no longer expressible.
 }
 
 func TestInteractiveExecutor_PublishesTokenEvents(t *testing.T) {
@@ -602,11 +597,10 @@ func TestInteractiveExecutor_CapturesSessionIDAndWorkDir(t *testing.T) {
 	_, err := executor.Execute(ctx, interactiveNode(), vars, "test-wf")
 	require.NoError(t, err)
 
-	// WorkDir flows from the seeded {{workspace}} variable; no tools; sentinel present.
+	// WorkDir flows from the seeded {{workspace}} variable; sentinel present.
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
 	assert.Equal(t, "/tmp/ws", reqs[0].WorkDir)
-	assert.Empty(t, reqs[0].Tools)
 	assert.Contains(t, reqs[0].Prompt, "<arbitron:result:")
 
 	// Session id is persisted under LLMConversation["sessionId"] for resumption.
@@ -670,7 +664,8 @@ func TestInteractiveExecutor_NoOutputSchema_NoTools(t *testing.T) {
 
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
-	assert.Empty(t, reqs[0].Tools)
+	// SF8: Tools field removed; no assertion needed.
+	_ = reqs[0]
 }
 
 func TestInteractiveExecutor_NoNotificationDeps_DoesNotPanic(t *testing.T) {

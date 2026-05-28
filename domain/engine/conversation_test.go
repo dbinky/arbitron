@@ -242,10 +242,10 @@ func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 	req := reqs[0]
 
 	assert.Equal(t, "You are a helpful assistant.", req.SystemPrompt)
-	// Resumed turns send only the new user message via Prompt — no history, no tools.
-	assert.Empty(t, req.Messages, "resumed turns must use Prompt, not Messages")
+	// SF8 / PR #8 thread 3291907744: Messages and Tools were removed from
+	// LLMRequest. Resumed turns use Prompt; the dead invariants are no
+	// longer expressible.
 	assert.Equal(t, "New question", req.Prompt)
-	assert.Empty(t, req.Tools, "claude-cli has no injectable tools")
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
 }
 
@@ -681,7 +681,7 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
-	assert.Empty(t, reqs[0].Messages)
+	// SF8: Messages field removed; assertion no longer expressible.
 	assert.Equal(t, "Hello from scratch", reqs[0].Prompt)
 	assert.Empty(t, reqs[0].SessionID, "no stored session id yet")
 
@@ -716,7 +716,7 @@ func TestConversationHandler_HandleMessage_ResumesViaStoredSessionID(t *testing.
 	require.Len(t, reqs, 1)
 	assert.Equal(t, "s-prev", reqs[0].SessionID)
 	assert.Equal(t, "next message", reqs[0].Prompt)
-	assert.Empty(t, reqs[0].Messages)
+	// SF8: Messages field removed.
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
 	require.NoError(t, err)

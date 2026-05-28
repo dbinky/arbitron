@@ -37,7 +37,7 @@ func TestProvider_Call_NonEmptyKey_ReturnsStubError(t *testing.T) {
 
 func TestProvider_StreamCall_NonEmptyKey_ReturnsStubError(t *testing.T) {
 	p := anthropic.New("sk-test-key")
-	_, err := p.StreamCall(context.Background(), engine.LLMRequest{Messages: []engine.LLMMessage{{Role: "user", Content: "hi"}}})
+	_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "hi"})
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, anthropic.ErrNotConfigured), "stub error must not be ErrNotConfigured")
 }
