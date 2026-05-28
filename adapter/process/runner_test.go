@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -61,4 +62,26 @@ func TestRun_PassesStdin(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Contains(t, res.Stdout, "piped")
+}
+
+func TestRun_Dir(t *testing.T) {
+	skipWin(t)
+	dir := t.TempDir()
+	res, err := run(context.Background(), commandSpec{
+		Name: "/bin/sh", Args: []string{"-c", "pwd"}, Dir: dir,
+	})
+	require.NoError(t, err)
+	// On macOS the /tmp <-> /private/tmp symlink means pwd and t.TempDir() may
+	// disagree on the absolute path prefix. The unique basename is stable in
+	// either direction, so assert on that to keep the test reliable.
+	assert.Contains(t, res.Stdout, filepath.Base(dir))
+}
+
+func TestRun_AlreadyCancelledCtxIsRunError(t *testing.T) {
+	skipWin(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := run(ctx, commandSpec{Name: "/bin/sh", Args: []string{"-c", "echo hi"}})
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }
