@@ -80,7 +80,10 @@ func conversationTestSetup(t *testing.T) (
 	instRepo.mu.Unlock()
 
 	// Create an initial node execution record with conversation history.
+	// The nonce mirrors what InteractiveExecutor would have persisted on the
+	// first turn; ConversationHandler reads it to scope sentinel parsing.
 	initialConversation := map[string]any{
+		"nonce": testNonce,
 		"messages": []map[string]any{
 			{"role": "user", "content": "Initial orchestration prompt"},
 			{"role": "assistant", "content": "Hello! How can I help you?"},
@@ -250,12 +253,19 @@ func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 // HandleMessage Tests: Session completion (tool call)
 // ---------------------------------------------------------------------------
 
+// testNonce is the per-instance sentinel nonce used across conversation
+// handler tests. Must match the value seeded into LLMConversation by
+// conversationTestSetup so the handler accepts the sentinel block.
+const testNonce = "test-nonce-fixed"
+
 // cannedSentinelStream emits a response whose text contains a completion
-// sentinel block carrying result, plus a Done chunk with a session id.
+// sentinel block carrying result, plus a Done chunk with a session id. The
+// sentinel uses testNonce so the conversation handler (which reads the nonce
+// from LLMConversation["nonce"]) accepts it.
 func cannedSentinelStream(prefix string, result map[string]any, sessionID string) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
 	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
 		payload, _ := json.Marshal(result)
-		body := prefix + engine.InteractiveResultSentinelOpen + string(payload) + engine.InteractiveResultSentinelClose
+		body := prefix + engine.SentinelOpenTag(testNonce) + string(payload) + engine.SentinelCloseTag(testNonce)
 		ch := make(chan engine.LLMStreamChunk, 2)
 		ch <- engine.LLMStreamChunk{Token: body}
 		ch <- engine.LLMStreamChunk{Done: true, SessionID: sessionID}

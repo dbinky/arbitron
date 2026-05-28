@@ -442,9 +442,9 @@ func TestInteractiveExecutor_UserMessageCombinesOrchestrationAndTemplate(t *test
 	require.Len(t, reqs, 1)
 
 	// User message = orchestration + "\n\n" + resolved template, followed by
-	// the completion-sentinel instruction.
+	// the completion-sentinel instruction (with per-instance nonce).
 	assert.Contains(t, reqs[0].Prompt, "Step 1: Do this\nStep 2: Do that\n\nName: Bob\nAge: 30")
-	assert.Contains(t, reqs[0].Prompt, engine.InteractiveResultSentinelOpen)
+	assert.Contains(t, reqs[0].Prompt, "<arbitron:result:")
 }
 
 // ---------------------------------------------------------------------------
@@ -605,7 +605,7 @@ func TestInteractiveExecutor_CapturesSessionIDAndWorkDir(t *testing.T) {
 	require.Len(t, reqs, 1)
 	assert.Equal(t, "/tmp/ws", reqs[0].WorkDir)
 	assert.Empty(t, reqs[0].Tools)
-	assert.Contains(t, reqs[0].Prompt, engine.InteractiveResultSentinelOpen)
+	assert.Contains(t, reqs[0].Prompt, "<arbitron:result:")
 
 	// Session id is persisted under LLMConversation["sessionId"] for resumption.
 	execs, _ := nodeExecRepo.ListByInstance(context.Background(), instanceID)

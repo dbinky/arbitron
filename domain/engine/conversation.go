@@ -120,10 +120,21 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		persistSessionID = req.SessionID
 	}
 
-	// 8. Detect completion via the result sentinel.
-	sentinelOutput, completed, sentErr := extractSentinelResult(fullResponse)
-	if sentErr != nil {
-		return sentErr
+	// 8. Detect completion via the result sentinel, scoped to the per-instance
+	// nonce persisted by InteractiveExecutor. If the conversation was never
+	// initialised by the executor (e.g. crash recovery where the instance was
+	// set to waiting before the executor wrote its record), no nonce is
+	// available and sentinel completion cannot be detected on this turn — the
+	// session continues as a normal response. EndSession remains the
+	// operator-side escape hatch.
+	var sentinelOutput map[string]any
+	var completed bool
+	if nonce := conversationNonce(nodeExec.LLMConversation); nonce != "" {
+		var sentErr error
+		sentinelOutput, completed, sentErr = extractSentinelResult(fullResponse, nonce)
+		if sentErr != nil {
+			return sentErr
+		}
 	}
 
 	// 9. Append the assistant message.
@@ -328,6 +339,19 @@ func conversationSessionID(conv map[string]any) string {
 	return id
 }
 
+// conversationNonce extracts the per-instance sentinel nonce persisted by
+// InteractiveExecutor on the first turn. Empty when the conversation was
+// created before the nonce was introduced — extractSentinelResult will refuse
+// to parse an empty-nonce sentinel block, so the worst case is a session that
+// cannot be completed via the sentinel and must be ended by the operator.
+func conversationNonce(conv map[string]any) string {
+	if conv == nil {
+		return ""
+	}
+	n, _ := conv["nonce"].(string)
+	return n
+}
+
 // parseConversation extracts the messages array from an LLM conversation map.
 func parseConversation(conv map[string]any) []map[string]any {
 	if conv == nil {
@@ -370,9 +394,12 @@ func (h *conversationHandler) handleSessionCompletion(
 	output map[string]any,
 ) error {
 	// 1. Persist the conversation (assistant message already appended by the
-	//    caller) with the refreshed session id.
+	//    caller) with the refreshed session id. Carry the nonce forward so
+	//    subsequent turns continue to scope sentinel parsing.
+	nonce := conversationNonce(nodeExec.LLMConversation)
 	nodeExec.LLMConversation = map[string]any{
 		"sessionId": sessionID,
+		"nonce":     nonce,
 		"messages":  messages,
 	}
 
@@ -404,9 +431,12 @@ func (h *conversationHandler) handleNormalResponse(
 	sessionID string,
 	fullResponse string,
 ) error {
-	// 1. Persist the conversation with the refreshed session id.
+	// 1. Persist the conversation with the refreshed session id. Carry the
+	//    nonce forward so subsequent turns continue to scope sentinel parsing.
+	nonce := conversationNonce(nodeExec.LLMConversation)
 	nodeExec.LLMConversation = map[string]any{
 		"sessionId": sessionID,
+		"nonce":     nonce,
 		"messages":  messages,
 	}
 

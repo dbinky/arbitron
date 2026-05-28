@@ -87,11 +87,17 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// 6. Compose the LLM request. The completion-sentinel instruction is
 	// appended to the prompt instead of injecting a complete_session tool, and
 	// the working directory is read from the {{workspace}} variable.
+	//
+	// SECURITY: generate a per-instance unguessable sentinel nonce. This
+	// scopes sentinel parsing so an attacker cannot stage a file whose
+	// contents look like a completed session and have the agent echo it
+	// back. PR #8 security HIGH thread 3291943275.
+	nonce := uuid.NewString()
 	workDir, _ := vars.Get("workspace")
 	workDirStr, _ := workDir.(string)
 
 	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
-		sentinelInstruction(node.Config.OutputSchema)
+		sentinelInstruction(nonce, node.Config.OutputSchema)
 
 	req := LLMRequest{
 		SystemPrompt: node.Config.SystemPrompt,
@@ -140,9 +146,12 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	fullResponse := responseBuilder.String()
 
-	// 9. Build the initial conversation array.
+	// 9. Build the initial conversation array. The nonce is persisted so
+	// resumed turns (ConversationHandler.HandleMessage) can scope their
+	// sentinel parsing to the same per-instance value.
 	conversation := map[string]any{
 		"sessionId": sessionID,
+		"nonce":     nonce,
 		"messages": []map[string]any{
 			{"role": "user", "content": userMessage},
 			{"role": "assistant", "content": fullResponse},
