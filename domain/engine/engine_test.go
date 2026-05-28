@@ -2739,3 +2739,157 @@ func TestEngine_ExternalNotifier_NotificationHasNonZeroCreatedAt(t *testing.T) {
 	n := waitForExternalNotification(t, ext, notification.TypeCompleted, 2*time.Second)
 	assert.False(t, n.CreatedAt.IsZero(), "notification.CreatedAt must not be zero when forwarded to external notifier")
 }
+
+// ---------------------------------------------------------------------------
+// Tests: Workspace lifecycle
+// ---------------------------------------------------------------------------
+
+// fakeWorkspaceManager records workspace lifecycle calls.
+type fakeWorkspaceManager struct {
+	mu        sync.Mutex
+	ensured   []uuid.UUID
+	removed   []uuid.UUID
+	ensureErr error
+	// statsFn overrides the default (0, 0, nil) InstanceDirStats response
+	// so tests can simulate a retain-on-failure workspace with content.
+	statsFn func(uuid.UUID) (int64, int, error)
+}
+
+func (f *fakeWorkspaceManager) EnsureInstanceDir(id uuid.UUID) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensured = append(f.ensured, id)
+	if f.ensureErr != nil {
+		return "", f.ensureErr
+	}
+	return "/tmp/arbitron-test-ws/" + id.String(), nil
+}
+
+func (f *fakeWorkspaceManager) RemoveInstanceDir(id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removed = append(f.removed, id)
+	return nil
+}
+
+// InstanceDirStats returns (0, 0, nil) for the fake — the engine's retain-
+// on-failure warning then no-ops because there's "nothing to retain". Tests
+// that want to assert the warning fires can override this via the
+// statsFn field below.
+func (f *fakeWorkspaceManager) InstanceDirStats(id uuid.UUID) (int64, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statsFn != nil {
+		return f.statsFn(id)
+	}
+	return 0, 0, nil
+}
+
+func (f *fakeWorkspaceManager) ensuredIDs() []uuid.UUID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make([]uuid.UUID, len(f.ensured))
+	copy(cp, f.ensured)
+	return cp
+}
+
+func (f *fakeWorkspaceManager) removedIDs() []uuid.UUID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make([]uuid.UUID, len(f.removed))
+	copy(cp, f.removed)
+	return cp
+}
+
+func TestEngine_WorkspaceLifecycle_RemovedOnSuccess(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{}
+	f.engine.SetWorkspaceManager(fwm)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.StateCompleted, inst.State)
+
+	assert.Equal(t, []uuid.UUID{id}, fwm.ensuredIDs())
+	assert.Equal(t, []uuid.UUID{id}, fwm.removedIDs())
+}
+
+func TestEngine_WorkspaceLifecycle_KeptOnFailure(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{}
+	f.engine.SetWorkspaceManager(fwm)
+
+	// Force node A to fail so the instance reaches StateFailed.
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("forced node failure")
+	})
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	assert.Equal(t, []uuid.UUID{id}, fwm.ensuredIDs(), "workspace must be created")
+	assert.Empty(t, fwm.removedIDs(), "workspace must be kept on failure")
+}
+
+func TestEngine_WorkspaceSeededAsVariable(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{}
+	f.engine.SetWorkspaceManager(fwm)
+
+	var seenWorkspace any
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, vars *variable.VariableStore) (*engine.NodeResult, error) {
+		seenWorkspace, _ = vars.Get("workspace")
+		return &engine.NodeResult{}, nil
+	})
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), seenWorkspace)
+}
+
+func TestEngine_WorkspaceEnsureFailure_FailsInstance(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{ensureErr: fmt.Errorf("disk full")}
+	f.engine.SetWorkspaceManager(fwm)
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+	assert.Equal(t, instance.StateFailed, inst.State)
+	assert.Empty(t, f.executor.getCalls(), "no nodes should run when workspace creation fails")
+}
+
+func TestEngine_WorkspacePersistedBeforeNodes(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+	fwm := &fakeWorkspaceManager{}
+	f.engine.SetWorkspaceManager(fwm)
+
+	var persistedWorkspace any
+	f.executor.onNode("A", func(ctx context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		id, _ := engine.InstanceIDFromContext(ctx)
+		inst, _ := f.instanceRepo.Get(ctx, id)
+		if inst != nil {
+			persistedWorkspace = inst.Variables["workspace"]
+		}
+		return &engine.NodeResult{}, nil
+	})
+
+	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), persistedWorkspace,
+		"workspace must be persisted to inst.Variables before the first node runs")
+}

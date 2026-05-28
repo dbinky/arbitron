@@ -322,3 +322,41 @@ queue:
 	assert.Equal(t, 100, cfg.Queue.GlobalCap, "YAML globalcap must override default 20")
 	assert.Equal(t, 25, cfg.Queue.PerUserCap, "YAML perusercap must override default 5")
 }
+
+func TestLoadClaudeCLIDefaults(t *testing.T) {
+	t.Run("claude-cli config fields have safe defaults", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		// SECURITY: default timeout is 1800 (30 min), NOT 0 (unbounded).
+		// PR #8 security thread 3291944120.
+		assert.Equal(t, 1800, cfg.LLM.TimeoutSeconds)
+		assert.Equal(t, "", cfg.LLM.BinaryPath) // default: auto-resolve
+		assert.Equal(t, "", cfg.LLM.Model)      // default: provider default
+		// SECURITY: skip-permissions defaults to false. Thread 3291940088.
+		assert.False(t, cfg.LLM.SkipPermissions)
+		assert.Empty(t, cfg.LLM.AllowedTools)
+		// SECURITY: 256 MB per-request stdout cap. Thread 3291941918.
+		assert.Equal(t, int64(256*1024*1024), cfg.LLM.MaxResponseBytes)
+	})
+
+	t.Run("YAML can override claude-cli policy fields", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+llm:
+  skippermissions: true
+  allowedtools:
+    - "Read"
+    - "Bash(git status:*)"
+  maxresponsebytes: 1048576
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		assert.True(t, cfg.LLM.SkipPermissions)
+		assert.Equal(t, []string{"Read", "Bash(git status:*)"}, cfg.LLM.AllowedTools)
+		assert.Equal(t, int64(1048576), cfg.LLM.MaxResponseBytes)
+	})
+}

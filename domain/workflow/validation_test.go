@@ -842,6 +842,26 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
 }
 
+func TestValidateReservedInputName(t *testing.T) {
+	t.Run("input named workspace is rejected", func(t *testing.T) {
+		wf := minimalValidWorkflow()
+		wf.Inputs = []workflow.InputField{{Name: "workspace", Type: "string"}}
+
+		errs := workflow.Validate(wf, nil)
+		codes := extractCodes(errs)
+		assert.Contains(t, codes, "RESERVED_INPUT_NAME")
+	})
+
+	t.Run("non-reserved input names are accepted", func(t *testing.T) {
+		wf := minimalValidWorkflow()
+		wf.Inputs = []workflow.InputField{{Name: "prNumber", Type: "string"}}
+
+		errs := workflow.Validate(wf, nil)
+		codes := extractCodes(errs)
+		assert.NotContains(t, codes, "RESERVED_INPUT_NAME")
+	})
+}
+
 func TestValidateInteractive_BothFilesMissing(t *testing.T) {
 	// Boundary: both TemplateFile and OrchestrationFile reference nonexistent
 	// files. Validation must report MISSING_FILE for each independently — the

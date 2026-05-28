@@ -59,16 +59,15 @@ func NewConversationHandler(
 }
 
 // HandleMessage processes a user message in an active interactive session.
-// It loads the instance and node execution, appends the user message to the
-// conversation, calls the LLM with the full history, streams the response,
-// and handles tool calls for session completion.
+// It loads the instance and node execution, resumes the stored claude session
+// (sending only the new user message), streams the response, and detects
+// session completion via the result sentinel block.
 func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error {
 	// 1. Load and validate instance state.
 	inst, nodeID, nodeConfig, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
 		return err
 	}
-	_ = inst // used for variable updates on completion
 
 	// 2. Load node execution record.
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
@@ -95,51 +94,59 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		},
 	})
 
-	// 6. Build the complete_session tool from output schema.
-	var tools []LLMTool
-	if nodeConfig.OutputSchema != nil {
-		tools = append(tools, LLMTool{
-			Name:        InteractiveCompletionToolName,
-			Description: InteractiveCompletionToolDescription,
-			InputSchema: nodeConfig.OutputSchema,
-		})
-	}
-
-	// 7. Build the LLM request with full conversation history.
-	llmMessages := make([]LLMMessage, len(messages))
-	for i, msg := range messages {
-		role, _ := msg["role"].(string)
-		msgContent, _ := msg["content"].(string)
-		llmMessages[i] = LLMMessage{Role: role, Content: msgContent}
-	}
-
+	// 6. Build the request: resume the stored session, send only the new
+	//    user message. WorkDir comes from the instance's seeded workspace.
+	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
 	req := LLMRequest{
 		SystemPrompt: nodeConfig.SystemPrompt,
-		Messages:     llmMessages,
+		Prompt:       content,
 		Model:        nodeConfig.Model,
-		MaxTokens:    nodeConfig.MaxTokens,
-		Temperature:  nodeConfig.Temperature,
-		Tools:        tools,
+		SessionID:    SessionID(nodeExec.LLMConversation),
+		WorkDir:      workDir,
 	}
 
-	// 8. Call the LLM provider with streaming.
-	fullResponse, toolUse, err := h.streamLLMResponse(ctx, instanceID, req)
+	// 7. Call the provider with streaming.
+	fullResponse, newSessionID, err := h.streamLLMResponse(ctx, instanceID, req)
 	if err != nil {
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
 		return err
 	}
 
-	// 9. Persist the user message and LLM response together (atomic from the
-	// conversation's perspective -- both are written in a single Update call).
-
-	// 10. Handle the response based on whether a tool was called.
-	if toolUse != nil && toolUse.Name == InteractiveCompletionToolName {
-		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, fullResponse, toolUse.Input)
+	// claude returns a session id on each turn; if the stream did not carry
+	// one, keep the existing id so the next turn can still resume.
+	persistSessionID := newSessionID
+	if persistSessionID == "" {
+		persistSessionID = req.SessionID
 	}
 
-	// Normal response: append assistant message and persist.
-	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, fullResponse)
+	// 8. Detect completion via the result sentinel, scoped to the per-instance
+	// nonce persisted by InteractiveExecutor. If the conversation was never
+	// initialised by the executor (e.g. crash recovery where the instance was
+	// set to waiting before the executor wrote its record), no nonce is
+	// available and sentinel completion cannot be detected on this turn — the
+	// session continues as a normal response. EndSession remains the
+	// operator-side escape hatch.
+	var sentinelOutput map[string]any
+	var completed bool
+	if nonce := conversationNonce(nodeExec.LLMConversation); nonce != "" {
+		var sentErr error
+		sentinelOutput, completed, sentErr = extractSentinelResult(fullResponse, nonce)
+		if sentErr != nil {
+			return sentErr
+		}
+	}
+
+	// 9. Append the assistant message.
+	messages = append(messages, map[string]any{
+		"role":    "assistant",
+		"content": fullResponse,
+	})
+
+	if completed {
+		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput)
+	}
+	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse)
 }
 
 // EndSession handles user-initiated session termination. It captures existing
@@ -225,26 +232,22 @@ func (h *conversationHandler) completeSession(
 
 // streamLLMResponse calls the LLM with streaming and consumes the stream,
 // publishing token events along the way. Returns the full response text and
-// any tool use detected. Used by both HandleMessage and can be shared with
-// InteractiveExecutor if needed in the future.
+// the provider session id (for resumption) from the terminal chunk.
 func (h *conversationHandler) streamLLMResponse(
 	ctx context.Context,
 	instanceID uuid.UUID,
 	req LLMRequest,
-) (string, *LLMToolUse, error) {
+) (response string, sessionID string, err error) {
 	stream, err := h.llmProvider.StreamCall(ctx, req)
 	if err != nil {
-		return "", nil, fmt.Errorf("conversation: stream call: %w", err)
+		return "", "", fmt.Errorf("conversation: stream call: %w", err)
 	}
 
 	var responseBuilder strings.Builder
-	var toolUse *LLMToolUse
-
 	for chunk := range stream {
 		if chunk.Error != nil {
-			return "", nil, fmt.Errorf("conversation: stream error: %w", chunk.Error)
+			return "", "", fmt.Errorf("conversation: stream error: %w", chunk.Error)
 		}
-
 		if chunk.Token != "" {
 			responseBuilder.WriteString(chunk.Token)
 			h.eventBus.Publish(instanceID, Event{
@@ -253,17 +256,14 @@ func (h *conversationHandler) streamLLMResponse(
 				Data:      map[string]any{"token": chunk.Token},
 			})
 		}
-
-		if chunk.ToolUse != nil {
-			toolUse = chunk.ToolUse
+		if chunk.SessionID != "" {
+			sessionID = chunk.SessionID
 		}
-
 		if chunk.Done {
 			break
 		}
 	}
-
-	return responseBuilder.String(), toolUse, nil
+	return responseBuilder.String(), sessionID, nil
 }
 
 // loadAndValidate loads an instance and verifies it is in the waiting state
@@ -330,13 +330,26 @@ func FindNodeByID(snapshot map[string]any, nodeID string) (*workflow.Node, error
 	return nil, fmt.Errorf("node %s not found in workflow snapshot", nodeID)
 }
 
+// conversationNonce extracts the per-instance sentinel nonce persisted by
+// InteractiveExecutor on the first turn. Empty when the conversation was
+// created before the nonce was introduced — extractSentinelResult will refuse
+// to parse an empty-nonce sentinel block, so the worst case is a session that
+// cannot be completed via the sentinel and must be ended by the operator.
+func conversationNonce(conv map[string]any) string {
+	if conv == nil {
+		return ""
+	}
+	n, _ := conv[ConversationKeyNonce].(string)
+	return n
+}
+
 // parseConversation extracts the messages array from an LLM conversation map.
 func parseConversation(conv map[string]any) []map[string]any {
 	if conv == nil {
 		return nil
 	}
 
-	rawMessages, ok := conv["messages"]
+	rawMessages, ok := conv[ConversationKeyMessages]
 	if !ok {
 		return nil
 	}
@@ -360,25 +373,29 @@ func parseConversation(conv map[string]any) []map[string]any {
 	}
 }
 
-// handleSessionCompletion processes a complete_session tool call from the LLM.
+// handleSessionCompletion processes a session completion signalled by the
+// result sentinel block in the LLM response.
 func (h *conversationHandler) handleSessionCompletion(
 	ctx context.Context,
 	instanceID uuid.UUID,
 	nodeID string,
 	nodeExec *instance.NodeExecution,
 	messages []map[string]any,
-	assistantContent string,
-	toolInput map[string]any,
+	sessionID string,
+	output map[string]any,
 ) error {
-	// 1. Append assistant message (with tool call content) to conversation.
-	messages = append(messages, map[string]any{
-		"role":    "assistant",
-		"content": assistantContent,
-	})
-	nodeExec.LLMConversation = map[string]any{"messages": messages}
+	// 1. Persist the conversation (assistant message already appended by the
+	//    caller) with the refreshed session id. Carry the nonce forward so
+	//    subsequent turns continue to scope sentinel parsing.
+	nonce := conversationNonce(nodeExec.LLMConversation)
+	nodeExec.LLMConversation = map[string]any{
+		ConversationKeySessionID: sessionID,
+		ConversationKeyNonce:     nonce,
+		ConversationKeyMessages:  messages,
+	}
 
 	// 2. Store structured output on node execution.
-	nodeExec.Output = toolInput
+	nodeExec.Output = output
 
 	// 3. Persist node execution.
 	if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
@@ -392,24 +409,27 @@ func (h *conversationHandler) handleSessionCompletion(
 	}
 
 	// 5. Complete the session (shared steps).
-	return h.completeSession(ctx, inst, instanceID, nodeID, toolInput, "llm_completed")
+	return h.completeSession(ctx, inst, instanceID, nodeID, output, "llm_completed")
 }
 
-// handleNormalResponse appends the assistant's text response to the conversation
-// and persists it.
+// handleNormalResponse persists the assistant's text response to the
+// conversation (already appended by the caller) with the refreshed session id.
 func (h *conversationHandler) handleNormalResponse(
 	ctx context.Context,
 	instanceID uuid.UUID,
 	nodeExec *instance.NodeExecution,
 	messages []map[string]any,
+	sessionID string,
 	fullResponse string,
 ) error {
-	// 1. Append assistant message.
-	messages = append(messages, map[string]any{
-		"role":    "assistant",
-		"content": fullResponse,
-	})
-	nodeExec.LLMConversation = map[string]any{"messages": messages}
+	// 1. Persist the conversation with the refreshed session id. Carry the
+	//    nonce forward so subsequent turns continue to scope sentinel parsing.
+	nonce := conversationNonce(nodeExec.LLMConversation)
+	nodeExec.LLMConversation = map[string]any{
+		ConversationKeySessionID: sessionID,
+		ConversationKeyNonce:     nonce,
+		ConversationKeyMessages:  messages,
+	}
 
 	// 2. Persist.
 	if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {

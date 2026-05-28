@@ -141,17 +141,42 @@ func TestGetFallsBackToNodeOutputs(t *testing.T) {
 
 func TestSetInput(t *testing.T) {
 	store := NewStore()
-	store.SetInput("key", "value1")
+	require.NoError(t, store.SetInput("key", "value1"))
 
 	val, ok := store.Get("key")
 	assert.True(t, ok)
 	assert.Equal(t, "value1", val)
 
 	// Overwrite
-	store.SetInput("key", "value2")
+	require.NoError(t, store.SetInput("key", "value2"))
 	val, ok = store.Get("key")
 	assert.True(t, ok)
 	assert.Equal(t, "value2", val)
+}
+
+func TestSetInput_RejectsReservedNames(t *testing.T) {
+	// SECURITY SF12 / PR #8 thread 3291944671 fix #3: workspace is engine-
+	// seeded; runtime callers (transform nodes, API edits) must not rewrite it.
+	store := NewStore()
+	store.SetReserved("workspace", "/seeded/path")
+
+	err := store.SetInput("workspace", "/etc")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReservedInputName)
+
+	// Original value must be preserved.
+	val, ok := store.Get("workspace")
+	require.True(t, ok)
+	assert.Equal(t, "/seeded/path", val)
+}
+
+func TestSetReserved_BypassesReservedNameCheck(t *testing.T) {
+	store := NewStore()
+	// SetReserved is the engine-seeding path; no error, no check.
+	store.SetReserved("workspace", "/from/engine")
+	val, ok := store.Get("workspace")
+	require.True(t, ok)
+	assert.Equal(t, "/from/engine", val)
 }
 
 func TestSetNodeOutput(t *testing.T) {

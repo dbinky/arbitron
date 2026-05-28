@@ -28,9 +28,10 @@ type Engine struct {
 	queueManager    QueueManager
 	queueRepo       instance.QueueRepository
 	scheduler       TimerScheduler
-	webhookRegistry WebhookRegistrar
+	webhookRegistry  WebhookRegistrar
 	notifications    notification.Repository
 	externalNotifier notification.ExternalNotifier
+	workspaceManager WorkspaceManager
 	mu               sync.Mutex
 	contexts        map[uuid.UUID]context.CancelFunc
 	wg              sync.WaitGroup
@@ -84,6 +85,12 @@ func (e *Engine) SetExternalNotifier(n notification.ExternalNotifier) {
 	e.externalNotifier = n
 }
 
+// SetWorkspaceManager wires the per-instance workspace manager. When unset,
+// workspace directories are not created and {{workspace}} is not seeded.
+func (e *Engine) SetWorkspaceManager(wm WorkspaceManager) {
+	e.workspaceManager = wm
+}
+
 // edgeTarget describes a destination from a graph edge.
 type edgeTarget struct {
 	nodeID     string
@@ -111,17 +118,26 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 				return uuid.Nil, false, fmt.Errorf("missing required input: %s", inp.Name)
 			}
 			if inp.Default != nil {
-				vars.SetInput(inp.Name, inp.Default)
+				if err := vars.SetInput(inp.Name, inp.Default); err != nil {
+					return uuid.Nil, false, fmt.Errorf("seed input default %q: %w", inp.Name, err)
+				}
 			}
 		} else {
-			vars.SetInput(inp.Name, val)
+			if err := vars.SetInput(inp.Name, val); err != nil {
+				return uuid.Nil, false, fmt.Errorf("seed input %q: %w", inp.Name, err)
+			}
 		}
 	}
 
 	// Also set any extra variables that don't match input definitions.
+	// SECURITY: this path accepts arbitrary caller-supplied keys; SetInput's
+	// reserved-name guard prevents writing to engine-seeded variables like
+	// "workspace".
 	for k, v := range variables {
 		if _, exists := vars.Get(k); !exists {
-			vars.SetInput(k, v)
+			if err := vars.SetInput(k, v); err != nil {
+				return uuid.Nil, false, fmt.Errorf("seed extra variable %q: %w", k, err)
+			}
 		}
 	}
 
@@ -283,6 +299,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 	vars := variable.FromSnapshotWithNodeIDs(inst.Variables, nodeIDs)
 
+	if e.workspaceManager != nil {
+		if !e.prepareWorkspace(ctx, instanceID, currentNodeID, vars) {
+			return
+		}
+	}
+
 	for currentNodeID != "" {
 		// TODO(race): There is a TOCTOU race between Pause() writing StatePaused
 		// and this loop reading the fresh state. If the pause arrives between Get()
@@ -363,8 +385,14 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// All nodes executed successfully.
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
+		// Persistence failed: keep the workspace for debugging/retry. Log
+		// the retention with size/file-count so the operator can see how
+		// much sensitive data is sitting on disk.
+		e.warnWorkspaceRetained(instanceID, "set_completed_failed")
 	} else {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
+		// Workspace is removed only after SetCompleted succeeds.
+		e.cleanupWorkspace(instanceID)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInstanceCompleted,
@@ -375,11 +403,16 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 // failInstance marks an instance as failed and logs errors. It consolidates
 // the repeated SetFailed + slog.Error pattern used throughout the run loop.
 // It returns true if the state change succeeded, false otherwise.
+//
+// SF9: on success, the workspace is intentionally NOT removed (retain on
+// failure for debugging); a slog.Warn with size/file-count is emitted so the
+// sensitive-data-retention surface is visible to operators.
 func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
 	if err := e.instances.SetFailed(ctx, instanceID, nodeID); err != nil {
 		slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
 		return false
 	}
+	e.warnWorkspaceRetained(instanceID, "instance_failed")
 	return true
 }
 

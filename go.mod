@@ -16,6 +16,7 @@ require (
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0
+	go.uber.org/goleak v1.3.0
 	modernc.org/sqlite v1.50.1
 	nhooyr.io/websocket v1.8.17
 )

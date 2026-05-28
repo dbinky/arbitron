@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arbitron/arbitron/adapter/anthropic"
+	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
@@ -192,8 +193,31 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
 
-	// 7. Create Anthropic LLM provider.
-	llmProvider := anthropic.New(cfg.LLM.APIKey)
+	// 7. Create the LLM provider based on config.
+	var llmProvider engine.LLMProvider
+	switch cfg.LLM.Provider {
+	case "claude-cli":
+		// SECURITY: WorkspaceRoot is the absolute workspace path; the provider
+		// uses it to pin every per-request WorkDir under this subtree.
+		wsRoot, err := filepath.Abs(cfg.Workspace.Path)
+		if err != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("resolving workspace path: %w", err)
+		}
+		llmProvider = claudecli.New(claudecli.Config{
+			BinaryPath:       cfg.LLM.BinaryPath,
+			DefaultModel:     cfg.LLM.Model,
+			WorkspaceRoot:    wsRoot,
+			Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+			AllowedTools:     cfg.LLM.AllowedTools,
+			SkipPermissions:  cfg.LLM.SkipPermissions,
+			MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+			Runner:           nil, // production os/exec runner
+		})
+	default:
+		llmProvider = anthropic.New(cfg.LLM.APIKey)
+	}
 
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
@@ -222,6 +246,15 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		nil, // queueManager set below after creation
 		queueRepo,
 	)
+
+	// 11a. Wire the per-instance workspace manager.
+	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("workspace manager: %w", err)
+	}
+	eng.SetWorkspaceManager(wsMgr)
 
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)

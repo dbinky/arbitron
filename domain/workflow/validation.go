@@ -26,6 +26,12 @@ var validInputTypes = map[string]bool{
 	"array":   true,
 }
 
+// reservedInputNames are variable names the engine seeds itself; workflow
+// authors must not declare inputs with these names.
+var reservedInputNames = map[string]bool{
+	"workspace": true,
+}
+
 // validErrorBehaviorTypes is the set of recognized error behavior types.
 var validErrorBehaviorTypes = map[string]bool{
 	"":      true, // empty means "use workflow default"
@@ -51,6 +57,7 @@ func Validate(wf *Workflow, checker FileChecker) []ValidationError {
 	errs = append(errs, validateConnectivity(wf, nodeIDs)...)
 	errs = append(errs, validateInputTypes(wf)...)
 	errs = append(errs, validateInputNames(wf)...)
+	errs = append(errs, validateReservedInputNames(wf)...)
 	errs = append(errs, validateNodeConfigs(wf)...)
 	errs = append(errs, validateErrorBehaviors(wf)...)
 
@@ -316,6 +323,20 @@ func validateInputNames(wf *Workflow) []ValidationError {
 			errs = append(errs, ValidationError{
 				Code:    "EMPTY_INPUT_NAME",
 				Message: "workflow has an input field with an empty name",
+			})
+		}
+	}
+	return errs
+}
+
+// validateReservedInputNames checks that no input uses an engine-reserved name.
+func validateReservedInputNames(wf *Workflow) []ValidationError {
+	var errs []ValidationError
+	for _, inp := range wf.Inputs {
+		if reservedInputNames[inp.Name] {
+			errs = append(errs, ValidationError{
+				Code:    "RESERVED_INPUT_NAME",
+				Message: "input name is reserved by the engine: " + inp.Name,
 			})
 		}
 	}

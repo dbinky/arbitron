@@ -36,6 +36,8 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	// Resolve substitutions in template.
 	prompt := variable.Resolve(string(templateBytes), vars)
 
+	workDirStr, _ := WorkDirFromVars(vars)
+
 	// Build LLM request.
 	req := LLMRequest{
 		Model:        node.Config.Model,
@@ -43,6 +45,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 		MaxTokens:    node.Config.MaxTokens,
 		Temperature:  node.Config.Temperature,
 		OutputSchema: node.Config.OutputSchema,
+		WorkDir:      workDirStr,
 	}
 
 	// Call LLM provider.

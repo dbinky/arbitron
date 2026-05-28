@@ -57,8 +57,10 @@ func applySet(op workflow.Operation, vars *variable.VariableStore) error {
 	if s, ok := val.(string); ok {
 		val = variable.Resolve(s, vars)
 	}
-	vars.SetInput(op.Variable, val)
-	return nil
+	// SECURITY (SF12): SetInput refuses engine-reserved names like
+	// "workspace". A transform that tries to rewrite the agent's WorkDir
+	// fails the node instead of silently rerouting it.
+	return vars.SetInput(op.Variable, val)
 }
 
 // applyIncrement adds (direction=1) or subtracts (direction=-1) a numeric
@@ -79,8 +81,7 @@ func applyIncrement(op workflow.Operation, vars *variable.VariableStore, directi
 		return fmt.Errorf("increment value is non-numeric")
 	}
 
-	vars.SetInput(op.Variable, currentNum+direction*delta)
-	return nil
+	return vars.SetInput(op.Variable, currentNum+direction*delta)
 }
 
 // applyAppend adds a value to an existing array, or creates a new array if
@@ -89,8 +90,7 @@ func applyIncrement(op workflow.Operation, vars *variable.VariableStore, directi
 func applyAppend(op workflow.Operation, vars *variable.VariableStore) error {
 	current, found := vars.Get(op.Variable)
 	if !found {
-		vars.SetInput(op.Variable, []any{op.Value})
-		return nil
+		return vars.SetInput(op.Variable, []any{op.Value})
 	}
 
 	arr, ok := current.([]any)
@@ -98,6 +98,5 @@ func applyAppend(op workflow.Operation, vars *variable.VariableStore) error {
 		return fmt.Errorf("variable %q is not an array", op.Variable)
 	}
 
-	vars.SetInput(op.Variable, append(arr, op.Value))
-	return nil
+	return vars.SetInput(op.Variable, append(arr, op.Value))
 }

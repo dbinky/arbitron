@@ -16,35 +16,49 @@ type FileReader interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
+// WorkspaceManager provides per-instance working directories for agent nodes.
+type WorkspaceManager interface {
+	// EnsureInstanceDir creates (idempotently) the working directory for an
+	// instance and returns its absolute path.
+	EnsureInstanceDir(instanceID uuid.UUID) (string, error)
+	// RemoveInstanceDir deletes an instance's working directory. Removing a
+	// directory that does not exist is not an error.
+	RemoveInstanceDir(instanceID uuid.UUID) error
+	// InstanceDirStats returns the cumulative byte size and file count of
+	// an instance directory, used by the engine to log sensitive-data
+	// retention when a workspace is kept past instance completion (SF9 /
+	// PR #8 security MEDIUM thread 3291941512). A missing directory
+	// returns (0, 0, nil).
+	InstanceDirStats(instanceID uuid.UUID) (bytes int64, files int, err error)
+}
+
 // LLMProvider abstracts large-language-model calls for use by LLM nodes.
 type LLMProvider interface {
 	Call(ctx context.Context, request LLMRequest) (*LLMResponse, error)
 	StreamCall(ctx context.Context, request LLMRequest) (<-chan LLMStreamChunk, error)
 }
 
-// LLMMessage represents a single message in a multi-turn LLM conversation.
-type LLMMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 // LLMRequest describes a single LLM invocation.
+//
+// History: the multi-turn Messages/Tools/LLMMessage/LLMTool/LLMToolUse types
+// were removed in the PR #8 cleanup (Should Fix #8 / thread 3291907744). The
+// current claude-cli provider does not consume them — resumed turns use
+// SessionID + a Prompt, not a Messages array — and the Anthropic Messages-API
+// adapter ships as a stub. Reintroduce only if/when a real Messages-API
+// adapter lands.
 type LLMRequest struct {
 	Model        string
 	SystemPrompt string
-	Prompt       string       // Single-turn prompt (used when Messages is empty).
-	Messages     []LLMMessage // Multi-turn conversation history (takes precedence over Prompt).
+	Prompt       string
 	MaxTokens    int
 	Temperature  float64
 	OutputSchema any
-	Tools        []LLMTool
-}
-
-// LLMTool describes a tool definition passed to the LLM provider.
-type LLMTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	InputSchema any    `json:"input_schema"`
+	// WorkDir is the working directory for subprocess-backed providers
+	// (e.g. claude-cli). Empty means the provider's default.
+	WorkDir string
+	// SessionID, when non-empty, resumes an existing provider session
+	// (claude-cli: `--resume`).
+	SessionID string
 }
 
 // LLMResponse holds the result of a non-streaming LLM call.
@@ -54,6 +68,9 @@ type LLMResponse struct {
 	Model        string
 	TokensIn     int
 	TokensOut    int
+	// SessionID identifies the provider session for resumption. Empty for
+	// providers without session support.
+	SessionID string
 }
 
 // LLMStreamChunk is one piece of a streaming LLM response.
@@ -63,15 +80,9 @@ type LLMStreamChunk struct {
 	Error     error
 	TokensIn  int
 	TokensOut int
-	// ToolUse is set on the final chunk when the LLM invokes a tool instead
-	// of producing a plain-text response.
-	ToolUse *LLMToolUse
-}
-
-// LLMToolUse describes a tool invocation detected in a streaming response.
-type LLMToolUse struct {
-	Name  string         `json:"name"`
-	Input map[string]any `json:"input"`
+	// SessionID is set on the terminal chunk for providers with session
+	// support, so callers can persist it for resumption.
+	SessionID string
 }
 
 // QueueManager defines the queue operations the engine needs.
@@ -118,13 +129,6 @@ const (
 	EventTypeInteractiveEnded   = "interactive.ended"
 	EventTypeInteractiveHistory = "interactive.history"
 	EventTypeInteractiveError   = "interactive.error"
-
-	// InteractiveCompletionToolName is the tool name the LLM must call to end an
-	// interactive session with structured output. Both InteractiveExecutor and
-	// ConversationHandler must agree on this value — a mismatch causes silent
-	// session hang (tool called but never detected).
-	InteractiveCompletionToolName        = "complete_session"
-	InteractiveCompletionToolDescription = "Call this tool when the conversation has reached its natural conclusion and you have the final output ready."
 )
 
 // Event represents a domain event emitted during workflow execution.
