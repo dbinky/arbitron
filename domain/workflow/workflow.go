@@ -5,14 +5,14 @@ package workflow
 type NodeType string
 
 const (
-	NodeTypeLLMCall      NodeType = "llm_call"
-	NodeTypeScript       NodeType = "script"
-	NodeTypeToolCall     NodeType = "tool_call"
-	NodeTypeConditional  NodeType = "conditional"
-	NodeTypeTransform    NodeType = "transform"
-	NodeTypeTimerDelay   NodeType = "timer_delay"
-	NodeTypeWebhookWait  NodeType = "webhook_wait"
-	NodeTypeInteractive  NodeType = "interactive"
+	NodeTypeLLMCall     NodeType = "llm_call"
+	NodeTypeScript      NodeType = "script"
+	NodeTypeToolCall    NodeType = "tool_call"
+	NodeTypeConditional NodeType = "conditional"
+	NodeTypeTransform   NodeType = "transform"
+	NodeTypeTimerDelay  NodeType = "timer_delay"
+	NodeTypeWebhookWait NodeType = "webhook_wait"
+	NodeTypeInteractive NodeType = "interactive"
 )
 
 // Workflow is the top-level definition of a directed graph of processing nodes.
@@ -55,24 +55,25 @@ type Node struct {
 
 // NodeConfig holds the type-specific configuration for a node.
 type NodeConfig struct {
-	TemplateFile      string      `json:"templateFile,omitempty"`
-	Model             string      `json:"model,omitempty"`
-	OutputSchema      any         `json:"outputSchema,omitempty"`
-	MaxTokens         int         `json:"maxTokens,omitempty"`
-	Temperature       float64     `json:"temperature,omitempty"`
-	SystemPrompt      string      `json:"systemPrompt,omitempty"`
-	OrchestrationFile string      `json:"orchestrationFile,omitempty"`
-	ScriptFile        string      `json:"scriptFile,omitempty"`
-	Interpreter     string      `json:"interpreter,omitempty"`
-	Command         string      `json:"command,omitempty"`
-	Args            []string    `json:"args,omitempty"`
-	TimeoutSeconds  int         `json:"timeoutSeconds,omitempty"`
-	Conditions      []Condition `json:"conditions,omitempty"`
-	DefaultOutput   string      `json:"defaultOutput,omitempty"`
-	Operations         []Operation `json:"operations,omitempty"`
-	DurationSeconds    string      `json:"durationSeconds,omitempty"`
-	Secret             string      `json:"secret,omitempty"`
-	WaitTimeoutSeconds string      `json:"waitTimeoutSeconds,omitempty"`
+	TemplateFile       string            `json:"templateFile,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	OutputSchema       any               `json:"outputSchema,omitempty"`
+	MaxTokens          int               `json:"maxTokens,omitempty"`
+	Temperature        float64           `json:"temperature,omitempty"`
+	SystemPrompt       string            `json:"systemPrompt,omitempty"`
+	OrchestrationFile  string            `json:"orchestrationFile,omitempty"`
+	ScriptFile         string            `json:"scriptFile,omitempty"`
+	Interpreter        string            `json:"interpreter,omitempty"`
+	Command            string            `json:"command,omitempty"`
+	Args               []string          `json:"args,omitempty"`
+	Env                map[string]string `json:"env,omitempty"`
+	TimeoutSeconds     int               `json:"timeoutSeconds,omitempty"`
+	Conditions         []Condition       `json:"conditions,omitempty"`
+	DefaultOutput      string            `json:"defaultOutput,omitempty"`
+	Operations         []Operation       `json:"operations,omitempty"`
+	DurationSeconds    string            `json:"durationSeconds,omitempty"`
+	Secret             string            `json:"secret,omitempty"`
+	WaitTimeoutSeconds string            `json:"waitTimeoutSeconds,omitempty"`
 }
 
 // Condition defines a branching rule in a conditional node.

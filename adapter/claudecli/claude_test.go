@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
@@ -89,7 +90,7 @@ func TestAugmentedEnv(t *testing.T) {
 		// PATH contains /usr/local/bin-custom, which substring-contains
 		// "/usr/local/bin" but is NOT the same entry.
 		t.Setenv("PATH", "/usr/local/bin-custom")
-		env := augmentedEnv()
+		env := procenv.BaseEnv()
 
 		var pathVal string
 		for _, e := range env {
@@ -105,7 +106,7 @@ func TestAugmentedEnv(t *testing.T) {
 
 	t.Run("does not duplicate a dir already present as an exact entry", func(t *testing.T) {
 		t.Setenv("PATH", "/usr/local/bin")
-		env := augmentedEnv()
+		env := procenv.BaseEnv()
 
 		var pathVal string
 		for _, e := range env {
@@ -134,7 +135,7 @@ func TestAugmentedEnv(t *testing.T) {
 		t.Setenv("HOME", "/home/test")
 		t.Setenv("LC_CTYPE", "en_US.UTF-8")
 
-		env := augmentedEnv()
+		env := procenv.BaseEnv()
 
 		joined := strings.Join(env, "\n")
 		assert.NotContains(t, joined, "should-be-stripped",
@@ -156,7 +157,7 @@ func TestAugmentedEnv(t *testing.T) {
 	t.Run("LC_ prefixed variables are allowlisted by prefix", func(t *testing.T) {
 		t.Setenv("LC_TIME", "en_US.UTF-8")
 		t.Setenv("LC_MESSAGES", "en_US.UTF-8")
-		env := augmentedEnv()
+		env := procenv.BaseEnv()
 
 		var keys []string
 		for _, e := range env {
@@ -172,7 +173,7 @@ func TestAugmentedEnv(t *testing.T) {
 		// SECURITY thread 3291907740: even if the parent never had PATH, the
 		// agent still needs one for git/gh.
 		t.Setenv("PATH", "")
-		env := augmentedEnv()
+		env := procenv.BaseEnv()
 
 		var pathVal string
 		var pathCount int
@@ -223,7 +224,7 @@ func TestResolveBinaryWith(t *testing.T) {
 		assert.Equal(t, "/from/lookpath/claude", got)
 	})
 
-	t.Run("falls back to standardBinDirs when lookPath fails", func(t *testing.T) {
+	t.Run("falls back to procenv.StandardBinDirs when lookPath fails", func(t *testing.T) {
 		// First stat call should succeed (any non-nil error indicates not found
 		// in production via the os.Stat default). Return a not-found error
 		// for all but the second candidate.
@@ -240,7 +241,7 @@ func TestResolveBinaryWith(t *testing.T) {
 			},
 		)
 		// Second candidate wins; do not assert exact path (depends on
-		// standardBinDirs order at runtime).
+		// procenv.StandardBinDirs order at runtime).
 		assert.NotEqual(t, "claude", got, "should return resolved path, not bare default")
 		assert.True(t, statCalls >= 2)
 	})

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
@@ -60,22 +61,8 @@ func buildArgs(req engine.LLMRequest, policy argsPolicy) []string {
 	return args
 }
 
-// standardBinDirs are the directories appended to PATH so the agent subprocess
-// can find common tools (git, gh, claude itself). Order matters: ~/.local/bin
-// is preferred so user-local installs win.
-func standardBinDirs() []string {
-	home, _ := os.UserHomeDir()
-	dirs := []string{
-		"/usr/local/bin", "/opt/homebrew/bin",
-	}
-	if home != "" {
-		dirs = append([]string{filepath.Join(home, ".local", "bin")}, dirs...)
-	}
-	return dirs
-}
-
 // resolveBinary returns the claude binary path. An explicit path is returned
-// unchanged; an empty path triggers a PATH lookup then standardBinDirs.
+// unchanged; an empty path triggers a PATH lookup then procenv.StandardBinDirs.
 func resolveBinary(explicit string) string {
 	return resolveBinaryWith(explicit, exec.LookPath, os.Stat)
 }
@@ -106,86 +93,11 @@ func resolveBinaryWith(
 	if p, err := lookPath("claude"); err == nil {
 		return p
 	}
-	for _, dir := range standardBinDirs() {
+	for _, dir := range procenv.StandardBinDirs() {
 		c := filepath.Join(dir, "claude")
 		if _, err := stat(c); err == nil {
 			return c
 		}
 	}
 	return "claude"
-}
-
-// envAllowlist is the set of parent-process environment variables that may be
-// propagated to the claude subprocess.
-//
-// SECURITY: any var NOT in this allowlist is stripped. The default os.Environ()
-// leaks every secret the engine was started with (ANTHROPIC_API_KEY,
-// GITHUB_TOKEN, AWS_*, DATABASE_URL, ...) to the agent process running under
-// --dangerously-skip-permissions. See PR #8 security thread 3291942736.
-//
-// LC_* is handled by prefix match in augmentedEnv (LC_ALL, LC_CTYPE, LC_TIME,
-// LC_MESSAGES, ...).
-var envAllowlist = map[string]bool{
-	"PATH":              true,
-	"HOME":              true,
-	"USER":              true,
-	"LOGNAME":           true,
-	"LANG":              true,
-	"LC_ALL":            true,
-	"LC_CTYPE":          true,
-	"TERM":              true,
-	"TMPDIR":            true,
-	"SHELL":             true,
-	"CLAUDE_CONFIG_DIR": true,
-}
-
-// augmentedEnv returns the allowlist-filtered parent env with standardBinDirs
-// appended to PATH (or a synthesised PATH if the parent had none) so the agent
-// subprocess can find common tools.
-func augmentedEnv() []string {
-	parent := os.Environ()
-	filtered := make([]string, 0, len(envAllowlist))
-	var parentPath string
-	havePath := false
-
-	for _, e := range parent {
-		i := strings.IndexByte(e, '=')
-		if i <= 0 {
-			continue
-		}
-		key := e[:i]
-		if !envAllowlist[key] && !strings.HasPrefix(key, "LC_") {
-			continue
-		}
-		if key == "PATH" {
-			parentPath = e[i+1:]
-			havePath = true
-			continue // re-emit below with augmentation
-		}
-		filtered = append(filtered, e)
-	}
-
-	// Build the augmented PATH: parent entries first, then standardBinDirs
-	// appended uniquely. When the parent had no PATH at all, just emit the
-	// standard dirs so the agent can still find git/gh/claude.
-	existing := make(map[string]bool)
-	path := parentPath
-	if havePath {
-		for _, p := range filepath.SplitList(parentPath) {
-			existing[p] = true
-		}
-	}
-	for _, d := range standardBinDirs() {
-		if existing[d] {
-			continue
-		}
-		if path == "" {
-			path = d
-		} else {
-			path += string(os.PathListSeparator) + d
-		}
-		existing[d] = true
-	}
-	filtered = append(filtered, "PATH="+path)
-	return filtered
 }

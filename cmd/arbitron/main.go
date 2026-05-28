@@ -225,8 +225,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider),
-		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader),
-		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(),
+		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
+		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 	}

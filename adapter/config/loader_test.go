@@ -301,6 +301,21 @@ func TestLoad_MissingFileCreatesDefault(t *testing.T) {
 	assert.Equal(t, cfg1.Queue, cfg2.Queue)
 }
 
+func TestLoad_ScriptEnvPassthrough_Default(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Script.EnvPassthrough)
+}
+
+func TestLoad_ScriptEnvPassthrough_FromEnv(t *testing.T) {
+	t.Setenv("ARBITRON_SCRIPT_ENVPASSTHROUGH", "LLM_API_KEY, LLM_ROUTER_URL ,,OPENAI_API_KEY")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"LLM_API_KEY", "LLM_ROUTER_URL", "OPENAI_API_KEY"}, cfg.Script.EnvPassthrough)
+}
+
 func TestLoad_QueueYAMLOverride(t *testing.T) {
 	// A YAML config file should override queue defaults.
 	tmpDir := t.TempDir()
