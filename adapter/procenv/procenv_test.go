@@ -52,13 +52,40 @@ func TestIsBaseName(t *testing.T) {
 	assert.False(t, procenv.IsBaseName("LLM_API_KEY"))
 }
 
-func TestStandardBinDirs(t *testing.T) {
+func TestStandardBinDirs_HomeFirstWhenSet(t *testing.T) {
+	t.Setenv("HOME", "/testhome")
 	dirs := procenv.StandardBinDirs()
+	require.NotEmpty(t, dirs)
+	assert.Equal(t, "/testhome/.local/bin", dirs[0])
 	assert.Contains(t, dirs, "/usr/local/bin")
 }
 
-func TestBaseEnv_DoesNotMutateProcessEnv(t *testing.T) {
+func TestBaseEnv_ReturnedSliceIsIndependent(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
-	_ = procenv.BaseEnv()
-	assert.Equal(t, "/home/test", os.Getenv("HOME"))
+	env := procenv.BaseEnv()
+	for i := range env {
+		env[i] = "TAMPERED=yes"
+	}
+	env2 := procenv.BaseEnv()
+	assert.Contains(t, strings.Join(env2, "\n"), "HOME=/home/test")
+	assert.NotContains(t, strings.Join(env2, "\n"), "TAMPERED")
+}
+
+func TestBaseEnv_UnsetParentPath(t *testing.T) {
+	orig, had := os.LookupEnv("PATH")
+	require.NoError(t, os.Unsetenv("PATH"))
+	t.Cleanup(func() {
+		if had {
+			os.Setenv("PATH", orig)
+		}
+	})
+	env := procenv.BaseEnv()
+	var path string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = strings.TrimPrefix(e, "PATH=")
+		}
+	}
+	assert.Contains(t, path, "/usr/local/bin") // standard dirs still present, no leading separator
+	assert.False(t, strings.HasPrefix(path, string(os.PathListSeparator)))
 }

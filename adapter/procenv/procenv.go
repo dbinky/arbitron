@@ -40,7 +40,7 @@ func StandardBinDirs() []string {
 // for subprocesses.
 func BaseEnv() []string {
 	parent := os.Environ()
-	filtered := make([]string, 0, len(baseAllowlist))
+	filtered := make([]string, 0, len(parent))
 	var parentPath string
 	havePath := false
 
@@ -77,7 +77,7 @@ func BaseEnv() []string {
 		} else {
 			path += string(os.PathListSeparator) + d
 		}
-		existing[d] = true
+		existing[d] = true // guard against duplicate StandardBinDirs entries
 	}
 	filtered = append(filtered, "PATH="+path)
 	return filtered
