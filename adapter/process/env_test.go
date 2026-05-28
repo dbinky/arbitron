@@ -74,3 +74,21 @@ func TestBuildEnv_RejectsCollisionWithLCPrefix(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collides")
 }
+
+func TestBuildEnv_PassthroughCannotShadowBase(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	// Operator mistakenly lists PATH as passthrough; it must NOT produce a
+	// second PATH entry that overrides the augmented base PATH.
+	env, err := buildEnv([]string{"PATH"}, nil, variable.NewStore())
+	require.NoError(t, err)
+	count := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "PATH must appear exactly once (base only, not shadowed by passthrough)")
+	// And it must be the augmented base PATH (contains a standard bin dir).
+	m := envMap(env)
+	assert.Contains(t, m["PATH"], "/usr/local/bin")
+}

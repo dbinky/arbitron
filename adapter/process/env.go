@@ -19,7 +19,7 @@ func buildEnv(passthrough []string, nodeEnv map[string]string, vars *variable.Va
 	passSet := make(map[string]bool, len(passthrough))
 	for _, name := range passthrough {
 		name = strings.TrimSpace(name)
-		if name == "" {
+		if name == "" || procenv.IsBaseName(name) {
 			continue
 		}
 		passSet[name] = true

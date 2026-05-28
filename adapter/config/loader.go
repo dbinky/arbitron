@@ -84,6 +84,14 @@ llm:
   # maxresponsebytes: 268435456   # 256 MiB
   #   Per-request stdout cap. Bounds OOM DoS from hostile prompts that flood
   #   tool output. 0 = no cap (test convenience only).
+script:
+  # envpassthrough: []
+  #   SECURITY: names (not values) of engine environment variables that script
+  #   and tool_call nodes may inherit, in addition to the base allowlist
+  #   (PATH, HOME, SHELL, LANG, LC_*, ...). Use this to expose e.g. an LLM API
+  #   key or router URL to a script WITHOUT leaking every engine secret. The
+  #   secret VALUES live in the deploy environment; only names go here.
+  #   Override via ARBITRON_SCRIPT_ENVPASSTHROUGH=NAME1,NAME2.
 logging:
   level: "info"
   file: "arbitron.log"
