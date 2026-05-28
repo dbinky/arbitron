@@ -1,6 +1,7 @@
 package claudecli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,5 +81,17 @@ func TestParseEvent(t *testing.T) {
 		_, ok, err := parseEvent([]byte(`{not json`))
 		require.Error(t, err)
 		assert.False(t, ok)
+	})
+
+	t.Run("text content block over 4096 chars is truncated", func(t *testing.T) {
+		// SF13 / PR #8 thread 3291945042: defensive cap on a single text
+		// block so a hostile prompt cannot balloon downstream string
+		// handling before the runner's per-request bytes cap trips.
+		big := strings.Repeat("z", 5000)
+		line := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"` + big + `"}]}}`)
+		ev, ok, err := parseEvent(line)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, 4096, len(ev.Text))
 	})
 }

@@ -8,6 +8,26 @@ import (
 	"fmt"
 )
 
+// maxContentBlockChars caps the length of a single text content block we
+// retain in memory. Defence-in-depth alongside RunSpec.MaxResponseBytes:
+// MaxResponseBytes bounds the whole request; this bounds a single block
+// within a line so a maliciously huge single text block does not balloon
+// the runtime string-handling cost before the bytes cap trips.
+//
+// Hostile blocks are truncated (not rejected) so legitimate output still
+// flows; the consumer sees the truncated text. SECURITY: PR #8 thread
+// 3291945042.
+const maxContentBlockChars = 4096
+
+// NOTE on json.Decoder.DisallowUnknownFields(): the stream-json envelope
+// from the claude CLI carries forward-compat fields the engine intentionally
+// ignores (subtype, model, parent_tool_use_id, ...). Enabling
+// DisallowUnknownFields here would reject every real claude line. The
+// recommendation from PR #8 thread 3291945042 applies to JSON payloads
+// whose schema arbitron fully controls; for the wire envelope, we
+// constrain the surface via narrow rawEnvelope fields + maxContentBlockChars
+// instead.
+
 // eventKind identifies a claude stream-json event type.
 type eventKind string
 
@@ -95,16 +115,22 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 	}
 }
 
-// assistantText concatenates the text blocks of an assistant message.
+// assistantText concatenates the text blocks of an assistant message. Each
+// text block is truncated at maxContentBlockChars characters.
 func assistantText(msg *rawMessage) string {
 	if msg == nil {
 		return ""
 	}
 	var b bytes.Buffer
 	for _, block := range msg.Content {
-		if block.Type == "text" {
-			b.WriteString(block.Text)
+		if block.Type != "text" {
+			continue
 		}
+		txt := block.Text
+		if len(txt) > maxContentBlockChars {
+			txt = txt[:maxContentBlockChars]
+		}
+		b.WriteString(txt)
 	}
 	return b.String()
 }
