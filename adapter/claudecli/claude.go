@@ -62,7 +62,7 @@ func buildArgs(req engine.LLMRequest, policy argsPolicy) []string {
 }
 
 // resolveBinary returns the claude binary path. An explicit path is returned
-// unchanged; an empty path triggers a PATH lookup then standardBinDirs.
+// unchanged; an empty path triggers a PATH lookup then procenv.StandardBinDirs.
 func resolveBinary(explicit string) string {
 	return resolveBinaryWith(explicit, exec.LookPath, os.Stat)
 }
