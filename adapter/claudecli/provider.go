@@ -98,9 +98,10 @@ func (p *Provider) spec(req engine.LLMRequest) RunSpec {
 			SkipPermissions: p.skipPermissions,
 			AllowedTools:    p.allowedTools,
 		}),
-		Stdin: req.Prompt,
-		Dir:   req.WorkDir,
-		Env:   augmentedEnv(),
+		Stdin:            req.Prompt,
+		Dir:              req.WorkDir,
+		Env:              augmentedEnv(),
+		MaxResponseBytes: p.maxResponseBytes,
 	}
 }
 
