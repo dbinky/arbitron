@@ -248,7 +248,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	)
 
 	// 11a. Wire the per-instance workspace manager.
-	eng.SetWorkspaceManager(filesystem.NewWorkspaceManager(cfg.Workspace.Path))
+	wsMgr, err := filesystem.NewWorkspaceManager(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("workspace manager: %w", err)
+	}
+	eng.SetWorkspaceManager(wsMgr)
 
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
