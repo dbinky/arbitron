@@ -43,7 +43,7 @@ echo '{"status": "done"}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ exit 2
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -97,7 +97,7 @@ echo '{"late": true}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 	elapsed := time.Since(start)
@@ -124,7 +124,7 @@ echo "plain text output"
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -152,7 +152,7 @@ echo "{\"name\": \"$1\"}"
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ fi
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestToolCallExecutor_CommandNotFound(t *testing.T) {
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -228,9 +228,63 @@ echo '{"ok": true}'
 		},
 	}
 
-	exec := process.NewToolCallExecutor()
+	exec := process.NewToolCallExecutor(nil)
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
 	assert.Contains(t, result.ScriptStderr, "warning message")
+}
+
+func TestToolCallExecutor_PassthroughSecretAvailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("not supported on Windows")
+	}
+	t.Setenv("LLM_API_KEY", "sk-tc")
+	node := workflow.Node{
+		ID: "t1", Type: workflow.NodeTypeToolCall,
+		Config: workflow.NodeConfig{
+			Command: "/bin/sh",
+			Args:    []string{"-c", `echo "{\"k\": \"$LLM_API_KEY\"}"`},
+		},
+	}
+	exec := process.NewToolCallExecutor([]string{"LLM_API_KEY"})
+	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"k": "sk-tc"}, result.Output)
+}
+
+func TestToolCallExecutor_SecretNotLeaked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("not supported on Windows")
+	}
+	t.Setenv("MY_SECRET", "leak")
+	node := workflow.Node{
+		ID: "t1", Type: workflow.NodeTypeToolCall,
+		Config: workflow.NodeConfig{
+			Command: "/bin/sh",
+			Args:    []string{"-c", `echo "{\"s\": \"${MY_SECRET:-absent}\"}"`},
+		},
+	}
+	exec := process.NewToolCallExecutor(nil)
+	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"s": "absent"}, result.Output)
+}
+
+func TestToolCallExecutor_EnvCollisionFailsNode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("not supported on Windows")
+	}
+	node := workflow.Node{
+		ID: "t1", Type: workflow.NodeTypeToolCall,
+		Config: workflow.NodeConfig{
+			Command: "/bin/sh",
+			Args:    []string{"-c", "echo '{}'"},
+			Env:     map[string]string{"PATH": "/evil"},
+		},
+	}
+	exec := process.NewToolCallExecutor(nil)
+	_, err := exec.Execute(context.Background(), node, variable.NewStore(), "wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "collides")
 }

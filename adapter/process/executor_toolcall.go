@@ -1,13 +1,10 @@
 package process
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/variable"
@@ -18,90 +15,60 @@ import (
 // Commands defined in workflow manifests execute with the same privileges as the Arbitron
 // process. There is no sandboxing, no allow-list of commands, and no filesystem isolation.
 // Before opening workflow authoring to untrusted users, a sandbox must be implemented.
-
-// TODO(refactor): Extract a CommandRunner interface the moment this executor is
-// touched for any reason. Both ToolCallExecutor and ScriptExecutor share identical
-// process lifecycle logic (start, wait, kill-on-timeout, capture stdout/stderr).
-// A shared CommandRunner would eliminate this duplication and simplify testing by
-// allowing process execution to be mocked.
 //
-// Trigger condition: any modification to this file.
+// The subprocess environment is strictly controlled: only the base allowlist, operator-
+// approved passthrough vars, and per-node env keys are forwarded (see buildEnv). The
+// engine's full environment is NOT inherited, preventing accidental secret leakage.
 
 // ToolCallExecutor runs an external command with arguments. Unlike
-// ScriptExecutor, it does NOT pipe variables to stdin.
-type ToolCallExecutor struct{}
-
-// NewToolCallExecutor creates a new ToolCallExecutor.
-func NewToolCallExecutor() *ToolCallExecutor {
-	return &ToolCallExecutor{}
+// ScriptExecutor it does NOT pipe variables to stdin. The subprocess
+// environment is the base allowlist + configured passthrough + per-node env
+// (see buildEnv); it does NOT inherit the engine's full environment.
+type ToolCallExecutor struct {
+	passthrough []string
 }
 
-// Execute runs the configured command with resolved args, captures stdout
-// (parsed as JSON) and stderr, and returns the result.
+// NewToolCallExecutor creates a ToolCallExecutor. envPassthrough names the
+// engine env vars a tool_call node may inherit beyond the base allowlist;
+// pass nil for none.
+func NewToolCallExecutor(envPassthrough []string) *ToolCallExecutor {
+	return &ToolCallExecutor{passthrough: envPassthrough}
+}
+
 func (e *ToolCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, _ string) (*engine.NodeResult, error) {
-	// Resolve substitution in args.
 	args := make([]string, len(node.Config.Args))
 	for i, arg := range node.Config.Args {
 		args[i] = variable.Resolve(arg, vars)
 	}
 
-	// Apply timeout if configured.
-	execCtx := ctx
-	var cancel context.CancelFunc
-	if node.Config.TimeoutSeconds > 0 {
-		execCtx, cancel = context.WithTimeout(ctx, time.Duration(node.Config.TimeoutSeconds)*time.Second)
-		defer cancel()
+	env, err := buildEnv(e.passthrough, node.Config.Env, vars)
+	if err != nil {
+		return nil, fmt.Errorf("tool_call %q: %w", node.ID, err)
 	}
 
-	cmd := exec.Command(node.Config.Command, args...)
-	setProcGroup(cmd)
-
-	// No stdin for tool calls.
-	cmd.Stdin = nil
-
-	// Capture stdout and stderr with bounded writers to prevent unbounded memory use.
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &limitedWriter{buf: &stdout, limit: maxOutputBytes}
-	cmd.Stderr = &limitedWriter{buf: &stderr, limit: maxOutputBytes}
-
-	// Run with context-aware waiting.
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("tool_call %q: start: %w", node.ID, err)
-	}
-
-	// Wait for completion or context cancellation.
-	doneCh := make(chan error, 1)
-	go func() {
-		doneCh <- cmd.Wait()
-	}()
-
-	var runErr error
-	select {
-	case <-execCtx.Done():
-		killProcGroup(cmd)
-		<-doneCh
-		runErr = execCtx.Err()
-	case runErr = <-doneCh:
-	}
+	res, runErr := run(ctx, commandSpec{
+		Name:        node.Config.Command,
+		Args:        args,
+		Env:         env,
+		TimeoutSecs: node.Config.TimeoutSeconds,
+	})
 
 	result := &engine.NodeResult{
-		ScriptStdout: stdout.String(),
-		ScriptStderr: stderr.String(),
+		ScriptStdout:   res.Stdout,
+		ScriptStderr:   res.Stderr,
+		ScriptExitCode: res.ExitCode,
 	}
-
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			result.ScriptExitCode = exitErr.ExitCode()
-		}
-		return result, fmt.Errorf("tool_call %q: exit status %d: %s", node.ID, result.ScriptExitCode, strings.TrimSpace(stderr.String()))
+		return result, fmt.Errorf("tool_call %q: %w", node.ID, runErr)
+	}
+	if res.ExitCode != 0 {
+		return result, fmt.Errorf("tool_call %q: exit status %d: %s", node.ID, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 
-	// Parse stdout as JSON.
 	var output any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &output); err != nil {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Stdout)), &output); err != nil {
 		return result, fmt.Errorf("tool_call %q: stdout is not valid JSON: %w", node.ID, err)
 	}
-
 	result.Output = output
 	return result, nil
 }
