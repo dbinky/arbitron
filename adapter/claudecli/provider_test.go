@@ -3,10 +3,13 @@ package claudecli
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/arbitron/arbitron/domain/engine"
 )
@@ -96,6 +99,69 @@ func TestProviderCall(t *testing.T) {
 
 func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.LLMProvider = (*Provider)(nil)
+}
+
+func TestProviderStreamCall_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
+	// MF9 / PR #8 thread 3291921373. The producer-side select { case out
+	// <- c: case <-runCtx.Done(): } in StreamCall ensures the goroutine
+	// returns when the consumer (or its parent ctx) bails out mid-stream
+	// instead of blocking forever on `out <- chunk` (which would also pin
+	// the subprocess via the runner contract).
+	//
+	// goleak.VerifyNone after this test fails if any goroutine started
+	// inside it is still running.
+	defer goleak.VerifyNone(t)
+
+	// 5 lines but the consumer reads only the first chunk then cancels.
+	runner := newCtxAwareFakeRunner([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"b"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"c"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"d"}]}}`,
+		`{"type":"result","result":"abcd","session_id":"s","usage":{"input_tokens":1,"output_tokens":1}}`,
+	})
+	p := New(Config{
+		BinaryPath:      "claude",
+		SkipPermissions: true,
+		Runner:          runner,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := p.StreamCall(ctx, engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+	require.NoError(t, err)
+
+	// Consume one chunk then bail.
+	<-ch
+	cancel()
+
+	// Wait briefly for the producer goroutine to observe ctx cancellation
+	// and exit. If MF9 was not landed, this loop would never see ch close
+	// and goleak.VerifyNone would fail at test cleanup.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range ch {
+			// drain
+		}
+	}()
+
+	// Give the runner up to 2s; the ctx-aware fake will return promptly
+	// once runCtx is done.
+	timeout := time.After(2 * time.Second)
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		// good
+	case <-timeout:
+		t.Fatal("producer goroutine did not return after consumer cancelled")
+	}
 }
 
 func TestProviderWorkDirValidation(t *testing.T) {

@@ -214,6 +214,24 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 		defer cancel()
 		defer close(out)
 
+		// sendChunk is the producer-side guard added in MF9 (PR #8 thread
+		// 3291921373). The previous shape was a bare `out <- chunk`, which
+		// blocks forever if the consumer stops draining (because it
+		// errored out mid-stream and returned, calling its `defer
+		// cancel()`). With the bare send we'd leak this goroutine AND the
+		// runner subprocess. The select makes the send non-blocking when
+		// runCtx is cancelled, so the goroutine can return, drain the
+		// remaining lines from the runner, and reap the process via
+		// wait().
+		sendChunk := func(c engine.LLMStreamChunk) bool {
+			select {
+			case out <- c:
+				return true
+			case <-runCtx.Done():
+				return false
+			}
+		}
+
 		var sessionID string
 		var tokensIn, tokensOut int
 		var failed bool // once true, keep draining lines without processing
@@ -224,7 +242,9 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 			}
 			ev, ok, parseErr := parseEvent([]byte(line))
 			if parseErr != nil {
-				out <- engine.LLMStreamChunk{Error: parseErr}
+				if !sendChunk(engine.LLMStreamChunk{Error: parseErr}) {
+					failed = true
+				}
 				failed = true
 				continue
 			}
@@ -237,12 +257,18 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 			switch ev.Kind {
 			case eventAssistant:
 				if ev.Text != "" {
-					out <- engine.LLMStreamChunk{Token: ev.Text}
+					if !sendChunk(engine.LLMStreamChunk{Token: ev.Text}) {
+						failed = true
+					}
 				}
 			case eventResult:
 				tokensIn, tokensOut = ev.TokensIn, ev.TokensOut
 				if ev.IsError {
-					out <- engine.LLMStreamChunk{Error: fmt.Errorf("claudecli: claude reported an error: %s", ev.Text)}
+					if !sendChunk(engine.LLMStreamChunk{
+						Error: fmt.Errorf("claudecli: claude reported an error: %s", ev.Text),
+					}) {
+						failed = true
+					}
 					failed = true
 					continue
 				}
@@ -252,20 +278,23 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 		// lines is fully drained; reap the process.
 		waitErr := wait()
 		if failed {
-			// An error chunk was already emitted; just finish.
+			// An error chunk was already emitted (or the consumer left);
+			// just finish — wait() above still ran, so no subprocess leak.
 			return
 		}
 		if waitErr != nil {
-			out <- engine.LLMStreamChunk{Error: fmt.Errorf("claudecli: claude exited with error: %w", waitErr)}
+			sendChunk(engine.LLMStreamChunk{
+				Error: fmt.Errorf("claudecli: claude exited with error: %w", waitErr),
+			})
 			return
 		}
 
-		out <- engine.LLMStreamChunk{
+		sendChunk(engine.LLMStreamChunk{
 			Done:      true,
 			SessionID: sessionID,
 			TokensIn:  tokensIn,
 			TokensOut: tokensOut,
-		}
+		})
 	}()
 
 	return out, nil
