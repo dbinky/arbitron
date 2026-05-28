@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
@@ -100,7 +101,7 @@ func (p *Provider) spec(req engine.LLMRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              augmentedEnv(),
+		Env:              procenv.BaseEnv(),
 		MaxResponseBytes: p.maxResponseBytes,
 	}
 }
