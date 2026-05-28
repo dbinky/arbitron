@@ -2,7 +2,11 @@
   "name": "pr-review",
   "description": "Multi-persona PR review pipeline (Architect R1 -\u003e 10x R1 -\u003e Architect R2 -\u003e 10x R2 -\u003e Security -\u003e Manager) with optional senior-engineer auto-implement of selected fix tier. Intended to be triggered by a GitHub Action on PR open/update.",
   "author": "arbitron",
-  "defaultErrorBehavior": {},
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  },
   "inputs": [
     {
       "name": "pr_number",
