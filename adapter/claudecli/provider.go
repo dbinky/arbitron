@@ -3,42 +3,89 @@ package claudecli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
+// Config configures a claude-cli Provider.
+//
+// SECURITY:
+//   - SkipPermissions defaults to false; setting true emits
+//     `--dangerously-skip-permissions`, removing the human-in-the-loop tool
+//     gate. Only flip in deployments that trust every prompt input.
+//   - AllowedTools is forwarded as `--allowedTools` (comma-joined). When
+//     SkipPermissions is false this should be configured because headless
+//     `--print` mode cannot prompt the operator for tool approvals.
+//   - WorkspaceRoot pins request WorkDir to a subtree of this absolute path.
+//     An empty WorkspaceRoot disables the pin check (test convenience only).
+//   - MaxResponseBytes caps the per-request total stdout bytes; 0 means no
+//     cap (test convenience only).
+type Config struct {
+	BinaryPath       string
+	DefaultModel     string
+	WorkspaceRoot    string
+	Timeout          time.Duration
+	AllowedTools     []string
+	SkipPermissions  bool
+	MaxResponseBytes int64
+	Runner           CommandRunner
+}
+
 // Provider implements engine.LLMProvider by invoking the `claude` CLI in
 // headless (`--print`) mode.
 type Provider struct {
-	binPath      string
-	defaultModel string
-	timeout      time.Duration
-	runner       CommandRunner
+	binPath          string
+	defaultModel     string
+	workspaceRoot    string
+	timeout          time.Duration
+	allowedTools     []string
+	skipPermissions  bool
+	maxResponseBytes int64
+	runner           CommandRunner
 }
 
 var _ engine.LLMProvider = (*Provider)(nil)
 
-// New constructs a claude-cli Provider. An empty binaryPath is resolved from
-// PATH and common install directories. A zero timeout means no timeout. A nil
-// runner uses the production os/exec runner.
-func New(binaryPath, defaultModel string, timeout time.Duration, runner CommandRunner) *Provider {
-	if runner == nil {
-		runner = newExecRunner()
+// New constructs a claude-cli Provider from cfg. An empty BinaryPath is
+// resolved from PATH and common install directories. A zero Timeout means no
+// timeout. A nil Runner uses the production os/exec runner.
+//
+// SECURITY: when SkipPermissions=false and AllowedTools is empty, a slog.Warn
+// is emitted because headless `--print` mode cannot answer interactive
+// permission prompts — the agent will fail at its first tool call. Operators
+// wanting permissionful runs should configure an AllowedTools allowlist.
+func New(cfg Config) *Provider {
+	if cfg.Runner == nil {
+		cfg.Runner = newExecRunner()
+	}
+	if !cfg.SkipPermissions && len(cfg.AllowedTools) == 0 {
+		slog.Warn(
+			"claudecli: SkipPermissions=false with empty AllowedTools; agent runs will fail at the first tool call because --print mode cannot prompt for approvals",
+		)
 	}
 	return &Provider{
-		binPath:      resolveBinary(binaryPath),
-		defaultModel: defaultModel,
-		timeout:      timeout,
-		runner:       runner,
+		binPath:          resolveBinary(cfg.BinaryPath),
+		defaultModel:     cfg.DefaultModel,
+		workspaceRoot:    cfg.WorkspaceRoot,
+		timeout:          cfg.Timeout,
+		allowedTools:     cfg.AllowedTools,
+		skipPermissions:  cfg.SkipPermissions,
+		maxResponseBytes: cfg.MaxResponseBytes,
+		runner:           cfg.Runner,
 	}
 }
 
 // spec builds the RunSpec for a request.
 func (p *Provider) spec(req engine.LLMRequest) RunSpec {
 	return RunSpec{
-		Bin:   p.binPath,
-		Args:  buildArgs(req, p.defaultModel),
+		Bin: p.binPath,
+		Args: buildArgs(req, argsPolicy{
+			DefaultModel:    p.defaultModel,
+			SkipPermissions: p.skipPermissions,
+			AllowedTools:    p.allowedTools,
+		}),
 		Stdin: req.Prompt,
 		Dir:   req.WorkDir,
 		Env:   augmentedEnv(),

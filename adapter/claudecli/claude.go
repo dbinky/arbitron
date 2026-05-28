@@ -9,17 +9,43 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
+// argsPolicy carries operator-policy knobs that are not request-scoped.
+// They originate from the provider Config (which comes from cfg.LLM.*) and
+// are passed down to buildArgs so the function stays a pure data-in / args-out
+// helper with no provider-struct coupling.
+type argsPolicy struct {
+	DefaultModel    string
+	SkipPermissions bool
+	AllowedTools    []string
+}
+
 // buildArgs assembles the `claude` CLI arguments for one invocation.
-// defaultModel is used when the request does not name a model.
-func buildArgs(req engine.LLMRequest, defaultModel string) []string {
+//
+// The required protocol flags (`--print`, `--verbose`, `--output-format
+// stream-json`) are always present — the adapter cannot function without them.
+// Operator-policy flags (skip-permissions, allowed-tools) come from policy.
+//
+// SECURITY: `--dangerously-skip-permissions` is only emitted when
+// policy.SkipPermissions is true. The default in cfg.LLM.SkipPermissions is
+// false; flipping it allows the agent to run any tool (Bash, Write, ...) with
+// no human confirmation, which is RCE-equivalent when prompt content is
+// influenced by untrusted input. Operators flipping the default MUST also
+// configure cfg.LLM.AllowedTools so the agent runs against an explicit
+// allowlist.
+func buildArgs(req engine.LLMRequest, policy argsPolicy) []string {
 	args := []string{
 		"--print", "--verbose", "--output-format", "stream-json",
-		"--dangerously-skip-permissions",
+	}
+	if policy.SkipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	if len(policy.AllowedTools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(policy.AllowedTools, ","))
 	}
 
 	model := req.Model
 	if model == "" {
-		model = defaultModel
+		model = policy.DefaultModel
 	}
 	if model != "" {
 		args = append(args, "--model", model)

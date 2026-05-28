@@ -18,7 +18,7 @@ func TestProviderCall(t *testing.T) {
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}`,
 			`{"type":"result","is_error":false,"result":"final answer","session_id":"s1","usage":{"input_tokens":7,"output_tokens":3}}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		resp, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "hi"})
 		require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestProviderCall(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","result":"ok","session_id":"s"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "do it", WorkDir: "/tmp/ws"})
 		require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestProviderCall(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","is_error":true,"result":"model failure","session_id":"s"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
 		require.Error(t, err)
@@ -55,7 +55,7 @@ func TestProviderCall(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
 		require.Error(t, err)
@@ -67,7 +67,7 @@ func TestProviderCall(t *testing.T) {
 			lines:   []string{`{"type":"result","result":"ok","session_id":"s"}`},
 			waitErr: errors.New("exit status 1"),
 		}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
 		require.Error(t, err)
@@ -75,7 +75,7 @@ func TestProviderCall(t *testing.T) {
 
 	t.Run("start failure is surfaced", func(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("binary not found")}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
 		require.Error(t, err)
@@ -87,7 +87,7 @@ func TestProviderCall(t *testing.T) {
 			`{bad json`,
 			`{"type":"result","result":"ok","session_id":"s"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
 		require.Error(t, err)
@@ -115,7 +115,7 @@ func TestProviderStreamCall(t *testing.T) {
 			`{"type":"assistant","message":{"content":[{"type":"text","text":"part two"}]}}`,
 			`{"type":"result","is_error":false,"result":"part one part two","session_id":"s1","usage":{"input_tokens":4,"output_tokens":9}}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.NoError(t, err)
@@ -139,7 +139,7 @@ func TestProviderStreamCall(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","result":"done","session_id":"s2"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestProviderStreamCall(t *testing.T) {
 			`{bad`,
 			`{"type":"result","result":"ok","session_id":"s"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestProviderStreamCall(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","is_error":true,"result":"model failure","session_id":"s"}`,
 		}}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestProviderStreamCall(t *testing.T) {
 			lines:   []string{`{"type":"result","result":"ok","session_id":"s"}`},
 			waitErr: errors.New("exit status 1"),
 		}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestProviderStreamCall(t *testing.T) {
 
 	t.Run("start failure returns an error from StreamCall itself", func(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("no binary")}
-		p := New("claude", "", 0, fr)
+		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
 		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go"})
 		require.Error(t, err)
