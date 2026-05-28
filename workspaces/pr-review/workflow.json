@@ -1,0 +1,162 @@
+{
+  "name": "pr-review",
+  "description": "Multi-persona PR review pipeline (Architect R1 -\u003e 10x R1 -\u003e Architect R2 -\u003e 10x R2 -\u003e Security -\u003e Manager) with optional senior-engineer auto-implement of selected fix tier. Intended to be triggered by a GitHub Action on PR open/update.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {},
+  "inputs": [
+    {
+      "name": "pr_number",
+      "type": "number",
+      "description": "GitHub PR number to review",
+      "required": true
+    },
+    {
+      "name": "repo",
+      "type": "string",
+      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron). Must be cloned into ~/Repos/\u003cowner\u003e/\u003cname\u003e on the container host.",
+      "required": true
+    },
+    {
+      "name": "fix_scope",
+      "type": "string",
+      "description": "Auto-implement tier. One of: must, must-should, all-but-defer, none. 'none' skips the senior-engineer node entirely.",
+      "default": "must-should",
+      "required": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "architect-r1",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "architect-r1.md"
+      },
+      "label": "Architect R1",
+      "description": "Ivory Tower Architect first pass; posts inline + general comments",
+      "errorBehavior": {},
+      "entrypoint": true
+    },
+    {
+      "id": "10x-r1",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "10x-r1.md"
+      },
+      "label": "10x R1",
+      "description": "10x GSD Engineer first pass; replies to architect threads, adds practical findings",
+      "errorBehavior": {}
+    },
+    {
+      "id": "architect-r2",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "architect-r2.md"
+      },
+      "label": "Architect R2",
+      "description": "Architect second pass; concedes or doubles down in existing threads only",
+      "errorBehavior": {}
+    },
+    {
+      "id": "10x-r2",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "10x-r2.md"
+      },
+      "label": "10x R2",
+      "description": "10x second pass; final positions in existing threads",
+      "errorBehavior": {}
+    },
+    {
+      "id": "security",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "security.md"
+      },
+      "label": "Security",
+      "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
+      "errorBehavior": {}
+    },
+    {
+      "id": "manager",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "manager.md"
+      },
+      "label": "Manager",
+      "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
+      "errorBehavior": {}
+    },
+    {
+      "id": "branch-on-scope",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "fix_scope",
+            "operator": "neq",
+            "value": "none",
+            "output": "implement"
+          }
+        ],
+        "defaultOutput": "skip"
+      },
+      "label": "Implement?",
+      "description": "Skip senior-engineer when fix_scope == 'none'",
+      "errorBehavior": {}
+    },
+    {
+      "id": "senior-engineer",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "senior-engineer.md"
+      },
+      "label": "Senior Engineer",
+      "description": "Implements selected fix tier locally on the PR branch; does NOT push (manual review before push)",
+      "errorBehavior": {}
+    },
+    {
+      "id": "skipped",
+      "type": "transform",
+      "config": {},
+      "label": "Skipped (review-only)",
+      "description": "No-op terminal node reached when fix_scope == 'none'",
+      "errorBehavior": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "architect-r1",
+      "target": "10x-r1"
+    },
+    {
+      "source": "10x-r1",
+      "target": "architect-r2"
+    },
+    {
+      "source": "architect-r2",
+      "target": "10x-r2"
+    },
+    {
+      "source": "10x-r2",
+      "target": "security"
+    },
+    {
+      "source": "security",
+      "target": "manager"
+    },
+    {
+      "source": "manager",
+      "target": "branch-on-scope"
+    },
+    {
+      "source": "branch-on-scope",
+      "target": "senior-engineer",
+      "output": "implement"
+    },
+    {
+      "source": "branch-on-scope",
+      "target": "skipped",
+      "output": "skip"
+    }
+  ]
+}
