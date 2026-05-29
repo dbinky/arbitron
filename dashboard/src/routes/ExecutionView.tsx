@@ -9,6 +9,7 @@ import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
+import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
 import { useInteractiveSession } from '../hooks/useInteractiveSession'
 import CalloutConnector from '../graph/CalloutConnector'
 import StateBadge from '../components/StateBadge'
@@ -221,6 +222,12 @@ export default function ExecutionView() {
   )
 
   const { connected } = useInstanceWebSocket(id, handleWsEvent)
+
+  // The instance WebSocket auto-reconnects after a drop, but events emitted
+  // while it was down are not replayed. Resync trace/instance/variables on
+  // reconnect so the graph doesn't sit stale (or empty, if the tab was opened
+  // before nodes ran) until the next event arrives.
+  useRefetchOnReconnect(connected, fetchData)
 
   // Handle node click: fetch node trace data.
   const handleNodeClick = useCallback(

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import type { InstanceSummary, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
+import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
 import QueueSection from '../components/QueueSection'
 
 /** Returns an ISO date string for N days ago. */
@@ -66,7 +67,7 @@ export default function QueueView() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useSystemWebSocket(
+  const { connected } = useSystemWebSocket(
     useCallback(
       (event: WebSocketEvent) => {
         if (!STATE_CHANGE_EVENTS.has(event.type)) return
@@ -78,6 +79,11 @@ export default function QueueView() {
       [fetchAll],
     ),
   )
+
+  // The system WebSocket auto-reconnects after a drop, but events emitted
+  // while it was down are not replayed. Resync on reconnect so the queue
+  // doesn't sit stale until the next event arrives.
+  useRefetchOnReconnect(connected, fetchAll)
 
   // Clean up debounce timer on unmount.
   useEffect(() => {
