@@ -4,6 +4,8 @@
 .claude
 arbitron
 node_modules
+dashboard/node_modules
+dashboard/dist
 dashboard/.vite
 .env
 *.db

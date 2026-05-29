@@ -1,8 +1,25 @@
+# Stage 1: build the dashboard SPA. Doing this in-image means every
+# `docker compose build` embeds a freshly-built UI from dashboard/ source —
+# no dependence on the hand-maintained, easily-stale adapter/dashboard/dist
+# checked into git (that copy exists only so a host `go build` compiles without
+# a Node toolchain; refresh it with `make ui`).
+FROM node:22-alpine AS dashboard-build
+WORKDIR /app/dashboard
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+COPY dashboard/ ./
+RUN npm run build
+
+# Stage 2: build the Go binary, embedding the freshly-built dashboard.
 FROM golang:1.25.5-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Replace the committed embed dir with the fresh build so the //go:embed dist/*
+# in adapter/dashboard picks up the current UI rather than a stale checked-in copy.
+RUN rm -rf adapter/dashboard/dist
+COPY --from=dashboard-build /app/dashboard/dist ./adapter/dashboard/dist
 RUN CGO_ENABLED=0 go build -o /arbitron ./cmd/arbitron
 
 FROM alpine:3.20
