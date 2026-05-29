@@ -6,7 +6,10 @@
 FROM node:22-alpine AS dashboard-build
 WORKDIR /app/dashboard
 COPY dashboard/package.json dashboard/package-lock.json ./
-RUN npm ci
+# npm install (not ci): the committed lockfile is generated on the dev host
+# (darwin) and omits the Linux-musl optional native bindings (rollup/vite,
+# @emnapi/*) that Alpine needs, which `npm ci` rejects as out-of-sync.
+RUN npm install --no-audit --no-fund
 COPY dashboard/ ./
 RUN npm run build
 
