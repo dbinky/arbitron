@@ -9,6 +9,12 @@
   flex: 1;
   min-width: 200px;
   overflow: hidden;
+  /* Must be a flex column so a flex:1 child (e.g. the ReactFlow graph
+     container) gets a real height. Without this, the graph's container
+     collapses to 0 height — its nodes are absolutely positioned and
+     contribute no layout height — and the graph renders blank. */
+  display: flex;
+  flex-direction: column;
 }
 
 .divider {
