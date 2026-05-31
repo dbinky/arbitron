@@ -148,6 +148,14 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// 9. Build the initial conversation array. The nonce is persisted so
 	// resumed turns (ConversationHandler.HandleMessage) can scope their
 	// sentinel parsing to the same per-instance value.
+	//
+	// messages[0] is machine scaffolding (orchestration+template prompt):
+	// persisted for rehydration/resumed-turn replay, intentionally not
+	// published live. The live interactive.message stream is a human-chat view
+	// that must not surface the prompt scaffolding (which also embeds the
+	// sentinel nonce); the reconnect/history view rehydrates the full
+	// conversation because resumed turns load exactly this record. This
+	// asymmetry is load-bearing — do not "fix" it by publishing messages[0].
 	conversation := map[string]any{
 		ConversationKeySessionID: sessionID,
 		ConversationKeyNonce:     nonce,
@@ -181,6 +189,15 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
 		return nil, fmt.Errorf("interactive %q: failed to set waiting state: %w", node.ID, err)
 	}
+
+	// 11a. Publish a terminating interactive.message for the assistant response,
+	// AFTER the conversation is persisted (step 10) and the instance is in the
+	// waiting state (step 11). This mirrors ConversationHandler.handleNormalResponse
+	// (persist-then-publish) and lets a client that watched the token stream reset
+	// its streaming flag. Publishing only post-transition means the turn-complete
+	// event is emitted once the instance is durable and actually accepting input —
+	// a live subscriber is never told the turn finished before it is persisted.
+	publishInteractiveMessage(e.eventBus, instanceID, "assistant", fullResponse)
 
 	// 12. Notify capacity freed.
 	e.queueMgr.NotifyCapacityFreed(ctx)

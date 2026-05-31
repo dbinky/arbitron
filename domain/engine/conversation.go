@@ -58,6 +58,26 @@ func NewConversationHandler(
 	}
 }
 
+// publishInteractiveMessage publishes a single interactive.message event for a
+// chat message with the given role and content. It is the one place that
+// defines the wire shape of that event (type constant, the role/content keys,
+// the Timestamp) so the contract lives in exactly one location rather than
+// being duplicated across the executor and conversation-handler emission sites.
+//
+// Scope: role+content message events only. Token (interactive.token) and ended
+// (interactive.ended) events have different payload shapes and are intentionally
+// NOT funneled through here.
+func publishInteractiveMessage(bus EventBus, instanceID uuid.UUID, role, content string) {
+	bus.Publish(instanceID, Event{
+		Type:      EventTypeInteractiveMessage,
+		Timestamp: time.Now(),
+		Data: map[string]any{
+			"role":    role,
+			"content": content,
+		},
+	})
+}
+
 // HandleMessage processes a user message in an active interactive session.
 // It loads the instance and node execution, resumes the stored claude session
 // (sending only the new user message), streams the response, and detects
@@ -85,14 +105,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	})
 
 	// 5. Publish interactive.message event for user message.
-	h.eventBus.Publish(instanceID, Event{
-		Type:      EventTypeInteractiveMessage,
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"role":    "user",
-			"content": content,
-		},
-	})
+	publishInteractiveMessage(h.eventBus, instanceID, "user", content)
 
 	// 6. Build the request: resume the stored session, send only the new
 	//    user message. WorkDir comes from the instance's seeded workspace.
@@ -437,14 +450,7 @@ func (h *conversationHandler) handleNormalResponse(
 	}
 
 	// 3. Publish interactive.message event for assistant.
-	h.eventBus.Publish(instanceID, Event{
-		Type:      EventTypeInteractiveMessage,
-		Timestamp: time.Now(),
-		Data: map[string]any{
-			"role":    "assistant",
-			"content": fullResponse,
-		},
-	})
+	publishInteractiveMessage(h.eventBus, instanceID, "assistant", fullResponse)
 
 	return nil
 }

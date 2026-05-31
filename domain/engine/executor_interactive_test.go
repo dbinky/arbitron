@@ -287,6 +287,60 @@ func TestInteractiveExecutor_PublishesTokenEvents(t *testing.T) {
 	assert.Equal(t, []string{"Hello", " ", "world"}, tokens)
 }
 
+func TestInteractiveExecutor_PublishesFinalAssistantMessageEvent(t *testing.T) {
+	// After streaming the first response, the executor must publish a
+	// terminating interactive.message (role=assistant) so a live client that
+	// watched the token stream resets its isStreaming flag. The resumed-turn
+	// ConversationHandler already does this; the initial executor must match,
+	// otherwise the dashboard composer stays disabled until a page reload
+	// triggers interactive.history.
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	llmProvider.streamCallFn = cannedStream([]string{"Hello", " world"}, 5, 10)
+
+	// Snapshot the number of events published at the moment the instance is
+	// transitioned to waiting (step 11). The finalizing interactive.message
+	// must be emitted at-or-after this point so a live client is only told the
+	// turn completed once the instance is durable and accepting input.
+	//
+	// Scope: asserts message emits after UpdateState(waiting); does not pin
+	// message-vs-Create — see swallowed-Create follow-up.
+	waitingSnapshot := -1
+	instRepo.onUpdateState = func(_ uuid.UUID, state instance.State) {
+		if state == instance.StateWaiting {
+			waitingSnapshot = eventBus.eventCount(instanceID)
+		}
+	}
+
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+
+	msgEvents := eventBus.eventsOfType(instanceID, "interactive.message")
+	require.Len(t, msgEvents, 1, "executor must publish exactly one finalizing interactive.message")
+
+	data, ok := msgEvents[0].Data.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "assistant", data["role"])
+	assert.Equal(t, "Hello world", data["content"])
+
+	// Ordering invariant: the interactive.message must land at-or-after the
+	// waiting transition. A future refactor that moves the Publish back above
+	// UpdateState(waiting) reintroduces the publish-before-persist race and
+	// fails here loudly (no clock, no sleep).
+	require.GreaterOrEqual(t, waitingSnapshot, 0, "onUpdateState(waiting) must have fired")
+	msgIndex := eventBus.indexOfType(instanceID, "interactive.message")
+	require.GreaterOrEqual(t, msgIndex, 0, "interactive.message must be present in the ordered event log")
+	assert.GreaterOrEqual(t, msgIndex, waitingSnapshot,
+		"interactive.message must be published at-or-after UpdateState(waiting)")
+}
+
 func TestInteractiveExecutor_WritesNodeExecutionRecord(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 

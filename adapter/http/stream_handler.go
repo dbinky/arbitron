@@ -102,6 +102,27 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// SECURITY / TRUST MODEL (per-instance authorization — pre-existing IDOR shape):
+	// This endpoint subscribes and streams to ANY caller who knows the instance
+	// UUID, with no per-user authorization check. That is intentional under the
+	// CURRENT trust model, not an oversight introduced here:
+	//   - There is no authentication middleware on any route (see NewRouterFromDeps:
+	//     only Recoverer/RequestID/RealIP/securityHeaders, no auth).
+	//   - There is no per-request user identity, session, or token anywhere; no
+	//     handler reads a caller identity from the request.
+	//   - instance.OwnerID is always the single fixed "local" user
+	//     (UserRepository.GetDefaultUser -> WHERE username = 'local'), so it
+	//     cannot be used to scope a request to its owner.
+	//   - The REST instance handlers (GET /instances/{id}, etc.) have the SAME
+	//     shape: they authorize on instance UUID alone. This WS endpoint is at
+	//     parity with them, not weaker.
+	// The codebase is effectively single-operator / network-isolated today.
+	// Adding a real per-user authz check here would require first introducing an
+	// authentication/identity mechanism for the whole API — a product decision,
+	// not a local fix. DO NOT bolt an ad-hoc auth scheme onto this one endpoint;
+	// that would diverge from the REST handlers and give a false sense of security.
+	// Tracked as a follow-up requiring a product decision on the auth model.
+
 	// Verify instance exists before upgrading.
 	inst, err := h.instances.Get(r.Context(), id)
 	if err != nil {

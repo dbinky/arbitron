@@ -82,6 +82,13 @@ type mockInstanceRepo struct {
 	instances           map[uuid.UUID]*instance.Instance
 	setWaitingErr       error
 	setWebhookFieldsErr error
+	// onUpdateState, when set, is invoked from UpdateState AFTER the state
+	// mutation is applied. It is a test-only hook (not part of the production
+	// InstanceRepository port) used to snapshot cross-mock ordering — e.g. the
+	// number of events published at the moment the instance transitions to
+	// waiting — so a test can assert event-emission happened at-or-after the
+	// transition.
+	onUpdateState func(id uuid.UUID, state instance.State)
 }
 
 func newMockInstanceRepo() *mockInstanceRepo {
@@ -153,13 +160,18 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 
 func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("instance not found: %s", id)
 	}
 	inst.State = state
 	inst.UpdatedAt = time.Now()
+	hook := r.onUpdateState
+	r.mu.Unlock()
+	if hook != nil {
+		hook(id, state)
+	}
 	return nil
 }
 
@@ -488,6 +500,29 @@ func (b *mockEventBus) eventsOfType(instanceID uuid.UUID, eventType string) []en
 		}
 	}
 	return result
+}
+
+// eventCount returns the number of events published for the instance so far,
+// in call order. Used to snapshot the ordered event log at a point in time
+// (e.g. when the instance transitions to waiting) for cross-mock ordering
+// assertions.
+func (b *mockEventBus) eventCount(instanceID uuid.UUID) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.events[instanceID])
+}
+
+// indexOfType returns the index, within the instance's ordered event log, of
+// the first event with the given type, or -1 if no such event was published.
+func (b *mockEventBus) indexOfType(instanceID uuid.UUID, eventType string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, e := range b.events[instanceID] {
+		if e.Type == eventType {
+			return i
+		}
+	}
+	return -1
 }
 
 // mockExecutor implements engine.NodeExecutor with configurable behavior

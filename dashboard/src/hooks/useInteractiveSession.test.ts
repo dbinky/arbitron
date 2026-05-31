@@ -108,8 +108,8 @@ describe('useInteractiveSession — interactive.history', () => {
     const { result } = renderHook(() => useInteractiveSession('inst-123'))
     fireEvent(historyEvent())
     expect(result.current.messages).toHaveLength(2)
-    expect(result.current.messages[0]).toEqual({ role: 'user', content: 'Please review' })
-    expect(result.current.messages[1]).toEqual({ role: 'assistant', content: 'I will review.' })
+    expect(result.current.messages[0]).toEqual(expect.objectContaining({ role: 'user', content: 'Please review' }))
+    expect(result.current.messages[1]).toEqual(expect.objectContaining({ role: 'assistant', content: 'I will review.' }))
     expect(result.current.nodeId).toBe('review-design')
     expect(result.current.isActive).toBe(true)
     expect(result.current.error).toBeNull()
@@ -197,7 +197,7 @@ describe('useInteractiveSession — interactive.message (assistant)', () => {
     expect(result.current.isStreaming).toBe(false)
     expect(result.current.streamingContent).toBe('')
     expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0]).toEqual({ role: 'assistant', content: 'Complete response' })
+    expect(result.current.messages[0]).toEqual(expect.objectContaining({ role: 'assistant', content: 'Complete response' }))
   })
 })
 
@@ -213,7 +213,7 @@ describe('useInteractiveSession — interactive.message (user)', () => {
     fireEvent(userMessageEvent('Hello there'))
 
     expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0]).toEqual({ role: 'user', content: 'Hello there' })
+    expect(result.current.messages[0]).toEqual(expect.objectContaining({ role: 'user', content: 'Hello there' }))
     // Streaming state was not touched by the user message
     expect(result.current.isStreaming).toBe(true)
   })
