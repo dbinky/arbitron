@@ -8,6 +8,17 @@ import (
 	"database/sql"
 )
 
+type Connection struct {
+	Name         string
+	Provider     string
+	BaseURL      string
+	Extras       string
+	APIKeyCipher []byte
+	APIKeyNonce  []byte
+	CreatedAt    string
+	UpdatedAt    string
+}
+
 type Instance struct {
 	ID                string
 	OwnerID           string

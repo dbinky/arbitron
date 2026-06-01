@@ -107,6 +107,31 @@ func fromJSONString(s string) (map[string]any, error) {
 	return m, nil
 }
 
+func extrasToJSON(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func extrasFromJSON(s string) (map[string]string, error) {
+	if s == "" || s == "{}" {
+		return map[string]string{}, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = map[string]string{}
+	}
+	return m, nil
+}
+
 func toNullJSONString(m map[string]any) (sql.NullString, error) {
 	if m == nil {
 		return sql.NullString{}, nil
