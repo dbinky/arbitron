@@ -8,7 +8,7 @@ This task realizes the persistence half of security acceptance **#7** (ciphertex
 
 **Dependency ordering:** Builds on **Task 1** (`provider.Crypto`, `adapter/crypto.AESGCM`). Builds on the **Phase 1 `domain/provider`** package. Task 3 (resolution) and Task 5 (wiring) consume this store. Sources of truth: design Phase 2 §1, §6, §7; sqlc/migration conventions in `adapter/sqlite/` (engine `sqlite`, `migrations/*.up.sql` + `*.down.sql`, `queries/*.sql`, generated into `adapter/sqlite/generated`).
 
-> Persistence note: the design doc names "Postgres", but the Arbitron codebase's sqlc store is the `sqlite` engine under `adapter/sqlite/` (see `adapter/sqlite/sqlc.yaml`, `migrate.go`). Implement the `ConnectionStore` there to match the live conventions exactly; the port stays storage-agnostic so a future Postgres engine is a drop-in.
+> Persistence note: the live sqlc store is the `sqlite` engine under `adapter/sqlite/` (see `adapter/sqlite/sqlc.yaml`, `migrate.go`), and the Phase-2 design doc now specifies SQLite conventions (BLOB cipher/nonce, TEXT-JSON extras, TEXT timestamps, `NNN_name.up.sql/.down.sql` migrations, `-- name:` annotated queries with `?` placeholders). Implement the `ConnectionStore` there to match the live conventions exactly; the `ConnectionStore` port stays storage-agnostic so a future Postgres engine would be a drop-in.
 
 ## Files to Create/Modify
 

@@ -6,13 +6,13 @@
 
 ## Overview
 
-Phase 2 turns the slim Phase-1 profile into the full three-concept model from spec §5–§6: **connections** (endpoint + credential), **models** (`model-id` on top of a connection), and **profiles** (the unit a node references). It adds a Postgres-backed **connection store** with API keys **encrypted at rest** (AES-256-GCM), a `Crypto` port, and the full resolution chain `alias → profile → connection → backend + injected credential`. Nodes are **not** re-touched — they still reference `model_profile: <alias>`; only the resolution behind the alias gets richer. This phase produces no new *node* behavior; it produces the credential and endpoint machinery that Phase 3's native adapters and opencode backend consume.
+Phase 2 turns the slim Phase-1 profile into the full three-concept model from spec §5–§6: **connections** (endpoint + credential), **models** (`model-id` on top of a connection), and **profiles** (the unit a node references). It adds a **connection store** backed by the live sqlc+SQLite store under `adapter/sqlite/`, with API keys **encrypted at rest** (AES-256-GCM), a `Crypto` port, and the full resolution chain `alias → profile → connection → backend + injected credential`. Nodes are **not** re-touched — they still reference `model_profile: <alias>`; only the resolution behind the alias gets richer. This phase produces no new *node* behavior; it produces the credential and endpoint machinery that Phase 3's native adapters and opencode backend consume.
 
 Realizes the resolution half of acceptance **#2/#3/#7**; the safety half (#7: keys never in `workflow.json`, never logged) is enforced here.
 
 ---
 
-## 1. Connection Store — `domain/provider` + `adapter/postgres`
+## 1. Connection Store — `domain/provider` + `adapter/sqlite`
 
 A connection binds an endpoint to its credential (spec §6). `model-id` is deliberately excluded so one connection fronts many models.
 
@@ -37,22 +37,35 @@ type ConnectionStore interface {
 }
 ```
 
-### Postgres schema (sqlc)
+### SQLite schema (sqlc)
+
+The live store is sqlc+SQLite under `adapter/sqlite/`. The migration is a new
+`adapter/sqlite/migrations/002_connections.up.sql` (+ `.down.sql`) following the
+existing `NNN_name` convention (see `migrate.go`, `001_initial_schema.up.sql`):
+TEXT timestamps via `strftime`, `BLOB` for binary cipher/nonce, and TEXT (JSON
+string) for `extras`.
 
 ```sql
-CREATE TABLE connections (
-    name           text PRIMARY KEY,
-    provider       text        NOT NULL,
-    base_url       text        NOT NULL,
-    extras         jsonb       NOT NULL DEFAULT '{}',
-    api_key_cipher bytea       NOT NULL,
-    api_key_nonce  bytea       NOT NULL,
-    created_at     timestamptz NOT NULL DEFAULT now(),
-    updated_at     timestamptz NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS connections (
+    name           TEXT PRIMARY KEY,
+    provider       TEXT NOT NULL,
+    base_url       TEXT NOT NULL,
+    extras         TEXT NOT NULL DEFAULT '{}',   -- JSON object (map[string]string)
+    api_key_cipher BLOB NOT NULL,
+    api_key_nonce  BLOB NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ'))
 );
 ```
 
-`adapter/postgres` implements `ConnectionStore` with sqlc-generated queries. The ciphertext + nonce columns hold the AES-GCM output; plaintext keys never hit a column, a log line, or a query parameter beyond the encrypt call.
+`adapter/sqlite` implements `ConnectionStore` with sqlc-generated queries
+(`adapter/sqlite/queries/connections.sql`, `-- name: X :one|:many|:exec`
+annotations, `?` placeholders, generated into `adapter/sqlite/generated`), and a
+`connection_repo.go` alongside the existing `*_repo.go`. The `api_key_cipher` /
+`api_key_nonce` BLOB columns hold the AES-GCM output; plaintext keys never hit a
+column, a log line, or a query parameter beyond the encrypt call. The
+`ConnectionStore` port stays storage-agnostic, so a future Postgres engine is a
+drop-in.
 
 ---
 
@@ -127,7 +140,7 @@ The `ResolvedBinding` is the seam Phase 3's adapters consume; Phase 1's `StaticP
 
 - **Connections** are managed through the server (CRUD via `ConnectionStore`), surfaced later by the Phase 5 dashboard/MCP write path. For MVP they can also be seeded from config/CLI; the **plaintext key is supplied at create/update time only** and immediately sealed.
 - **Profiles** remain a koanf-loaded server-level registry (now including `connection-ref` + params), env-overridable per existing precedence. Still **not** in `workflow.json`.
-- `cmd/arbitron/main.go`: construct `AESGCM` (master key from env/keyring) → `ConnectionStore` (Postgres) → widened `ProfileResolver`; inject the resolver into the executors and validation.
+- `cmd/arbitron/main.go`: construct `AESGCM` (master key from env/keyring) → `ConnectionStore` (sqlc+SQLite, `adapter/sqlite`) → widened `ProfileResolver`; inject the resolver into the executors and validation.
 
 ---
 
@@ -143,7 +156,7 @@ The `ResolvedBinding` is the seam Phase 3's adapters consume; Phase 1's `StaticP
 ## 7. Testing Strategy (strict TDD, 5 scenario categories)
 
 - **`AESGCM` crypto** — seal/open round-trip; tampered ciphertext fails open; wrong-key fails; empty plaintext; nonce uniqueness across seals.
-- **`ConnectionStore` (Postgres)** — create/get/list/update/delete; `Reveal` decrypts; update-with-nil-key preserves the key; get returns no plaintext; missing-connection error; duplicate-name edge.
+- **`ConnectionStore` (sqlc+SQLite)** — create/get/list/update/delete; `Reveal` decrypts; update-with-nil-key preserves the key; get returns no plaintext; missing-connection error; duplicate-name edge. Use the existing `:memory:` + `RunMigrations` test setup in `adapter/sqlite/integration_test.go`.
 - **Resolution chain** — alias→profile→connection→binding happy path; empty `ConnectionRef` → claude-cli no-key binding; unknown connection error; unknown alias error; lazy `RevealKey` only decrypts when called.
 - **Validation** — profile with valid connection OK; profile referencing missing connection fails; Azure connection missing `api-version` rejected at connection create; kind-matching still enforced.
 - **Secrecy assertions** — a test that captures log output and asserts no plaintext key appears for a resolved/used connection.
@@ -151,7 +164,7 @@ The `ResolvedBinding` is the seam Phase 3's adapters consume; Phase 1's `StaticP
 ## 8. Sequencing (each built test-first)
 
 1. `Crypto` port + `AESGCM` adapter + master-key bootstrap.
-2. `ConnectionStore` port + Postgres adapter + sqlc queries + migration.
+2. `ConnectionStore` port + sqlc+SQLite adapter (`adapter/sqlite`) + sqlc queries + `002_connections` migration.
 3. Widen `Profile` + resolution chain (`ResolvedBinding`); keep claude-cli no-key path working.
 4. Validation extensions (connection existence, Azure extras).
 5. Wiring + management surface; secrecy/log-redaction tests.

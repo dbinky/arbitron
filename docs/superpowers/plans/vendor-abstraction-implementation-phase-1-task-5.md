@@ -46,7 +46,7 @@ Introduce a domain-level **profile checker** interface mirroring `FileChecker`, 
   func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker) []ValidationError
   ```
   - When `profiles != nil`, run a new `validateModelProfiles(wf, profiles)` pass; when nil, skip it (same nil-skip convention as `checker`).
-  - **Caller impact:** every existing call site of `Validate(wf, checker)` must pass the new arg (use `nil` where no resolver is available, e.g. pure structural tests). Update `domain/workflow/validation_test.go` and any callers in `cmd/`, `adapter/http`, or wherever `workflow_validate` is invoked. Search: `Validate(` across the repo.
+  - **Caller impact:** every existing call site of `Validate(wf, checker)` must pass the new arg (use `nil` where no resolver is available, e.g. pure structural tests). The two production call sites today are `adapter/mcp/tools_workflow.go` (`workflow.Validate(wf, srv.deps.FileReader)`) and `adapter/http/workflow_handler.go` (`workflow.Validate(wf, h.fileReader)`); update both, plus `domain/workflow/validation_test.go`. Search `Validate(` across the repo to confirm none are missed. (In this task they may pass `nil` for the profile checker if the resolver is not yet threaded into those handlers; Task 6 wires the real `ResolverChecker` through both call sites. Note Phase 2 Task 4 then adds a fourth `ConnectionChecker` arg — keep this third `ProfileChecker` arg when that lands.)
 - Add `validateModelProfiles`:
   ```go
   func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationError

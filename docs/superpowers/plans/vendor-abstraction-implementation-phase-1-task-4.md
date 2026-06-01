@@ -87,6 +87,7 @@ func NewAgentCallExecutor(fr FileReader, ap AgentProvider, resolver provider.Pro
   - In `Execute`, resolve `prof, err := e.resolver.Resolve(node.Config.ModelProfile)` (wrap as `llm_call %q: resolve profile`), and set `req.Model = prof.Model`.
   - The request stays tool-suppressed by construction (the `ChatProvider`/`ChatAdapter` never has tools) — no tool fields on `ChatRequest`. This is the §3 fix: `llm_call` can no longer edit files.
   - Everything else (`processLLMOutput`, `WorkDirFromVars`) unchanged.
+  - **Forward note (Phase 3):** in P1 the executor holds a single `ChatProvider` (the only backend is claude-cli) and uses the resolver only for `prof.Model`. Phase 3 Task 5 swaps that single-provider field for a `ChatProviderSelector` so the concrete backend is chosen **per node** from the resolved binding's `Provider`. Keep the resolver call and the `Chat` call cleanly separable so that change is a localized field swap, not a rewrite. (`AgentCallExecutor` evolves symmetrically to an `AgentProviderSelector`.)
 
 ### Note: `interactive` and the conversation handler
 

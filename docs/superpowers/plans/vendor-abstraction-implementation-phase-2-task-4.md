@@ -26,11 +26,12 @@ This task realizes the validation half of acceptance **#7** (a profile referenci
   }
   ```
   (Keeping both lookups behind one checker lets validation map alias → ConnectionRef → existence without importing `domain/provider`.)
-- Extend the top-level `Validate` signature to accept the new checker alongside the existing `FileChecker`, following the current injected-checker convention. Prefer an additive optional parameter so existing call sites stay valid; a nil `ConnectionChecker` skips the connection check (same pattern as a nil `FileChecker` skipping file checks):
+- **Extend the Phase-1 `Validate` signature — do NOT redefine it.** Phase 1 Task 5 already widened `Validate` to thread the `ProfileChecker` (kind-matching): `Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker) []ValidationError`. This task **adds** a fourth argument — the `ConnectionChecker` — keeping the existing `FileChecker` and `ProfileChecker` exactly as Phase 1 left them. The single coherent signature after both phases is:
   ```go
-  func Validate(wf *Workflow, fileChecker FileChecker, connChecker ConnectionChecker) []ValidationError
+  func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker) []ValidationError
   ```
-  Update internal callers accordingly. (If Phase 1 already widened this signature for the profile registry, extend that signature rather than adding a competing one.)
+  This EXTENDS the Phase-1 entry point; it is **not** a competing 3-arg redefinition that drops `ProfileChecker`. Follow the current injected-checker convention: each checker is independently nil-skippable — a nil `ConnectionChecker` skips the connection check (same pattern as a nil `FileChecker` skipping file checks, and a nil `ProfileChecker` skipping kind-matching from Phase 1).
+  Update every internal caller accordingly (search `Validate(` across the repo): structural-only callers pass `nil` for the checkers they have no source for; the wired path (Task 5) passes the file checker, the profile checker, and the connection checker. Keep the Phase-1 `ProfileChecker` argument present in every call site.
 - Add `validateConnectionReferences(wf, connChecker)`:
   - For every `llm_call`/`agent_call` node, read its `model_profile` alias (already validated for kind in Phase 1).
   - `connChecker.ProfileConnectionRef(alias)`; if the alias is unknown, skip here (Phase 1's kind/alias validation already reports the unknown-alias error — do not double-report).
@@ -62,11 +63,12 @@ Test `validateConnectionReferences` with a **fake `ConnectionChecker`** and `Val
 - **Happy path** — a workflow whose `llm_call`/`agent_call` profiles reference existing connections validates with no connection errors; an Azure connection **with** `api-version` passes `ValidateConnection`.
 - **Success** — a profile with an empty `ConnectionRef` (claude-cli subscription) validates with no connection error (no existence check performed); a non-Azure connection with no `api-version` passes `ValidateConnection`.
 - **Failure** — a profile referencing a missing connection produces a clear `ValidationError` naming the alias and the connection; an Azure connection **missing** `api-version` is rejected by `ValidateConnection` with `ErrAzureAPIVersionRequired`, and (integration) `ConnectionRepo.Create`/`Update` returns that error and persists nothing.
-- **Error** — `Validate` with a nil `ConnectionChecker` skips the connection check without panicking; an unknown alias is **not** double-reported by the connection check (Phase 1 owns that error).
+- **Error** — `Validate(wf, fileChecker, profileChecker, nil)` (nil `ConnectionChecker`, Phase-1 `ProfileChecker` still passed) skips the connection check without panicking and still runs kind-matching; an unknown alias is **not** double-reported by the connection check (Phase 1 owns that error).
 - **Edge case** — `api-version` present but empty string is rejected (treated as missing); a workflow mixing a no-connection Claude profile and a real-connection Azure profile validates the real one and skips the empty one; kind-matching from Phase 1 still fails an `agent_call`→chat profile (regression assertion that this task did not weaken it).
 
 ## Acceptance Criteria
 
+- `Validate` is the single coherent 4-arg entry point `Validate(wf, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker)` — the Phase-1 `ProfileChecker` is retained and the `ConnectionChecker` is added (not a competing redefinition); each checker is independently nil-skippable.
 - `domain/workflow/validation.go` checks, via an injected `ConnectionChecker` (not a `ConnectionStore`), that every non-empty profile `ConnectionRef` names an existing connection, failing `workflow_validate` with a clear error before any run.
 - Empty `ConnectionRef` (claude-cli subscription) passes validation with no existence check.
 - `provider.ValidateConnection` enforces Azure `api-version` in `Extras` at connection create/update; the `ConnectionRepo` calls it before sealing/persisting.

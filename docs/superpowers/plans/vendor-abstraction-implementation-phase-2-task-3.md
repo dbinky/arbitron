@@ -43,7 +43,12 @@ This task realizes the resolution half of acceptance **#7** (base-url/key resolv
       Resolve(alias string) (ResolvedBinding, error)
   }
   ```
-  Update the Phase 1 sentinel for unknown alias if one exists (reuse it); otherwise add `var ErrUnknownAlias = errors.New("unknown profile alias")`. Domain imports no adapter — `ConnectionStore`/`Crypto` are domain ports, so the resolver depending on them is hex-clean.
+  Reuse the Phase-1 unknown-alias sentinel (Phase 1 Task 3 defines `provider.ErrUnknownProfile`); keep that one name rather than introducing a parallel `ErrUnknownAlias`, so the Phase-1 `ResolverChecker`'s `errors.Is`/return-on-error path and the executors' `resolve profile` wrap continue to match the same sentinel. Domain imports no adapter — `ConnectionStore`/`Crypto` are domain ports, so the resolver depending on them is hex-clean.
+
+> **Resolver type evolution — explicit P1→P2→P3 contract.** Phase 1 established `ProfileResolver.Resolve(alias) (Profile, error)` with the slim `Profile{Alias,Kind,Model}`. This task **widens** that single port (same method name `Resolve`) to return `ResolvedBinding{Kind, Provider, BaseURL, Extras, Model, Params, RevealKey}` — it does **not** fork a second parallel resolver type. Because `ResolvedBinding` carries both `Kind` and `Model`, the Phase-1 callers continue to compile after the widening with only the field-access source changing:
+> - **`LLMCallExecutor` / `AgentCallExecutor`** (Phase 1 Task 4) read `prof.Model` to set `ChatRequest.Model` / `AgentMission.Model`; after this task they read `binding.Model` off the `ResolvedBinding`. Update those two reads as part of this task so the executors compile against the widened `Resolve`. Their resolver-injection contract (an alias in, a backend selection out) is unchanged.
+> - **`ResolverChecker`** (Phase 1 Task 5, in `adapter/provider`) calls `Resolve(alias)` and returns `string(prof.Kind), true`; after this task it reads `binding.Kind`. Update that single read. The `workflow.ProfileChecker` interface it satisfies is unchanged.
+> Phase 3 then consumes the same `ResolvedBinding` (its native adapters and the opencode backend read `BaseURL`/`Extras`/`Model`/`RevealKey`). No phase redefines these types incompatibly.
 
 ### Modify: `adapter/provider/static_resolver.go` (the Phase 1 `StaticProfileResolver`)
 
@@ -59,6 +64,10 @@ This task realizes the resolution half of acceptance **#7** (base-url/key resolv
   5. **`RevealKey`** is a closure capturing `store` and `profile.ConnectionRef`: `func(ctx context.Context) (string, error) { return store.Reveal(ctx, connRef) }`. It is invoked only by Phase 3 backends at call/launch time — **lazy**: building the binding performs no decryption.
 - Compile-time assertion: `var _ provider.ProfileResolver = (*StaticProfileResolver)(nil)`.
 - SECURITY: the resolver logs (if at all) the alias and connection **name** only — never the revealed key. `RevealKey`'s output is returned to the caller, never logged inside the resolver.
+
+### Also update: the config→profile mapping seam + `ProfileConfig`
+
+- Widen `domain/config.ProfileConfig` (Phase 1 Task 3: `{Alias, Kind, Model}`) to add `ConnectionRef` + `Params`, and extend the Phase-1 `ProfilesFromConfig` helper (`adapter/config`) to copy the two new fields into `provider.Profile`. (Phase 2 Task 5 wires the loader/YAML for these fields and constructs the widened resolver via this same `ProfilesFromConfig` seam — keep the helper name and location from Phase 1 Task 3; do not fork a parallel mapper.)
 
 > Many-to-one topology and one-line backend swap are intrinsic to this chain (design §3): a shared-key endpoint is one connection serving many profiles; repointing a profile's `ConnectionRef`/`Model` or the connection's `base-url`/key swaps the backend for every node using that alias with no graph edit. No extra code — assert these in tests.
 

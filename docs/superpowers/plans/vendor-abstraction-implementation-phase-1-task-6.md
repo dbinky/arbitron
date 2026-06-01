@@ -16,7 +16,7 @@ Source of truth: `docs/superpowers/specs/vendor-abstraction-design-phase-1.md` �
 - Around line 196: a `switch cfg.LLM.Provider` builds a single `var llmProvider engine.ChatProvider` (post-Task-1) — `case "claude-cli"` constructs `claudecli.New(...)`; `default` builds the anthropic stub. `WorkspaceRoot` is resolved from `cfg.Workspace.Path`.
 - Around line 226: `executors := map[workflow.NodeType]engine.NodeExecutor{ ... NodeTypeLLMCall: engine.NewLLMCallExecutor(fileReader, llmProvider), ... }`.
 - Around line 296: `executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr)` and the conversation handler at ~301 also takes `llmProvider`.
-- `workflow.Validate` is called wherever `workflow_validate` is served (find via `grep -rn "workflow.Validate(" .`); each call site needs the new third arg.
+- `workflow.Validate` is called wherever `workflow_validate` is served — the two production call sites are `adapter/mcp/tools_workflow.go` (line ~248) and `adapter/http/workflow_handler.go` (line ~114), both currently `workflow.Validate(wf, <fileReader>)`. Each needs the new third `ProfileChecker` arg (the `ResolverChecker`). (Confirm via `grep -rn "workflow.Validate(" .`.)
 - Existing workflow JSON using `model`: `adapter/filesystem/testdata/all-node-types/workflow.json` (and any production workflow definitions under the workspace path — these live outside the repo at runtime, so the migration here covers in-repo testdata + a documented operator step).
 
 ## Files to Create/Modify
