@@ -348,6 +348,22 @@ func TestStaticProfileResolver_CaseSensitive(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 }
 
+// Edge: a connection-backed profile (non-empty ConnectionRef) cannot resolve
+// when the store is nil — NewStaticProfileResolver accepts nil for a no-key-
+// only registry, but Resolve must fail fast and name both the profile alias
+// and the referenced connection so operators know what to fix.
+func TestStaticProfileResolver_ConnBackedProfileNilStore_Errors(t *testing.T) {
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "cloud-chat", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "m"},
+	}, nil)
+	require.NoError(t, err, "construction succeeds even with nil store")
+
+	_, err = r.Resolve("cloud-chat")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cloud-chat")
+	assert.Contains(t, err.Error(), "azure-prod")
+}
+
 // The resolver satisfies the domain ProfileResolver port.
 func TestStaticProfileResolver_ImplementsPort(t *testing.T) {
 	var _ provider.ProfileResolver = (*adapterprovider.StaticProfileResolver)(nil)
