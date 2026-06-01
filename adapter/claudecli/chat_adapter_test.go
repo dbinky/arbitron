@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,6 +147,33 @@ func TestChatAdapterChat(t *testing.T) {
 		assert.Equal(t, "s3", resp.SessionID)
 	})
 
+	// Error — configured Timeout cancels a hung runner; Chat returns an error
+	// instead of hanging. Mirrors the equivalent test on AgentAdapter.
+	t.Run("configured Timeout cancels a hung runner", func(t *testing.T) {
+		br := &blockingRunner{}
+		a := NewChatAdapter(Config{
+			BinaryPath: "claude",
+			Timeout:    20 * time.Millisecond,
+			Runner:     br,
+		})
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			require.Error(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Chat did not return after Timeout elapsed")
+		}
+		assert.NotNil(t, br.gotCtx)
+		_, hasDeadline := br.gotCtx.Deadline()
+		assert.True(t, hasDeadline, "a configured Timeout must set a context deadline on the runner ctx")
+	})
+
 	// Edge — WorkDir invariants.
 	t.Run("empty WorkDir is rejected without invoking the runner", func(t *testing.T) {
 		fr := &fakeRunner{}
@@ -269,6 +297,36 @@ func TestChatAdapterStreamChat(t *testing.T) {
 		chunks := collectChunks(t, ch)
 		require.NotEmpty(t, chunks)
 		assert.Error(t, chunks[len(chunks)-1].Error)
+	})
+
+	// Error — configured Timeout cancels a hung StreamChat; the goroutine
+	// returns and the channel closes instead of leaking forever.
+	t.Run("configured Timeout cancels a hung StreamChat", func(t *testing.T) {
+		br := &blockingRunner{}
+		a := NewChatAdapter(Config{
+			BinaryPath: "claude",
+			Timeout:    20 * time.Millisecond,
+			Runner:     br,
+		})
+
+		ch, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
+		require.NoError(t, err)
+
+		// The channel must close once the timeout fires; drain it and assert
+		// the goroutine returned within a generous wall-clock margin.
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for range ch { //nolint:revive // intentional drain
+			}
+		}()
+
+		select {
+		case <-drained:
+			// channel closed; goroutine returned — pass
+		case <-time.After(2 * time.Second):
+			t.Fatal("StreamChat goroutine did not return after Timeout elapsed")
+		}
 	})
 
 	// Edge — empty WorkDir rejected before invoking the runner.
