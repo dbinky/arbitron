@@ -62,7 +62,7 @@ The execution model separates a node's **intent** (its kind) from its **backend*
 
 ---
 
-## Vendor Abstraction — Models, Providers, Credentials
+## Vendor Abstraction — Models, Connections & Providers
 
 The MVP makes Arbitron **fully abstracted from any single LLM vendor** while still allowing a local `claude -p` (Claude subscription) backend for both reasoning and agentic editing.
 
@@ -71,25 +71,29 @@ The MVP makes Arbitron **fully abstracted from any single LLM vendor** while sti
 - **`ChatProvider`** — reasoning/chat. Prompt (or conversation) + model + params + optional output schema → text or structured output + token usage. Streaming variant for `interactive`. No tools, no file side effects. Implementations: **tool-suppressed `claude -p`**, **native Azure AI Foundry**, **native OpenRouter**.
 - **`AgentProvider`** — agentic editing. Mission (prompt + workdir + model) → file mutations in the workspace + result summary + step events. The tool-use loop runs inside the harness. Implementations: **`claude -p`** (tools on) and **`opencode`** (`run`/`serve`), which routes the mission to any provider/model. Non-Claude agentic editing (Azure, OpenRouter, open-weight) goes through opencode; Arbitron does not build its own API-level tool-use loop.
 
-### Model Profile Registry
+### Models, Connections & Profiles
 
-A **model profile** binds intent to backend:
+Three orthogonal concepts, kept separate because real provider topologies force them apart:
+
+- **Connection (endpoint)** — *where to reach a backend and how to authenticate*: `connection = { name, provider, base-url, region/extras, api-key }`. The API key is endpoint-scoped, so key and URL are bound together here; `model-id` is **not** part of a connection.
+- **Model** — a `model-id` (Azure: a deployment name) selected *on top of* a connection, so one connection can serve many models and the same model can come from several connections.
+- **Model profile** — what a node references:
 
 ```
-profile = { alias, kind: chat | agent, provider, model-id, credential-ref, default params }
+profile = { alias, kind: chat | agent, connection-ref, model-id, default params }
 ```
 
-Nodes reference a profile by **alias** (e.g. `model_profile: fast-reasoner`). Resolution maps the alias to a concrete adapter (or harness + `provider/model` string) and a credential. This gives **per-node model freedom**, a **one-line backend swap** for every node using an alias, and **kind-matching validation** (an `agent_call` requires an `agent` profile; an `llm_call` requires a `chat` profile).
+Nodes reference a profile by **alias** (e.g. `model_profile: fast-reasoner`). Resolution maps the alias to its connection (which determines the adapter, or harness + `provider/model` string), applies `model-id`, and injects the connection's credential. This gives **per-node model freedom**, a **one-line backend swap** (repoint the profile or its connection), and **kind-matching validation** (an `agent_call` requires an `agent` profile; an `llm_call` requires a `chat` profile).
 
-### Credential Store
+### Connection Store
 
-A single local **encrypted** store of named secrets, referenced by profiles via `credential-ref`:
+A single local store (API keys **encrypted** at rest), referenced by profiles via `connection-ref`:
 
-- Subscription `claude -p` needs **no** entry (it inherits the ambient Claude login) — a Claude-only local run requires zero stored keys.
-- Native chat adapters (Azure, OpenRouter) read their key directly.
-- Subprocess harnesses (`claude`, `opencode`) receive the required key **injected as an environment variable at launch** — this is how `opencode run --model <provider/model>` obtains the right key.
+- Subscription `claude -p` needs **no** connection (it inherits the ambient Claude login) — a Claude-only local run requires zero stored keys or endpoints.
+- Native chat adapters (Azure AI Foundry, OpenRouter, LiteLLM) read their connection's base-url, key, and extras directly.
+- Subprocess harnesses (`claude`, `opencode`) receive the connection's key and base-url **injected as environment variables at launch** — this is how `opencode run --model <provider/model>` reaches the right endpoint with the right key.
 
-Keys never appear in `workflow.json` and are never logged.
+A **local router** (e.g. LiteLLM) is just another connection. **Azure's two topologies** map on without special-casing: an Azure OpenAI resource is one connection serving many model **deployments** (one connection / many profiles, `api-version` in extras, `model-id` = deployment name); an Azure AI Foundry serverless deployment has its own endpoint + key (one connection / model). Keys never appear in `workflow.json` and are never logged.
 
 ---
 

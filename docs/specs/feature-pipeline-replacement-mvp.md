@@ -53,32 +53,47 @@ The provider layer exposes **two distinct interfaces**, separated by capability.
 
 Rationale for two ports rather than one unified provider: a single interface would force chat-only adapters to no-op the tool methods and would blur the capability validation that `agent_call` depends on. The two-port split gives a clean capability contract, native control over chat (structured output, streaming, token accounting), and confines harness usage to where agency is genuinely required.
 
-The `interactive` node's executor is already provider-agnostic (it consumes the streaming interface and tracks a session). Its eventual backend is a Messages-API chat adapter that resumes via a conversation array rather than a harness session id; that adapter is **out of scope** here and noted as future work (§9).
+The `interactive` node's executor is already provider-agnostic (it consumes the streaming interface and tracks a session). Its eventual backend is a Messages-API chat adapter or a Chat Completions API (dpending on model provider) that resumes via a conversation array rather than a harness session id; that adapter is **out of scope** here and noted as future work (§9).
 
-## 5. Model Profile Registry
+## 5. Models, Connections & Profiles
 
-A **model profile** is the single unit that binds intent to backend:
+Three orthogonal concepts are kept separate, because real provider topologies force them apart:
+
+- **Connection (endpoint)** — *where to reach a backend and how to authenticate*. An API key is endpoint-scoped, so the key and URL are bound together here; `model-id` is **not** part of a connection. Defined in §6.
+- **Model** — a `model-id` (or, for Azure, a deployment name) selected *on top of* a connection. Keeping it off the connection lets one connection serve many models, and lets the same logical model be sourced from several connections.
+- **Model profile** — the single unit a node references:
 
 ```
-profile = { alias, kind: chat | agent, provider, model-id, credential-ref, default params }
+profile = { alias, kind: chat | agent, connection-ref, model-id, default params }
 ```
 
-Nodes reference a profile by **alias** (e.g. `model_profile: fast-reasoner`). Resolution maps the alias to a concrete adapter (or harness + `provider/model` string for agent profiles) and to a credential. Properties:
+Nodes reference a profile by **alias** (e.g. `model_profile: fast-reasoner`). Resolution maps the alias to its connection (which determines the provider and thus the concrete adapter, or harness + `provider/model` string for agent profiles), applies `model-id` on that connection, and injects the connection's credential. Properties:
 
 - **Per-node model freedom.** Any node names any profile; this is the mechanism for "every node a different model."
-- **One-line backend swap.** Repointing a profile changes the backend for every node that uses it, without touching the workflow graph.
-- **Multiple credentials per provider** are supported (the profile names its credential explicitly).
+- **One-line backend swap.** Repointing a profile — or repointing its connection — changes the backend for every node that uses it, without touching the workflow graph.
+- **Connections are many-to-one with models, by provider topology.** A shared-key endpoint (OpenRouter, an Azure OpenAI resource) is *one* connection serving *many* profiles; a per-model endpoint (an Azure AI Foundry serverless deployment) is *one* connection serving *one* profile. The same `model-id` reached from two providers is simply two profiles over two connections.
 - **Kind-matching is validated.** A node's intent must match its profile's `kind`: an `agent_call` requires an `agent` profile, an `llm_call` requires a `chat` profile. Mismatches fail validation.
 
-## 6. Credential Store
+## 6. Connection Store
 
-Credentials are owned by Arbitron in a **single local encrypted store** of named secrets, referenced by profiles via `credential-ref`. Delivery rules differ by backend:
+Connections are owned by Arbitron in a **single local store** (API keys encrypted at rest), referenced by profiles via `connection-ref` (§5). A connection binds an endpoint to its credential:
 
-- **Subscription `claude -p` needs no entry** — it inherits the ambient Claude login. A Claude-only local run requires zero stored keys.
-- **Native chat adapters** (Azure AI Foundry, OpenRouter) read their key directly from the store.
-- **Subprocess harnesses** (`claude`, `opencode`) receive the required key **injected as an environment variable into that process at launch.** This is precisely how `opencode run --model <provider/model>` obtains the correct key for whatever provider the model lives on.
+```
+connection = { name, provider, base-url, region/extras, api-key }
+```
 
-Security requirements: keys never appear in `workflow.json`; keys are never logged; each key is scoped to the provider/profile that needs it. The store is the one source of truth for credentials across both native adapters and delegated harnesses.
+Because an API key authenticates against a specific endpoint, the key and URL are bound together on the connection. `model-id` is deliberately excluded so a single connection can front many models. A **local router** (e.g. LiteLLM) is just another connection whose `base-url` points at the router. Delivery rules differ by backend:
+
+- **Subscription `claude -p` needs no connection** — it inherits the ambient Claude login. A Claude-only local run requires zero stored keys or endpoints.
+- **Native chat adapters** (Azure AI Foundry, OpenRouter, LiteLLM) read their connection's base-url, key, and extras directly.
+- **Subprocess harnesses** (`claude`, `opencode`) receive the connection's key and base-url **injected as environment variables into that process at launch** — this is how `opencode run --model <provider/model>` reaches the right endpoint with the right key.
+
+**Azure's two topologies both map onto connections with no special-casing:**
+
+- **Azure OpenAI resource** (GPT-family): one resource-level endpoint + key shared across many model **deployments** → **one connection, many profiles**, each profile's `model-id` set to its **deployment name** (the deployment name, not the canonical model name). The required `api-version` lives in the connection's `region/extras`.
+- **Azure AI Foundry serverless / open-weight catalog** (Llama, Mistral, etc.): each serverless deployment has its **own** endpoint + key → **one connection per model**. This is the same shape used for the open-weight test configuration (§1).
+
+Security requirements: keys never appear in `workflow.json`; keys are never logged; each key is scoped to the connection that owns it. The store is the one source of truth for endpoints and credentials across both native adapters and delegated harnesses.
 
 ## 7. Loop Handling — The Native Ralph Loop
 
@@ -107,7 +122,7 @@ The MVP is complete when all of the following hold:
 4. **Configuration interchangeability.** The same workflow graph runs under both the Claude-subscription and open-weight configurations by changing only profile references — no edits to node kinds, edges, or templates.
 5. **Native loop.** A workflow loop iterates multiple times and exits on its `conditional`, with the iteration counter persisted in instance variables and visible in the trace.
 6. **Capability validation.** An `agent_call` bound to a chat-only profile fails `workflow_validate` with a clear error, before any execution.
-7. **Credential safety & delivery.** A stored credential is resolvable, injected into the `opencode` subprocess for a non-Claude agent/chat model, and appears in **neither** the workflow files **nor** any log output.
+7. **Connection safety & delivery.** A connection's base-url and key are resolvable from a profile, injected into the `opencode` subprocess for a non-Claude agent/chat model, and the key appears in **neither** the workflow files **nor** any log output. A multi-region case (two Azure connections, different endpoints/keys) resolves each node to the correct endpoint.
 
 ## 9. Non-Goals, Known Risks & Future Work
 
