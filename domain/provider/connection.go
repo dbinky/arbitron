@@ -48,3 +48,28 @@ var ErrConnectionNotFound = errors.New("connection not found")
 // ErrConnectionExists is returned when creating a connection whose name is
 // already taken.
 var ErrConnectionExists = errors.New("connection already exists")
+
+// ErrAzureAPIVersionRequired is returned by ValidateConnection when an Azure
+// provider connection lacks a non-empty "api-version" entry in Extras.
+var ErrAzureAPIVersionRequired = errors.New("azure connections require an api-version in extras")
+
+// azureProviders is the set of providers that require an api-version in Extras.
+// Centralized so later phases can extend the Azure set in one place.
+var azureProviders = map[string]bool{
+	"azure-openai":  true,
+	"azure-foundry": true,
+}
+
+// ValidateConnection enforces provider-specific requirements at create/update
+// time (not at workflow validate time). Azure providers ("azure-openai",
+// "azure-foundry") require a non-empty "api-version" entry in Extras; an absent
+// or empty value returns ErrAzureAPIVersionRequired. Non-Azure providers pass
+// with no extras requirement.
+func ValidateConnection(c Connection) error {
+	if azureProviders[c.Provider] {
+		if c.Extras["api-version"] == "" {
+			return ErrAzureAPIVersionRequired
+		}
+	}
+	return nil
+}

@@ -188,6 +188,44 @@ func TestConnectionRepo_DeleteMissing(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrConnectionNotFound)
 }
 
+// Failure: Create of an Azure connection missing api-version is rejected by the
+// write-time provider rule and persists nothing.
+func TestConnectionRepo_CreateAzureMissingAPIVersion_Rejected(t *testing.T) {
+	repo, _ := newConnRepo(t)
+	ctx := context.Background()
+	c := provider.Connection{
+		Name:     "az-bad",
+		Provider: "azure-openai",
+		BaseURL:  "https://example.openai.azure.com",
+		Extras:   map[string]string{}, // no api-version
+	}
+
+	err := repo.Create(ctx, c, "k")
+	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+
+	// Nothing persisted.
+	_, getErr := repo.Get(ctx, "az-bad")
+	assert.ErrorIs(t, getErr, provider.ErrConnectionNotFound)
+}
+
+// Failure: Update that drops an Azure connection's api-version is rejected and
+// the prior stored metadata is left unchanged.
+func TestConnectionRepo_UpdateAzureMissingAPIVersion_Rejected(t *testing.T) {
+	repo, _ := newConnRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleConn("az-up"), "k"))
+
+	bad := sampleConn("az-up")
+	bad.Extras = map[string]string{"api-version": ""} // empty == missing
+	err := repo.Update(ctx, bad, nil)
+	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+
+	// Prior metadata unchanged.
+	got, getErr := repo.Get(ctx, "az-up")
+	require.NoError(t, getErr)
+	assert.Equal(t, "2024-02-01", got.Extras["api-version"])
+}
+
 // ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------

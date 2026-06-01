@@ -39,7 +39,7 @@ func TestValidate_AgentCallWithAgentProfile_OK(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "my-agent")
 	checker := &mockProfileChecker{kinds: map[string]string{"my-agent": "agent"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	assert.Empty(t, errs)
 }
 
@@ -47,7 +47,7 @@ func TestValidate_LLMCallWithChatProfile_OK(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "my-chat")
 	checker := &mockProfileChecker{kinds: map[string]string{"my-chat": "chat"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	assert.Empty(t, errs)
 }
 
@@ -87,7 +87,7 @@ func TestValidate_MixedKindsWorkflow_OK(t *testing.T) {
 		"agentp": "agent",
 	}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	assert.Empty(t, errs)
 }
 
@@ -95,7 +95,7 @@ func TestValidate_AgentCallTemplateFilePresent_NoStructuralError(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "my-agent")
 	checker := &mockProfileChecker{kinds: map[string]string{"my-agent": "agent"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	assert.NotContains(t, codes, "MISSING_REQUIRED_CONFIG")
 }
@@ -108,7 +108,7 @@ func TestValidate_AgentCallWithChatProfile_KindMismatch(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "chatp")
 	checker := &mockProfileChecker{kinds: map[string]string{"chatp": "chat"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
 
@@ -127,7 +127,7 @@ func TestValidate_LLMCallWithAgentProfile_KindMismatch(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "agentp")
 	checker := &mockProfileChecker{kinds: map[string]string{"agentp": "agent"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
 }
@@ -141,7 +141,7 @@ func TestValidate_MissingModelProfile_Error(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "")
 	checker := &mockProfileChecker{kinds: map[string]string{}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
 	// No spurious kind/unknown errors when the alias is absent.
@@ -153,7 +153,7 @@ func TestValidate_AgentCallMissingModelProfile_Error(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "")
 	checker := &mockProfileChecker{kinds: map[string]string{}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
 }
@@ -162,7 +162,7 @@ func TestValidate_UnknownModelProfile_Error(t *testing.T) {
 	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "ghost")
 	checker := &mockProfileChecker{kinds: map[string]string{"other": "chat"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	require.Equal(t, 1, countCode(codes, "UNKNOWN_PROFILE"))
 
@@ -187,7 +187,7 @@ func TestValidate_NilProfileChecker_SkipsCapabilityValidation(t *testing.T) {
 	// nil profile checker the capability pass must be skipped (backward-compat).
 	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "chatp")
 
-	errs := workflow.Validate(wf, nil, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.NotContains(t, codes, "PROFILE_KIND_MISMATCH")
 	assert.NotContains(t, codes, "UNKNOWN_PROFILE")
@@ -197,7 +197,7 @@ func TestValidate_NoCallNodes_NoProfileErrors(t *testing.T) {
 	wf := minimalValidWorkflow() // single transform node
 	checker := &mockProfileChecker{kinds: map[string]string{}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	assert.Empty(t, errs)
 }
 
@@ -216,7 +216,7 @@ func TestValidate_CapabilityRunsWithinValidate(t *testing.T) {
 	// no TemplateFile set -> structural error
 	checker := &mockProfileChecker{kinds: map[string]string{"chatp": "chat"}}
 
-	errs := workflow.Validate(wf, nil, checker)
+	errs := workflow.Validate(wf, nil, checker, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG", "structural template check still fires")
 	assert.Contains(t, codes, "PROFILE_KIND_MISMATCH", "capability check runs within Validate")

@@ -46,6 +46,11 @@ func isUniqueViolation(err error) bool {
 }
 
 func (r *ConnectionRepo) Create(ctx context.Context, c provider.Connection, apiKey string) error {
+	// Enforce provider-specific write-time rules (e.g. Azure api-version) before
+	// sealing the key or persisting anything.
+	if err := provider.ValidateConnection(c); err != nil {
+		return err
+	}
 	extrasJSON, err := extrasToJSON(c.Extras)
 	if err != nil {
 		return fmt.Errorf("marshalling extras: %w", err)
@@ -75,6 +80,11 @@ func (r *ConnectionRepo) Create(ctx context.Context, c provider.Connection, apiK
 }
 
 func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiKey *string) error {
+	// Enforce provider-specific write-time rules (e.g. Azure api-version) before
+	// re-sealing the key or persisting anything.
+	if err := provider.ValidateConnection(c); err != nil {
+		return err
+	}
 	// Pre-check existence so a missing connection maps to the sentinel rather
 	// than silently affecting zero rows.
 	if _, err := r.queries.GetConnectionMeta(ctx, c.Name); err != nil {

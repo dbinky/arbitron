@@ -58,3 +58,49 @@ func (fakeStore) Reveal(context.Context, string) (string, error)      { return "
 func TestConnectionStore_Implementable(t *testing.T) {
 	var _ provider.ConnectionStore = fakeStore{}
 }
+
+// ---------------------------------------------------------------------------
+// ValidateConnection: Azure api-version requirement (write-time rule).
+// ---------------------------------------------------------------------------
+
+// Happy path: an Azure connection carrying a non-empty api-version in Extras
+// passes ValidateConnection.
+func TestValidateConnection_AzureWithAPIVersion_OK(t *testing.T) {
+	for _, prov := range []string{"azure-openai", "azure-foundry"} {
+		c := provider.Connection{
+			Name:     "az",
+			Provider: prov,
+			Extras:   map[string]string{"api-version": "2024-02-01"},
+		}
+		assert.NoError(t, provider.ValidateConnection(c), "provider %q", prov)
+	}
+}
+
+// Success: a non-Azure connection with no api-version passes; the api-version
+// requirement applies only to the Azure provider set.
+func TestValidateConnection_NonAzureWithoutAPIVersion_OK(t *testing.T) {
+	for _, prov := range []string{"openrouter", "litellm", "claude-cli"} {
+		c := provider.Connection{Name: "n", Provider: prov}
+		assert.NoError(t, provider.ValidateConnection(c), "provider %q", prov)
+	}
+}
+
+// Failure: an Azure connection missing api-version is rejected with
+// ErrAzureAPIVersionRequired.
+func TestValidateConnection_AzureMissingAPIVersion_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "az", Provider: "azure-openai"}
+	err := provider.ValidateConnection(c)
+	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+}
+
+// Edge case: an Azure connection whose api-version is present but empty is
+// treated as missing and rejected.
+func TestValidateConnection_AzureEmptyAPIVersion_Rejected(t *testing.T) {
+	c := provider.Connection{
+		Name:     "az",
+		Provider: "azure-foundry",
+		Extras:   map[string]string{"api-version": ""},
+	}
+	err := provider.ValidateConnection(c)
+	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+}

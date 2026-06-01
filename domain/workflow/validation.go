@@ -16,6 +16,19 @@ type ProfileChecker interface {
 	ProfileKind(alias string) (kind string, ok bool)
 }
 
+// ConnectionChecker is the minimal subset used to validate that a profile's
+// ConnectionRef names an existing connection. The concrete implementation is
+// injected at wiring time; the domain depends only on this interface, not on
+// the full ConnectionStore (so no adapter or provider-persistence concern
+// leaks into the domain).
+type ConnectionChecker interface {
+	// ProfileConnectionRef returns the ConnectionRef for a profile alias, and
+	// whether the alias is known.
+	ProfileConnectionRef(alias string) (connectionRef string, aliasKnown bool)
+	// ConnectionExists reports whether a connection with the given name exists.
+	ConnectionExists(name string) bool
+}
+
 // ValidationError describes a single validation problem found in a workflow.
 type ValidationError struct {
 	Code    string `json:"code"`
@@ -53,7 +66,10 @@ var validErrorBehaviorTypes = map[string]bool{
 // scriptFile); pass nil to skip file-existence checks. Pass a non-nil
 // ProfileChecker to validate that llm_call/agent_call nodes reference a
 // model_profile of the correct capability kind; pass nil to skip that pass.
-func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker) []ValidationError {
+// Pass a non-nil ConnectionChecker to validate that a profile's non-empty
+// ConnectionRef names an existing connection; pass nil to skip that pass. Each
+// checker is independently nil-skippable.
+func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker) []ValidationError {
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
@@ -78,6 +94,51 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker) []Vali
 		errs = append(errs, validateModelProfiles(wf, profiles)...)
 	}
 
+	if connChecker != nil {
+		errs = append(errs, validateConnectionReferences(wf, connChecker)...)
+	}
+
+	return errs
+}
+
+// validateConnectionReferences checks that every llm_call/agent_call node whose
+// model_profile resolves to a non-empty ConnectionRef names a connection that
+// actually exists. An empty ConnectionRef is the claude-cli no-key subscription
+// path and is valid with no existence check. An unknown alias is skipped here
+// because validateModelProfiles (Phase 1) already reports it; double-reporting
+// is avoided.
+func validateConnectionReferences(wf *Workflow, connChecker ConnectionChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		switch n.Type {
+		case NodeTypeLLMCall, NodeTypeAgentCall:
+		default:
+			continue
+		}
+
+		alias := n.Config.ModelProfile
+		if alias == "" {
+			// Phase 1 reports the missing model_profile; nothing to check here.
+			continue
+		}
+
+		connRef, aliasKnown := connChecker.ProfileConnectionRef(alias)
+		if !aliasKnown {
+			// Phase 1 owns the unknown-alias error; do not double-report.
+			continue
+		}
+		if connRef == "" {
+			// claude-cli no-key subscription path: valid, no existence check.
+			continue
+		}
+		if !connChecker.ConnectionExists(connRef) {
+			errs = append(errs, ValidationError{
+				Code:    "UNKNOWN_CONNECTION",
+				Message: "profile " + alias + " references unknown connection " + connRef,
+				NodeID:  n.ID,
+			})
+		}
+	}
 	return errs
 }
 
