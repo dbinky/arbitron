@@ -98,6 +98,7 @@ type domainStack struct {
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
 	conversationHandler engine.ConversationHandler
+	profileChecker      workflow.ProfileChecker
 	tracingShutdown     func(ctx context.Context) error
 }
 
@@ -140,6 +141,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		QueueRepo:           ds.queueRepo,
 		Notifications:       ds.notifRepo,
 		ConversationHandler: ds.conversationHandler,
+		ProfileChecker:      ds.profileChecker,
 	}
 }
 
@@ -194,40 +196,51 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
 
-	// 7. Create the LLM provider based on config.
-	var llmProvider engine.ChatProvider
+	// 7. Create the chat + agent providers based on config.
+	//
+	// SECURITY: WorkspaceRoot is the absolute workspace path; both adapters use
+	// it to pin every per-request WorkDir under this subtree. The chat adapter
+	// is tool-suppressed by construction (no AllowedTools / SkipPermissions); the
+	// agent adapter carries the full tool scope.
+	wsRoot, err := filepath.Abs(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("resolving workspace path: %w", err)
+	}
+
+	chatCfg := claudecli.Config{
+		BinaryPath:       cfg.LLM.BinaryPath,
+		DefaultModel:     cfg.LLM.Model,
+		WorkspaceRoot:    wsRoot,
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
+	}
+
+	var chatProvider engine.ChatProvider
 	switch cfg.LLM.Provider {
 	case "claude-cli":
-		// SECURITY: WorkspaceRoot is the absolute workspace path; the provider
-		// uses it to pin every per-request WorkDir under this subtree.
-		wsRoot, err := filepath.Abs(cfg.Workspace.Path)
-		if err != nil {
-			db.Close()
-			logCloser.Close()
-			return nil, fmt.Errorf("resolving workspace path: %w", err)
-		}
-		llmProvider = claudecli.New(claudecli.Config{
-			BinaryPath:       cfg.LLM.BinaryPath,
-			DefaultModel:     cfg.LLM.Model,
-			WorkspaceRoot:    wsRoot,
-			Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-			AllowedTools:     cfg.LLM.AllowedTools,
-			SkipPermissions:  cfg.LLM.SkipPermissions,
-			MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-			Runner:           nil, // production os/exec runner
-		})
+		chatProvider = claudecli.NewChatAdapter(chatCfg)
 	default:
-		llmProvider = anthropic.New(cfg.LLM.APIKey)
+		chatProvider = anthropic.New(cfg.LLM.APIKey)
 	}
+
+	// The agent backend is claude-cli regardless of the configured chat provider:
+	// in P1 every agent profile resolves to claude-cli (design §4), so agent_call
+	// works on the local Claude path even when cfg.LLM.Provider defaults elsewhere.
+	agentCfg := chatCfg
+	agentCfg.SkipPermissions = cfg.LLM.SkipPermissions
+	agentCfg.AllowedTools = cfg.LLM.AllowedTools // full agent scope default
+	var agentProvider engine.AgentProvider = claudecli.NewAgentAdapter(agentCfg)
 
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
 
-	// NOTE (Task 4): the LLMCallExecutor now resolves a chat profile alias for
-	// its model via a ProfileResolver. The full config-driven profile-registry
-	// wiring (validation, migration, agent_call registration) lands in Task 6;
-	// here we build a StaticProfileResolver from cfg.Profiles solely to satisfy
-	// the new constructor and keep the build green.
+	// 8a. Build the immutable profile resolver from config profiles. This is the
+	// single source of truth for model_profile aliases: the executors resolve a
+	// node's alias to a concrete model through it, and workflow validation checks
+	// alias/kind through the ResolverChecker wrapper built below.
 	profileResolver, err := providersadapter.NewStaticProfileResolver(
 		configadapter.ProfilesFromConfig(cfg.Profiles),
 	)
@@ -236,10 +249,12 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		logCloser.Close()
 		return nil, fmt.Errorf("building profile resolver: %w", err)
 	}
+	profileChecker := providersadapter.NewResolverChecker(profileResolver)
 
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider, profileResolver),
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, chatProvider, profileResolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, agentProvider, profileResolver),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
@@ -309,12 +324,12 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 12c. Register the interactive executor. Notification creation is handled
 	// by the engine when it processes the IsWait result.
 	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr,
+		instanceRepo, nodeExecRepo, chatProvider, fileReader, bus, queueMgr,
 	)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
-		instanceRepo, nodeExecRepo, llmProvider, bus, queueMgr,
+		instanceRepo, nodeExecRepo, chatProvider, bus, queueMgr,
 	)
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
@@ -386,6 +401,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		webhookRegistry:     webhookRegistry,
 		notifRepo:           notifRepo,
 		conversationHandler: conversationHandler,
+		profileChecker:      profileChecker,
 		tracingShutdown:     tracingShutdown,
 	}, nil
 }
@@ -426,6 +442,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		ConversationHandler: ds.conversationHandler,
 		WebhookHandler:      webhookHandler,
 		MCPHandler:          mcpSrv.HTTPHandler(),
+		ProfileChecker:      ds.profileChecker,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

@@ -32,19 +32,28 @@ type workflowStatsReader interface {
 
 // WorkflowHandler handles REST API requests for workflow operations.
 type WorkflowHandler struct {
-	repo       workflow.WorkflowRepository
-	service    WorkflowService
-	fileReader engine.FileReader
-	stats      workflowStatsReader
+	repo           workflow.WorkflowRepository
+	service        WorkflowService
+	fileReader     engine.FileReader
+	stats          workflowStatsReader
+	profileChecker workflow.ProfileChecker
 }
 
 // NewWorkflowHandler creates a new WorkflowHandler with its dependencies.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader) *WorkflowHandler {
+// An optional workflow.ProfileChecker may be supplied as the final argument to
+// enable model_profile validation; when omitted (or nil), the model_profile
+// validation pass is skipped.
+func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
+	var pc workflow.ProfileChecker
+	if len(profileChecker) > 0 {
+		pc = profileChecker[0]
+	}
 	return &WorkflowHandler{
-		repo:       repo,
-		service:    service,
-		fileReader: fileReader,
-		stats:      stats,
+		repo:           repo,
+		service:        service,
+		fileReader:     fileReader,
+		stats:          stats,
+		profileChecker: pc,
 	}
 }
 
@@ -111,7 +120,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader, nil)
+	errs := workflow.Validate(wf, h.fileReader, h.profileChecker)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}

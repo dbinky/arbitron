@@ -534,6 +534,44 @@ func TestWorkflowValidate(t *testing.T) {
 		assert.Contains(t, text, `"errors": []`)
 		assert.NotContains(t, text, `"errors": null`)
 	})
+
+	t.Run("threads injected profile checker into validation", func(t *testing.T) {
+		// An llm_call referencing an agent-kind profile must fail validation with
+		// PROFILE_KIND_MISMATCH, proving the workflow_validate tool forwards the
+		// Deps.ProfileChecker to workflow.Validate.
+		repo := &stubWorkflowRepo{
+			loadFn: func(_ context.Context, _ string) (*workflow.Workflow, error) {
+				return &workflow.Workflow{
+					Name: "mismatch-wf",
+					Nodes: []workflow.Node{
+						{ID: "llm", Type: workflow.NodeTypeLLMCall, Entrypoint: true, Config: workflow.NodeConfig{ModelProfile: "an-agent"}},
+					},
+				}, nil
+			},
+		}
+		deps := &adaptmcp.Deps{
+			Workflows:      repo,
+			FileReader:     &stubFileReader{fileExistsFn: func(_, _ string) bool { return true }},
+			ProfileChecker: mcpStubProfileChecker{"an-agent": "agent"},
+		}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterWorkflowTools(srv)
+
+		result := callTool(t, srv, "workflow_validate", map[string]any{"name": "mismatch-wf"})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, `"valid": false`)
+		assert.Contains(t, text, "PROFILE_KIND_MISMATCH")
+	})
+}
+
+// mcpStubProfileChecker is a minimal workflow.ProfileChecker for MCP tool tests.
+type mcpStubProfileChecker map[string]string
+
+func (s mcpStubProfileChecker) ProfileKind(alias string) (string, bool) {
+	kind, ok := s[alias]
+	return kind, ok
 }
 
 func TestWorkflowListFiles(t *testing.T) {

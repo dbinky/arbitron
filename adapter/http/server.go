@@ -56,6 +56,10 @@ type RouterDeps struct {
 	// MCPHandler, when non-nil, is mounted at /mcp for the MCP Streamable
 	// HTTP transport so LLM clients can call tools over HTTP.
 	MCPHandler http.Handler
+	// ProfileChecker resolves a node's model_profile alias to its capability
+	// kind during workflow validation. May be nil to skip the model_profile
+	// validation pass (the workflow validator treats a nil checker as a no-op).
+	ProfileChecker workflow.ProfileChecker
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -117,7 +121,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	// are especially sensitive — without auth, any client can send messages to or
 	// terminate any instance's interactive session.
 
-	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances)
+	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances, d.ProfileChecker)
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus)

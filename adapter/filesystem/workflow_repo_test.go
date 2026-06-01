@@ -125,7 +125,7 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 	llm := byID["llm-node"]
 	assert.Equal(t, workflow.NodeTypeLLMCall, llm.Type)
 	assert.Equal(t, "prompt.md", llm.Config.TemplateFile)
-	assert.Equal(t, "claude-sonnet-4-6", llm.Config.Model)
+	assert.Equal(t, "default-chat", llm.Config.ModelProfile)
 	assert.Equal(t, 1000, llm.Config.MaxTokens)
 	assert.Equal(t, 0.7, llm.Config.Temperature)
 	assert.NotNil(t, llm.Config.OutputSchema)

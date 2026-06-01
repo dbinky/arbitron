@@ -53,4 +53,8 @@ type Deps struct {
 	QueueRepo           instance.QueueRepository
 	Notifications       notification.Repository
 	ConversationHandler engine.ConversationHandler
+	// ProfileChecker resolves a node's model_profile alias to its capability
+	// kind during workflow validation. Optional: a nil checker skips the
+	// model_profile validation pass.
+	ProfileChecker workflow.ProfileChecker
 }

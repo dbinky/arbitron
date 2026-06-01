@@ -309,6 +309,91 @@ func TestWorkflowHandler_Validate(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("threads injected profile checker into validation", func(t *testing.T) {
+		// A workflow whose llm_call references an agent-kind profile must fail
+		// validation with PROFILE_KIND_MISMATCH — but only when a ProfileChecker
+		// is wired in. This proves the handler forwards its injected checker to
+		// workflow.Validate (rather than passing nil and silently skipping the
+		// model_profile pass).
+		repo := newMockWorkflowRepo()
+		repo.workflows["mismatch-wf"] = &workflow.Workflow{
+			Name: "mismatch-wf",
+			Nodes: []workflow.Node{
+				{
+					ID:         "llm",
+					Type:       workflow.NodeTypeLLMCall,
+					Entrypoint: true,
+					Config:     workflow.NodeConfig{ModelProfile: "an-agent"},
+				},
+			},
+		}
+		checker := stubProfileChecker{"an-agent": "agent"}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil, checker)
+
+		req := httptest.NewRequest(http.MethodPost, "/workflows/mismatch-wf/validate", nil)
+		req = withChiURLParam(req, "name", "mismatch-wf")
+		w := httptest.NewRecorder()
+		h.Validate(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, false, resp["valid"])
+		errs, ok := resp["errors"].([]any)
+		require.True(t, ok)
+		var codes []string
+		for _, e := range errs {
+			if m, ok := e.(map[string]any); ok {
+				codes = append(codes, m["code"].(string))
+			}
+		}
+		assert.Contains(t, codes, "PROFILE_KIND_MISMATCH")
+	})
+
+	t.Run("skips model_profile pass when no checker injected", func(t *testing.T) {
+		// Same mismatched workflow, but with no ProfileChecker: the model_profile
+		// pass is skipped, so no PROFILE_KIND_MISMATCH appears.
+		repo := newMockWorkflowRepo()
+		repo.workflows["mismatch-wf"] = &workflow.Workflow{
+			Name: "mismatch-wf",
+			Nodes: []workflow.Node{
+				{
+					ID:         "llm",
+					Type:       workflow.NodeTypeLLMCall,
+					Entrypoint: true,
+					Config:     workflow.NodeConfig{ModelProfile: "an-agent"},
+				},
+			},
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/workflows/mismatch-wf/validate", nil)
+		req = withChiURLParam(req, "name", "mismatch-wf")
+		w := httptest.NewRecorder()
+		h.Validate(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		errs, _ := resp["errors"].([]any)
+		for _, e := range errs {
+			if m, ok := e.(map[string]any); ok {
+				assert.NotEqual(t, "PROFILE_KIND_MISMATCH", m["code"])
+			}
+		}
+	})
+}
+
+// stubProfileChecker is a minimal workflow.ProfileChecker for handler tests: it
+// maps an alias to its capability kind. An unknown alias returns ok=false.
+type stubProfileChecker map[string]string
+
+func (s stubProfileChecker) ProfileKind(alias string) (string, bool) {
+	kind, ok := s[alias]
+	return kind, ok
 }
 
 // ---------------------------------------------------------------------------
