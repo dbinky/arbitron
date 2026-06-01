@@ -30,11 +30,18 @@ type ConnectionChecker interface {
 }
 
 // ValidationError describes a single validation problem found in a workflow.
+//
+// Severity distinguishes hard validation failures from non-gating advisories.
+// An empty Severity means "error" (a hard failure) for back-compatibility: all
+// findings returned by Validate leave it empty and gate the workflow. Advisory
+// lints (see LintWorkflow) set Severity to "warning"; those are surfaced
+// informationally and never gate validation.
 type ValidationError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	NodeID  string `json:"nodeId,omitempty"`
-	EdgeIdx int    `json:"edgeIdx,omitempty"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	NodeID   string `json:"nodeId,omitempty"`
+	EdgeIdx  int    `json:"edgeIdx,omitempty"`
+	Severity string `json:"severity,omitempty"`
 }
 
 // validInputTypes is the set of types allowed for workflow input fields.
@@ -332,10 +339,7 @@ func validateConnectivity(wf *Workflow, nodeIDs map[string]bool) []ValidationErr
 	}
 
 	// Build adjacency list from edges.
-	adj := make(map[string][]string)
-	for _, e := range wf.Edges {
-		adj[e.Source] = append(adj[e.Source], e.Target)
-	}
+	adj := buildAdjacency(wf)
 
 	// BFS.
 	visited := make(map[string]bool)

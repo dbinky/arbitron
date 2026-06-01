@@ -24,7 +24,7 @@ A self-hostable Go service that:
 - **Workflow** — a reusable definition stored as a folder: one JSON manifest describing a directed graph of **nodes** and **edges**, plus accompanying files (markdown templates, scripts).
 - **Workflow Instance** — a single execution. Has its own variable state, execution trace, and lifecycle (queued, running, waiting, completed, failed, cancelled, paused). An instance snapshots the workflow definition at creation time — later edits don't affect running instances.
 - **Node** — a step in the graph. Each node declares an **intent** (its kind) and references a **model profile** for its backend. See [Node Kinds](#node-kinds).
-- **Edge** — a simple, unconditional wire defining graph topology. Edges carry no logic; all routing happens inside nodes (specifically `conditional` nodes). Edges may form **cycles** (see [Loops](#loops--the-native-refinement-cycle)).
+- **Edge** — a simple, unconditional wire defining graph topology. Edges carry no logic; all routing happens inside nodes (specifically `conditional` nodes). Edges may form **cycles** (see [Loops](#loops--the-native-ralph-loop)).
 - **Instance Variables** — a key-value store living for the instance's duration, initialized from the workflow's input schema. Nodes read variables via `{{substitution}}` in templates and write variables via their structured output. A reserved `{{workspace}}` variable provides a per-instance working directory.
 - **Structured Output** — every execution node emits JSON on completion, stored in instance state and available to downstream nodes (conditionals evaluate it; templates substitute it).
 
@@ -97,20 +97,55 @@ A **local router** (e.g. LiteLLM) is just another connection. **Azure's two topo
 
 ---
 
-## Loops — The Native Refinement Cycle
+## Loops — The Native Ralph Loop
 
-Arbitron's engine permits **cyclic graphs**. A loop is expressed with the **cyclic-edge pattern**: a back-edge forms the loop, a `transform` increments a counter, and a `conditional` checks *(done? OR counter ≥ max)* to either loop or exit. `interactive` nodes are excluded from loop bodies (they cache per `(instance, node)`).
+Arbitron's engine permits **cyclic graphs** — there is no acyclicity check, `transform`/`conditional` re-execute on revisit, and there is no unique `(instance, node)` constraint. The native ralph refinement loop is built **directly on this existing behavior**: it introduces **no new engine primitive** (a first-class loop construct is a deferred non-goal). It replaces the external ralph-o-matic server with an in-engine cycle, so Arbitron itself runs the refinement loop.
 
-This lets Arbitron run the **ralph refinement loop natively**, replacing the external ralph-o-matic server:
+### The idiom (cyclic-edge pattern)
+
+A loop is the existing node kinds wired into a cycle by a **back-edge**:
 
 ```
-agent_call (edit toward focus areas)
-   → llm_call (assess: tests / remaining gaps)
-   → transform (increment counter)
-   → conditional (loop back, or exit)
+        ┌─────────────────────────── back-edge ──────────────────────────┐
+        ▼                                                                 │
+  [agent_call]  ──►  [llm_call]  ──►  [transform]  ──►  [conditional] ────┘
+   edit toward        assess: run /     increment        done? OR
+   focus areas        inspect tests,    iteration         counter ≥ max
+   (AgentProvider)    remaining gaps    counter           ├─ loop (back-edge)
+                      (ChatProvider)                       └─ exit
 ```
 
-`RALPH.md`, `focus-areas`, and `gaps` are ordinary files in the instance `{{workspace}}` that the agent reads and rewrites each pass. **Termination is the author's `conditional`** — the MVP engine adds no runaway guard (a future backstop will cap max node-executions / wall-clock).
+1. **`agent_call`** edits the workspace toward the current focus areas (AgentProvider — `claude -p` with tools, or `opencode`).
+2. **`llm_call`** assesses — inspects test results and remaining gaps and emits a structured `{done, notes}` (ChatProvider, tool-suppressed).
+3. **`transform`** increments an iteration counter held in **instance variables**. The counter is a plain variable: it persists across passes and is visible in the execution trace.
+4. **`conditional`** evaluates *(done? OR counter ≥ max)* and routes out to the exit, or back along the **back-edge** to the `agent_call`.
+
+`RALPH.md`, `focus-areas`, and `gaps` are **ordinary files in the instance `{{workspace}}`** that the `agent_call` reads and rewrites each pass — no external server, no `ralph-o-matic` dependency. A seed set of these files is placed in `{{workspace}}` for the first pass; each subsequent pass updates them in place.
+
+### Worked example
+
+The canonical, runnable illustration is the worked-example workflow folder `examples/workflows/native-ralph-loop/`:
+
+- `workflow.json` — the 4-node cycle above. Nodes reference the profile **aliases** `editor` (agent) and `assessor` (chat) via `model_profile`; the back-edge is `loop-or-exit → editor`.
+- `mission.md` — the `agent_call` mission template (read `RALPH.md`/`focus-areas.md`/`gaps.md`, make the smallest correct edit toward the top focus area, run tests, update the tracking files).
+- `assessment.md` — the `llm_call` assessment template (emit `{done, notes}`).
+- `seed/RALPH.md`, `seed/focus-areas.md`, `seed/gaps.md` — the seed tracking files copied into `{{workspace}}` for the first pass.
+
+The **same** `workflow.json` runs under both the **Claude-subscription** and **open-weight** configurations by repointing the `editor`/`assessor` aliases only — no edits to node kinds, edges, or templates. The Claude binding points both aliases at `claude -p` (agent with tools / tool-suppressed chat, ambient login, no connection); the open-weight binding points `editor` at an `opencode` agent profile on an open-weight model and `assessor` at an OpenRouter/Azure chat profile (connection-backed, key env-injected at launch).
+
+### Constraints
+
+- **No `interactive` node in a loop body.** The interactive executor short-circuits on a prior succeeded `(instance, node)` execution — it would replay its first answer on every subsequent pass. Loop bodies use only `agent_call` / `llm_call` / `transform` / `conditional` / `tool_call`. An advisory `INTERACTIVE_IN_LOOP` validation lint may warn when an `interactive` node sits on a cycle; it is **advisory only** — cyclic graphs remain allowed and the lint never hard-fails validation.
+- **No engine runaway guard (accepted MVP risk).** Termination depends **solely** on the author's `conditional`. A malformed loop with no reachable exit can run **indefinitely**; this is a documented, accepted MVP risk (spec §9). The planned future backstop — an engine-level cap on max node-executions and/or wall-clock per instance — is **out of scope** for the MVP.
+
+### Migration note — what the native loop supersedes
+
+- The external **`ralph-o-matic` server** is **superseded** by this in-engine native loop: Arbitron executes the ralph refinement cycle itself, with no external server dependency.
+- The **standalone feature-pipeline skill** is **superseded** by the native loop plus the (separately-specced) **native feature-pipeline workflow** — the latter is the named acceptance test for the vendor-abstraction layer and is authored in its own spec, not here. The existing skills are not deleted; they are documented as superseded.
+- **Scope:** this layer delivers the **enabling loop idiom + worked example + docs** — not the full feature-pipeline workflow content (spec §1, §9 non-goals).
+- **Operator migration for the vendor-abstraction layer:** in workflow JSON, the per-node `model` field is replaced by **`model_profile`** (an alias) on `llm_call` nodes; and any `llm_call` node that was *silently* agentic (relying on the Claude CLI always having tools) should move to **`agent_call`** referencing an **agent** profile, so the capability requirement is explicit and validated.
+
+> An installed-opencode caveat affects the open-weight agent backend: the `opencode` build on the dev box is single-shot (`opencode -p`/`-c`) with **no** `--model`, `--resume`, or `serve` — model selection is implicit (via the provider key in the process env, e.g. `ANTHROPIC_API_KEY`) and there is no cross-step session resume. Each `agent_call` therefore maps to one headless `opencode -p` invocation; cross-pass continuity is carried by the `{{workspace}}` files, not an opencode session. See `docs/superpowers/specs/vendor-abstraction-opencode-spike-finding.md`.
 
 ---
 
