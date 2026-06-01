@@ -202,6 +202,36 @@ func TestValidate_NoCallNodes_NoProfileErrors(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Edge case: a profile checker returning an unrecognized kind (not "chat" or
+// "agent") still produces a clear PROFILE_KIND_MISMATCH — the checker may be
+// backed by a future profile registry that has expanded kinds. The mismatch
+// message must name both the required kind and the actual kind.
+// ---------------------------------------------------------------------------
+
+func TestValidate_LLMCallWithUnrecognizedKind_KindMismatch(t *testing.T) {
+	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "myp")
+	// Checker returns a kind string that is not "chat" or "agent" — simulates a
+	// misconfigured profile or a future extended kind unsupported by this node.
+	checker := &mockProfileChecker{kinds: map[string]string{"myp": "multimodal"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
+
+	var got workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			got = e
+		}
+	}
+	// Message must name the required kind ("chat") and the actual kind ("multimodal").
+	assert.Contains(t, got.Message, "chat",
+		"mismatch message must name the required kind")
+	assert.Contains(t, got.Message, "multimodal",
+		"mismatch message must name the actual kind returned by the checker")
+}
+
+// ---------------------------------------------------------------------------
 // Regression: capability validation runs as part of Validate (alongside
 // existing structural checks), not only in isolation.
 // ---------------------------------------------------------------------------

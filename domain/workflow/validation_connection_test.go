@@ -188,6 +188,64 @@ func TestValidate_KindMismatchStillEnforced_Regression(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Edge case: multiple call nodes with missing connections each generate their
+// own UNKNOWN_CONNECTION error — one per node, none silently dropped.
+// ---------------------------------------------------------------------------
+
+func TestValidate_MultipleNodesMissingConnections_EachErrored(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "multi-miss",
+		Nodes: []workflow.Node{
+			{
+				ID:         "llm1",
+				Type:       workflow.NodeTypeLLMCall,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					ModelProfile: "chatp",
+					TemplateFile: "llm.hbs",
+				},
+			},
+			{
+				ID:   "agent1",
+				Type: workflow.NodeTypeAgentCall,
+				Config: workflow.NodeConfig{
+					ModelProfile: "agentp",
+					TemplateFile: "agent.hbs",
+				},
+			},
+		},
+		Edges: []workflow.Edge{{Source: "llm1", Target: "agent1"}},
+	}
+	profiles := &mockProfileChecker{kinds: map[string]string{
+		"chatp":  "chat",
+		"agentp": "agent",
+	}}
+	conns := &mockConnChecker{
+		refs: map[string]string{
+			"chatp":  "missing-conn-1",
+			"agentp": "missing-conn-2",
+		},
+		conns: map[string]bool{}, // neither connection exists
+	}
+
+	errs := workflow.Validate(wf, nil, profiles, conns)
+	codes := extractCodes(errs)
+
+	require.Equal(t, 2, countCode(codes, "UNKNOWN_CONNECTION"),
+		"each node must produce its own UNKNOWN_CONNECTION error; errors must not be silently dropped")
+
+	// Each error names its own node.
+	nodeIDs := map[string]bool{}
+	for _, e := range errs {
+		if e.Code == "UNKNOWN_CONNECTION" {
+			nodeIDs[e.NodeID] = true
+		}
+	}
+	assert.True(t, nodeIDs["llm1"], "llm1 must have its own UNKNOWN_CONNECTION error")
+	assert.True(t, nodeIDs["agent1"], "agent1 must have its own UNKNOWN_CONNECTION error")
+}
+
+// ---------------------------------------------------------------------------
 // agent_call parity: validateConnectionReferences handles both llm_call and
 // agent_call in its switch; these tests cover the agent_call branches.
 // ---------------------------------------------------------------------------
