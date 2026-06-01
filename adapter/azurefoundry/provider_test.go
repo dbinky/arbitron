@@ -411,6 +411,32 @@ func TestChat_MaxResponseBytesExceeded_BoundedReadError(t *testing.T) {
 	assert.NotContains(t, err.Error(), revealedKey)
 }
 
+// Edge: a malformed JSON frame in an otherwise-200 stream delivers an Error
+// chunk before the channel closes — it does not silently discard the frame.
+func TestStreamChat_MalformedSSEFrame_ErrorChunk(t *testing.T) {
+	var cap captured
+	// A valid first token, then a malformed frame, then more tokens that are
+	// never reached (channel closes on first decode error).
+	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n" +
+		"data: {not-valid-json}\n" +
+		"data: [DONE]\n\n"
+	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {
+		return sseResp(stream), nil
+	})
+	p := azurefoundry.New(azurefoundry.Config{Binding: serverlessBinding(), HTTPClient: client})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "hi"})
+	require.NoError(t, err)
+
+	var sawErr bool
+	for c := range ch {
+		if c.Error != nil {
+			sawErr = true
+		}
+	}
+	assert.True(t, sawErr, "a malformed SSE data frame must produce an Error chunk")
+}
+
 // --- Security: revealed key never appears in logs or errors -----------------
 
 func TestSecurity_RevealedKeyNeverLogged_AcrossBranches(t *testing.T) {
