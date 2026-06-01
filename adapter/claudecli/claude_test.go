@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
@@ -82,6 +83,65 @@ func TestBuildArgs(t *testing.T) {
 		args := buildArgs(engine.ChatRequest{SystemPrompt: "be terse"}, argsPolicy{})
 		assert.Contains(t, args, "--append-system-prompt")
 		assert.Contains(t, args, "be terse")
+	})
+
+	t.Run("SuppressTools emits --allowedTools with an empty value", func(t *testing.T) {
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{SuppressTools: true})
+		require.Contains(t, args, "--allowedTools")
+		for i, a := range args {
+			if a == "--allowedTools" {
+				require.Less(t, i+1, len(args), "--allowedTools must have a value")
+				assert.Equal(t, "", args[i+1], "SuppressTools must emit an empty allowed-tools set")
+				return
+			}
+		}
+		t.Fatal("--allowedTools not found")
+	})
+
+	t.Run("SuppressTools does not emit --dangerously-skip-permissions", func(t *testing.T) {
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{SuppressTools: true})
+		assert.NotContains(t, args, "--dangerously-skip-permissions")
+	})
+
+	t.Run("SuppressTools overrides any incidental AllowedTools", func(t *testing.T) {
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{
+			SuppressTools: true,
+			AllowedTools:  []string{"Read", "Bash"},
+		})
+		// The allowed-tools value must be empty, never the joined scope.
+		for i, a := range args {
+			if a == "--allowedTools" {
+				assert.Equal(t, "", args[i+1])
+			}
+		}
+		assert.NotContains(t, args, "Read,Bash")
+	})
+
+	t.Run("agent combination: skip-permissions plus non-empty AllowedTools emits both", func(t *testing.T) {
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{
+			SkipPermissions: true,
+			AllowedTools:    []string{"Read", "Bash(git status:*)"},
+		})
+		assert.Contains(t, args, "--dangerously-skip-permissions")
+		require.Contains(t, args, "--allowedTools")
+		for i, a := range args {
+			if a == "--allowedTools" {
+				assert.Equal(t, "Read,Bash(git status:*)", args[i+1])
+				return
+			}
+		}
+		t.Fatal("--allowedTools not found")
+	})
+
+	t.Run("protocol flags are always present regardless of policy", func(t *testing.T) {
+		for _, policy := range []argsPolicy{
+			{},
+			{SuppressTools: true},
+			{SkipPermissions: true, AllowedTools: []string{"Read"}},
+		} {
+			args := buildArgs(engine.ChatRequest{}, policy)
+			assert.Equal(t, []string{"--print", "--verbose", "--output-format", "stream-json"}, args[:4])
+		}
 	})
 }
 

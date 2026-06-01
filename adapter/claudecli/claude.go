@@ -17,7 +17,8 @@ import (
 // helper with no provider-struct coupling.
 type argsPolicy struct {
 	DefaultModel    string
-	SkipPermissions bool
+	SkipPermissions bool // agent: emits --dangerously-skip-permissions
+	SuppressTools   bool // chat: emits --allowedTools "" (empty set)
 	AllowedTools    []string
 }
 
@@ -34,6 +35,12 @@ type argsPolicy struct {
 // influenced by untrusted input. Operators flipping the default MUST also
 // configure cfg.LLM.AllowedTools so the agent runs against an explicit
 // allowlist.
+//
+// policy.SuppressTools produces a no-tools chat invocation: it emits
+// `--allowedTools ""` (an empty allowed-tools set) and ignores AllowedTools,
+// so `claude -p` behaves as a plain completion with no tool access. It is
+// mutually exclusive with SkipPermissions in practice and wins on the
+// allowed-tools argument.
 func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 	args := []string{
 		"--print", "--verbose", "--output-format", "stream-json",
@@ -41,7 +48,11 @@ func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 	if policy.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	if len(policy.AllowedTools) > 0 {
+	switch {
+	case policy.SuppressTools:
+		// Empty allowed-tools set: no tools available to the model.
+		args = append(args, "--allowedTools", "")
+	case len(policy.AllowedTools) > 0:
 		args = append(args, "--allowedTools", strings.Join(policy.AllowedTools, ","))
 	}
 

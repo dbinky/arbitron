@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
@@ -48,6 +46,11 @@ type Config struct {
 
 // Provider implements engine.ChatProvider by invoking the `claude` CLI in
 // headless (`--print`) mode.
+//
+// Deprecated: Provider is a thin pre-split shim retained only until Task 6
+// rewires cmd/arbitron/main.go onto NewChatAdapter / NewAgentAdapter. New code
+// should construct a ChatAdapter (tool-suppressed chat) or AgentAdapter
+// (tools-enabled mission) instead.
 type Provider struct {
 	binPath          string
 	defaultModel     string
@@ -106,42 +109,9 @@ func (p *Provider) spec(req engine.ChatRequest) RunSpec {
 	}
 }
 
-// validateWorkDir enforces the per-request WorkDir invariants:
-//   - non-empty (avoid the silent "inherit engine cwd" fallback)
-//   - resolves to an absolute path under p.workspaceRoot when one is configured
-//
-// An empty WorkspaceRoot disables the pin check (test convenience only).
+// validateWorkDir delegates to the shared per-call WorkDir invariant check.
 func (p *Provider) validateWorkDir(workDir string) error {
-	if workDir == "" {
-		return ErrWorkDirRequired
-	}
-	if p.workspaceRoot == "" {
-		return nil
-	}
-	abs, err := filepath.Abs(workDir)
-	if err != nil {
-		return fmt.Errorf("claudecli: resolve WorkDir: %w", err)
-	}
-	abs = filepath.Clean(abs)
-	root := filepath.Clean(p.workspaceRoot)
-	// Allow root itself, or any subdir of root. Use a separator-terminated
-	// prefix check to avoid /root/wsX shadowing /root/ws.
-	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return fmt.Errorf("%w: %q not under %q", ErrWorkDirEscapesRoot, abs, root)
-	}
-	return nil
-}
-
-// withTimeout derives a context honouring the provider timeout. Parent ctx
-// cancellation propagates regardless (context.WithTimeout derives from
-// parent), so callers don't need a separate cancel path for caller-side
-// shutdown — the no-op cancel returned when timeout <= 0 still gives a
-// uniform call shape at the call site. PR #8 thread 3291907737.
-func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if p.timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, p.timeout)
+	return validateWorkDir(workDir, p.workspaceRoot)
 }
 
 // Chat runs claude to completion and returns the terminal result event.
@@ -150,41 +120,12 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 		return nil, err
 	}
 
-	runCtx, cancel := p.withTimeout(ctx)
+	runCtx, cancel := withTimeout(ctx, p.timeout)
 	defer cancel()
 
-	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
+	result, _, err := collectResult(runCtx, p.runner, p.spec(req))
 	if err != nil {
-		return nil, fmt.Errorf("claudecli: call: %w", err)
-	}
-
-	var result streamEvent
-	var haveResult bool
-	var parseErr error
-	for line := range lines {
-		if parseErr != nil {
-			continue // keep draining; don't process further
-		}
-		ev, ok, err := parseEvent([]byte(line))
-		if err != nil {
-			parseErr = err
-			continue
-		}
-		if ok && ev.Kind == eventResult {
-			result, haveResult = ev, true
-		}
-	}
-	if waitErr := wait(); waitErr != nil {
-		return nil, fmt.Errorf("claudecli: claude exited with error: %w", waitErr)
-	}
-	if parseErr != nil {
-		return nil, parseErr
-	}
-	if !haveResult {
-		return nil, fmt.Errorf("claudecli: no result event in claude output")
-	}
-	if result.IsError {
-		return nil, fmt.Errorf("claudecli: claude reported an error: %s", result.Text)
+		return nil, err
 	}
 
 	return &engine.ChatResponse{
@@ -206,7 +147,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		return nil, err
 	}
 
-	runCtx, cancel := p.withTimeout(ctx)
+	runCtx, cancel := withTimeout(ctx, p.timeout)
 
 	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
 	if err != nil {
