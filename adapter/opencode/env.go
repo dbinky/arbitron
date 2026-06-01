@@ -45,6 +45,9 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 	// Reveal the key LAST, only after validation, so a rejected/unknown
 	// provider never even decrypts the secret. The revealed value flows only
 	// into the returned slice below — never into a log line.
+	if binding.RevealKey == nil {
+		return nil, fmt.Errorf("opencode: binding has no RevealKey — a connection is required")
+	}
 	key, err := binding.RevealKey(ctx)
 	if err != nil {
 		return nil, err

@@ -22,7 +22,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 7 | Connection store (`domain/provider/connection.go`, `adapter/sqlite/connection_repo.go`, `migrations/002_connections.*`, `queries/connections.sql` — CRUD, Reveal-only decrypt, Azure api-version rule) | [x] | [x] | Done |
 | 8 | OpenRouter chat adapter (`adapter/openrouter/` — chat/completions, Bearer auth, SSE streaming, structured output, usage) | [x] | [x] | Done |
 | 9 | Azure Foundry chat adapter (`adapter/azurefoundry/` — both topologies, deployment path + api-version, api-key header, serverless endpoint) | [x] | [x] | Done |
-| 10 | opencode agent backend (`adapter/opencode/` — single-shot `RunAgent`, `opencodeEnv` credential injection, `buildArgs` isolation) | [x] | [ ] | |
+| 10 | opencode agent backend (`adapter/opencode/` — single-shot `RunAgent`, `opencodeEnv` credential injection, `buildArgs` isolation) | [x] | [x] | Done |
 | 11 | Provider selection factory (`adapter/provider/factory.go`, `conn_checker.go` — provider→adapter mapping, empty→claude-cli) | [ ] | [ ] | |
 | 12 | Conditional & transform executors (`domain/engine/executor_conditional.go`, `executor_transform.go` — value template-resolution, numeric compare, counter increment) | [ ] | [ ] | |
 | 13 | Connection management surface (`adapter/mcp/tools_connection.go` — create/update/delete/get/list, key-in-never-out, name-only logging) | [ ] | [ ] | |

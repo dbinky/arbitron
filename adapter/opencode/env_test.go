@@ -173,6 +173,21 @@ func TestOpencodeEnv_KeyAbsentFromLogs(t *testing.T) {
 	assert.NotContains(t, buf.String(), sentinel, "revealed key leaked into logs")
 }
 
+// Edge case — nil RevealKey returns a clear error instead of panicking. A
+// binding with no RevealKey is invalid for opencode (it requires a key to
+// authenticate); the function must fail before any env is produced.
+func TestOpencodeEnv_NilRevealKey_Errors(t *testing.T) {
+	b := provider.ResolvedBinding{
+		Provider:  "anthropic",
+		BaseURL:   "https://api.anthropic.com",
+		RevealKey: nil, // no key function
+	}
+
+	env, err := opencodeEnv(context.Background(), b)
+	require.Error(t, err, "nil RevealKey must return an error, not panic")
+	assert.Nil(t, env, "no env must be produced when RevealKey is nil")
+}
+
 // Error — an injected var name that collides with the base allowlist is
 // rejected. Uses a synthetic provider entry registered for the test.
 func TestOpencodeEnv_BaseNameCollisionRejected(t *testing.T) {
