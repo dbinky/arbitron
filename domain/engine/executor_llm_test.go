@@ -449,6 +449,81 @@ func TestLLMCallExecutor_SelectorError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
+// Success: the {{workspace}} reserved variable seeds ChatRequest.WorkDir so
+// the ChatProvider (claude-cli ChatAdapter) receives the instance path.
+// Mirrors TestAgentCallExecutor_HappyPath's WorkDir assertion for the LLM path.
+func TestLLMCallExecutor_WorkDirFromWorkspace(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("prompt")
+
+	var capturedReq engine.ChatRequest
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			capturedReq = req
+			return &engine.ChatResponse{Output: map[string]any{"ok": true}, Model: "m"}, nil
+		},
+	}
+
+	vars := variable.NewStore()
+	vars.SetReserved(engine.ReservedVarWorkspace, "/workspace/inst-llm")
+
+	node := workflow.Node{
+		ID:   "llm1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+			OutputSchema: map[string]any{"type": "object"},
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "/workspace/inst-llm", capturedReq.WorkDir,
+		"{{workspace}} must seed ChatRequest.WorkDir so the ChatProvider receives the instance path")
+}
+
+// Edge: an unseeded {{workspace}} yields an empty WorkDir in ChatRequest; the
+// ChatProvider rejects it and the error surfaces. Mirrors the AgentCallExecutor
+// MissingWorkspace test to maintain parity on the LLM path.
+func TestLLMCallExecutor_MissingWorkspace(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("prompt")
+
+	errWorkDirRequired := errors.New("work dir required")
+	var sawWorkDir string
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			sawWorkDir = req.WorkDir
+			if req.WorkDir == "" {
+				return nil, errWorkDirRequired
+			}
+			return &engine.ChatResponse{Output: map[string]any{"ok": true}, Model: "m"}, nil
+		},
+	}
+
+	// No workspace seeded.
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "llm1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Empty(t, sawWorkDir, "unseeded workspace must propagate as empty WorkDir")
+	assert.ErrorIs(t, err, errWorkDirRequired)
+	assert.Contains(t, err.Error(), "provider call")
+}
+
 // Category 5 (empty output edge): an empty-string output under a schema is a
 // parse error (empty is not valid JSON), surfaced clearly rather than silently
 // passed through.
