@@ -424,6 +424,30 @@ func TestChat_MaxResponseBytesExceeded(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// --- EDGE: MaxResponseBytes exceeded in stream -> error chunk, channel closes ---
+
+func TestStreamChat_MaxResponseBytesExceeded(t *testing.T) {
+	// Build a stream body far larger than the cap (each event ~47 bytes × 50).
+	sse := strings.Repeat(`data: {"choices":[{"delta":{"content":"X"}}]}`+"\n\n", 50)
+	ft := &fakeTransport{resp: sseResponse(200, sse)}
+	p := New(Config{
+		Binding:          staticBinding("https://router.test/v1", "m"),
+		HTTPClient:       &http.Client{Transport: ft},
+		MaxResponseBytes: 32,
+	})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.NoError(t, err)
+
+	var sawErr bool
+	for c := range ch {
+		if c.Error != nil {
+			sawErr = true
+		}
+	}
+	assert.True(t, sawErr, "expected an error chunk when MaxResponseBytes is exceeded in a stream")
+}
+
 // --- LiteLLM: a router base-url resolves through this same adapter (no special code) ---
 
 func TestChat_LiteLLMRouterBaseURL(t *testing.T) {
