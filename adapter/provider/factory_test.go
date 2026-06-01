@@ -194,6 +194,15 @@ func TestFactory_AgentProviderFor_NormalizesEmptyWhitespaceToClaude(t *testing.T
 	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
 }
 
+// Edge case: whitespace-only provider string for ChatProviderFor normalizes to
+// empty, routing to claude-cli — the chat-path mirror of the agent test above.
+func TestFactory_ChatProviderFor_WhitespaceOnlyIsClaudeCLI(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("   "))
+	require.NoError(t, err)
+	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
+}
+
 // ---- Success (variants): HTTP adapters get the injected client ----
 
 func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
