@@ -292,6 +292,23 @@ func TestTransformExecutor_EmptyVariableNameReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "variable name is required")
 }
 
+// Edge case: decrement with a non-numeric delta returns an error, mirroring
+// the equivalent increment test (same code path via applyIncrement).
+func TestTransformExecutor_DecrementNonNumericDelta(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("counter", float64(10))
+
+	node := transformNode([]workflow.Operation{
+		{Variable: "counter", Operation: "decrement", Value: "not_a_number"},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-numeric")
+}
+
 func TestTransformExecutor_RejectsReservedWorkspaceVariable(t *testing.T) {
 	// SF12 / PR #8 thread 3291944671 fix #3: a transform that tries to
 	// rewrite the engine-seeded "workspace" variable (which becomes the

@@ -24,7 +24,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 9 | Azure Foundry chat adapter (`adapter/azurefoundry/` — both topologies, deployment path + api-version, api-key header, serverless endpoint) | [x] | [x] | Done |
 | 10 | opencode agent backend (`adapter/opencode/` — single-shot `RunAgent`, `opencodeEnv` credential injection, `buildArgs` isolation) | [x] | [x] | Done |
 | 11 | Provider selection factory (`adapter/provider/factory.go`, `conn_checker.go` — provider→adapter mapping, empty→claude-cli) | [x] | [x] | Done |
-| 12 | Conditional & transform executors (`domain/engine/executor_conditional.go`, `executor_transform.go` — value template-resolution, numeric compare, counter increment) | [ ] | [ ] | |
+| 12 | Conditional & transform executors (`domain/engine/executor_conditional.go`, `executor_transform.go` — value template-resolution, numeric compare, counter increment) | [x] | [ ] | |
 | 13 | Connection management surface (`adapter/mcp/tools_connection.go` — create/update/delete/get/list, key-in-never-out, name-only logging) | [ ] | [ ] | |
 | 14 | Composition root wiring (`cmd/arbitron/main.go` — adapters, resolver, selectors, checkers, fail-fast gate) | [ ] | [ ] | |
 | 15 | Config & profile loading (`domain/config/config.go`, `adapter/config/loader.go`, `profiles.go` — Profiles block, ConnectionRef/Params, precedence) | [ ] | [ ] | |

@@ -434,6 +434,39 @@ func TestConditionalExecutor_TemplateValueNonNumericSkips(t *testing.T) {
 	assert.Equal(t, "loop", result.OutputPort)
 }
 
+// Edge case: eq with a missing field returns false (routes to default); absence
+// is never equal to any value.
+func TestConditionalExecutor_EqMissingField(t *testing.T) {
+	vars := variable.NewStore()
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "nonexistent", Operator: "eq", Value: "anything", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort,
+		"eq on a missing field must route to default, not matched")
+}
+
+// Edge case: contains with a missing field returns false (routes to default).
+func TestConditionalExecutor_ContainsMissingField(t *testing.T) {
+	vars := variable.NewStore()
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "nonexistent", Operator: "contains", Value: "anything", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort,
+		"contains on a missing field must route to default, not matched")
+}
+
 // The field is a path, not a template: a field that literally contains {{...}}
 // is looked up verbatim (and thus missing), never substituted.
 func TestConditionalExecutor_FieldIsNotTemplated(t *testing.T) {
