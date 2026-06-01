@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/provider"
@@ -150,8 +149,9 @@ func TestLoadMasterKey_DoesNotLogKey(t *testing.T) {
 	out := buf.String()
 	assert.NotContains(t, out, keyB64, "base64 key must not appear in logs")
 	assert.NotContains(t, out, string(keyBytes), "raw key bytes must not appear in logs")
-	// Sanity: the bootstrap should still log *something* about the source.
-	assert.True(t, strings.Contains(out, "env") || len(out) >= 0)
+	// The bootstrap must still record that it loaded from env — confirming it
+	// ran and logged the source — without ever logging the key itself.
+	assert.Contains(t, out, "env", "bootstrap must log the key source")
 }
 
 // Secrecy: NewAESGCM must not log or expose the key via String/error.

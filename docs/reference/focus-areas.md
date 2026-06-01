@@ -18,7 +18,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 3 | Profile registry & resolver (`domain/provider/provider.go`, `adapter/provider/static.go` — `Profile`, `ProfileKind`, `ProfileResolver`, `ResolvedBinding`, alias resolution) | [x] | [x] | Done |
 | 4 | LLM & agent executors (`domain/engine/executor_llm.go`, `executor_agent.go` — profile resolve, provider-agnostic structured output, workspace WorkDir) | [x] | [x] | Done |
 | 5 | Capability validation & loop lint (`domain/workflow/validation.go`, `lint.go` — kind-matching, connection-existence, `INTERACTIVE_IN_LOOP` advisory) | [x] | [x] | Done |
-| 6 | Crypto (`domain/provider/crypto.go`, `adapter/crypto/` — AES-256-GCM, nonce-per-seal, master-key bootstrap, fail-fast gate) | [x] | [ ] | |
+| 6 | Crypto (`domain/provider/crypto.go`, `adapter/crypto/` — AES-256-GCM, nonce-per-seal, master-key bootstrap, fail-fast gate) | [x] | [x] | Done |
 | 7 | Connection store (`domain/provider/connection.go`, `adapter/sqlite/connection_repo.go`, `migrations/002_connections.*`, `queries/connections.sql` — CRUD, Reveal-only decrypt, Azure api-version rule) | [ ] | [ ] | |
 | 8 | OpenRouter chat adapter (`adapter/openrouter/` — chat/completions, Bearer auth, SSE streaming, structured output, usage) | [ ] | [ ] | |
 | 9 | Azure Foundry chat adapter (`adapter/azurefoundry/` — both topologies, deployment path + api-version, api-key header, serverless endpoint) | [ ] | [ ] | |
