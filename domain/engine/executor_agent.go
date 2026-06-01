@@ -11,27 +11,27 @@ import (
 )
 
 // AgentCallExecutor reads a mission template, resolves substitutions, resolves
-// an agent profile for its model, runs an AgentProvider mission inside the
-// instance {{workspace}}, and records the result's steps/summary/tokens.
+// an agent profile for its model, selects the concrete AgentProvider for the
+// resolved binding, runs the mission inside the instance {{workspace}}, and
+// records the result's steps/summary/tokens.
 //
-// Forward note (Phase 3): the executor holds a single AgentProvider (claude-cli
-// is the only P1 backend) and uses the resolver only for prof.Model. It evolves
-// symmetrically to the LLMCallExecutor's ChatProviderSelector — Phase 3 swaps
-// the single-provider field for an AgentProviderSelector chosen per node from
-// the resolved binding. The resolve call and the RunAgent call are kept cleanly
-// separable so that change stays a localized field swap.
+// Phase 3: the executor holds an AgentProviderSelector (not a single raw
+// provider), mirroring the LLMCallExecutor. After resolving the alias to a
+// binding it selects the backend per node from binding.Provider — claude-cli
+// (subscription) or opencode (non-Claude) — without importing either adapter.
 type AgentCallExecutor struct {
-	fileReader    FileReader
-	agentProvider AgentProvider
-	resolver      provider.ProfileResolver
+	fileReader FileReader
+	selector   AgentProviderSelector
+	resolver   provider.ProfileResolver
 }
 
 // NewAgentCallExecutor creates an AgentCallExecutor with the given dependencies.
-func NewAgentCallExecutor(fr FileReader, ap AgentProvider, resolver provider.ProfileResolver) *AgentCallExecutor {
+// The selector chooses the concrete AgentProvider per resolved binding.
+func NewAgentCallExecutor(fr FileReader, selector AgentProviderSelector, resolver provider.ProfileResolver) *AgentCallExecutor {
 	return &AgentCallExecutor{
-		fileReader:    fr,
-		agentProvider: ap,
-		resolver:      resolver,
+		fileReader: fr,
+		selector:   selector,
+		resolver:   resolver,
 	}
 }
 
@@ -54,6 +54,13 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 		return nil, fmt.Errorf("agent_call %q: resolve profile: %w", node.ID, err)
 	}
 
+	// Select the concrete agent backend for this node from binding.Provider
+	// (claude-cli / opencode). No adapter is imported here.
+	agentProvider, err := e.selector.AgentProviderFor(binding)
+	if err != nil {
+		return nil, fmt.Errorf("agent_call %q: select provider: %w", node.ID, err)
+	}
+
 	// Seed WorkDir from the reserved {{workspace}} variable. An unseeded
 	// workspace yields an empty WorkDir, which the AgentProvider (claude-cli
 	// AgentAdapter) rejects via ErrWorkDirRequired — propagate that rather than
@@ -70,7 +77,7 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 		Timeout:   time.Duration(node.Config.TimeoutSeconds) * time.Second,
 	}
 
-	res, err := e.agentProvider.RunAgent(ctx, mission)
+	res, err := agentProvider.RunAgent(ctx, mission)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: run agent: %w", node.ID, err)
 	}

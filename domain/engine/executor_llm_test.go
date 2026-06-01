@@ -69,7 +69,7 @@ func TestLLMCallExecutor_SuccessWithSchema(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestLLMCallExecutor_SuccessWithoutSchema_JSONResponse(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestLLMCallExecutor_SuccessWithoutSchema_TextResponse(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestLLMCallExecutor_TemplateSubstitution(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestLLMCallExecutor_ProviderError(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -232,7 +232,7 @@ func TestLLMCallExecutor_ResolverMiss(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -262,7 +262,7 @@ func TestLLMCallExecutor_FileNotFound(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("gpt-4"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("gpt-4"))
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -300,7 +300,7 @@ func TestLLMCallExecutor_RequestFields(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewLLMCallExecutor(fr, prov, chatResolver("claude-resolved-model"))
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("claude-resolved-model"))
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)

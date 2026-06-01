@@ -5,6 +5,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/google/uuid"
 )
@@ -46,6 +47,23 @@ type ChatProvider interface {
 // tools (P1); opencode (P3).
 type AgentProvider interface {
 	RunAgent(ctx context.Context, mission AgentMission) (*AgentResult, error)
+}
+
+// ChatProviderSelector chooses the concrete ChatProvider for a resolved
+// binding. The composition root supplies an implementation (the
+// adapter/provider factory); this keeps domain/engine free of concrete adapter
+// imports while letting the LLMCallExecutor pick a backend per node from the
+// resolved binding's Provider (claude-cli, openrouter, azure, ...).
+type ChatProviderSelector interface {
+	ChatProviderFor(b provider.ResolvedBinding) (ChatProvider, error)
+}
+
+// AgentProviderSelector chooses the concrete AgentProvider for a resolved
+// binding. It is the agent-side mirror of ChatProviderSelector: the
+// AgentCallExecutor selects claude-cli or opencode per node from the resolved
+// binding's Provider, without importing either adapter package.
+type AgentProviderSelector interface {
+	AgentProviderFor(b provider.ResolvedBinding) (AgentProvider, error)
 }
 
 // AgentMission describes a single agentic mission to run inside the instance

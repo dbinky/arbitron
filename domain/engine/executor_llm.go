@@ -11,27 +11,27 @@ import (
 )
 
 // LLMCallExecutor reads a prompt template, resolves substitutions, resolves a
-// chat profile for its model, calls a ChatProvider with no tools, and returns
-// the structured or text response.
+// chat profile for its model, selects the concrete ChatProvider for the
+// resolved binding, calls it with no tools, and returns the structured or text
+// response.
 //
-// Forward note (Phase 3): the executor holds a single ChatProvider (claude-cli
-// is the only P1 backend) and uses the resolver only for prof.Model. Phase 3
-// swaps the single-provider field for a ChatProviderSelector so the concrete
-// backend is chosen per node from the resolved binding's Provider. The resolver
-// call and the Chat call are kept cleanly separable so that change stays a
-// localized field swap.
+// Phase 3: the executor holds a ChatProviderSelector (not a single raw
+// provider). After resolving the alias to a binding it selects the backend per
+// node from binding.Provider — claude-cli (subscription), openrouter/litellm,
+// or azure — keeping the executor free of any concrete adapter import.
 type LLMCallExecutor struct {
-	fileReader  FileReader
-	llmProvider ChatProvider
-	resolver    provider.ProfileResolver
+	fileReader FileReader
+	selector   ChatProviderSelector
+	resolver   provider.ProfileResolver
 }
 
 // NewLLMCallExecutor creates an LLMCallExecutor with the given dependencies.
-func NewLLMCallExecutor(fr FileReader, chatProvider ChatProvider, resolver provider.ProfileResolver) *LLMCallExecutor {
+// The selector chooses the concrete ChatProvider per resolved binding.
+func NewLLMCallExecutor(fr FileReader, selector ChatProviderSelector, resolver provider.ProfileResolver) *LLMCallExecutor {
 	return &LLMCallExecutor{
-		fileReader:  fr,
-		llmProvider: chatProvider,
-		resolver:    resolver,
+		fileReader: fr,
+		selector:   selector,
+		resolver:   resolver,
 	}
 }
 
@@ -55,6 +55,13 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 		return nil, fmt.Errorf("llm_call %q: resolve profile: %w", node.ID, err)
 	}
 
+	// Select the concrete chat backend for this node from binding.Provider
+	// (claude-cli / openrouter / azure). No adapter is imported here.
+	chatProvider, err := e.selector.ChatProviderFor(binding)
+	if err != nil {
+		return nil, fmt.Errorf("llm_call %q: select provider: %w", node.ID, err)
+	}
+
 	workDirStr, _ := WorkDirFromVars(vars)
 
 	// Build LLM request.
@@ -68,7 +75,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	}
 
 	// Call LLM provider.
-	resp, err := e.llmProvider.Chat(ctx, req)
+	resp, err := chatProvider.Chat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("llm_call %q: provider call: %w", node.ID, err)
 	}

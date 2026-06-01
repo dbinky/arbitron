@@ -225,6 +225,9 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
 	}
 
+	// The empty-connection (subscription) path resolves to the claude-cli chat
+	// adapter. interactive/conversation executors below also use this single
+	// chat provider directly (they are not per-node alias-selected).
 	var chatProvider engine.ChatProvider
 	switch cfg.LLM.Provider {
 	case "claude-cli":
@@ -233,13 +236,14 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		chatProvider = anthropic.New(cfg.LLM.APIKey)
 	}
 
-	// The agent backend is claude-cli regardless of the configured chat provider:
-	// in P1 every agent profile resolves to claude-cli (design §4), so agent_call
-	// works on the local Claude path even when cfg.LLM.Provider defaults elsewhere.
+	// The agent backend for the empty-connection path is the claude-cli agent
+	// adapter: every Claude/subscription agent profile resolves to it (design
+	// §4). Non-Claude agent profiles route to opencode via the factory below.
 	agentCfg := chatCfg
 	agentCfg.SkipPermissions = cfg.LLM.SkipPermissions
 	agentCfg.AllowedTools = cfg.LLM.AllowedTools // full agent scope default
-	var agentProvider engine.AgentProvider = claudecli.NewAgentAdapter(agentCfg)
+	claudeChatAdapter := claudecli.NewChatAdapter(chatCfg)
+	claudeAgentAdapter := claudecli.NewAgentAdapter(agentCfg)
 
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
@@ -308,10 +312,28 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// ConnectionRef names an existing connection at workflow_validate time.
 	connChecker := providersadapter.NewConnChecker(domainProfiles, connStore)
 
+	// 8f. Build the provider-selection factory: it maps a resolved binding's
+	// Provider to a concrete backend per node (empty/claude-cli -> the claude-cli
+	// adapters; openrouter/litellm -> adapter/openrouter; azure-* ->
+	// adapter/azurefoundry; non-Claude agent -> adapter/opencode). The executors
+	// hold this factory as the domain selector port and never import an adapter.
+	//
+	// Capability validation stays load-bearing with NO new code: an agent_call
+	// whose profile resolves to a chat-only adapter is impossible by construction
+	// — the profile is kind: chat and already fails workflow_validate (Phase 1).
+	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
+		ClaudeChat:  claudeChatAdapter,
+		ClaudeAgent: claudeAgentAdapter,
+		HTTPClient:  http.DefaultClient,
+		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// Runner nil -> opencode uses the shared production os/exec runner.
+		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+	})
+
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, chatProvider, profileResolver),
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, agentProvider, profileResolver),
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, providerFactory, profileResolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
