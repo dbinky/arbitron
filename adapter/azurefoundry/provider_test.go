@@ -411,6 +411,33 @@ func TestChat_MaxResponseBytesExceeded_BoundedReadError(t *testing.T) {
 	assert.NotContains(t, err.Error(), revealedKey)
 }
 
+// Edge: a stream body exceeding MaxResponseBytes delivers an Error chunk and
+// closes — it does not silently truncate or block.
+func TestStreamChat_MaxResponseBytesExceeded_ErrorChunk(t *testing.T) {
+	// Each SSE event is ~47 bytes; 50 events far exceed MaxResponseBytes: 32.
+	big := strings.Repeat(`data: {"choices":[{"delta":{"content":"X"}}]}`+"\n", 50)
+	var cap captured
+	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {
+		return sseResp(big), nil
+	})
+	p := azurefoundry.New(azurefoundry.Config{
+		Binding:          serverlessBinding(),
+		HTTPClient:       client,
+		MaxResponseBytes: 32,
+	})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "hi"})
+	require.NoError(t, err)
+
+	var sawErr bool
+	for c := range ch {
+		if c.Error != nil {
+			sawErr = true
+		}
+	}
+	assert.True(t, sawErr, "stream exceeding MaxResponseBytes must produce an Error chunk")
+}
+
 // Edge: a malformed JSON frame in an otherwise-200 stream delivers an Error
 // chunk before the channel closes — it does not silently discard the frame.
 func TestStreamChat_MalformedSSEFrame_ErrorChunk(t *testing.T) {
