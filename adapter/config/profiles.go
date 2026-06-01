@@ -17,9 +17,11 @@ func ProfilesFromConfig(cfgs []domainconfig.ProfileConfig) []provider.Profile {
 	out := make([]provider.Profile, len(cfgs))
 	for i, c := range cfgs {
 		out[i] = provider.Profile{
-			Alias: c.Alias,
-			Kind:  provider.ProfileKind(c.Kind),
-			Model: c.Model,
+			Alias:         c.Alias,
+			Kind:          provider.ProfileKind(c.Kind),
+			ConnectionRef: c.ConnectionRef,
+			Model:         c.Model,
+			Params:        c.Params,
 		}
 	}
 	return out

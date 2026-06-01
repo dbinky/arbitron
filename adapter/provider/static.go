@@ -4,25 +4,36 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
+// claudeCLIProvider is the Provider value the no-connection subscription path
+// resolves to. A profile with an empty ConnectionRef runs against the local
+// Claude subscription (claude-cli) and needs no endpoint or key.
+const claudeCLIProvider = "claude-cli"
+
 // StaticProfileResolver resolves aliases against an immutable in-memory registry
-// loaded once at startup from config. In P1 every profile resolves to
-// claude-cli: kind chat -> ChatAdapter, kind agent -> AgentAdapter (the engine
-// selects the adapter by Profile.Kind).
+// loaded once at startup from config, then runs the full
+// alias -> profile -> connection -> binding chain. A profile with an empty
+// ConnectionRef resolves to the claude-cli no-key binding and never touches the
+// ConnectionStore; a profile with a ConnectionRef looks up the connection
+// metadata for Provider/BaseURL/Extras and produces a lazy RevealKey closure.
 type StaticProfileResolver struct {
 	byAlias map[string]provider.Profile
+	store   provider.ConnectionStore
 }
 
 var _ provider.ProfileResolver = (*StaticProfileResolver)(nil)
 
-// NewStaticProfileResolver builds the alias->Profile map. It fails fast at
+// NewStaticProfileResolver builds the alias->Profile map and captures the
+// ConnectionStore used to resolve connection-backed profiles. It fails fast at
 // construction (startup) rather than at resolve time on a duplicate alias or an
-// unknown kind value.
-func NewStaticProfileResolver(profiles []provider.Profile) (*StaticProfileResolver, error) {
+// unknown kind value. The store may be nil when every profile uses the
+// claude-cli no-key subscription path (which stores zero connections).
+func NewStaticProfileResolver(profiles []provider.Profile, store provider.ConnectionStore) (*StaticProfileResolver, error) {
 	byAlias := make(map[string]provider.Profile, len(profiles))
 	for _, p := range profiles {
 		if _, dup := byAlias[p.Alias]; dup {
@@ -36,15 +47,64 @@ func NewStaticProfileResolver(profiles []provider.Profile) (*StaticProfileResolv
 		}
 		byAlias[p.Alias] = p
 	}
-	return &StaticProfileResolver{byAlias: byAlias}, nil
+	return &StaticProfileResolver{byAlias: byAlias, store: store}, nil
 }
 
-// Resolve returns the profile for an exact alias match, or ErrUnknownProfile
-// (wrapped with the alias for context) on a miss.
-func (r *StaticProfileResolver) Resolve(alias string) (provider.Profile, error) {
+// Resolve runs the alias -> profile -> connection -> binding chain. An unknown
+// alias returns ErrUnknownProfile (wrapped with the alias). An empty
+// ConnectionRef yields the claude-cli no-key binding with no ConnectionStore
+// call. Otherwise the connection metadata is looked up (a miss wraps
+// ErrConnectionNotFound, naming the profile and connection), and a lazy
+// RevealKey closure is attached that decrypts only when invoked.
+func (r *StaticProfileResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
 	p, ok := r.byAlias[alias]
 	if !ok {
-		return provider.Profile{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}
-	return p, nil
+
+	// No-key subscription path: empty ConnectionRef -> claude-cli, no store call.
+	if p.ConnectionRef == "" {
+		return provider.ResolvedBinding{
+			Kind:     p.Kind,
+			Provider: claudeCLIProvider,
+			BaseURL:  "",
+			Extras:   nil,
+			Model:    p.Model,
+			Params:   p.Params,
+			RevealKey: func(context.Context) (string, error) {
+				return "", nil
+			},
+		}, nil
+	}
+
+	// Connection-backed path: look up metadata (no key material here). Resolve
+	// carries no ctx per the port signature; use Background for the metadata Get.
+	if r.store == nil {
+		return provider.ResolvedBinding{}, fmt.Errorf(
+			"provider: profile %q references connection %q but no connection store is configured",
+			alias, p.ConnectionRef)
+	}
+
+	conn, err := r.store.Get(context.Background(), p.ConnectionRef)
+	if err != nil {
+		return provider.ResolvedBinding{}, fmt.Errorf(
+			"provider: profile %q references connection %q: %w", alias, p.ConnectionRef, err)
+	}
+
+	connRef := p.ConnectionRef
+	store := r.store
+	return provider.ResolvedBinding{
+		Kind:     p.Kind,
+		Provider: conn.Provider,
+		BaseURL:  conn.BaseURL,
+		Extras:   conn.Extras,
+		Model:    p.Model,
+		Params:   p.Params,
+		// RevealKey is lazy: it decrypts the connection's key only when invoked,
+		// at call/launch time. SECURITY: the revealed key is returned to the
+		// caller and never logged here.
+		RevealKey: func(ctx context.Context) (string, error) {
+			return store.Reveal(ctx, connRef)
+		},
+	}, nil
 }

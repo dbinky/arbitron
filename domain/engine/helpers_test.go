@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -22,12 +23,19 @@ func newFakeResolver(profiles ...provider.Profile) *fakeResolver {
 	return &fakeResolver{byAlias: m}
 }
 
-func (r *fakeResolver) Resolve(alias string) (provider.Profile, error) {
+func (r *fakeResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
 	p, ok := r.byAlias[alias]
 	if !ok {
-		return provider.Profile{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}
-	return p, nil
+	return provider.ResolvedBinding{
+		Kind:   p.Kind,
+		Model:  p.Model,
+		Params: p.Params,
+		RevealKey: func(context.Context) (string, error) {
+			return "", nil
+		},
+	}, nil
 }
 
 var _ provider.ProfileResolver = (*fakeResolver)(nil)

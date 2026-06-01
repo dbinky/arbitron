@@ -18,9 +18,11 @@ type Config struct {
 // mirrors domain/provider.Profile but stays in the config package to keep
 // config free of a provider-package import; adapter/config maps it across.
 type ProfileConfig struct {
-	Alias string
-	Kind  string // "chat" | "agent"
-	Model string
+	Alias         string
+	Kind          string // "chat" | "agent"
+	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
+	Model         string
+	Params        map[string]any // default temperature, max tokens, ...
 }
 
 // ScriptConfig holds settings for script/tool_call process nodes.

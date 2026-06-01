@@ -49,7 +49,7 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	prompt := variable.Resolve(string(templateBytes), vars)
 
 	// Resolve the agent profile alias to a concrete model.
-	prof, err := e.resolver.Resolve(node.Config.ModelProfile)
+	binding, err := e.resolver.Resolve(node.Config.ModelProfile)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: resolve profile: %w", node.ID, err)
 	}
@@ -63,7 +63,7 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	// Build the mission. SessionID is left empty in P1 — single-shot mission per
 	// step; cross-step resume is a Phase-3 decision pending the opencode spike.
 	mission := AgentMission{
-		Model:     prof.Model,
+		Model:     binding.Model,
 		Prompt:    prompt,
 		WorkDir:   workDirStr,
 		ToolScope: node.Config.ToolScope,

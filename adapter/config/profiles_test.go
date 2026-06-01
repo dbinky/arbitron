@@ -42,13 +42,19 @@ profiles:
 // converting the Kind string into a ProfileKind.
 func TestProfilesFromConfig_Mapping(t *testing.T) {
 	cfgs := []domainconfig.ProfileConfig{
-		{Alias: "a", Kind: "chat", Model: "m1"},
+		{Alias: "a", Kind: "chat", ConnectionRef: "azure-prod", Model: "m1", Params: map[string]any{"temperature": 0.2}},
 		{Alias: "b", Kind: "agent", Model: "m2"},
 	}
 
 	got := adapterconfig.ProfilesFromConfig(cfgs)
 	require.Len(t, got, 2)
-	assert.Equal(t, provider.Profile{Alias: "a", Kind: provider.ProfileKindChat, Model: "m1"}, got[0])
+	assert.Equal(t, provider.Profile{
+		Alias:         "a",
+		Kind:          provider.ProfileKindChat,
+		ConnectionRef: "azure-prod",
+		Model:         "m1",
+		Params:        map[string]any{"temperature": 0.2},
+	}, got[0])
 	assert.Equal(t, provider.Profile{Alias: "b", Kind: provider.ProfileKindAgent, Model: "m2"}, got[1])
 }
 
@@ -63,7 +69,7 @@ func TestProfilesFromConfig_MalformedKindRejectedDownstream(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, provider.ProfileKind("tool"), got[0].Kind)
 
-	_, err := adapterprovider.NewStaticProfileResolver(got)
+	_, err := adapterprovider.NewStaticProfileResolver(got, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool")
 }

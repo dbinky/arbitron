@@ -241,8 +241,12 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// single source of truth for model_profile aliases: the executors resolve a
 	// node's alias to a concrete model through it, and workflow validation checks
 	// alias/kind through the ResolverChecker wrapper built below.
+	// The ConnectionStore is wired in a later task; until then every profile
+	// uses the claude-cli no-key subscription path (empty ConnectionRef), which
+	// resolves without a store.
 	profileResolver, err := providersadapter.NewStaticProfileResolver(
 		configadapter.ProfilesFromConfig(cfg.Profiles),
+		nil,
 	)
 	if err != nil {
 		db.Close()

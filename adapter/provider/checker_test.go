@@ -13,12 +13,12 @@ import (
 // stubResolver is a tiny ProfileResolver for exercising ResolverChecker in
 // isolation, including the non-ErrUnknownProfile error path.
 type stubResolver struct {
-	prof provider.Profile
-	err  error
+	binding provider.ResolvedBinding
+	err     error
 }
 
-func (s stubResolver) Resolve(string) (provider.Profile, error) {
-	return s.prof, s.err
+func (s stubResolver) Resolve(string) (provider.ResolvedBinding, error) {
+	return s.binding, s.err
 }
 
 // Happy path: a resolvable chat alias yields its kind as a plain string, ok=true.
@@ -26,7 +26,7 @@ func TestResolverChecker_ProfileKindChat(t *testing.T) {
 	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
 		{Alias: "default-chat", Kind: provider.ProfileKindChat, Model: "m-chat"},
 		{Alias: "default-agent", Kind: provider.ProfileKindAgent, Model: "m-agent"},
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	c := adapterprovider.NewResolverChecker(r)
@@ -40,7 +40,7 @@ func TestResolverChecker_ProfileKindChat(t *testing.T) {
 func TestResolverChecker_ProfileKindAgent(t *testing.T) {
 	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
 		{Alias: "default-agent", Kind: provider.ProfileKindAgent, Model: "m-agent"},
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	c := adapterprovider.NewResolverChecker(r)
@@ -52,7 +52,7 @@ func TestResolverChecker_ProfileKindAgent(t *testing.T) {
 
 // Error: an unknown alias (ErrUnknownProfile) reports ok=false, empty kind.
 func TestResolverChecker_UnknownAlias(t *testing.T) {
-	r, err := adapterprovider.NewStaticProfileResolver(nil)
+	r, err := adapterprovider.NewStaticProfileResolver(nil, nil)
 	require.NoError(t, err)
 
 	c := adapterprovider.NewResolverChecker(r)

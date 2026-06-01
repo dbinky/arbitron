@@ -22,9 +22,9 @@ func NewResolverChecker(r provider.ProfileResolver) ResolverChecker {
 // ProfileKind resolves the alias and returns its kind as a plain string. An
 // unresolvable alias (including ErrUnknownProfile) returns ok=false.
 func (c ResolverChecker) ProfileKind(alias string) (string, bool) {
-	prof, err := c.r.Resolve(alias)
+	binding, err := c.r.Resolve(alias)
 	if err != nil {
 		return "", false
 	}
-	return string(prof.Kind), true
+	return string(binding.Kind), true
 }
