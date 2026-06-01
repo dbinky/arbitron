@@ -396,6 +396,62 @@ func (s stubProfileChecker) ProfileKind(alias string) (string, bool) {
 	return kind, ok
 }
 
+// stubConnChecker is a minimal workflow.ConnectionChecker for handler tests.
+type stubConnChecker struct {
+	refs    map[string]string // alias -> connectionRef
+	present map[string]bool   // connectionRef -> exists
+}
+
+func (s stubConnChecker) ProfileConnectionRef(alias string) (string, bool) {
+	ref, ok := s.refs[alias]
+	return ref, ok
+}
+
+func (s stubConnChecker) ConnectionExists(name string) bool { return s.present[name] }
+
+// A connection checker injected via SetConnectionChecker is threaded into
+// validation: an llm_call whose profile references a missing connection yields
+// UNKNOWN_CONNECTION.
+func TestWorkflowHandler_Validate_ThreadsConnectionChecker(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.workflows["conn-wf"] = &workflow.Workflow{
+		Name: "conn-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "llm",
+				Type:       workflow.NodeTypeLLMCall,
+				Entrypoint: true,
+				Config:     workflow.NodeConfig{ModelProfile: "az-chat"},
+			},
+		},
+	}
+	pc := stubProfileChecker{"az-chat": "chat"}
+	cc := stubConnChecker{
+		refs:    map[string]string{"az-chat": "azure-prod"},
+		present: map[string]bool{}, // azure-prod missing
+	}
+	h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil, pc)
+	h.SetConnectionChecker(cc)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/conn-wf/validate", nil)
+	req = withChiURLParam(req, "name", "conn-wf")
+	w := httptest.NewRecorder()
+	h.Validate(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, false, resp["valid"])
+	errs, _ := resp["errors"].([]any)
+	var codes []string
+	for _, e := range errs {
+		if m, ok := e.(map[string]any); ok {
+			codes = append(codes, m["code"].(string))
+		}
+	}
+	assert.Contains(t, codes, "UNKNOWN_CONNECTION")
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Trigger workflow
 // ---------------------------------------------------------------------------

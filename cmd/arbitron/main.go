@@ -20,6 +20,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/anthropic"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
+	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
@@ -34,6 +35,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -99,6 +101,8 @@ type domainStack struct {
 	notifRepo           notification.Repository
 	conversationHandler engine.ConversationHandler
 	profileChecker      workflow.ProfileChecker
+	connChecker         workflow.ConnectionChecker
+	connStore           provider.ConnectionStore
 	tracingShutdown     func(ctx context.Context) error
 }
 
@@ -142,6 +146,9 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Notifications:       ds.notifRepo,
 		ConversationHandler: ds.conversationHandler,
 		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
+		Connections:         ds.connStore,
+		Logger:              ds.logger,
 	}
 }
 
@@ -237,23 +244,69 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
 
-	// 8a. Build the immutable profile resolver from config profiles. This is the
+	// 8a. Bootstrap connection secrecy: load the master key (env/keyring), build
+	// the AES-GCM crypto only when a key is present, and construct the connection
+	// store. The master key is held in memory only and is never logged or
+	// persisted; LoadMasterKey logs the source only.
+	masterKey, err := adaptcrypto.LoadMasterKey(logger)
+	if err != nil && !errors.Is(err, provider.ErrMasterKeyMissing) {
+		// An invalid key (bad base64 / wrong length) is a hard error.
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading master key: %w", err)
+	}
+	haveKey := masterKey != nil
+
+	var connCrypto provider.Crypto
+	if haveKey {
+		connCrypto, err = adaptcrypto.NewAESGCM(masterKey)
+		if err != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("building crypto: %w", err)
+		}
+	}
+
+	// 8b. Construct the connection store over the SQLite DB + crypto. A nil
+	// crypto (Claude-only, no master key) yields a store that can still count
+	// rows; the fail-fast gate below ensures no connections exist in that case.
+	connStore := adaptsqlite.NewConnectionRepo(db, connCrypto)
+
+	// 8c. Fail-fast gate: refuse to start when connections exist but no master
+	// key is available, because their ciphertext could never be decrypted. A
+	// Claude-only deployment (zero connections) boots with no master key.
+	connCount, err := connStore.Count(context.Background())
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("counting connections: %w", err)
+	}
+	if err := adaptcrypto.RequireMasterKeyIfConnections(haveKey, connCount); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, err
+	}
+
+	// 8d. Build the immutable profile resolver from config profiles. This is the
 	// single source of truth for model_profile aliases: the executors resolve a
 	// node's alias to a concrete model through it, and workflow validation checks
-	// alias/kind through the ResolverChecker wrapper built below.
-	// The ConnectionStore is wired in a later task; until then every profile
-	// uses the claude-cli no-key subscription path (empty ConnectionRef), which
-	// resolves without a store.
-	profileResolver, err := providersadapter.NewStaticProfileResolver(
-		configadapter.ProfilesFromConfig(cfg.Profiles),
-		nil,
-	)
+	// alias/kind through the ResolverChecker wrapper built below. The widened
+	// resolver carries the connection store so a profile with a non-empty
+	// ConnectionRef resolves to its endpoint + lazy key reveal; an empty
+	// ConnectionRef stays on the claude-cli no-key subscription path.
+	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
+	profileResolver, err := providersadapter.NewStaticProfileResolver(domainProfiles, connStore)
 	if err != nil {
 		db.Close()
 		logCloser.Close()
 		return nil, fmt.Errorf("building profile resolver: %w", err)
 	}
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
+
+	// 8e. Build the connection-existence checker for workflow validation over the
+	// loaded profiles + the connection store. It confirms a profile's non-empty
+	// ConnectionRef names an existing connection at workflow_validate time.
+	connChecker := providersadapter.NewConnChecker(domainProfiles, connStore)
 
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
@@ -406,6 +459,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		notifRepo:           notifRepo,
 		conversationHandler: conversationHandler,
 		profileChecker:      profileChecker,
+		connChecker:         connChecker,
+		connStore:           connStore,
 		tracingShutdown:     tracingShutdown,
 	}, nil
 }
@@ -447,6 +502,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		WebhookHandler:      webhookHandler,
 		MCPHandler:          mcpSrv.HTTPHandler(),
 		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

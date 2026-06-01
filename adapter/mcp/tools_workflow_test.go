@@ -564,6 +564,40 @@ func TestWorkflowValidate(t *testing.T) {
 		assert.Contains(t, text, `"valid": false`)
 		assert.Contains(t, text, "PROFILE_KIND_MISMATCH")
 	})
+
+	t.Run("threads injected connection checker into validation", func(t *testing.T) {
+		// An llm_call whose profile references a missing connection must fail
+		// validation with UNKNOWN_CONNECTION, proving the workflow_validate tool
+		// forwards Deps.ConnChecker to workflow.Validate.
+		repo := &stubWorkflowRepo{
+			loadFn: func(_ context.Context, _ string) (*workflow.Workflow, error) {
+				return &workflow.Workflow{
+					Name: "conn-wf",
+					Nodes: []workflow.Node{
+						{ID: "llm", Type: workflow.NodeTypeLLMCall, Entrypoint: true, Config: workflow.NodeConfig{ModelProfile: "az-chat"}},
+					},
+				}, nil
+			},
+		}
+		deps := &adaptmcp.Deps{
+			Workflows:      repo,
+			FileReader:     &stubFileReader{fileExistsFn: func(_, _ string) bool { return true }},
+			ProfileChecker: mcpStubProfileChecker{"az-chat": "chat"},
+			ConnChecker: mcpStubConnChecker{
+				refs:    map[string]string{"az-chat": "azure-prod"},
+				present: map[string]bool{},
+			},
+		}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterWorkflowTools(srv)
+
+		result := callTool(t, srv, "workflow_validate", map[string]any{"name": "conn-wf"})
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, `"valid": false`)
+		assert.Contains(t, text, "UNKNOWN_CONNECTION")
+	})
 }
 
 // mcpStubProfileChecker is a minimal workflow.ProfileChecker for MCP tool tests.
@@ -573,6 +607,19 @@ func (s mcpStubProfileChecker) ProfileKind(alias string) (string, bool) {
 	kind, ok := s[alias]
 	return kind, ok
 }
+
+// mcpStubConnChecker is a minimal workflow.ConnectionChecker for MCP tool tests.
+type mcpStubConnChecker struct {
+	refs    map[string]string
+	present map[string]bool
+}
+
+func (s mcpStubConnChecker) ProfileConnectionRef(alias string) (string, bool) {
+	ref, ok := s.refs[alias]
+	return ref, ok
+}
+
+func (s mcpStubConnChecker) ConnectionExists(name string) bool { return s.present[name] }
 
 func TestWorkflowListFiles(t *testing.T) {
 	t.Run("happy path returns files", func(t *testing.T) {

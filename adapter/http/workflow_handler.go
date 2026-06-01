@@ -37,6 +37,14 @@ type WorkflowHandler struct {
 	fileReader     engine.FileReader
 	stats          workflowStatsReader
 	profileChecker workflow.ProfileChecker
+	connChecker    workflow.ConnectionChecker
+}
+
+// SetConnectionChecker injects the workflow.ConnectionChecker used to validate
+// that a profile's non-empty ConnectionRef names an existing connection. When
+// unset (nil), the connection-reference validation pass is skipped.
+func (h *WorkflowHandler) SetConnectionChecker(cc workflow.ConnectionChecker) {
+	h.connChecker = cc
 }
 
 // NewWorkflowHandler creates a new WorkflowHandler with its dependencies.
@@ -120,7 +128,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader, h.profileChecker, nil)
+	errs := workflow.Validate(wf, h.fileReader, h.profileChecker, h.connChecker)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -57,4 +59,17 @@ type Deps struct {
 	// kind during workflow validation. Optional: a nil checker skips the
 	// model_profile validation pass.
 	ProfileChecker workflow.ProfileChecker
+	// ConnChecker validates that a profile's non-empty ConnectionRef names an
+	// existing connection during workflow validation. Optional: a nil checker
+	// skips the connection-reference validation pass.
+	ConnChecker workflow.ConnectionChecker
+	// Connections is the connection-management store powering the
+	// connection_* CRUD tools. The plaintext API key enters only through
+	// Create/Update and is sealed immediately; it is never returned by Get/List.
+	// Optional: when nil, the connection tools report the store as unavailable.
+	Connections provider.ConnectionStore
+	// Logger is the structured logger used by tool handlers. SECURITY: the
+	// connection tools log the connection NAME only, never the api_key. Optional:
+	// a nil logger falls back to slog.Default().
+	Logger *slog.Logger
 }
