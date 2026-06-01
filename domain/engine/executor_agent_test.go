@@ -258,6 +258,33 @@ func TestAgentCallExecutor_MissingWorkspace(t *testing.T) {
 	assert.Contains(t, err.Error(), "run agent")
 }
 
+// Error: AgentProviderSelector.AgentProviderFor returns an error -> wrapped
+// "select provider" error, no RunAgent call.
+func TestAgentCallExecutor_SelectorError(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("do work")
+
+	wantErr := errors.New("no agent adapter for provider: unknown")
+	failSel := staticAgentSelector{err: wantErr}
+
+	vars := storeWithWorkspace("/workspace/inst-7")
+	node := workflow.Node{
+		ID:   "agent1",
+		Type: workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "mission.txt",
+			ModelProfile: "agent-default",
+		},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, failSel, agentResolver("claude-opus-4-8"))
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "select provider")
+	assert.ErrorIs(t, err, wantErr)
+}
+
 // Edge case: empty Steps + non-JSON summary with no schema -> valid NodeResult,
 // summary wrapped via parseOrWrapText.
 func TestAgentCallExecutor_EmptyStepsNonJSONSummary(t *testing.T) {

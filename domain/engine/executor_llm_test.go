@@ -422,6 +422,33 @@ func TestLLMCallExecutor_SchemaInvalidJSONErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "structured output")
 }
 
+// Error: ChatProviderSelector.ChatProviderFor returns an error -> wrapped
+// "select provider" error, no Chat call.
+func TestLLMCallExecutor_SelectorError(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("some prompt")
+
+	wantErr := errors.New("no chat adapter for provider: unknown")
+	failSel := staticChatSelector{err: wantErr}
+
+	vars := variable.NewStore()
+	node := workflow.Node{
+		ID:   "llm1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, failSel, chatResolver("gpt-4"))
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "select provider")
+	assert.ErrorIs(t, err, wantErr)
+}
+
 // Category 5 (empty output edge): an empty-string output under a schema is a
 // parse error (empty is not valid JSON), surfaced clearly rather than silently
 // passed through.
