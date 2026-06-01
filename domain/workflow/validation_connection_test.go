@@ -186,3 +186,47 @@ func TestValidate_KindMismatchStillEnforced_Regression(t *testing.T) {
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "PROFILE_KIND_MISMATCH")
 }
+
+// ---------------------------------------------------------------------------
+// agent_call parity: validateConnectionReferences handles both llm_call and
+// agent_call in its switch; these tests cover the agent_call branches.
+// ---------------------------------------------------------------------------
+
+// Happy path: an agent_call whose profile references an existing connection
+// validates clean — the agent_call branch is symmetric with llm_call.
+func TestValidate_AgentCallConnectionRefExists_OK(t *testing.T) {
+	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "agentp")
+	profiles := &mockProfileChecker{kinds: map[string]string{"agentp": "agent"}}
+	conns := &mockConnChecker{
+		refs:  map[string]string{"agentp": "opencode-conn"},
+		conns: map[string]bool{"opencode-conn": true},
+	}
+
+	errs := workflow.Validate(wf, nil, profiles, conns)
+	assert.Empty(t, errs)
+}
+
+// Failure: an agent_call whose profile references a missing connection yields
+// UNKNOWN_CONNECTION naming both the alias and the missing connection.
+func TestValidate_AgentCallConnectionRefMissing_Error(t *testing.T) {
+	wf := callNodeWorkflow(workflow.NodeTypeAgentCall, "agentp")
+	profiles := &mockProfileChecker{kinds: map[string]string{"agentp": "agent"}}
+	conns := &mockConnChecker{
+		refs:  map[string]string{"agentp": "ghost-conn"},
+		conns: map[string]bool{"other": true},
+	}
+
+	errs := workflow.Validate(wf, nil, profiles, conns)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "UNKNOWN_CONNECTION"))
+
+	var got workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "UNKNOWN_CONNECTION" {
+			got = e
+		}
+	}
+	assert.Equal(t, "entry", got.NodeID)
+	assert.Contains(t, got.Message, "agentp")
+	assert.Contains(t, got.Message, "ghost-conn")
+}
