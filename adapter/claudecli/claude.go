@@ -34,7 +34,7 @@ type argsPolicy struct {
 // influenced by untrusted input. Operators flipping the default MUST also
 // configure cfg.LLM.AllowedTools so the agent runs against an explicit
 // allowlist.
-func buildArgs(req engine.LLMRequest, policy argsPolicy) []string {
+func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 	args := []string{
 		"--print", "--verbose", "--output-format", "stream-json",
 	}

@@ -12,7 +12,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
-// ErrWorkDirRequired is returned by Call/StreamCall when req.WorkDir is empty.
+// ErrWorkDirRequired is returned by Chat/StreamChat when req.WorkDir is empty.
 // SECURITY: an empty Dir on cmd.Exec means "inherit parent cwd" — i.e., the
 // engine launch directory containing arbitron.db, config.yaml, and other
 // secrets. PR #8 security MEDIUM thread 3291944671 item 1.
@@ -46,7 +46,7 @@ type Config struct {
 	Runner           CommandRunner
 }
 
-// Provider implements engine.LLMProvider by invoking the `claude` CLI in
+// Provider implements engine.ChatProvider by invoking the `claude` CLI in
 // headless (`--print`) mode.
 type Provider struct {
 	binPath          string
@@ -59,7 +59,7 @@ type Provider struct {
 	runner           CommandRunner
 }
 
-var _ engine.LLMProvider = (*Provider)(nil)
+var _ engine.ChatProvider = (*Provider)(nil)
 
 // New constructs a claude-cli Provider from cfg. An empty BinaryPath is
 // resolved from PATH and common install directories. A zero Timeout means no
@@ -91,7 +91,7 @@ func New(cfg Config) *Provider {
 }
 
 // spec builds the RunSpec for a request.
-func (p *Provider) spec(req engine.LLMRequest) RunSpec {
+func (p *Provider) spec(req engine.ChatRequest) RunSpec {
 	return RunSpec{
 		Bin: p.binPath,
 		Args: buildArgs(req, argsPolicy{
@@ -144,8 +144,8 @@ func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.Ca
 	return context.WithTimeout(ctx, p.timeout)
 }
 
-// Call runs claude to completion and returns the terminal result event.
-func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+// Chat runs claude to completion and returns the terminal result event.
+func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 	if err := p.validateWorkDir(req.WorkDir); err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 		return nil, fmt.Errorf("claudecli: claude reported an error: %s", result.Text)
 	}
 
-	return &engine.LLMResponse{
+	return &engine.ChatResponse{
 		Output:    result.Text,
 		SessionID: result.SessionID,
 		Model:     req.Model,
@@ -196,12 +196,12 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 	}, nil
 }
 
-// StreamCall runs claude and streams assistant text as it arrives. The final
+// StreamChat runs claude and streams assistant text as it arrives. The final
 // chunk has Done=true and carries the session id and token counts. Any failure
 // is reported as a chunk with a non-nil Error. The internal goroutine always
 // drains the runner's lines channel and calls wait(), honouring the
 // CommandRunner contract even when an error is encountered mid-stream.
-func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	if err := p.validateWorkDir(req.WorkDir); err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 		return nil, fmt.Errorf("claudecli: stream call: %w", err)
 	}
 
-	out := make(chan engine.LLMStreamChunk)
+	out := make(chan engine.ChatChunk)
 	go func() {
 		defer cancel()
 		defer close(out)

@@ -35,7 +35,7 @@ type ConversationHandler interface {
 type conversationHandler struct {
 	instances   instance.InstanceRepository
 	nodeExecs   instance.NodeExecutionRepository
-	llmProvider LLMProvider
+	llmProvider ChatProvider
 	eventBus    EventBus
 	queueMgr    QueueManager
 }
@@ -45,7 +45,7 @@ type conversationHandler struct {
 func NewConversationHandler(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
-	llmProvider LLMProvider,
+	llmProvider ChatProvider,
 	eventBus EventBus,
 	queueMgr QueueManager,
 ) ConversationHandler {
@@ -110,7 +110,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 6. Build the request: resume the stored session, send only the new
 	//    user message. WorkDir comes from the instance's seeded workspace.
 	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
-	req := LLMRequest{
+	req := ChatRequest{
 		SystemPrompt: nodeConfig.SystemPrompt,
 		Prompt:       content,
 		Model:        nodeConfig.Model,
@@ -119,7 +119,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	}
 
 	// 7. Call the provider with streaming.
-	fullResponse, newSessionID, err := h.streamLLMResponse(ctx, instanceID, req)
+	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, req)
 	if err != nil {
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
@@ -243,15 +243,15 @@ func (h *conversationHandler) completeSession(
 	return nil
 }
 
-// streamLLMResponse calls the LLM with streaming and consumes the stream,
+// streamChatResponse calls the LLM with streaming and consumes the stream,
 // publishing token events along the way. Returns the full response text and
 // the provider session id (for resumption) from the terminal chunk.
-func (h *conversationHandler) streamLLMResponse(
+func (h *conversationHandler) streamChatResponse(
 	ctx context.Context,
 	instanceID uuid.UUID,
-	req LLMRequest,
+	req ChatRequest,
 ) (response string, sessionID string, err error) {
-	stream, err := h.llmProvider.StreamCall(ctx, req)
+	stream, err := h.llmProvider.StreamChat(ctx, req)
 	if err != nil {
 		return "", "", fmt.Errorf("conversation: stream call: %w", err)
 	}

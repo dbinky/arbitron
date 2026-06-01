@@ -23,7 +23,7 @@ var _ NodeExecutor = (*InteractiveExecutor)(nil)
 type InteractiveExecutor struct {
 	instances   instance.InstanceRepository
 	nodeExecs   instance.NodeExecutionRepository
-	llmProvider LLMProvider
+	llmProvider ChatProvider
 	fileReader  FileReader
 	eventBus    EventBus
 	queueMgr    QueueManager
@@ -33,7 +33,7 @@ type InteractiveExecutor struct {
 func NewInteractiveExecutor(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
-	llmProvider LLMProvider,
+	llmProvider ChatProvider,
 	fileReader FileReader,
 	eventBus EventBus,
 	queueMgr QueueManager,
@@ -98,7 +98,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
 		sentinelInstruction(nonce, node.Config.OutputSchema)
 
-	req := LLMRequest{
+	req := ChatRequest{
 		SystemPrompt: node.Config.SystemPrompt,
 		Prompt:       userMessage,
 		Model:        node.Config.Model,
@@ -108,7 +108,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	}
 
 	// 7. Call the LLM provider with streaming.
-	stream, err := e.llmProvider.StreamCall(ctx, req)
+	stream, err := e.llmProvider.StreamChat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
 	}

@@ -12,16 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockLLMProvider implements engine.LLMProvider for tests.
-type mockLLMProvider struct {
-	callFn func(ctx context.Context, req engine.LLMRequest) (*engine.LLMResponse, error)
+// mockChatProvider implements engine.ChatProvider for tests.
+type mockChatProvider struct {
+	callFn func(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error)
 }
 
-func (m *mockLLMProvider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+func (m *mockChatProvider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 	return m.callFn(ctx, req)
 }
 
-func (m *mockLLMProvider) StreamCall(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func (m *mockChatProvider) StreamChat(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	return nil, errors.New("streaming not implemented in mock")
 }
 
@@ -29,9 +29,9 @@ func TestLLMCallExecutor_SuccessWithSchema(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("Summarize: {{topic}}")
 
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
-			return &engine.LLMResponse{
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{
 				Output:       map[string]any{"summary": "A brief summary"},
 				Conversation: []map[string]any{{"role": "user", "content": req.Prompt}},
 				Model:        "gpt-4",
@@ -71,9 +71,9 @@ func TestLLMCallExecutor_SuccessWithoutSchema_JSONResponse(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("Generate JSON")
 
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
-			return &engine.LLMResponse{
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{
 				Output:   `{"key": "value"}`,
 				Model:    "gpt-4",
 				TokensIn: 5,
@@ -102,9 +102,9 @@ func TestLLMCallExecutor_SuccessWithoutSchema_TextResponse(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("Tell me a joke")
 
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
-			return &engine.LLMResponse{
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{
 				Output:   "Why did the chicken cross the road?",
 				Model:    "gpt-4",
 				TokensIn: 5,
@@ -134,10 +134,10 @@ func TestLLMCallExecutor_TemplateSubstitution(t *testing.T) {
 	fr.files["test-wf/prompt.txt"] = []byte("Hello {{name}}, summarize {{topic}}")
 
 	var capturedPrompt string
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 			capturedPrompt = req.Prompt
-			return &engine.LLMResponse{
+			return &engine.ChatResponse{
 				Output: map[string]any{"ok": true},
 				Model:  "gpt-4",
 			}, nil
@@ -169,8 +169,8 @@ func TestLLMCallExecutor_ProviderError(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("some prompt")
 
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
 			return nil, errors.New("rate limit exceeded")
 		},
 	}
@@ -196,8 +196,8 @@ func TestLLMCallExecutor_FileNotFound(t *testing.T) {
 	fr := newMockFileReader()
 	// No file registered.
 
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
 			t.Fatal("provider should not be called")
 			return nil, nil
 		},
@@ -224,11 +224,11 @@ func TestLLMCallExecutor_RequestFields(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("test prompt")
 
-	var capturedReq engine.LLMRequest
-	provider := &mockLLMProvider{
-		callFn: func(_ context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+	var capturedReq engine.ChatRequest
+	provider := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 			capturedReq = req
-			return &engine.LLMResponse{
+			return &engine.ChatResponse{
 				Output: map[string]any{"ok": true},
 				Model:  "gpt-4",
 			}, nil

@@ -16,24 +16,24 @@ import (
 
 func TestBuildArgs(t *testing.T) {
 	t.Run("base args are always present (skip-permissions off, no allowed tools)", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{})
 		assert.Equal(t, []string{
 			"--print", "--verbose", "--output-format", "stream-json",
 		}, args)
 	})
 
 	t.Run("skip-permissions emits --dangerously-skip-permissions when true", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{SkipPermissions: true})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{SkipPermissions: true})
 		assert.Contains(t, args, "--dangerously-skip-permissions")
 	})
 
 	t.Run("skip-permissions omits the flag when false", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{SkipPermissions: false})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{SkipPermissions: false})
 		assert.NotContains(t, args, "--dangerously-skip-permissions")
 	})
 
 	t.Run("allowed tools are forwarded as a comma-joined --allowedTools", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{AllowedTools: []string{"Read", "Bash(git status:*)"}})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{AllowedTools: []string{"Read", "Bash(git status:*)"}})
 		assert.Contains(t, args, "--allowedTools")
 		for i, a := range args {
 			if a == "--allowedTools" {
@@ -45,41 +45,41 @@ func TestBuildArgs(t *testing.T) {
 	})
 
 	t.Run("empty allowed tools omits the flag", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{})
 		assert.NotContains(t, args, "--allowedTools")
 	})
 
 	t.Run("request model overrides default model", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{Model: "claude-opus-4-7"}, argsPolicy{DefaultModel: "claude-sonnet-4-6"})
+		args := buildArgs(engine.ChatRequest{Model: "claude-opus-4-7"}, argsPolicy{DefaultModel: "claude-sonnet-4-6"})
 		assert.Contains(t, args, "--model")
 		assert.Contains(t, args, "claude-opus-4-7")
 		assert.NotContains(t, args, "claude-sonnet-4-6")
 	})
 
 	t.Run("default model used when request model is empty", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{DefaultModel: "claude-sonnet-4-6"})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{DefaultModel: "claude-sonnet-4-6"})
 		assert.Contains(t, args, "--model")
 		assert.Contains(t, args, "claude-sonnet-4-6")
 	})
 
 	t.Run("no --model flag when both are empty", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{})
 		assert.NotContains(t, args, "--model")
 	})
 
 	t.Run("session id adds --resume", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{SessionID: "sess-9"}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{SessionID: "sess-9"}, argsPolicy{})
 		assert.Contains(t, args, "--resume")
 		assert.Contains(t, args, "sess-9")
 	})
 
 	t.Run("no --resume when session id is empty", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{})
 		assert.NotContains(t, args, "--resume")
 	})
 
 	t.Run("system prompt adds --append-system-prompt", func(t *testing.T) {
-		args := buildArgs(engine.LLMRequest{SystemPrompt: "be terse"}, argsPolicy{})
+		args := buildArgs(engine.ChatRequest{SystemPrompt: "be terse"}, argsPolicy{})
 		assert.Contains(t, args, "--append-system-prompt")
 		assert.Contains(t, args, "be terse")
 	})

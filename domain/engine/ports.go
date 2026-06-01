@@ -32,13 +32,50 @@ type WorkspaceManager interface {
 	InstanceDirStats(instanceID uuid.UUID) (bytes int64, files int, err error)
 }
 
-// LLMProvider abstracts large-language-model calls for use by LLM nodes.
-type LLMProvider interface {
-	Call(ctx context.Context, request LLMRequest) (*LLMResponse, error)
-	StreamCall(ctx context.Context, request LLMRequest) (<-chan LLMStreamChunk, error)
+// ChatProvider performs reasoning/chat with no tool use and no file side
+// effects. Backends: tool-suppressed claude -p (P1); Azure AI Foundry,
+// OpenRouter (P3).
+type ChatProvider interface {
+	Chat(ctx context.Context, request ChatRequest) (*ChatResponse, error)
+	StreamChat(ctx context.Context, request ChatRequest) (<-chan ChatChunk, error)
 }
 
-// LLMRequest describes a single LLM invocation.
+// AgentProvider runs an agentic mission that mutates files inside the
+// instance workspace. The agentic loop (tool calls, edits, test runs)
+// happens INSIDE the harness, not inside Arbitron. Backends: claude -p with
+// tools (P1); opencode (P3).
+type AgentProvider interface {
+	RunAgent(ctx context.Context, mission AgentMission) (*AgentResult, error)
+}
+
+// AgentMission describes a single agentic mission to run inside the instance
+// workspace.
+type AgentMission struct {
+	Model     string   // resolved model-id (or provider/model for opencode)
+	Prompt    string   // the mission instruction
+	WorkDir   string   // = the instance {{workspace}}
+	ToolScope []string // allowed-tools / permission scope
+	SessionID string   // optional cross-step resume; see opencode spike
+	Timeout   time.Duration
+}
+
+// AgentResult holds the outcome of an agentic mission.
+type AgentResult struct {
+	Summary   string      // result/summary text
+	Steps     []AgentStep // step events (tool calls, edits) for the trace
+	Model     string
+	TokensIn  int // coarse; subprocess accounting
+	TokensOut int
+	SessionID string
+}
+
+// AgentStep is a single step event emitted during an agentic mission.
+type AgentStep struct {
+	Kind    string // "tool_call" | "edit" | "assistant" | "result"
+	Summary string
+}
+
+// ChatRequest describes a single LLM invocation.
 //
 // History: the multi-turn Messages/Tools/LLMMessage/LLMTool/LLMToolUse types
 // were removed in the PR #8 cleanup (Should Fix #8 / thread 3291907744). The
@@ -46,7 +83,7 @@ type LLMProvider interface {
 // SessionID + a Prompt, not a Messages array — and the Anthropic Messages-API
 // adapter ships as a stub. Reintroduce only if/when a real Messages-API
 // adapter lands.
-type LLMRequest struct {
+type ChatRequest struct {
 	Model        string
 	SystemPrompt string
 	Prompt       string
@@ -61,8 +98,8 @@ type LLMRequest struct {
 	SessionID string
 }
 
-// LLMResponse holds the result of a non-streaming LLM call.
-type LLMResponse struct {
+// ChatResponse holds the result of a non-streaming LLM call.
+type ChatResponse struct {
 	Output       any
 	Conversation any
 	Model        string
@@ -73,8 +110,8 @@ type LLMResponse struct {
 	SessionID string
 }
 
-// LLMStreamChunk is one piece of a streaming LLM response.
-type LLMStreamChunk struct {
+// ChatChunk is one piece of a streaming LLM response.
+type ChatChunk struct {
 	Token     string
 	Done      bool
 	Error     error

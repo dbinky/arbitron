@@ -1,4 +1,4 @@
-// Package claudecli implements engine.LLMProvider by shelling out to the
+// Package claudecli implements engine.ChatProvider by shelling out to the
 // `claude` CLI in headless (`--print`) mode.
 package claudecli
 

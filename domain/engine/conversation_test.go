@@ -24,7 +24,7 @@ import (
 func conversationTestSetup(t *testing.T) (
 	*mockInstanceRepo,
 	*mockNodeExecutionRepo,
-	*mockStreamingLLMProvider,
+	*mockStreamingChatProvider,
 	*mockEventBus,
 	*mockQueueManager,
 	uuid.UUID,
@@ -33,7 +33,7 @@ func conversationTestSetup(t *testing.T) (
 
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()
-	llmProvider := newMockStreamingLLMProvider()
+	llmProvider := newMockStreamingChatProvider()
 	eventBus := newMockEventBus()
 	queueMgr := newMockQueueManager()
 
@@ -106,7 +106,7 @@ func conversationTestSetup(t *testing.T) (
 func buildConversationHandler(
 	instRepo *mockInstanceRepo,
 	nodeExecRepo *mockNodeExecutionRepo,
-	llmProvider *mockStreamingLLMProvider,
+	llmProvider *mockStreamingChatProvider,
 	eventBus *mockEventBus,
 	queueMgr *mockQueueManager,
 ) engine.ConversationHandler {
@@ -243,7 +243,7 @@ func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 
 	assert.Equal(t, "You are a helpful assistant.", req.SystemPrompt)
 	// SF8 / PR #8 thread 3291907744: Messages and Tools were removed from
-	// LLMRequest. Resumed turns use Prompt; the dead invariants are no
+	// ChatRequest. Resumed turns use Prompt; the dead invariants are no
 	// longer expressible.
 	assert.Equal(t, "New question", req.Prompt)
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
@@ -262,13 +262,13 @@ const testNonce = "test-nonce-fixed"
 // sentinel block carrying result, plus a Done chunk with a session id. The
 // sentinel uses testNonce so the conversation handler (which reads the nonce
 // from LLMConversation["nonce"]) accepts it.
-func cannedSentinelStream(prefix string, result map[string]any, sessionID string) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func cannedSentinelStream(prefix string, result map[string]any, sessionID string) func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	return func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 		payload, _ := json.Marshal(result)
 		body := prefix + engine.SentinelOpenTag(testNonce) + string(payload) + engine.SentinelCloseTag(testNonce)
-		ch := make(chan engine.LLMStreamChunk, 2)
-		ch <- engine.LLMStreamChunk{Token: body}
-		ch <- engine.LLMStreamChunk{Done: true, SessionID: sessionID}
+		ch := make(chan engine.ChatChunk, 2)
+		ch <- engine.ChatChunk{Token: body}
+		ch <- engine.ChatChunk{Done: true, SessionID: sessionID}
 		close(ch)
 		return ch, nil
 	}
@@ -412,7 +412,7 @@ func TestConversationHandler_HandleMessage_NotWaiting_ReturnsError(t *testing.T)
 func TestConversationHandler_HandleMessage_NotInteractiveNode_ReturnsError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()
-	llmProvider := newMockStreamingLLMProvider()
+	llmProvider := newMockStreamingChatProvider()
 	eventBus := newMockEventBus()
 	queueMgr := newMockQueueManager()
 
@@ -454,7 +454,7 @@ func TestConversationHandler_HandleMessage_NotInteractiveNode_ReturnsError(t *te
 func TestConversationHandler_HandleMessage_InstanceNotFound_ReturnsError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()
-	llmProvider := newMockStreamingLLMProvider()
+	llmProvider := newMockStreamingChatProvider()
 	eventBus := newMockEventBus()
 	queueMgr := newMockQueueManager()
 
@@ -769,7 +769,7 @@ func TestConversationHandler_HandleMessage_NoSentinelIsNormalTurn(t *testing.T) 
 func TestConversationHandler_HandleMessage_StreamError_ReturnsError(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 		return nil, fmt.Errorf("LLM unavailable")
 	}
 
@@ -783,10 +783,10 @@ func TestConversationHandler_HandleMessage_StreamError_ReturnsError(t *testing.T
 func TestConversationHandler_HandleMessage_StreamChunkError_ReturnsError(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
 
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, 2)
-		ch <- engine.LLMStreamChunk{Token: "partial"}
-		ch <- engine.LLMStreamChunk{Error: fmt.Errorf("connection lost")}
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, 2)
+		ch <- engine.ChatChunk{Token: "partial"}
+		ch <- engine.ChatChunk{Error: fmt.Errorf("connection lost")}
 		close(ch)
 		return ch, nil
 	}

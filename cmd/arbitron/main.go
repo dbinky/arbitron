@@ -194,7 +194,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
 
 	// 7. Create the LLM provider based on config.
-	var llmProvider engine.LLMProvider
+	var llmProvider engine.ChatProvider
 	switch cfg.LLM.Provider {
 	case "claude-cli":
 		// SECURITY: WorkspaceRoot is the absolute workspace path; the provider

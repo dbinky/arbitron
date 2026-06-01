@@ -13,11 +13,11 @@ import (
 // LLM provider, and returns the structured or text response.
 type LLMCallExecutor struct {
 	fileReader  FileReader
-	llmProvider LLMProvider
+	llmProvider ChatProvider
 }
 
 // NewLLMCallExecutor creates an LLMCallExecutor with the given dependencies.
-func NewLLMCallExecutor(fr FileReader, provider LLMProvider) *LLMCallExecutor {
+func NewLLMCallExecutor(fr FileReader, provider ChatProvider) *LLMCallExecutor {
 	return &LLMCallExecutor{
 		fileReader:  fr,
 		llmProvider: provider,
@@ -39,7 +39,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	workDirStr, _ := WorkDirFromVars(vars)
 
 	// Build LLM request.
-	req := LLMRequest{
+	req := ChatRequest{
 		Model:        node.Config.Model,
 		Prompt:       prompt,
 		MaxTokens:    node.Config.MaxTokens,
@@ -49,7 +49,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	}
 
 	// Call LLM provider.
-	resp, err := e.llmProvider.Call(ctx, req)
+	resp, err := e.llmProvider.Chat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("llm_call %q: provider call: %w", node.ID, err)
 	}
@@ -68,7 +68,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 
 // processLLMOutput determines the final output value based on whether an
 // output schema was provided and the response type.
-func processLLMOutput(resp *LLMResponse, outputSchema any) any {
+func processLLMOutput(resp *ChatResponse, outputSchema any) any {
 	// If output schema provided, use the structured output directly.
 	if outputSchema != nil {
 		return resp.Output

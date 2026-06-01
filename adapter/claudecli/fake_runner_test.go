@@ -33,7 +33,7 @@ func (f *fakeRunner) Run(_ context.Context, spec RunSpec) (<-chan string, func()
 // ctxAwareFakeRunner is a CommandRunner that honours its ctx. It models the
 // production behaviour where ctx cancellation kills the subprocess and the
 // stdout-reader goroutine returns. Used by the goleak regression test for
-// MF9 to ensure the Provider's StreamCall goroutine returns instead of
+// MF9 to ensure the Provider's StreamChat goroutine returns instead of
 // blocking forever on `out <- chunk` after the consumer cancelled.
 type ctxAwareFakeRunner struct {
 	lines []string
