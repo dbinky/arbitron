@@ -245,7 +245,7 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("workflow not found"), nil
 		}
 
-		validationErrors := workflow.Validate(wf, srv.deps.FileReader)
+		validationErrors := workflow.Validate(wf, srv.deps.FileReader, nil)
 		if validationErrors == nil {
 			validationErrors = []workflow.ValidationError{}
 		}

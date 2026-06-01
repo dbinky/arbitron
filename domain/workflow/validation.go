@@ -9,6 +9,13 @@ type FileChecker interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
+// ProfileChecker resolves a node's model_profile alias to its capability
+// kind for validation. Mirrors FileChecker: an injected domain capability,
+// not an adapter import. Returns ok=false for an unknown alias.
+type ProfileChecker interface {
+	ProfileKind(alias string) (kind string, ok bool)
+}
+
 // ValidationError describes a single validation problem found in a workflow.
 type ValidationError struct {
 	Code    string `json:"code"`
@@ -43,8 +50,10 @@ var validErrorBehaviorTypes = map[string]bool{
 
 // Validate performs structural and semantic validation of a workflow definition.
 // Pass a non-nil FileChecker to validate file references (templateFile,
-// scriptFile); pass nil to skip file-existence checks.
-func Validate(wf *Workflow, checker FileChecker) []ValidationError {
+// scriptFile); pass nil to skip file-existence checks. Pass a non-nil
+// ProfileChecker to validate that llm_call/agent_call nodes reference a
+// model_profile of the correct capability kind; pass nil to skip that pass.
+func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker) []ValidationError {
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
@@ -65,6 +74,58 @@ func Validate(wf *Workflow, checker FileChecker) []ValidationError {
 		errs = append(errs, validateFileReferences(wf, checker)...)
 	}
 
+	if profiles != nil {
+		errs = append(errs, validateModelProfiles(wf, profiles)...)
+	}
+
+	return errs
+}
+
+// validateModelProfiles checks that llm_call and agent_call nodes reference a
+// model_profile whose capability kind matches the node type: llm_call requires
+// a chat profile, agent_call requires an agent profile. A missing alias, an
+// unknown alias, or a kind mismatch each produces a specific error so the
+// failure is caught at workflow_validate, before any run.
+func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		var wantKind string
+		switch n.Type {
+		case NodeTypeLLMCall:
+			wantKind = "chat"
+		case NodeTypeAgentCall:
+			wantKind = "agent"
+		default:
+			continue
+		}
+
+		if n.Config.ModelProfile == "" {
+			errs = append(errs, ValidationError{
+				Code:    "MISSING_REQUIRED_CONFIG",
+				Message: string(n.Type) + " node " + n.ID + " must have a model_profile",
+				NodeID:  n.ID,
+			})
+			continue
+		}
+
+		kind, ok := profiles.ProfileKind(n.Config.ModelProfile)
+		if !ok {
+			errs = append(errs, ValidationError{
+				Code:    "UNKNOWN_PROFILE",
+				Message: "node " + n.ID + " references unknown model_profile: " + n.Config.ModelProfile,
+				NodeID:  n.ID,
+			})
+			continue
+		}
+
+		if kind != wantKind {
+			errs = append(errs, ValidationError{
+				Code:    "PROFILE_KIND_MISMATCH",
+				Message: string(n.Type) + " node " + n.ID + " requires a " + wantKind + " profile but " + n.Config.ModelProfile + " is " + kind,
+				NodeID:  n.ID,
+			})
+		}
+	}
 	return errs
 }
 
@@ -353,6 +414,14 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 				errs = append(errs, ValidationError{
 					Code:    "MISSING_REQUIRED_CONFIG",
 					Message: "llm_call node " + n.ID + " must have a templateFile",
+					NodeID:  n.ID,
+				})
+			}
+		case NodeTypeAgentCall:
+			if n.Config.TemplateFile == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "agent_call node " + n.ID + " must have a templateFile",
 					NodeID:  n.ID,
 				})
 			}

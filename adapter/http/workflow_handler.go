@@ -111,7 +111,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader)
+	errs := workflow.Validate(wf, h.fileReader, nil)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}
