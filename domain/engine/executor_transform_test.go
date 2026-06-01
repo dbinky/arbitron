@@ -294,6 +294,26 @@ func TestTransformExecutor_EmptyVariableNameReturnsError(t *testing.T) {
 
 // Edge case: decrement with a non-numeric delta returns an error, mirroring
 // the equivalent increment test (same code path via applyIncrement).
+// Robustness: a counter seeded at exactly 0 can be incremented to 1. Zero is a
+// valid float64 value in the store; toFloat64(float64(0)) must return (0, true),
+// not (0, false). This covers the native loop's initial state before iteration 1.
+func TestTransformExecutor_IncrementFromZero(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("counter", float64(0))
+
+	node := transformNode([]workflow.Operation{
+		{Variable: "counter", Operation: "increment", Value: float64(1)},
+	})
+
+	exec := engine.NewTransformExecutor()
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+	require.NoError(t, err)
+
+	val, ok := vars.Get("counter")
+	require.True(t, ok)
+	assert.Equal(t, float64(1), val)
+}
+
 func TestTransformExecutor_DecrementNonNumericDelta(t *testing.T) {
 	vars := variable.NewStore()
 	vars.SetInput("counter", float64(10))
