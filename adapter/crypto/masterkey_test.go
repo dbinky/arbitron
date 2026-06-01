@@ -95,6 +95,44 @@ func TestRequireMasterKeyIfConnections_ConnectionsNoKey_Fails(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrMasterKeyMissing)
 }
 
+// Error: keyring returns a non-base64 value → ErrMasterKeyInvalid (symmetric
+// with the env-path test TestLoadMasterKey_NonBase64_Invalid).
+func TestLoadMasterKey_KeyringNonBase64_Invalid(t *testing.T) {
+	setMasterKeyEnv(t, "")
+	stubKeyring(t, func(string, string) (string, error) {
+		return "not!base64!!!", nil
+	})
+
+	got, err := LoadMasterKey(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	assert.ErrorIs(t, err, provider.ErrMasterKeyInvalid)
+	assert.Nil(t, got)
+}
+
+// Error: keyring returns correct base64 but decodes to wrong length →
+// ErrMasterKeyInvalid (symmetric with TestLoadMasterKey_WrongLength_Invalid).
+func TestLoadMasterKey_KeyringWrongLength_Invalid(t *testing.T) {
+	setMasterKeyEnv(t, "")
+	stubKeyring(t, func(string, string) (string, error) {
+		return base64.StdEncoding.EncodeToString(make([]byte, 16)), nil
+	})
+
+	got, err := LoadMasterKey(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	assert.ErrorIs(t, err, provider.ErrMasterKeyInvalid)
+	assert.Nil(t, got)
+}
+
+// Edge: a nil logger is accepted; LoadMasterKey falls back to slog.Default()
+// and returns the key without panicking.
+func TestLoadMasterKey_NilLogger_UsesDefault(t *testing.T) {
+	want := bytes.Repeat([]byte{0x11}, 32)
+	setMasterKeyEnv(t, base64.StdEncoding.EncodeToString(want))
+	stubKeyring(t, func(string, string) (string, error) { return "", nil })
+
+	got, err := LoadMasterKey(nil) // nil logger → slog.Default()
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
 // Secrecy: LoadMasterKey must never log the key bytes or its base64 form.
 func TestLoadMasterKey_DoesNotLogKey(t *testing.T) {
 	keyBytes := bytes.Repeat([]byte{0x99}, 32)

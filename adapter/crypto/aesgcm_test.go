@@ -134,6 +134,41 @@ func TestAESGCM_LongPlaintext_RoundTrip(t *testing.T) {
 	assert.Equal(t, plaintext, got)
 }
 
+// Error: a nil nonce (zero length) is rejected by Open with ErrDecrypt.
+// GCM requires a 12-byte nonce; the guard in Open catches the wrong length
+// before GCM itself is invoked, so no partial state can leak.
+func TestAESGCM_EmptyNonce_Fails(t *testing.T) {
+	c, err := adaptercrypto.NewAESGCM(key32(0x09))
+	require.NoError(t, err)
+
+	ct, _, err := c.Seal([]byte("payload"))
+	require.NoError(t, err)
+
+	got, err := c.Open(ct, nil)
+	assert.ErrorIs(t, err, provider.ErrDecrypt)
+	assert.Nil(t, got, "no partial plaintext on nil nonce")
+}
+
+// Error: a nonce of wrong length (neither zero nor 12 bytes) is rejected by
+// Open with ErrDecrypt; both shorter and longer nonces must fail cleanly.
+func TestAESGCM_WrongNonceLength_Fails(t *testing.T) {
+	c, err := adaptercrypto.NewAESGCM(key32(0x0A))
+	require.NoError(t, err)
+
+	ct, _, err := c.Seal([]byte("payload"))
+	require.NoError(t, err)
+
+	// Too short (8 bytes instead of 12).
+	got, err := c.Open(ct, make([]byte, 8))
+	assert.ErrorIs(t, err, provider.ErrDecrypt)
+	assert.Nil(t, got, "no partial plaintext on short nonce")
+
+	// Too long (16 bytes instead of 12).
+	got, err = c.Open(ct, make([]byte, 16))
+	assert.ErrorIs(t, err, provider.ErrDecrypt)
+	assert.Nil(t, got, "no partial plaintext on long nonce")
+}
+
 // Edge: nonce uniqueness across many seals of the same plaintext — all nonces
 // distinct and all ciphertexts differ (probabilistic GCM nonce uniqueness).
 func TestAESGCM_NonceUniqueness(t *testing.T) {
