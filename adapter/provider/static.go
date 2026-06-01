@@ -36,6 +36,9 @@ var _ provider.ProfileResolver = (*StaticProfileResolver)(nil)
 func NewStaticProfileResolver(profiles []provider.Profile, store provider.ConnectionStore) (*StaticProfileResolver, error) {
 	byAlias := make(map[string]provider.Profile, len(profiles))
 	for _, p := range profiles {
+		if p.Alias == "" {
+			return nil, fmt.Errorf("provider: profile has empty alias (set a unique non-empty alias for each profile)")
+		}
 		if _, dup := byAlias[p.Alias]; dup {
 			return nil, fmt.Errorf("provider: duplicate profile alias %q", p.Alias)
 		}

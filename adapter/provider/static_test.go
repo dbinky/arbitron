@@ -308,6 +308,17 @@ func TestStaticProfileResolver_RevealKeyNeverLogged(t *testing.T) {
 	assert.NotContains(t, buf.String(), secret)
 }
 
+// Error: an empty alias is a construction-time failure — a node that forgets to
+// set model_profile produces "", which must not silently match a blank-alias
+// profile instead of returning ErrUnknownProfile.
+func TestNewStaticProfileResolver_EmptyAlias(t *testing.T) {
+	_, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "", Kind: provider.ProfileKindChat, Model: "m"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty alias")
+}
+
 // Error: a duplicate alias is a construction-time failure naming the alias.
 func TestNewStaticProfileResolver_DuplicateAlias(t *testing.T) {
 	_, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
