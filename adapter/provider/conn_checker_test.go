@@ -100,6 +100,22 @@ func TestConnChecker_ConnectionExists_StoreError(t *testing.T) {
 	assert.False(t, c.ConnectionExists("azure-prod"))
 }
 
+// Edge case: duplicate aliases in profiles — the last profile in the slice wins
+// (map last-write semantics). This documents the silent-overwrite behavior so
+// callers know to deduplicate aliases before constructing a ConnChecker.
+func TestConnChecker_DuplicateAlias_LastWriteWins(t *testing.T) {
+	store := &existsStore{present: map[string]bool{"conn-b": true}}
+	c := adapterprovider.NewConnChecker([]provider.Profile{
+		{Alias: "prod", Kind: provider.ProfileKindChat, ConnectionRef: "conn-a"},
+		{Alias: "prod", Kind: provider.ProfileKindChat, ConnectionRef: "conn-b"},
+	}, store)
+
+	ref, ok := c.ProfileConnectionRef("prod")
+	require.True(t, ok, "alias is still known after duplicate")
+	assert.Equal(t, "conn-b", ref, "last-listed profile wins on duplicate alias")
+	assert.True(t, c.ConnectionExists(ref), "resolved ref must resolve against the store")
+}
+
 // Integration with workflow.Validate: a workflow node referencing a profile
 // whose connection is missing produces an UNKNOWN_CONNECTION error.
 func TestConnChecker_SatisfiesWorkflowPort(t *testing.T) {
