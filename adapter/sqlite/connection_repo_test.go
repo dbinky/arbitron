@@ -270,6 +270,18 @@ func TestConnectionRepo_EmptyExtrasRoundTrip(t *testing.T) {
 	assert.Equal(t, "{}", stored)
 }
 
+// Edge: List on an empty store returns a non-nil empty slice, not nil.
+// Callers that distinguish nil from []Connection{} (e.g. JSON marshalling) would
+// see a different result if the repo returned the raw nil slice from sqlc.
+func TestConnectionRepo_ListEmpty(t *testing.T) {
+	repo, _ := newConnRepo(t)
+
+	list, err := repo.List(context.Background())
+	require.NoError(t, err)
+	assert.NotNil(t, list, "List must return a non-nil slice on an empty store")
+	assert.Empty(t, list)
+}
+
 // Edge: a connection name with unusual but valid characters round-trips.
 func TestConnectionRepo_UnusualNameRoundTrip(t *testing.T) {
 	repo, _ := newConnRepo(t)

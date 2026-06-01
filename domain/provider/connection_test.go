@@ -93,6 +93,14 @@ func TestValidateConnection_AzureMissingAPIVersion_Rejected(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
 }
 
+// Failure: azure-foundry also requires api-version; the failure path is
+// symmetric with azure-openai (both are members of the azure provider set).
+func TestValidateConnection_AzureFoundryMissingAPIVersion_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "af", Provider: "azure-foundry"}
+	err := provider.ValidateConnection(c)
+	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+}
+
 // Edge case: an Azure connection whose api-version is present but empty is
 // treated as missing and rejected.
 func TestValidateConnection_AzureEmptyAPIVersion_Rejected(t *testing.T) {
