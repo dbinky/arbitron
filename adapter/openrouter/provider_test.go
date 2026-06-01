@@ -490,6 +490,39 @@ func TestSecurity_KeyNeverLogged(t *testing.T) {
 	}
 }
 
+// --- EDGE: nil RevealKey (public/no-key endpoint) -> no Authorization header ---
+
+func TestChat_NilRevealKey_NoAuthHeader(t *testing.T) {
+	ft := &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"ok"}}]}`)}
+	b := provider.ResolvedBinding{
+		Kind:      provider.ProfileKindChat,
+		Provider:  "openrouter",
+		BaseURL:   "https://router.test/v1",
+		Model:     "m",
+		RevealKey: nil, // explicitly no key
+	}
+	p := newProvider(t, ft, b)
+
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.NoError(t, err)
+	require.NotNil(t, ft.gotReq)
+	assert.Empty(t, ft.gotReq.Header.Get("Authorization"),
+		"no Authorization header when RevealKey is nil")
+}
+
+// --- EDGE: structured output requested but model returns invalid JSON content ---
+
+func TestChat_StructuredOutput_ContentNotJSON(t *testing.T) {
+	ft := &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"I cannot produce JSON"}}]}`)}
+	p := newProvider(t, ft, staticBinding("https://router.test/v1", "m"))
+
+	schema := map[string]any{"type": "object"}
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "q", OutputSchema: schema})
+	require.Error(t, err, "non-JSON content with OutputSchema must be an error")
+	assert.Nil(t, resp)
+	assert.NotContains(t, err.Error(), secretKey)
+}
+
 // --- parseSSELine unit table (stream parsing is table-testable) ---
 
 func TestParseSSELine(t *testing.T) {
