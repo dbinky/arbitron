@@ -218,7 +218,9 @@ func TestChatProvider_StreamChat_EmitsChunks(t *testing.T) {
 	assert.Equal(t, "sess-stream", terminal.SessionID)
 }
 
-// Error: StreamChat returns an error (e.g. bad auth) without opening a channel.
+// Error: StreamChat returns an error (startup failure — bad auth, unreachable
+// endpoint) before any channel is opened. The function return is the only
+// error mechanism in this case; `ch` is nil.
 func TestChatProvider_StreamChat_ErrorReturn(t *testing.T) {
 	wantErr := errors.New("unauthorized")
 	p := &fakeChat{
@@ -232,6 +234,47 @@ func TestChatProvider_StreamChat_ErrorReturn(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 	assert.Nil(t, ch)
+}
+
+// Error (mid-stream): ChatProvider.StreamChat opens a channel successfully but
+// then delivers a chunk with Error set (e.g. rate-limit hit mid-response,
+// connection reset). This is the second error channel in the streaming
+// contract. Consumers MUST range over the channel and inspect chunk.Error on
+// every chunk, not just check the function's return error.
+//
+// This documents the dual-error contract for future adapter authors:
+//   - startup failure  → (nil, error) from StreamChat itself
+//   - mid-stream error → (ch, nil) from StreamChat; chunk.Error ≠ nil in ch
+func TestChatProvider_StreamChat_MidStreamError(t *testing.T) {
+	wantErr := errors.New("rate limit hit mid-stream")
+	p := &fakeChat{
+		streamChatFn: func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+			ch := make(chan engine.ChatChunk, 2)
+			ch <- engine.ChatChunk{Token: "partial output"}
+			ch <- engine.ChatChunk{Error: wantErr}
+			close(ch)
+			return ch, nil // no startup error; the channel IS valid
+		},
+	}
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.NoError(t, err, "channel opened successfully — no startup error")
+	require.NotNil(t, ch)
+
+	var partial string
+	var midErr error
+	for chunk := range ch {
+		if chunk.Error != nil {
+			midErr = chunk.Error
+		}
+		if chunk.Token != "" {
+			partial += chunk.Token
+		}
+	}
+
+	assert.Equal(t, "partial output", partial, "tokens before the error were delivered")
+	require.Error(t, midErr)
+	assert.ErrorIs(t, midErr, wantErr)
 }
 
 // --- ChatProviderSelector port tests ----------------------------------------

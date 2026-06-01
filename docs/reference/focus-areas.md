@@ -13,7 +13,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Provider ports (`domain/engine/ports.go` — `ChatProvider`/`AgentProvider`, `Chat*`/`Agent*` types, `ChatProviderSelector`/`AgentProviderSelector`) | [x] | [ ] | |
+| 1 | Provider ports (`domain/engine/ports.go` — `ChatProvider`/`AgentProvider`, `Chat*`/`Agent*` types, `ChatProviderSelector`/`AgentProviderSelector`) | [x] | [x] | Done |
 | 2 | claude-cli adapters (`adapter/claudecli/` — `ChatAdapter` tool-suppression, `AgentAdapter` tools, `argsPolicy`/`buildArgs`, shared `CommandRunner`, stream-json parsing) | [ ] | [ ] | |
 | 3 | Profile registry & resolver (`domain/provider/provider.go`, `adapter/provider/static.go` — `Profile`, `ProfileKind`, `ProfileResolver`, `ResolvedBinding`, alias resolution) | [ ] | [ ] | |
 | 4 | LLM & agent executors (`domain/engine/executor_llm.go`, `executor_agent.go` — profile resolve, provider-agnostic structured output, workspace WorkDir) | [ ] | [ ] | |
