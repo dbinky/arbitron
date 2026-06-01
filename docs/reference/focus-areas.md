@@ -14,7 +14,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
 | 1 | Provider ports (`domain/engine/ports.go` — `ChatProvider`/`AgentProvider`, `Chat*`/`Agent*` types, `ChatProviderSelector`/`AgentProviderSelector`) | [x] | [x] | Done |
-| 2 | claude-cli adapters (`adapter/claudecli/` — `ChatAdapter` tool-suppression, `AgentAdapter` tools, `argsPolicy`/`buildArgs`, shared `CommandRunner`, stream-json parsing) | [x] | [ ] | |
+| 2 | claude-cli adapters (`adapter/claudecli/` — `ChatAdapter` tool-suppression, `AgentAdapter` tools, `argsPolicy`/`buildArgs`, shared `CommandRunner`, stream-json parsing) | [x] | [x] | Done |
 | 3 | Profile registry & resolver (`domain/provider/provider.go`, `adapter/provider/static.go` — `Profile`, `ProfileKind`, `ProfileResolver`, `ResolvedBinding`, alias resolution) | [ ] | [ ] | |
 | 4 | LLM & agent executors (`domain/engine/executor_llm.go`, `executor_agent.go` — profile resolve, provider-agnostic structured output, workspace WorkDir) | [ ] | [ ] | |
 | 5 | Capability validation & loop lint (`domain/workflow/validation.go`, `lint.go` — kind-matching, connection-existence, `INTERACTIVE_IN_LOOP` advisory) | [ ] | [ ] | |

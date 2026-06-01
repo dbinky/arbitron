@@ -3,11 +3,13 @@ package claudecli
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/arbitron/arbitron/domain/engine"
 )
@@ -339,4 +341,58 @@ func TestChatAdapterStreamChat(t *testing.T) {
 		assert.ErrorIs(t, err, ErrWorkDirRequired)
 		assert.False(t, fr.runCalled)
 	})
+}
+
+func TestChatAdapterStreamChat_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
+	// MF9 parity for ChatAdapter. The producer-side select{case out<-c:
+	// case <-runCtx.Done():} in streamState.makeSendChunk must also hold for
+	// the ChatAdapter.StreamChat path so that a consumer that bails mid-
+	// stream cannot pin the producer goroutine (and therefore the subprocess).
+	//
+	// goleak.VerifyNone fails this test if any goroutine started here is
+	// still running at cleanup — catching any regression in the non-blocking
+	// send or context-propagation on the ChatAdapter path.
+	defer goleak.VerifyNone(t)
+
+	runner := newCtxAwareFakeRunner([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"b"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"c"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"d"}]}}`,
+		`{"type":"result","result":"abcd","session_id":"s","usage":{"input_tokens":1,"output_tokens":1}}`,
+	})
+	a := NewChatAdapter(Config{BinaryPath: "claude", Runner: runner})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := a.StreamChat(ctx, engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+	require.NoError(t, err)
+
+	// Read one chunk then cancel — the producer must observe the cancellation
+	// and exit without the consumer draining the remainder.
+	<-ch
+	cancel()
+
+	// Drain the channel so the goroutine can unblock and exit.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range ch { //nolint:revive // intentional drain
+		}
+	}()
+
+	timeout := time.After(2 * time.Second)
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		// producer goroutine returned — pass
+	case <-timeout:
+		t.Fatal("producer goroutine did not return after consumer cancelled")
+	}
 }
