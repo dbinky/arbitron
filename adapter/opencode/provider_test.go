@@ -283,3 +283,64 @@ func TestBuildArgs(t *testing.T) {
 		assert.NotContains(t, joined, "--model")
 	})
 }
+
+// parseOutput table test — covers the whitespace-filtering, token-counting,
+// and step-folding logic directly so the pure function's contract is auditable.
+func TestParseOutput(t *testing.T) {
+	tests := []struct {
+		name          string
+		lines         []string
+		wantSummary   string
+		wantStepCount int
+		wantTokensOut int
+	}{
+		{
+			name:          "empty input yields empty output",
+			lines:         nil,
+			wantSummary:   "",
+			wantStepCount: 0,
+			wantTokensOut: 0,
+		},
+		{
+			name:          "whitespace-only lines are filtered, not folded into steps",
+			lines:         []string{"", "   ", "\t"},
+			wantSummary:   "",
+			wantStepCount: 0,
+			wantTokensOut: 0,
+		},
+		{
+			name:          "content lines produce one step per line",
+			lines:         []string{"line one", "line two"},
+			wantSummary:   "line one\nline two",
+			wantStepCount: 2,
+			wantTokensOut: 4, // 2 words each
+		},
+		{
+			name:          "mixed blank and content lines: blanks dropped from steps",
+			lines:         []string{"first", "", "second", "   "},
+			wantSummary:   "first\nsecond",
+			wantStepCount: 2,
+			wantTokensOut: 2,
+		},
+		{
+			name:          "multi-word lines accumulate coarse token count",
+			lines:         []string{"one two three four five"},
+			wantSummary:   "one two three four five",
+			wantStepCount: 1,
+			wantTokensOut: 5,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			summary, steps, tokensOut := parseOutput(tc.lines)
+			assert.Equal(t, tc.wantSummary, summary)
+			assert.Len(t, steps, tc.wantStepCount)
+			assert.Equal(t, tc.wantTokensOut, tokensOut)
+			// All produced steps carry Kind "assistant".
+			for _, s := range steps {
+				assert.Equal(t, "assistant", s.Kind)
+			}
+		})
+	}
+}
