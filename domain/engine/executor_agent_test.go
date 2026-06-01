@@ -285,6 +285,41 @@ func TestAgentCallExecutor_SelectorError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
+// SECURITY: the executor must never call binding.RevealKey. Credential injection
+// is the selector's/adapter's responsibility; calling RevealKey in the executor
+// would expose the plaintext key to the executor's call stack. The
+// spyRevealResolver's RevealKey counter must stay at zero after a successful Execute.
+func TestAgentCallExecutor_RevealKeyNotCalledByExecutor(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("do work")
+
+	ap := &fakeAgent{
+		runFn: func(_ context.Context, _ engine.AgentMission) (*engine.AgentResult, error) {
+			return &engine.AgentResult{Summary: "done", Model: "m"}, nil
+		},
+	}
+
+	var revealCalls int
+	resolver := newSpyRevealResolver("agent-default", provider.ProfileKindAgent, "m", &revealCalls)
+
+	vars := storeWithWorkspace("/workspace/inst-spy")
+	node := workflow.Node{
+		ID:   "agent1",
+		Type: workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "mission.txt",
+			ModelProfile: "agent-default",
+		},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver)
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, revealCalls,
+		"AgentCallExecutor must never call RevealKey; credential injection is the selector/adapter's responsibility")
+}
+
 // Edge case: empty Steps + non-JSON summary with no schema -> valid NodeResult,
 // summary wrapped via parseOrWrapText.
 func TestAgentCallExecutor_EmptyStepsNonJSONSummary(t *testing.T) {

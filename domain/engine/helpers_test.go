@@ -83,6 +83,37 @@ func (r *fakeResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
 
 var _ provider.ProfileResolver = (*fakeResolver)(nil)
 
+// spyRevealResolver is a ProfileResolver whose bindings carry a RevealKey that
+// increments a counter. Executor security tests use this to assert that the
+// executor itself never calls RevealKey — credential injection is the
+// selector/adapter's responsibility, not the executor's.
+type spyRevealResolver struct {
+	alias       string
+	kind        provider.ProfileKind
+	model       string
+	revealCalls *int
+}
+
+func newSpyRevealResolver(alias string, kind provider.ProfileKind, model string, calls *int) *spyRevealResolver {
+	return &spyRevealResolver{alias: alias, kind: kind, model: model, revealCalls: calls}
+}
+
+func (r *spyRevealResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
+	if alias != r.alias {
+		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+	}
+	return provider.ResolvedBinding{
+		Kind:  r.kind,
+		Model: r.model,
+		RevealKey: func(context.Context) (string, error) {
+			*r.revealCalls++
+			return "", nil
+		},
+	}, nil
+}
+
+var _ provider.ProfileResolver = (*spyRevealResolver)(nil)
+
 // mockFileReader implements engine.FileReader for tests.
 type mockFileReader struct {
 	files map[string][]byte

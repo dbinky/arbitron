@@ -524,6 +524,44 @@ func TestLLMCallExecutor_MissingWorkspace(t *testing.T) {
 	assert.Contains(t, err.Error(), "provider call")
 }
 
+// SECURITY: the executor must never call binding.RevealKey. Credential
+// injection is the selector's/adapter's responsibility; calling RevealKey in the
+// executor would expose the plaintext key to the executor's call stack (where it
+// could be logged or serialised into error messages). The spyRevealResolver's
+// RevealKey counter must stay at zero after a successful Execute.
+func TestLLMCallExecutor_RevealKeyNotCalledByExecutor(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("prompt")
+
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{Output: map[string]any{"ok": true}, Model: "m"}, nil
+		},
+	}
+
+	var revealCalls int
+	resolver := newSpyRevealResolver("chat-default", provider.ProfileKindChat, "m", &revealCalls)
+
+	vars := variable.NewStore()
+	vars.SetReserved(engine.ReservedVarWorkspace, "/tmp")
+	node := workflow.Node{
+		ID:   "llm1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+			OutputSchema: map[string]any{"type": "object"},
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), resolver)
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, revealCalls,
+		"LLMCallExecutor must never call RevealKey; credential injection is the selector/adapter's responsibility")
+}
+
 // Category 5 (empty output edge): an empty-string output under a schema is a
 // parse error (empty is not valid JSON), surfaced clearly rather than silently
 // passed through.
