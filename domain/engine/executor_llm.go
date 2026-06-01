@@ -80,8 +80,13 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 		return nil, fmt.Errorf("llm_call %q: provider call: %w", node.ID, err)
 	}
 
-	// Process output.
-	output := processLLMOutput(resp, node.Config.OutputSchema)
+	// Process output. With a schema, normalise the provider's output to a map
+	// so node.field references (e.g. assessor.done) resolve uniformly REGARDLESS
+	// of which ChatProvider produced it.
+	output, err := processLLMOutput(resp, node.Config.OutputSchema)
+	if err != nil {
+		return nil, fmt.Errorf("llm_call %q: %w", node.ID, err)
+	}
 
 	return &NodeResult{
 		Output:          output,
@@ -94,19 +99,36 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 
 // processLLMOutput determines the final output value based on whether an
 // output schema was provided and the response type.
-func processLLMOutput(resp *ChatResponse, outputSchema any) any {
-	// If output schema provided, use the structured output directly.
+//
+// PROVIDER-AGNOSTIC structured output: when a schema is present, the result
+// MUST be a map so downstream node.field references resolve identically no
+// matter which ChatProvider produced it. Native HTTP adapters (openrouter)
+// already parse the JSON into a map; subprocess/text adapters (claude-cli,
+// azure) deliver it as a raw JSON string. This function bridges both: a string
+// is parsed here; a map is passed through (no double-parse). An empty or
+// non-JSON string under a schema is a clear error, not a silent passthrough.
+func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 	if outputSchema != nil {
-		return resp.Output
+		switch v := resp.Output.(type) {
+		case string:
+			var parsed any
+			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
+				return nil, fmt.Errorf("parse structured output: %w", err)
+			}
+			return parsed, nil
+		default:
+			// Already structured (e.g. openrouter mapped it); pass through.
+			return v, nil
+		}
 	}
 
 	// No schema: attempt to parse text as JSON, otherwise wrap.
 	switch v := resp.Output.(type) {
 	case string:
-		return parseOrWrapText(v)
+		return parseOrWrapText(v), nil
 	default:
 		// Already structured (shouldn't happen without schema, but handle gracefully).
-		return v
+		return v, nil
 	}
 }
 

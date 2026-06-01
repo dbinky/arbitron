@@ -3,9 +3,7 @@ package acceptance
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,16 +23,14 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 	t.Run("editor via claude-cli agent", func(t *testing.T) {
 		runner := newFakeRunner()
 		runner.on("--dangerously-skip-permissions", claudeAgentLines...)
-		runner.withFallback(claudeAssessorLines(false)...)
+		// The claude-cli chat assessor exits on assessor.done on the second pass;
+		// the loop terminates through the real conditional (no self-cancel guard).
+		runner.withChatDoneScript(false, true)
 
 		h := newHarness(t, claudeBinding(runner))
-		const guard = 4
-		idCh := make(chan uuid.UUID, 1)
-		runner.armGuard(guard, func() { _ = h.engine.Cancel(<-idCh) })
-		id := h.trigger(t, 2)
-		idCh <- id
-		inst := h.waitForTerminal(t, id, 10*time.Second)
-		require.Equal(t, instance.StateCancelled, inst.State)
+		res := h.runWorkedExample(t, 10)
+		require.Equal(t, instance.StateCompleted, res.instance.State,
+			"the claude agent run completes through the conditional on assessor.done")
 
 		agentSpecs := runner.specsMatching("--dangerously-skip-permissions")
 		require.NotEmpty(t, agentSpecs, "editor must run via the claude-cli AgentAdapter (claude -p, tools)")

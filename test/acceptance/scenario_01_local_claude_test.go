@@ -3,9 +3,7 @@ package acceptance
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -14,55 +12,55 @@ import (
 
 // TestAcceptance_01_LocalClaudeRun_NoKeys proves spec §8 #1: the worked-example
 // pipeline runs locally on a Claude subscription with NO API keys — `llm_call`
-// via tool-suppressed claude -p and `agent_call` via claude -p with tools.
+// via tool-suppressed claude -p and `agent_call` via claude -p with tools — and
+// the loop TERMINATES through the real conditional on `assessor.done`.
 //
 // Requires (Phase 1): the tool-suppressed claude-cli ChatAdapter (assessor) and
 // the tools-enabled AgentAdapter (editor), plus the no-connection ambient-login
-// path (Phase 2 empty ConnectionRef → no key).
+// path (Phase 2 empty ConnectionRef → no key). It also exercises the two
+// correctness fixes the harness discovered: the executor now parses the
+// claude-cli chat assessor's RAW JSON text into a map under its outputSchema
+// (provider-agnostic structured output), so `assessor.done` resolves downstream
+// just as it does on the HTTP chat backends.
 //
 // HERMETIC / PATH-PROVEN: provider output is canned stream-json from the fake
-// CommandRunner, so the assertions are on DELIVERY (recorded args, no
-// connections, no key reads) over multiple real loop passes — not live model
-// output.
-//
-// DOCUMENTED LIMITATION (path-only, not full completion): over the claude-cli
-// CHAT path the assessor's structured output is delivered as RAW TEXT (claude
-// -p returns the result string verbatim; processLLMOutput does not parse it), so
-// `assessor.done` never resolves and the worked example's loop cannot
-// self-terminate on the claude path. This scenario therefore bounds the run with
-// a fake-runner self-guard that calls engine.Cancel after several passes — the
-// FAKE, not the engine, stops the loop (the same technique loop_mechanics_test
-// uses for the no-auto-kill case). End-to-end completion on a structured-output
-// chat backend is proven to COMPLETION under #2/#4/#5 (the HTTP chat binding,
-// whose adapters parse structured output into a map). Live sign-off against a
-// real subscription is a manual / non-CI check.
+// CommandRunner. The assessor reports done=false for the first two passes and
+// done=true on the third, so the loop runs exactly three real passes and exits
+// through the loop-or-exit conditional's `assessor.done` branch — NOT via a
+// counter cap and NOT via an external cancel. Assertions also cover DELIVERY
+// (recorded args, no connections, no key reads).
 func TestAcceptance_01_LocalClaudeRun_NoKeys(t *testing.T) {
 	runner := newFakeRunner()
 	// agent (editor): tools-enabled invocation → --dangerously-skip-permissions.
 	runner.on("--dangerously-skip-permissions", claudeAgentLines...)
-	// chat (assessor): tool-suppressed invocation → no skip-permissions, empty
-	// allowed-tools. Never resolvably "done" over the claude-cli chat path.
-	runner.withFallback(claudeAssessorLines(false)...)
+	// chat (assessor): tool-suppressed invocation. done: false, false, true →
+	// the loop exits on `assessor.done` on the third pass via the real engine
+	// path (no self-cancel guard).
+	runner.withChatDoneScript(false, false, true)
 
 	b := claudeBinding(runner)
 	h := newHarness(t, b)
 
-	// Bound the otherwise-non-terminating claude loop: after guard invocations
-	// the FAKE cancels the run. idCh hands the id to the guard closure.
-	const guard = 6
-	idCh := make(chan uuid.UUID, 1)
-	runner.armGuard(guard, func() { _ = h.engine.Cancel(<-idCh) })
+	// High max_iterations so the done-condition, not the counter cap, ends it.
+	res := h.runWorkedExample(t, 10)
+	require.Equal(t, instance.StateCompleted, res.instance.State,
+		"the claude loop self-terminates through the conditional on assessor.done")
 
-	id := h.trigger(t, 2)
-	idCh <- id
+	// Exactly three passes: the assessor (claude-cli chat) was invoked once per
+	// pass and the third reported done=true.
+	chatSpecs := chatInvocationSpecs(runner)
+	require.Len(t, chatSpecs, 3, "the loop ran exactly three assess passes before exiting on done")
 
-	inst := h.waitForTerminal(t, id, 10*time.Second)
-	require.Equal(t, instance.StateCancelled, inst.State,
-		"the claude loop is stopped by the fake guard, not the engine (no auto-kill)")
+	// The counter exited BELOW the cap, proving the done-branch (not gte) fired.
+	require.Equal(t, float64(3), res.instance.Variables["iteration"],
+		"iteration reached 3 (< max 10): the loop exited on done, not on the counter cap")
+
+	// assessor.done is the parsed boolean in the persisted assessor output.
+	assessor, ok := res.instance.Variables["assessor"].(map[string]any)
+	require.True(t, ok, "assessor structured output is a map (provider-agnostic parse)")
+	assert.Equal(t, true, assessor["done"], "the final assessor pass resolved done=true")
 
 	specs := runner.recordedSpecs()
-	require.GreaterOrEqual(t, len(specs), guard,
-		"the engine kept re-entering the loop body across multiple passes")
 
 	// editor: tools-enabled claude -p with --dangerously-skip-permissions.
 	agentSpecs := runner.specsMatching("--dangerously-skip-permissions")

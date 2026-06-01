@@ -310,3 +310,134 @@ func TestLLMCallExecutor_RequestFields(t *testing.T) {
 	assert.Equal(t, 0.5, capturedReq.Temperature)
 	assert.Equal(t, schema, capturedReq.OutputSchema)
 }
+
+// --- GAP 2: provider-agnostic structured output --------------------------
+
+// llmNodeWithSchema builds an llm_call node carrying an object outputSchema.
+func llmNodeWithSchema() workflow.Node {
+	return workflow.Node{
+		ID:   "assessor",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+			OutputSchema: map[string]any{"type": "object"},
+		},
+	}
+}
+
+// Category 1 (happy path, claude-cli-style raw JSON text): a provider that
+// returns the structured result as a RAW JSON STRING (claude-cli / azure shape)
+// must, with a schema, be parsed into a map so `assessor.done` resolves
+// downstream regardless of which provider produced it.
+func TestLLMCallExecutor_SchemaParsesRawJSONText(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("assess")
+
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{
+				Output: `{"done": true, "notes": "focus areas satisfied"}`,
+				Model:  "claude-sonnet-4",
+			}, nil
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("claude-sonnet-4"))
+	result, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	m, ok := result.Output.(map[string]any)
+	require.True(t, ok, "schema output must be a map so node.field references resolve")
+	assert.Equal(t, true, m["done"])
+	assert.Equal(t, "focus areas satisfied", m["notes"])
+}
+
+// Category 2 (passthrough): a provider that already returns a map (openrouter
+// shape, whose adapter parsed it) is passed through untouched — no double-parse.
+func TestLLMCallExecutor_SchemaPassesThroughMap(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("assess")
+
+	already := map[string]any{"done": false, "notes": "more work remains"}
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{Output: already, Model: "deepseek"}, nil
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("deepseek"))
+	result, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, already, result.Output)
+}
+
+// Category 3 (no schema, unchanged): without a schema, a JSON-string output is
+// parsed and a non-JSON string is wrapped, exactly as before (regression guard
+// alongside the existing without-schema tests).
+func TestLLMCallExecutor_NoSchemaUnchanged(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("free text")
+
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{Output: "just some prose", Model: "m"}, nil
+		},
+	}
+
+	node := workflow.Node{
+		ID:   "llm1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "prompt.txt",
+			ModelProfile: "chat-default",
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+	result, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"response": "just some prose"}, result.Output)
+}
+
+// Category 4 (error): invalid JSON text under a schema yields a clear,
+// node-attributed error rather than an unparseable string downstream.
+func TestLLMCallExecutor_SchemaInvalidJSONErrors(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("assess")
+
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{Output: "this is not json", Model: "claude-sonnet-4"}, nil
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("claude-sonnet-4"))
+	_, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "assessor", "the error is attributed to the node")
+	assert.Contains(t, err.Error(), "structured output")
+}
+
+// Category 5 (empty output edge): an empty-string output under a schema is a
+// parse error (empty is not valid JSON), surfaced clearly rather than silently
+// passed through.
+func TestLLMCallExecutor_SchemaEmptyOutputErrors(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("assess")
+
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+			return &engine.ChatResponse{Output: "", Model: "claude-sonnet-4"}, nil
+		},
+	}
+
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("claude-sonnet-4"))
+	_, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "structured output")
+}

@@ -1,11 +1,8 @@
 package acceptance
 
 import (
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -35,7 +32,9 @@ func TestAcceptance_02_AllThreeChatProviders(t *testing.T) {
 	t.Run("claude chat backend", func(t *testing.T) {
 		runner := newFakeRunner()
 		runner.on("--dangerously-skip-permissions", claudeAgentLines...)
-		runner.withFallback(claudeAssessorLines(false)...)
+		// done: false, true → the claude-cli chat assessor exits on assessor.done
+		// on the second pass (provider-agnostic structured-output parse).
+		runner.withChatDoneScript(false, true)
 
 		b := binding{
 			name:     "assessor=claude",
@@ -44,27 +43,18 @@ func TestAcceptance_02_AllThreeChatProviders(t *testing.T) {
 		}
 		h := newHarness(t, b)
 
-		// claude chat cannot self-terminate (raw-text structured output); bound it.
-		const guard = 4
-		idCh := make(chan uuid.UUID, 1)
-		runner.armGuard(guard, func() { _ = h.engine.Cancel(<-idCh) })
-		id := h.trigger(t, 2)
-		idCh <- id
-		inst := h.waitForTerminal(t, id, 10*time.Second)
-		require.Equal(t, instance.StateCancelled, inst.State)
+		res := h.runWorkedExample(t, 10) // high max → exits on done, not the cap
+		require.Equal(t, instance.StateCompleted, res.instance.State,
+			"the claude-cli chat assessor self-terminates on assessor.done")
 
-		// The assessor ran the tool-suppressed claude-cli chat adapter.
-		var sawChat bool
-		for _, s := range runner.recordedSpecs() {
-			joined := strings.Join(s.Args, " ")
-			if strings.Contains(joined, "--dangerously-skip-permissions") {
-				continue
-			}
-			if v, ok := argValue(s.Args, "--allowedTools"); ok && v == "" {
-				sawChat = true
-			}
+		// The assessor ran the tool-suppressed claude-cli chat adapter, once per pass.
+		chatSpecs := chatInvocationSpecs(runner)
+		require.Len(t, chatSpecs, 2, "two assess passes before exiting on done")
+		for _, s := range chatSpecs {
+			v, ok := argValue(s.Args, "--allowedTools")
+			require.True(t, ok, "chat must pass --allowedTools (empty set)")
+			assert.Equal(t, "", v, "assessor must route to the tool-suppressed claude-cli chat adapter")
 		}
-		assert.True(t, sawChat, "assessor must route to the claude-cli chat adapter")
 	})
 
 	t.Run("openrouter chat backend", func(t *testing.T) {
@@ -93,17 +83,17 @@ func TestAcceptance_02_AllThreeChatProviders(t *testing.T) {
 		assert.Empty(t, reqs[0].APIKey, "OpenRouter does not use the Azure api-key header")
 	})
 
-	// Azure (like claude-cli) returns structured output as RAW TEXT rather than a
-	// parsed map, so `assessor.done` does not resolve and the loop cannot
-	// self-terminate over the Azure chat path. As with the claude subtest we
-	// bound the run with a fake-runner guard and assert the PATH: the Azure HTTP
-	// adapter is driven against the correct deployment endpoint with the correct
-	// api-key. (OpenRouter is the chat provider whose native mapOutput parses the
-	// structured result into a map, so only it self-terminates above.)
+	// Azure (like claude-cli) returns structured output as RAW TEXT. The executor
+	// now parses that text into a map under the assessor's outputSchema
+	// (provider-agnostic structured output), so `assessor.done` resolves and the
+	// Azure chat path self-terminates through the real conditional — no guard.
+	// This subtest also asserts the PATH: the Azure HTTP adapter is driven against
+	// the correct deployment endpoint with the correct api-key.
 	t.Run("azure foundry chat backend", func(t *testing.T) {
 		const azureKey = "sk-SENTINEL-azure-DO-NOT-LOG"
 		runner := newFakeRunner().on("--dangerously-skip-permissions", claudeAgentLines...)
-		transport := newFakeTransport(false)
+		// done: false, true → exits on assessor.done on the second pass.
+		transport := newScriptedTransport(false, true)
 		b := binding{
 			name:     "assessor=azure",
 			profiles: []provider.Profile{editorProfile, {Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "azure-chat", Model: "gpt-4o-deployment"}},
@@ -120,16 +110,12 @@ func TestAcceptance_02_AllThreeChatProviders(t *testing.T) {
 		}
 		h := newHarness(t, b)
 
-		const guard = 4
-		idCh := make(chan uuid.UUID, 1)
-		runner.armGuard(guard, func() { _ = h.engine.Cancel(<-idCh) })
-		id := h.trigger(t, 5)
-		idCh <- id
-		inst := h.waitForTerminal(t, id, 10*time.Second)
-		require.Equal(t, instance.StateCancelled, inst.State)
+		res := h.runWorkedExample(t, 10) // high max → exits on done, not the cap
+		require.Equal(t, instance.StateCompleted, res.instance.State,
+			"the Azure chat assessor self-terminates on assessor.done")
 
 		reqs := transport.recorded()
-		require.NotEmpty(t, reqs, "assessor must route to the Azure HTTP adapter")
+		require.Len(t, reqs, 2, "two assess passes before exiting on done")
 		assert.Contains(t, reqs[0].URL, "eastus.example.azure.com")
 		assert.Contains(t, reqs[0].URL, "/openai/deployments/gpt-4o-deployment/chat/completions")
 		assert.Contains(t, reqs[0].URL, "api-version=2024-02-01")

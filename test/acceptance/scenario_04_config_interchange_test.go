@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"testing"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -82,15 +80,14 @@ func TestAcceptance_04_ConfigInterchangeability(t *testing.T) {
 	// --- Run A: Claude binding ---------------------------------------------
 	runnerA := newFakeRunner()
 	runnerA.on("--dangerously-skip-permissions", claudeAgentLines...)
-	runnerA.withFallback(claudeAssessorLines(false)...)
+	// The claude-cli chat assessor exits on assessor.done; the run completes
+	// through the real conditional (no self-cancel guard).
+	runnerA.withChatDoneScript(false, true)
 	hA := newHarness(t, claudeBinding(runnerA))
-	const guard = 4
-	idChA := make(chan uuid.UUID, 1)
-	runnerA.armGuard(guard, func() { _ = hA.engine.Cancel(<-idChA) })
-	idA := hA.trigger(t, 2)
-	idChA <- idA
-	instA := hA.waitForTerminal(t, idA, 10*time.Second)
-	require.Contains(t, []instance.State{instance.StateCancelled, instance.StateCompleted}, instA.State)
+	resA := hA.runWorkedExample(t, 10)
+	idA := resA.instance.ID
+	require.Equal(t, instance.StateCompleted, resA.instance.State,
+		"the Claude binding completes through the conditional on assessor.done")
 
 	// --- Run B: open-weight binding ----------------------------------------
 	runnerB := newFakeRunner().withFallback("Editing.", "Done.")

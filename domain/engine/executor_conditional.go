@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/variable"
@@ -33,6 +34,14 @@ func (e *ConditionalExecutor) Execute(_ context.Context, node workflow.Node, var
 func evaluateCondition(cond workflow.Condition, vars *variable.VariableStore) bool {
 	fieldVal, found := vars.Get(cond.Field)
 
+	// The comparison VALUE may carry {{var}} templates (e.g. the worked
+	// example's `iteration >= {{max_iterations}}`). Resolve them against the
+	// instance store before comparing, using the SAME substitution the other
+	// executors use. The FIELD is a dot-path, not a template, and is never
+	// resolved this way. Numeric operators still parse the resolved string as a
+	// number below (compareNumeric handles string operands).
+	condValue := resolveConditionValue(cond.Value, vars)
+
 	switch cond.Operator {
 	case "exists":
 		return found && fieldVal != nil
@@ -40,31 +49,50 @@ func evaluateCondition(cond workflow.Condition, vars *variable.VariableStore) bo
 		if !found {
 			return false
 		}
-		return fmt.Sprintf("%v", fieldVal) == fmt.Sprintf("%v", cond.Value)
+		return fmt.Sprintf("%v", fieldVal) == fmt.Sprintf("%v", condValue)
 	case "neq":
 		if !found {
 			return true
 		}
-		return fmt.Sprintf("%v", fieldVal) != fmt.Sprintf("%v", cond.Value)
+		return fmt.Sprintf("%v", fieldVal) != fmt.Sprintf("%v", condValue)
 	case "gt":
-		return compareNumeric(fieldVal, cond.Value, func(a, b float64) bool { return a > b })
+		return compareNumeric(fieldVal, condValue, func(a, b float64) bool { return a > b })
 	case "gte":
-		return compareNumeric(fieldVal, cond.Value, func(a, b float64) bool { return a >= b })
+		return compareNumeric(fieldVal, condValue, func(a, b float64) bool { return a >= b })
 	case "lt":
-		return compareNumeric(fieldVal, cond.Value, func(a, b float64) bool { return a < b })
+		return compareNumeric(fieldVal, condValue, func(a, b float64) bool { return a < b })
 	case "lte":
-		return compareNumeric(fieldVal, cond.Value, func(a, b float64) bool { return a <= b })
+		return compareNumeric(fieldVal, condValue, func(a, b float64) bool { return a <= b })
 	case "contains":
 		if !found {
 			return false
 		}
-		return evaluateContains(fieldVal, cond.Value)
+		return evaluateContains(fieldVal, condValue)
 	default:
 		return false
 	}
 }
 
-// toFloat64 attempts to convert a value to float64. Returns false if not numeric.
+// resolveConditionValue resolves {{var}} templates in a condition's comparison
+// VALUE against the variable store. Only string values can carry templates;
+// any other type (bool, number, nil, slice) is returned unchanged. An
+// unresolved {{path}} is left as a literal string by variable.Resolve, which a
+// numeric comparison then treats as non-numeric (skips), matching the
+// missing-var edge.
+func resolveConditionValue(value any, vars *variable.VariableStore) any {
+	s, ok := value.(string)
+	if !ok {
+		return value
+	}
+	if !strings.Contains(s, "{{") {
+		return s
+	}
+	return variable.Resolve(s, vars)
+}
+
+// toFloat64 attempts to convert a value to float64. Numeric strings (e.g. a
+// resolved "5") are parsed so a templated condition VALUE compares as a number.
+// Returns false if not numeric.
 func toFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -77,6 +105,12 @@ func toFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case int32:
 		return float64(n), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
 	default:
 		return 0, false
 	}

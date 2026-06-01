@@ -88,18 +88,20 @@ type fakeRunner struct {
 	// whose key is a substring of the joined args wins; order is unspecified, so
 	// keys must be mutually exclusive across the invocations a scenario drives.
 	byMatch map[string][]string
-	// fallback is replayed when no byMatch key matches.
+	// fallback is replayed when no byMatch key matches AND no chat done-script
+	// is armed.
 	fallback []string
+	// chatDoneScript, when non-nil, drives the tool-suppressed claude-cli CHAT
+	// (assessor) invocations: each such call pops the next `done` value (the last
+	// value repeats once exhausted) and replays a canned stream-json result whose
+	// text is the assessor's structured {done, notes} JSON. The claude-cli chat
+	// path delivers this as raw JSON text; the engine's processLLMOutput parses it
+	// into a map under the assessor's outputSchema, so `assessor.done` resolves and
+	// the loop exits through the real conditional — no self-cancel guard needed.
+	chatDoneScript []bool
+	chatCalls      int
 	// specs records every RunSpec in call order.
 	specs []claudecli.RunSpec
-	// guardAfter, when > 0, invokes guard once the total recorded invocation
-	// count reaches it. Used by the #1 claude scenario to bound a loop that
-	// cannot self-terminate over the claude-cli chat path (structured output is
-	// delivered as raw text, so `assessor.done` never resolves) — the FAKE, not
-	// the engine, stops the run, mirroring loop_mechanics_test's no-auto-kill case.
-	guardAfter int
-	guard      func()
-	guardFired bool
 }
 
 func newFakeRunner() *fakeRunner {
@@ -124,37 +126,51 @@ func (f *fakeRunner) withFallback(lines ...string) *fakeRunner {
 	return f
 }
 
-// armGuard wires a self-imposed guard: once total invocations reach after, guard
-// is called exactly once (e.g. to engine.Cancel a loop the fake cannot let
-// terminate naturally).
-func (f *fakeRunner) armGuard(after int, guard func()) {
+// withChatDoneScript arms the tool-suppressed claude-cli CHAT (assessor) seam
+// with a per-pass `done` script (last value repeats). Each assessor pass replays
+// a canned stream-json result whose text is the assessor's structured
+// {done, notes} JSON, letting the worked example exit through the real
+// conditional on `assessor.done` under the Claude binding.
+func (f *fakeRunner) withChatDoneScript(doneSeq ...bool) *fakeRunner {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.guardAfter = after
-	f.guard = guard
+	f.chatDoneScript = doneSeq
+	return f
+}
+
+// isChatInvocation reports whether a joined-args string is a tool-suppressed
+// chat (assessor) call rather than a tools-enabled agent (editor) call. The
+// agent path always carries --dangerously-skip-permissions; the chat path never
+// does.
+func isChatInvocation(joined string) bool {
+	return !strings.Contains(joined, "--dangerously-skip-permissions")
 }
 
 func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
 	f.mu.Lock()
 	f.specs = append(f.specs, spec)
 	joined := strings.Join(spec.Args, " ")
-	lines := f.fallback
-	for match, canned := range f.byMatch {
-		if strings.Contains(joined, match) {
-			lines = canned
-			break
+
+	var lines []string
+	// An armed chat done-script takes precedence for chat (assessor) calls.
+	if f.chatDoneScript != nil && isChatInvocation(joined) {
+		idx := f.chatCalls
+		f.chatCalls++
+		if idx >= len(f.chatDoneScript) {
+			idx = len(f.chatDoneScript) - 1
+		}
+		done := idx >= 0 && f.chatDoneScript[idx]
+		lines = claudeAssessorLines(done)
+	} else {
+		lines = f.fallback
+		for match, canned := range f.byMatch {
+			if strings.Contains(joined, match) {
+				lines = canned
+				break
+			}
 		}
 	}
-	var fireGuard func()
-	if f.guardAfter > 0 && !f.guardFired && len(f.specs) >= f.guardAfter {
-		f.guardFired = true
-		fireGuard = f.guard
-	}
 	f.mu.Unlock()
-
-	if fireGuard != nil {
-		fireGuard()
-	}
 
 	ch := make(chan string)
 	go func() {
@@ -180,6 +196,18 @@ func (f *fakeRunner) specsMatching(match string) []claudecli.RunSpec {
 	var out []claudecli.RunSpec
 	for _, s := range f.recordedSpecs() {
 		if strings.Contains(strings.Join(s.Args, " "), match) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// chatInvocationSpecs returns the recorded tool-suppressed CHAT (assessor)
+// invocations — every spec that is not a tools-enabled agent call.
+func chatInvocationSpecs(f *fakeRunner) []claudecli.RunSpec {
+	var out []claudecli.RunSpec
+	for _, s := range f.recordedSpecs() {
+		if isChatInvocation(strings.Join(s.Args, " ")) {
 			out = append(out, s)
 		}
 	}
@@ -300,9 +328,11 @@ var claudeAgentLines = []string{
 
 // claudeAssessorLines is a canned stream-json transcript for the tool-suppressed
 // chat assessor. The result text is a JSON object string; the claude-cli
-// ChatAdapter returns it verbatim (claude-cli structured output is delivered as
-// raw text), so under the Claude binding the loop exits on the counter
-// condition, not on `assessor.done`.
+// ChatAdapter returns it verbatim (claude-cli delivers structured output as raw
+// JSON text). Under the assessor's outputSchema the engine's processLLMOutput
+// now parses that raw text into a map (provider-agnostic structured output), so
+// `assessor.done` resolves and the Claude binding exits through the real
+// conditional on done — just like the HTTP chat backends.
 func claudeAssessorLines(done bool) []string {
 	content := `{\"done\":false,\"notes\":\"more work remains\"}`
 	if done {
