@@ -282,6 +282,38 @@ func TestConnectionRepo_ListEmpty(t *testing.T) {
 	assert.Empty(t, list)
 }
 
+// Edge: if the stored extras column contains malformed JSON, Get returns a
+// non-nil error and no Connection value — not a silent garbled struct.
+func TestConnectionRepo_CorruptedExtras_GetErrors(t *testing.T) {
+	repo, db := newConnRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleConn("corrupt"), "k"))
+
+	_, err := db.DB.Exec("UPDATE connections SET extras = ? WHERE name = ?", "not-json{{{", "corrupt")
+	require.NoError(t, err)
+
+	got, err := repo.Get(ctx, "corrupt")
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, provider.ErrConnectionNotFound, "corruption is not a missing-connection error")
+	assert.Equal(t, provider.Connection{}, got)
+}
+
+// Edge: if one row in the store has malformed extras JSON, List fails with a
+// non-nil error rather than silently skipping the bad row or panicking.
+func TestConnectionRepo_CorruptedExtras_ListErrors(t *testing.T) {
+	repo, db := newConnRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleConn("good"), "k"))
+	require.NoError(t, repo.Create(ctx, sampleConn("bad"), "k"))
+
+	_, err := db.DB.Exec("UPDATE connections SET extras = ? WHERE name = ?", "not-json{{{", "bad")
+	require.NoError(t, err)
+
+	list, err := repo.List(ctx)
+	assert.Error(t, err)
+	assert.Nil(t, list)
+}
+
 // Edge: a connection name with unusual but valid characters round-trips.
 func TestConnectionRepo_UnusualNameRoundTrip(t *testing.T) {
 	repo, _ := newConnRepo(t)
