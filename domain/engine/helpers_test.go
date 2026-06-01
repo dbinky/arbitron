@@ -1,6 +1,36 @@
 package engine_test
 
-import "os"
+import (
+	"fmt"
+	"os"
+
+	"github.com/arbitron/arbitron/domain/provider"
+)
+
+// fakeResolver is an in-memory provider.ProfileResolver for engine tests. A
+// miss returns provider.ErrUnknownProfile (wrapped), mirroring the real
+// StaticProfileResolver.
+type fakeResolver struct {
+	byAlias map[string]provider.Profile
+}
+
+func newFakeResolver(profiles ...provider.Profile) *fakeResolver {
+	m := make(map[string]provider.Profile, len(profiles))
+	for _, p := range profiles {
+		m[p.Alias] = p
+	}
+	return &fakeResolver{byAlias: m}
+}
+
+func (r *fakeResolver) Resolve(alias string) (provider.Profile, error) {
+	p, ok := r.byAlias[alias]
+	if !ok {
+		return provider.Profile{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+	}
+	return p, nil
+}
+
+var _ provider.ProfileResolver = (*fakeResolver)(nil)
 
 // mockFileReader implements engine.FileReader for tests.
 type mockFileReader struct {

@@ -5,22 +5,33 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
-// LLMCallExecutor reads a prompt template, resolves substitutions, calls an
-// LLM provider, and returns the structured or text response.
+// LLMCallExecutor reads a prompt template, resolves substitutions, resolves a
+// chat profile for its model, calls a ChatProvider with no tools, and returns
+// the structured or text response.
+//
+// Forward note (Phase 3): the executor holds a single ChatProvider (claude-cli
+// is the only P1 backend) and uses the resolver only for prof.Model. Phase 3
+// swaps the single-provider field for a ChatProviderSelector so the concrete
+// backend is chosen per node from the resolved binding's Provider. The resolver
+// call and the Chat call are kept cleanly separable so that change stays a
+// localized field swap.
 type LLMCallExecutor struct {
 	fileReader  FileReader
 	llmProvider ChatProvider
+	resolver    provider.ProfileResolver
 }
 
 // NewLLMCallExecutor creates an LLMCallExecutor with the given dependencies.
-func NewLLMCallExecutor(fr FileReader, provider ChatProvider) *LLMCallExecutor {
+func NewLLMCallExecutor(fr FileReader, chatProvider ChatProvider, resolver provider.ProfileResolver) *LLMCallExecutor {
 	return &LLMCallExecutor{
 		fileReader:  fr,
-		llmProvider: provider,
+		llmProvider: chatProvider,
+		resolver:    resolver,
 	}
 }
 
@@ -36,11 +47,19 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	// Resolve substitutions in template.
 	prompt := variable.Resolve(string(templateBytes), vars)
 
+	// Resolve the chat profile alias to a concrete model. The request stays
+	// tool-suppressed by construction (the ChatProvider never has tools), so
+	// llm_call can no longer edit files.
+	prof, err := e.resolver.Resolve(node.Config.ModelProfile)
+	if err != nil {
+		return nil, fmt.Errorf("llm_call %q: resolve profile: %w", node.ID, err)
+	}
+
 	workDirStr, _ := WorkDirFromVars(vars)
 
 	// Build LLM request.
 	req := ChatRequest{
-		Model:        node.Config.Model,
+		Model:        prof.Model,
 		Prompt:       prompt,
 		MaxTokens:    node.Config.MaxTokens,
 		Temperature:  node.Config.Temperature,

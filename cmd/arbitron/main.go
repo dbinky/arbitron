@@ -28,6 +28,7 @@ import (
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/process"
+	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
@@ -222,9 +223,23 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
 
+	// NOTE (Task 4): the LLMCallExecutor now resolves a chat profile alias for
+	// its model via a ProfileResolver. The full config-driven profile-registry
+	// wiring (validation, migration, agent_call registration) lands in Task 6;
+	// here we build a StaticProfileResolver from cfg.Profiles solely to satisfy
+	// the new constructor and keep the build green.
+	profileResolver, err := providersadapter.NewStaticProfileResolver(
+		configadapter.ProfilesFromConfig(cfg.Profiles),
+	)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("building profile resolver: %w", err)
+	}
+
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider),
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider, profileResolver),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),

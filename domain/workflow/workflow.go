@@ -13,6 +13,7 @@ const (
 	NodeTypeTimerDelay  NodeType = "timer_delay"
 	NodeTypeWebhookWait NodeType = "webhook_wait"
 	NodeTypeInteractive NodeType = "interactive"
+	NodeTypeAgentCall   NodeType = "agent_call"
 )
 
 // Workflow is the top-level definition of a directed graph of processing nodes.
@@ -57,6 +58,8 @@ type Node struct {
 type NodeConfig struct {
 	TemplateFile       string            `json:"templateFile,omitempty"`
 	Model              string            `json:"model,omitempty"`
+	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
+	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`
 	Temperature        float64           `json:"temperature,omitempty"`
