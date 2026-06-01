@@ -49,6 +49,13 @@ func defaults() map[string]interface{} {
 		"queue.globalcap":       20,
 		"queue.perusercap":      5,
 		"script.envpassthrough": []string{},
+		// Profile registry: alias -> capability kind + model-id. A fresh
+		// install ships a chat/agent pair so a basic workflow validates; empty
+		// model means "use the claude-cli default model" (cfg.LLM.Model).
+		"profiles": []map[string]interface{}{
+			{"alias": "default-chat", "kind": "chat", "model": ""},
+			{"alias": "default-agent", "kind": "agent", "model": ""},
+		},
 	}
 }
 
@@ -92,6 +99,19 @@ script:
   #   key or router URL to a script WITHOUT leaking every engine secret. The
   #   secret VALUES live in the deploy environment; only names go here.
   #   Override via ARBITRON_SCRIPT_ENVPASSTHROUGH=NAME1,NAME2.
+profiles:
+  # The profile registry maps a node's model_profile alias to a capability
+  # kind (chat | agent) and a model-id. Nodes reference a backend by alias, so
+  # a config swap repoints aliases without touching workflow.json. An empty
+  # model means "use the claude-cli default model" (llm.model). In Phase 1
+  # every profile resolves to claude-cli; chat selects the no-tool ChatAdapter,
+  # agent selects the tool-using AgentAdapter.
+  - alias: "default-chat"
+    kind: "chat"
+    model: ""
+  - alias: "default-agent"
+    kind: "agent"
+    model: ""
 logging:
   level: "info"
   file: "arbitron.log"

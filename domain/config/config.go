@@ -11,6 +11,16 @@ type Config struct {
 	Tracing   TracingConfig
 	Queue     QueueConfig
 	Script    ScriptConfig
+	Profiles  []ProfileConfig
+}
+
+// ProfileConfig is the config-file shape of one profile-registry entry. It
+// mirrors domain/provider.Profile but stays in the config package to keep
+// config free of a provider-package import; adapter/config maps it across.
+type ProfileConfig struct {
+	Alias string
+	Kind  string // "chat" | "agent"
+	Model string
 }
 
 // ScriptConfig holds settings for script/tool_call process nodes.
