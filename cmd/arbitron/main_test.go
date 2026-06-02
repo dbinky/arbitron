@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/arbitron/arbitron/domain/engine"
 )
 
 func TestNewServeCmd(t *testing.T) {
@@ -86,4 +89,15 @@ func TestDomainStack_MCPDeps_WiresSecurityFields(t *testing.T) {
 	assert.Nil(t, deps.Connections, "nil connStore must produce nil Connections in MCP deps")
 	assert.Nil(t, deps.ConnChecker, "nil connChecker must produce nil ConnChecker in MCP deps")
 	assert.Nil(t, deps.ProfileChecker, "nil profileChecker must produce nil ProfileChecker in MCP deps")
+}
+
+// Robustness: domainStack.Close() must not panic when all optional fields
+// (schedulerCancel, scheduler, tracingShutdown, db, logCloser) are nil. Only
+// the engine is non-nil (Shutdown() only waits on a zero-value WaitGroup).
+func TestDomainStack_Close_NilOptionalsDoNotPanic(t *testing.T) {
+	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	ds := &domainStack{eng: eng}
+	// All optional fields (scheduler, tracing, db, logCloser) are nil.
+	// Close must complete without panicking.
+	assert.NotPanics(t, func() { ds.Close(context.Background()) })
 }
