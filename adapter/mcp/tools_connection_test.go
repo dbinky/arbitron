@@ -299,3 +299,59 @@ func TestConnection_ResponseShape(t *testing.T) {
 	_, hasApiKey := meta["apiKey"]
 	assert.False(t, hasApiKey)
 }
+
+// Edge: nil Connections store → every tool returns a tool error, not a panic.
+func TestConnectionTools_NilStore(t *testing.T) {
+	srv := newConnServer(t, nil, nil)
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"connection_create", map[string]any{"name": "x", "provider": "p", "base_url": "u", "api_key": "k"}},
+		{"connection_update", map[string]any{"name": "x", "provider": "p", "base_url": "u"}},
+		{"connection_delete", map[string]any{"name": "x"}},
+		{"connection_get", map[string]any{"name": "x"}},
+		{"connection_list", nil},
+	} {
+		res := callTool(t, srv, tc.tool, tc.args)
+		assert.True(t, res.IsError, "%s must return an error when store is nil", tc.tool)
+		assert.Contains(t, strings.ToLower(extractText(t, res)), "not available", tc.tool)
+	}
+}
+
+// Edge: empty name for each name-requiring tool returns a tool error.
+func TestConnectionTools_EmptyNameRejected(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"connection_create", map[string]any{"name": "", "provider": "p", "base_url": "u", "api_key": "k"}},
+		{"connection_update", map[string]any{"name": "", "provider": "p", "base_url": "u"}},
+		{"connection_delete", map[string]any{"name": ""}},
+		{"connection_get", map[string]any{"name": ""}},
+	} {
+		res := callTool(t, srv, tc.tool, tc.args)
+		assert.True(t, res.IsError, "%s must reject empty name", tc.tool)
+		assert.Contains(t, strings.ToLower(extractText(t, res)), "required", tc.tool)
+	}
+}
+
+// Edge: extras with a non-string value returns a tool error from stringExtras.
+func TestConnectionCreate_ExtrasNonStringValue(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	res := callTool(t, srv, "connection_create", map[string]any{
+		"name":     "bad-extras",
+		"provider": "azure-openai",
+		"base_url": "https://x",
+		"api_key":  "sk-x",
+		"extras":   map[string]any{"api-version": float64(2024)}, // number, not string
+	})
+	assert.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "string")
+}
