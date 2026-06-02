@@ -76,8 +76,7 @@ func (f *fakeConnectionStore) Reveal(_ context.Context, name string) (string, er
 }
 
 // Happy path: alias -> profile (with a ConnectionRef) -> connection -> binding
-// carries the connection's Provider/BaseURL/Extras and the profile's
-// Model/Params/Kind.
+// carries the connection's Provider/BaseURL/Extras and the profile's Model/Kind.
 func TestStaticProfileResolver_ResolveWithConnection(t *testing.T) {
 	store := newFakeConnectionStore()
 	store.put(provider.Connection{
@@ -93,7 +92,6 @@ func TestStaticProfileResolver_ResolveWithConnection(t *testing.T) {
 			Kind:          provider.ProfileKindChat,
 			ConnectionRef: "azure-prod",
 			Model:         "gpt-4o",
-			Params:        map[string]any{"temperature": 0.3},
 		},
 	}, store)
 	require.NoError(t, err)
@@ -106,7 +104,6 @@ func TestStaticProfileResolver_ResolveWithConnection(t *testing.T) {
 	assert.Equal(t, "https://prod.azure.com", b.BaseURL)
 	assert.Equal(t, map[string]string{"api-version": "2024-02-01"}, b.Extras)
 	assert.Equal(t, "gpt-4o", b.Model)
-	assert.Equal(t, map[string]any{"temperature": 0.3}, b.Params)
 
 	// RevealKey decrypts when invoked.
 	key, err := b.RevealKey(context.Background())

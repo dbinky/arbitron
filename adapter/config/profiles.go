@@ -21,7 +21,6 @@ func ProfilesFromConfig(cfgs []domainconfig.ProfileConfig) []provider.Profile {
 			Kind:          provider.ProfileKind(c.Kind),
 			ConnectionRef: c.ConnectionRef,
 			Model:         c.Model,
-			Params:        c.Params,
 		}
 	}
 	return out

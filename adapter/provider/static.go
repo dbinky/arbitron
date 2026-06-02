@@ -88,7 +88,6 @@ func (r *StaticProfileResolver) Resolve(ctx context.Context, alias string) (prov
 			BaseURL:  "",
 			Extras:   nil,
 			Model:    p.Model,
-			Params:   p.Params,
 			RevealKey: func(context.Context) (string, error) {
 				return "", nil
 			},
@@ -118,7 +117,6 @@ func (r *StaticProfileResolver) Resolve(ctx context.Context, alias string) (prov
 		BaseURL:  conn.BaseURL,
 		Extras:   conn.Extras,
 		Model:    p.Model,
-		Params:   p.Params,
 		// RevealKey is lazy: it decrypts the connection's key only when invoked,
 		// at call/launch time. SECURITY: the revealed key is returned to the
 		// caller and never logged here.

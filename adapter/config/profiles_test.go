@@ -42,7 +42,7 @@ profiles:
 // converting the Kind string into a ProfileKind.
 func TestProfilesFromConfig_Mapping(t *testing.T) {
 	cfgs := []domainconfig.ProfileConfig{
-		{Alias: "a", Kind: "chat", ConnectionRef: "azure-prod", Model: "m1", Params: map[string]any{"temperature": 0.2}},
+		{Alias: "a", Kind: "chat", ConnectionRef: "azure-prod", Model: "m1"},
 		{Alias: "b", Kind: "agent", Model: "m2"},
 	}
 
@@ -53,7 +53,6 @@ func TestProfilesFromConfig_Mapping(t *testing.T) {
 		Kind:          provider.ProfileKindChat,
 		ConnectionRef: "azure-prod",
 		Model:         "m1",
-		Params:        map[string]any{"temperature": 0.2},
 	}, got[0])
 	assert.Equal(t, provider.Profile{Alias: "b", Kind: provider.ProfileKindAgent, Model: "m2"}, got[1])
 }

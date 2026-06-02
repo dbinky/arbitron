@@ -1,6 +1,6 @@
 // Package provider defines the slim profile registry: the alias indirection
 // and capability contract that node kinds resolve a backend through. Phase 2
-// adds ConnectionRef + default params; Phase 1 is alias + kind + model only.
+// adds ConnectionRef; Phase 1 is alias + kind + model only.
 package provider
 
 import (
@@ -22,13 +22,12 @@ const (
 // Profile is the registry entry an alias maps to. Phase 1 carried only
 // Alias/Kind/Model; Phase 2 widens it with ConnectionRef (the connection that
 // supplies the endpoint + key; empty means the claude-cli no-key subscription
-// path) and Params (per-profile defaults such as temperature/max-tokens).
+// path).
 type Profile struct {
 	Alias         string
-	Kind          ProfileKind    // chat | agent (unchanged from P1)
-	ConnectionRef string         // -> Connection.Name; empty = claude-cli no-key (subscription)
-	Model         string         // model-id, Azure deployment name, or provider/model for opencode
-	Params        map[string]any // default temperature, max tokens, ...
+	Kind          ProfileKind // chat | agent (unchanged from P1)
+	ConnectionRef string      // -> Connection.Name; empty = claude-cli no-key (subscription)
+	Model         string      // model-id, Azure deployment name, or provider/model for opencode
 }
 
 // ResolvedBinding is the fully resolved backend selection for an alias. It is
@@ -36,11 +35,10 @@ type Profile struct {
 // connection's key only when invoked, at call/launch time.
 type ResolvedBinding struct {
 	Kind      ProfileKind
-	Provider  string            // "claude-cli" for the no-connection subscription path
-	BaseURL   string            //
-	Extras    map[string]string //
-	Model     string            //
-	Params    map[string]any    //
+	Provider  string                                    // "claude-cli" for the no-connection subscription path
+	BaseURL   string                                    //
+	Extras    map[string]string                         //
+	Model     string                                    //
 	RevealKey func(ctx context.Context) (string, error) // nil-safe; no-key path returns ""
 }
 

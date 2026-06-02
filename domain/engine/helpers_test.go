@@ -72,9 +72,8 @@ func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.Resolv
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}
 	return provider.ResolvedBinding{
-		Kind:   p.Kind,
-		Model:  p.Model,
-		Params: p.Params,
+		Kind:  p.Kind,
+		Model: p.Model,
 		RevealKey: func(context.Context) (string, error) {
 			return "", nil
 		},

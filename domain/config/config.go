@@ -22,7 +22,6 @@ type ProfileConfig struct {
 	Kind          string // "chat" | "agent"
 	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string
-	Params        map[string]any // default temperature, max tokens, ...
 }
 
 // ScriptConfig holds settings for script/tool_call process nodes.
