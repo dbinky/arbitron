@@ -1,5 +1,7 @@
 # Phase 1, Task 5: API Changes (Priority Endpoint, Trigger 201/202, System Config Update, Queue-Ordered Listing)
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Objective
 Add the priority mutation endpoint, modify the trigger endpoint to return 201/202 based on queue state, add the system config queue endpoint, and update instance listing to support queue ordering.
 
@@ -56,7 +58,7 @@ Add the priority mutation endpoint, modify the trigger endpoint to return 201/20
        return e.instances.UpdatePriority(ctx, id, instance.Priority(priority))
    }
    ```
-   Add `UpdatePriority(ctx, id, priority)` to `InstanceRepository` interface and implement in postgres adapter.
+   Add `UpdatePriority(ctx, id, priority)` to `InstanceRepository` interface and implement in postgres adapter. _(Postgres has since been replaced by SQLite.)_
 
 5. **Add priority endpoint handler**:
    ```go

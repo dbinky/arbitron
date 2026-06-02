@@ -1,12 +1,14 @@
 # Phase 3.4 Task 1: Notification Backend — Migration, Domain, Repository, API
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create the notifications database table, domain model, repository port, Postgres adapter, HTTP endpoints, and wire notification creation into the engine's state transitions.
+**Goal:** Create the notifications database table, domain model, repository port, Postgres adapter, HTTP endpoints, and wire notification creation into the engine's state transitions. _(Postgres has since been replaced by SQLite.)_
 
-**Architecture:** New `domain/notification/` package with the domain model and port. New Postgres adapter, sqlc queries, and migration. New HTTP handler. Engine creates notifications as a fire-and-forget side effect on state transitions. Notification events are published on the global event bus for cross-tab sync.
+**Architecture:** New `domain/notification/` package with the domain model and port. New Postgres adapter, sqlc queries, and migration. New HTTP handler. Engine creates notifications as a fire-and-forget side effect on state transitions. Notification events are published on the global event bus for cross-tab sync. _(Postgres has since been replaced by SQLite.)_
 
-**Tech Stack:** Go, Postgres, sqlc, chi
+**Tech Stack:** Go, Postgres, sqlc, chi _(Postgres has since been replaced by SQLite.)_
 
 ---
 
@@ -127,7 +129,7 @@ git commit -m "feat: add notification domain model and repository port"
 
 ---
 
-### Task 1.3: Postgres notification repository
+### Task 1.3: Postgres notification repository _(Postgres has since been replaced by SQLite.)_
 
 **Files:**
 - Create: `adapter/postgres/queries/notifications.sql`

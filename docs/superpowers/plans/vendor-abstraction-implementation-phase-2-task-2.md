@@ -1,5 +1,7 @@
 # Phase 2, Task 2: `ConnectionStore` Port + sqlc Queries + Migration + Adapter
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Goal
 
 Introduce the `ConnectionStore` port in `domain/provider` and implement it over the existing sqlc-backed store in `adapter/sqlite`. Add the `connections` table migration, the sqlc query file, and the repo adapter that encrypts each API key with the Task 1 `Crypto` port before it ever touches a column. `Get`/`List` return metadata only; `Reveal` is the single decryption entry point. The plaintext key is never stored in a column, never passed as a query parameter beyond the seal call, and never logged.

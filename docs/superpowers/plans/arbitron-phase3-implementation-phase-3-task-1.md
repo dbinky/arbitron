@@ -1,5 +1,7 @@
 # Phase 3.3 Task 1: Backend — Node Positions, Workflow Stats, Summary Enhancement
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the `NodePosition` field to the workflow domain model, implement `SaveNodePositions` in the filesystem adapter, add the `PUT /api/v1/workflows/:name/layout` endpoint, add the `GET /api/v1/workflows/:name/stats` endpoint, and extend `WorkflowSummary` with `NodeCount`.
