@@ -262,6 +262,88 @@
       "errorBehavior": {}
     },
     {
+      "id": "impl-task",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/impl-task.md",
+        "model_profile": "coder",
+        "timeoutSeconds": 3600
+      },
+      "label": "Implement next task",
+      "description": "Implement the next incomplete plan task, strict TDD, commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "impl-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/impl-assess.md",
+        "model_profile": "assessor",
+        "outputSchema": {
+          "properties": {
+            "all_tasks_complete": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "tasks_remaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "all_tasks_complete",
+            "tasks_remaining",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess impl progress",
+      "description": "Emit {all_tasks_complete, tasks_remaining, notes}.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "impl-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "impl_iteration++",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "impl-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl-assess.all_tasks_complete",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "impl_iteration",
+            "operator": "gte",
+            "value": "{{max_impl_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Impl loop or exit",
+      "description": "Exit when all tasks complete OR iteration cap reached; else loop.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done-spec",
       "type": "transform",
       "config": {
@@ -343,7 +425,30 @@
     },
     {
       "source": "align-plans",
+      "target": "impl-task"
+    },
+    {
+      "source": "impl-task",
+      "target": "impl-assess"
+    },
+    {
+      "source": "impl-assess",
+      "target": "impl-inc"
+    },
+    {
+      "source": "impl-inc",
+      "target": "impl-gate"
+    },
+    {
+      "source": "impl-gate",
+      "target": "impl-task",
+      "output": "loop",
+      "label": "back-edge: next task"
+    },
+    {
+      "source": "impl-gate",
       "target": "done",
+      "output": "exit",
       "label": "TEMP until next task"
     }
   ]
