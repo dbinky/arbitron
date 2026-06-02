@@ -12,3 +12,5 @@ arbitron.db-wal
 arbitron.log
 # OTel trace exports
 /traces/
+# Per-instance runtime workspaces (clones/worktrees created at execution)
+workspaces/instances/
