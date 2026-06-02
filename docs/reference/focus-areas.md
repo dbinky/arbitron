@@ -40,7 +40,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 18 | Provider ports + selection factory (port contract alignment; every provider string maps to an adapter; unknown→clear error) | [x] | Done |
 | 19 | Profile resolver + connection store (alias→profile→connection→binding; lazy `RevealKey` decrypts only at use; empty ConnectionRef→claude-cli no-key) | [x] | Done |
 | 20 | Capability validation + profile registry (kind-matching end-to-end; `agent_call`→chat fails before any run; unknown alias/connection errors) | [x] | Done |
-| 21 | Crypto + connection store (seal-on-write/Reveal-on-read; tampered/wrong-key → `ErrDecrypt`; no plaintext in any column) | [ ] | |
+| 21 | Crypto + connection store (seal-on-write/Reveal-on-read; tampered/wrong-key → `ErrDecrypt`; no plaintext in any column) | [x] | Done |
 | 22 | opencode env-injection + connection resolution (credential delivered into the subprocess env; absent from logs and `workflow.json`) | [ ] | |
 | 23 | Conditional executor + worked example (done-exit and `counter >= max` exit both genuinely reachable; loop terminates under the Claude binding) | [ ] | |
 | 24 | Chat adapters (claudecli/openrouter/azurefoundry) + LLM executor (structured output parsed to a map uniformly regardless of backend; no double-parse) | [ ] | |

@@ -398,3 +398,29 @@ func TestConnectionRepo_RevealCryptoOpenFails(t *testing.T) {
 }
 
 var _ provider.Crypto = fakeDecryptFailCrypto{}
+
+// ---------------------------------------------------------------------------
+// Paired integration: AESGCM crypto ↔ ConnectionRepo seam
+// ---------------------------------------------------------------------------
+
+// Error: a ConnectionRepo opened with a different master key cannot Reveal a
+// connection sealed by the original key — AES-GCM authentication fails and
+// ErrDecrypt propagates through the repo boundary.  This is the "wrong key"
+// integration test that proves seal-on-write and Reveal-on-read are coupled to
+// the same key at the repo seam, not just at the AESGCM unit level.
+func TestConnectionRepo_RevealWrongKey_ErrDecrypt(t *testing.T) {
+	repo, db := newConnRepo(t) // crypto = testKey32(0x2A)
+	ctx := context.Background()
+	const sentinel = "sk-WRONG-KEY-MUST-NOT-DECRYPT"
+	require.NoError(t, repo.Create(ctx, sampleConn("sealed-with-a"), sentinel))
+
+	// Build a second repo over the same DB but with a different master key.
+	wrongCrypto, err := adaptercrypto.NewAESGCM(testKey32(0xFF))
+	require.NoError(t, err)
+	wrongRepo := NewConnectionRepo(db.DB, wrongCrypto)
+
+	revealed, err := wrongRepo.Reveal(ctx, "sealed-with-a")
+	assert.ErrorIs(t, err, provider.ErrDecrypt,
+		"wrong-key Reveal must propagate ErrDecrypt through the repo boundary")
+	assert.Empty(t, revealed, "no partial plaintext on wrong-key Reveal")
+}
