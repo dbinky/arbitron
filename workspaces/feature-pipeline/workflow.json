@@ -72,6 +72,52 @@
       "entrypoint": true
     },
     {
+      "id": "promote-vars",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{init-workspace.slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init-workspace.run_date}}"
+          },
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init-workspace.work_dir}}"
+          },
+          {
+            "variable": "branch",
+            "operation": "set",
+            "value": "{{init-workspace.branch}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift init-workspace outputs to top-level vars for clean downstream references.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "notify-start",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline started for {{slug}} on branch {{branch}} (repo {{repo_url}})."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: started",
+      "description": "In-app notification that the pipeline has started.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done",
       "type": "transform",
       "config": {
@@ -91,6 +137,14 @@
   "edges": [
     {
       "source": "init-workspace",
+      "target": "promote-vars"
+    },
+    {
+      "source": "promote-vars",
+      "target": "notify-start"
+    },
+    {
+      "source": "notify-start",
       "target": "done"
     }
   ]
