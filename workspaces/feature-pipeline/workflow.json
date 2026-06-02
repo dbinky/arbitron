@@ -1,0 +1,97 @@
+{
+  "name": "feature-pipeline",
+  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, implement task-by-task (TDD), refine via the native ralph loop, and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  },
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "GitHub repo URL to clone and work in.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug; auto-derived from the spec brainstorm if empty.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_only",
+      "type": "boolean",
+      "description": "Stop after spec + design brainstorm.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "max_impl_iterations",
+      "type": "number",
+      "description": "Backstop cap on the draft-impl loop.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "max_ralph_iterations",
+      "type": "number",
+      "description": "Backstop cap on the ralph refinement loop.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "impl_iteration",
+      "type": "number",
+      "description": "Draft-impl loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "ralph_iteration",
+      "type": "number",
+      "description": "Ralph loop counter.",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init-workspace",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-{slug} worktree at {{workspace}}/work.",
+      "errorBehavior": {},
+      "entrypoint": true
+    },
+    {
+      "id": "done",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "complete"
+          }
+        ]
+      },
+      "label": "Done (terminal)",
+      "description": "Terminal node. Records final status so the walk ends cleanly.",
+      "errorBehavior": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": "init-workspace",
+      "target": "done"
+    }
+  ]
+}
