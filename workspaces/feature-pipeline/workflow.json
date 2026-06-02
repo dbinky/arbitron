@@ -208,6 +208,40 @@
       "errorBehavior": {}
     },
     {
+      "id": "spec-only?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "spec_only",
+            "operator": "eq",
+            "value": true,
+            "output": "stop"
+          }
+        ],
+        "defaultOutput": "continue"
+      },
+      "label": "Spec only?",
+      "description": "If spec_only, stop after designs; else continue to the automated pipeline.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "done-spec",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "spec-only-complete"
+          }
+        ]
+      },
+      "label": "Done (spec-only, terminal)",
+      "description": "Terminal node for the --spec-only path.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done",
       "type": "transform",
       "config": {
@@ -251,7 +285,18 @@
     },
     {
       "source": "write-designs",
-      "target": "done"
+      "target": "spec-only?"
+    },
+    {
+      "source": "spec-only?",
+      "target": "done-spec",
+      "output": "stop"
+    },
+    {
+      "source": "spec-only?",
+      "target": "done",
+      "output": "continue",
+      "label": "TEMP until next task"
     }
   ]
 }
