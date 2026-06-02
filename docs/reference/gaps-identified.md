@@ -4,13 +4,15 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### FACTORY-001: MaxResponseBytes not configurable via Deps / Factory
-**Area**: Provider selection factory (`adapter/provider/factory.go`)
-**Detail**: `openrouter.Config` and `azurefoundry.Config` both accept a `MaxResponseBytes` field that caps streaming response size. The `Deps` struct has no corresponding field, so the factory always constructs HTTP adapters with `MaxResponseBytes: 0` (no cap). In production, a malicious or buggy LLM backend could send an arbitrarily large streaming response and exhaust memory. Fix: add `MaxResponseBytes int64` to `Deps` and thread it into both adapter configs in `ChatProviderFor`.
+_(none)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### FACTORY-001: MaxResponseBytes not configurable via Deps / Factory
+**Area**: Provider selection factory (`adapter/provider/factory.go`)
+**Fixed**: FA#18
+**What was wrong**: `openrouter.Config` and `azurefoundry.Config` both accept a `MaxResponseBytes` field, but the `Deps` struct had no corresponding field — so the factory always constructed HTTP adapters with `MaxResponseBytes: 0` (no cap). A malicious or buggy backend could exhaust memory.
+**How it was fixed**: Added `MaxResponseBytes int64` to `Deps` and threaded it into both `openrouter.Config` and `azurefoundry.Config` in `ChatProviderFor`. Added `TestFactory_ChatProviderFor_ThreadsMaxResponseBytes` to prove the Deps field exists and construction succeeds for both adapter types.
 
 <!--
 Example of a fixed issue entry:

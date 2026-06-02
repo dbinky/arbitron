@@ -55,6 +55,9 @@ type Deps struct {
 	// OpencodeTimeout is the default per-mission opencode timeout; <=0 means no
 	// default.
 	OpencodeTimeout time.Duration
+	// MaxResponseBytes caps the per-request response body read in HTTP adapters
+	// (openrouter, azurefoundry). 0 means no cap.
+	MaxResponseBytes int64
 }
 
 // Factory holds the shared construction inputs and selects a concrete backend
@@ -96,15 +99,17 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 		return f.deps.ClaudeChat, nil
 	case providerOpenRouter, providerLiteLLM:
 		return openrouter.New(openrouter.Config{
-			Binding:    b,
-			HTTPClient: f.deps.HTTPClient,
-			Timeout:    f.deps.HTTPTimeout,
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
 	case providerAzureOpenAI, providerAzureFoundry:
 		return azurefoundry.New(azurefoundry.Config{
-			Binding:    b,
-			HTTPClient: f.deps.HTTPClient,
-			Timeout:    f.deps.HTTPTimeout,
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, b.Provider)

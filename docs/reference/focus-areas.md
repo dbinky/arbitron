@@ -37,7 +37,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 18 | Provider ports + selection factory (port contract alignment; every provider string maps to an adapter; unknown→clear error) | [ ] | |
+| 18 | Provider ports + selection factory (port contract alignment; every provider string maps to an adapter; unknown→clear error) | [x] | Done |
 | 19 | Profile resolver + connection store (alias→profile→connection→binding; lazy `RevealKey` decrypts only at use; empty ConnectionRef→claude-cli no-key) | [ ] | |
 | 20 | Capability validation + profile registry (kind-matching end-to-end; `agent_call`→chat fails before any run; unknown alias/connection errors) | [ ] | |
 | 21 | Crypto + connection store (seal-on-write/Reveal-on-read; tampered/wrong-key → `ErrDecrypt`; no plaintext in any column) | [ ] | |

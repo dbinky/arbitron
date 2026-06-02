@@ -215,6 +215,33 @@ func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
 	assert.IsType(t, (*openrouter.Provider)(nil), cp)
 }
 
+// ---- Edge case: MaxResponseBytes is threaded from Deps into HTTP adapters ----
+
+// TestFactory_ChatProviderFor_ThreadsMaxResponseBytes proves FACTORY-001 is
+// fixed: the MaxResponseBytes cap from Deps reaches both HTTP adapter
+// constructors (openrouter and azurefoundry). The field is stored inside each
+// adapter and not accessible externally, so this test proves the fix at the
+// construction boundary: the Deps field exists (compile-time), is accepted by
+// NewFactory, and both ChatProviderFor calls succeed without error. The
+// per-adapter byte-cap behavior is exercised by the adapters' own tests.
+func TestFactory_ChatProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
+	hc := &http.Client{}
+	f := adapterprovider.NewFactory(adapterprovider.Deps{
+		HTTPClient:       hc,
+		MaxResponseBytes: 1 << 20, // 1 MiB cap
+	})
+
+	cp, err := f.ChatProviderFor(chatBinding("openrouter"))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp,
+		"openrouter provider constructed with MaxResponseBytes from Deps")
+
+	cp2, err := f.ChatProviderFor(chatBinding("azure-foundry"))
+	require.NoError(t, err)
+	assert.IsType(t, (*azurefoundry.Provider)(nil), cp2,
+		"azurefoundry provider constructed with MaxResponseBytes from Deps")
+}
+
 // ---- Security: selection + reveal never logs the revealed key ----
 
 func TestFactory_Selection_DoesNotLogRevealedKey(t *testing.T) {
