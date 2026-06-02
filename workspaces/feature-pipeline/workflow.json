@@ -434,6 +434,33 @@
       "errorBehavior": {}
     },
     {
+      "id": "push-and-pr",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/push-and-pr.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Push \u0026 open PR",
+      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open).",
+      "errorBehavior": {}
+    },
+    {
+      "id": "notify-done",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline complete for {{slug}}: PR {{push-and-pr.pr_url}} opened. PR review will run on open."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: PR opened",
+      "description": "In-app notification that the PR is open.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done-spec",
       "type": "transform",
       "config": {
@@ -564,9 +591,16 @@
     },
     {
       "source": "refine-gate",
-      "target": "done",
-      "output": "exit",
-      "label": "TEMP until next task"
+      "target": "push-and-pr",
+      "output": "exit"
+    },
+    {
+      "source": "push-and-pr",
+      "target": "notify-done"
+    },
+    {
+      "source": "notify-done",
+      "target": "done"
     }
   ]
 }
