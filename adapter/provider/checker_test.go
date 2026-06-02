@@ -6,6 +6,7 @@ import (
 
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +70,76 @@ func TestResolverChecker_GenericResolveError(t *testing.T) {
 	kind, ok := c.ProfileKind("whatever")
 	assert.False(t, ok)
 	assert.Equal(t, "", kind)
+}
+
+// Integration with workflow.Validate: a ResolverChecker backed by a real
+// StaticProfileResolver drives the kind-mismatch check end-to-end — an
+// agent_call node referencing a chat profile produces PROFILE_KIND_MISMATCH
+// via workflow.Validate, and an unknown alias produces UNKNOWN_PROFILE.
+// This proves the ResolverChecker satisfies the workflow.ProfileChecker port
+// at the boundary that matters: capability validation before any run.
+func TestResolverChecker_SatisfiesWorkflowPort(t *testing.T) {
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "chat-only", Kind: provider.ProfileKindChat, Model: "m-chat"},
+	}, nil)
+	require.NoError(t, err)
+	c := adapterprovider.NewResolverChecker(r)
+
+	// agent_call bound to a chat profile: kind mismatch must be caught by
+	// workflow.Validate via the ResolverChecker — before any executor runs.
+	wf := &workflow.Workflow{
+		Name: "kind-mismatch-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "editor",
+				Type:       workflow.NodeTypeAgentCall,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					TemplateFile: "mission.md",
+					ModelProfile: "chat-only", // agent_call needs agent kind
+				},
+			},
+		},
+	}
+	errs := workflow.Validate(wf, nil, c, nil)
+
+	var codes []string
+	for _, e := range errs {
+		codes = append(codes, e.Code)
+	}
+	assert.Contains(t, codes, "PROFILE_KIND_MISMATCH",
+		"agent_call referencing a chat profile must produce PROFILE_KIND_MISMATCH via workflow.Validate")
+
+	// Confirm the error names the node and describes the mismatch.
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			assert.Equal(t, "editor", e.NodeID)
+			assert.Contains(t, e.Message, "agent", "message must name the required kind")
+			assert.Contains(t, e.Message, "chat", "message must name the actual kind")
+		}
+	}
+
+	// Unknown alias also produces UNKNOWN_PROFILE through the same path.
+	wf2 := &workflow.Workflow{
+		Name: "unknown-alias-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "llm",
+				Type:       workflow.NodeTypeLLMCall,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					TemplateFile: "prompt.md",
+					ModelProfile: "ghost-alias",
+				},
+			},
+		},
+	}
+	errs2 := workflow.Validate(wf2, nil, c, nil)
+
+	var codes2 []string
+	for _, e := range errs2 {
+		codes2 = append(codes2, e.Code)
+	}
+	assert.Contains(t, codes2, "UNKNOWN_PROFILE",
+		"an unknown alias must produce UNKNOWN_PROFILE via workflow.Validate")
 }
