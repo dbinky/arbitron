@@ -4,10 +4,24 @@
 package procenv
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// WithTimeout derives a context honouring d. A non-positive d yields the parent
+// ctx unchanged with a no-op cancel (no deadline). It is the single shared
+// helper for the per-call timeout plumbing used by the claudecli, opencode,
+// openrouter, and azurefoundry adapters. The returned CancelFunc must always be
+// called (typically deferred) to release resources.
+func WithTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
 
 // baseAllowlist is the set of parent-process environment variables propagated
 // to subprocesses. SECURITY: any var NOT here (and not LC_*) is stripped, so

@@ -54,6 +54,12 @@ var expectedTools = []string{
 	"interactive_send_message",
 	"interactive_end_session",
 	"interactive_get_history",
+	// Connection management (5)
+	"connection_create",
+	"connection_update",
+	"connection_delete",
+	"connection_get",
+	"connection_list",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {

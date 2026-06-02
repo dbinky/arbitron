@@ -375,3 +375,57 @@ llm:
 		assert.Equal(t, int64(1048576), cfg.LLM.MaxResponseBytes)
 	})
 }
+
+// Edge: ARBITRON_SCRIPT_ENVPASSTHROUGH with only commas and whitespace yields
+// an empty slice (all entries are empty after trimming), not a slice containing
+// empty strings.
+func TestLoad_ScriptEnvPassthrough_AllEmptyEntriesDropped(t *testing.T) {
+	t.Setenv("ARBITRON_SCRIPT_ENVPASSTHROUGH", " ,,  , ")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Script.EnvPassthrough,
+		"whitespace-only/comma-only passthrough must produce an empty slice, not empty strings")
+}
+
+
+// SECURITY: a non-positive llm.timeoutseconds is floored at config load to the
+// sane default so a misconfigured 0 cannot silently disable every per-call
+// deadline (a hang-forever DoS on the credential-bearing HTTP adapters and the
+// CLI subprocesses).
+func TestLoad_TimeoutSecondsFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantSec int
+	}{
+		{
+			name: "zero is floored to the default",
+			yaml: "llm:\n  timeoutseconds: 0\n",
+			wantSec: adapterconfig.DefaultTimeoutSeconds,
+		},
+		{
+			name: "negative is floored to the default",
+			yaml: "llm:\n  timeoutseconds: -5\n",
+			wantSec: adapterconfig.DefaultTimeoutSeconds,
+		},
+		{
+			name: "a positive value is preserved",
+			yaml: "llm:\n  timeoutseconds: 90\n",
+			wantSec: 90,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+
+			cfg, err := adapterconfig.Load(configPath)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantSec, cfg.LLM.TimeoutSeconds)
+			assert.Positive(t, cfg.LLM.TimeoutSeconds,
+				"the timeout must always be positive so deadlines cannot be disabled")
+		})
+	}
+}

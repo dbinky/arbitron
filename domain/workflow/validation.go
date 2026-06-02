@@ -9,12 +9,39 @@ type FileChecker interface {
 	FileExists(workflowName string, relativePath string) bool
 }
 
+// ProfileChecker resolves a node's model_profile alias to its capability
+// kind for validation. Mirrors FileChecker: an injected domain capability,
+// not an adapter import. Returns ok=false for an unknown alias.
+type ProfileChecker interface {
+	ProfileKind(alias string) (kind string, ok bool)
+}
+
+// ConnectionChecker is the minimal subset used to validate that a profile's
+// ConnectionRef names an existing connection. The concrete implementation is
+// injected at wiring time; the domain depends only on this interface, not on
+// the full ConnectionStore (so no adapter or provider-persistence concern
+// leaks into the domain).
+type ConnectionChecker interface {
+	// ProfileConnectionRef returns the ConnectionRef for a profile alias, and
+	// whether the alias is known.
+	ProfileConnectionRef(alias string) (connectionRef string, aliasKnown bool)
+	// ConnectionExists reports whether a connection with the given name exists.
+	ConnectionExists(name string) bool
+}
+
 // ValidationError describes a single validation problem found in a workflow.
+//
+// Severity distinguishes hard validation failures from non-gating advisories.
+// An empty Severity means "error" (a hard failure) for back-compatibility: all
+// findings returned by Validate leave it empty and gate the workflow. Advisory
+// lints (see LintWorkflow) set Severity to "warning"; those are surfaced
+// informationally and never gate validation.
 type ValidationError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	NodeID  string `json:"nodeId,omitempty"`
-	EdgeIdx int    `json:"edgeIdx,omitempty"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	NodeID   string `json:"nodeId,omitempty"`
+	EdgeIdx  int    `json:"edgeIdx,omitempty"`
+	Severity string `json:"severity,omitempty"`
 }
 
 // validInputTypes is the set of types allowed for workflow input fields.
@@ -43,8 +70,13 @@ var validErrorBehaviorTypes = map[string]bool{
 
 // Validate performs structural and semantic validation of a workflow definition.
 // Pass a non-nil FileChecker to validate file references (templateFile,
-// scriptFile); pass nil to skip file-existence checks.
-func Validate(wf *Workflow, checker FileChecker) []ValidationError {
+// scriptFile); pass nil to skip file-existence checks. Pass a non-nil
+// ProfileChecker to validate that llm_call/agent_call nodes reference a
+// model_profile of the correct capability kind; pass nil to skip that pass.
+// Pass a non-nil ConnectionChecker to validate that a profile's non-empty
+// ConnectionRef names an existing connection; pass nil to skip that pass. Each
+// checker is independently nil-skippable.
+func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker) []ValidationError {
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
@@ -65,6 +97,103 @@ func Validate(wf *Workflow, checker FileChecker) []ValidationError {
 		errs = append(errs, validateFileReferences(wf, checker)...)
 	}
 
+	if profiles != nil {
+		errs = append(errs, validateModelProfiles(wf, profiles)...)
+	}
+
+	if connChecker != nil {
+		errs = append(errs, validateConnectionReferences(wf, connChecker)...)
+	}
+
+	return errs
+}
+
+// validateConnectionReferences checks that every llm_call/agent_call node whose
+// model_profile resolves to a non-empty ConnectionRef names a connection that
+// actually exists. An empty ConnectionRef is the claude-cli no-key subscription
+// path and is valid with no existence check. An unknown alias is skipped here
+// because validateModelProfiles (Phase 1) already reports it; double-reporting
+// is avoided.
+func validateConnectionReferences(wf *Workflow, connChecker ConnectionChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		switch n.Type {
+		case NodeTypeLLMCall, NodeTypeAgentCall:
+		default:
+			continue
+		}
+
+		alias := n.Config.ModelProfile
+		if alias == "" {
+			// Phase 1 reports the missing model_profile; nothing to check here.
+			continue
+		}
+
+		connRef, aliasKnown := connChecker.ProfileConnectionRef(alias)
+		if !aliasKnown {
+			// Phase 1 owns the unknown-alias error; do not double-report.
+			continue
+		}
+		if connRef == "" {
+			// claude-cli no-key subscription path: valid, no existence check.
+			continue
+		}
+		if !connChecker.ConnectionExists(connRef) {
+			errs = append(errs, ValidationError{
+				Code:    "UNKNOWN_CONNECTION",
+				Message: "profile " + alias + " references unknown connection " + connRef,
+				NodeID:  n.ID,
+			})
+		}
+	}
+	return errs
+}
+
+// validateModelProfiles checks that llm_call and agent_call nodes reference a
+// model_profile whose capability kind matches the node type: llm_call requires
+// a chat profile, agent_call requires an agent profile. A missing alias, an
+// unknown alias, or a kind mismatch each produces a specific error so the
+// failure is caught at workflow_validate, before any run.
+func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		var wantKind string
+		switch n.Type {
+		case NodeTypeLLMCall:
+			wantKind = "chat"
+		case NodeTypeAgentCall:
+			wantKind = "agent"
+		default:
+			continue
+		}
+
+		if n.Config.ModelProfile == "" {
+			errs = append(errs, ValidationError{
+				Code:    "MISSING_REQUIRED_CONFIG",
+				Message: string(n.Type) + " node " + n.ID + " must have a model_profile",
+				NodeID:  n.ID,
+			})
+			continue
+		}
+
+		kind, ok := profiles.ProfileKind(n.Config.ModelProfile)
+		if !ok {
+			errs = append(errs, ValidationError{
+				Code:    "UNKNOWN_PROFILE",
+				Message: "node " + n.ID + " references unknown model_profile: " + n.Config.ModelProfile,
+				NodeID:  n.ID,
+			})
+			continue
+		}
+
+		if kind != wantKind {
+			errs = append(errs, ValidationError{
+				Code:    "PROFILE_KIND_MISMATCH",
+				Message: string(n.Type) + " node " + n.ID + " requires a " + wantKind + " profile but " + n.Config.ModelProfile + " is " + kind,
+				NodeID:  n.ID,
+			})
+		}
+	}
 	return errs
 }
 
@@ -210,10 +339,7 @@ func validateConnectivity(wf *Workflow, nodeIDs map[string]bool) []ValidationErr
 	}
 
 	// Build adjacency list from edges.
-	adj := make(map[string][]string)
-	for _, e := range wf.Edges {
-		adj[e.Source] = append(adj[e.Source], e.Target)
-	}
+	adj := buildAdjacency(wf)
 
 	// BFS.
 	visited := make(map[string]bool)
@@ -353,6 +479,14 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 				errs = append(errs, ValidationError{
 					Code:    "MISSING_REQUIRED_CONFIG",
 					Message: "llm_call node " + n.ID + " must have a templateFile",
+					NodeID:  n.ID,
+				})
+			}
+		case NodeTypeAgentCall:
+			if n.Config.TemplateFile == "" {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_REQUIRED_CONFIG",
+					Message: "agent_call node " + n.ID + " must have a templateFile",
 					NodeID:  n.ID,
 				})
 			}

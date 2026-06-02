@@ -49,6 +49,13 @@ func defaults() map[string]interface{} {
 		"queue.globalcap":       20,
 		"queue.perusercap":      5,
 		"script.envpassthrough": []string{},
+		// Profile registry: alias -> capability kind + model-id. A fresh
+		// install ships a chat/agent pair so a basic workflow validates; empty
+		// model means "use the claude-cli default model" (cfg.LLM.Model).
+		"profiles": []map[string]interface{}{
+			{"alias": "default-chat", "kind": "chat", "model": ""},
+			{"alias": "default-agent", "kind": "agent", "model": ""},
+		},
 	}
 }
 
@@ -92,6 +99,19 @@ script:
   #   key or router URL to a script WITHOUT leaking every engine secret. The
   #   secret VALUES live in the deploy environment; only names go here.
   #   Override via ARBITRON_SCRIPT_ENVPASSTHROUGH=NAME1,NAME2.
+profiles:
+  # The profile registry maps a node's model_profile alias to a capability
+  # kind (chat | agent) and a model-id. Nodes reference a backend by alias, so
+  # a config swap repoints aliases without touching workflow.json. An empty
+  # model means "use the claude-cli default model" (llm.model). In Phase 1
+  # every profile resolves to claude-cli; chat selects the no-tool ChatAdapter,
+  # agent selects the tool-using AgentAdapter.
+  - alias: "default-chat"
+    kind: "chat"
+    model: ""
+  - alias: "default-agent"
+    kind: "agent"
+    model: ""
 logging:
   level: "info"
   file: "arbitron.log"
@@ -168,7 +188,26 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
+	normalize(&cfg)
+
 	return &cfg, nil
+}
+
+// DefaultTimeoutSeconds is the floor applied to a non-positive
+// llm.timeoutseconds. SECURITY: a 0 (or negative) value would silently disable
+// every per-call deadline — the only deadline the credential-bearing HTTP
+// adapters and the claude-cli/opencode subprocesses have — letting a wedged or
+// attacker-pointed endpoint hang a node forever and starve the worker pool.
+// Flooring it keeps the whole timeout story from being disabled by misconfig.
+const DefaultTimeoutSeconds = 1800
+
+// normalize applies safety floors to a loaded config in place. It clamps a
+// non-positive llm.timeoutseconds up to DefaultTimeoutSeconds so a misconfigured
+// 0 cannot disable every deadline.
+func normalize(cfg *domainconfig.Config) {
+	if cfg.LLM.TimeoutSeconds <= 0 {
+		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
+	}
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.

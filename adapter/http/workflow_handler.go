@@ -32,19 +32,36 @@ type workflowStatsReader interface {
 
 // WorkflowHandler handles REST API requests for workflow operations.
 type WorkflowHandler struct {
-	repo       workflow.WorkflowRepository
-	service    WorkflowService
-	fileReader engine.FileReader
-	stats      workflowStatsReader
+	repo           workflow.WorkflowRepository
+	service        WorkflowService
+	fileReader     engine.FileReader
+	stats          workflowStatsReader
+	profileChecker workflow.ProfileChecker
+	connChecker    workflow.ConnectionChecker
+}
+
+// SetConnectionChecker injects the workflow.ConnectionChecker used to validate
+// that a profile's non-empty ConnectionRef names an existing connection. When
+// unset (nil), the connection-reference validation pass is skipped.
+func (h *WorkflowHandler) SetConnectionChecker(cc workflow.ConnectionChecker) {
+	h.connChecker = cc
 }
 
 // NewWorkflowHandler creates a new WorkflowHandler with its dependencies.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader) *WorkflowHandler {
+// An optional workflow.ProfileChecker may be supplied as the final argument to
+// enable model_profile validation; when omitted (or nil), the model_profile
+// validation pass is skipped.
+func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
+	var pc workflow.ProfileChecker
+	if len(profileChecker) > 0 {
+		pc = profileChecker[0]
+	}
 	return &WorkflowHandler{
-		repo:       repo,
-		service:    service,
-		fileReader: fileReader,
-		stats:      stats,
+		repo:           repo,
+		service:        service,
+		fileReader:     fileReader,
+		stats:          stats,
+		profileChecker: pc,
 	}
 }
 
@@ -111,7 +128,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader)
+	errs := workflow.Validate(wf, h.fileReader, h.profileChecker, h.connChecker)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}

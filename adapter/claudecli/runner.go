@@ -61,6 +61,11 @@ type execRunner struct{}
 // newExecRunner constructs the os/exec-backed CommandRunner.
 func newExecRunner() *execRunner { return &execRunner{} }
 
+// NewExecRunner returns the shared production os/exec-backed CommandRunner.
+// Exported so sibling driven adapters (e.g. adapter/opencode) can reuse the
+// same subprocess seam instead of redefining a parallel runner.
+func NewExecRunner() CommandRunner { return newExecRunner() }
+
 // Run starts the process described by spec. The caller's ctx is used both
 // for the subprocess lifecycle (exec.CommandContext) and for early abort if
 // the response-bytes cap is exceeded (via an internal derived cancel).

@@ -9,9 +9,9 @@ import (
 
 // streamState accumulates the per-line bookkeeping for a streaming claude
 // invocation. It is intentionally small and stateless across instances —
-// callers create one per StreamCall.
+// callers create one per StreamChat.
 //
-// SF3 / PR #8 thread 3291907738: extracting this from the StreamCall closure
+// SF3 / PR #8 thread 3291907738: extracting this from the StreamChat closure
 // makes the partial-failure paths individually testable (parseEvent error
 // mid-stream, result-with-is_error, exit-with-no-result) without spinning up
 // a full Provider.
@@ -29,13 +29,13 @@ type streamState struct {
 // rawLine is the on-the-wire line; parseEvent's result is consumed here.
 // A parse error becomes a chunk-with-error; the caller MUST keep draining
 // the runner's lines channel so the subprocess can be reaped.
-func (s *streamState) Handle(rawLine string, sendChunk func(engine.LLMStreamChunk) bool) {
+func (s *streamState) Handle(rawLine string, sendChunk func(engine.ChatChunk) bool) {
 	if s.failed {
 		return
 	}
 	ev, ok, parseErr := parseEvent([]byte(rawLine))
 	if parseErr != nil {
-		if !sendChunk(engine.LLMStreamChunk{Error: parseErr}) {
+		if !sendChunk(engine.ChatChunk{Error: parseErr}) {
 			// consumer gone; still mark failed so Finalize knows
 		}
 		s.failed = true
@@ -50,14 +50,14 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.LLMStreamChun
 	switch ev.Kind {
 	case eventAssistant:
 		if ev.Text != "" {
-			if !sendChunk(engine.LLMStreamChunk{Token: ev.Text}) {
+			if !sendChunk(engine.ChatChunk{Token: ev.Text}) {
 				s.failed = true
 			}
 		}
 	case eventResult:
 		s.tokensIn, s.tokensOut = ev.TokensIn, ev.TokensOut
 		if ev.IsError {
-			if !sendChunk(engine.LLMStreamChunk{
+			if !sendChunk(engine.ChatChunk{
 				Error: fmt.Errorf("claudecli: claude reported an error: %s", ev.Text),
 			}) {
 				// consumer gone
@@ -71,17 +71,17 @@ func (s *streamState) Handle(rawLine string, sendChunk func(engine.LLMStreamChun
 // been fully drained and wait() has returned. waitErr is whatever wait()
 // returned (nil on clean exit). No chunk is emitted when Handle already
 // reported a failure — the consumer has the error.
-func (s *streamState) Finalize(waitErr error, sendChunk func(engine.LLMStreamChunk) bool) {
+func (s *streamState) Finalize(waitErr error, sendChunk func(engine.ChatChunk) bool) {
 	if s.failed {
 		return
 	}
 	if waitErr != nil {
-		sendChunk(engine.LLMStreamChunk{
+		sendChunk(engine.ChatChunk{
 			Error: fmt.Errorf("claudecli: claude exited with error: %w", waitErr),
 		})
 		return
 	}
-	sendChunk(engine.LLMStreamChunk{
+	sendChunk(engine.ChatChunk{
 		Done:      true,
 		SessionID: s.sessionID,
 		TokensIn:  s.tokensIn,
@@ -91,8 +91,8 @@ func (s *streamState) Finalize(waitErr error, sendChunk func(engine.LLMStreamChu
 
 // makeSendChunk returns the sendChunk closure used by both Handle and
 // Finalize: non-blocking via select on runCtx.
-func makeSendChunk(runCtx context.Context, out chan<- engine.LLMStreamChunk) func(engine.LLMStreamChunk) bool {
-	return func(c engine.LLMStreamChunk) bool {
+func makeSendChunk(runCtx context.Context, out chan<- engine.ChatChunk) func(engine.ChatChunk) bool {
+	return func(c engine.ChatChunk) bool {
 		select {
 		case out <- c:
 			return true

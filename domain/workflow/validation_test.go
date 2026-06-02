@@ -41,7 +41,7 @@ func minimalValidWorkflow() *workflow.Workflow {
 func TestValidate_ValidWorkflowPasses(t *testing.T) {
 	wf := minimalValidWorkflow()
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -49,7 +49,7 @@ func TestValidate_NoEntryNode(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].Entrypoint = false
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "NO_ENTRY_NODE", errs[0].Code)
 }
@@ -67,7 +67,7 @@ func TestValidate_MultipleEntryNodes(t *testing.T) {
 		{Source: "entry", Target: "entry2"},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	require.Len(t, errs, 1)
 	assert.Equal(t, "MULTIPLE_ENTRY_NODES", errs[0].Code)
 }
@@ -80,7 +80,7 @@ func TestValidate_DuplicateNodeIDs(t *testing.T) {
 		Label: "Duplicate",
 	})
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "DUPLICATE_NODE_ID")
 }
@@ -96,7 +96,7 @@ func TestValidate_InvalidEdgeSource(t *testing.T) {
 		{Source: "nonexistent", Target: "target"},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_EDGE_SOURCE")
 }
@@ -107,7 +107,7 @@ func TestValidate_InvalidEdgeTarget(t *testing.T) {
 		{Source: "entry", Target: "nonexistent"},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_EDGE_TARGET")
 }
@@ -140,7 +140,7 @@ func TestValidate_ConditionalMissingEdgeForOutput(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_CONDITIONAL_EDGE")
 }
@@ -164,7 +164,7 @@ func TestValidate_UnreachableNode(t *testing.T) {
 		Edges: []workflow.Edge{},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "UNREACHABLE_NODE")
 }
@@ -175,7 +175,7 @@ func TestValidate_InvalidInputType(t *testing.T) {
 		{Name: "bad", Type: "map", Required: true},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_INPUT_TYPE")
 }
@@ -186,7 +186,7 @@ func TestValidate_MissingTemplateFile(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_FILE")
 }
@@ -197,7 +197,7 @@ func TestValidate_TemplateFileExists(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{"prompt.hbs": true}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -208,7 +208,7 @@ func TestValidate_MissingScriptFile(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_FILE")
 }
@@ -220,7 +220,7 @@ func TestValidate_ScriptFileExists(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{"run.sh": true}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -286,7 +286,7 @@ func TestValidate_ComplexValidWorkflow(t *testing.T) {
 		"run.sh":   true,
 	}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -302,7 +302,7 @@ func TestValidate_FileCheckerReceivesWorkflowName(t *testing.T) {
 		return true
 	}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	assert.Empty(t, errs)
 	assert.Equal(t, "my-workflow", capturedName, "workflowName must be forwarded to FileChecker")
 	assert.Equal(t, "prompt.hbs", capturedPath)
@@ -321,7 +321,7 @@ func TestValidate_EmptyNodeID(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].ID = ""
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "EMPTY_NODE_ID")
 }
@@ -330,7 +330,7 @@ func TestValidate_EmptyInputName(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Inputs = []workflow.InputField{{Name: "", Type: "string"}}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "EMPTY_INPUT_NAME")
 }
@@ -339,7 +339,7 @@ func TestValidate_LLMNodeMissingTemplateFile(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].Type = workflow.NodeTypeLLMCall
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
 }
@@ -349,7 +349,7 @@ func TestValidate_LLMNodeWithTemplateFileIsValid(t *testing.T) {
 	wf.Nodes[0].Type = workflow.NodeTypeLLMCall
 	wf.Nodes[0].Config.TemplateFile = "prompt.hbs"
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -357,7 +357,7 @@ func TestValidate_ScriptNodeMissingScriptFile(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].Type = workflow.NodeTypeScript
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -365,7 +365,7 @@ func TestValidate_ToolCallNodeMissingCommand(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].Type = workflow.NodeTypeToolCall
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -375,7 +375,7 @@ func TestValidate_ConditionalNodeNoConditionsNoDefault(t *testing.T) {
 	wf.Nodes[0].Config.Conditions = nil
 	wf.Nodes[0].Config.DefaultOutput = ""
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -387,7 +387,7 @@ func TestValidate_ConditionalNodeWithDefaultOnlyIsValid(t *testing.T) {
 	// Add matching edge so MISSING_CONDITIONAL_EDGE doesn't fire.
 	wf.Edges = []workflow.Edge{{Source: wf.Nodes[0].ID, Target: wf.Nodes[0].ID, Output: "next"}}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -395,7 +395,7 @@ func TestValidate_InvalidErrorBehaviorType(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.DefaultErrorBehavior = workflow.ErrorBehavior{Type: "explode"}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR")
 }
 
@@ -403,7 +403,7 @@ func TestValidate_NodeInvalidErrorBehaviorType(t *testing.T) {
 	wf := minimalValidWorkflow()
 	wf.Nodes[0].ErrorBehavior = workflow.ErrorBehavior{Type: "Halt"}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR")
 }
 
@@ -411,7 +411,7 @@ func TestValidate_ValidErrorBehaviorTypes(t *testing.T) {
 	for _, typ := range []string{"", "halt", "retry", "skip", "route"} {
 		wf := minimalValidWorkflow()
 		wf.DefaultErrorBehavior = workflow.ErrorBehavior{Type: typ}
-		errs := workflow.Validate(wf, nil)
+		errs := workflow.Validate(wf, nil, nil, nil)
 		assert.NotContains(t, extractCodes(errs), "INVALID_ERROR_BEHAVIOR", "type=%q should be valid", typ)
 	}
 }
@@ -454,7 +454,7 @@ func TestValidateTimerDelay_Valid(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -472,7 +472,7 @@ func TestValidateTimerDelay_MissingDurationSeconds(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG")
 }
@@ -489,7 +489,7 @@ func TestValidateTimerDelay_NoOutgoingEdge(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
 }
@@ -510,7 +510,7 @@ func TestValidateTimerDelay_MultipleOutgoingEdges(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
 }
@@ -527,7 +527,7 @@ func TestValidateTimerDelay_AsEntrypoint(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_TIMER_DELAY")
 }
@@ -546,7 +546,7 @@ func TestValidateTimerDelay_WithSubstitution(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -568,7 +568,7 @@ func TestValidateWebhookWait_Valid_NoConfig(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -586,7 +586,7 @@ func TestValidateWebhookWait_Valid_WithSecret(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -604,7 +604,7 @@ func TestValidateWebhookWait_Valid_WithTimeout(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -622,7 +622,7 @@ func TestValidateWebhookWait_Valid_WithBoth(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -638,7 +638,7 @@ func TestValidateWebhookWait_NoOutgoingEdge(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
 }
@@ -659,7 +659,7 @@ func TestValidateWebhookWait_MultipleOutgoingEdges(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
 }
@@ -676,7 +676,7 @@ func TestValidateWebhookWait_AsEntrypoint(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "INVALID_WEBHOOK_WAIT")
 }
@@ -695,7 +695,7 @@ func TestValidateWebhookWait_TimeoutWithSubstitution(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -721,7 +721,7 @@ func TestValidateInteractive_RequiresOrchestrationFile(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -743,7 +743,7 @@ func TestValidateInteractive_RequiresTemplateFile(t *testing.T) {
 		},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.Contains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -771,7 +771,7 @@ func TestValidateInteractive_Valid(t *testing.T) {
 		"orchestrate.yaml": true,
 	}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	assert.Empty(t, errs)
 }
 
@@ -795,7 +795,7 @@ func TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig(t *testing.T) {
 		Edges: []workflow.Edge{},
 	}
 
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.NotContains(t, extractCodes(errs), "MISSING_REQUIRED_CONFIG")
 }
 
@@ -817,7 +817,7 @@ func TestValidateInteractive_MissingOrchestrationFile(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	codes := extractCodes(errs)
 	assert.Contains(t, codes, "MISSING_FILE")
 }
@@ -839,7 +839,7 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 	}
 
 	// With nil checker, file references should not be validated.
-	errs := workflow.Validate(wf, nil)
+	errs := workflow.Validate(wf, nil, nil, nil)
 	assert.NotContains(t, extractCodes(errs), "MISSING_FILE")
 }
 
@@ -848,7 +848,7 @@ func TestValidateReservedInputName(t *testing.T) {
 		wf := minimalValidWorkflow()
 		wf.Inputs = []workflow.InputField{{Name: "workspace", Type: "string"}}
 
-		errs := workflow.Validate(wf, nil)
+		errs := workflow.Validate(wf, nil, nil, nil)
 		codes := extractCodes(errs)
 		assert.Contains(t, codes, "RESERVED_INPUT_NAME")
 	})
@@ -857,7 +857,7 @@ func TestValidateReservedInputName(t *testing.T) {
 		wf := minimalValidWorkflow()
 		wf.Inputs = []workflow.InputField{{Name: "prNumber", Type: "string"}}
 
-		errs := workflow.Validate(wf, nil)
+		errs := workflow.Validate(wf, nil, nil, nil)
 		codes := extractCodes(errs)
 		assert.NotContains(t, codes, "RESERVED_INPUT_NAME")
 	})
@@ -903,7 +903,7 @@ func TestValidateInteractive_BothFilesMissing(t *testing.T) {
 
 	checker := &mockFileChecker{existing: map[string]bool{}}
 
-	errs := workflow.Validate(wf, checker)
+	errs := workflow.Validate(wf, checker, nil, nil)
 	codes := extractCodes(errs)
 	// Both missing files must be reported.
 	assert.Equal(t, 2, countCode(codes, "MISSING_FILE"), "expected one MISSING_FILE per missing file reference")

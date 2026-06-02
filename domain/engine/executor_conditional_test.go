@@ -321,3 +321,166 @@ func TestConditionalExecutor_UnknownOperator(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "default", result.OutputPort)
 }
+
+// --- GAP 1: condition VALUE template resolution ---------------------------
+
+// Category 1 (literal value, unchanged behavior): a value with no {{...}}
+// markers is compared verbatim, exactly as before.
+func TestConditionalExecutor_LiteralValueUnchanged(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("status", "active")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "status", Operator: "eq", Value: "active", Output: "is_active"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "is_active", result.OutputPort)
+}
+
+// Category 2 (happy path, eq): a {{var}} value resolves against the store and
+// then compares equal to the field.
+func TestConditionalExecutor_TemplateValueResolvesEq(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("status", "active")
+	vars.SetInput("expected", "active")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "status", Operator: "eq", Value: "{{expected}}", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "matched", result.OutputPort)
+}
+
+// Category 2/3 (numeric gte after resolution): the worked-example case —
+// iteration >= {{max_iterations}} must fire once the resolved "5" is compared
+// as a number.
+func TestConditionalExecutor_TemplateValueResolvesGte(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("iteration", float64(5))
+	vars.SetInput("max_iterations", float64(5))
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "iteration", Operator: "gte", Value: "{{max_iterations}}", Output: "exit"},
+	}, "loop")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "exit", result.OutputPort)
+}
+
+// Category 3 (numeric gte stays below): the same resolved numeric comparison
+// does NOT fire while iteration < max.
+func TestConditionalExecutor_TemplateValueGteBelowMax(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("iteration", float64(2))
+	vars.SetInput("max_iterations", float64(5))
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "iteration", Operator: "gte", Value: "{{max_iterations}}", Output: "exit"},
+	}, "loop")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "loop", result.OutputPort)
+}
+
+// Category 4 (missing var edge): an unresolved {{missing}} value stays a
+// literal {{missing}} string, which is non-numeric, so a numeric comparison
+// skips and routes to default.
+func TestConditionalExecutor_TemplateValueMissingVar(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("iteration", float64(5))
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "iteration", Operator: "gte", Value: "{{max_iterations}}", Output: "exit"},
+	}, "loop")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "loop", result.OutputPort)
+}
+
+// Category 5 (malformed / non-numeric edge): a resolved-but-non-numeric value
+// under a numeric operator skips the comparison (routes to default) without
+// panicking, and the FIELD is never treated as a template even if it looks
+// like one.
+func TestConditionalExecutor_TemplateValueNonNumericSkips(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("iteration", float64(5))
+	vars.SetInput("max_iterations", "not-a-number")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "iteration", Operator: "gte", Value: "{{max_iterations}}", Output: "exit"},
+	}, "loop")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "loop", result.OutputPort)
+}
+
+// Edge case: eq with a missing field returns false (routes to default); absence
+// is never equal to any value.
+func TestConditionalExecutor_EqMissingField(t *testing.T) {
+	vars := variable.NewStore()
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "nonexistent", Operator: "eq", Value: "anything", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort,
+		"eq on a missing field must route to default, not matched")
+}
+
+// Edge case: contains with a missing field returns false (routes to default).
+func TestConditionalExecutor_ContainsMissingField(t *testing.T) {
+	vars := variable.NewStore()
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "nonexistent", Operator: "contains", Value: "anything", Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort,
+		"contains on a missing field must route to default, not matched")
+}
+
+// The field is a path, not a template: a field that literally contains {{...}}
+// is looked up verbatim (and thus missing), never substituted.
+func TestConditionalExecutor_FieldIsNotTemplated(t *testing.T) {
+	vars := variable.NewStore()
+	vars.SetInput("real", "value")
+
+	node := conditionalNode([]workflow.Condition{
+		{Field: "{{real}}", Operator: "exists", Value: nil, Output: "matched"},
+	}, "default")
+
+	exec := engine.NewConditionalExecutor()
+	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
+
+	require.NoError(t, err)
+	assert.Equal(t, "default", result.OutputPort,
+		"the field is a literal path, not a template, so {{real}} must not resolve")
+}

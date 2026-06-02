@@ -16,10 +16,10 @@ import (
 
 // recordingSink collects emitted chunks and never blocks.
 type recordingSink struct {
-	chunks []engine.LLMStreamChunk
+	chunks []engine.ChatChunk
 }
 
-func (s *recordingSink) send(c engine.LLMStreamChunk) bool {
+func (s *recordingSink) send(c engine.ChatChunk) bool {
 	s.chunks = append(s.chunks, c)
 	return true
 }
@@ -84,7 +84,7 @@ func TestStreamState_WaitError_EmittedByFinalize(t *testing.T) {
 func TestStreamState_ConsumerGoneFlagsFailed(t *testing.T) {
 	var st streamState
 	// sendChunk returns false to simulate consumer cancellation.
-	send := func(engine.LLMStreamChunk) bool { return false }
+	send := func(engine.ChatChunk) bool { return false }
 
 	st.Handle(`{"type":"assistant","message":{"content":[{"type":"text","text":"x"}]}}`, send)
 	assert.True(t, st.failed, "consumer-gone must flag failed so Finalize stops")
@@ -94,10 +94,10 @@ func TestMakeSendChunk_NonBlocking(t *testing.T) {
 	// sendChunk returns false (consumer gone) when runCtx is already
 	// cancelled at the time of the send.
 	ctx, cancel := context.WithCancel(context.Background())
-	out := make(chan engine.LLMStreamChunk)
+	out := make(chan engine.ChatChunk)
 	send := makeSendChunk(ctx, out)
 	cancel()
 
-	ok := send(engine.LLMStreamChunk{Token: "x"})
+	ok := send(engine.ChatChunk{Token: "x"})
 	assert.False(t, ok)
 }

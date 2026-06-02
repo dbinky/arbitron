@@ -20,6 +20,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/anthropic"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
+	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
@@ -28,11 +29,13 @@ import (
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
 	"github.com/arbitron/arbitron/adapter/process"
+	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -97,6 +100,9 @@ type domainStack struct {
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
 	conversationHandler engine.ConversationHandler
+	profileChecker      workflow.ProfileChecker
+	connChecker         workflow.ConnectionChecker
+	connStore           provider.ConnectionStore
 	tracingShutdown     func(ctx context.Context) error
 }
 
@@ -139,6 +145,10 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		QueueRepo:           ds.queueRepo,
 		Notifications:       ds.notifRepo,
 		ConversationHandler: ds.conversationHandler,
+		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
+		Connections:         ds.connStore,
+		Logger:              ds.logger,
 	}
 }
 
@@ -193,38 +203,153 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
 
-	// 7. Create the LLM provider based on config.
-	var llmProvider engine.LLMProvider
+	// 7. Create the chat + agent providers based on config.
+	//
+	// SECURITY: WorkspaceRoot is the absolute workspace path; both adapters use
+	// it to pin every per-request WorkDir under this subtree. The chat adapter
+	// is tool-suppressed by construction (no AllowedTools / SkipPermissions); the
+	// agent adapter carries the full tool scope.
+	wsRoot, err := filepath.Abs(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("resolving workspace path: %w", err)
+	}
+
+	chatCfg := claudecli.Config{
+		BinaryPath:       cfg.LLM.BinaryPath,
+		DefaultModel:     cfg.LLM.Model,
+		WorkspaceRoot:    wsRoot,
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
+	}
+
+	// The empty-connection (subscription) path resolves to the claude-cli chat
+	// adapter. interactive/conversation executors below also use this single
+	// chat provider directly (they are not per-node alias-selected).
+	var chatProvider engine.ChatProvider
 	switch cfg.LLM.Provider {
 	case "claude-cli":
-		// SECURITY: WorkspaceRoot is the absolute workspace path; the provider
-		// uses it to pin every per-request WorkDir under this subtree.
-		wsRoot, err := filepath.Abs(cfg.Workspace.Path)
-		if err != nil {
-			db.Close()
-			logCloser.Close()
-			return nil, fmt.Errorf("resolving workspace path: %w", err)
-		}
-		llmProvider = claudecli.New(claudecli.Config{
-			BinaryPath:       cfg.LLM.BinaryPath,
-			DefaultModel:     cfg.LLM.Model,
-			WorkspaceRoot:    wsRoot,
-			Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-			AllowedTools:     cfg.LLM.AllowedTools,
-			SkipPermissions:  cfg.LLM.SkipPermissions,
-			MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-			Runner:           nil, // production os/exec runner
-		})
+		chatProvider = claudecli.NewChatAdapter(chatCfg)
 	default:
-		llmProvider = anthropic.New(cfg.LLM.APIKey)
+		chatProvider = anthropic.New(cfg.LLM.APIKey)
 	}
+
+	// The agent backend for the empty-connection path is the claude-cli agent
+	// adapter: every Claude/subscription agent profile resolves to it (design
+	// §4). Non-Claude agent profiles route to opencode via the factory below.
+	agentCfg := chatCfg
+	agentCfg.SkipPermissions = cfg.LLM.SkipPermissions
+	agentCfg.AllowedTools = cfg.LLM.AllowedTools // full agent scope default
+	claudeChatAdapter := claudecli.NewChatAdapter(chatCfg)
+	claudeAgentAdapter := claudecli.NewAgentAdapter(agentCfg)
 
 	// 8. Create in-process event bus.
 	bus := eventbus.New()
 
+	// 8a. Bootstrap connection secrecy: load the master key (env/keyring), build
+	// the AES-GCM crypto only when a key is present, and construct the connection
+	// store. The master key is held in memory only and is never logged or
+	// persisted; LoadMasterKey logs the source only.
+	masterKey, err := adaptcrypto.LoadMasterKey(logger)
+	if err != nil && !errors.Is(err, provider.ErrMasterKeyMissing) {
+		// An invalid key (bad base64 / wrong length) is a hard error.
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading master key: %w", err)
+	}
+	haveKey := masterKey != nil
+
+	var connCrypto provider.Crypto
+	if haveKey {
+		connCrypto, err = adaptcrypto.NewAESGCM(masterKey)
+		if err != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("building crypto: %w", err)
+		}
+	}
+
+	// 8b. Construct the connection store over the SQLite DB + crypto. A nil
+	// crypto (Claude-only, no master key) yields a store that can still count
+	// rows; the fail-fast gate below ensures no connections exist in that case.
+	connStore := adaptsqlite.NewConnectionRepo(db, connCrypto)
+
+	// 8c. Fail-fast gate: refuse to start when connections exist but no master
+	// key is available, because their ciphertext could never be decrypted. A
+	// Claude-only deployment (zero connections) boots with no master key.
+	connCount, err := connStore.Count(context.Background())
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("counting connections: %w", err)
+	}
+	if err := adaptcrypto.RequireMasterKeyIfConnections(haveKey, connCount); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, err
+	}
+
+	// 8d. Build the immutable profile resolver from config profiles. This is the
+	// single source of truth for model_profile aliases: the executors resolve a
+	// node's alias to a concrete model through it, and workflow validation checks
+	// alias/kind through the ResolverChecker wrapper built below. The widened
+	// resolver carries the connection store so a profile with a non-empty
+	// ConnectionRef resolves to its endpoint + lazy key reveal; an empty
+	// ConnectionRef stays on the claude-cli no-key subscription path.
+	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
+	profileResolver, err := providersadapter.NewStaticProfileResolver(domainProfiles, connStore)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("building profile resolver: %w", err)
+	}
+	profileChecker := providersadapter.NewResolverChecker(profileResolver)
+
+	// 8e. Build the connection-existence checker for workflow validation over the
+	// loaded profiles + the connection store. It confirms a profile's non-empty
+	// ConnectionRef names an existing connection at workflow_validate time.
+	connChecker := providersadapter.NewConnChecker(domainProfiles, connStore)
+
+	// 8f. Build the provider-selection factory: it maps a resolved binding's
+	// Provider to a concrete backend per node (empty/claude-cli -> the claude-cli
+	// adapters; openrouter/litellm -> adapter/openrouter; azure-* ->
+	// adapter/azurefoundry; non-Claude agent -> adapter/opencode). The executors
+	// hold this factory as the domain selector port and never import an adapter.
+	//
+	// Capability validation stays load-bearing with NO new code: an agent_call
+	// whose profile resolves to a chat-only adapter is impossible by construction
+	// — the profile is kind: chat and already fails workflow_validate (Phase 1).
+	// SECURITY (hang-forever DoS backstop): the HTTP adapters rely on the per-call
+	// withTimeout(ctx) derived from cfg.LLM.TimeoutSeconds (now floored > 0 at
+	// config load). Give the shared client its own Timeout as an absolute backstop
+	// independent of ctx so a wedged endpoint can never block a node forever even
+	// if the per-call deadline plumbing regresses. A dedicated client (not the
+	// global http.DefaultClient) is used so this Timeout does not leak to other
+	// callers; the transport still pools connections.
+	httpClient := &http.Client{
+		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+	}
+
+	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
+		ClaudeChat:  claudeChatAdapter,
+		ClaudeAgent: claudeAgentAdapter,
+		HTTPClient:  httpClient,
+		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// Runner nil -> opencode uses the shared production os/exec runner.
+		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
+		// three credential-bearing backends (openrouter, azurefoundry, opencode).
+		// Dropping this lets an attacker-pointed base_url stream an unbounded body
+		// into io.ReadAll and OOM-kill the engine. 256MiB default per config.
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+	})
+
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, llmProvider),
+		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, providerFactory, profileResolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
@@ -294,12 +419,12 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 12c. Register the interactive executor. Notification creation is handled
 	// by the engine when it processes the IsWait result.
 	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, llmProvider, fileReader, bus, queueMgr,
+		instanceRepo, nodeExecRepo, chatProvider, fileReader, bus, queueMgr,
 	)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
-		instanceRepo, nodeExecRepo, llmProvider, bus, queueMgr,
+		instanceRepo, nodeExecRepo, chatProvider, bus, queueMgr,
 	)
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
@@ -371,6 +496,9 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		webhookRegistry:     webhookRegistry,
 		notifRepo:           notifRepo,
 		conversationHandler: conversationHandler,
+		profileChecker:      profileChecker,
+		connChecker:         connChecker,
+		connStore:           connStore,
 		tracingShutdown:     tracingShutdown,
 	}, nil
 }
@@ -411,6 +539,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		ConversationHandler: ds.conversationHandler,
 		WebhookHandler:      webhookHandler,
 		MCPHandler:          mcpSrv.HTTPHandler(),
+		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

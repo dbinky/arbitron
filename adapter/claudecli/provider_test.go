@@ -23,7 +23,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		resp, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "hi", WorkDir: "/tmp"})
+		resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "hi", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		assert.Equal(t, "final answer", resp.Output)
 		assert.Equal(t, "s1", resp.SessionID)
@@ -37,7 +37,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "do it", WorkDir: "/tmp/ws"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "do it", WorkDir: "/tmp/ws"})
 		require.NoError(t, err)
 		assert.Equal(t, "do it", fr.gotSpec.Stdin)
 		assert.Equal(t, "/tmp/ws", fr.gotSpec.Dir)
@@ -49,7 +49,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "model failure")
 	})
@@ -60,7 +60,7 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no result event")
 	})
@@ -72,7 +72,7 @@ func TestProviderCall(t *testing.T) {
 		}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 
@@ -80,7 +80,7 @@ func TestProviderCall(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("binary not found")}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "binary not found")
 	})
@@ -92,18 +92,18 @@ func TestProviderCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x", WorkDir: "/tmp"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 }
 
 func TestProviderImplementsPort(t *testing.T) {
-	var _ engine.LLMProvider = (*Provider)(nil)
+	var _ engine.ChatProvider = (*Provider)(nil)
 }
 
-func TestProviderStreamCall_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
+func TestProviderStreamChat_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
 	// MF9 / PR #8 thread 3291921373. The producer-side select { case out
-	// <- c: case <-runCtx.Done(): } in StreamCall ensures the goroutine
+	// <- c: case <-runCtx.Done(): } in StreamChat ensures the goroutine
 	// returns when the consumer (or its parent ctx) bails out mid-stream
 	// instead of blocking forever on `out <- chunk` (which would also pin
 	// the subprocess via the runner contract).
@@ -128,7 +128,7 @@ func TestProviderStreamCall_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	ch, err := p.StreamCall(ctx, engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+	ch, err := p.StreamChat(ctx, engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 	require.NoError(t, err)
 
 	// Consume one chunk then bail.
@@ -166,27 +166,27 @@ func TestProviderStreamCall_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
 
 func TestProviderWorkDirValidation(t *testing.T) {
 	// SECURITY MF6 / PR #8 thread 3291944671.
-	t.Run("Call rejects empty WorkDir", func(t *testing.T) {
+	t.Run("Chat rejects empty WorkDir", func(t *testing.T) {
 		fr := &fakeRunner{}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWorkDirRequired)
 		assert.False(t, fr.runCalled, "runner must not be invoked")
 	})
 
-	t.Run("StreamCall rejects empty WorkDir", func(t *testing.T) {
+	t.Run("StreamChat rejects empty WorkDir", func(t *testing.T) {
 		fr := &fakeRunner{}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "x"})
+		_, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWorkDirRequired)
 		assert.False(t, fr.runCalled)
 	})
 
-	t.Run("Call rejects WorkDir outside WorkspaceRoot", func(t *testing.T) {
+	t.Run("Chat rejects WorkDir outside WorkspaceRoot", func(t *testing.T) {
 		fr := &fakeRunner{}
 		p := New(Config{
 			BinaryPath:      "claude",
@@ -195,7 +195,7 @@ func TestProviderWorkDirValidation(t *testing.T) {
 			Runner:          fr,
 		})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{
+		_, err := p.Chat(context.Background(), engine.ChatRequest{
 			Prompt:  "x",
 			WorkDir: "/etc",
 		})
@@ -204,7 +204,7 @@ func TestProviderWorkDirValidation(t *testing.T) {
 		assert.False(t, fr.runCalled)
 	})
 
-	t.Run("Call accepts WorkDir under WorkspaceRoot", func(t *testing.T) {
+	t.Run("Chat accepts WorkDir under WorkspaceRoot", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{`{"type":"result","result":"ok","session_id":"s"}`}}
 		p := New(Config{
 			BinaryPath:      "claude",
@@ -213,7 +213,7 @@ func TestProviderWorkDirValidation(t *testing.T) {
 			Runner:          fr,
 		})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{
+		_, err := p.Chat(context.Background(), engine.ChatRequest{
 			Prompt:  "x",
 			WorkDir: "/var/lib/arbitron/workspaces/instances/abc",
 		})
@@ -229,7 +229,7 @@ func TestProviderWorkDirValidation(t *testing.T) {
 			Runner:          fr,
 		})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{
+		_, err := p.Chat(context.Background(), engine.ChatRequest{
 			Prompt:  "x",
 			WorkDir: "/var/lib/arbitron/ws-other/x",
 		})
@@ -246,7 +246,7 @@ func TestProviderWorkDirValidation(t *testing.T) {
 			// no WorkspaceRoot
 		})
 
-		_, err := p.Call(context.Background(), engine.LLMRequest{
+		_, err := p.Chat(context.Background(), engine.ChatRequest{
 			Prompt:  "x",
 			WorkDir: "/anywhere",
 		})
@@ -254,16 +254,16 @@ func TestProviderWorkDirValidation(t *testing.T) {
 	})
 }
 
-func collectChunks(t *testing.T, ch <-chan engine.LLMStreamChunk) []engine.LLMStreamChunk {
+func collectChunks(t *testing.T, ch <-chan engine.ChatChunk) []engine.ChatChunk {
 	t.Helper()
-	var out []engine.LLMStreamChunk
+	var out []engine.ChatChunk
 	for c := range ch {
 		out = append(out, c)
 	}
 	return out
 }
 
-func TestProviderStreamCall(t *testing.T) {
+func TestProviderStreamChat(t *testing.T) {
 	t.Run("emits assistant text then a terminal chunk", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"system","subtype":"init","session_id":"s1"}`,
@@ -273,7 +273,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 
@@ -297,7 +297,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		assert.Equal(t, "s2", chunks[len(chunks)-1].SessionID)
@@ -310,7 +310,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 
@@ -324,7 +324,7 @@ func TestProviderStreamCall(t *testing.T) {
 		}}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		require.NotEmpty(t, chunks)
@@ -340,17 +340,17 @@ func TestProviderStreamCall(t *testing.T) {
 		}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		ch, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 		chunks := collectChunks(t, ch)
 		assert.Error(t, chunks[len(chunks)-1].Error)
 	})
 
-	t.Run("start failure returns an error from StreamCall itself", func(t *testing.T) {
+	t.Run("start failure returns an error from StreamChat itself", func(t *testing.T) {
 		fr := &fakeRunner{startErr: errors.New("no binary")}
 		p := New(Config{BinaryPath: "claude", SkipPermissions: true, Runner: fr})
 
-		_, err := p.StreamCall(context.Background(), engine.LLMRequest{Prompt: "go", WorkDir: "/tmp"})
+		_, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.Error(t, err)
 	})
 }

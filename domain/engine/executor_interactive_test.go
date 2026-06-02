@@ -20,21 +20,21 @@ import (
 // Mock: streaming LLM provider for interactive executor tests
 // ---------------------------------------------------------------------------
 
-type mockStreamingLLMProvider struct {
+type mockStreamingChatProvider struct {
 	mu            sync.Mutex
-	streamCallFn  func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error)
-	capturedReqs  []engine.LLMRequest
+	streamCallFn  func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error)
+	capturedReqs  []engine.ChatRequest
 }
 
-func newMockStreamingLLMProvider() *mockStreamingLLMProvider {
-	return &mockStreamingLLMProvider{}
+func newMockStreamingChatProvider() *mockStreamingChatProvider {
+	return &mockStreamingChatProvider{}
 }
 
-func (m *mockStreamingLLMProvider) Call(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
-	return nil, fmt.Errorf("Call not implemented for streaming mock")
+func (m *mockStreamingChatProvider) Chat(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+	return nil, fmt.Errorf("Chat not implemented for streaming mock")
 }
 
-func (m *mockStreamingLLMProvider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func (m *mockStreamingChatProvider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	m.mu.Lock()
 	m.capturedReqs = append(m.capturedReqs, req)
 	fn := m.streamCallFn
@@ -45,36 +45,36 @@ func (m *mockStreamingLLMProvider) StreamCall(ctx context.Context, req engine.LL
 	return nil, fmt.Errorf("no stream call function configured")
 }
 
-func (m *mockStreamingLLMProvider) getCapturedReqs() []engine.LLMRequest {
+func (m *mockStreamingChatProvider) getCapturedReqs() []engine.ChatRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := make([]engine.LLMRequest, len(m.capturedReqs))
+	cp := make([]engine.ChatRequest, len(m.capturedReqs))
 	copy(cp, m.capturedReqs)
 	return cp
 }
 
-// cannedStream returns a StreamCall function that emits the given tokens
+// cannedStream returns a StreamChat function that emits the given tokens
 // and a final Done chunk with token counts.
-func cannedStream(tokens []string, tokensIn, tokensOut int) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, len(tokens)+1)
+func cannedStream(tokens []string, tokensIn, tokensOut int) func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	return func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, len(tokens)+1)
 		for _, t := range tokens {
-			ch <- engine.LLMStreamChunk{Token: t}
+			ch <- engine.ChatChunk{Token: t}
 		}
-		ch <- engine.LLMStreamChunk{Done: true, TokensIn: tokensIn, TokensOut: tokensOut}
+		ch <- engine.ChatChunk{Done: true, TokensIn: tokensIn, TokensOut: tokensOut}
 		close(ch)
 		return ch, nil
 	}
 }
 
 // cannedStreamWithSession is cannedStream plus a session id on the Done chunk.
-func cannedStreamWithSession(tokens []string, sessionID string) func(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-	return func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, len(tokens)+1)
+func cannedStreamWithSession(tokens []string, sessionID string) func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	return func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, len(tokens)+1)
 		for _, tok := range tokens {
-			ch <- engine.LLMStreamChunk{Token: tok}
+			ch <- engine.ChatChunk{Token: tok}
 		}
-		ch <- engine.LLMStreamChunk{Done: true, SessionID: sessionID}
+		ch <- engine.ChatChunk{Done: true, SessionID: sessionID}
 		close(ch)
 		return ch, nil
 	}
@@ -87,7 +87,7 @@ func cannedStreamWithSession(tokens []string, sessionID string) func(ctx context
 func interactiveTestSetup() (
 	*mockInstanceRepo,
 	*mockNodeExecutionRepo,
-	*mockStreamingLLMProvider,
+	*mockStreamingChatProvider,
 	*mockFileReader,
 	*mockEventBus,
 	*mockQueueManager,
@@ -95,7 +95,7 @@ func interactiveTestSetup() (
 ) {
 	instRepo := newMockInstanceRepo()
 	nodeExecRepo := newMockNodeExecutionRepo()
-	llmProvider := newMockStreamingLLMProvider()
+	llmProvider := newMockStreamingChatProvider()
 	fileReader := newMockFileReader()
 	eventBus := newMockEventBus()
 	queueMgr := newMockQueueManager()
@@ -135,7 +135,7 @@ func interactiveNode() workflow.Node {
 func buildInteractiveExecutor(
 	instRepo *mockInstanceRepo,
 	nodeExecRepo *mockNodeExecutionRepo,
-	llmProvider *mockStreamingLLMProvider,
+	llmProvider *mockStreamingChatProvider,
 	fileReader *mockFileReader,
 	eventBus *mockEventBus,
 	queueMgr *mockQueueManager,
@@ -218,7 +218,7 @@ func TestInteractiveExecutor_VariableSubstitutionInTemplate(t *testing.T) {
 	assert.Contains(t, reqs[0].Prompt, "Hello Alice, please review Q3 report")
 }
 
-func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
+func TestInteractiveExecutor_StreamChatInvokedWithCorrectRequest(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration instructions")
@@ -255,7 +255,7 @@ func TestInteractiveExecutor_StreamCallInvokedWithCorrectRequest(t *testing.T) {
 	assert.Equal(t, 0.7, req.Temperature)
 
 	// SF8 / PR #8 thread 3291907744: Tools and Messages were removed from
-	// LLMRequest. The initial interactive call uses Prompt; the dead
+	// ChatRequest. The initial interactive call uses Prompt; the dead
 	// invariants are no longer expressible.
 }
 
@@ -541,13 +541,13 @@ func TestInteractiveExecutor_TemplateFileNotFound_Fails(t *testing.T) {
 	assert.Contains(t, err.Error(), "template")
 }
 
-func TestInteractiveExecutor_StreamCallError_Fails(t *testing.T) {
+func TestInteractiveExecutor_StreamChatError_Fails(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 		return nil, fmt.Errorf("LLM service unavailable")
 	}
 
@@ -566,10 +566,10 @@ func TestInteractiveExecutor_StreamChunkError_Fails(t *testing.T) {
 	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, 3)
-		ch <- engine.LLMStreamChunk{Token: "partial"}
-		ch <- engine.LLMStreamChunk{Error: fmt.Errorf("connection reset")}
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, 3)
+		ch <- engine.ChatChunk{Token: "partial"}
+		ch <- engine.ChatChunk{Error: fmt.Errorf("connection reset")}
 		close(ch)
 		return ch, nil
 	}
@@ -674,12 +674,12 @@ func TestInteractiveExecutor_EmptyStreamTokensSkipped(t *testing.T) {
 	fileReader.files["test-wf/template.md"] = []byte("Template")
 
 	// Stream with empty token (should still publish events for non-empty tokens)
-	llmProvider.streamCallFn = func(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
-		ch := make(chan engine.LLMStreamChunk, 4)
-		ch <- engine.LLMStreamChunk{Token: "Hello"}
-		ch <- engine.LLMStreamChunk{Token: ""}
-		ch <- engine.LLMStreamChunk{Token: "World"}
-		ch <- engine.LLMStreamChunk{Done: true, TokensIn: 5, TokensOut: 10}
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, 4)
+		ch <- engine.ChatChunk{Token: "Hello"}
+		ch <- engine.ChatChunk{Token: ""}
+		ch <- engine.ChatChunk{Token: "World"}
+		ch <- engine.ChatChunk{Done: true, TokensIn: 5, TokensOut: 10}
 		close(ch)
 		return ch, nil
 	}

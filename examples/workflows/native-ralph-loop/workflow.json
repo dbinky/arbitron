@@ -1,0 +1,105 @@
+{
+  "name": "native-ralph-loop",
+  "description": "Worked example of the native ralph refinement loop: an agent edits the workspace toward the current focus areas, a tool-suppressed chat node assesses whether the focus areas are satisfied, a transform increments the iteration counter, and a conditional either exits (done OR counter >= max) or back-edges to the agent for another pass. Nodes reference only profile aliases (editor, assessor), so the same graph runs under both the Claude-subscription and open-weight configurations by repointing the alias bindings.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "mission",
+      "type": "string",
+      "description": "The high-level refinement goal the editor agent works toward each pass.",
+      "required": true
+    },
+    {
+      "name": "max_iterations",
+      "type": "number",
+      "description": "Maximum number of refinement passes before the loop exits unconditionally.",
+      "required": true
+    },
+    {
+      "name": "iteration",
+      "type": "number",
+      "description": "The loop counter. Declared as an input with default 0 so it exists and is numeric before the first increment.",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "editor",
+      "type": "agent_call",
+      "label": "Editor (agent)",
+      "description": "Reads RALPH.md, focus-areas.md, and gaps.md from the workspace and makes the smallest correct edit toward the top focus area.",
+      "entrypoint": true,
+      "config": {
+        "templateFile": "mission.md",
+        "model_profile": "editor"
+      }
+    },
+    {
+      "id": "assessor",
+      "type": "llm_call",
+      "label": "Assessor (chat)",
+      "description": "Tool-suppressed reasoning: judges whether the focus areas are satisfied and emits a structured {done, notes} result.",
+      "config": {
+        "templateFile": "assessment.md",
+        "model_profile": "assessor",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "boolean",
+              "description": "True when the focus areas are satisfied and the loop should exit."
+            },
+            "notes": {
+              "type": "string",
+              "description": "Short rationale for the decision."
+            }
+          },
+          "required": ["done", "notes"]
+        }
+      }
+    },
+    {
+      "id": "increment-counter",
+      "type": "transform",
+      "label": "Increment iteration counter",
+      "description": "Adds 1 to the iteration counter after each assess pass.",
+      "config": {
+        "operations": [
+          {"variable": "iteration", "operation": "increment", "value": 1}
+        ]
+      }
+    },
+    {
+      "id": "loop-or-exit",
+      "type": "conditional",
+      "label": "Loop or exit",
+      "description": "Encodes (done? OR counter >= max?) as two condition entries that both route to the exit port (first-match wins); the default routes back into the loop.",
+      "config": {
+        "conditions": [
+          {"field": "assessor.done", "operator": "eq", "value": true, "output": "exit"},
+          {"field": "iteration", "operator": "gte", "value": "{{max_iterations}}", "output": "exit"}
+        ],
+        "defaultOutput": "loop"
+      }
+    },
+    {
+      "id": "summary",
+      "type": "transform",
+      "label": "Loop summary (terminal)",
+      "description": "Terminal node with no outgoing edges. Records the final loop status so the walk ends cleanly and the exit port is reachable for connectivity validation.",
+      "config": {
+        "operations": [
+          {"variable": "status", "operation": "set", "value": "loop-complete"}
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {"source": "editor", "target": "assessor"},
+    {"source": "assessor", "target": "increment-counter"},
+    {"source": "increment-counter", "target": "loop-or-exit"},
+    {"source": "loop-or-exit", "target": "editor", "output": "loop", "label": "back-edge: another pass"},
+    {"source": "loop-or-exit", "target": "summary", "output": "exit", "label": "done OR counter >= max"}
+  ]
+}

@@ -13,9 +13,9 @@ import (
 // a valid API key.
 var ErrNotConfigured = errors.New("anthropic provider not configured: set ANTHROPIC_API_KEY")
 
-var _ engine.LLMProvider = (*Provider)(nil)
+var _ engine.ChatProvider = (*Provider)(nil)
 
-// Provider is a stub implementation of engine.LLMProvider for the Anthropic API.
+// Provider is a stub implementation of engine.ChatProvider for the Anthropic API.
 type Provider struct {
 	apiKey string
 }
@@ -26,18 +26,18 @@ func New(apiKey string) *Provider {
 	return &Provider{apiKey: apiKey}
 }
 
-// Call makes a synchronous LLM request. Currently returns ErrNotConfigured
+// Chat makes a synchronous LLM request. Currently returns ErrNotConfigured
 // if no API key is set; a full implementation will be added in a future phase.
-func (p *Provider) Call(_ context.Context, _ engine.LLMRequest) (*engine.LLMResponse, error) {
+func (p *Provider) Chat(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
 	if p.apiKey == "" {
 		return nil, ErrNotConfigured
 	}
 	return nil, errors.New("anthropic provider: full implementation not yet available")
 }
 
-// StreamCall makes a streaming LLM request. Currently returns ErrNotConfigured
+// StreamChat makes a streaming LLM request. Currently returns ErrNotConfigured
 // if no API key is set; a full implementation will be added in a future phase.
-func (p *Provider) StreamCall(_ context.Context, _ engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func (p *Provider) StreamChat(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	if p.apiKey == "" {
 		return nil, ErrNotConfigured
 	}

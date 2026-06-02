@@ -11,6 +11,17 @@ type Config struct {
 	Tracing   TracingConfig
 	Queue     QueueConfig
 	Script    ScriptConfig
+	Profiles  []ProfileConfig
+}
+
+// ProfileConfig is the config-file shape of one profile-registry entry. It
+// mirrors domain/provider.Profile but stays in the config package to keep
+// config free of a provider-package import; adapter/config maps it across.
+type ProfileConfig struct {
+	Alias         string
+	Kind          string // "chat" | "agent"
+	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
+	Model         string
 }
 
 // ScriptConfig holds settings for script/tool_call process nodes.
@@ -59,11 +70,13 @@ type LLMConfig struct {
 	// Model is the default model passed to the provider when a node does not
 	// specify one.
 	Model string
-	// TimeoutSeconds bounds a single provider call. 0 means no timeout.
-	// SECURITY: 0 is a trivial queue-pinning DoS — a stuck or hostile
-	// subprocess runs forever and never frees its queue slot. The configured
-	// default is 1800 (30 minutes); explicitly setting 0 is supported but
-	// discouraged.
+	// TimeoutSeconds bounds a single provider call.
+	// SECURITY: a non-positive value is a trivial queue-pinning / hang-forever
+	// DoS — a stuck or hostile subprocess or HTTP endpoint runs forever and
+	// never frees its queue slot, and it is the only deadline the shared
+	// http.Client relies on. The config loader therefore FLOORS a non-positive
+	// value up to the sane default (1800s / 30 minutes); 0 can no longer
+	// silently disable every deadline.
 	TimeoutSeconds int
 	// SkipPermissions, when true, emits `--dangerously-skip-permissions` to the
 	// claude CLI, removing every tool-permission prompt. The agent will run

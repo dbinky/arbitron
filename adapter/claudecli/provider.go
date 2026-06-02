@@ -4,15 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
-// ErrWorkDirRequired is returned by Call/StreamCall when req.WorkDir is empty.
+// ErrWorkDirRequired is returned by Chat/StreamChat when req.WorkDir is empty.
 // SECURITY: an empty Dir on cmd.Exec means "inherit parent cwd" — i.e., the
 // engine launch directory containing arbitron.db, config.yaml, and other
 // secrets. PR #8 security MEDIUM thread 3291944671 item 1.
@@ -46,8 +44,13 @@ type Config struct {
 	Runner           CommandRunner
 }
 
-// Provider implements engine.LLMProvider by invoking the `claude` CLI in
+// Provider implements engine.ChatProvider by invoking the `claude` CLI in
 // headless (`--print`) mode.
+//
+// Deprecated: Provider is a thin pre-split shim retained only until Task 6
+// rewires cmd/arbitron/main.go onto NewChatAdapter / NewAgentAdapter. New code
+// should construct a ChatAdapter (tool-suppressed chat) or AgentAdapter
+// (tools-enabled mission) instead.
 type Provider struct {
 	binPath          string
 	defaultModel     string
@@ -59,7 +62,7 @@ type Provider struct {
 	runner           CommandRunner
 }
 
-var _ engine.LLMProvider = (*Provider)(nil)
+var _ engine.ChatProvider = (*Provider)(nil)
 
 // New constructs a claude-cli Provider from cfg. An empty BinaryPath is
 // resolved from PATH and common install directories. A zero Timeout means no
@@ -91,7 +94,7 @@ func New(cfg Config) *Provider {
 }
 
 // spec builds the RunSpec for a request.
-func (p *Provider) spec(req engine.LLMRequest) RunSpec {
+func (p *Provider) spec(req engine.ChatRequest) RunSpec {
 	return RunSpec{
 		Bin: p.binPath,
 		Args: buildArgs(req, argsPolicy{
@@ -106,88 +109,26 @@ func (p *Provider) spec(req engine.LLMRequest) RunSpec {
 	}
 }
 
-// validateWorkDir enforces the per-request WorkDir invariants:
-//   - non-empty (avoid the silent "inherit engine cwd" fallback)
-//   - resolves to an absolute path under p.workspaceRoot when one is configured
-//
-// An empty WorkspaceRoot disables the pin check (test convenience only).
+// validateWorkDir delegates to the shared per-call WorkDir invariant check.
 func (p *Provider) validateWorkDir(workDir string) error {
-	if workDir == "" {
-		return ErrWorkDirRequired
-	}
-	if p.workspaceRoot == "" {
-		return nil
-	}
-	abs, err := filepath.Abs(workDir)
-	if err != nil {
-		return fmt.Errorf("claudecli: resolve WorkDir: %w", err)
-	}
-	abs = filepath.Clean(abs)
-	root := filepath.Clean(p.workspaceRoot)
-	// Allow root itself, or any subdir of root. Use a separator-terminated
-	// prefix check to avoid /root/wsX shadowing /root/ws.
-	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return fmt.Errorf("%w: %q not under %q", ErrWorkDirEscapesRoot, abs, root)
-	}
-	return nil
+	return validateWorkDir(workDir, p.workspaceRoot)
 }
 
-// withTimeout derives a context honouring the provider timeout. Parent ctx
-// cancellation propagates regardless (context.WithTimeout derives from
-// parent), so callers don't need a separate cancel path for caller-side
-// shutdown — the no-op cancel returned when timeout <= 0 still gives a
-// uniform call shape at the call site. PR #8 thread 3291907737.
-func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if p.timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, p.timeout)
-}
-
-// Call runs claude to completion and returns the terminal result event.
-func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLMResponse, error) {
+// Chat runs claude to completion and returns the terminal result event.
+func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 	if err := p.validateWorkDir(req.WorkDir); err != nil {
 		return nil, err
 	}
 
-	runCtx, cancel := p.withTimeout(ctx)
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
+	result, _, err := collectResult(runCtx, p.runner, p.spec(req))
 	if err != nil {
-		return nil, fmt.Errorf("claudecli: call: %w", err)
+		return nil, err
 	}
 
-	var result streamEvent
-	var haveResult bool
-	var parseErr error
-	for line := range lines {
-		if parseErr != nil {
-			continue // keep draining; don't process further
-		}
-		ev, ok, err := parseEvent([]byte(line))
-		if err != nil {
-			parseErr = err
-			continue
-		}
-		if ok && ev.Kind == eventResult {
-			result, haveResult = ev, true
-		}
-	}
-	if waitErr := wait(); waitErr != nil {
-		return nil, fmt.Errorf("claudecli: claude exited with error: %w", waitErr)
-	}
-	if parseErr != nil {
-		return nil, parseErr
-	}
-	if !haveResult {
-		return nil, fmt.Errorf("claudecli: no result event in claude output")
-	}
-	if result.IsError {
-		return nil, fmt.Errorf("claudecli: claude reported an error: %s", result.Text)
-	}
-
-	return &engine.LLMResponse{
+	return &engine.ChatResponse{
 		Output:    result.Text,
 		SessionID: result.SessionID,
 		Model:     req.Model,
@@ -196,17 +137,17 @@ func (p *Provider) Call(ctx context.Context, req engine.LLMRequest) (*engine.LLM
 	}, nil
 }
 
-// StreamCall runs claude and streams assistant text as it arrives. The final
+// StreamChat runs claude and streams assistant text as it arrives. The final
 // chunk has Done=true and carries the session id and token counts. Any failure
 // is reported as a chunk with a non-nil Error. The internal goroutine always
 // drains the runner's lines channel and calls wait(), honouring the
 // CommandRunner contract even when an error is encountered mid-stream.
-func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-chan engine.LLMStreamChunk, error) {
+func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	if err := p.validateWorkDir(req.WorkDir); err != nil {
 		return nil, err
 	}
 
-	runCtx, cancel := p.withTimeout(ctx)
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
 	if err != nil {
@@ -214,7 +155,7 @@ func (p *Provider) StreamCall(ctx context.Context, req engine.LLMRequest) (<-cha
 		return nil, fmt.Errorf("claudecli: stream call: %w", err)
 	}
 
-	out := make(chan engine.LLMStreamChunk)
+	out := make(chan engine.ChatChunk)
 	go func() {
 		defer cancel()
 		defer close(out)

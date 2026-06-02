@@ -1,14 +1,44 @@
 package procenv_test
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Happy path: a positive duration derives a context carrying a deadline.
+func TestWithTimeout_PositiveSetsDeadline(t *testing.T) {
+	ctx, cancel := procenv.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, ok := ctx.Deadline()
+	assert.True(t, ok, "a positive duration must set a deadline")
+}
+
+// Edge: a non-positive duration returns the parent ctx unchanged (no deadline)
+// with a no-op cancel that is safe to call.
+func TestWithTimeout_NonPositiveReturnsParent(t *testing.T) {
+	for _, d := range []time.Duration{0, -1 * time.Second} {
+		parent := context.Background()
+		ctx, cancel := procenv.WithTimeout(parent, d)
+		_, ok := ctx.Deadline()
+		assert.False(t, ok, "a non-positive duration must not set a deadline (d=%v)", d)
+		assert.Equal(t, parent, ctx, "the parent ctx is returned unchanged")
+		cancel() // must be a safe no-op
+	}
+}
+
+// Success: cancelling the returned cancel func cancels the derived context.
+func TestWithTimeout_CancelPropagates(t *testing.T) {
+	ctx, cancel := procenv.WithTimeout(context.Background(), time.Hour)
+	cancel()
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+}
 
 func TestBaseEnv_KeepsAllowlistedDropsOthers(t *testing.T) {
 	t.Setenv("HOME", "/home/test")

@@ -1,6 +1,117 @@
 package engine_test
 
-import "os"
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
+)
+
+// staticChatSelector returns the same ChatProvider for every binding. It lets
+// executor tests inject a single fake through the new ChatProviderSelector seam
+// without depending on the concrete adapter/provider factory.
+type staticChatSelector struct {
+	provider engine.ChatProvider
+	err      error
+}
+
+func (s staticChatSelector) ChatProviderFor(provider.ResolvedBinding) (engine.ChatProvider, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.provider, nil
+}
+
+var _ engine.ChatProviderSelector = staticChatSelector{}
+
+// chatSelector wraps a ChatProvider in a ChatProviderSelector for tests.
+func chatSelector(p engine.ChatProvider) engine.ChatProviderSelector {
+	return staticChatSelector{provider: p}
+}
+
+// staticAgentSelector returns the same AgentProvider for every binding.
+type staticAgentSelector struct {
+	provider engine.AgentProvider
+	err      error
+}
+
+func (s staticAgentSelector) AgentProviderFor(provider.ResolvedBinding) (engine.AgentProvider, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.provider, nil
+}
+
+var _ engine.AgentProviderSelector = staticAgentSelector{}
+
+// agentSelector wraps an AgentProvider in an AgentProviderSelector for tests.
+func agentSelector(p engine.AgentProvider) engine.AgentProviderSelector {
+	return staticAgentSelector{provider: p}
+}
+
+// fakeResolver is an in-memory provider.ProfileResolver for engine tests. A
+// miss returns provider.ErrUnknownProfile (wrapped), mirroring the real
+// StaticProfileResolver.
+type fakeResolver struct {
+	byAlias map[string]provider.Profile
+}
+
+func newFakeResolver(profiles ...provider.Profile) *fakeResolver {
+	m := make(map[string]provider.Profile, len(profiles))
+	for _, p := range profiles {
+		m[p.Alias] = p
+	}
+	return &fakeResolver{byAlias: m}
+}
+
+func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
+	p, ok := r.byAlias[alias]
+	if !ok {
+		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+	}
+	return provider.ResolvedBinding{
+		Kind:  p.Kind,
+		Model: p.Model,
+		RevealKey: func(context.Context) (string, error) {
+			return "", nil
+		},
+	}, nil
+}
+
+var _ provider.ProfileResolver = (*fakeResolver)(nil)
+
+// spyRevealResolver is a ProfileResolver whose bindings carry a RevealKey that
+// increments a counter. Executor security tests use this to assert that the
+// executor itself never calls RevealKey — credential injection is the
+// selector/adapter's responsibility, not the executor's.
+type spyRevealResolver struct {
+	alias       string
+	kind        provider.ProfileKind
+	model       string
+	revealCalls *int
+}
+
+func newSpyRevealResolver(alias string, kind provider.ProfileKind, model string, calls *int) *spyRevealResolver {
+	return &spyRevealResolver{alias: alias, kind: kind, model: model, revealCalls: calls}
+}
+
+func (r *spyRevealResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
+	if alias != r.alias {
+		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
+	}
+	return provider.ResolvedBinding{
+		Kind:  r.kind,
+		Model: r.model,
+		RevealKey: func(context.Context) (string, error) {
+			*r.revealCalls++
+			return "", nil
+		},
+	}, nil
+}
+
+var _ provider.ProfileResolver = (*spyRevealResolver)(nil)
 
 // mockFileReader implements engine.FileReader for tests.
 type mockFileReader struct {
