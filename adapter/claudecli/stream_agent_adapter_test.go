@@ -1,0 +1,220 @@
+package claudecli
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/arbitron/arbitron/domain/engine"
+)
+
+func TestStreamAgentAdapterImplementsPort(t *testing.T) {
+	var _ engine.ChatProvider = (*StreamAgentAdapter)(nil)
+}
+
+func TestStreamAgentAdapterChat(t *testing.T) {
+	// Happy path — arg threading: skip-permissions present, no tool-suppression.
+	t.Run("emits --dangerously-skip-permissions and not --allowedTools empty", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{
+			BinaryPath:   "claude",
+			AllowedTools: []string{"Read", "Bash"},
+			Runner:       fr,
+		})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "do it", WorkDir: "/tmp/ws"})
+		require.NoError(t, err)
+
+		// Must contain --dangerously-skip-permissions.
+		assert.Contains(t, fr.gotSpec.Args, "--dangerously-skip-permissions",
+			"stream agent must always emit --dangerously-skip-permissions")
+
+		// Must NOT suppress tools: --allowedTools "" must not appear.
+		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		if ok {
+			// If --allowedTools is present, it must not be the empty suppress-tools value.
+			assert.NotEqual(t, "", val,
+				"stream agent must not suppress tools with an empty --allowedTools set")
+		}
+
+		// WorkDir threads through to RunSpec.Dir.
+		assert.Equal(t, "/tmp/ws", fr.gotSpec.Dir)
+	})
+
+	// Happy path — AllowedTools from config are forwarded.
+	t.Run("forwards configured AllowedTools to --allowedTools", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{
+			BinaryPath:   "claude",
+			AllowedTools: []string{"Read", "Bash"},
+			Runner:       fr,
+		})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+		require.NoError(t, err)
+
+		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		require.True(t, ok, "--allowedTools must be present when AllowedTools configured")
+		assert.Equal(t, "Read,Bash", val)
+	})
+
+	// Happy path — no AllowedTools in config: --allowedTools flag absent.
+	t.Run("no --allowedTools flag when config AllowedTools is empty", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{
+			BinaryPath: "claude",
+			Runner:     fr,
+		})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+		require.NoError(t, err)
+
+		_, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		assert.False(t, ok, "--allowedTools must not be present when AllowedTools is empty")
+	})
+
+	// Edge — WorkDir is forwarded to RunSpec.Dir.
+	t.Run("WorkDir threads through to RunSpec.Dir", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp/mydir"})
+		require.NoError(t, err)
+		assert.Equal(t, "/tmp/mydir", fr.gotSpec.Dir)
+	})
+
+	// Error — empty WorkDir is rejected without invoking the runner.
+	t.Run("empty WorkDir is rejected without invoking runner", func(t *testing.T) {
+		fr := &fakeRunner{}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirRequired)
+		assert.False(t, fr.runCalled)
+	})
+}
+
+func TestStreamAgentAdapterStreamChat(t *testing.T) {
+	// Happy path — streaming returns assistant text then Done chunk.
+	t.Run("emits assistant text then a terminal Done chunk", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"system","subtype":"init","session_id":"s1"}`,
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"hello "}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"world"}]}}`,
+			`{"type":"result","is_error":false,"result":"hello world","session_id":"s1","usage":{"input_tokens":3,"output_tokens":5}}`,
+		}}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		ch, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+
+		require.NotEmpty(t, chunks)
+		var text string
+		for _, c := range chunks {
+			text += c.Token
+		}
+		assert.Equal(t, "hello world", text)
+
+		last := chunks[len(chunks)-1]
+		assert.True(t, last.Done)
+		assert.Equal(t, "s1", last.SessionID)
+		assert.Equal(t, 3, last.TokensIn)
+		assert.Equal(t, 5, last.TokensOut)
+	})
+
+	// Happy path — stream path has skip-permissions and no tool-suppression.
+	t.Run("stream path emits --dangerously-skip-permissions and no empty --allowedTools", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		ch, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+		require.NoError(t, err)
+		collectChunks(t, ch)
+
+		assert.Contains(t, fr.gotSpec.Args, "--dangerously-skip-permissions")
+		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		if ok {
+			assert.NotEqual(t, "", val, "must not suppress tools with empty --allowedTools")
+		}
+	})
+
+	// Edge — tool_use + tool_result frames in stream do not corrupt text or crash.
+	t.Run("tool frames in stream do not corrupt text accumulation or crash", func(t *testing.T) {
+		// Simulate: assistant text, then an assistant message with a tool_use
+		// block (non-text content), then a tool_result (user event), then more
+		// assistant text, then the final result.
+		fr := &fakeRunner{lines: []string{
+			`{"type":"system","subtype":"init","session_id":"s1"}`,
+			// First text chunk.
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"before "}]}}`,
+			// Tool-use block: assistant message with tool_use content (no text block).
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Read","input":{}}]}}`,
+			// Tool result: user event carrying the tool result.
+			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"file contents"}]}}`,
+			// Second text chunk after tool round-trip.
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"after"}]}}`,
+			// Terminal result.
+			`{"type":"result","is_error":false,"result":"before after","session_id":"s1","usage":{"input_tokens":10,"output_tokens":4}}`,
+		}}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		ch, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "use tool", WorkDir: "/tmp"})
+		require.NoError(t, err)
+		chunks := collectChunks(t, ch)
+
+		require.NotEmpty(t, chunks, "must emit at least the Done chunk")
+
+		// Assert no chunk carries an error.
+		for _, c := range chunks {
+			assert.NoError(t, c.Error, "tool frames must not produce error chunks")
+		}
+
+		// Assert assistant TEXT accumulated correctly (tool frames contribute no text).
+		var text string
+		for _, c := range chunks {
+			text += c.Token
+		}
+		assert.Equal(t, "before after", text,
+			"tool_use and tool_result frames must not contribute to text accumulation")
+
+		// Assert terminal Done chunk.
+		last := chunks[len(chunks)-1]
+		assert.True(t, last.Done, "last chunk must be Done")
+		assert.Equal(t, "s1", last.SessionID)
+	})
+
+	// Error — start failure returns error from StreamChat.
+	t.Run("start failure returns an error from StreamChat", func(t *testing.T) {
+		fr := &fakeRunner{startErr: errors.New("binary not found")}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		_, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
+		require.Error(t, err)
+	})
+
+	// Error — empty WorkDir is rejected.
+	t.Run("empty WorkDir is rejected", func(t *testing.T) {
+		fr := &fakeRunner{}
+		a := NewStreamAgentAdapter(Config{BinaryPath: "claude", Runner: fr})
+
+		_, err := a.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrWorkDirRequired)
+		assert.False(t, fr.runCalled)
+	})
+}

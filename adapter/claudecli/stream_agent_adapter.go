@@ -1,0 +1,118 @@
+package claudecli
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
+	"github.com/arbitron/arbitron/domain/engine"
+)
+
+// StreamAgentAdapter implements engine.ChatProvider by invoking the `claude`
+// CLI in headless (`--print`) streaming mode with tools enabled: it emits
+// `--dangerously-skip-permissions` and forwards the configured AllowedTools
+// (or a per-request ToolScope), so the model may execute tools inside the
+// instance workspace. Unlike ChatAdapter, no tool-suppression flag is emitted.
+//
+// This adapter is intended for the interactive_agent node, which requires a
+// streaming, tool-enabled chat interface so the engine can relay partial output
+// while the agent executes tool calls.
+type StreamAgentAdapter struct {
+	core adapterCore
+}
+
+var _ engine.ChatProvider = (*StreamAgentAdapter)(nil)
+
+// NewStreamAgentAdapter constructs a tool-enabled streaming chat adapter from
+// cfg. An empty BinaryPath is resolved from PATH and common install
+// directories. A zero Timeout means no timeout. A nil Runner uses the
+// production os/exec runner.
+//
+// SECURITY: the stream-agent path always emits --dangerously-skip-permissions,
+// removing the human-in-the-loop tool gate. The allowed-tools allowlist
+// (cfg.AllowedTools) is the only bound on what the model may run.
+func NewStreamAgentAdapter(cfg Config) *StreamAgentAdapter {
+	return &StreamAgentAdapter{core: newAdapterCore(cfg)}
+}
+
+// spec builds the tool-enabled RunSpec for a chat request. The argsPolicy sets
+// SkipPermissions=true and forwards AllowedTools from the adapter's configured
+// allowedTools, mirroring AgentAdapter.spec's fallback behaviour.
+// SuppressTools is never set.
+func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
+	return RunSpec{
+		Bin: a.core.binPath,
+		Args: buildArgs(req, argsPolicy{
+			DefaultModel:    a.core.defaultModel,
+			SkipPermissions: true,
+			AllowedTools:    a.core.allowedTools,
+		}),
+		Stdin:            req.Prompt,
+		Dir:              req.WorkDir,
+		Env:              procenv.BaseEnv(),
+		MaxResponseBytes: a.core.maxResponseBytes,
+	}
+}
+
+// Chat runs claude to completion and returns the terminal result event.
+func (a *StreamAgentAdapter) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+	if err := a.core.validateWorkDir(req.WorkDir); err != nil {
+		return nil, err
+	}
+
+	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
+	defer cancel()
+
+	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req))
+	if err != nil {
+		return nil, err
+	}
+
+	return &engine.ChatResponse{
+		Output:    result.Text,
+		SessionID: result.SessionID,
+		Model:     req.Model,
+		TokensIn:  result.TokensIn,
+		TokensOut: result.TokensOut,
+	}, nil
+}
+
+// StreamChat runs claude and streams assistant text as it arrives. The final
+// chunk has Done=true and carries the session id and token counts. Any failure
+// is reported as a chunk with a non-nil Error. The internal goroutine always
+// drains the runner's lines channel and calls wait().
+//
+// Tool frames (assistant messages with tool_use content blocks, user messages
+// carrying tool_result) are tolerated: the streamState loop ignores non-text
+// content blocks in assistant messages (assistantText skips them) and treats
+// user/tool-result events as no-ops in the switch, so text accumulation and
+// the Done chunk are unaffected by tool round-trips.
+func (a *StreamAgentAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+	if err := a.core.validateWorkDir(req.WorkDir); err != nil {
+		return nil, err
+	}
+
+	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
+
+	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("claudecli: stream call: %w", err)
+	}
+
+	out := make(chan engine.ChatChunk)
+	go func() {
+		defer cancel()
+		defer close(out)
+
+		sendChunk := makeSendChunk(runCtx, out)
+
+		var st streamState
+		for line := range lines {
+			st.Handle(line, sendChunk)
+		}
+		st.Finalize(wait(), sendChunk)
+	}()
+
+	return out, nil
+}
