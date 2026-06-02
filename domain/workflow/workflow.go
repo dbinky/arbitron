@@ -5,16 +5,16 @@ package workflow
 type NodeType string
 
 const (
-	NodeTypeLLMCall     NodeType = "llm_call"
-	NodeTypeScript      NodeType = "script"
-	NodeTypeToolCall    NodeType = "tool_call"
-	NodeTypeConditional NodeType = "conditional"
-	NodeTypeTransform   NodeType = "transform"
-	NodeTypeTimerDelay  NodeType = "timer_delay"
-	NodeTypeWebhookWait NodeType = "webhook_wait"
+	NodeTypeLLMCall          NodeType = "llm_call"
+	NodeTypeScript           NodeType = "script"
+	NodeTypeToolCall         NodeType = "tool_call"
+	NodeTypeConditional      NodeType = "conditional"
+	NodeTypeTransform        NodeType = "transform"
+	NodeTypeTimerDelay       NodeType = "timer_delay"
+	NodeTypeWebhookWait      NodeType = "webhook_wait"
 	NodeTypeInteractiveLLM   NodeType = "interactive_llm"
 	NodeTypeInteractiveAgent NodeType = "interactive_agent"
-	NodeTypeAgentCall   NodeType = "agent_call"
+	NodeTypeAgentCall        NodeType = "agent_call"
 )
 
 // IsInteractive reports whether t is one of the human-in-the-loop node types.
