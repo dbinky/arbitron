@@ -9,6 +9,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -111,6 +112,22 @@ func interactiveTestSetup() (
 	return instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID
 }
 
+// interactiveChatProfile is the chat model_profile alias used by the standard
+// interactiveNode. The fakeResolver below resolves it to a chat binding whose
+// Model is the sonnet model the existing assertions expect.
+const interactiveChatProfile = "interactive-chat"
+const interactiveChatModel = "claude-sonnet-4-20250514"
+
+// interactiveResolver returns a fakeResolver that knows the chat profile used by
+// interactiveNode (resolving to a chat binding with interactiveChatModel).
+func interactiveResolver() *fakeResolver {
+	return newFakeResolver(provider.Profile{
+		Alias: interactiveChatProfile,
+		Kind:  provider.ProfileKindChat,
+		Model: interactiveChatModel,
+	})
+}
+
 func interactiveNode() workflow.Node {
 	return workflow.Node{
 		ID:   "interact",
@@ -119,7 +136,7 @@ func interactiveNode() workflow.Node {
 			SystemPrompt:      "You are a helpful assistant.",
 			OrchestrationFile: "orchestration.md",
 			TemplateFile:      "template.md",
-			Model:             "claude-sonnet-4-20250514",
+			ModelProfile:      interactiveChatProfile,
 			MaxTokens:         4096,
 			Temperature:       0.7,
 			OutputSchema: map[string]any{
@@ -143,7 +160,8 @@ func buildInteractiveExecutor(
 	return engine.NewInteractiveExecutor(
 		instRepo,
 		nodeExecRepo,
-		llmProvider,
+		streamSelector(llmProvider),
+		interactiveResolver(),
 		fileReader,
 		eventBus,
 		queueMgr,
@@ -597,7 +615,7 @@ func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
 	executor := engine.NewInteractiveExecutor(
-		emptyInstRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr,
+		emptyInstRepo, nodeExecRepo, streamSelector(llmProvider), interactiveResolver(), fileReader, eventBus, queueMgr,
 	)
 
 	instanceID := uuid.New()
@@ -606,6 +624,94 @@ func TestInteractiveExecutor_UpdateStateFailure_ReturnsError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to set waiting state")
+}
+
+func TestInteractiveExecutor_AgentProfile_UsesAgentStreamAndBindingModel(t *testing.T) {
+	// An interactive_agent node whose model_profile resolves to an AGENT binding
+	// must stream via the agent (tool-enabled) provider, and the request model
+	// must come from binding.Model — not from node.Config.Model.
+	instRepo, nodeExecRepo, _, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	chatProv := newMockStreamingChatProvider()
+	agentProv := newMockStreamingChatProvider()
+	agentProv.streamCallFn = cannedStream([]string{"agent reply"}, 7, 9)
+
+	resolver := newFakeResolver(provider.Profile{
+		Alias: "agent-prof",
+		Kind:  provider.ProfileKindAgent,
+		Model: "claude-opus-agent",
+	})
+	sel := &fakeStreamSelector{chatProv: chatProv, agentProv: agentProv}
+
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, sel, resolver, fileReader, eventBus, queueMgr,
+	)
+
+	node := interactiveNode()
+	node.Type = workflow.NodeTypeInteractiveAgent
+	node.Config.ModelProfile = "agent-prof"
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	result, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Selector saw the agent binding's model.
+	assert.Equal(t, provider.ProfileKindAgent, sel.gotKind)
+	assert.Equal(t, "claude-opus-agent", sel.gotModel)
+
+	// The agent stream provider was used (not the chat provider).
+	assert.Empty(t, chatProv.getCapturedReqs(), "chat provider must not be used for an agent profile")
+	agentReqs := agentProv.getCapturedReqs()
+	require.Len(t, agentReqs, 1)
+	assert.Equal(t, "claude-opus-agent", agentReqs[0].Model, "request model must come from binding.Model")
+
+	// Persisted model reflects the resolved binding model.
+	assert.Equal(t, "claude-opus-agent", result.LLMModel)
+}
+
+func TestInteractiveExecutor_UnknownProfile_ResolveErrorSurfaces(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	// Resolver knows nothing -> Resolve returns ErrUnknownProfile.
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, streamSelector(llmProvider), newFakeResolver(), fileReader, eventBus, queueMgr,
+	)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
+	assert.Contains(t, err.Error(), "resolve profile")
+	// LLM must not be called when the profile cannot be resolved.
+	assert.Empty(t, llmProvider.getCapturedReqs())
+}
+
+func TestInteractiveExecutor_SelectStreamProviderError_Fails(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	sel := &fakeStreamSelector{err: fmt.Errorf("no stream backend")}
+
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, sel, interactiveResolver(), fileReader, eventBus, queueMgr,
+	)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "select stream provider")
+	assert.Empty(t, llmProvider.getCapturedReqs())
 }
 
 func TestInteractiveExecutor_AccumulatesFullResponse(t *testing.T) {
@@ -732,7 +838,7 @@ func TestInteractiveExecutor_NoNotificationDeps_DoesNotPanic(t *testing.T) {
 	llmProvider.streamCallFn = cannedStream([]string{"OK"}, 5, 10)
 
 	executor := engine.NewInteractiveExecutor(
-		instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr,
+		instRepo, nodeExecRepo, streamSelector(llmProvider), interactiveResolver(), fileReader, eventBus, queueMgr,
 	)
 
 	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)

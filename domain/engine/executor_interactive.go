@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -20,31 +21,37 @@ var _ NodeExecutor = (*InteractiveExecutor)(nil)
 // conversation, streaming the first response, and transitioning the instance
 // to the waiting state. Notification creation is handled by the engine after
 // the executor returns.
+// Profile-aware: the executor resolves the node's model_profile to a binding,
+// then picks the streaming backend via the InteractiveStreamSelector (chat
+// profile -> tool-suppressed chat stream; agent profile -> tool-enabled stream).
 type InteractiveExecutor struct {
-	instances   instance.InstanceRepository
-	nodeExecs   instance.NodeExecutionRepository
-	llmProvider ChatProvider
-	fileReader  FileReader
-	eventBus    EventBus
-	queueMgr    QueueManager
+	instances  instance.InstanceRepository
+	nodeExecs  instance.NodeExecutionRepository
+	selector   InteractiveStreamSelector
+	resolver   provider.ProfileResolver
+	fileReader FileReader
+	eventBus   EventBus
+	queueMgr   QueueManager
 }
 
 // NewInteractiveExecutor constructs a new InteractiveExecutor with all required dependencies.
 func NewInteractiveExecutor(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
-	llmProvider ChatProvider,
+	selector InteractiveStreamSelector,
+	resolver provider.ProfileResolver,
 	fileReader FileReader,
 	eventBus EventBus,
 	queueMgr QueueManager,
 ) *InteractiveExecutor {
 	return &InteractiveExecutor{
-		instances:   instances,
-		nodeExecs:   nodeExecs,
-		llmProvider: llmProvider,
-		fileReader:  fileReader,
-		eventBus:    eventBus,
-		queueMgr:    queueMgr,
+		instances:  instances,
+		nodeExecs:  nodeExecs,
+		selector:   selector,
+		resolver:   resolver,
+		fileReader: fileReader,
+		eventBus:   eventBus,
+		queueMgr:   queueMgr,
 	}
 }
 
@@ -98,17 +105,30 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
 		sentinelInstruction(nonce, node.Config.OutputSchema)
 
+	// 6a. Resolve the node's model_profile to a binding, then select the
+	// streaming backend for it: a chat binding yields the tool-suppressed chat
+	// stream, an agent binding yields the tool-enabled (YOLO) stream. The model
+	// comes from the resolved binding, never from node.Config.Model.
+	binding, err := e.resolver.Resolve(ctx, node.Config.ModelProfile)
+	if err != nil {
+		return nil, fmt.Errorf("interactive %q: resolve profile: %w", node.ID, err)
+	}
+	streamProvider, err := e.selector.StreamProviderFor(binding)
+	if err != nil {
+		return nil, fmt.Errorf("interactive %q: select stream provider: %w", node.ID, err)
+	}
+
 	req := ChatRequest{
 		SystemPrompt: node.Config.SystemPrompt,
 		Prompt:       userMessage,
-		Model:        node.Config.Model,
+		Model:        binding.Model,
 		MaxTokens:    node.Config.MaxTokens,
 		Temperature:  node.Config.Temperature,
 		WorkDir:      workDirStr,
 	}
 
 	// 7. Call the LLM provider with streaming.
-	stream, err := e.llmProvider.StreamChat(ctx, req)
+	stream, err := streamProvider.StreamChat(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: stream call: %w", node.ID, err)
 	}
@@ -167,7 +187,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	// 10. Write node execution record with succeeded status.
 	now := time.Now()
-	model := node.Config.Model
+	model := binding.Model
 	nodeExec := &instance.NodeExecution{
 		ID:              uuid.New(),
 		InstanceID:      instanceID,

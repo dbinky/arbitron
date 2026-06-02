@@ -17,7 +17,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/arbitron/arbitron/adapter/anthropic"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
@@ -225,17 +224,6 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
 	}
 
-	// The empty-connection (subscription) path resolves to the claude-cli chat
-	// adapter. interactive/conversation executors below also use this single
-	// chat provider directly (they are not per-node alias-selected).
-	var chatProvider engine.ChatProvider
-	switch cfg.LLM.Provider {
-	case "claude-cli":
-		chatProvider = claudecli.NewChatAdapter(chatCfg)
-	default:
-		chatProvider = anthropic.New(cfg.LLM.APIKey)
-	}
-
 	// The agent backend for the empty-connection path is the claude-cli agent
 	// adapter: every Claude/subscription agent profile resolves to it (design
 	// §4). Non-Claude agent profiles route to opencode via the factory below.
@@ -416,15 +404,24 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	logNotifier := adaptnotif.NewLogNotifier(logger)
 	eng.SetExternalNotifier(logNotifier)
 
-	// 12c. Register the interactive executor. Notification creation is handled
-	// by the engine when it processes the IsWait result.
-	executors[workflow.NodeTypeInteractiveLLM] = engine.NewInteractiveExecutor(
-		instanceRepo, nodeExecRepo, chatProvider, fileReader, bus, queueMgr,
+	// 12c. Build the profile-aware interactive stream selector: chat profiles
+	// route to the tool-suppressed chat stream (via the provider factory), agent
+	// profiles route to the tool-enabled (YOLO) claude-cli streaming adapter.
+	streamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
+	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(providerFactory, streamAgent)
+
+	// Register one interactive executor instance under BOTH interactive node
+	// types. Notification creation is handled by the engine when it processes the
+	// IsWait result.
+	interactiveExec := engine.NewInteractiveExecutor(
+		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, fileReader, bus, queueMgr,
 	)
+	executors[workflow.NodeTypeInteractiveLLM] = interactiveExec
+	executors[workflow.NodeTypeInteractiveAgent] = interactiveExec
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
-		instanceRepo, nodeExecRepo, chatProvider, bus, queueMgr,
+		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, bus, queueMgr,
 	)
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans

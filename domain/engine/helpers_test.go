@@ -51,6 +51,37 @@ func agentSelector(p engine.AgentProvider) engine.AgentProviderSelector {
 	return staticAgentSelector{provider: p}
 }
 
+// fakeStreamSelector implements engine.InteractiveStreamSelector for tests. It
+// records the binding it was asked to route and returns chatProv for chat-kind
+// bindings and agentProv for agent-kind bindings, mirroring the real
+// adapter/provider InteractiveStreamSelector routing. A non-nil err short-circuits.
+type fakeStreamSelector struct {
+	chatProv  engine.ChatProvider
+	agentProv engine.ChatProvider
+	err       error
+	gotKind   provider.ProfileKind
+	gotModel  string
+}
+
+func (s *fakeStreamSelector) StreamProviderFor(b provider.ResolvedBinding) (engine.ChatProvider, error) {
+	s.gotKind = b.Kind
+	s.gotModel = b.Model
+	if s.err != nil {
+		return nil, s.err
+	}
+	if b.Kind == provider.ProfileKindAgent {
+		return s.agentProv, nil
+	}
+	return s.chatProv, nil
+}
+
+var _ engine.InteractiveStreamSelector = (*fakeStreamSelector)(nil)
+
+// streamSelector wraps a single ChatProvider as a chat-kind InteractiveStreamSelector.
+func streamSelector(p engine.ChatProvider) *fakeStreamSelector {
+	return &fakeStreamSelector{chatProv: p, agentProv: p}
+}
+
 // fakeResolver is an in-memory provider.ProfileResolver for engine tests. A
 // miss returns provider.ErrUnknownProfile (wrapped), mirroring the real
 // StaticProfileResolver.

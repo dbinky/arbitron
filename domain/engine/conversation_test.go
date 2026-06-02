@@ -8,6 +8,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -50,7 +51,7 @@ func conversationTestSetup(t *testing.T) (
 				Entrypoint: true,
 				Config: workflow.NodeConfig{
 					SystemPrompt: "You are a helpful assistant.",
-					Model:        "claude-sonnet-4-20250514",
+					ModelProfile: interactiveChatProfile,
 					MaxTokens:    4096,
 					Temperature:  0.7,
 					OutputSchema: map[string]any{
@@ -113,7 +114,8 @@ func buildConversationHandler(
 	return engine.NewConversationHandler(
 		instRepo,
 		nodeExecRepo,
-		llmProvider,
+		streamSelector(llmProvider),
+		interactiveResolver(),
 		eventBus,
 		queueMgr,
 	)
@@ -247,6 +249,84 @@ func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 	// longer expressible.
 	assert.Equal(t, "New question", req.Prompt)
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
+}
+
+func TestConversationHandler_HandleMessage_AgentProfile_UsesAgentStreamAndBindingModel(t *testing.T) {
+	// A resumed turn on an interactive_agent node must resolve the node's
+	// model_profile to an AGENT binding, select the agent (tool-enabled) stream
+	// provider, and send binding.Model on the request.
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecutionRepo()
+	eventBus := newMockEventBus()
+	queueMgr := newMockQueueManager()
+
+	instanceID := uuid.New()
+	nodeID := "agent-interact"
+
+	wf := workflow.Workflow{
+		Name: "test-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         nodeID,
+				Type:       workflow.NodeTypeInteractiveAgent,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					SystemPrompt: "You are an agent.",
+					ModelProfile: "agent-prof",
+				},
+			},
+		},
+	}
+	wfBytes, err := json.Marshal(wf)
+	require.NoError(t, err)
+	var wfSnapshot map[string]any
+	require.NoError(t, json.Unmarshal(wfBytes, &wfSnapshot))
+
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID] = &instance.Instance{
+		ID:               instanceID,
+		State:            instance.StateWaiting,
+		CurrentNodeID:    &nodeID,
+		WorkflowSnapshot: wfSnapshot,
+		Variables:        map[string]any{},
+	}
+	instRepo.mu.Unlock()
+
+	require.NoError(t, nodeExecRepo.Create(context.Background(), &instance.NodeExecution{
+		ID:         uuid.New(),
+		InstanceID: instanceID,
+		NodeID:     nodeID,
+		Attempt:    1,
+		Status:     instance.NodeStatusSucceeded,
+		LLMConversation: map[string]any{
+			"nonce": testNonce,
+			"messages": []map[string]any{
+				{"role": "user", "content": "Initial"},
+				{"role": "assistant", "content": "Ready."},
+			},
+		},
+	}))
+
+	chatProv := newMockStreamingChatProvider()
+	agentProv := newMockStreamingChatProvider()
+	agentProv.streamCallFn = cannedStream([]string{"agent turn"}, 3, 4)
+
+	resolver := newFakeResolver(provider.Profile{
+		Alias: "agent-prof",
+		Kind:  provider.ProfileKindAgent,
+		Model: "claude-opus-agent",
+	})
+	sel := &fakeStreamSelector{chatProv: chatProv, agentProv: agentProv}
+
+	handler := engine.NewConversationHandler(instRepo, nodeExecRepo, sel, resolver, eventBus, queueMgr)
+
+	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "Do the thing"))
+
+	assert.Equal(t, provider.ProfileKindAgent, sel.gotKind)
+	assert.Empty(t, chatProv.getCapturedReqs(), "chat provider must not be used for an agent profile")
+	agentReqs := agentProv.getCapturedReqs()
+	require.Len(t, agentReqs, 1)
+	assert.Equal(t, "claude-opus-agent", agentReqs[0].Model, "request model must come from binding.Model")
 }
 
 // ---------------------------------------------------------------------------
