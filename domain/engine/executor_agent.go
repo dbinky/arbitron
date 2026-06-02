@@ -49,7 +49,7 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	prompt := variable.Resolve(string(templateBytes), vars)
 
 	// Resolve the agent profile alias to a concrete model.
-	binding, err := e.resolver.Resolve(node.Config.ModelProfile)
+	binding, err := e.resolver.Resolve(ctx, node.Config.ModelProfile)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: resolve profile: %w", node.ID, err)
 	}

@@ -66,7 +66,7 @@ func newFakeResolver(profiles ...provider.Profile) *fakeResolver {
 	return &fakeResolver{byAlias: m}
 }
 
-func (r *fakeResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
+func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
 	p, ok := r.byAlias[alias]
 	if !ok {
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
@@ -98,7 +98,7 @@ func newSpyRevealResolver(alias string, kind provider.ProfileKind, model string,
 	return &spyRevealResolver{alias: alias, kind: kind, model: model, revealCalls: calls}
 }
 
-func (r *spyRevealResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
+func (r *spyRevealResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
 	if alias != r.alias {
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}

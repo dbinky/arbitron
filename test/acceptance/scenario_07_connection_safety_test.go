@@ -156,7 +156,7 @@ func TestAcceptance_07_ConnectionSafety_MultiRegion(t *testing.T) {
 
 	// Resolve each profile and reveal its key — each must map to its OWN endpoint
 	// and key, with no cross-region contamination.
-	east, err := h.resolver.Resolve("assessor-east")
+	east, err := h.resolver.Resolve(ctx, "assessor-east")
 	require.NoError(t, err)
 	assert.Equal(t, "https://east.example.azure.com", east.BaseURL)
 	assert.Equal(t, "gpt-4o-east", east.Model)
@@ -165,7 +165,7 @@ func TestAcceptance_07_ConnectionSafety_MultiRegion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, eastKey, eastRevealed, "east profile resolves to the east key")
 
-	west, err := h.resolver.Resolve("assessor-west")
+	west, err := h.resolver.Resolve(ctx, "assessor-west")
 	require.NoError(t, err)
 	assert.Equal(t, "https://west.example.azure.com", west.BaseURL)
 	assert.Equal(t, "llama-3-west", west.Model)

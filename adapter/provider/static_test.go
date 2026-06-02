@@ -49,8 +49,13 @@ func (f *fakeConnectionStore) List(context.Context) ([]provider.Connection, erro
 	return nil, errors.New("not implemented")
 }
 
-func (f *fakeConnectionStore) Get(_ context.Context, name string) (provider.Connection, error) {
+func (f *fakeConnectionStore) Get(ctx context.Context, name string) (provider.Connection, error) {
 	f.getCalls++
+	// Honour cancellation so the resolver's ctx-threading is observable: a
+	// cancelled request-scoped ctx aborts the connection lookup.
+	if err := ctx.Err(); err != nil {
+		return provider.Connection{}, err
+	}
 	c, ok := f.conns[name]
 	if !ok {
 		return provider.Connection{}, provider.ErrConnectionNotFound
@@ -93,7 +98,7 @@ func TestStaticProfileResolver_ResolveWithConnection(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("fast-chat")
+	b, err := r.Resolve(context.Background(), "fast-chat")
 	require.NoError(t, err)
 
 	assert.Equal(t, provider.ProfileKindChat, b.Kind)
@@ -109,6 +114,52 @@ func TestStaticProfileResolver_ResolveWithConnection(t *testing.T) {
 	assert.Equal(t, "sk-secret", key)
 }
 
+// Cancellation: a cancelled request-scoped ctx aborts the connection-backed
+// lookup. This is the correctness win of widening Resolve to take ctx — before,
+// the connection Get smuggled context.Background() and could not be cancelled.
+func TestStaticProfileResolver_Resolve_CancelledCtxAbortsLookup(t *testing.T) {
+	store := newFakeConnectionStore()
+	store.put(provider.Connection{
+		Name:     "azure-prod",
+		Provider: "azure-openai",
+		BaseURL:  "https://prod.azure.com",
+		Extras:   map[string]string{"api-version": "2024-02-01"},
+	}, "sk-secret")
+
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "fast-chat", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "gpt-4o"},
+	}, store)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = r.Resolve(ctx, "fast-chat")
+	require.ErrorIs(t, err, context.Canceled,
+		"a cancelled ctx must abort the connection lookup")
+}
+
+// Zero-I/O Kind: Kind returns a profile's capability kind from the in-memory
+// registry without touching the ConnectionStore (getCalls stays 0), and reports
+// ok=false for an unknown alias.
+func TestStaticProfileResolver_Kind_ZeroIO(t *testing.T) {
+	store := newFakeConnectionStore()
+	store.put(provider.Connection{Name: "azure-prod", Provider: "azure-openai", BaseURL: "https://prod.azure.com"}, "k")
+
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "fast-chat", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "gpt-4o"},
+	}, store)
+	require.NoError(t, err)
+
+	kind, ok := r.Kind("fast-chat")
+	require.True(t, ok)
+	assert.Equal(t, provider.ProfileKindChat, kind)
+	assert.Equal(t, 0, store.getCalls, "Kind must not touch the ConnectionStore")
+
+	_, ok = r.Kind("ghost")
+	assert.False(t, ok, "an unknown alias reports ok=false")
+}
+
 // Success: an empty ConnectionRef resolves to the claude-cli no-key binding —
 // Provider == "claude-cli", empty BaseURL, RevealKey returns ("", nil) WITHOUT
 // touching the store (no Get/Reveal calls).
@@ -120,7 +171,7 @@ func TestStaticProfileResolver_EmptyConnectionRefNoKey(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("default-agent")
+	b, err := r.Resolve(context.Background(), "default-agent")
 	require.NoError(t, err)
 
 	assert.Equal(t, provider.ProfileKindAgent, b.Kind)
@@ -146,7 +197,7 @@ func TestStaticProfileResolver_EmptyConnectionRefNilStore(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("default-chat")
+	b, err := r.Resolve(context.Background(), "default-chat")
 	require.NoError(t, err)
 	assert.Equal(t, "claude-cli", b.Provider)
 	key, err := b.RevealKey(context.Background())
@@ -165,7 +216,7 @@ func TestStaticProfileResolver_UnknownConnection(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	_, err = r.Resolve("fast-chat")
+	_, err = r.Resolve(context.Background(), "fast-chat")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, provider.ErrConnectionNotFound)
 	assert.Contains(t, err.Error(), "fast-chat")
@@ -181,7 +232,7 @@ func TestStaticProfileResolver_ResolveUnknown(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	_, err = r.Resolve("nope")
+	_, err = r.Resolve(context.Background(), "nope")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 	assert.Contains(t, err.Error(), "nope")
@@ -199,7 +250,7 @@ func TestStaticProfileResolver_RevealKeyPropagatesDecryptError(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("fast-chat")
+	b, err := r.Resolve(context.Background(), "fast-chat")
 	require.NoError(t, err)
 
 	_, err = b.RevealKey(context.Background())
@@ -218,7 +269,7 @@ func TestStaticProfileResolver_RevealKeyIsLazy(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("fast-chat")
+	b, err := r.Resolve(context.Background(), "fast-chat")
 	require.NoError(t, err)
 	assert.Equal(t, 0, store.revealCalls, "building the binding must not decrypt")
 
@@ -241,9 +292,9 @@ func TestStaticProfileResolver_ManyToOneSharedConnection(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b1, err := r.Resolve("p1")
+	b1, err := r.Resolve(context.Background(), "p1")
 	require.NoError(t, err)
-	b2, err := r.Resolve("p2")
+	b2, err := r.Resolve(context.Background(), "p2")
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://shared", b1.BaseURL)
@@ -268,7 +319,7 @@ func TestStaticProfileResolver_OneLineBackendSwap(t *testing.T) {
 		{Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "old", Model: "m"},
 	}, store)
 	require.NoError(t, err)
-	b, err := before.Resolve("p")
+	b, err := before.Resolve(context.Background(), "p")
 	require.NoError(t, err)
 	assert.Equal(t, "https://old", b.BaseURL)
 
@@ -276,7 +327,7 @@ func TestStaticProfileResolver_OneLineBackendSwap(t *testing.T) {
 		{Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "new", Model: "m"},
 	}, store)
 	require.NoError(t, err)
-	b2, err := after.Resolve("p")
+	b2, err := after.Resolve(context.Background(), "p")
 	require.NoError(t, err)
 	assert.Equal(t, "https://new", b2.BaseURL)
 }
@@ -299,7 +350,7 @@ func TestStaticProfileResolver_RevealKeyNeverLogged(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 
-	b, err := r.Resolve("fast-chat")
+	b, err := r.Resolve(context.Background(), "fast-chat")
 	require.NoError(t, err)
 	key, err := b.RevealKey(context.Background())
 	require.NoError(t, err)
@@ -344,7 +395,7 @@ func TestNewStaticProfileResolver_EmptyRegistry(t *testing.T) {
 	r, err := adapterprovider.NewStaticProfileResolver(nil, nil)
 	require.NoError(t, err)
 
-	_, err = r.Resolve("anything")
+	_, err = r.Resolve(context.Background(), "anything")
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 }
 
@@ -355,7 +406,7 @@ func TestStaticProfileResolver_CaseSensitive(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	_, err = r.Resolve("Default-Chat")
+	_, err = r.Resolve(context.Background(), "Default-Chat")
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 }
 
@@ -369,7 +420,7 @@ func TestStaticProfileResolver_ConnBackedProfileNilStore_Errors(t *testing.T) {
 	}, nil)
 	require.NoError(t, err, "construction succeeds even with nil store")
 
-	_, err = r.Resolve("cloud-chat")
+	_, err = r.Resolve(context.Background(), "cloud-chat")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cloud-chat")
 	assert.Contains(t, err.Error(), "azure-prod")
@@ -382,6 +433,6 @@ func TestStaticProfileResolver_ImplementsPort(t *testing.T) {
 	r, err := adapterprovider.NewStaticProfileResolver(nil, nil)
 	require.NoError(t, err)
 	var port provider.ProfileResolver = r
-	_, err = port.Resolve("x")
+	_, err = port.Resolve(context.Background(), "x")
 	assert.True(t, errors.Is(err, provider.ErrUnknownProfile))
 }

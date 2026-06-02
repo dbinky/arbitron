@@ -58,7 +58,7 @@ func TestSecrecy_ResolveAndUse_NeverLogsKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Resolve the connection-backed profile: metadata only, no key yet.
-	binding, err := resolver.Resolve("az-chat")
+	binding, err := resolver.Resolve(ctx, "az-chat")
 	require.NoError(t, err)
 	assert.Equal(t, "azure-openai", binding.Provider)
 	assert.Equal(t, "https://example.openai.azure.com", binding.BaseURL)
@@ -73,7 +73,7 @@ func TestSecrecy_ResolveAndUse_NeverLogsKey(t *testing.T) {
 	_ = revealed // consumed by the (stubbed) request builder; never logged
 
 	// The no-key path reveals an empty string and never touches the store.
-	noKeyBinding, err := resolver.Resolve("claude")
+	noKeyBinding, err := resolver.Resolve(ctx, "claude")
 	require.NoError(t, err)
 	got, err := noKeyBinding.RevealKey(ctx)
 	require.NoError(t, err)

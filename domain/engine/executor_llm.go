@@ -50,7 +50,7 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	// Resolve the chat profile alias to a concrete model. The request stays
 	// tool-suppressed by construction (the ChatProvider never has tools), so
 	// llm_call can no longer edit files.
-	binding, err := e.resolver.Resolve(node.Config.ModelProfile)
+	binding, err := e.resolver.Resolve(ctx, node.Config.ModelProfile)
 	if err != nil {
 		return nil, fmt.Errorf("llm_call %q: resolve profile: %w", node.ID, err)
 	}

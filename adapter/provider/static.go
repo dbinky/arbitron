@@ -53,13 +53,28 @@ func NewStaticProfileResolver(profiles []provider.Profile, store provider.Connec
 	return &StaticProfileResolver{byAlias: byAlias, store: store}, nil
 }
 
+// Kind returns a profile's capability kind by alias from the in-memory registry
+// with ZERO I/O: it never touches the ConnectionStore. ok=false means the alias
+// is unknown. This is the cheap lookup workflow validation uses for capability
+// checks — distinct from Resolve, which runs the full connection-backed chain.
+// SECURITY/CORRECTNESS: using Kind (not Resolve) for ProfileKind means a valid
+// profile whose connection is absent is NOT mislabeled UNKNOWN_PROFILE; the
+// missing connection falls through to the connection-existence check instead.
+func (r *StaticProfileResolver) Kind(alias string) (provider.ProfileKind, bool) {
+	p, ok := r.byAlias[alias]
+	if !ok {
+		return "", false
+	}
+	return p.Kind, true
+}
+
 // Resolve runs the alias -> profile -> connection -> binding chain. An unknown
 // alias returns ErrUnknownProfile (wrapped with the alias). An empty
 // ConnectionRef yields the claude-cli no-key binding with no ConnectionStore
 // call. Otherwise the connection metadata is looked up (a miss wraps
 // ErrConnectionNotFound, naming the profile and connection), and a lazy
 // RevealKey closure is attached that decrypts only when invoked.
-func (r *StaticProfileResolver) Resolve(alias string) (provider.ResolvedBinding, error) {
+func (r *StaticProfileResolver) Resolve(ctx context.Context, alias string) (provider.ResolvedBinding, error) {
 	p, ok := r.byAlias[alias]
 	if !ok {
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
@@ -80,15 +95,16 @@ func (r *StaticProfileResolver) Resolve(alias string) (provider.ResolvedBinding,
 		}, nil
 	}
 
-	// Connection-backed path: look up metadata (no key material here). Resolve
-	// carries no ctx per the port signature; use Background for the metadata Get.
+	// Connection-backed path: look up metadata (no key material here). The
+	// request-scoped ctx is threaded into the store Get so a cancelled run aborts
+	// the lookup (matching the lazy RevealKey(ctx) closure below).
 	if r.store == nil {
 		return provider.ResolvedBinding{}, fmt.Errorf(
 			"provider: profile %q references connection %q but no connection store is configured",
 			alias, p.ConnectionRef)
 	}
 
-	conn, err := r.store.Get(context.Background(), p.ConnectionRef)
+	conn, err := r.store.Get(ctx, p.ConnectionRef)
 	if err != nil {
 		return provider.ResolvedBinding{}, fmt.Errorf(
 			"provider: profile %q references connection %q: %w", alias, p.ConnectionRef, err)

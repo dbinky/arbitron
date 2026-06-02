@@ -47,8 +47,12 @@ type ResolvedBinding struct {
 // ProfileResolver maps a node's alias to a fully-resolved ResolvedBinding,
 // running the alias -> profile -> connection -> binding chain. Driven port; the
 // engine and workflow validation depend on it, adapters implement it.
+//
+// Resolve takes a context.Context because the connection-backed path performs
+// I/O (a ConnectionStore lookup): a request-scoped ctx lets a cancelled run
+// abort the lookup. The executors already hold a ctx; thread it through.
 type ProfileResolver interface {
-	Resolve(alias string) (ResolvedBinding, error)
+	Resolve(ctx context.Context, alias string) (ResolvedBinding, error)
 }
 
 // ErrUnknownProfile is returned by resolvers when an alias has no registry

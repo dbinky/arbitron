@@ -1,7 +1,6 @@
 package provider_test
 
 import (
-	"errors"
 	"testing"
 
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
@@ -11,15 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// stubResolver is a tiny ProfileResolver for exercising ResolverChecker in
-// isolation, including the non-ErrUnknownProfile error path.
-type stubResolver struct {
-	binding provider.ResolvedBinding
-	err     error
+// stubKinder is a tiny ProfileKinder for exercising ResolverChecker in
+// isolation: it reports a fixed kind/ok for any alias.
+type stubKinder struct {
+	kind provider.ProfileKind
+	ok   bool
 }
 
-func (s stubResolver) Resolve(string) (provider.ResolvedBinding, error) {
-	return s.binding, s.err
+func (s stubKinder) Kind(string) (provider.ProfileKind, bool) {
+	return s.kind, s.ok
 }
 
 // Happy path: a resolvable chat alias yields its kind as a plain string, ok=true.
@@ -63,9 +62,9 @@ func TestResolverChecker_UnknownAlias(t *testing.T) {
 	assert.Equal(t, "", kind)
 }
 
-// Edge: any resolver error (not just ErrUnknownProfile) collapses to ok=false.
-func TestResolverChecker_GenericResolveError(t *testing.T) {
-	c := adapterprovider.NewResolverChecker(stubResolver{err: errors.New("boom")})
+// Edge: a kinder reporting ok=false collapses to an empty kind / ok=false.
+func TestResolverChecker_KinderReportsUnknown(t *testing.T) {
+	c := adapterprovider.NewResolverChecker(stubKinder{ok: false})
 
 	kind, ok := c.ProfileKind("whatever")
 	assert.False(t, ok)
@@ -142,4 +141,56 @@ func TestResolverChecker_SatisfiesWorkflowPort(t *testing.T) {
 	}
 	assert.Contains(t, codes2, "UNKNOWN_PROFILE",
 		"an unknown alias must produce UNKNOWN_PROFILE via workflow.Validate")
+}
+
+// CORRECTNESS regression: a VALID profile whose connection is ABSENT must fall
+// through to UNKNOWN_CONNECTION, NOT be mislabeled UNKNOWN_PROFILE. Before the
+// zero-I/O Kind(alias) fix, ProfileKind ran the full Resolve chain, which failed
+// on the missing connection and reported ok=false -> UNKNOWN_PROFILE, hiding the
+// real cause. With Kind(alias) the profile is recognised (kind known) and the
+// missing connection is surfaced by the connection-existence check instead.
+func TestResolverChecker_ValidProfileAbsentConnection_IsUnknownConnection(t *testing.T) {
+	profiles := []provider.Profile{
+		{Alias: "az", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "m"},
+	}
+	// Store has NO "azure-prod" connection: the profile is valid but its
+	// connection is absent. The ProfileKind path is zero-I/O (Kind over the
+	// in-memory registry), so the resolver needs no store here; the absent
+	// connection is exercised through the ConnChecker.
+	store := &existsStore{present: map[string]bool{}}
+
+	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
+	require.NoError(t, err)
+	profileChecker := adapterprovider.NewResolverChecker(resolver)
+	connChecker := adapterprovider.NewConnChecker(profiles, store)
+
+	// The capability check alone must NOT report the profile as unknown.
+	kind, ok := profileChecker.ProfileKind("az")
+	require.True(t, ok, "a valid profile must be recognised even when its connection is absent")
+	assert.Equal(t, "chat", kind)
+
+	wf := &workflow.Workflow{
+		Name: "absent-conn-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "llm",
+				Type:       workflow.NodeTypeLLMCall,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					TemplateFile: "prompt.md",
+					ModelProfile: "az",
+				},
+			},
+		},
+	}
+	errs := workflow.Validate(wf, nil, profileChecker, connChecker)
+
+	var codes []string
+	for _, e := range errs {
+		codes = append(codes, e.Code)
+	}
+	assert.Contains(t, codes, "UNKNOWN_CONNECTION",
+		"a valid profile with an absent connection must produce UNKNOWN_CONNECTION")
+	assert.NotContains(t, codes, "UNKNOWN_PROFILE",
+		"a valid profile must NOT be mislabeled UNKNOWN_PROFILE when only its connection is absent")
 }
