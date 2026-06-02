@@ -344,6 +344,96 @@
       "errorBehavior": {}
     },
     {
+      "id": "seed-ralph",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/seed-ralph.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Seed ralph files",
+      "description": "Generate RALPH.md/focus-areas.md/gaps-identified.md; commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "refine",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine.md",
+        "model_profile": "coder",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine (ralph pass)",
+      "description": "Smallest correct improvement toward focus areas; run tests; update tracking files; commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "refine-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/refine-assess.md",
+        "model_profile": "assessor",
+        "outputSchema": {
+          "properties": {
+            "done": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "done",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess refinement",
+      "description": "Emit {done, notes}.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "refine-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "ralph_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "ralph_iteration++",
+      "description": "",
+      "errorBehavior": {}
+    },
+    {
+      "id": "refine-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "refine-assess.done",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "ralph_iteration",
+            "operator": "gte",
+            "value": "{{max_ralph_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Refine loop or exit",
+      "description": "Exit when done OR ralph cap reached; else loop.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done-spec",
       "type": "transform",
       "config": {
@@ -447,6 +537,33 @@
     },
     {
       "source": "impl-gate",
+      "target": "seed-ralph",
+      "output": "exit"
+    },
+    {
+      "source": "seed-ralph",
+      "target": "refine"
+    },
+    {
+      "source": "refine",
+      "target": "refine-assess"
+    },
+    {
+      "source": "refine-assess",
+      "target": "refine-inc"
+    },
+    {
+      "source": "refine-inc",
+      "target": "refine-gate"
+    },
+    {
+      "source": "refine-gate",
+      "target": "refine",
+      "output": "loop",
+      "label": "back-edge: another pass"
+    },
+    {
+      "source": "refine-gate",
       "target": "done",
       "output": "exit",
       "label": "TEMP until next task"
