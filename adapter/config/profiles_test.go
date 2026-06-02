@@ -74,6 +74,40 @@ func TestProfilesFromConfig_MalformedKindRejectedDownstream(t *testing.T) {
 	assert.Contains(t, err.Error(), "tool")
 }
 
+// Success: a YAML profile with connectionref round-trips through Load and
+// ProfilesFromConfig correctly. This is the primary binding between the
+// profile registry and the connection store (the no-key subscription path
+// leaves connectionref empty; a non-empty ref names a stored connection).
+func TestLoad_ProfileWithConnectionRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+profiles:
+  - alias: "az-chat"
+    kind: "chat"
+    connectionref: "azure-prod"
+    model: "gpt-4o"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.Len(t, cfg.Profiles, 1)
+	assert.Equal(t, "az-chat", cfg.Profiles[0].Alias)
+	assert.Equal(t, "chat", cfg.Profiles[0].Kind)
+	assert.Equal(t, "azure-prod", cfg.Profiles[0].ConnectionRef,
+		"connectionref YAML key must unmarshall to ProfileConfig.ConnectionRef")
+	assert.Equal(t, "gpt-4o", cfg.Profiles[0].Model)
+
+	// ProfilesFromConfig must preserve the ConnectionRef all the way to the
+	// domain Profile.
+	got := adapterconfig.ProfilesFromConfig(cfg.Profiles)
+	require.Len(t, got, 1)
+	assert.Equal(t, "azure-prod", got[0].ConnectionRef)
+}
+
 // Edge: with no profiles block in YAML, defaults supply default-chat and
 // default-agent, and the empty model is preserved.
 func TestLoad_ProfilesDefaults(t *testing.T) {
