@@ -4,7 +4,7 @@ You are assessing implementation progress. You have no tools — reason only fro
 
 ## Context
 - Plans live at `./work/docs/plans/{{run_date}}-{{slug}}-implementation-phase-*-task-*.md`, using `- [ ]` / `- [x]` per step.
-- The most recent implementation pass reported: {{impl-task}}
+- The most recent implementation pass reported: {{impl-task.response}}
 
 ## Decide
 - `all_tasks_complete`: true only if EVERY plan task has all steps checked (`- [x]`) — i.e. there is no remaining unchecked `- [ ]` step anywhere.

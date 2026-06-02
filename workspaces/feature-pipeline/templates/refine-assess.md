@@ -4,7 +4,7 @@ You are assessing whether refinement is complete. Reason only from the informati
 
 ## Context
 - Tracking files live at `./work/RALPH.md`, `./work/focus-areas.md`, `./work/gaps-identified.md`.
-- The most recent refinement pass reported: {{refine}}
+- The most recent refinement pass reported: {{refine.response}}
 
 ## Decide
 - `done`: true only when the definition of done in RALPH.md is satisfied — all plan tasks implemented, the full test suite green (including happy/success/failure/error/edge), no remaining focus areas or gaps.

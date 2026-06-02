@@ -158,6 +158,22 @@
       "errorBehavior": {}
     },
     {
+      "id": "repromote-slug",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{write-spec.slug}}"
+          }
+        ]
+      },
+      "label": "Re-promote slug",
+      "description": "After the spec brainstorm, set the global slug to the resolved feature slug write-spec used, so designs/plans/templates all use one consistent slug.",
+      "errorBehavior": {}
+    },
+    {
       "id": "brainstorm-design",
       "type": "interactive",
       "config": {
@@ -512,6 +528,10 @@
     },
     {
       "source": "write-spec",
+      "target": "repromote-slug"
+    },
+    {
+      "source": "repromote-slug",
       "target": "brainstorm-design"
     },
     {
