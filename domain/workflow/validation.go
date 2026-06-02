@@ -163,6 +163,10 @@ func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationEr
 			wantKind = "chat"
 		case NodeTypeAgentCall:
 			wantKind = "agent"
+		case NodeTypeInteractiveLLM:
+			wantKind = "chat"
+		case NodeTypeInteractiveAgent:
+			wantKind = "agent"
 		default:
 			continue
 		}
@@ -518,7 +522,7 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
-		case NodeTypeInteractiveLLM:
+		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
 	}

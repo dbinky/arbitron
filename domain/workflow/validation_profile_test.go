@@ -251,3 +251,74 @@ func TestValidate_CapabilityRunsWithinValidate(t *testing.T) {
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG", "structural template check still fires")
 	assert.Contains(t, codes, "PROFILE_KIND_MISMATCH", "capability check runs within Validate")
 }
+
+// ---------------------------------------------------------------------------
+// Tests: interactive node kind-checking (interactive_llm requires chat;
+// interactive_agent requires agent).
+// ---------------------------------------------------------------------------
+
+// interactiveCallNodeWorkflow builds a minimal workflow whose entry node is of
+// the given interactive type with both required config fields (orchestrationFile
+// + templateFile) set, so only the profile-kind validation is under test.
+func interactiveCallNodeWorkflow(nodeType workflow.NodeType, alias string) *workflow.Workflow {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = nodeType
+	wf.Nodes[0].Config.ModelProfile = alias
+	wf.Nodes[0].Config.TemplateFile = "prompt.hbs"
+	wf.Nodes[0].Config.OrchestrationFile = "orch.yaml"
+	return wf
+}
+
+func TestValidate_InteractiveLLM_WithChatProfile_OK(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveLLM, "my-chat")
+	checker := &mockProfileChecker{kinds: map[string]string{"my-chat": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidate_InteractiveAgent_WithAgentProfile_OK(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveAgent, "my-agent")
+	checker := &mockProfileChecker{kinds: map[string]string{"my-agent": "agent"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidate_InteractiveLLM_WithAgentProfile_KindMismatch(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveLLM, "agentp")
+	checker := &mockProfileChecker{kinds: map[string]string{"agentp": "agent"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
+
+	var mismatch workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			mismatch = e
+		}
+	}
+	assert.Equal(t, "entry", mismatch.NodeID)
+	assert.Contains(t, mismatch.Message, "chat")
+	assert.Contains(t, mismatch.Message, "agent")
+}
+
+func TestValidate_InteractiveAgent_WithChatProfile_KindMismatch(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveAgent, "chatp")
+	checker := &mockProfileChecker{kinds: map[string]string{"chatp": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
+
+	var mismatch workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			mismatch = e
+		}
+	}
+	assert.Equal(t, "entry", mismatch.NodeID)
+	assert.Contains(t, mismatch.Message, "agent")
+	assert.Contains(t, mismatch.Message, "chat")
+}
