@@ -75,6 +75,40 @@ func TestAcceptance_07_ConnectionSafety_EnvInjectionAndSecrecy(t *testing.T) {
 	assert.NotContains(t, string(wfBytes), "api-key")
 	assert.NotContains(t, string(wfBytes), "connectionRef",
 		"connections are not named in the graph file")
+
+	// --- Persisted execution trace: keys must never enter the variable store ---
+	// The lazy RevealKey contract: keys are decrypted only at the moment the
+	// adapter injects them into the subprocess env or HTTP headers — never earlier.
+	// If this invariant broke, a key would appear in the variable store and be
+	// persisted to every downstream record. Verify all three layers:
+	ctx := context.Background()
+
+	// 1. Final instance variables (written after each node by UpdateVariables).
+	instVarsJSON, err := json.Marshal(res.instance.Variables)
+	require.NoError(t, err)
+	assert.NotContains(t, string(instVarsJSON), "sk-SENTINEL",
+		"final instance variables must never contain a connection key")
+
+	// 2. Variable snapshots: pre-execution state captured before each node runs.
+	snaps, err := h.snapshots.ListByInstance(ctx, res.instance.ID)
+	require.NoError(t, err)
+	for i, snap := range snaps {
+		snapJSON, _ := json.Marshal(snap.Variables)
+		assert.NotContains(t, string(snapJSON), "sk-SENTINEL",
+			"variable snapshot[%d] (node=%s) must not contain a connection key", i, snap.NodeID)
+	}
+
+	// 3. Node execution records: resolved inputs and outputs written per attempt.
+	execs, err := h.nodeExecs.ListByInstance(ctx, res.instance.ID)
+	require.NoError(t, err)
+	for i, ex := range execs {
+		inputsJSON, _ := json.Marshal(ex.ResolvedInputs)
+		outputJSON, _ := json.Marshal(ex.Output)
+		assert.NotContains(t, string(inputsJSON), "sk-SENTINEL",
+			"nodeExec[%d] (node=%s) resolved inputs must not contain a connection key", i, ex.NodeID)
+		assert.NotContains(t, string(outputJSON), "sk-SENTINEL",
+			"nodeExec[%d] (node=%s) output must not contain a connection key", i, ex.NodeID)
+	}
 }
 
 // TestAcceptance_07_ConnectionSafety_MultiRegion proves spec §8 #7, Scenario B:
