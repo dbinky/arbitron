@@ -8,9 +8,10 @@ and must not claim to. Reason only over the information given to you below.
 
 - Overall mission: `{{mission}}`
 - Iteration just completed: `{{iteration}}` of at most `{{max_iterations}}`
-- The editor agent's report from this pass, plus the current `focus-areas.md` and
-  `gaps.md` contents, are summarized for you by the prior step (do not attempt to
-  open files yourself).
+
+## Editor report from this pass
+
+{{editor}}
 
 ## Decide
 

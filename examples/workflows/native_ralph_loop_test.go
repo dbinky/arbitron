@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/filesystem"
+	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -154,6 +155,30 @@ func TestNativeRalphLoop_UnknownAliasFailsValidation(t *testing.T) {
 	}
 	assert.Contains(t, codes, "UNKNOWN_PROFILE",
 		"unknown editor/assessor aliases must produce UNKNOWN_PROFILE errors")
+}
+
+// TestNativeRalphLoop_AssessmentTemplateInjectsEditorOutput verifies that the
+// assessor template actually includes the editor's output via {{editor}}. The
+// assessor (llm_call) is tool-suppressed: it cannot read workspace files, so
+// the editor's summary is its only window into what changed this pass. Without
+// {{editor}} in the template, the assessor reasons in a vacuum — it would
+// always see the same prompt regardless of what the editor did.
+func TestNativeRalphLoop_AssessmentTemplateInjectsEditorOutput(t *testing.T) {
+	_, reader := loadExample(t)
+
+	content, err := reader.ReadFile(nativeRalphLoop, "assessment.md")
+	require.NoError(t, err, "reading assessment.md")
+
+	// Resolve the template with a sentinel editor output. If {{editor}} is
+	// absent from the template, the sentinel will not appear in the resolved
+	// prompt and the test fails — the data never flows to the assessor.
+	store := variable.NewStore()
+	store.SetNodeOutput("editor", map[string]any{"response": "editor-summary-sentinel"})
+	resolved := variable.Resolve(string(content), store)
+
+	assert.Contains(t, resolved, "editor-summary-sentinel",
+		"assessment.md must contain {{editor}} so the engine threads the editor's "+
+			"output into the assessor's prompt; without it the assessor is blind to what was changed")
 }
 
 // TestNativeRalphLoop_ChatProfileOnEditorFailsValidation is the negative variant
