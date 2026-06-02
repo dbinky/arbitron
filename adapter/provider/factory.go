@@ -55,8 +55,11 @@ type Deps struct {
 	// OpencodeTimeout is the default per-mission opencode timeout; <=0 means no
 	// default.
 	OpencodeTimeout time.Duration
-	// MaxResponseBytes caps the per-request response body read in HTTP adapters
-	// (openrouter, azurefoundry). 0 means no cap.
+	// MaxResponseBytes caps the per-request response/stdout read across ALL three
+	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry)
+	// bound their response-body read, and opencode bounds its subprocess stdout.
+	// 0 means no cap. SECURITY: a non-zero cap bounds the OOM DoS from an
+	// attacker-pointed base_url (or hostile subprocess) streaming an unbounded body.
 	MaxResponseBytes int64
 }
 
@@ -129,10 +132,11 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 		return f.deps.ClaudeAgent, nil
 	default:
 		return opencode.New(opencode.Config{
-			Binding:    b,
-			BinaryPath: f.deps.OpencodeBinaryPath,
-			Runner:     f.deps.Runner,
-			Timeout:    f.deps.OpencodeTimeout,
+			Binding:          b,
+			BinaryPath:       f.deps.OpencodeBinaryPath,
+			Runner:           f.deps.Runner,
+			Timeout:          f.deps.OpencodeTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
 	}
 }

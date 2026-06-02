@@ -104,6 +104,16 @@ func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.ChatProvider = (*Provider)(nil)
 }
 
+// SECURITY (OOM DoS): a configured MaxResponseBytes is carried into the Provider
+// so the response-body read is bounded. Composition-root guard for the HTTP half
+// of the MaxResponseBytes wiring fix.
+func TestNew_CarriesMaxResponseBytes(t *testing.T) {
+	const cap = int64(1 << 20)
+	p := New(Config{MaxResponseBytes: cap})
+	assert.Equal(t, cap, p.maxResponseBytes,
+		"the configured MaxResponseBytes must be stored on the Provider")
+}
+
 // --- HAPPY PATH: Chat ---
 
 func TestChat_HappyPath(t *testing.T) {

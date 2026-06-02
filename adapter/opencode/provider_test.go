@@ -74,6 +74,30 @@ func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.AgentProvider = (*Provider)(nil)
 }
 
+// SECURITY (OOM DoS): a configured MaxResponseBytes flows into the RunSpec so
+// the subprocess stdout read is bounded. This is the composition-root guard for
+// the opencode half of the MaxResponseBytes wiring fix: the cap must be carried,
+// not silently dropped (which would leave the subprocess stdout uncapped).
+func TestRunAgent_ThreadsMaxResponseBytes(t *testing.T) {
+	fr := &fakeRunner{lines: []string{"Done."}}
+	const cap = int64(1 << 20)
+	p := New(Config{
+		Binding:          anthropicBinding("sk-sentinel", nil),
+		BinaryPath:       "opencode",
+		Runner:           fr,
+		MaxResponseBytes: cap,
+	})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "x",
+		WorkDir: "/tmp/ws",
+		Model:   "anthropic/claude-3-5-sonnet",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, cap, fr.gotSpec.MaxResponseBytes,
+		"the configured MaxResponseBytes must reach the subprocess RunSpec")
+}
+
 // Happy path — single-shot run with canned output → AgentResult; the fake
 // receives -p/-c/cwd and the injected env (base allowlist + key + base-url).
 func TestRunAgent_HappyPath(t *testing.T) {

@@ -328,6 +328,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// Runner nil -> opencode uses the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
+		// three credential-bearing backends (openrouter, azurefoundry, opencode).
+		// Dropping this lets an attacker-pointed base_url stream an unbounded body
+		// into io.ReadAll and OOM-kill the engine. 256MiB default per config.
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
 	})
 
 	// 9. Create all node executors and build the executor map.

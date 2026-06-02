@@ -215,16 +215,17 @@ func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
 	assert.IsType(t, (*openrouter.Provider)(nil), cp)
 }
 
-// ---- Edge case: MaxResponseBytes is threaded from Deps into HTTP adapters ----
+// ---- Edge case: MaxResponseBytes is threaded from Deps into ALL backends ----
 
-// TestFactory_ChatProviderFor_ThreadsMaxResponseBytes proves FACTORY-001 is
-// fixed: the MaxResponseBytes cap from Deps reaches both HTTP adapter
-// constructors (openrouter and azurefoundry). The field is stored inside each
-// adapter and not accessible externally, so this test proves the fix at the
-// construction boundary: the Deps field exists (compile-time), is accepted by
-// NewFactory, and both ChatProviderFor calls succeed without error. The
-// per-adapter byte-cap behavior is exercised by the adapters' own tests.
-func TestFactory_ChatProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
+// TestFactory_ProviderFor_ThreadsMaxResponseBytes proves FACTORY-001 is fixed
+// across all THREE credential-bearing backends: the cap from Deps reaches the
+// openrouter and azurefoundry HTTP adapters AND the opencode subprocess adapter.
+// The field is stored unexported inside each adapter, so this test proves the
+// fix at the construction boundary: the Deps field exists (compile-time), is
+// accepted by NewFactory, and each ProviderFor call selects the right adapter
+// without error. The per-adapter byte-cap behavior is exercised by the adapters'
+// own tests; the opencode adapter's own test asserts the cap value is stored.
+func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	hc := &http.Client{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
 		HTTPClient:       hc,
@@ -240,6 +241,11 @@ func TestFactory_ChatProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, (*azurefoundry.Provider)(nil), cp2,
 		"azurefoundry provider constructed with MaxResponseBytes from Deps")
+
+	ap, err := f.AgentProviderFor(agentBinding("openrouter"))
+	require.NoError(t, err)
+	assert.IsType(t, (*opencode.Provider)(nil), ap,
+		"opencode provider constructed with MaxResponseBytes from Deps (subprocess stdout cap)")
 }
 
 // ---- Security: selection + reveal never logs the revealed key ----
