@@ -1,11 +1,573 @@
 {
+  "name": "feature-pipeline",
+  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, implement task-by-task (TDD), refine via the native ralph loop, and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
   "author": "arbitron",
   "defaultErrorBehavior": {
+    "type": "retry",
     "retries": 2,
-    "retryDelaySeconds": 30,
-    "type": "retry"
+    "retryDelaySeconds": 30
   },
-  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, implement task-by-task (TDD), refine via the native ralph loop, and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "GitHub repo URL to clone and work in.",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Feature slug; auto-derived from the spec brainstorm if empty.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_only",
+      "type": "boolean",
+      "description": "Stop after spec + design brainstorm.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "max_impl_iterations",
+      "type": "number",
+      "description": "Backstop cap on the draft-impl loop.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "max_ralph_iterations",
+      "type": "number",
+      "description": "Backstop cap on the ralph refinement loop.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "impl_iteration",
+      "type": "number",
+      "description": "Draft-impl loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "ralph_iteration",
+      "type": "number",
+      "description": "Ralph loop counter.",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init-workspace",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-{slug} worktree at {{workspace}}/work.",
+      "errorBehavior": {},
+      "entrypoint": true,
+      "position": {
+        "x": 200,
+        "y": 0
+      }
+    },
+    {
+      "id": "promote-vars",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{init-workspace.slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init-workspace.run_date}}"
+          },
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init-workspace.work_dir}}"
+          },
+          {
+            "variable": "branch",
+            "operation": "set",
+            "value": "{{init-workspace.branch}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift init-workspace outputs to top-level vars for clean downstream references.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 160
+      }
+    },
+    {
+      "id": "notify-start",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline started for {{slug}} on branch {{branch}} (repo {{repo_url}})."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: started",
+      "description": "In-app notification that the pipeline has started.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 320
+      }
+    },
+    {
+      "id": "brainstorm-spec",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-spec.md",
+        "model_profile": "interviewer",
+        "outputSchema": {
+          "properties": {
+            "slug": {
+              "type": "string"
+            },
+            "spec_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "spec_path"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-spec.orch.md"
+      },
+      "label": "Brainstorm: spec",
+      "description": "Interactive agent spec brainstorm; writes spec to disk and emits {slug, spec_path}.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 480
+      }
+    },
+    {
+      "id": "repromote-slug",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{brainstorm-spec.slug}}"
+          }
+        ]
+      },
+      "label": "Re-promote slug",
+      "description": "After the spec brainstorm, set the global slug to the resolved feature slug the agent used, so designs/plans/templates all use one consistent slug.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 640
+      }
+    },
+    {
+      "id": "brainstorm-design",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/brainstorm-design.md",
+        "model_profile": "interviewer",
+        "outputSchema": {
+          "properties": {
+            "design_paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "design_paths"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-design.orch.md"
+      },
+      "label": "Brainstorm: design",
+      "description": "Interactive agent design brainstorm; writes design docs to disk and emits {slug, design_paths}.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 800
+      }
+    },
+    {
+      "id": "spec-only?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "spec_only",
+            "operator": "eq",
+            "value": true,
+            "output": "stop"
+          }
+        ],
+        "defaultOutput": "continue"
+      },
+      "label": "Spec only?",
+      "description": "If spec_only, stop after designs; else continue to the automated pipeline.",
+      "errorBehavior": {},
+      "position": {
+        "x": 200,
+        "y": 960
+      }
+    },
+    {
+      "id": "align-designs",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-designs.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align designs",
+      "description": "Read spec + designs; fix alignment in place; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 1120
+      }
+    },
+    {
+      "id": "produce-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/produce-plans.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 3600
+      },
+      "label": "Produce plans",
+      "description": "Write detailed TDD task plans for each design phase; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 1280
+      }
+    },
+    {
+      "id": "align-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-plans.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align plans",
+      "description": "Align spec+designs+plans; fix in place; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 1440
+      }
+    },
+    {
+      "id": "impl-task",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/impl-task.md",
+        "model_profile": "coder",
+        "timeoutSeconds": 3600
+      },
+      "label": "Implement next task",
+      "description": "Implement the next incomplete plan task, strict TDD, commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 1600
+      }
+    },
+    {
+      "id": "impl-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/impl-assess.md",
+        "model_profile": "assessor",
+        "outputSchema": {
+          "properties": {
+            "all_tasks_complete": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "tasks_remaining": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "all_tasks_complete",
+            "tasks_remaining",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess impl progress",
+      "description": "Emit {all_tasks_complete, tasks_remaining, notes}.",
+      "errorBehavior": {},
+      "position": {
+        "x": -131.8134188716155,
+        "y": 1748.8001670239805
+      }
+    },
+    {
+      "id": "impl-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "impl_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1920
+      }
+    },
+    {
+      "id": "impl-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl-assess.all_tasks_complete",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "impl_iteration",
+            "operator": "gte",
+            "value": "{{max_impl_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Impl loop or exit",
+      "description": "Exit when all tasks complete OR iteration cap reached; else loop.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 2080
+      }
+    },
+    {
+      "id": "seed-ralph",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/seed-ralph.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Seed ralph files",
+      "description": "Generate RALPH.md/focus-areas.md/gaps-identified.md; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 2240
+      }
+    },
+    {
+      "id": "refine",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine.md",
+        "model_profile": "coder",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine (ralph pass)",
+      "description": "Smallest correct improvement toward focus areas; run tests; update tracking files; commit.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 2400
+      }
+    },
+    {
+      "id": "refine-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/refine-assess.md",
+        "model_profile": "assessor",
+        "outputSchema": {
+          "properties": {
+            "done": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "done",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess refinement",
+      "description": "Emit {done, notes}.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2560
+      }
+    },
+    {
+      "id": "refine-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "ralph_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "ralph_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 2720
+      }
+    },
+    {
+      "id": "refine-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "refine-assess.done",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "ralph_iteration",
+            "operator": "gte",
+            "value": "{{max_ralph_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Refine loop or exit",
+      "description": "Exit when done OR ralph cap reached; else loop.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 2880
+      }
+    },
+    {
+      "id": "push-and-pr",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/push-and-pr.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Push \u0026 open PR",
+      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open).",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 3040
+      }
+    },
+    {
+      "id": "notify-done",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Feature pipeline complete for {{slug}}: PR {{push-and-pr.pr_url}} opened. PR review will run on open."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: PR opened",
+      "description": "In-app notification that the PR is open.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 3200
+      }
+    },
+    {
+      "id": "done-spec",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "spec-only-complete"
+          }
+        ]
+      },
+      "label": "Done (spec-only, terminal)",
+      "description": "Terminal node for the --spec-only path.",
+      "errorBehavior": {},
+      "position": {
+        "x": 330,
+        "y": 1120
+      }
+    },
+    {
+      "id": "done",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "complete"
+          }
+        ]
+      },
+      "label": "Done (terminal)",
+      "description": "Terminal node. Records final status so the walk ends cleanly.",
+      "errorBehavior": {},
+      "position": {
+        "x": 70,
+        "y": 3360
+      }
+    }
+  ],
   "edges": [
     {
       "source": "init-workspace",
@@ -21,10 +583,6 @@
     },
     {
       "source": "brainstorm-spec",
-      "target": "write-spec"
-    },
-    {
-      "source": "write-spec",
       "target": "repromote-slug"
     },
     {
@@ -33,21 +591,17 @@
     },
     {
       "source": "brainstorm-design",
-      "target": "write-designs"
-    },
-    {
-      "source": "write-designs",
       "target": "spec-only?"
     },
     {
-      "output": "stop",
       "source": "spec-only?",
-      "target": "done-spec"
+      "target": "done-spec",
+      "output": "stop"
     },
     {
-      "output": "continue",
       "source": "spec-only?",
-      "target": "align-designs"
+      "target": "align-designs",
+      "output": "continue"
     },
     {
       "source": "align-designs",
@@ -74,15 +628,15 @@
       "target": "impl-gate"
     },
     {
-      "label": "back-edge: next task",
-      "output": "loop",
       "source": "impl-gate",
-      "target": "impl-task"
+      "target": "impl-task",
+      "output": "loop",
+      "label": "back-edge: next task"
     },
     {
-      "output": "exit",
       "source": "impl-gate",
-      "target": "seed-ralph"
+      "target": "seed-ralph",
+      "output": "exit"
     },
     {
       "source": "seed-ralph",
@@ -101,15 +655,15 @@
       "target": "refine-gate"
     },
     {
-      "label": "back-edge: another pass",
-      "output": "loop",
       "source": "refine-gate",
-      "target": "refine"
+      "target": "refine",
+      "output": "loop",
+      "label": "back-edge: another pass"
     },
     {
-      "output": "exit",
       "source": "refine-gate",
-      "target": "push-and-pr"
+      "target": "push-and-pr",
+      "output": "exit"
     },
     {
       "source": "push-and-pr",
@@ -118,609 +672,6 @@
     {
       "source": "notify-done",
       "target": "done"
-    }
-  ],
-  "inputs": [
-    {
-      "description": "GitHub repo URL to clone and work in.",
-      "name": "repo_url",
-      "required": true,
-      "type": "string"
-    },
-    {
-      "default": "",
-      "description": "Feature slug; auto-derived from the spec brainstorm if empty.",
-      "name": "slug",
-      "required": false,
-      "type": "string"
-    },
-    {
-      "default": false,
-      "description": "Stop after spec + design brainstorm.",
-      "name": "spec_only",
-      "required": false,
-      "type": "boolean"
-    },
-    {
-      "default": 200,
-      "description": "Backstop cap on the draft-impl loop.",
-      "name": "max_impl_iterations",
-      "required": false,
-      "type": "number"
-    },
-    {
-      "default": 200,
-      "description": "Backstop cap on the ralph refinement loop.",
-      "name": "max_ralph_iterations",
-      "required": false,
-      "type": "number"
-    },
-    {
-      "default": 0,
-      "description": "Draft-impl loop counter.",
-      "name": "impl_iteration",
-      "required": false,
-      "type": "number"
-    },
-    {
-      "default": 0,
-      "description": "Ralph loop counter.",
-      "name": "ralph_iteration",
-      "required": false,
-      "type": "number"
-    }
-  ],
-  "name": "feature-pipeline",
-  "nodes": [
-    {
-      "config": {
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/init-workspace.sh",
-        "timeoutSeconds": 600
-      },
-      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-{slug} worktree at {{workspace}}/work.",
-      "entrypoint": true,
-      "errorBehavior": {},
-      "id": "init-workspace",
-      "label": "Init workspace",
-      "position": {
-        "x": 200,
-        "y": 0
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "set",
-            "value": "{{init-workspace.slug}}",
-            "variable": "slug"
-          },
-          {
-            "operation": "set",
-            "value": "{{init-workspace.run_date}}",
-            "variable": "run_date"
-          },
-          {
-            "operation": "set",
-            "value": "{{init-workspace.work_dir}}",
-            "variable": "work_dir"
-          },
-          {
-            "operation": "set",
-            "value": "{{init-workspace.branch}}",
-            "variable": "branch"
-          }
-        ]
-      },
-      "description": "Lift init-workspace outputs to top-level vars for clean downstream references.",
-      "errorBehavior": {},
-      "id": "promote-vars",
-      "label": "Promote vars",
-      "position": {
-        "x": 200,
-        "y": 160
-      },
-      "type": "transform"
-    },
-    {
-      "config": {
-        "args": [
-          "Feature pipeline started for {{slug}} on branch {{branch}} (repo {{repo_url}})."
-        ],
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/notify.sh",
-        "timeoutSeconds": 30
-      },
-      "description": "In-app notification that the pipeline has started.",
-      "errorBehavior": {},
-      "id": "notify-start",
-      "label": "Notify: started",
-      "position": {
-        "x": 200,
-        "y": 320
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "model_profile": "interviewer",
-        "orchestrationFile": "orchestration/brainstorm-spec.orch.md",
-        "outputSchema": {
-          "properties": {
-            "slug": {
-              "description": "Recommended kebab-case slug.",
-              "type": "string"
-            },
-            "spec_markdown": {
-              "description": "The complete product spec as Markdown.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "spec_markdown"
-          ],
-          "type": "object"
-        },
-        "templateFile": "templates/brainstorm-spec.md"
-      },
-      "description": "Interactive spec brainstorm; emits {slug, spec_markdown}.",
-      "errorBehavior": {},
-      "id": "brainstorm-spec",
-      "label": "Brainstorm: spec",
-      "position": {
-        "x": 200,
-        "y": 480
-      },
-      "type": "interactive"
-    },
-    {
-      "config": {
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/write-spec.sh",
-        "timeoutSeconds": 60
-      },
-      "description": "Write docs/specs/{date}-{slug}-spec.md and commit.",
-      "errorBehavior": {},
-      "id": "write-spec",
-      "label": "Write spec",
-      "position": {
-        "x": 200,
-        "y": 640
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "set",
-            "value": "{{write-spec.slug}}",
-            "variable": "slug"
-          }
-        ]
-      },
-      "description": "After the spec brainstorm, set the global slug to the resolved feature slug write-spec used, so designs/plans/templates all use one consistent slug.",
-      "errorBehavior": {},
-      "id": "repromote-slug",
-      "label": "Re-promote slug",
-      "position": {
-        "x": 200,
-        "y": 800
-      },
-      "type": "transform"
-    },
-    {
-      "config": {
-        "model_profile": "interviewer",
-        "orchestrationFile": "orchestration/brainstorm-design.orch.md",
-        "outputSchema": {
-          "properties": {
-            "phases": {
-              "items": {
-                "properties": {
-                  "markdown": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "title",
-                  "markdown"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "phases"
-          ],
-          "type": "object"
-        },
-        "templateFile": "templates/brainstorm-design.md"
-      },
-      "description": "Interactive design brainstorm; emits {phases:[{title,markdown}]}.",
-      "errorBehavior": {},
-      "id": "brainstorm-design",
-      "label": "Brainstorm: design",
-      "position": {
-        "x": 200,
-        "y": 960
-      },
-      "type": "interactive"
-    },
-    {
-      "config": {
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/write-designs.sh",
-        "timeoutSeconds": 120
-      },
-      "description": "Write docs/designs/{date}-{slug}-design-phase-N.md and commit.",
-      "errorBehavior": {},
-      "id": "write-designs",
-      "label": "Write designs",
-      "position": {
-        "x": 200,
-        "y": 1120
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "conditions": [
-          {
-            "field": "spec_only",
-            "operator": "eq",
-            "output": "stop",
-            "value": true
-          }
-        ],
-        "defaultOutput": "continue"
-      },
-      "description": "If spec_only, stop after designs; else continue to the automated pipeline.",
-      "errorBehavior": {},
-      "id": "spec-only?",
-      "label": "Spec only?",
-      "position": {
-        "x": 200,
-        "y": 1280
-      },
-      "type": "conditional"
-    },
-    {
-      "config": {
-        "model_profile": "planner",
-        "templateFile": "templates/align-designs.md",
-        "timeoutSeconds": 1800
-      },
-      "description": "Read spec + designs; fix alignment in place; commit.",
-      "errorBehavior": {},
-      "id": "align-designs",
-      "label": "Align designs",
-      "position": {
-        "x": 70,
-        "y": 1440
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "planner",
-        "templateFile": "templates/produce-plans.md",
-        "timeoutSeconds": 3600
-      },
-      "description": "Write detailed TDD task plans for each design phase; commit.",
-      "errorBehavior": {},
-      "id": "produce-plans",
-      "label": "Produce plans",
-      "position": {
-        "x": 70,
-        "y": 1600
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "planner",
-        "templateFile": "templates/align-plans.md",
-        "timeoutSeconds": 1800
-      },
-      "description": "Align spec+designs+plans; fix in place; commit.",
-      "errorBehavior": {},
-      "id": "align-plans",
-      "label": "Align plans",
-      "position": {
-        "x": 70,
-        "y": 1760
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "coder",
-        "templateFile": "templates/impl-task.md",
-        "timeoutSeconds": 3600
-      },
-      "description": "Implement the next incomplete plan task, strict TDD, commit.",
-      "errorBehavior": {},
-      "id": "impl-task",
-      "label": "Implement next task",
-      "position": {
-        "x": 70,
-        "y": 1920
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "assessor",
-        "outputSchema": {
-          "properties": {
-            "all_tasks_complete": {
-              "type": "boolean"
-            },
-            "notes": {
-              "type": "string"
-            },
-            "tasks_remaining": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "all_tasks_complete",
-            "tasks_remaining",
-            "notes"
-          ],
-          "type": "object"
-        },
-        "templateFile": "templates/impl-assess.md"
-      },
-      "description": "Emit {all_tasks_complete, tasks_remaining, notes}.",
-      "errorBehavior": {},
-      "id": "impl-assess",
-      "label": "Assess impl progress",
-      "position": {
-        "x": -131.8134188716155,
-        "y": 2068.8001670239805
-      },
-      "type": "llm_call"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "increment",
-            "value": 1,
-            "variable": "impl_iteration"
-          }
-        ]
-      },
-      "description": "",
-      "errorBehavior": {},
-      "id": "impl-inc",
-      "label": "impl_iteration++",
-      "position": {
-        "x": 0,
-        "y": 2240
-      },
-      "type": "transform"
-    },
-    {
-      "config": {
-        "conditions": [
-          {
-            "field": "impl-assess.all_tasks_complete",
-            "operator": "eq",
-            "output": "exit",
-            "value": true
-          },
-          {
-            "field": "impl_iteration",
-            "operator": "gte",
-            "output": "exit",
-            "value": "{{max_impl_iterations}}"
-          }
-        ],
-        "defaultOutput": "loop"
-      },
-      "description": "Exit when all tasks complete OR iteration cap reached; else loop.",
-      "errorBehavior": {},
-      "id": "impl-gate",
-      "label": "Impl loop or exit",
-      "position": {
-        "x": 70,
-        "y": 2400
-      },
-      "type": "conditional"
-    },
-    {
-      "config": {
-        "model_profile": "planner",
-        "templateFile": "templates/seed-ralph.md",
-        "timeoutSeconds": 1800
-      },
-      "description": "Generate RALPH.md/focus-areas.md/gaps-identified.md; commit.",
-      "errorBehavior": {},
-      "id": "seed-ralph",
-      "label": "Seed ralph files",
-      "position": {
-        "x": 70,
-        "y": 2560
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "coder",
-        "templateFile": "templates/refine.md",
-        "timeoutSeconds": 3600
-      },
-      "description": "Smallest correct improvement toward focus areas; run tests; update tracking files; commit.",
-      "errorBehavior": {},
-      "id": "refine",
-      "label": "Refine (ralph pass)",
-      "position": {
-        "x": 70,
-        "y": 2720
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "model_profile": "assessor",
-        "outputSchema": {
-          "properties": {
-            "done": {
-              "type": "boolean"
-            },
-            "notes": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "done",
-            "notes"
-          ],
-          "type": "object"
-        },
-        "templateFile": "templates/refine-assess.md"
-      },
-      "description": "Emit {done, notes}.",
-      "errorBehavior": {},
-      "id": "refine-assess",
-      "label": "Assess refinement",
-      "position": {
-        "x": 0,
-        "y": 2880
-      },
-      "type": "llm_call"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "increment",
-            "value": 1,
-            "variable": "ralph_iteration"
-          }
-        ]
-      },
-      "description": "",
-      "errorBehavior": {},
-      "id": "refine-inc",
-      "label": "ralph_iteration++",
-      "position": {
-        "x": 0,
-        "y": 3040
-      },
-      "type": "transform"
-    },
-    {
-      "config": {
-        "conditions": [
-          {
-            "field": "refine-assess.done",
-            "operator": "eq",
-            "output": "exit",
-            "value": true
-          },
-          {
-            "field": "ralph_iteration",
-            "operator": "gte",
-            "output": "exit",
-            "value": "{{max_ralph_iterations}}"
-          }
-        ],
-        "defaultOutput": "loop"
-      },
-      "description": "Exit when done OR ralph cap reached; else loop.",
-      "errorBehavior": {},
-      "id": "refine-gate",
-      "label": "Refine loop or exit",
-      "position": {
-        "x": 70,
-        "y": 3200
-      },
-      "type": "conditional"
-    },
-    {
-      "config": {
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/push-and-pr.sh",
-        "timeoutSeconds": 300
-      },
-      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open).",
-      "errorBehavior": {},
-      "id": "push-and-pr",
-      "label": "Push \u0026 open PR",
-      "position": {
-        "x": 70,
-        "y": 3360
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "args": [
-          "Feature pipeline complete for {{slug}}: PR {{push-and-pr.pr_url}} opened. PR review will run on open."
-        ],
-        "interpreter": "/bin/sh",
-        "scriptFile": "scripts/notify.sh",
-        "timeoutSeconds": 30
-      },
-      "description": "In-app notification that the PR is open.",
-      "errorBehavior": {},
-      "id": "notify-done",
-      "label": "Notify: PR opened",
-      "position": {
-        "x": 70,
-        "y": 3520
-      },
-      "type": "script"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "set",
-            "value": "spec-only-complete",
-            "variable": "pipeline_status"
-          }
-        ]
-      },
-      "description": "Terminal node for the --spec-only path.",
-      "errorBehavior": {},
-      "id": "done-spec",
-      "label": "Done (spec-only, terminal)",
-      "position": {
-        "x": 330,
-        "y": 1440
-      },
-      "type": "transform"
-    },
-    {
-      "config": {
-        "operations": [
-          {
-            "operation": "set",
-            "value": "complete",
-            "variable": "pipeline_status"
-          }
-        ]
-      },
-      "description": "Terminal node. Records final status so the walk ends cleanly.",
-      "errorBehavior": {},
-      "id": "done",
-      "label": "Done (terminal)",
-      "position": {
-        "x": 70,
-        "y": 3680
-      },
-      "type": "transform"
     }
   ]
 }
