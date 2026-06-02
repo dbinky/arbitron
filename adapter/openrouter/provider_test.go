@@ -473,6 +473,25 @@ func TestChat_LiteLLMRouterBaseURL(t *testing.T) {
 	assert.Equal(t, "http://litellm.internal:4000/chat/completions", ft.gotReq.URL.String())
 }
 
+// --- SECURITY: upstream error snippet scrubs control characters ---
+
+func TestStatusError_ScrubsControlCharacters(t *testing.T) {
+	dirty := "bad\nrequest\r\twith\x1b[31mescape\x00null"
+	ft := &fakeTransport{resp: jsonResponse(500, dirty)}
+	p := newProvider(t, ft, staticBinding("https://router.test/v1", "m"))
+
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.ErrorIs(t, err, ErrUpstreamStatus)
+	msg := err.Error()
+	assert.NotContains(t, msg, "\n", "newlines must be scrubbed from the snippet")
+	assert.NotContains(t, msg, "\r", "carriage returns must be scrubbed")
+	assert.NotContains(t, msg, "\x1b", "terminal escapes must be scrubbed")
+	assert.NotContains(t, msg, "\x00", "null bytes must be scrubbed")
+	// Printable content survives.
+	assert.Contains(t, msg, "request")
+	assert.Contains(t, msg, "escape")
+}
+
 // --- SECURITY: a non-http(s) base-url scheme is rejected at request build ---
 
 func TestChat_RejectsNonHTTPScheme(t *testing.T) {

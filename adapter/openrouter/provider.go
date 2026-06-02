@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
@@ -234,13 +235,28 @@ func send(ctx context.Context, out chan<- engine.ChatChunk, c engine.ChatChunk) 
 }
 
 // statusError reads the bounded error body and wraps ErrUpstreamStatus with a
-// snippet. It never includes the Authorization header or revealed key.
+// snippet. It never includes the Authorization header or revealed key, and it
+// scrubs control characters so a hostile upstream cannot shape an error string
+// that injects newlines/escapes into a structured logger.
 func (p *Provider) statusError(status int, body io.Reader) error {
 	snippet, _ := io.ReadAll(body)
 	const max = 512
 	if len(snippet) > max {
 		snippet = snippet[:max]
 	}
-	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, string(snippet))
+	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, scrubControl(string(snippet)))
+}
+
+// scrubControl replaces ASCII control characters (except none are kept) with a
+// space so an upstream-shaped error snippet cannot inject newlines, carriage
+// returns, or terminal escapes into logs. Printable bytes and valid UTF-8 are
+// preserved.
+func scrubControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || (r >= 0 && r < 0x20) || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
 }
 

@@ -321,10 +321,21 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// Capability validation stays load-bearing with NO new code: an agent_call
 	// whose profile resolves to a chat-only adapter is impossible by construction
 	// — the profile is kind: chat and already fails workflow_validate (Phase 1).
+	// SECURITY (hang-forever DoS backstop): the HTTP adapters rely on the per-call
+	// withTimeout(ctx) derived from cfg.LLM.TimeoutSeconds (now floored > 0 at
+	// config load). Give the shared client its own Timeout as an absolute backstop
+	// independent of ctx so a wedged endpoint can never block a node forever even
+	// if the per-call deadline plumbing regresses. A dedicated client (not the
+	// global http.DefaultClient) is used so this Timeout does not leak to other
+	// callers; the transport still pools connections.
+	httpClient := &http.Client{
+		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+	}
+
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
-		HTTPClient:  http.DefaultClient,
+		HTTPClient:  httpClient,
 		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// Runner nil -> opencode uses the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,

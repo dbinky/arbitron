@@ -288,6 +288,29 @@ func TestChat_Upstream401_ReturnsTypedError(t *testing.T) {
 	assert.NotContains(t, err.Error(), revealedKey)
 }
 
+// SECURITY: the upstream error message is scrubbed of control characters so a
+// hostile upstream cannot inject newlines/escapes into a structured logger.
+func TestChat_UpstreamError_ScrubsControlCharacters(t *testing.T) {
+	// The JSON-escaped \n \r \t in error.message decode to real control
+	// characters that the adapter must scrub before they reach a logger.
+	dirtyBody := "{\"error\":{\"message\":\"bad\\ngateway\\r\\twith escape\"}}"
+	var cap captured
+	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {
+		return jsonResp(http.StatusBadGateway, dirtyBody), nil
+	})
+	p := azurefoundry.New(azurefoundry.Config{Binding: resourceBinding(), HTTPClient: client})
+
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "hi"})
+	require.Error(t, err)
+	msg := err.Error()
+	// The JSON \n \r \t in error.message decode to real control characters,
+	// which the adapter must scrub before they reach a logger.
+	assert.NotContains(t, msg, "\n", "newlines must be scrubbed")
+	assert.NotContains(t, msg, "\r", "carriage returns must be scrubbed")
+	assert.NotContains(t, msg, "\t", "tabs must be scrubbed")
+	assert.Contains(t, msg, "gateway")
+}
+
 func TestChat_Upstream404Deployment_ReturnsTypedError(t *testing.T) {
 	var cap captured
 	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {

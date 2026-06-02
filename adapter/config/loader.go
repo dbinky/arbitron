@@ -188,7 +188,26 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
+	normalize(&cfg)
+
 	return &cfg, nil
+}
+
+// DefaultTimeoutSeconds is the floor applied to a non-positive
+// llm.timeoutseconds. SECURITY: a 0 (or negative) value would silently disable
+// every per-call deadline — the only deadline the credential-bearing HTTP
+// adapters and the claude-cli/opencode subprocesses have — letting a wedged or
+// attacker-pointed endpoint hang a node forever and starve the worker pool.
+// Flooring it keeps the whole timeout story from being disabled by misconfig.
+const DefaultTimeoutSeconds = 1800
+
+// normalize applies safety floors to a loaded config in place. It clamps a
+// non-positive llm.timeoutseconds up to DefaultTimeoutSeconds so a misconfigured
+// 0 cannot disable every deadline.
+func normalize(cfg *domainconfig.Config) {
+	if cfg.LLM.TimeoutSeconds <= 0 {
+		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
+	}
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.

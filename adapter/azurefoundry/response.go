@@ -67,7 +67,9 @@ func (r *chatResponse) content() string {
 }
 
 // apiErrorFromBody builds a typed APIError from a non-2xx response body. It
-// extracts the upstream error.message when present but never the key.
+// extracts the upstream error.message when present but never the key, and scrubs
+// control characters so a hostile upstream cannot inject newlines/escapes into a
+// structured logger via the error string.
 func apiErrorFromBody(status int, body []byte) *APIError {
 	msg := ""
 	var env struct {
@@ -78,7 +80,19 @@ func apiErrorFromBody(status int, body []byte) *APIError {
 	if err := json.Unmarshal(body, &env); err == nil {
 		msg = env.Error.Message
 	}
-	return &APIError{StatusCode: status, Message: msg}
+	return &APIError{StatusCode: status, Message: scrubControl(msg)}
+}
+
+// scrubControl replaces ASCII control characters with a space so an
+// upstream-shaped error message cannot inject newlines, carriage returns, or
+// terminal escapes into logs. Printable bytes and valid UTF-8 are preserved.
+func scrubControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || (r >= 0 && r < 0x20) || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // parseSSELine extracts the data payload from a single SSE line. It returns
