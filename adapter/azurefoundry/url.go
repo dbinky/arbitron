@@ -22,6 +22,12 @@ var (
 	// resource path; endpointURL itself treats an absent api-version as the
 	// serverless topology per the plan.
 	ErrMissingAPIVersion = errors.New("azurefoundry: resource topology requires Extras[\"api-version\"]")
+	// ErrUnsupportedScheme is returned when the binding's BaseURL uses a scheme
+	// other than http/https. The write-path StrictURLPolicy is the primary SSRF
+	// guard (https-only, no internal hosts); this is a defensive request-build
+	// check so a non-web scheme (file, gopher, ...) can never reach the HTTP
+	// client even if a binding bypassed the write path.
+	ErrUnsupportedScheme = errors.New("azurefoundry: base_url scheme must be http or https")
 )
 
 const chatCompletionsSuffix = "/chat/completions"
@@ -40,6 +46,11 @@ func endpointURL(b provider.ResolvedBinding) (string, error) {
 	base := strings.TrimRight(strings.TrimSpace(b.BaseURL), "/")
 	if base == "" {
 		return "", ErrMissingBaseURL
+	}
+	if u, err := url.Parse(base); err != nil {
+		return "", err
+	} else if u.Scheme != "http" && u.Scheme != "https" {
+		return "", ErrUnsupportedScheme
 	}
 
 	if apiVersion := strings.TrimSpace(b.Extras["api-version"]); apiVersion != "" {

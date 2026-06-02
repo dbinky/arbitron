@@ -15,9 +15,10 @@ import (
 // API key is sealed via the injected provider.Crypto before it touches storage;
 // the plaintext key is never written to a non-cipher column and never logged.
 type ConnectionRepo struct {
-	db      *sql.DB
-	queries *generated.Queries
-	crypto  provider.Crypto
+	db        *sql.DB
+	queries   *generated.Queries
+	crypto    provider.Crypto
+	urlPolicy provider.URLPolicy
 }
 
 // Compile-time assertion that ConnectionRepo satisfies the domain port.
@@ -25,12 +26,26 @@ var _ provider.ConnectionStore = (*ConnectionRepo)(nil)
 
 // NewConnectionRepo creates a ConnectionRepo using the given database
 // connection and Crypto. The Crypto seals keys on write and is the only path
-// that decrypts them on Reveal.
+// that decrypts them on Reveal. The BaseURL is validated at write time against
+// provider.StrictURLPolicy (https-only, no internal hosts) — the SSRF /
+// credential-exfiltration guard. Use NewConnectionRepoWithPolicy to inject a
+// permissive policy for tests/fixtures that need loopback or http endpoints.
 func NewConnectionRepo(db *sql.DB, crypto provider.Crypto) *ConnectionRepo {
+	return NewConnectionRepoWithPolicy(db, crypto, provider.StrictURLPolicy)
+}
+
+// NewConnectionRepoWithPolicy is like NewConnectionRepo but takes an explicit
+// URLPolicy for the connection BaseURL write-time check. A nil policy defaults
+// to provider.StrictURLPolicy.
+func NewConnectionRepoWithPolicy(db *sql.DB, crypto provider.Crypto, policy provider.URLPolicy) *ConnectionRepo {
+	if policy == nil {
+		policy = provider.StrictURLPolicy
+	}
 	return &ConnectionRepo{
-		db:      db,
-		queries: generated.New(db),
-		crypto:  crypto,
+		db:        db,
+		queries:   generated.New(db),
+		crypto:    crypto,
+		urlPolicy: policy,
 	}
 }
 
@@ -49,6 +64,12 @@ func (r *ConnectionRepo) Create(ctx context.Context, c provider.Connection, apiK
 	// Enforce provider-specific write-time rules (e.g. Azure api-version) before
 	// sealing the key or persisting anything.
 	if err := provider.ValidateConnection(c); err != nil {
+		return err
+	}
+	// SECURITY (SSRF / credential exfiltration): the BaseURL drives outbound
+	// credentialed requests, so reject non-https or internal-host endpoints at
+	// the write path before any key is sealed.
+	if err := provider.ValidateConnectionURL(c, r.urlPolicy); err != nil {
 		return err
 	}
 	extrasJSON, err := extrasToJSON(c.Extras)
@@ -86,12 +107,19 @@ func (r *ConnectionRepo) Update(ctx context.Context, c provider.Connection, apiK
 		return err
 	}
 	// Pre-check existence so a missing connection maps to the sentinel rather
-	// than silently affecting zero rows.
+	// than silently affecting zero rows. This precedes the BaseURL check so an
+	// update to a non-existent connection still surfaces ErrConnectionNotFound.
 	if _, err := r.queries.GetConnectionMeta(ctx, c.Name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("connection %q: %w", c.Name, provider.ErrConnectionNotFound)
 		}
 		return fmt.Errorf("checking connection %q: %w", c.Name, err)
+	}
+
+	// SECURITY (SSRF / credential exfiltration): re-validate the BaseURL on every
+	// update so a connection cannot be repointed at a non-https or internal host.
+	if err := provider.ValidateConnectionURL(c, r.urlPolicy); err != nil {
+		return err
 	}
 
 	extrasJSON, err := extrasToJSON(c.Extras)

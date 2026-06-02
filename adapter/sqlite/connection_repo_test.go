@@ -257,7 +257,7 @@ func TestConnectionRepo_UpdateNilKeyPreservesKey(t *testing.T) {
 func TestConnectionRepo_EmptyExtrasRoundTrip(t *testing.T) {
 	repo, db := newConnRepo(t)
 	ctx := context.Background()
-	c := provider.Connection{Name: "noextras", Provider: "litellm", BaseURL: "http://x", Extras: nil}
+	c := provider.Connection{Name: "noextras", Provider: "litellm", BaseURL: "https://x", Extras: nil}
 	require.NoError(t, repo.Create(ctx, c, "k"))
 
 	got, err := repo.Get(ctx, "noextras")
@@ -268,6 +268,49 @@ func TestConnectionRepo_EmptyExtrasRoundTrip(t *testing.T) {
 	var stored string
 	require.NoError(t, db.DB.QueryRow("SELECT extras FROM connections WHERE name = ?", "noextras").Scan(&stored))
 	assert.Equal(t, "{}", stored)
+}
+
+// SECURITY (SSRF): the strict (production) store rejects a non-https or
+// internal-host BaseURL at the write path, before any key is sealed.
+func TestConnectionRepo_StrictPolicy_RejectsUnsafeBaseURL(t *testing.T) {
+	repo, _ := newConnRepo(t)
+	ctx := context.Background()
+	for _, raw := range []string{
+		"http://api.example.com",          // non-https
+		"https://127.0.0.1/v1",            // loopback
+		"https://169.254.169.254/latest/", // cloud metadata
+		"https://10.1.2.3/v1",             // RFC1918 private
+	} {
+		c := provider.Connection{Name: "unsafe", Provider: "openrouter", BaseURL: raw}
+		err := repo.Create(ctx, c, "k")
+		assert.ErrorIs(t, err, provider.ErrInvalidBaseURL, "base_url %q must be rejected", raw)
+	}
+}
+
+// SECURITY (SSRF): Update on an existing connection also re-validates the
+// BaseURL, so a stored connection cannot be repointed at an unsafe host.
+func TestConnectionRepo_StrictPolicy_RejectsUnsafeBaseURLOnUpdate(t *testing.T) {
+	repo, _ := newConnRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleConn("c"), "k"))
+
+	c := sampleConn("c")
+	c.BaseURL = "https://192.168.0.5/v1"
+	err := repo.Update(ctx, c, nil)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+// The permissive constructor accepts loopback/http so tests and local fixtures
+// (httptest servers, fake routers) can persist connections.
+func TestConnectionRepoWithPolicy_Permissive_AcceptsLoopback(t *testing.T) {
+	db := setupTestDB(t)
+	crypto, err := adaptercrypto.NewAESGCM(testKey32(0x2A))
+	require.NoError(t, err)
+	repo := NewConnectionRepoWithPolicy(db.DB, crypto, provider.AllowAnyURLPolicy)
+	ctx := context.Background()
+
+	c := provider.Connection{Name: "loop", Provider: "openrouter", BaseURL: "http://127.0.0.1:8080"}
+	require.NoError(t, repo.Create(ctx, c, "k"))
 }
 
 // Edge: List on an empty store returns a non-nil empty slice, not nil.

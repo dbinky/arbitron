@@ -462,6 +462,18 @@ func TestChat_LiteLLMRouterBaseURL(t *testing.T) {
 	assert.Equal(t, "http://litellm.internal:4000/chat/completions", ft.gotReq.URL.String())
 }
 
+// --- SECURITY: a non-http(s) base-url scheme is rejected at request build ---
+
+func TestChat_RejectsNonHTTPScheme(t *testing.T) {
+	ft := &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"x"}}]}`)}
+	p := newProvider(t, ft, staticBinding("file:///etc/passwd", "m"))
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.ErrorIs(t, err, ErrUnsupportedScheme)
+	assert.Nil(t, resp)
+	assert.Nil(t, ft.gotReq, "request must never reach the transport on a bad scheme")
+}
+
 // --- base-url trailing slash is trimmed ---
 
 func TestChat_BaseURLTrailingSlash(t *testing.T) {

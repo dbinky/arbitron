@@ -83,6 +83,15 @@ func TestEndpointURL(t *testing.T) {
 			},
 			wantErr: ErrMissingBaseURL,
 		},
+		{
+			name: "non-http(s) scheme is rejected at request build",
+			binding: provider.ResolvedBinding{
+				BaseURL: "file:///etc/passwd",
+				Model:   "gpt-4o-deploy",
+				Extras:  map[string]string{"api-version": "2024-08-01-preview"},
+			},
+			wantErr: ErrUnsupportedScheme,
+		},
 	}
 
 	for _, tc := range cases {
