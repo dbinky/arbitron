@@ -7,6 +7,7 @@ import (
 
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -117,15 +118,45 @@ func TestConnChecker_DuplicateAlias_LastWriteWins(t *testing.T) {
 }
 
 // Integration with workflow.Validate: a workflow node referencing a profile
-// whose connection is missing produces an UNKNOWN_CONNECTION error.
+// whose connection is missing produces an UNKNOWN_CONNECTION error when
+// workflow.Validate is called with the ConnChecker. This test proves the
+// ConnChecker satisfies the workflow.ConnectionChecker port end-to-end: the
+// UNKNOWN_CONNECTION error code appears in the returned ValidationError slice.
 func TestConnChecker_SatisfiesWorkflowPort(t *testing.T) {
 	store := &existsStore{present: map[string]bool{}}
 	c := adapterprovider.NewConnChecker([]provider.Profile{
 		{Alias: "az", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod"},
 	}, store)
 
+	// Manual method checks (ConnChecker satisfies the port interface).
 	ref, ok := c.ProfileConnectionRef("az")
 	require.True(t, ok)
 	require.Equal(t, "azure-prod", ref)
-	assert.False(t, c.ConnectionExists(ref))
+	require.False(t, c.ConnectionExists(ref))
+
+	// End-to-end: pass the ConnChecker to workflow.Validate and assert that
+	// UNKNOWN_CONNECTION is produced for the node whose connection is absent.
+	// FileChecker and ProfileChecker are nil — only the connection check runs.
+	wf := &workflow.Workflow{
+		Name: "conn-check-wf",
+		Nodes: []workflow.Node{
+			{
+				ID:         "llm",
+				Type:       workflow.NodeTypeLLMCall,
+				Entrypoint: true,
+				Config: workflow.NodeConfig{
+					TemplateFile: "prompt.md",
+					ModelProfile: "az",
+				},
+			},
+		},
+	}
+	errs := workflow.Validate(wf, nil, nil, c)
+
+	var codes []string
+	for _, e := range errs {
+		codes = append(codes, e.Code)
+	}
+	assert.Contains(t, codes, "UNKNOWN_CONNECTION",
+		"a profile referencing an absent connection must produce UNKNOWN_CONNECTION via workflow.Validate")
 }
