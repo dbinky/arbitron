@@ -82,7 +82,7 @@ The permission model follows the chat/agent capability split, and is **already t
 
 ## 8. Risks & Open Items (resolved during implementation)
 
-- **Tool-enabled streaming + resume** is the one new behavior — de-risk first with the §6.7 spike; if headless tool-streaming resume proves unreliable, fall back to single-turn-per-resume with the workspace files carrying continuity.
+- **Tool-enabled streaming + resume** is the one new behavior — de-risk first with the §6.7 spike; if headless tool-streaming resume proves unreliable, fall back to single-turn-per-resume with the workspace files carrying continuity. **Spike result (2026-06-02): PASS.** `claude -p --verbose --output-format stream-json --dangerously-skip-permissions` streamed a `Write` `tool_use` and created the file (turn 1), and `--resume <sessionId>` streamed an `Edit` `tool_use` and modified it (turn 2), `is_error:false` both turns. **Required condition:** `ANTHROPIC_API_KEY` must be unset (a set-but-invalid key forces API mode and fails with "Invalid API key"); `procenv.BaseEnv()` already strips it, so the arbitron-spawned path is correct. No fallback needed.
 - **Stream parser** must not mis-handle `tool_use`/`tool_result` frames when scanning for the sentinel — covered by an edge test.
 - **Dashboard display** of agent tool activity in an interactive session: surface minimally (event lines); rich rendering is out of scope.
 - **Dead `maxTokens` field** on interactive nodes: either wire it through or remove it from the schema — decide during implementation; the design does not depend on it.
