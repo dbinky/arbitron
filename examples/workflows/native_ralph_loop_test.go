@@ -112,6 +112,50 @@ func TestNativeRalphLoop_Shape(t *testing.T) {
 	assert.True(t, hasExitEdge, "exit edge from loop-or-exit must exist")
 }
 
+// TestNativeRalphLoop_IterationInputHasDefault0 verifies the iteration input is
+// declared with default=0 so the counter is numeric before the first increment.
+// A missing or non-numeric default would cause the transform to error on the
+// first loop iteration.
+func TestNativeRalphLoop_IterationInputHasDefault0(t *testing.T) {
+	wf, _ := loadExample(t)
+
+	var iterInput *workflow.InputField
+	for i := range wf.Inputs {
+		if wf.Inputs[i].Name == "iteration" {
+			iterInput = &wf.Inputs[i]
+			break
+		}
+	}
+	require.NotNil(t, iterInput, "workflow must declare an 'iteration' input")
+	assert.False(t, iterInput.Required, "iteration must not be required (has a default)")
+	require.NotNil(t, iterInput.Default, "iteration input must have a default value")
+	// The JSON number 0 unmarshals as float64. The transform increments this on
+	// the first pass, so it must be numeric at the start.
+	_, isNumeric := iterInput.Default.(float64)
+	assert.True(t, isNumeric,
+		"iteration default must be a numeric type (float64 from JSON 0), got %T", iterInput.Default)
+}
+
+// TestNativeRalphLoop_UnknownAliasFailsValidation verifies that a profile
+// checker that doesn't know the editor or assessor aliases produces
+// UNKNOWN_PROFILE errors (not a silent pass). This is the guard that prevents
+// a miswired binding from silently skipping alias validation.
+func TestNativeRalphLoop_UnknownAliasFailsValidation(t *testing.T) {
+	wf, reader := loadExample(t)
+
+	// Empty checker — no aliases known.
+	checker := &mockProfileChecker{kinds: map[string]string{}}
+
+	errs := workflow.Validate(wf, reader, checker, nil)
+
+	var codes []string
+	for _, e := range errs {
+		codes = append(codes, e.Code)
+	}
+	assert.Contains(t, codes, "UNKNOWN_PROFILE",
+		"unknown editor/assessor aliases must produce UNKNOWN_PROFILE errors")
+}
+
 // TestNativeRalphLoop_ChatProfileOnEditorFailsValidation is the negative variant
 // (acceptance #6 territory): binding the editor alias to a chat-only profile must
 // fail validation with a PROFILE_KIND_MISMATCH, proving the same graph rejects a

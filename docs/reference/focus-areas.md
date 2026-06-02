@@ -28,7 +28,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 13 | Connection management surface (`adapter/mcp/tools_connection.go` — create/update/delete/get/list, key-in-never-out, name-only logging) | [x] | [x] | Done |
 | 14 | Composition root wiring (`cmd/arbitron/main.go` — adapters, resolver, selectors, checkers, fail-fast gate) | [x] | [x] | Done |
 | 15 | Config & profile loading (`domain/config/config.go`, `adapter/config/loader.go`, `profiles.go` — Profiles block, ConnectionRef/Params, precedence) | [x] | [x] | Done |
-| 16 | Native ralph loop example (`examples/workflows/native-ralph-loop/` — graph, templates, seed files, both bindings, termination on both exit branches) | [ ] | [ ] | |
+| 16 | Native ralph loop example (`examples/workflows/native-ralph-loop/` — graph, templates, seed files, both bindings, termination on both exit branches) | [x] | [ ] | |
 | 17 | Acceptance harness (`test/acceptance/` — #1–#7 scenarios, hermetic seams, config-diff & secrecy assertions) | [ ] | [ ] | |
 
 ---
