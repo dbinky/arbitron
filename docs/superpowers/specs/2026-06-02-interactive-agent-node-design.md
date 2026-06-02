@@ -6,9 +6,9 @@
 
 Arbitron's `interactive` node is a human-in-the-loop **chat** session: it streams an LLM turn, pauses (`waiting`), resumes on the human's reply, and completes when the model emits a completion sentinel whose JSON becomes the node's structured output. This works for small structured results but **fails for large documents**: a brainstorm that must return a full spec (or worse, multiple design-phase docs) as one JSON sentinel exceeds `claude -p`'s per-turn output cap, the closing tag never arrives, the sentinel never matches, and the instance is stuck in `waiting` forever. `claude -p` exposes no max-output flag, so the cap can't be raised; and the node's `maxTokens` config is a dead no-op because `buildArgs` forwards no token limit. This was discovered dogfooding the feature-pipeline: the spec brainstorm got stuck exactly this way.
 
-A second, latent defect surfaced alongside it: today's chat backend is **tool-suppressed**, so an interactive brainstorm cannot actually read the repo it was told to ground itself in — it fabricates "I skimmed the README." And the autonomous `agent_call` nodes run with neither `--dangerously-skip-permissions` nor an allow-list, so in `--print` mode they **cannot use tools at all** and would silently no-op every file edit in the pipeline (align/produce/impl/refine).
+A second limitation surfaced alongside it: today's `interactive` node is a **tool-suppressed chat** backend, so an interactive brainstorm cannot actually read the repo it was told to ground itself in — it fabricates "I skimmed the README." (By contrast, the autonomous `agent_call` backend **already runs tool-enabled and YOLO** — the claude-cli agent adapter hardcodes `--dangerously-skip-permissions` with the full tool scope — so its file edits work. The gap is specifically that *interactivity* has only ever been wired to the suppressed chat path; there is no tool-enabled interactive backend.)
 
-**Outcome:** introduce an **`interactive_agent`** node — a human-in-the-loop session backed by a **tool-enabled** `claude -p` — so doc-producing interactive steps **write artifacts to the workspace via tool calls** and return only tiny metadata through the sentinel. The output-cap failure mode is structurally eliminated. In the same change, make **all agent backends run YOLO** in their isolated worktrees, fixing the silent no-edit `agent_call` defect.
+**Outcome:** introduce an **`interactive_agent`** node — a human-in-the-loop session backed by a **tool-enabled, YOLO** `claude -p` (the same execution posture the autonomous agent adapter already uses) — so doc-producing interactive steps **write artifacts to the workspace via tool calls** and return only tiny metadata through the sentinel. The output-cap failure mode is structurally eliminated, and the brainstorm can genuinely read `./src`.
 
 ### Non-goals
 
@@ -42,15 +42,15 @@ The key simplification: the *only* difference between the two interactive types 
 - **Resume across turns** uses the existing `--resume <sessionId>`; the session preserves prior tool use and context.
 - **Profile/WorkDir:** `interactive_agent` resolves an agent profile and runs with `WorkDir = {{workspace}}` (the instance root), exactly like `agent_call`.
 
-## 4. Agent YOLO Execution
+## 4. Agent YOLO Execution (capability split)
 
-The chat/agent split maps cleanly onto a permission model:
+The permission model follows the chat/agent capability split, and is **already the reality** for the autonomous backends — this section makes it explicit and extends it to the new interactive-agent path:
 
-- **Chat backends are tool-suppressed by construction** (`llm_call`, `interactive_llm`): no tools, no side effects, safe regardless of prompt content. Unchanged.
-- **Agent backends run YOLO by construction** (`agent_call`, `interactive_agent`): the claude-cli agent path always emits `--dangerously-skip-permissions` with tools enabled. Justification: each instance works in an **isolated per-instance worktree** under `{{workspace}}`. The opencode backend gets its YOLO equivalent when it lands.
-- **Fixes the latent `agent_call` defect:** today those nodes have no tools and no skip-permissions, so they silently cannot edit files — the pipeline's align/produce/impl/refine phases would no-op. After this change they actually perform their work.
-- **`toolScope`** remains available to *narrow* an agent node's tools; the default is full.
-- **Accepted residual risk:** `--dangerously-skip-permissions` is RCE-equivalent and Bash is not jailed to the worktree (it runs as the host user). Accepted for self-hosted, single-user, author-trusted prompts — documented, not hidden.
+- **Chat backends are tool-suppressed by construction** (`llm_call`, `interactive_llm`): the claude-cli chat adapter emits `--allowedTools ""`, no skip-permissions — no tools, no side effects, safe regardless of prompt. Unchanged.
+- **Agent backends run YOLO by construction** (`agent_call`, and now `interactive_agent`): the claude-cli agent path emits `--dangerously-skip-permissions` with the full tool scope. `agent_call` **already** does this (hardcoded in the agent adapter); `interactive_agent`'s new tool-enabled streaming path must adopt the **same** posture. Justification: each instance works in an **isolated per-instance worktree** under `{{workspace}}`. The opencode backend gets its YOLO equivalent when it lands.
+- **No `agent_call` change is required** — it already edits files correctly. The only new YOLO surface is `interactive_agent`'s streaming backend.
+- **`toolScope`** remains available to *narrow* an agent node's tools (already supported on `agent_call`); the default is full.
+- **Accepted residual risk:** `--dangerously-skip-permissions` is RCE-equivalent and Bash is not jailed to the worktree (it runs as the host user). This is the *existing* posture for agent work, accepted for self-hosted, single-user, author-trusted prompts — documented, not hidden.
 
 ## 5. Feature-Pipeline Workflow Changes
 
