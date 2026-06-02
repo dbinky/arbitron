@@ -126,7 +126,7 @@ func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 	if err != nil {
 		return false
 	}
-	return node.Type == workflow.NodeTypeInteractive
+	return workflow.IsInteractive(node.Type)
 }
 
 // retryRequest is the optional JSON body for retrying an instance.

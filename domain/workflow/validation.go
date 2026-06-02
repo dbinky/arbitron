@@ -518,7 +518,7 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
-		case NodeTypeInteractive:
+		case NodeTypeInteractiveLLM:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
 	}

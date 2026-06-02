@@ -15,7 +15,7 @@ import (
 func interactiveNode(id string, entry bool) workflow.Node {
 	return workflow.Node{
 		ID:         id,
-		Type:       workflow.NodeTypeInteractive,
+		Type:       workflow.NodeTypeInteractiveLLM,
 		Entrypoint: entry,
 		Config: workflow.NodeConfig{
 			OrchestrationFile: "orch.md",

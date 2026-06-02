@@ -1181,7 +1181,7 @@ func TestStreamHandler_HistoryHydration_InteractiveWait(t *testing.T) {
 		"nodes": []any{
 			map[string]any{
 				"id":   "review-design",
-				"type": "interactive",
+				"type": "interactive_llm",
 				"config": map[string]any{
 					"systemPrompt": "You are a reviewer.",
 				},
@@ -1360,7 +1360,7 @@ func TestStreamHandler_HistoryHydration_NilNodeExecRepo_SkipsHistory(t *testing.
 		"nodes": []any{
 			map[string]any{
 				"id":   "review-design",
-				"type": "interactive",
+				"type": "interactive_llm",
 				"config": map[string]any{
 					"systemPrompt": "You are a reviewer.",
 				},
@@ -1421,7 +1421,7 @@ func TestStreamHandler_HistoryHydration_NodeExecNotFound_SkipsHistory(t *testing
 		"nodes": []any{
 			map[string]any{
 				"id":   "review-design",
-				"type": "interactive",
+				"type": "interactive_llm",
 				"config": map[string]any{
 					"systemPrompt": "You are a reviewer.",
 				},

@@ -314,7 +314,7 @@ func findInteractiveNodeConfig(snapshot map[string]any, nodeID string) (workflow
 		return workflow.NodeConfig{}, fmt.Errorf("conversation: %w", err)
 	}
 
-	if node.Type != workflow.NodeTypeInteractive {
+	if !workflow.IsInteractive(node.Type) {
 		return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
 	}
 	return node.Config, nil

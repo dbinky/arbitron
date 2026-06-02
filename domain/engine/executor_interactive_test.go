@@ -114,7 +114,7 @@ func interactiveTestSetup() (
 func interactiveNode() workflow.Node {
 	return workflow.Node{
 		ID:   "interact",
-		Type: workflow.NodeTypeInteractive,
+		Type: workflow.NodeTypeInteractiveLLM,
 		Config: workflow.NodeConfig{
 			SystemPrompt:      "You are a helpful assistant.",
 			OrchestrationFile: "orchestration.md",

@@ -510,7 +510,7 @@ func (e *Engine) handleNodeSuccess(
 			Timestamp: time.Now(),
 			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
 		})
-		if node.Type == workflow.NodeTypeInteractive {
+		if workflow.IsInteractive(node.Type) {
 			e.emitNotification(ctx, instanceID, workflowName, notification.TypeNeedsInteraction)
 		}
 		*capacityFreed = true

@@ -46,7 +46,7 @@ func conversationTestSetup(t *testing.T) (
 		Nodes: []workflow.Node{
 			{
 				ID:         nodeID,
-				Type:       workflow.NodeTypeInteractive,
+				Type:       workflow.NodeTypeInteractiveLLM,
 				Entrypoint: true,
 				Config: workflow.NodeConfig{
 					SystemPrompt: "You are a helpful assistant.",

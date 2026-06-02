@@ -25,7 +25,7 @@ func lintInteractiveInLoop(wf *Workflow) []ValidationError {
 
 	var findings []ValidationError
 	for _, n := range wf.Nodes {
-		if n.Type != NodeTypeInteractive {
+		if n.Type != NodeTypeInteractiveLLM {
 			continue
 		}
 		if nodeOnCycle(n.ID, adj) {

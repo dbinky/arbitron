@@ -12,9 +12,15 @@ const (
 	NodeTypeTransform   NodeType = "transform"
 	NodeTypeTimerDelay  NodeType = "timer_delay"
 	NodeTypeWebhookWait NodeType = "webhook_wait"
-	NodeTypeInteractive NodeType = "interactive"
+	NodeTypeInteractiveLLM   NodeType = "interactive_llm"
+	NodeTypeInteractiveAgent NodeType = "interactive_agent"
 	NodeTypeAgentCall   NodeType = "agent_call"
 )
+
+// IsInteractive reports whether t is one of the human-in-the-loop node types.
+func IsInteractive(t NodeType) bool {
+	return t == NodeTypeInteractiveLLM || t == NodeTypeInteractiveAgent
+}
 
 // Workflow is the top-level definition of a directed graph of processing nodes.
 type Workflow struct {

@@ -710,7 +710,7 @@ func TestValidateInteractive_RequiresOrchestrationFile(t *testing.T) {
 		Name: "interactive-no-orch",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				TemplateFile: "prompt.hbs", // TemplateFile is set, OrchestrationFile is empty
 			}},
 			{ID: "next", Type: workflow.NodeTypeTransform},
@@ -732,7 +732,7 @@ func TestValidateInteractive_RequiresTemplateFile(t *testing.T) {
 		Name: "interactive-no-template",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				OrchestrationFile: "orchestrate.yaml", // OrchestrationFile is set, TemplateFile is empty
 			}},
 			{ID: "next", Type: workflow.NodeTypeTransform},
@@ -752,7 +752,7 @@ func TestValidateInteractive_Valid(t *testing.T) {
 		Name: "interactive-valid",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				SystemPrompt:      "You are a helpful assistant",
 				OrchestrationFile: "orchestrate.yaml",
 				TemplateFile:      "prompt.hbs",
@@ -783,7 +783,7 @@ func TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig(t *testing.T) {
 		Nodes: []workflow.Node{
 			{
 				ID:                "entry",
-				Type:              workflow.NodeTypeInteractive,
+				Type:              workflow.NodeTypeInteractiveLLM,
 				Label:             "Interactive",
 				Entrypoint:        true,
 				Config: workflow.NodeConfig{
@@ -804,7 +804,7 @@ func TestValidateInteractive_MissingOrchestrationFile(t *testing.T) {
 		Name: "interactive-missing-orch",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				OrchestrationFile: "nonexistent.md",
 			}},
 			{ID: "next", Type: workflow.NodeTypeTransform},
@@ -827,7 +827,7 @@ func TestValidateInteractive_OrchestrationFileSkippedWithNilChecker(t *testing.T
 		Name: "interactive-nil-checker",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				OrchestrationFile: "nonexistent.md",
 			}},
 			{ID: "next", Type: workflow.NodeTypeTransform},
@@ -889,7 +889,7 @@ func TestValidateInteractive_BothFilesMissing(t *testing.T) {
 		Name: "interactive-both-missing",
 		Nodes: []workflow.Node{
 			{ID: "entry", Type: workflow.NodeTypeTransform, Entrypoint: true},
-			{ID: "interact", Type: workflow.NodeTypeInteractive, Config: workflow.NodeConfig{
+			{ID: "interact", Type: workflow.NodeTypeInteractiveLLM, Config: workflow.NodeConfig{
 				TemplateFile:      "missing-template.hbs",
 				OrchestrationFile: "missing-orch.md",
 			}},

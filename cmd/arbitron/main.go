@@ -418,7 +418,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 
 	// 12c. Register the interactive executor. Notification creation is handled
 	// by the engine when it processes the IsWait result.
-	executors[workflow.NodeTypeInteractive] = engine.NewInteractiveExecutor(
+	executors[workflow.NodeTypeInteractiveLLM] = engine.NewInteractiveExecutor(
 		instanceRepo, nodeExecRepo, chatProvider, fileReader, bus, queueMgr,
 	)
 
