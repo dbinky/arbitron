@@ -67,3 +67,35 @@ func TestAcceptance_05_NativeLoop(t *testing.T) {
 	}
 	assert.Equal(t, 3, editorExecs, "the editor re-executed once per loop pass via the back-edge")
 }
+
+// TestAcceptance_05_NativeLoop_CounterCapExit exercises the second conditional
+// branch: when `assessor.done` never fires, the loop must exit on
+// `iteration >= max_iterations`. All prior loop tests exit on the done-branch;
+// this is the only test that proves the gte (counter cap) branch is reachable
+// end-to-end under a real engine run (spec §8 #5: "exits on its conditional").
+func TestAcceptance_05_NativeLoop_CounterCapExit(t *testing.T) {
+	runner := newFakeRunner().withFallback("Editing.", "Done.")
+	// Assessor always reports done=false — the counter cap must fire instead.
+	transport := newFakeTransport(false)
+	h := newHarness(t, openWeightBinding(runner, transport))
+
+	// max_iterations=2: the loop runs exactly 2 passes and exits on the cap.
+	res := h.runWorkedExample(t, 2)
+	require.Equal(t, instance.StateCompleted, res.instance.State,
+		"the loop must complete via the counter cap even when assessor.done never fires")
+
+	// Exactly 2 assess passes (one per pass; cap fires at iteration==2).
+	assert.Len(t, transport.recorded(), 2,
+		"the loop ran exactly 2 assess passes before the counter cap fired")
+
+	// The final counter equals max_iterations: the gte branch fired.
+	assert.Equal(t, float64(2), res.instance.Variables["iteration"],
+		"iteration reached max_iterations (2): the counter cap ended the loop, not done=true")
+
+	// assessor.done is false in the final persisted output, confirming the
+	// done-exit branch did NOT fire.
+	assessor, ok := res.instance.Variables["assessor"].(map[string]any)
+	require.True(t, ok, "assessor structured output must be a map")
+	assert.Equal(t, false, assessor["done"],
+		"assessor.done is false: the counter cap fired, not the done-true branch")
+}
