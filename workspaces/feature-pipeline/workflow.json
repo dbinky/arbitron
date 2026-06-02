@@ -118,6 +118,96 @@
       "errorBehavior": {}
     },
     {
+      "id": "brainstorm-spec",
+      "type": "interactive",
+      "config": {
+        "templateFile": "templates/brainstorm-spec.md",
+        "model_profile": "interviewer",
+        "outputSchema": {
+          "properties": {
+            "slug": {
+              "description": "Recommended kebab-case slug.",
+              "type": "string"
+            },
+            "spec_markdown": {
+              "description": "The complete product spec as Markdown.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "spec_markdown"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-spec.orch.md"
+      },
+      "label": "Brainstorm: spec",
+      "description": "Interactive spec brainstorm; emits {slug, spec_markdown}.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "write-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/write-spec.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Write spec",
+      "description": "Write docs/specs/{date}-{slug}-spec.md and commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "brainstorm-design",
+      "type": "interactive",
+      "config": {
+        "templateFile": "templates/brainstorm-design.md",
+        "model_profile": "interviewer",
+        "outputSchema": {
+          "properties": {
+            "phases": {
+              "items": {
+                "properties": {
+                  "markdown": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "markdown"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "phases"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/brainstorm-design.orch.md"
+      },
+      "label": "Brainstorm: design",
+      "description": "Interactive design brainstorm; emits {phases:[{title,markdown}]}.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "write-designs",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/write-designs.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Write designs",
+      "description": "Write docs/designs/{date}-{slug}-design-phase-N.md and commit.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done",
       "type": "transform",
       "config": {
@@ -145,6 +235,22 @@
     },
     {
       "source": "notify-start",
+      "target": "brainstorm-spec"
+    },
+    {
+      "source": "brainstorm-spec",
+      "target": "write-spec"
+    },
+    {
+      "source": "write-spec",
+      "target": "brainstorm-design"
+    },
+    {
+      "source": "brainstorm-design",
+      "target": "write-designs"
+    },
+    {
+      "source": "write-designs",
       "target": "done"
     }
   ]
