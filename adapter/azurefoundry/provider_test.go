@@ -162,6 +162,39 @@ func TestChat_StructuredOutput_SetsResponseFormat(t *testing.T) {
 	assert.Equal(t, "json_schema", rf["type"])
 }
 
+// The azurefoundry adapter returns structured content as a raw JSON string in
+// resp.Output — it is the LLMCallExecutor's job to parse it, not the adapter's.
+// This is the "no double-parse" contract: azurefoundry returns string (like
+// claude-cli), openrouter returns a pre-parsed map. The executor bridges both.
+func TestChat_StructuredOutput_ContentReturnedAsRawString(t *testing.T) {
+	const structuredContent = `{"done": true, "notes": "focus areas satisfied"}`
+	bodyBytes, err := json.Marshal(map[string]any{
+		"model": "gpt-4o-deploy",
+		"choices": []map[string]any{
+			{"message": map[string]any{"role": "assistant", "content": structuredContent}},
+		},
+		"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 8},
+	})
+	require.NoError(t, err)
+
+	var cap captured
+	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {
+		return jsonResp(http.StatusOK, string(bodyBytes)), nil
+	})
+	schema := map[string]any{"type": "object"}
+	p := azurefoundry.New(azurefoundry.Config{Binding: resourceBinding(), HTTPClient: client})
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "assess", OutputSchema: schema})
+	require.NoError(t, err)
+
+	// azurefoundry always returns the raw assistant content string so that the
+	// LLMCallExecutor.processLLMOutput parses it exactly once (no double-parse).
+	s, ok := resp.Output.(string)
+	require.True(t, ok, "azurefoundry Chat must return Output as a raw string (not a pre-parsed map), got %T", resp.Output)
+	assert.Equal(t, structuredContent, s,
+		"the returned string must be the verbatim assistant content from the upstream response")
+}
+
 func TestChat_NoSchema_OmitsResponseFormat(t *testing.T) {
 	var cap captured
 	client := newFakeClient(&cap, func(*http.Request) (*http.Response, error) {
