@@ -17,7 +17,7 @@
     {
       "name": "slug",
       "type": "string",
-      "description": "Feature slug; auto-derived from the spec brainstorm if empty.",
+      "description": "Feature slug used for the branch name and docs. If empty, the branch uses a neutral 'feature' placeholder (never the repo name) and the real slug is resolved from the spec brainstorm for docs/templates.",
       "default": "",
       "required": false
     },
@@ -67,7 +67,7 @@
         "timeoutSeconds": 600
       },
       "label": "Init workspace",
-      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-{slug} worktree at {{workspace}}/work.",
+      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-<slug>-<run_date>-<instance-short-id> worktree at {{workspace}}/work. The instance-id suffix keeps branches unique across concurrent runs of the same repo/feature.",
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
