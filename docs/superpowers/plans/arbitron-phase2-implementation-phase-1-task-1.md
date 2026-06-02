@@ -1,5 +1,7 @@
 # Phase 1, Task 1: Domain Model Changes
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Objective
 Add the `StateWaiting` constant, new sentinel errors, `QueuedAt` field to Instance/InstanceSummary, `QueueConfig` to Config, and define the `QueueRepository` port interface.
 
@@ -51,7 +53,7 @@ Add the `StateWaiting` constant, new sentinel errors, `QueuedAt` field to Instan
        ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
    }
    ```
-   Note: `CountQueued` and `CountWaiting` are used by the system config API endpoint. `ListWaitingWithTimer` and `ListWaitingWithWebhook` are used by crash recovery in later phases. All are defined here so the interface is complete from the start. Their Postgres implementations are added incrementally (counts in Phase 1 Task 2, lists in Phase 2 Task 5 and Phase 3 Task 6).
+   Note: `CountQueued` and `CountWaiting` are used by the system config API endpoint. `ListWaitingWithTimer` and `ListWaitingWithWebhook` are used by crash recovery in later phases. All are defined here so the interface is complete from the start. Their Postgres implementations are added incrementally (counts in Phase 1 Task 2, lists in Phase 2 Task 5 and Phase 3 Task 6). _(Postgres has since been replaced by SQLite.)_
 
 6. **Add QueueConfig** in `domain/config/config.go`:
    ```go

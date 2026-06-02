@@ -4,3 +4,11 @@
 node_modules/
 dashboard/.vite/
 .worktrees/
+# SQLite runtime database (created by `arbitron serve`)
+arbitron.db
+arbitron.db-shm
+arbitron.db-wal
+# Runtime log
+arbitron.log
+# OTel trace exports
+/traces/

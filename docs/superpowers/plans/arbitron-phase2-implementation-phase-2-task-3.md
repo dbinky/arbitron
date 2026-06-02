@@ -1,5 +1,7 @@
 # Phase 2, Task 3: Timer Delay Executor + WaitResult + Engine run() Loop Change
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Objective
 Implement the timer delay executor that transitions instances to `waiting` state, introduce the `WaitResult` type, and modify the engine's `run()` loop to handle wait results by exiting cleanly.
 

@@ -1,5 +1,7 @@
 # Phase 3 Task 3: Structured Logging & OpenTelemetry Tracing
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement structured logging (slog with dual JSON/text handlers) and OpenTelemetry tracing (with file exporter), plus request logging middleware and engine span instrumentation.
@@ -529,8 +531,8 @@ Update `cmd/arbitron/main.go` to replace all TODO markers with actual adapter cr
 
 1. Load config
 2. Set up logging (adapter/observability)
-3. Connect to Postgres, run migrations
-4. Initialize sqlc + create Postgres adapters
+3. Connect to Postgres, run migrations _(Postgres has since been replaced by SQLite.)_
+4. Initialize sqlc + create Postgres adapters _(Postgres has since been replaced by SQLite.)_
 5. Create filesystem workflow repo + file reader
 6. Create Anthropic provider
 7. Create event bus
@@ -568,7 +570,7 @@ git commit -m "feat: wire all components into bootstrap"
 - [ ] **Step 18: Write an end-to-end integration test**
 
 Create an integration test that:
-1. Starts a Postgres testcontainer
+1. Starts a Postgres testcontainer _(Postgres has since been replaced by SQLite.)_
 2. Runs migrations
 3. Creates a test workflow folder on disk (a simple transform-only workflow)
 4. Boots the full application (creates all adapters, engine, router)

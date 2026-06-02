@@ -1,8 +1,10 @@
 # Arbitron Phase 1 — Workflow Engine & REST API
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Overview
 
-Phase 1 delivers the core execution engine, instance lifecycle management, and REST API for the Arbitron workflow orchestration platform. It is a single Go binary that reads workflow definitions from the filesystem, executes them as directed graphs of nodes, persists all runtime state to Postgres, and exposes operations via a RESTful API. Single-user local mode with no dashboard, no MCP server, and no multi-user authentication.
+Phase 1 delivers the core execution engine, instance lifecycle management, and REST API for the Arbitron workflow orchestration platform. It is a single Go binary that reads workflow definitions from the filesystem, executes them as directed graphs of nodes, persists all runtime state to Postgres, and exposes operations via a RESTful API. _(Postgres has since been replaced by SQLite.)_ Single-user local mode with no dashboard, no MCP server, and no multi-user authentication.
 
 ---
 
@@ -131,7 +133,7 @@ If a substitution path doesn't resolve, the literal `{{path}}` string is left in
 
 ### Variable History
 
-At each node boundary (before a node starts executing), the engine snapshots the full variable state to a history table in Postgres. This creates a queryable timeline of how variables evolved throughout the instance.
+At each node boundary (before a node starts executing), the engine snapshots the full variable state to a history table in Postgres. _(Postgres has since been replaced by SQLite.)_ This creates a queryable timeline of how variables evolved throughout the instance.
 
 ---
 
@@ -143,7 +145,7 @@ When an instance is triggered:
 1. Load the snapshotted workflow definition
 2. Find the entry node (`entrypoint: true`)
 3. Execute nodes sequentially, following edges from each node's output to the next
-4. At each node boundary: snapshot variables to history, write a node execution record, update the instance's current node pointer in Postgres
+4. At each node boundary: snapshot variables to history, write a node execution record, update the instance's current node pointer in Postgres _(Postgres has since been replaced by SQLite.)_
 
 ### Node Execution
 
@@ -194,7 +196,7 @@ After a node completes, the engine finds the edge(s) where `source` matches the 
 
 ### Crash Resilience
 
-The engine writes instance state (current node, status) to Postgres before starting each node. If the process crashes:
+The engine writes instance state (current node, status) to Postgres before starting each node. _(Postgres has since been replaced by SQLite.)_ If the process crashes:
 - On restart, scan for instances in `running` state
 - Move any found to `failed` at the node they were executing
 - The user can retry via the API
@@ -323,7 +325,7 @@ Additional providers (LiteLLM, Azure OpenAI) implement the same interface. The e
 
 ## 7. Observability
 
-### Per-Node Execution Records (Postgres, User-Facing)
+### Per-Node Execution Records (Postgres, User-Facing) _(Postgres has since been replaced by SQLite.)_
 
 Every node execution records:
 - Node ID, type, label
@@ -466,7 +468,7 @@ All settings can be overridden via environment variables with an `ARBITRON_` pre
 ### Startup Sequence
 
 1. Load configuration (file → env var overrides)
-2. Connect to Postgres, run migrations (auto-migrate using embedded migration files)
+2. Connect to Postgres, run migrations (auto-migrate using embedded migration files) _(Postgres has since been replaced by SQLite.)_
 3. Create default user if not exists
 4. Scan for instances in `running` state (crash recovery) — move to `failed`
 5. Initialize LLM provider
@@ -492,10 +494,10 @@ The binary is invoked as `arbitron serve`. A single subcommand in Phase 1, with 
 - WebSocket streaming for live instance output
 - Workflow validation endpoint
 - LLM provider interface with Anthropic-direct implementation
-- Per-node execution records in Postgres
+- Per-node execution records in Postgres _(Postgres has since been replaced by SQLite.)_
 - Structured logging (slog) and OpenTelemetry tracing with file exporters
 - Single-user local mode with default admin user
-- Postgres for all runtime state
+- Postgres for all runtime state _(Postgres has since been replaced by SQLite.)_
 - Filesystem for workflow definitions
 - YAML configuration with env var overrides
 

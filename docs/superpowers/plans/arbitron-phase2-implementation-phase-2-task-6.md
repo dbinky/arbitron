@@ -1,5 +1,7 @@
 # Phase 2, Task 6: API Changes (waitingUntil Field) + Integration Tests
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Objective
 Add the `waitingUntil` field to instance API responses and write integration tests covering the full timer delay lifecycle.
 
@@ -8,7 +10,7 @@ Add the `waitingUntil` field to instance API responses and write integration tes
 
 ## Files to Create/Modify
 - `adapter/http/instance_handler.go` — add `waitingUntil` field to response
-- `adapter/postgres/instance_repo.go` — ensure `WaitingUntil` is read/written in Get/List queries
+- `adapter/postgres/instance_repo.go` — ensure `WaitingUntil` is read/written in Get/List queries _(Postgres has since been replaced by SQLite.)_
 - `tests/integration/timer_delay_test.go` — end-to-end timer delay tests
 
 ## Implementation Steps
@@ -40,7 +42,7 @@ Add the `waitingUntil` field to instance API responses and write integration tes
    }
    ```
 
-3. **Update Postgres queries** — ensure the `GetInstance` and `ListInstances` sqlc queries include `waiting_until` in their SELECT and that the mapping code populates `Instance.WaitingUntil`.
+3. **Update Postgres queries** — ensure the `GetInstance` and `ListInstances` sqlc queries include `waiting_until` in their SELECT and that the mapping code populates `Instance.WaitingUntil`. _(Postgres has since been replaced by SQLite.)_
 
 4. **Update sqlc query for CreateInstance** — include `waiting_until` parameter for instances that start in waiting state (or null for normal creation).
 

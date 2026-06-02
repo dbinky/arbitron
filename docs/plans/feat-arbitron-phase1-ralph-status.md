@@ -1,5 +1,7 @@
 # Progress
 
+> **Historical note (added 2026-06-02):** This document predates Arbitron's migration from Postgres to SQLite. All Postgres references below are obsolete — the live persistence layer is the SQLite adapter (`adapter/sqlite/`, configured via `database.path`, default `./arbitron.db`). Retained as a historical record.
+
 ## Phase Status
 - [x] FA1–FA14 Pass 1 (single-area correctness reviews) — COMPLETE
 - [x] FA15–FA23 Paired area reviews — COMPLETE  
@@ -19,7 +21,7 @@
 - [x] Fix: `Engine.Rerun` missing terminal state guard — any state accepted for rerun
 - [x] Fix: `Engine.executeWithRetry` never populated `ResolvedInputs` — trace endpoint always returned null for resolvedInputs
 - [x] Fix: tracing initialized after crash recovery — OTel spans from recovery were silently dropped
-- [x] Fix: postgres compile-time assertions only in test file — moved to `adapter/postgres/assert.go` so enforced by `go build`
+- [x] Fix: postgres compile-time assertions only in test file — moved to `adapter/postgres/assert.go` so enforced by `go build` _(Postgres has since been replaced by SQLite.)_
 - [x] Add: `WorkflowRepo` compile-time interface assertion in `workflow_repo.go`
 - [x] Add: `FileReaderAdapter` satisfies `workflow.FileChecker` compile-time assertion
 - [x] Add: `FileChecker` workflowName forwarding test in `validation_test.go`
