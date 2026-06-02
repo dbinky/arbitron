@@ -44,7 +44,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 22 | opencode env-injection + connection resolution (credential delivered into the subprocess env; absent from logs and `workflow.json`) | [x] | Done |
 | 23 | Conditional executor + worked example (done-exit and `counter >= max` exit both genuinely reachable; loop terminates under the Claude binding) | [x] | Done |
 | 24 | Chat adapters (claudecli/openrouter/azurefoundry) + LLM executor (structured output parsed to a map uniformly regardless of backend; no double-parse) | [x] | Done |
-| 25 | Acceptance harness + all backends (scenarios exercise real selection/adapter/credential seams, not just unit happy paths) | [ ] | |
+| 25 | Acceptance harness + all backends (scenarios exercise real selection/adapter/credential seams, not just unit happy paths) | [x] | Done |
 
 ---
 
