@@ -354,6 +354,40 @@ func TestLLMCallExecutor_SchemaParsesRawJSONText(t *testing.T) {
 	assert.Equal(t, "focus areas satisfied", m["notes"])
 }
 
+// Category 1b (happy path, real-world): models often wrap structured JSON in a
+// markdown code fence (```json ... ```), especially agent/CLI adapters that
+// emit conversational text. processLLMOutput strips a surrounding fence before
+// parsing so a well-behaved model isn't failed for cosmetic formatting.
+func TestLLMCallExecutor_SchemaStripsJSONCodeFence(t *testing.T) {
+	cases := map[string]string{
+		"json-fence":            "```json\n{\"done\": true, \"notes\": \"ok\"}\n```",
+		"bare-fence":            "```\n{\"done\": true, \"notes\": \"ok\"}\n```",
+		"fence-with-whitespace": "\n  ```json\n{\"done\": true, \"notes\": \"ok\"}\n```  \n",
+	}
+
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			fr := newMockFileReader()
+			fr.files["test-wf/prompt.txt"] = []byte("assess")
+
+			prov := &mockChatProvider{
+				callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+					return &engine.ChatResponse{Output: raw, Model: "claude-sonnet-4"}, nil
+				},
+			}
+
+			exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("claude-sonnet-4"))
+			result, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+
+			require.NoError(t, err)
+			m, ok := result.Output.(map[string]any)
+			require.True(t, ok, "schema output must be a map so node.field references resolve")
+			assert.Equal(t, true, m["done"])
+			assert.Equal(t, "ok", m["notes"])
+		})
+	}
+}
+
 // Category 2 (contract guard): every ChatProvider now returns RAW text under a
 // schema and processLLMOutput is the SOLE parser, so ChatResponse.Output means
 // exactly one thing pre-parse (a string). A provider that violates the contract

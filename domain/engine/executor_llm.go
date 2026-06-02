@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
@@ -115,7 +116,7 @@ func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 			return nil, fmt.Errorf("structured output: expected raw string from provider, got %T", resp.Output)
 		}
 		var parsed any
-		if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(stripCodeFence(s)), &parsed); err != nil {
 			return nil, fmt.Errorf("parse structured output: %w", err)
 		}
 		return parsed, nil
@@ -135,8 +136,36 @@ func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 // text in {"response": "..."}.
 func parseOrWrapText(text string) any {
 	var parsed any
-	if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+	if err := json.Unmarshal([]byte(stripCodeFence(text)), &parsed); err == nil {
 		return parsed
 	}
 	return map[string]any{"response": text}
+}
+
+// stripCodeFence removes a single surrounding markdown code fence from s, if
+// present. Models — especially agent/CLI adapters that emit conversational
+// text — frequently wrap structured JSON in ```json ... ``` (or a bare ```
+// fence), which is not valid JSON. We strip the opening fence line (and its
+// optional language tag) and the trailing fence so the inner payload can be
+// parsed. If s is not fenced it is returned unchanged (trimmed of surrounding
+// whitespace), so well-formed JSON is unaffected.
+func stripCodeFence(s string) string {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "```") {
+		return t
+	}
+	// Drop everything up to and including the first newline (the opening fence
+	// line, e.g. "```" or "```json").
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		t = t[i+1:]
+	} else {
+		// Single-line fence with no body — nothing useful to extract.
+		return t
+	}
+	// Drop a trailing closing fence if present.
+	t = strings.TrimSpace(t)
+	if j := strings.LastIndex(t, "```"); j >= 0 {
+		t = t[:j]
+	}
+	return strings.TrimSpace(t)
 }

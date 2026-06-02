@@ -18,6 +18,18 @@ export default function ChatInput({ onSend, disabled = false }: ChatInputProps) 
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [value])
 
+  // Return focus to the input each time it re-enables after the assistant
+  // finishes a reply (disabled flips true -> false). When the session ends,
+  // the whole panel unmounts, so there is no input to refocus — which is
+  // exactly the "don't refocus on the final reply" behavior we want.
+  const wasDisabledRef = useRef(disabled)
+  useEffect(() => {
+    if (wasDisabledRef.current && !disabled) {
+      textareaRef.current?.focus()
+    }
+    wasDisabledRef.current = disabled
+  }, [disabled])
+
   const handleSend = useCallback(() => {
     const trimmed = value.trim()
     if (!trimmed || disabled) return
