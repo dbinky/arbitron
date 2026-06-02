@@ -120,7 +120,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 		return nil, err
 	}
 
-	runCtx, cancel := withTimeout(ctx, p.timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	result, _, err := collectResult(runCtx, p.runner, p.spec(req))
@@ -147,7 +147,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		return nil, err
 	}
 
-	runCtx, cancel := withTimeout(ctx, p.timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	lines, wait, err := p.runner.Run(runCtx, p.spec(req))
 	if err != nil {

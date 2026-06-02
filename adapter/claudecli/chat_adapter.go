@@ -46,15 +46,6 @@ func (c *adapterCore) validateWorkDir(workDir string) error {
 	return validateWorkDir(workDir, c.workspaceRoot)
 }
 
-// withTimeout derives a context honouring the given timeout. A non-positive
-// timeout yields the parent ctx unchanged with a no-op cancel.
-func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, timeout)
-}
-
 // ChatAdapter implements engine.ChatProvider by invoking the `claude` CLI in
 // headless (`--print`) mode with tools suppressed (`--allowedTools ""`, no
 // `--dangerously-skip-permissions`), so it behaves as a plain completion with
@@ -97,7 +88,7 @@ func (a *ChatAdapter) Chat(ctx context.Context, req engine.ChatRequest) (*engine
 		return nil, err
 	}
 
-	runCtx, cancel := withTimeout(ctx, a.core.timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 	defer cancel()
 
 	result, _, err := collectResult(runCtx, a.core.runner, a.spec(req))
@@ -123,7 +114,7 @@ func (a *ChatAdapter) StreamChat(ctx context.Context, req engine.ChatRequest) (<
 		return nil, err
 	}
 
-	runCtx, cancel := withTimeout(ctx, a.core.timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, a.core.timeout)
 
 	lines, wait, err := a.core.runner.Run(runCtx, a.spec(req))
 	if err != nil {

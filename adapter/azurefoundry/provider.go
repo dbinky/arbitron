@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -79,15 +80,6 @@ func (p *Provider) revealKey(ctx context.Context) (string, error) {
 	return p.binding.RevealKey(ctx)
 }
 
-// withTimeout derives a context honouring the configured timeout. A
-// non-positive timeout returns the parent ctx with a no-op cancel.
-func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if p.timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, p.timeout)
-}
-
 // Chat performs a synchronous chat-completions request and returns the terminal
 // response with native token usage.
 func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
@@ -100,7 +92,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 		return nil, err
 	}
 
-	callCtx, cancel := p.withTimeout(ctx)
+	callCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	httpReq, err := p.newRequest(callCtx, urlStr, body)
@@ -149,7 +141,7 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 		return nil, err
 	}
 
-	callCtx, cancel := p.withTimeout(ctx)
+	callCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	httpReq, err := p.newRequest(callCtx, urlStr, body)
 	if err != nil {

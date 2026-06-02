@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -63,15 +64,6 @@ func New(cfg Config) *Provider {
 	}
 }
 
-// withTimeout derives a context honouring the configured timeout. A
-// non-positive timeout yields the parent ctx with a no-op cancel.
-func (p *Provider) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if p.timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, p.timeout)
-}
-
 // boundedReader wraps r with the configured MaxResponseBytes cap. A zero cap
 // returns r unchanged.
 func (p *Provider) boundedReader(r io.Reader) io.Reader {
@@ -109,7 +101,7 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 // Chat POSTs a non-streaming completion and maps the first choice's content to
 // ChatResponse.Output, copying the model and usage token counts.
 func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
-	ctx, cancel := p.withTimeout(ctx)
+	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	body, err := buildBody(req, p.binding.Model, false)
@@ -161,7 +153,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 // failure is delivered as a ChatChunk{Error} before the channel closes; the
 // goroutine always drains the body and closes the channel.
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
-	streamCtx, cancel := p.withTimeout(ctx)
+	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	body, err := buildBody(req, p.binding.Model, true)
 	if err != nil {

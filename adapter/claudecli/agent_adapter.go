@@ -66,7 +66,7 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 	if timeout <= 0 {
 		timeout = a.core.timeout
 	}
-	runCtx, cancel := withTimeout(ctx, timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	result, events, err := collectResult(runCtx, a.core.runner, a.spec(mission))

@@ -94,7 +94,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	if timeout <= 0 {
 		timeout = p.timeout
 	}
-	runCtx, cancel := withTimeout(ctx, timeout)
+	runCtx, cancel := procenv.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	spec := claudecli.RunSpec{
@@ -138,15 +138,6 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// TokensIn left zero (coarse subprocess accounting; text mode emits no
 		// structured usage). SessionID empty per the single-shot contract.
 	}, nil
-}
-
-// withTimeout derives a context honouring timeout. A non-positive timeout
-// yields the parent ctx unchanged with a no-op cancel. Mirrors claudecli's.
-func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return ctx, func() {}
-	}
-	return context.WithTimeout(ctx, timeout)
 }
 
 // resolveBinary returns the opencode binary path. An explicit path is returned
