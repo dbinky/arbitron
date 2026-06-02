@@ -66,6 +66,13 @@ type AgentProviderSelector interface {
 	AgentProviderFor(b provider.ResolvedBinding) (AgentProvider, error)
 }
 
+// InteractiveStreamSelector chooses the streaming ChatProvider for an
+// interactive node from a resolved binding: chat bindings get the tool-suppressed
+// chat stream; agent bindings get the tool-enabled (YOLO) stream.
+type InteractiveStreamSelector interface {
+	StreamProviderFor(b provider.ResolvedBinding) (ChatProvider, error)
+}
+
 // AgentMission describes a single agentic mission to run inside the instance
 // workspace.
 type AgentMission struct {
