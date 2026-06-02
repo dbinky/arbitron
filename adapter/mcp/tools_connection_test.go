@@ -355,3 +355,62 @@ func TestConnectionCreate_ExtrasNonStringValue(t *testing.T) {
 	assert.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "string")
 }
+
+// Security: connection_update with api_key="" (empty string, explicitly supplied)
+// preserves the stored key rather than rotating it. An LLM passing an empty
+// key must not clear a valid sealed key.
+func TestConnectionUpdate_EmptyAPIKeyPreservesKey(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	const origKey = "sk-original-sealed"
+	require.False(t, callTool(t, srv, "connection_create", map[string]any{
+		"name":     "c1",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  origKey,
+	}).IsError)
+
+	// Update with an explicitly-empty api_key — must be treated as "omit rotation".
+	res := callTool(t, srv, "connection_update", map[string]any{
+		"name":     "c1",
+		"provider": "litellm",
+		"base_url": "https://x",
+		"api_key":  "",
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	// The original sealed key must be unchanged.
+	assert.Equal(t, origKey, store.keys["c1"],
+		"empty api_key on update must not rotate the stored key")
+}
+
+// Security: connection_update logs key_rotated=true when a new key is supplied,
+// key_rotated=false when omitted — and never logs the key value itself.
+func TestConnectionUpdate_DoesNotLogKeyValue(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, logger)
+
+	const sentinel = "sk-SENTINEL-UPDATE-LOG"
+	require.False(t, callTool(t, srv, "connection_create", map[string]any{
+		"name":     "c1",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  "sk-orig",
+	}).IsError)
+	buf.Reset() // clear create log
+
+	res := callTool(t, srv, "connection_update", map[string]any{
+		"name":     "c1",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  sentinel,
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	logs := buf.String()
+	assert.NotContains(t, logs, sentinel, "updated key must never appear in logs")
+	assert.Contains(t, logs, "key_rotated")
+}
