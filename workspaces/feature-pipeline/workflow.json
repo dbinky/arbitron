@@ -226,6 +226,42 @@
       "errorBehavior": {}
     },
     {
+      "id": "align-designs",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-designs.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align designs",
+      "description": "Read spec + designs; fix alignment in place; commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "produce-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/produce-plans.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 3600
+      },
+      "label": "Produce plans",
+      "description": "Write detailed TDD task plans for each design phase; commit.",
+      "errorBehavior": {}
+    },
+    {
+      "id": "align-plans",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/align-plans.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 1800
+      },
+      "label": "Align plans",
+      "description": "Align spec+designs+plans; fix in place; commit.",
+      "errorBehavior": {}
+    },
+    {
       "id": "done-spec",
       "type": "transform",
       "config": {
@@ -294,8 +330,20 @@
     },
     {
       "source": "spec-only?",
+      "target": "align-designs",
+      "output": "continue"
+    },
+    {
+      "source": "align-designs",
+      "target": "produce-plans"
+    },
+    {
+      "source": "produce-plans",
+      "target": "align-plans"
+    },
+    {
+      "source": "align-plans",
       "target": "done",
-      "output": "continue",
       "label": "TEMP until next task"
     }
   ]
