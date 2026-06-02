@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -431,6 +432,14 @@ func (e *Engine) handleNodeError(
 	vars *variable.VariableStore,
 	adj map[string][]edgeTarget,
 ) (nextNodeID string, halt bool) {
+	// Cancellation race: when the run context is cancelled (e.g. via Cancel()),
+	// the executing node returns context.Canceled. That is a cancellation, NOT a
+	// node failure — marking the instance Failed here would clobber the Cancelled
+	// state Cancel() set. Halt without changing state; the cancel path owns it.
+	if ctx.Err() != nil || errors.Is(execErr, context.Canceled) {
+		return "", true
+	}
+
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeNodeFailed,
 		Timestamp: time.Now(),
