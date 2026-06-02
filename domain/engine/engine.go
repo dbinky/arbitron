@@ -405,9 +405,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 // the repeated SetFailed + slog.Error pattern used throughout the run loop.
 // It returns true if the state change succeeded, false otherwise.
 //
-// SF9: on success, the workspace is intentionally NOT removed (retain on
-// failure for debugging); a slog.Warn with size/file-count is emitted so the
-// sensitive-data-retention surface is visible to operators.
+// SF9: on failure the workspace is intentionally NOT removed — it is retained
+// for debugging (the success path in run() removes it after SetCompleted). A
+// slog.Warn with size/file-count is emitted so the sensitive-data-retention
+// surface is visible to operators.
 func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID string) bool {
 	if err := e.instances.SetFailed(ctx, instanceID, nodeID); err != nil {
 		slog.Error("failed to set instance failed", "instanceID", instanceID, "error", err)
