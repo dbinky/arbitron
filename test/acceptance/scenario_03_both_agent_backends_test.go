@@ -43,6 +43,18 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 		for _, e := range s.Env {
 			assert.False(t, strings.HasPrefix(e, "OPENROUTER_API_KEY="), "no key on the claude no-key path")
 		}
+
+		// Explicitly prove the done-exit branch fired, not the counter cap.
+		// done-script = (false, true) → exactly 2 assessor passes before exit.
+		chatSpecs := chatInvocationSpecs(runner)
+		assert.Len(t, chatSpecs, 2,
+			"the Claude assessor ran exactly 2 passes before done=true ended the loop")
+		assert.Equal(t, float64(2), res.instance.Variables["iteration"],
+			"iteration == 2: the loop ran 2 passes under the claude binding (counter cap at 10 did not fire)")
+		assessor, ok := res.instance.Variables["assessor"].(map[string]any)
+		require.True(t, ok, "assessor structured output must be a map in instance variables")
+		assert.Equal(t, true, assessor["done"],
+			"assessor.done is true: the done-exit branch fired under the claude binding, not the counter cap")
 	})
 
 	// --- Backend B: editor via opencode (open-weight binding) ---------------
