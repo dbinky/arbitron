@@ -375,3 +375,45 @@ llm:
 		assert.Equal(t, int64(1048576), cfg.LLM.MaxResponseBytes)
 	})
 }
+
+// Edge: ARBITRON_SCRIPT_ENVPASSTHROUGH with only commas and whitespace yields
+// an empty slice (all entries are empty after trimming), not a slice containing
+// empty strings.
+func TestLoad_ScriptEnvPassthrough_AllEmptyEntriesDropped(t *testing.T) {
+	t.Setenv("ARBITRON_SCRIPT_ENVPASSTHROUGH", " ,,  , ")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Script.EnvPassthrough,
+		"whitespace-only/comma-only passthrough must produce an empty slice, not empty strings")
+}
+
+// Success: a YAML profile with a params block (provider-specific settings)
+// round-trips through Load. YAML numbers unmarshal as float64; the loader must
+// not coerce or drop them.
+func TestLoad_ProfileParamsFromYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+profiles:
+  - alias: "tuned"
+    kind: "chat"
+    model: "gpt-4o"
+    params:
+      temperature: 0.7
+      max_tokens: 1000
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.Len(t, cfg.Profiles, 1)
+	p := cfg.Profiles[0]
+	assert.Equal(t, "tuned", p.Alias)
+	require.NotNil(t, p.Params, "params block must not be nil after loading")
+	// koanf/YAML: floating-point values unmarshal as float64; integer values as int.
+	assert.InDelta(t, 0.7, p.Params["temperature"], 1e-9)
+	assert.Equal(t, 1000, p.Params["max_tokens"])
+}
