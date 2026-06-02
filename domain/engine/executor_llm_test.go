@@ -44,8 +44,9 @@ func TestLLMCallExecutor_SuccessWithSchema(t *testing.T) {
 
 	prov := &mockChatProvider{
 		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			// Adapters return RAW text under a schema; the executor is the sole parser.
 			return &engine.ChatResponse{
-				Output:       map[string]any{"summary": "A brief summary"},
+				Output:       `{"summary": "A brief summary"}`,
 				Conversation: []map[string]any{{"role": "user", "content": req.Prompt}},
 				Model:        "gpt-4",
 				TokensIn:     10,
@@ -154,7 +155,7 @@ func TestLLMCallExecutor_TemplateSubstitution(t *testing.T) {
 		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 			capturedPrompt = req.Prompt
 			return &engine.ChatResponse{
-				Output: map[string]any{"ok": true},
+				Output: `{"ok": true}`,
 				Model:  "gpt-4",
 			}, nil
 		},
@@ -279,7 +280,7 @@ func TestLLMCallExecutor_RequestFields(t *testing.T) {
 		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 			capturedReq = req
 			return &engine.ChatResponse{
-				Output: map[string]any{"ok": true},
+				Output: `{"ok": true}`,
 				Model:  "gpt-4",
 			}, nil
 		},
@@ -353,9 +354,12 @@ func TestLLMCallExecutor_SchemaParsesRawJSONText(t *testing.T) {
 	assert.Equal(t, "focus areas satisfied", m["notes"])
 }
 
-// Category 2 (passthrough): a provider that already returns a map (openrouter
-// shape, whose adapter parsed it) is passed through untouched — no double-parse.
-func TestLLMCallExecutor_SchemaPassesThroughMap(t *testing.T) {
+// Category 2 (contract guard): every ChatProvider now returns RAW text under a
+// schema and processLLMOutput is the SOLE parser, so ChatResponse.Output means
+// exactly one thing pre-parse (a string). A provider that violates the contract
+// by handing back an already-parsed map under a schema is a hard error, NOT a
+// silent passthrough — the old default: map-passthrough branch is deleted.
+func TestLLMCallExecutor_SchemaNonStringOutputErrors(t *testing.T) {
 	fr := newMockFileReader()
 	fr.files["test-wf/prompt.txt"] = []byte("assess")
 
@@ -367,10 +371,10 @@ func TestLLMCallExecutor_SchemaPassesThroughMap(t *testing.T) {
 	}
 
 	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("deepseek"))
-	result, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+	_, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
 
-	require.NoError(t, err)
-	assert.Equal(t, already, result.Output)
+	require.Error(t, err, "a non-string Output under a schema violates the single-parser contract")
+	assert.Contains(t, err.Error(), "expected raw string")
 }
 
 // Category 3 (no schema, unchanged): without a schema, a JSON-string output is
@@ -460,7 +464,7 @@ func TestLLMCallExecutor_WorkDirFromWorkspace(t *testing.T) {
 	prov := &mockChatProvider{
 		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
 			capturedReq = req
-			return &engine.ChatResponse{Output: map[string]any{"ok": true}, Model: "m"}, nil
+			return &engine.ChatResponse{Output: `{"ok": true}`, Model: "m"}, nil
 		},
 	}
 
@@ -535,7 +539,7 @@ func TestLLMCallExecutor_RevealKeyNotCalledByExecutor(t *testing.T) {
 
 	prov := &mockChatProvider{
 		callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
-			return &engine.ChatResponse{Output: map[string]any{"ok": true}, Model: "m"}, nil
+			return &engine.ChatResponse{Output: `{"ok": true}`, Model: "m"}, nil
 		},
 	}
 

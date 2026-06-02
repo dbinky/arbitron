@@ -12,7 +12,6 @@ package openrouter
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -143,14 +142,14 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 		return nil, err
 	}
 
+	// Return the RAW assistant content string regardless of OutputSchema. The
+	// domain executor's processLLMOutput is the SOLE structured-output parser, so
+	// every ChatProvider hands back a string pre-parse (no adapter-side parsing,
+	// no double-parse). See domain/engine/executor_llm.go.
 	content := completion.Choices[0].Message.Content
-	output, err := mapOutput(content, req.OutputSchema)
-	if err != nil {
-		return nil, err
-	}
 
 	return &engine.ChatResponse{
-		Output:    output,
+		Output:    content,
 		Model:     completion.Model,
 		TokensIn:  completion.Usage.PromptTokens,
 		TokensOut: completion.Usage.CompletionTokens,
@@ -253,16 +252,3 @@ func (p *Provider) statusError(status int, body io.Reader) error {
 	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, string(snippet))
 }
 
-// mapOutput converts the assistant content string into ChatResponse.Output.
-// With an OutputSchema, the content is parsed as JSON (structured output);
-// otherwise the raw string is returned.
-func mapOutput(content string, outputSchema any) (any, error) {
-	if outputSchema == nil {
-		return content, nil
-	}
-	var parsed any
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		return nil, fmt.Errorf("openrouter: parse structured output: %w", err)
-	}
-	return parsed, nil
-}

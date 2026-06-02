@@ -218,10 +218,11 @@ func TestChat_StructuredOutput(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, schema, js["schema"])
 
-	// Structured content is parsed back into Output.
-	out, ok := resp.Output.(map[string]any)
-	require.True(t, ok, "structured output should be parsed JSON, got %T", resp.Output)
-	assert.EqualValues(t, 42, out["answer"])
+	// The adapter returns the RAW assistant content string under a schema; the
+	// domain executor's processLLMOutput is the sole parser (no double-parse).
+	s, ok := resp.Output.(string)
+	require.True(t, ok, "structured output must be returned as a raw string, got %T", resp.Output)
+	assert.JSONEq(t, `{"answer":42}`, s)
 }
 
 // --- SUCCESS VARIANT: StreamChat SSE chunking -> Done with usage ---
@@ -556,17 +557,23 @@ func TestChat_NilRevealKey_NoAuthHeader(t *testing.T) {
 		"no Authorization header when RevealKey is nil")
 }
 
-// --- EDGE: structured output requested but model returns invalid JSON content ---
-
-func TestChat_StructuredOutput_ContentNotJSON(t *testing.T) {
+// --- EDGE: structured output requested but model returns non-JSON content ---
+//
+// The adapter no longer parses structured output — it returns the raw content
+// string verbatim and lets the domain executor's processLLMOutput decide whether
+// it is valid JSON. So a non-JSON body is NOT an adapter error here; the parse
+// error surfaces in the executor (see executor_llm_test.go SchemaInvalidJSON).
+func TestChat_StructuredOutput_ContentNotJSON_ReturnedRaw(t *testing.T) {
 	ft := &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"I cannot produce JSON"}}]}`)}
 	p := newProvider(t, ft, staticBinding("https://router.test/v1", "m"))
 
 	schema := map[string]any{"type": "object"}
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "q", OutputSchema: schema})
-	require.Error(t, err, "non-JSON content with OutputSchema must be an error")
-	assert.Nil(t, resp)
-	assert.NotContains(t, err.Error(), secretKey)
+	require.NoError(t, err, "the adapter returns raw content; parsing is the executor's job")
+	require.NotNil(t, resp)
+	s, ok := resp.Output.(string)
+	require.True(t, ok, "Output must be the raw string, got %T", resp.Output)
+	assert.Equal(t, "I cannot produce JSON", s)
 }
 
 // --- parseSSELine unit table (stream parsing is table-testable) ---

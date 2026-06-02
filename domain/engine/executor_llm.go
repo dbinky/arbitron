@@ -100,26 +100,25 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 // processLLMOutput determines the final output value based on whether an
 // output schema was provided and the response type.
 //
-// PROVIDER-AGNOSTIC structured output: when a schema is present, the result
-// MUST be a map so downstream node.field references resolve identically no
-// matter which ChatProvider produced it. Native HTTP adapters (openrouter)
-// already parse the JSON into a map; subprocess/text adapters (claude-cli,
-// azure) deliver it as a raw JSON string. This function bridges both: a string
-// is parsed here; a map is passed through (no double-parse). An empty or
-// non-JSON string under a schema is a clear error, not a silent passthrough.
+// PROVIDER-AGNOSTIC structured output: this is the SOLE parser of structured
+// output. Every ChatProvider returns the model's raw assistant text in
+// resp.Output (a string) — adapters never pre-parse — so ChatResponse.Output
+// means exactly one thing pre-parse. When a schema is present the string is
+// parsed into a map here so downstream node.field references resolve identically
+// no matter which ChatProvider produced it. An empty or non-JSON string under a
+// schema is a clear error. A non-string Output under a schema is a contract
+// violation (an adapter pre-parsed) and is reported, not silently passed through.
 func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 	if outputSchema != nil {
-		switch v := resp.Output.(type) {
-		case string:
-			var parsed any
-			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				return nil, fmt.Errorf("parse structured output: %w", err)
-			}
-			return parsed, nil
-		default:
-			// Already structured (e.g. openrouter mapped it); pass through.
-			return v, nil
+		s, ok := resp.Output.(string)
+		if !ok {
+			return nil, fmt.Errorf("structured output: expected raw string from provider, got %T", resp.Output)
 		}
+		var parsed any
+		if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+			return nil, fmt.Errorf("parse structured output: %w", err)
+		}
+		return parsed, nil
 	}
 
 	// No schema: attempt to parse text as JSON, otherwise wrap.
