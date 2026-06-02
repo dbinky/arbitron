@@ -33,7 +33,7 @@ A `run_date` variable (`YYYY-MM-DD`) is captured once in `init-workspace` and re
 
 ## 3. Workspace & Isolation Model
 
-- `init-workspace` (script) clones `repo_url` into `{{workspace}}/src`, derives/accepts the slug, captures `run_date`, then creates an isolated **git worktree** at `{{workspace}}/work` on a new branch `dev-{slug}`. All subsequent nodes operate in `{{workspace}}/work`.
+- `init-workspace` (script) clones `repo_url` into `{{workspace}}/src`, derives/accepts the slug, captures `run_date`, then creates an isolated **git worktree** at `{{workspace}}/work` on a new branch `dev-{slug}-{run_date}` (the date suffix keeps concurrent instances on the same repo from colliding in a shared remote namespace). All subsequent nodes operate in `{{workspace}}/work`. Note the branch slug is the *repo-derived* slug fixed at init time; the *feature* slug used for artifact filenames is re-promoted (via a `repromote-slug` transform) after the spec brainstorm from the slug the brainstorm recommends, so the branch name and the artifact slug may legitimately differ.
 - Each instance has its own `{{workspace}}`, so **multiple feature-pipeline instances can run against the same `repo_url` concurrently** with no collision — each gets a separate clone + worktree producing a different spec/feature/branch.
 
 ## 4. Graph
@@ -168,17 +168,17 @@ Mirrors the legacy hard-fail vs. tolerate split:
 
 ## 10. Notifications
 
-`notify.sh` (a `tool_call`/`script` node) posts to arbitron's notifications REST API at automation start (`notify-start`) and PR-opened (`notify-done`). The engine additionally auto-emits notifications on `waiting` (the interactive pauses), `failed`, and `completed` transitions, so failures self-report without explicit nodes. (Exact REST endpoint/CLI confirmed at authoring time.)
+`notify.sh` (a `script` node) is invoked at automation start (`notify-start`) and PR-opened (`notify-done`). **Authoring finding:** arbitron's REST API has **no create-notification endpoint** — notifications are created *internally by the engine* on state transitions. So `notify.sh` is **best-effort only**: it POSTs but treats a non-2xx as a soft `notified:false` and still exits 0, so it never blocks the pipeline. The actual user-facing notifications come from the engine auto-emitting on `waiting` (the interactive pauses → "needs interaction"), `failed`, and `completed`. The explicit notify nodes are retained as forward-compatible no-ops (they light up if a create endpoint is ever added). A genuine "PR #N opened with URL" milestone notification would require either such an endpoint or a custom transport — noted as a follow-up.
 
 ## 11. Acceptance Criteria
 
 1. The workflow validates (`workflow_validate`) with all profile-kind contracts satisfied.
-2. A run clones the repo, creates the `dev-{slug}` worktree, and conducts the interactive spec + design brainstorms, writing dated artifacts to `docs/specs`, `docs/designs`, and (later) `docs/plans` with commits.
+2. A run clones the repo, creates the `dev-{slug}-{run_date}` worktree, and conducts the interactive spec + design brainstorms, writing dated artifacts to `docs/specs`, `docs/designs`, and (later) `docs/plans` with commits.
 3. `spec_only == true` halts cleanly after `write-designs`.
 4. Design-alignment, plan-production, and plan-alignment run as distinct committing passes.
 5. The draft-impl loop iterates tasks one-at-a-time (TDD) and exits on completion or the cap, with `impl_iteration` visible in the trace.
 6. The ralph loop iterates and exits on `refine-assess.done` or the cap, with `ralph_iteration` in the trace.
-7. `push-and-pr` pushes `dev-{slug}` and opens a PR; the existing `pr-review` workflow triggers on PR open.
+7. `push-and-pr` pushes `dev-{slug}-{run_date}` and opens a PR; the existing `pr-review` workflow triggers on PR open.
 8. Two concurrent instances on the same `repo_url` complete without collision.
 9. No runtime dependency on any external skill/plugin (only `git`/`gh` for the PR handoff).
 
