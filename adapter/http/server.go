@@ -243,62 +243,9 @@ type SystemHandler struct {
 	queueRepo    instance.QueueRepository
 }
 
-// systemConfigResponse is the JSON representation of system configuration
-// with sensitive fields redacted.
-type systemConfigResponse struct {
-	Server    serverConfigResponse    `json:"server"`
-	Database  databaseConfigResponse  `json:"database"`
-	Workspace workspaceConfigResponse `json:"workspace"`
-	LLM       llmConfigResponse       `json:"llm"`
-	Logging   loggingConfigResponse   `json:"logging"`
-	Tracing   tracingConfigResponse   `json:"tracing"`
-	Queue     queueConfigResponse     `json:"queue"`
-	Teams     teamsConfigResponse     `json:"teams"`
-}
-
-type serverConfigResponse struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	PublicBaseURL string `json:"publicBaseUrl"`
-}
-
-type teamsConfigResponse struct {
-	Enabled    bool   `json:"enabled"`
-	WebhookURL string `json:"webhookUrl"` // redacted: "**REDACTED**" or ""
-}
-
-type databaseConfigResponse struct {
-	Configured bool `json:"configured"`
-}
-
-type workspaceConfigResponse struct {
-	Path string `json:"path"`
-}
-
-type llmConfigResponse struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
-}
-
-type loggingConfigResponse struct {
-	Level string `json:"level"`
-	File  string `json:"file"`
-}
-
-type tracingConfigResponse struct {
-	Enabled   bool   `json:"enabled"`
-	ExportDir string `json:"exportDir"`
-}
-
-type queueConfigResponse struct {
-	GlobalCap    int `json:"globalCap"`
-	PerUserCap   int `json:"perUserCap"`
-	RunningCount int `json:"runningCount"`
-	QueuedCount  int `json:"queuedCount"`
-	WaitingCount int `json:"waitingCount"`
-}
-
-// GetConfig handles GET /system/config.
+// GetConfig handles GET /system/config. It marshals the shared
+// config.RedactedConfig allow-list projection (the same one the MCP
+// system_config tool uses) augmented with live queue counts.
 func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	var running, queued, waiting int
 	if h.queueRepo != nil {
@@ -308,54 +255,12 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
-	globalCap := h.config.Queue.GlobalCap
-	perUserCap := h.config.Queue.PerUserCap
-	teamsEnabled := h.config.Notifications.Teams.Enabled
-	teamsWebhookSet := h.config.Notifications.Teams.WebhookURL != ""
-	publicBaseURL := h.config.Server.PublicBaseURL
+	resp := config.Redact(h.config, h.config.Notifications.Teams)
 	h.mu.Unlock()
 
-	redactedWebhook := ""
-	if teamsWebhookSet {
-		redactedWebhook = "**REDACTED**"
-	}
-
-	resp := systemConfigResponse{
-		Server: serverConfigResponse{
-			Host:          h.config.Server.Host,
-			Port:          h.config.Server.Port,
-			PublicBaseURL: publicBaseURL,
-		},
-		Database: databaseConfigResponse{
-			Configured: h.config.Database.Path != "",
-		},
-		Workspace: workspaceConfigResponse{
-			Path: h.config.Workspace.Path,
-		},
-		LLM: llmConfigResponse{
-			Provider: h.config.LLM.Provider,
-			APIKey:   "**REDACTED**",
-		},
-		Logging: loggingConfigResponse{
-			Level: h.config.Logging.Level,
-			File:  h.config.Logging.File,
-		},
-		Tracing: tracingConfigResponse{
-			Enabled:   h.config.Tracing.Enabled,
-			ExportDir: h.config.Tracing.ExportDir,
-		},
-		Queue: queueConfigResponse{
-			GlobalCap:    globalCap,
-			PerUserCap:   perUserCap,
-			RunningCount: running,
-			QueuedCount:  queued,
-			WaitingCount: waiting,
-		},
-		Teams: teamsConfigResponse{
-			Enabled:    teamsEnabled,
-			WebhookURL: redactedWebhook,
-		},
-	}
+	resp.Queue.RunningCount = running
+	resp.Queue.QueuedCount = queued
+	resp.Queue.WaitingCount = waiting
 	WriteJSON(w, http.StatusOK, resp)
 }
 

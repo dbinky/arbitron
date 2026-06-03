@@ -99,22 +99,15 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count waiting: %s", err)), nil
 		}
 
-		// Marshal a value-copy with the Teams webhook redacted so the raw URL is
-		// never echoed on read, matching the HTTP GET /system/config behavior.
-		redacted := *srv.deps.Config
-		if redacted.Notifications.Teams.WebhookURL != "" {
-			redacted.Notifications.Teams.WebhookURL = "**REDACTED**"
-		}
-
-		result := map[string]any{
-			"config": redacted,
-			"queue": map[string]int{
-				"running": running,
-				"queued":  queued,
-				"waiting": waiting,
-			},
-		}
-		return MarshalResult(result)
+		// Project into the shared positive allow-list so secrets (LLM API key,
+		// Teams webhook) are never echoed and a newly added Config field defaults
+		// to NOT exposed. This is the same projection the HTTP GET /system/config
+		// surface uses.
+		redacted := config.Redact(srv.deps.Config, srv.deps.Config.Notifications.Teams)
+		redacted.Queue.RunningCount = running
+		redacted.Queue.QueuedCount = queued
+		redacted.Queue.WaitingCount = waiting
+		return MarshalResult(redacted)
 	}
 }
 

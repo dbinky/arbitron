@@ -539,6 +539,23 @@ func TestSystemConfig_RedactsTeamsWebhook(t *testing.T) {
 	assert.NotContains(t, text, "secret.example.com")
 }
 
+// Security: system_config must never echo the raw LLM API key. The positive
+// allow-list projection masks it; the previous raw-marshal + deny-list path
+// leaked any secret it did not explicitly know to redact. This case fails
+// against that old handler.
+func TestSystemConfig_RedactsLLMAPIKey(t *testing.T) {
+	cfg := &config.Config{
+		LLM: config.LLMConfig{Provider: "anthropic", APIKey: "sk-secret"},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.NotContains(t, text, "sk-secret")
+	assert.Contains(t, text, "**REDACTED**")
+}
+
 // Success: system_update_teams_config writes URL + toggle to in-memory config.
 func TestSystemUpdateTeamsConfig_Success(t *testing.T) {
 	cfg := &config.Config{}
