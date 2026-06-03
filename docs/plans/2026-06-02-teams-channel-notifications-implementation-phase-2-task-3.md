@@ -19,7 +19,7 @@
 
 ### 1. Write the failing test
 
-- [ ] Create `adapter/notification/multi_notifier_test.go`:
+- [x] Create `adapter/notification/multi_notifier_test.go`:
 
 ```go
 package notification_test
@@ -84,17 +84,17 @@ func TestMultiNotifier_Notify_NoChildren(t *testing.T) {
 
 ### 2. Run — confirm it FAILS (does not compile)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestMultiNotifier
 ```
 
-- [ ] Expected: build failure, `undefined: adaptnotif.NewMultiNotifier`.
+- [x] Expected: build failure, `undefined: adaptnotif.NewMultiNotifier`.
 
 ### 3. Implement the MultiNotifier
 
-- [ ] Create `adapter/notification/multi_notifier.go`:
+- [x] Create `adapter/notification/multi_notifier.go`:
 
 ```go
 package notification
@@ -135,27 +135,27 @@ func (m *MultiNotifier) Notify(ctx context.Context, n *notification.Notification
 
 ### 4. Run — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestMultiNotifier
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Run the full notification package suite
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/
 ```
 
-- [ ] Expected: `ok` (LogNotifier, payload, TeamsNotifier, MultiNotifier all pass).
+- [x] Expected: `ok` (LogNotifier, payload, TeamsNotifier, MultiNotifier all pass).
 
 ### 6. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/notification/multi_notifier.go adapter/notification/multi_notifier_test.go
