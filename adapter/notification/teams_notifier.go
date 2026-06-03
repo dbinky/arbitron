@@ -40,7 +40,17 @@ type TeamsNotifier struct {
 // failure paths never panic.
 func NewTeamsNotifier(settings notification.TeamsSettings, publicBaseURL string, client *http.Client, logger *slog.Logger) *TeamsNotifier {
 	if client == nil {
-		client = &http.Client{Timeout: defaultTeamsTimeout}
+		// SECURITY (PR #18 item 14): the default client carries a dial-time SSRF
+		// guard so a webhook host that resolves to an internal/loopback/metadata
+		// address is refused at connect, closing the DNS-rebinding window a
+		// write-time URL check alone cannot. A caller-injected client (tests,
+		// fixtures using httptest loopback) bypasses this by design.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = ssrfGuardedDialContext(defaultTeamsTimeout)
+		client = &http.Client{
+			Timeout:   defaultTeamsTimeout,
+			Transport: transport,
+		}
 	}
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
