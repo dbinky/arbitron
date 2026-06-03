@@ -358,3 +358,74 @@ func TestAgentCallExecutor_EmptyStepsNonJSONSummary(t *testing.T) {
 	require.True(t, ok)
 	assert.Empty(t, steps)
 }
+
+// PR #18 item 1b: an agent profile's resolved AllowedTools is the per-request
+// tool scope for the mission, taking precedence over node.Config.ToolScope and
+// (downstream) the adapter's global scope. This is how reviewer/coder profiles
+// get an explicit minimal allowlist instead of the YOLO all-tools default.
+func TestAgentCallExecutor_BindingAllowedToolsBecomeMissionScope(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("review the PR")
+
+	var captured engine.AgentMission
+	ap := &fakeAgent{
+		runFn: func(_ context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
+			captured = m
+			return &engine.AgentResult{Summary: "ok", Model: m.Model}, nil
+		},
+	}
+
+	wantTools := []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}
+	resolver := newFakeResolverWithTools(provider.Profile{
+		Alias:        "reviewer",
+		Kind:         provider.ProfileKindAgent,
+		Model:        "claude-agent",
+		AllowedTools: wantTools,
+	})
+
+	node := workflow.Node{
+		ID:   "architect",
+		Type: workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "mission.txt",
+			ModelProfile: "reviewer",
+		},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver)
+	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/ws/inst"), "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, wantTools, captured.ToolScope,
+		"the mission ToolScope must come from the resolved profile's AllowedTools")
+}
+
+// When the binding carries NO AllowedTools, the node-level toolScope still
+// applies (back-compat fallback).
+func TestAgentCallExecutor_NodeToolScopeFallbackWhenBindingEmpty(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("do work")
+
+	var captured engine.AgentMission
+	ap := &fakeAgent{
+		runFn: func(_ context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
+			captured = m
+			return &engine.AgentResult{Summary: "ok", Model: m.Model}, nil
+		},
+	}
+
+	node := workflow.Node{
+		ID:   "agent1",
+		Type: workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{
+			TemplateFile: "mission.txt",
+			ModelProfile: "agent-default",
+			ToolScope:    []string{"Read", "Edit"},
+		},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("m"))
+	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/ws/inst"), "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Read", "Edit"}, captured.ToolScope,
+		"node toolScope remains the fallback when the profile carries no AllowedTools")
+}

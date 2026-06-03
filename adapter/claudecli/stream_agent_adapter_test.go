@@ -65,6 +65,32 @@ func TestStreamAgentAdapterChat(t *testing.T) {
 		assert.Equal(t, "Read,Bash", val)
 	})
 
+	// PR #18 item 1b: a per-request ToolScope (from the resolved profile's
+	// AllowedTools) takes precedence over the adapter's global AllowedTools, so
+	// each agent profile runs against its own explicit minimal allowlist.
+	t.Run("per-request ToolScope overrides the adapter's global AllowedTools", func(t *testing.T) {
+		fr := &fakeRunner{lines: []string{
+			`{"type":"result","result":"ok","session_id":"s"}`,
+		}}
+		a := NewStreamAgentAdapter(Config{
+			BinaryPath:   "claude",
+			AllowedTools: []string{"Read", "Write", "Bash"}, // global default
+			Runner:       fr,
+		})
+
+		_, err := a.Chat(context.Background(), engine.ChatRequest{
+			Prompt:    "go",
+			WorkDir:   "/tmp",
+			ToolScope: []string{"Read", "Grep", "Glob", "Bash(gh:*)"},
+		})
+		require.NoError(t, err)
+
+		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		require.True(t, ok)
+		assert.Equal(t, "Read,Grep,Glob,Bash(gh:*)", val,
+			"the per-request ToolScope must win over the adapter's global AllowedTools")
+	})
+
 	// SECURITY (PR #18 CRITICAL, comment 4614956545): with no AllowedTools in
 	// config the agent path must FAIL CLOSED, emitting --allowedTools "" (the
 	// empty set) rather than omitting the flag — an absent --allowedTools under

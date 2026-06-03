@@ -121,6 +121,13 @@ type ChatRequest struct {
 	// SessionID, when non-empty, resumes an existing provider session
 	// (claude-cli: `--resume`).
 	SessionID string
+	// ToolScope is the per-request tool allowlist for tool-enabled (agent)
+	// streaming providers (PR #18 item 1b). When non-empty, the agent adapter
+	// prefers it over its global cfg.LLM.AllowedTools so an interactive_agent
+	// node runs against its profile's explicit minimal allowlist. Empty means
+	// "use the adapter's global scope". Ignored by tool-suppressed chat
+	// providers, which never emit tools.
+	ToolScope []string
 }
 
 // ChatResponse holds the result of a non-streaming LLM call.

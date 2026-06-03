@@ -60,14 +60,22 @@ func defaults() map[string]interface{} {
 		// clone validate those workflows honestly instead of passing
 		// workflow_validate and then dying mid-run with "unknown profile alias"
 		// (PR #18 Must Fix item 4, comment 4614860006).
+		// SECURITY (PR #18 item 1b): each AGENT profile carries an explicit
+		// minimal AllowedTools allowlist so a tool-enabled agent runs bounded
+		// rather than against the YOLO all-tools default. Reviewers are read +
+		// comment only (Read/Grep/Glob + scoped gh/git; NO Write/Edit, NO bare
+		// Bash) because they process attacker-authored PR content; the coder
+		// gets full dev tools; interviewer/planner get write-capable scopes for
+		// artifact authoring. Chat profiles stay tool-suppressed (no allowlist).
+		// Deployment config.yaml SHOULD mirror these scopes when overriding.
 		"profiles": []map[string]interface{}{
 			{"alias": "default-chat", "kind": "chat", "model": ""},
 			{"alias": "default-agent", "kind": "agent", "model": ""},
 			{"alias": "assessor", "kind": "chat", "model": ""},
-			{"alias": "interviewer", "kind": "agent", "model": ""},
-			{"alias": "reviewer", "kind": "agent", "model": ""},
-			{"alias": "coder", "kind": "agent", "model": ""},
-			{"alias": "planner", "kind": "agent", "model": ""},
+			{"alias": "interviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
+			{"alias": "reviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}},
+			{"alias": "coder", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
+			{"alias": "planner", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
 		},
 	}
 }
@@ -134,21 +142,32 @@ profiles:
   # (workspaces/pr-review, workspaces/feature-pipeline). Override the model-id
   # per alias to repoint a persona at a specific backend; remove an alias only
   # if you are not running its workflow.
+  #
+  # SECURITY (PR #18 item 1b): each AGENT profile sets an explicit minimal
+  # allowedtools allowlist so a tool-enabled agent runs bounded instead of
+  # against the YOLO all-tools default. Reviewers are read + comment only
+  # (no Write/Edit, no bare Bash) because they read attacker-authored PR
+  # content; the coder gets full dev tools; interviewer/planner write artifacts.
+  # Mirror these scopes if you override this block.
   - alias: "assessor"
     kind: "chat"
     model: ""
   - alias: "interviewer"
     kind: "agent"
     model: ""
+    allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
   - alias: "reviewer"
     kind: "agent"
     model: ""
+    allowedtools: ["Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"]
   - alias: "coder"
     kind: "agent"
     model: ""
+    allowedtools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
   - alias: "planner"
     kind: "agent"
     model: ""
+    allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
 logging:
   level: "info"
   file: "arbitron.log"

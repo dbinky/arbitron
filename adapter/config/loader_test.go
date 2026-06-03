@@ -542,3 +542,31 @@ func TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases(t *testing
 		assert.Equal(t, kind, got, "alias %q must be kind %q", alias, kind)
 	}
 }
+
+// TestLoad_DefaultProfileRegistry_AgentToolScopes verifies the in-repo default
+// registry ships an explicit minimal AllowedTools per agent profile (PR #18
+// item 1b). Reviewers are read + comment only (no Write/Edit); coder gets full
+// dev; interviewer/planner get write-capable scopes for artifact authoring.
+// Chat profiles (assessor) stay tool-suppressed (no AllowedTools).
+func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+
+	byAlias := map[string][]string{}
+	for _, p := range cfg.Profiles {
+		byAlias[p.Alias] = p.AllowedTools
+	}
+
+	assert.Equal(t, []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}, byAlias["reviewer"],
+		"reviewer is read + comment only; no Write/Edit, no bare Bash")
+	assert.Equal(t, []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}, byAlias["coder"])
+	assert.Equal(t, []string{"Read", "Write", "Grep", "Glob", "Bash"}, byAlias["interviewer"])
+	assert.Equal(t, []string{"Read", "Write", "Grep", "Glob", "Bash"}, byAlias["planner"])
+
+	// Chat-kind assessor stays tool-suppressed: no per-profile allowlist.
+	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
+}

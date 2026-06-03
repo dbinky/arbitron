@@ -1034,3 +1034,43 @@ func TestInteractiveExecutor_StreamClosesWithoutDone_ReturnsError(t *testing.T) 
 			"a truncated/cancelled turn must not be recorded as a completed success")
 	}
 }
+
+// PR #18 item 1b: an interactive_agent node's resolved binding carries a
+// per-profile AllowedTools allowlist; the executor must forward it as the
+// per-request tool scope (ChatRequest.ToolScope) so the agent stream runs
+// against the explicit minimal allowlist, not the YOLO all-tools default.
+func TestInteractiveExecutor_AgentProfile_ForwardsAllowedToolsAsToolScope(t *testing.T) {
+	instRepo, nodeExecRepo, _, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	agentProv := newMockStreamingChatProvider()
+	agentProv.streamCallFn = cannedStream([]string{"ok"}, 1, 1)
+
+	wantTools := []string{"Read", "Write", "Grep", "Glob", "Bash"}
+	resolver := newFakeResolverWithTools(provider.Profile{
+		Alias:        "interviewer",
+		Kind:         provider.ProfileKindAgent,
+		Model:        "claude-agent",
+		AllowedTools: wantTools,
+	})
+	sel := &fakeStreamSelector{chatProv: newMockStreamingChatProvider(), agentProv: agentProv}
+
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, sel, resolver, fileReader, eventBus, queueMgr,
+	)
+
+	node := interactiveNode()
+	node.Type = workflow.NodeTypeInteractiveAgent
+	node.Config.ModelProfile = "interviewer"
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+
+	reqs := agentProv.getCapturedReqs()
+	require.Len(t, reqs, 1)
+	assert.Equal(t, wantTools, reqs[0].ToolScope,
+		"the agent stream request must carry the resolved binding's AllowedTools as ToolScope")
+}

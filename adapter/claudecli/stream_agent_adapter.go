@@ -40,12 +40,22 @@ func NewStreamAgentAdapter(cfg Config) *StreamAgentAdapter {
 // allowedTools, mirroring AgentAdapter.spec's fallback behaviour.
 // SuppressTools is never set.
 func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
+	// Per-request tool scope precedence (PR #18 item 1b): a non-empty
+	// req.ToolScope (the resolved profile's per-profile AllowedTools) overrides
+	// the adapter's global cfg.LLM.AllowedTools, so an interactive_agent node
+	// runs against its profile's explicit minimal allowlist. An empty ToolScope
+	// falls back to the adapter's configured scope (which, under buildArgs'
+	// fail-closed default, is the empty set when unset).
+	scope := req.ToolScope
+	if len(scope) == 0 {
+		scope = a.core.allowedTools
+	}
 	return RunSpec{
 		Bin: a.core.binPath,
 		Args: buildArgs(req, argsPolicy{
 			DefaultModel:    a.core.defaultModel,
 			SkipPermissions: true,
-			AllowedTools:    a.core.allowedTools,
+			AllowedTools:    scope,
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,

@@ -135,6 +135,10 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		MaxTokens:    node.Config.MaxTokens,
 		Temperature:  node.Config.Temperature,
 		WorkDir:      workDirStr,
+		// Forward the resolved profile's per-request tool scope (PR #18 item 1b).
+		// For an agent binding this bounds the tool-enabled stream to the
+		// profile's explicit minimal allowlist; a chat binding ignores it.
+		ToolScope: binding.AllowedTools,
 	}
 
 	// 7. Call the LLM provider with streaming.

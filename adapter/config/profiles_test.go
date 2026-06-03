@@ -127,3 +127,35 @@ func TestLoad_ProfilesDefaults(t *testing.T) {
 	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-chat", Kind: "chat", Model: ""}, byAlias["default-chat"])
 	assert.Equal(t, domainconfig.ProfileConfig{Alias: "default-agent", Kind: "agent", Model: ""}, byAlias["default-agent"])
 }
+
+// PR #18 item 1b: a profile may carry a per-profile AllowedTools allowlist
+// (agent kinds only in practice). It must unmarshal from YAML as a list and
+// map through ProfilesFromConfig to provider.Profile.AllowedTools.
+func TestLoad_ProfilesAllowedToolsFromYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+profiles:
+  - alias: "reviewer"
+    kind: "agent"
+    model: ""
+    allowedtools: ["Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"]
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.Len(t, cfg.Profiles, 1)
+	assert.Equal(t, []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}, cfg.Profiles[0].AllowedTools)
+}
+
+func TestProfilesFromConfig_MapsAllowedTools(t *testing.T) {
+	cfgs := []domainconfig.ProfileConfig{
+		{Alias: "reviewer", Kind: "agent", AllowedTools: []string{"Read", "Bash(gh:*)"}},
+	}
+	got := adapterconfig.ProfilesFromConfig(cfgs)
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"Read", "Bash(gh:*)"}, got[0].AllowedTools)
+}

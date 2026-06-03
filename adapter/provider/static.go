@@ -89,11 +89,12 @@ func (r *StaticProfileResolver) Resolve(ctx context.Context, alias string) (prov
 	// No-key subscription path: empty ConnectionRef -> claude-cli, no store call.
 	if p.ConnectionRef == "" {
 		return provider.ResolvedBinding{
-			Kind:     p.Kind,
-			Provider: claudeCLIProvider,
-			BaseURL:  "",
-			Extras:   nil,
-			Model:    p.Model,
+			Kind:         p.Kind,
+			Provider:     claudeCLIProvider,
+			BaseURL:      "",
+			Extras:       nil,
+			Model:        p.Model,
+			AllowedTools: p.AllowedTools,
 			RevealKey: func(context.Context) (string, error) {
 				return "", nil
 			},
@@ -118,11 +119,12 @@ func (r *StaticProfileResolver) Resolve(ctx context.Context, alias string) (prov
 	connRef := p.ConnectionRef
 	store := r.store
 	return provider.ResolvedBinding{
-		Kind:     p.Kind,
-		Provider: conn.Provider,
-		BaseURL:  conn.BaseURL,
-		Extras:   conn.Extras,
-		Model:    p.Model,
+		Kind:         p.Kind,
+		Provider:     conn.Provider,
+		BaseURL:      conn.BaseURL,
+		Extras:       conn.Extras,
+		Model:        p.Model,
+		AllowedTools: p.AllowedTools,
 		// RevealKey is lazy: it decrypts the connection's key only when invoked,
 		// at call/launch time. SECURITY: the revealed key is returned to the
 		// caller and never logged here.

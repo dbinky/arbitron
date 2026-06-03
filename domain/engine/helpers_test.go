@@ -97,14 +97,21 @@ func newFakeResolver(profiles ...provider.Profile) *fakeResolver {
 	return &fakeResolver{byAlias: m}
 }
 
+// newFakeResolverWithTools is newFakeResolver; the name documents at the call
+// site that the profile's AllowedTools are expected to flow into the binding.
+func newFakeResolverWithTools(profiles ...provider.Profile) *fakeResolver {
+	return newFakeResolver(profiles...)
+}
+
 func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
 	p, ok := r.byAlias[alias]
 	if !ok {
 		return provider.ResolvedBinding{}, fmt.Errorf("%w: %q", provider.ErrUnknownProfile, alias)
 	}
 	return provider.ResolvedBinding{
-		Kind:  p.Kind,
-		Model: p.Model,
+		Kind:         p.Kind,
+		Model:        p.Model,
+		AllowedTools: p.AllowedTools,
 		RevealKey: func(context.Context) (string, error) {
 			return "", nil
 		},
