@@ -57,7 +57,11 @@ the configuration surface that Phase 2 consumes.
 
 ### MCP — `adapter/mcp/tools_system.go`
 
-- Surface the Teams config inside the `system_config` tool result.
+- Surface the Teams config inside the `system_config` tool result **with the
+  same redaction as the HTTP read** — report `enabled` plus a redacted webhook
+  value (`"**REDACTED**"` when set, `""` when unset), never the raw URL, so the
+  "never echoed on read" decision above holds on every read surface, not just
+  HTTP.
 - Add `system_update_teams_config` mirroring `system_update_queue_config`
   (string `webhookUrl`, string/bool `enabled`), writing the same in-memory
   `srv.deps.Config` so reads stay consistent.
@@ -90,7 +94,8 @@ Tests are written **before** implementation.
 - **Edge-case:** unset webhook round-trips as `enabled=false` / `""`; partial
   `PUT` (toggle only) preserves the existing URL; trailing-slash
   `public_base_url` is normalized; MCP `system_update_teams_config` and the HTTP
-  handler produce identical in-memory state.
+  handler produce identical in-memory state; the MCP `system_config` read
+  redacts the webhook URL identically to the HTTP read.
 
 ## YAGNI
 
