@@ -51,6 +51,20 @@ func TestMultiNotifier_Notify_OneChildErrorStillRunsOthers(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "boom")
 }
 
+// Edge-case: a nil logger does not panic when a child errors; the constructor
+// defaults it to a discard logger so fan-out stays panic-free.
+func TestMultiNotifier_Notify_NilLoggerNoPanic(t *testing.T) {
+	a := &stubNotifier{err: errors.New("boom")}
+	b := &stubNotifier{}
+	m := adaptnotif.NewMultiNotifier(nil, a, b)
+
+	require.NotPanics(t, func() {
+		require.NoError(t, m.Notify(context.Background(), sampleNotification()))
+	})
+	assert.Equal(t, 1, a.calls)
+	assert.Equal(t, 1, b.calls)
+}
+
 // Edge-case: no children is a clean no-op.
 func TestMultiNotifier_Notify_NoChildren(t *testing.T) {
 	m := adaptnotif.NewMultiNotifier(discardLogger())

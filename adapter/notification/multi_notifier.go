@@ -18,8 +18,12 @@ type MultiNotifier struct {
 	logger   *slog.Logger
 }
 
-// NewMultiNotifier constructs a MultiNotifier over the given children.
+// NewMultiNotifier constructs a MultiNotifier over the given children. A nil
+// logger defaults to a discard logger so the per-child failure path never panics.
 func NewMultiNotifier(logger *slog.Logger, children ...notification.ExternalNotifier) *MultiNotifier {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	return &MultiNotifier{children: children, logger: logger}
 }
 

@@ -117,6 +117,56 @@ func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "failed")
 }
 
+// Edge-case: a nil logger does not panic on the failure path; the constructor
+// defaults it to a discard logger so best-effort delivery stays panic-free.
+func TestTeamsNotifier_Notify_NilLoggerNoPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), nil)
+
+	require.NotPanics(t, func() {
+		require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	})
+}
+
+// Edge-case: a hung endpoint is bounded by the HTTP client timeout rather than
+// stalling the notification path; the transport error is logged and swallowed.
+func TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // block until the test releases the handler
+	}))
+	defer srv.Close()
+	defer close(release) // runs before srv.Close(): unblock the handler so Close() returns
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
+	}}
+	client := &http.Client{Timeout: 50 * time.Millisecond}
+	n := adaptnotif.NewTeamsNotifier(cfg, "", client, logger)
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- n.Notify(context.Background(), sampleNotification()) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		assert.Less(t, time.Since(start), 2*time.Second, "timeout should bound the hung endpoint")
+		assert.Contains(t, logBuf.String(), "failed")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Notify did not return; the client timeout did not bound the hung endpoint")
+	}
+}
+
 // Edge-case: a live config edit between calls is observed on the second call.
 func TestTeamsNotifier_Notify_LiveConfigEdit(t *testing.T) {
 	var calls int32

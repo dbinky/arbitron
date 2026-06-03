@@ -76,15 +76,21 @@ error/edge) per public function. Three were missing.
   assert the error message and that config is left unchanged.
 All new tests green; `go build ./...`, `go vet ./adapter/...`, `go test ./...` clean.
 
-### GAP-005: Notifier path robustness — nil logger & timeout  (LOW)
+### ~~GAP-005: Notifier path robustness — nil logger & timeout~~  ✅ CLOSED (LOW)
 **Area:** `adapter/notification/teams_notifier.go`, `multi_notifier.go`
 **Focus area:** 5
-**What's wrong:** `TeamsNotifier`/`MultiNotifier` call `logger.Warn(...)` on the
-failure/error paths; a `nil` logger would panic — there is no nil guard or
+**What was wrong:** `TeamsNotifier`/`MultiNotifier` call `logger.Warn(...)` on the
+failure/error paths; a `nil` logger would panic — there was no nil guard or
 documented non-nil contract with a test. Separately, the `defaultTeamsTimeout`
-bound is not proven by a slow-endpoint/context-deadline test.
-**Fix:** Default to a discard logger (or require non-nil with a test), and add a
-timeout test.
+bound was not proven by a slow-endpoint test.
+**Closed:** both constructors now default a nil logger to
+`slog.New(slog.DiscardHandler)` with a documented contract. TDD tests
+`TestTeamsNotifier_Notify_NilLoggerNoPanic` and
+`TestMultiNotifier_Notify_NilLoggerNoPanic` panicked before the guard and pass
+after. Added `TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint` — a blocking
+handler + short-timeout client; Notify returns nil within the bound and logs the
+swallowed transport error, proving a hung endpoint cannot stall the path.
+`go build ./...`, `go vet ./adapter/notification/`, `make test` all green.
 
 ### GAP-006: Config-example & deep-link documentation polish  (LOW)
 **Area:** `adapter/config/loader.go` (`defaultYAMLContent`), README / config docs

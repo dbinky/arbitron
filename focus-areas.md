@@ -84,14 +84,21 @@ against an `httptest` Teams webhook stub and asserts a parsed Adaptive Card
       and `TestSystemUpdateTeamsConfig_EnabledNotBool` (non-bool `enabled`); each
       asserts the error result message and that config is left unchanged.
 
-## 5. Robustness polish on the notifier path  ⟶ GAP-005 (LOW)
+## ~~5. Robustness polish on the notifier path~~  ✅ DONE ⟶ GAP-005 (LOW)
 
-- [ ] `MultiNotifier`/`TeamsNotifier` guard against a `nil` logger (today a nil
-      logger would panic on the failure/error paths). Either require non-nil at
-      construction with a documented contract + test, or default to a discard
-      logger.
-- [ ] Confirm the `TeamsNotifier` HTTP timeout (`defaultTeamsTimeout`) actually
-      bounds a hung endpoint via a context-deadline / slow-server test.
+~~`MultiNotifier`/`TeamsNotifier` would panic on a nil logger; the timeout was
+unproven.~~ **Closed:** both constructors now default a nil logger to
+`slog.New(slog.DiscardHandler)` (documented contract), and a slow-server test
+proves the HTTP client timeout bounds a hung endpoint.
+
+- [x] `NewTeamsNotifier`/`NewMultiNotifier` default a `nil` logger to a discard
+      logger (TDD: `TestTeamsNotifier_Notify_NilLoggerNoPanic`,
+      `TestMultiNotifier_Notify_NilLoggerNoPanic` — both panicked before the fix,
+      green after). Best-effort failure paths can no longer panic.
+- [x] Added `TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint`: a handler that
+      blocks until released + a short-timeout client; Notify returns nil within the
+      bound and logs the swallowed transport error, proving a hung endpoint cannot
+      stall the notification path.
 
 ## 6. Documentation & config-example polish  ⟶ GAP-006 (LOW)
 

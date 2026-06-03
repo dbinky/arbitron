@@ -29,10 +29,14 @@ type TeamsNotifier struct {
 }
 
 // NewTeamsNotifier constructs a TeamsNotifier. A nil client gets a default
-// client with a bounded timeout.
+// client with a bounded timeout; a nil logger defaults to a discard logger so
+// the best-effort failure paths never panic.
 func NewTeamsNotifier(cfg *config.Config, publicBaseURL string, client *http.Client, logger *slog.Logger) *TeamsNotifier {
 	if client == nil {
 		client = &http.Client{Timeout: defaultTeamsTimeout}
+	}
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
 	}
 	return &TeamsNotifier{
 		config:        cfg,
