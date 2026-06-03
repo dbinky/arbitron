@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,9 @@ func TestNewDefaultExternalNotifier_FansOut(t *testing.T) {
 	require.NotNil(t, en)
 	require.NoError(t, en.Notify(context.Background(), sampleNotification()))
 
-	assert.Equal(t, int32(1), atomic.LoadInt32(&teamsCalls), "Teams child should be hit")
+	// Teams delivery is fire-and-forget; the log child runs synchronously.
+	assert.Eventually(t, func() bool { return atomic.LoadInt32(&teamsCalls) == 1 },
+		2*time.Second, 5*time.Millisecond, "Teams child should be hit")
 	assert.Contains(t, logBuf.String(), "external notification", "LogNotifier child should run")
 }
 

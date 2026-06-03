@@ -300,6 +300,8 @@ func TestEngine_TeamsSeam_InAppFiresWhenTeamsFails(t *testing.T) {
 	created := f.eventBus.eventsOfType(id, "notification.created")
 	assert.NotEmpty(t, created, "notification.created event must fire even when Teams forwarding fails")
 
-	// Teams was attempted (best-effort), then swallowed without disrupting the run.
-	assert.GreaterOrEqual(t, stub.count(), 1, "Teams delivery should have been attempted")
+	// Teams was attempted (best-effort) off the run loop, then swallowed without
+	// disrupting the run. Delivery is now fire-and-forget, so poll for it.
+	assert.Eventually(t, func() bool { return stub.count() >= 1 },
+		2*time.Second, 5*time.Millisecond, "Teams delivery should have been attempted")
 }

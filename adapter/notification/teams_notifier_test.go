@@ -51,6 +51,7 @@ func TestTeamsNotifier_Notify_PostsCard(t *testing.T) {
 	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait() // delivery is fire-and-forget; wait for the dispatched POST
 	assert.Equal(t, "application/json", gotContentType)
 	assert.Contains(t, string(gotBody), "AdaptiveCard")
 }
@@ -70,6 +71,7 @@ func TestTeamsNotifier_Notify_DisabledNoOp(t *testing.T) {
 	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
 }
 
@@ -97,6 +99,7 @@ func TestTeamsNotifier_Notify_Non2xxSwallowed(t *testing.T) {
 	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 	assert.Contains(t, logBuf.String(), "non-success")
 }
 
@@ -114,6 +117,7 @@ func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
 	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", http.DefaultClient, logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 	assert.Contains(t, logBuf.String(), "failed")
 }
 
@@ -133,6 +137,7 @@ func TestTeamsNotifier_Notify_DeliveryErrorDoesNotLogSecret(t *testing.T) {
 	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", http.DefaultClient, logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 
 	logged := logBuf.String()
 	assert.Contains(t, logged, "failed", "the failure should still be logged")
@@ -155,11 +160,13 @@ func TestTeamsNotifier_Notify_NilLoggerNoPanic(t *testing.T) {
 
 	require.NotPanics(t, func() {
 		require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+		n.Wait()
 	})
 }
 
-// Edge-case: a hung endpoint is bounded by the HTTP client timeout rather than
-// stalling the notification path; the transport error is logged and swallowed.
+// Edge-case: a hung endpoint never blocks the caller (Notify returns at once,
+// off the run loop) and the dispatched delivery is bounded by the client
+// timeout; the transport error is logged and swallowed.
 func TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint(t *testing.T) {
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -173,20 +180,24 @@ func TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	client := &http.Client{Timeout: 50 * time.Millisecond}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", client, logger)
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", client, logger)
 
-	done := make(chan error, 1)
+	// Notify is fire-and-forget: it returns immediately even though the endpoint
+	// hangs, so the engine run loop is never coupled to webhook latency.
 	start := time.Now()
-	go func() { done <- n.Notify(context.Background(), sampleNotification()) }()
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Less(t, time.Since(start), 50*time.Millisecond, "Notify must not block on the hung endpoint")
 
+	// The dispatched delivery is still bounded (by the client timeout here).
+	done := make(chan struct{})
+	go func() { n.Wait(); close(done) }()
 	select {
-	case err := <-done:
-		require.NoError(t, err)
-		assert.Less(t, time.Since(start), 2*time.Second, "timeout should bound the hung endpoint")
+	case <-done:
+		assert.Less(t, time.Since(start), 2*time.Second, "client timeout should bound the hung delivery")
 		assert.Contains(t, logBuf.String(), "failed")
 	case <-time.After(2 * time.Second):
-		t.Fatal("Notify did not return; the client timeout did not bound the hung endpoint")
+		t.Fatal("delivery goroutine did not return; the client timeout did not bound the hung endpoint")
 	}
 }
 
@@ -202,12 +213,16 @@ func TestTeamsNotifier_Notify_LiveConfigEdit(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), discardLogger())
+	store := config.NewSettingsStore(&cfg.Notifications.Teams)
+	n := adaptnotif.NewTeamsNotifier(store, "", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
 
-	cfg.Notifications.Teams.Enabled = true // live edit via shared pointer
+	enabled := true
+	store.SetTeams(nil, &enabled) // live edit through the synchronized store
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	n.Wait()
 	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
 }
