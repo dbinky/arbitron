@@ -100,13 +100,21 @@ proves the HTTP client timeout bounds a hung endpoint.
       bound and logs the swallowed transport error, proving a hung endpoint cannot
       stall the notification path.
 
-## 6. Documentation & config-example polish  ⟶ GAP-006 (LOW)
+## ~~6. Documentation & config-example polish~~  ✅ DONE ⟶ GAP-006 (LOW)
 
-- [ ] Verify the default YAML comments (`adapter/config/loader.go`
-      `defaultYAMLContent()`) document `server.publicbaseurl`,
-      `notifications.teams.webhookurl`/`enabled`, and the env-var overrides
-      (`ARBITRON_SERVER_PUBLICBASEURL`,
-      `ARBITRON_NOTIFICATIONS_TEAMS_WEBHOOKURL`/`_ENABLED`).
-- [ ] Note in the README / configuration docs that deep links require
-      `server.public_base_url` to be set (empty base URL → the card omits the
-      OpenUrl action by design).
+~~Confirm the default YAML documents the new keys + env overrides, and note the
+deep-link-requires-`public_base_url` behavior for operators.~~ **Closed:** the
+default YAML already documents all keys; corrected the README, which still
+described Teams as a *future/deferred* transport.
+
+- [x] Verified the default YAML comments (`adapter/config/loader.go`
+      `defaultYAMLContent()`) already document `server.publicbaseurl`
+      (lines 68–72), `notifications.teams.webhookurl`/`enabled` (lines 124–131),
+      and every env-var override (`ARBITRON_SERVER_PUBLICBASEURL`,
+      `ARBITRON_NOTIFICATIONS_TEAMS_WEBHOOKURL`/`_ENABLED`). No change needed;
+      `adapter/config/loader_test.go` already pins these keys load from YAML.
+- [x] Updated `README.md`: the **Notifications** bullet now states in-app
+      notifications are optionally forwarded to Teams (best-effort/silent) and
+      that deep links require `server.public_base_url` (empty ⇒ link omitted by
+      design); the **Scope Boundaries** "Deferred" list no longer lists Teams as
+      an unshipped transport (email/Slack remain future).

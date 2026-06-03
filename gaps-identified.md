@@ -92,14 +92,24 @@ handler + short-timeout client; Notify returns nil within the bound and logs the
 swallowed transport error, proving a hung endpoint cannot stall the path.
 `go build ./...`, `go vet ./adapter/notification/`, `make test` all green.
 
-### GAP-006: Config-example & deep-link documentation polish  (LOW)
+### ~~GAP-006: Config-example & deep-link documentation polish~~  ✅ CLOSED (LOW)
 **Area:** `adapter/config/loader.go` (`defaultYAMLContent`), README / config docs
 **Focus area:** 6
-**What's wrong:** Need to confirm the default YAML documents the new keys and their
-env-var overrides (`ARBITRON_SERVER_PUBLICBASEURL`,
-`ARBITRON_NOTIFICATIONS_TEAMS_WEBHOOKURL` / `_ENABLED`), and that the
-deep-link-requires-`public_base_url` behavior (empty base URL ⇒ OpenUrl action
-omitted, by design) is documented for operators.
+**What was wrong:** Needed to confirm the default YAML documents the new keys/env
+overrides, and that the deep-link-requires-`public_base_url` behavior is documented
+for operators. Inspection also surfaced that `README.md` still described Teams as a
+*future/deferred* notification transport, contradicting the now-shipped feature.
+**Closed:**
+- The default YAML (`defaultYAMLContent`) already documents `server.publicbaseurl`
+  (lines 68–72), `notifications.teams.webhookurl`/`enabled` (lines 124–131), and
+  every env override (`ARBITRON_SERVER_PUBLICBASEURL`,
+  `ARBITRON_NOTIFICATIONS_TEAMS_WEBHOOKURL`/`_ENABLED`). No change needed;
+  `loader_test.go` already asserts these keys load from YAML.
+- `README.md` corrected: the **Notifications** bullet now documents optional Teams
+  forwarding (best-effort/silent) and the deep-link → `server.public_base_url`
+  requirement (empty ⇒ OpenUrl action omitted by design); the **Scope Boundaries**
+  "Deferred" list no longer counts Teams among unshipped transports.
+`go build ./...`, `go vet ./...`, `go test ./adapter/config/` all green.
 
 ## Won't Fix (Out of Scope — spec Non-Goals)
 
