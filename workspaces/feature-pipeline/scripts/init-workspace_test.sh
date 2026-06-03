@@ -92,6 +92,64 @@ printf '{"workspace":"%s","repo_url":"file://%s","slug":"x"}' "$ws" "$ORIGIN" | 
 shallow="$(git -C "$ws/src" rev-parse --is-shallow-repository)"
 check "clone is shallow (depth 1)" "$shallow" "true"
 
+# --- SECURITY: repo_url validation (PR #18 item 2, comment 3350510419) -------
+# repo_url is an attacker-controllable workflow input passed to git clone. The
+# script must reject git's RCE/option-injection transports before cloning.
+
+run_repo_url() { # instance_id repo_url -> runs script, returns exit status
+  iid="$1"; url="$2"
+  ws="$TMP/instances/$iid"
+  mkdir -p "$ws"
+  printf '{"workspace":"%s","repo_url":"%s","slug":"x"}' "$ws" "$url" \
+    | sh "$SCRIPT" >/dev/null 2>&1
+}
+
+REJECT_MARK="repo_url is not an allowed"
+
+# err_for runs the script with the given repo_url and captures stderr only.
+err_for() { # instance_id repo_url
+  iid="$1"; url="$2"
+  ws="$TMP/instances/$iid"
+  mkdir -p "$ws"
+  printf '{"workspace":"%s","repo_url":"%s","slug":"x"}' "$ws" "$url" \
+    | sh "$SCRIPT" 2>&1 >/dev/null || true
+}
+
+# ext:: transport is remote code execution; must be rejected at the gate.
+err="$(err_for "c0000000-0000-0000-0000-000000000001" "ext::sh -c id")"
+check_contains "repo_url 'ext::...' rejected at the validation gate" "$err" "$REJECT_MARK" 1
+
+# Leading-dash repo_url is git option injection (e.g. --upload-pack=...).
+err="$(err_for "c0000000-0000-0000-0000-000000000002" "--upload-pack=touch /tmp/pwn")"
+check_contains "repo_url with leading dash rejected at the validation gate" "$err" "$REJECT_MARK" 1
+
+# An arbitrary non-allowlisted scheme is rejected.
+err="$(err_for "c0000000-0000-0000-0000-000000000003" "javascript:alert(1)")"
+check_contains "repo_url with a non-allowlisted scheme rejected" "$err" "$REJECT_MARK" 1
+
+# A valid (allowed) URL passes the validation gate: file:// to the offline
+# fixture both passes the gate AND clones, so we assert it does NOT hit the
+# rejection path (no network required).
+err="$(err_for "c0000000-0000-0000-0000-000000000004" "file://$ORIGIN")"
+check_contains "valid allowed URL passes the validation gate" "$err" "$REJECT_MARK" 0
+
+# --- SECURITY: slug sanitization (PR #18 item 8, comment 3350535218) ---------
+# A caller-supplied slug with shell/git-unsafe characters must be sanitized
+# through the allowlist pipeline before entering the branch name.
+out="$(run_case "5a111111-2222-3333-4444-555555555555" "feat/../../etc;rm -rf")"
+slug_out="$(printf '%s' "$out" | jq -r .slug)"
+branch="$(printf '%s' "$out" | jq -r .branch)"
+check_contains "sanitized slug contains no slash" "$slug_out" "/" 0
+check_contains "sanitized slug contains no semicolon" "$slug_out" ";" 0
+check_contains "sanitized slug contains no space" "$slug_out" " " 0
+check_contains "sanitized branch contains no slash" "$branch" "/" 0
+check_contains "sanitized branch is well-formed dev- prefix" "$branch" "dev-" 1
+
+# A leading-dash slug must not produce a branch ref that starts with a dash.
+out="$(run_case "5b111111-2222-3333-4444-555555555555" "-bad")"
+branch="$(printf '%s' "$out" | jq -r .branch)"
+check_contains "branch keeps dev- prefix despite leading-dash slug" "$branch" "dev-" 1
+
 echo "---"
 if [ "$fails" -eq 0 ]; then
   echo "PASS"
