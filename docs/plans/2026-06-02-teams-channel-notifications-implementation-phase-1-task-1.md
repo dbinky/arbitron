@@ -19,7 +19,7 @@
 
 ### 1. Write the failing test for the new config fields
 
-- [ ] Create `domain/config/config_test.go` with this exact content:
+- [x] Create `domain/config/config_test.go` with this content (DEVIATION: a `config_test.go` already existed using internal `package config` with `QueueConfig` tests; rather than overwrite and destroy those, the three new test funcs were appended to that file, adapted to the internal package — unqualified `Config`/`NotificationsConfig`/`TeamsConfig`/`ServerConfig` instead of `config.`-prefixed):
 
 ```go
 package config_test
@@ -65,13 +65,13 @@ func TestServerConfig_PublicBaseURL_RoundTrip(t *testing.T) {
 
 ### 2. Run the test — confirm it FAILS (does not compile)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./domain/config/
 ```
 
-- [ ] Expected: a build failure naming the missing fields, e.g.:
+- [x] Expected: a build failure naming the missing fields, e.g.:
 
 ```
 domain/config/config_test.go:13:11: undefined: config.NotificationsConfig
@@ -81,7 +81,7 @@ FAIL	github.com/arbitron/arbitron/domain/config [build failed]
 
 ### 3. Add the `PublicBaseURL` field to `ServerConfig`
 
-- [ ] In `domain/config/config.go`, replace the `ServerConfig` struct:
+- [x] In `domain/config/config.go`, replace the `ServerConfig` struct:
 
 ```go
 // ServerConfig holds HTTP server settings.
@@ -99,7 +99,7 @@ type ServerConfig struct {
 
 ### 4. Add the notifications sub-config types
 
-- [ ] In `domain/config/config.go`, add these type declarations immediately after the `ServerConfig` block:
+- [x] In `domain/config/config.go`, add these type declarations immediately after the `ServerConfig` block:
 
 ```go
 // TeamsConfig holds the single global Microsoft Teams webhook settings.
@@ -122,7 +122,7 @@ type NotificationsConfig struct {
 
 ### 5. Add the `Notifications` field to `Config`
 
-- [ ] In `domain/config/config.go`, add the field to the `Config` struct (place it after `Script ScriptConfig`):
+- [x] In `domain/config/config.go`, add the field to the `Config` struct (place it after `Script ScriptConfig`):
 
 ```go
 // Config is the top-level configuration structure for the Arbitron system.
@@ -142,13 +142,13 @@ type Config struct {
 
 ### 6. Run the test — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./domain/config/
 ```
 
-- [ ] Expected:
+- [x] Expected:
 
 ```
 ok  	github.com/arbitron/arbitron/domain/config	0.00s
@@ -156,17 +156,17 @@ ok  	github.com/arbitron/arbitron/domain/config	0.00s
 
 ### 7. Confirm the whole module still builds
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go build ./...
 ```
 
-- [ ] Expected: no output, exit code 0.
+- [x] Expected: no output, exit code 0.
 
 ### 8. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add domain/config/config.go domain/config/config_test.go

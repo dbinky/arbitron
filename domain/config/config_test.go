@@ -27,3 +27,33 @@ func TestConfigIncludesQueueField(t *testing.T) {
 	assert.Equal(t, 10, cfg.Queue.GlobalCap)
 	assert.Equal(t, 3, cfg.Queue.PerUserCap)
 }
+
+// Happy-path: the new notifications/teams fields exist and round-trip values.
+func TestConfig_TeamsFields_RoundTrip(t *testing.T) {
+	cfg := Config{
+		Notifications: NotificationsConfig{
+			Teams: TeamsConfig{
+				WebhookURL: "https://example.com/webhook",
+				Enabled:    true,
+			},
+		},
+	}
+
+	assert.Equal(t, "https://example.com/webhook", cfg.Notifications.Teams.WebhookURL)
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Edge-case: zero value is a disabled, empty Teams config.
+func TestConfig_TeamsFields_ZeroValue(t *testing.T) {
+	var cfg Config
+
+	assert.Equal(t, "", cfg.Notifications.Teams.WebhookURL)
+	assert.False(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Happy-path: ServerConfig exposes a static public base URL for deep links.
+func TestServerConfig_PublicBaseURL_RoundTrip(t *testing.T) {
+	sc := ServerConfig{PublicBaseURL: "http://localhost:8080"}
+
+	assert.Equal(t, "http://localhost:8080", sc.PublicBaseURL)
+}

@@ -3,15 +3,16 @@ package config
 
 // Config is the top-level configuration structure for the Arbitron system.
 type Config struct {
-	Server    ServerConfig
-	Database  DatabaseConfig
-	Workspace WorkspaceConfig
-	LLM       LLMConfig
-	Logging   LoggingConfig
-	Tracing   TracingConfig
-	Queue     QueueConfig
-	Script    ScriptConfig
-	Profiles  []ProfileConfig
+	Server        ServerConfig
+	Database      DatabaseConfig
+	Workspace     WorkspaceConfig
+	LLM           LLMConfig
+	Logging       LoggingConfig
+	Tracing       TracingConfig
+	Queue         QueueConfig
+	Script        ScriptConfig
+	Notifications NotificationsConfig
+	Profiles      []ProfileConfig
 }
 
 // ProfileConfig is the config-file shape of one profile-registry entry. It
@@ -43,6 +44,29 @@ type QueueConfig struct {
 type ServerConfig struct {
 	Host string
 	Port int
+	// PublicBaseURL is the externally reachable base URL of the dashboard
+	// (e.g. "http://localhost:8080"), used to build deep links in outbound
+	// notifications. Static: set via config file / env only, never UI-editable.
+	// Any trailing "/" is trimmed by the loader so callers can concatenate
+	// "/instances/<id>" deterministically.
+	PublicBaseURL string
+}
+
+// TeamsConfig holds the single global Microsoft Teams webhook settings.
+// Stored in memory only (admin-editable at runtime, not persisted), mirroring
+// the QueueConfig precedent.
+type TeamsConfig struct {
+	// WebhookURL is the Teams Workflows webhook URL. Treated as sensitive:
+	// never echoed back on any read surface.
+	WebhookURL string
+	// Enabled gates delivery. When false, Teams forwarding is a clean no-op.
+	Enabled bool
+}
+
+// NotificationsConfig groups external notification-channel settings. Today it
+// holds only Teams; future channels join here.
+type NotificationsConfig struct {
+	Teams TeamsConfig
 }
 
 // DatabaseConfig holds database connection settings.
