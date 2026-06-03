@@ -24,14 +24,15 @@ adapter/dashboard/dist` now matches (`assets/index-BRHMsNHu.js`). `go build ./..
 `make test`, and `cd dashboard && npx tsc --noEmit && npx vitest run` (121 tests)
 all green with the refreshed artifact embedded. Committed.
 
-### GAP-002: `make test` excludes the dashboard suite  (MEDIUM)
+### ~~GAP-002: `make test` excludes the dashboard suite~~  ✅ CLOSED (MEDIUM)
 **Area:** `Makefile`, CI/verification expectations
 **Focus area:** 2
-**What's wrong:** `make test` is only `go test ./...`. The entire Phase 3 surface
-(`client.test.ts`, `Settings.test.tsx`, `tsc --noEmit`) is outside it, so "full
-suite green" can silently skip the dashboard. RALPH.md's DoD now requires both;
-this gap tracks making that operationally true (run both each iteration; optional
-`test-all` target).
+**What was wrong:** `make test` was only `go test ./...`. The entire Phase 3 surface
+(`client.test.ts`, `Settings.test.tsx`, `tsc --noEmit`) was outside it, so "full
+suite green" could silently skip the dashboard.
+**Closed:** added `test-ui` (`cd dashboard && npx tsc --noEmit && npx vitest run`)
+and `test-all` (`test test-ui`) Make targets. The full DoD gate is now one command,
+`make test-all`; confirmed green (Go suite + 121 dashboard tests, tsc clean).
 
 ### GAP-003: No end-to-end engine → Teams coverage  (MEDIUM)
 **Area:** `domain/engine/engine.go` (`emitNotification`), `adapter/notification/*`

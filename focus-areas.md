@@ -27,16 +27,18 @@ offline (`npm run build`) and copied it to `adapter/dashboard/dist`. A host
 - [x] Commit the refreshed `adapter/dashboard/dist` so the checked-in artifact no
       longer drifts from `dashboard/src`.
 
-## 2. Make the full test suite the gate — include the dashboard suite  ⟶ GAP-002 (MEDIUM)
+## ~~2. Make the full test suite the gate — include the dashboard suite~~  ✅ DONE ⟶ GAP-002 (MEDIUM)
 
-`make test` runs only `go test ./...`; the Vitest + `tsc` dashboard tests are not
-part of it, so "full suite green" can silently exclude the entire Phase 3 surface.
+~~`make test` runs only `go test ./...`; the Vitest + `tsc` dashboard tests are not
+part of it, so "full suite green" can silently exclude the entire Phase 3 surface.~~
+**Closed:** added `test-ui` (`tsc --noEmit` + `vitest run`) and `test-all`
+(`test test-ui`) targets to the `Makefile`, so the full Definition-of-Done gate is
+a single runnable command instead of only prose in `RALPH.md`.
 
-- [ ] Verify `cd dashboard && npx tsc --noEmit && npx vitest run` is green and runs
-      it every iteration that touches `dashboard/`.
-- [ ] Make the two-suite expectation explicit (it is documented in `RALPH.md`; if a
-      single command is wanted, add a Make target such as `test-all` that runs both
-      — optional, non-behavioral).
+- [x] Verified `cd dashboard && npx tsc --noEmit && npx vitest run` is green
+      (121 tests pass; tsc clean).
+- [x] Made the two-suite expectation explicit and runnable: `make test-all` runs
+      the Go suite then the dashboard suite. Confirmed green end-to-end.
 
 ## 3. End-to-end engine → Teams seam coverage  ⟶ GAP-003 (MEDIUM)
 
