@@ -412,9 +412,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
-	// 12b. Create external notifier (logging-only) and wire it to the engine.
-	logNotifier := adaptnotif.NewLogNotifier(logger)
-	eng.SetExternalNotifier(logNotifier)
+	// 12b. Create the fan-out external notifier (log + best-effort Teams) and
+	// wire it to the engine. The Teams child reads cfg live, so an admin toggle
+	// via the dashboard / MCP takes effect on the next notification.
+	externalNotifier := adaptnotif.NewDefaultExternalNotifier(cfg, logger)
+	eng.SetExternalNotifier(externalNotifier)
 
 	// 12c. Register the interactive executor. Notification creation is handled
 	// by the engine when it processes the IsWait result.

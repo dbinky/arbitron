@@ -18,7 +18,7 @@
 
 ### 1. Write the failing test for the factory
 
-- [ ] Create `adapter/notification/default_notifier_test.go`:
+- [x] Create `adapter/notification/default_notifier_test.go`:
 
 ```go
 package notification_test
@@ -93,17 +93,17 @@ func TestNewDefaultExternalNotifier_TeamsDisabled(t *testing.T) {
 
 ### 2. Run — confirm it FAILS (does not compile)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestNewDefaultExternalNotifier
 ```
 
-- [ ] Expected: build failure, `undefined: adaptnotif.NewDefaultExternalNotifier`.
+- [x] Expected: build failure, `undefined: adaptnotif.NewDefaultExternalNotifier`.
 
 ### 3. Implement the factory
 
-- [ ] Create `adapter/notification/default_notifier.go`:
+- [x] Create `adapter/notification/default_notifier.go`:
 
 ```go
 package notification
@@ -127,17 +127,17 @@ func NewDefaultExternalNotifier(cfg *config.Config, logger *slog.Logger) notific
 
 ### 4. Run — confirm the factory tests PASS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestNewDefaultExternalNotifier
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Swap the wiring in main.go
 
-- [ ] In `cmd/arbitron/main.go`, replace the "12b" block (lines ~415-417):
+- [x] In `cmd/arbitron/main.go`, replace the "12b" block (lines ~415-417):
 
 ```go
 	// 12b. Create external notifier (logging-only) and wire it to the engine.
@@ -157,35 +157,35 @@ with:
 
 ### 6. Verify the binary builds and vets clean
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go build ./...
 ```
 
-- [ ] Expected: no output, exit code 0.
+- [x] Expected: no output, exit code 0.
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go vet ./cmd/... ./adapter/notification/...
 ```
 
-- [ ] Expected: no output, exit code 0. (If `go vet` reports `logNotifier declared and not used` you missed removing the old lines — fix and re-run.)
+- [x] Expected: no output, exit code 0. (If `go vet` reports `logNotifier declared and not used` you missed removing the old lines — fix and re-run.)
 
 ### 7. Run the full notification package + a module-wide test sweep
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ && go test ./...
 ```
 
-- [ ] Expected: `ok` for `adapter/notification` and no new failures across the module.
+- [x] Expected: `ok` for `adapter/notification` and no new failures across the module.
 
 ### 8. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/notification/default_notifier.go adapter/notification/default_notifier_test.go cmd/arbitron/main.go
