@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -28,6 +29,15 @@ func RegisterSystemTools(srv *Server) {
 			gomcp.WithString("perUserCap", gomcp.Required(), gomcp.Description("Per-user concurrency cap (0 = unlimited)")),
 		),
 		systemUpdateQueueConfigHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("system_update_teams_config",
+			gomcp.WithDescription("Update the global Teams notification webhook URL and enable toggle"),
+			gomcp.WithString("webhookUrl", gomcp.Description("Teams Workflows webhook URL (omit to leave unchanged; empty string clears it)")),
+			gomcp.WithBoolean("enabled", gomcp.Description("Enable/disable Teams forwarding (omit to leave unchanged)")),
+		),
+		systemUpdateTeamsConfigHandler(srv),
 	)
 
 	srv.AddTool(
@@ -89,8 +99,15 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count waiting: %s", err)), nil
 		}
 
+		// Marshal a value-copy with the Teams webhook redacted so the raw URL is
+		// never echoed on read, matching the HTTP GET /system/config behavior.
+		redacted := *srv.deps.Config
+		if redacted.Notifications.Teams.WebhookURL != "" {
+			redacted.Notifications.Teams.WebhookURL = "**REDACTED**"
+		}
+
 		result := map[string]any{
-			"config": srv.deps.Config,
+			"config": redacted,
 			"queue": map[string]int{
 				"running": running,
 				"queued":  queued,
@@ -153,6 +170,61 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 			"status":     "updated",
 			"globalCap":  globalCap,
 			"perUserCap": perUserCap,
+		})
+	}
+}
+
+// validTeamsWebhookURL reports whether raw is acceptable as a Teams webhook
+// URL: an empty string (clears it) or an absolute http(s) URL with a host.
+func validTeamsWebhookURL(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return u.Host != ""
+}
+
+func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
+	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Config == nil {
+			return gomcp.NewToolResultError("config not available"), nil
+		}
+		args := request.GetArguments()
+
+		if raw, ok := args["webhookUrl"]; ok {
+			webhookURL, ok := raw.(string)
+			if !ok {
+				return gomcp.NewToolResultError("webhookUrl must be a string"), nil
+			}
+			if !validTeamsWebhookURL(webhookURL) {
+				return gomcp.NewToolResultError("webhookUrl must be an absolute http(s) URL"), nil
+			}
+			srv.deps.Config.Notifications.Teams.WebhookURL = webhookURL
+		}
+
+		if raw, ok := args["enabled"]; ok {
+			enabled, ok := raw.(bool)
+			if !ok {
+				return gomcp.NewToolResultError("enabled must be a boolean"), nil
+			}
+			srv.deps.Config.Notifications.Teams.Enabled = enabled
+		}
+
+		redactedWebhook := ""
+		if srv.deps.Config.Notifications.Teams.WebhookURL != "" {
+			redactedWebhook = "**REDACTED**"
+		}
+
+		return MarshalResult(map[string]any{
+			"status":     "updated",
+			"enabled":    srv.deps.Config.Notifications.Teams.Enabled,
+			"webhookUrl": redactedWebhook,
 		})
 	}
 }

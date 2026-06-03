@@ -522,3 +522,68 @@ func TestWorkflowStats(t *testing.T) {
 		assert.True(t, result.IsError)
 	})
 }
+
+// Edge-case: system_config never echoes the raw Teams webhook URL.
+func TestSystemConfig_RedactsTeamsWebhook(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://secret.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.Contains(t, text, "**REDACTED**")
+	assert.NotContains(t, text, "secret.example.com")
+}
+
+// Success: system_update_teams_config writes URL + toggle to in-memory config.
+func TestSystemUpdateTeamsConfig_Success(t *testing.T) {
+	cfg := &config.Config{}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{
+		"webhookUrl": "https://example.com/hook",
+		"enabled":    true,
+	})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "https://example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+	text := extractText(t, result)
+	assert.Contains(t, text, "**REDACTED**")
+	assert.NotContains(t, text, "example.com/hook")
+}
+
+// Edge-case: omitting webhookUrl preserves the stored URL (toggle-only update).
+func TestSystemUpdateTeamsConfig_PartialPreservesURL(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://kept.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"enabled": false})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "https://kept.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.False(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Failure: a non-http(s) webhook URL is rejected, config unchanged.
+func TestSystemUpdateTeamsConfig_InvalidURL(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": "ftp://nope"})
+
+	assert.True(t, result.IsError)
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}

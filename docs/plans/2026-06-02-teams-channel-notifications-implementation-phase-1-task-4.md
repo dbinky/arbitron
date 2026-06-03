@@ -19,7 +19,7 @@
 
 ### 1. Write the failing test: system_config redacts the webhook
 
-- [ ] In `adapter/mcp/tools_system_test.go`, add:
+- [x] In `adapter/mcp/tools_system_test.go`, add:
 
 ```go
 // Edge-case: system_config never echoes the raw Teams webhook URL.
@@ -41,13 +41,13 @@ func TestSystemConfig_RedactsTeamsWebhook(t *testing.T) {
 
 ### 2. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/mcp/ -run TestSystemConfig_RedactsTeamsWebhook
 ```
 
-- [ ] Expected: fails because the raw URL leaks:
+- [x] Expected: fails because the raw URL leaks:
 
 ```
 --- FAIL: TestSystemConfig_RedactsTeamsWebhook (0.00s)
@@ -57,7 +57,7 @@ FAIL
 
 ### 3. Redact the webhook in `systemConfigHandler`
 
-- [ ] In `adapter/mcp/tools_system.go`, in `systemConfigHandler`, replace the `result` map construction (the block that sets `"config": srv.deps.Config`):
+- [x] In `adapter/mcp/tools_system.go`, in `systemConfigHandler`, replace the `result` map construction (the block that sets `"config": srv.deps.Config`):
 
 ```go
 		// Marshal a value-copy with the Teams webhook redacted so the raw URL is
@@ -80,17 +80,17 @@ FAIL
 
 ### 4. Run — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/mcp/ -run TestSystemConfig_RedactsTeamsWebhook
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Write the failing test: system_update_teams_config
 
-- [ ] In `adapter/mcp/tools_system_test.go`, add:
+- [x] In `adapter/mcp/tools_system_test.go`, add:
 
 ```go
 // Success: system_update_teams_config writes URL + toggle to in-memory config.
@@ -145,21 +145,21 @@ func TestSystemUpdateTeamsConfig_InvalidURL(t *testing.T) {
 
 ### 6. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/mcp/ -run TestSystemUpdateTeamsConfig
 ```
 
-- [ ] Expected: fails because the tool is not registered (`callTool` returns an error result / unknown tool).
+- [x] Expected: fails because the tool is not registered (`callTool` returns an error result / unknown tool).
 
 ### 7. Add the `net/url` import
 
-- [ ] In `adapter/mcp/tools_system.go`, add `"net/url"` to the import block (with the other stdlib imports).
+- [x] In `adapter/mcp/tools_system.go`, add `"net/url"` to the import block (with the other stdlib imports).
 
 ### 8. Register the new tool
 
-- [ ] In `adapter/mcp/tools_system.go`, in `RegisterSystemTools`, after the `system_update_queue_config` registration block (`tools_system.go:24-31`), add:
+- [x] In `adapter/mcp/tools_system.go`, in `RegisterSystemTools`, after the `system_update_queue_config` registration block (`tools_system.go:24-31`), add:
 
 ```go
 	srv.AddTool(
@@ -174,7 +174,7 @@ go test ./adapter/mcp/ -run TestSystemUpdateTeamsConfig
 
 ### 9. Implement the handler + helper
 
-- [ ] In `adapter/mcp/tools_system.go`, add after `systemUpdateQueueConfigHandler` (after `tools_system.go:158`):
+- [x] In `adapter/mcp/tools_system.go`, add after `systemUpdateQueueConfigHandler` (after `tools_system.go:158`):
 
 ```go
 // validTeamsWebhookURL reports whether raw is acceptable as a Teams webhook
@@ -235,27 +235,27 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 
 ### 10. Run — confirm the update tests PASS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/mcp/ -run TestSystemUpdateTeamsConfig
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 11. Run the full MCP package suite (no regressions)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/mcp/
 ```
 
-- [ ] Expected: `ok` (existing `TestSystemConfig`, `TestSystemUpdateQueueConfig`, etc. still pass).
+- [x] Expected: `ok` (existing `TestSystemConfig`, `TestSystemUpdateQueueConfig`, etc. still pass).
 
 ### 12. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/mcp/tools_system.go adapter/mcp/tools_system_test.go
