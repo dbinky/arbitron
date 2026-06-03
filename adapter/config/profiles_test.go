@@ -107,8 +107,11 @@ profiles:
 	assert.Equal(t, "azure-prod", got[0].ConnectionRef)
 }
 
-// Edge: with no profiles block in YAML, defaults supply default-chat and
-// default-agent, and the empty model is preserved.
+// Edge: with no profiles block in YAML, defaults supply the base default-chat
+// and default-agent pair (empty model preserved). The default registry also
+// ships the in-repo workflow aliases (covered by
+// TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases), so this
+// test asserts the base pair is present rather than an exact count.
 func TestLoad_ProfilesDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -116,7 +119,6 @@ func TestLoad_ProfilesDefaults(t *testing.T) {
 
 	cfg, err := adapterconfig.Load(configPath)
 	require.NoError(t, err)
-	require.Len(t, cfg.Profiles, 2)
 
 	byAlias := map[string]domainconfig.ProfileConfig{}
 	for _, p := range cfg.Profiles {

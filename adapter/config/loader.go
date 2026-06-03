@@ -52,9 +52,22 @@ func defaults() map[string]interface{} {
 		// Profile registry: alias -> capability kind + model-id. A fresh
 		// install ships a chat/agent pair so a basic workflow validates; empty
 		// model means "use the claude-cli default model" (cfg.LLM.Model).
+		//
+		// The reviewer/coder/planner/interviewer/assessor aliases are the
+		// in-repo default registry for the workflows shipped in this repo
+		// (workspaces/pr-review, workspaces/feature-pipeline). Shipping them as
+		// defaults (overridable by the deployment config.yaml) lets a fresh
+		// clone validate those workflows honestly instead of passing
+		// workflow_validate and then dying mid-run with "unknown profile alias"
+		// (PR #18 Must Fix item 4, comment 4614860006).
 		"profiles": []map[string]interface{}{
 			{"alias": "default-chat", "kind": "chat", "model": ""},
 			{"alias": "default-agent", "kind": "agent", "model": ""},
+			{"alias": "assessor", "kind": "chat", "model": ""},
+			{"alias": "interviewer", "kind": "agent", "model": ""},
+			{"alias": "reviewer", "kind": "agent", "model": ""},
+			{"alias": "coder", "kind": "agent", "model": ""},
+			{"alias": "planner", "kind": "agent", "model": ""},
 		},
 	}
 }
@@ -115,6 +128,25 @@ profiles:
     kind: "chat"
     model: ""
   - alias: "default-agent"
+    kind: "agent"
+    model: ""
+  # In-repo default registry for the workflows shipped in this repo
+  # (workspaces/pr-review, workspaces/feature-pipeline). Override the model-id
+  # per alias to repoint a persona at a specific backend; remove an alias only
+  # if you are not running its workflow.
+  - alias: "assessor"
+    kind: "chat"
+    model: ""
+  - alias: "interviewer"
+    kind: "agent"
+    model: ""
+  - alias: "reviewer"
+    kind: "agent"
+    model: ""
+  - alias: "coder"
+    kind: "agent"
+    model: ""
+  - alias: "planner"
     kind: "agent"
     model: ""
 logging:
