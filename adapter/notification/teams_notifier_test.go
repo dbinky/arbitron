@@ -117,6 +117,29 @@ func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "failed")
 }
 
+// Security: the webhook URL is a bearer secret (the token lives in the query,
+// ?sig=...). On a transport failure the raw *url.Error preserves that token, so
+// the failure log must never contain it — host-only scrub.
+func TestTeamsNotifier_Notify_DeliveryErrorDoesNotLogSecret(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	secretURL := srv.URL + "/workflows/abc?sig=SUPERSECRETTOKEN"
+	srv.Close() // now unreachable -> transport error path
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: secretURL, Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", http.DefaultClient, logger)
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+
+	logged := logBuf.String()
+	assert.Contains(t, logged, "failed", "the failure should still be logged")
+	assert.NotContains(t, logged, "SUPERSECRETTOKEN", "the bearer secret must not be logged")
+	assert.NotContains(t, logged, "sig=", "the query string carrying the secret must not be logged")
+}
+
 // Edge-case: a nil logger does not panic on the failure path; the constructor
 // defaults it to a discard logger so best-effort delivery stays panic-free.
 func TestTeamsNotifier_Notify_NilLoggerNoPanic(t *testing.T) {

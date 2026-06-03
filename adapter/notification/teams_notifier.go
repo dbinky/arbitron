@@ -63,14 +63,21 @@ func (t *TeamsNotifier) Notify(ctx context.Context, n *notification.Notification
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
-		t.logger.Warn("teams: failed to build request", "error", err)
+		// SECURITY: the webhook URL is a bearer secret (the auth token lives in
+		// the path/query, e.g. ?sig=...). Never log the raw error — *url.Error
+		// embeds the full URL — and req may be nil here, so emit a static message.
+		t.logger.Warn("teams: failed to build request")
 		return nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		t.logger.Warn("teams: webhook delivery failed", "error", err)
+		// SECURITY: scrub to host only. http.Client.Do returns a *url.Error whose
+		// Error() preserves the ?sig=... token verbatim (net/http masks only
+		// userinfo passwords), so logging the raw error leaks the secret into the
+		// log file — precisely when the endpoint is unreachable.
+		t.logger.Warn("teams: webhook delivery failed", "host", req.URL.Hostname())
 		return nil
 	}
 	defer resp.Body.Close()
