@@ -143,6 +143,7 @@ func newSystemServer(
 ) *adaptmcp.Server {
 	deps := &adaptmcp.Deps{
 		Config:        cfg,
+		Settings:      config.NewSettingsStore(&cfg.Notifications.Teams),
 		QueueRepo:     queueRepo,
 		QueueManager:  queueMgr,
 		Notifications: notifRepo,
@@ -521,4 +522,143 @@ func TestWorkflowStats(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+}
+
+// Edge-case: system_config never echoes the raw Teams webhook URL.
+func TestSystemConfig_RedactsTeamsWebhook(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://secret.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.Contains(t, text, "**REDACTED**")
+	assert.NotContains(t, text, "secret.example.com")
+}
+
+// Security: system_config must never echo the raw LLM API key. The positive
+// allow-list projection masks it; the previous raw-marshal + deny-list path
+// leaked any secret it did not explicitly know to redact. This case fails
+// against that old handler.
+func TestSystemConfig_RedactsLLMAPIKey(t *testing.T) {
+	cfg := &config.Config{
+		LLM: config.LLMConfig{Provider: "anthropic", APIKey: "sk-secret"},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.NotContains(t, text, "sk-secret")
+	assert.Contains(t, text, "**REDACTED**")
+}
+
+// Success: system_update_teams_config writes URL + toggle to in-memory config.
+func TestSystemUpdateTeamsConfig_Success(t *testing.T) {
+	cfg := &config.Config{}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{
+		"webhookUrl": "https://example.com/hook",
+		"enabled":    true,
+	})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "https://example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+	text := extractText(t, result)
+	assert.Contains(t, text, "**REDACTED**")
+	assert.NotContains(t, text, "example.com/hook")
+}
+
+// Edge-case: omitting webhookUrl preserves the stored URL (toggle-only update).
+func TestSystemUpdateTeamsConfig_PartialPreservesURL(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://kept.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"enabled": false})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "https://kept.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.False(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Failure: a non-http(s) webhook URL is rejected, config unchanged.
+func TestSystemUpdateTeamsConfig_InvalidURL(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": "ftp://nope"})
+
+	assert.True(t, result.IsError)
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// Security: an SSRF target is rejected at the MCP boundary, config unchanged.
+func TestSystemUpdateTeamsConfig_RejectsSSRFTargets(t *testing.T) {
+	for _, raw := range []string{
+		"https://169.254.169.254/latest/meta-data",
+		"https://127.0.0.1/hook",
+		"https://localhost/hook",
+		"https://192.168.0.1/hook",
+		"http://example.com/hook", // non-https also rejected now
+	} {
+		cfg := &config.Config{
+			Notifications: config.NotificationsConfig{
+				Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+			},
+		}
+		srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+		result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": raw})
+
+		assert.True(t, result.IsError, "expected %q to be rejected", raw)
+		assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL, "config must be unchanged for %q", raw)
+	}
+}
+
+// Error: a non-string webhookUrl is a type error; config is left unchanged.
+func TestSystemUpdateTeamsConfig_WebhookURLNotString(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": 123})
+
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "webhookUrl must be a string")
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// Error: a non-bool enabled is a type error; config is left unchanged.
+func TestSystemUpdateTeamsConfig_EnabledNotBool(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://kept.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"enabled": "yes"})
+
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "enabled must be a boolean")
+	// Config unchanged: enabled stays true, URL preserved.
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+	assert.Equal(t, "https://kept.example.com/hook", cfg.Notifications.Teams.WebhookURL)
 }

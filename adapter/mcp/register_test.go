@@ -37,9 +37,10 @@ var expectedTools = []string{
 	"trace_get_node",
 	"variables_get",
 	"variables_history",
-	// System, queue & notifications (7)
+	// System, queue & notifications (8)
 	"system_config",
 	"system_update_queue_config",
+	"system_update_teams_config",
 	"notification_list",
 	"notification_unread_count",
 	"notification_mark_read",

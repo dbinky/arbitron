@@ -83,6 +83,7 @@ func newMCPCmd() *cobra.Command {
 // so that initialisation logic is not duplicated.
 type domainStack struct {
 	cfg                 *config.Config
+	settings            *config.SettingsStore
 	logger              *slog.Logger
 	logCloser           io.Closer
 	db                  *sql.DB
@@ -141,6 +142,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		FileReader:          ds.fileReader,
 		EventBus:            ds.bus,
 		Config:              ds.cfg,
+		Settings:            ds.settings,
 		QueueManager:        ds.queueMgr,
 		QueueRepo:           ds.queueRepo,
 		Notifications:       ds.notifRepo,
@@ -412,9 +414,17 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
-	// 12b. Create external notifier (logging-only) and wire it to the engine.
-	logNotifier := adaptnotif.NewLogNotifier(logger)
-	eng.SetExternalNotifier(logNotifier)
+	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
+	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
+	// Teams notifier so all three route reads/writes through one mutex.
+	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
+
+	// 12c. Create the fan-out external notifier (log + best-effort Teams) and
+	// wire it to the engine. The Teams child reads the live webhook config
+	// through the store, so an admin toggle via the dashboard / MCP takes effect
+	// on the next notification.
+	externalNotifier := adaptnotif.NewDefaultExternalNotifier(settings, cfg.Server.PublicBaseURL, logger)
+	eng.SetExternalNotifier(externalNotifier)
 
 	// 12c. Register the interactive executor. Notification creation is handled
 	// by the engine when it processes the IsWait result.
@@ -479,6 +489,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 
 	return &domainStack{
 		cfg:                 cfg,
+		settings:            settings,
 		logger:              logger,
 		logCloser:           logCloser,
 		db:                  db,
@@ -532,6 +543,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		FileReader:          ds.fileReader,
 		EventBus:            ds.bus,
 		Config:              ds.cfg,
+		Settings:            ds.settings,
 		QueueManager:        ds.queueMgr,
 		QueueRepo:           ds.queueRepo,
 		DashboardHandler:    dashHandler,

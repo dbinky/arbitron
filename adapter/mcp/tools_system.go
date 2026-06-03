@@ -9,6 +9,7 @@ import (
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/notification"
 )
 
@@ -28,6 +29,15 @@ func RegisterSystemTools(srv *Server) {
 			gomcp.WithString("perUserCap", gomcp.Required(), gomcp.Description("Per-user concurrency cap (0 = unlimited)")),
 		),
 		systemUpdateQueueConfigHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("system_update_teams_config",
+			gomcp.WithDescription("Update the global Teams notification webhook URL and enable toggle"),
+			gomcp.WithString("webhookUrl", gomcp.Description("Teams Workflows webhook URL (omit to leave unchanged; empty string clears it)")),
+			gomcp.WithBoolean("enabled", gomcp.Description("Enable/disable Teams forwarding (omit to leave unchanged)")),
+		),
+		systemUpdateTeamsConfigHandler(srv),
 	)
 
 	srv.AddTool(
@@ -89,15 +99,15 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count waiting: %s", err)), nil
 		}
 
-		result := map[string]any{
-			"config": srv.deps.Config,
-			"queue": map[string]int{
-				"running": running,
-				"queued":  queued,
-				"waiting": waiting,
-			},
-		}
-		return MarshalResult(result)
+		// Project into the shared positive allow-list so secrets (LLM API key,
+		// Teams webhook) are never echoed and a newly added Config field defaults
+		// to NOT exposed. This is the same projection the HTTP GET /system/config
+		// surface uses.
+		redacted := config.Redact(srv.deps.Config, srv.deps.Settings.GetTeams())
+		redacted.Queue.RunningCount = running
+		redacted.Queue.QueuedCount = queued
+		redacted.Queue.WaitingCount = waiting
+		return MarshalResult(redacted)
 	}
 }
 
@@ -153,6 +163,49 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 			"status":     "updated",
 			"globalCap":  globalCap,
 			"perUserCap": perUserCap,
+		})
+	}
+}
+
+func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
+	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.Settings == nil {
+			return gomcp.NewToolResultError("settings not available"), nil
+		}
+		args := request.GetArguments()
+
+		// Build the partial update, validating before any mutation so a bad input
+		// leaves the stored config unchanged.
+		var webhookPtr *string
+		var enabledPtr *bool
+
+		if raw, ok := args["webhookUrl"]; ok {
+			webhookURL, ok := raw.(string)
+			if !ok {
+				return gomcp.NewToolResultError("webhookUrl must be a string"), nil
+			}
+			if err := config.ValidateTeamsWebhookURL(webhookURL); err != nil {
+				return gomcp.NewToolResultError(err.Error()), nil
+			}
+			webhookPtr = &webhookURL
+		}
+
+		if raw, ok := args["enabled"]; ok {
+			enabled, ok := raw.(bool)
+			if !ok {
+				return gomcp.NewToolResultError("enabled must be a boolean"), nil
+			}
+			enabledPtr = &enabled
+		}
+
+		// Apply atomically through the synchronized store (shared with HTTP and
+		// the notifier).
+		result := srv.deps.Settings.SetTeams(webhookPtr, enabledPtr)
+
+		return MarshalResult(map[string]any{
+			"status":     "updated",
+			"enabled":    result.Enabled,
+			"webhookUrl": config.RedactWebhookURL(result.WebhookURL),
 		})
 	}
 }

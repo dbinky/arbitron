@@ -607,6 +607,7 @@ func newTestFixtures() *testFixtures {
 		workflow.NodeTypeToolCall:    exec,
 		workflow.NodeTypeConditional: exec,
 		workflow.NodeTypeTransform:   exec,
+		workflow.NodeTypeInteractive: exec,
 	}
 
 	// The mock queue manager's default Enqueue calls StartInstance directly,

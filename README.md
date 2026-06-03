@@ -166,7 +166,7 @@ The **same** `workflow.json` runs under both the **Claude-subscription** and **o
 - **REST API** — HTTP wrapping of the engine for non-MCP clients.
 - **Web dashboard** — React UI showing the live workflow graph, instance state, traces, streaming LLM/agent output, and notifications. Served as embedded static assets.
 - **Event streaming** — real-time node-progress and token events over WebSocket.
-- **Notifications** — in-app notifications (with external transports as a future extension).
+- **Notifications** — in-app notifications, optionally also forwarded to a Microsoft Teams channel (best-effort and silent, configured via Settings / HTTP / MCP). Teams deep links back to an instance require `server.public_base_url` to be set; with it empty the card omits the link by design. Further external transports (email/Slack) remain a future extension.
 
 ---
 
@@ -220,4 +220,4 @@ Hexagonal (ports & adapters):
 
 **In the MVP end-state:** the full node-kind set above (incl. `agent_call`), the `ChatProvider`/`AgentProvider` abstraction with Claude/Azure/OpenRouter chat backends and `claude -p`/`opencode` agent backends, the model-profile registry, the credential store, native cyclic loops, the MCP server, REST API, dashboard, streaming, notifications, queue/caps/priority, and the native feature pipeline in both configurations.
 
-**Deferred (post-MVP):** `fan-out`/`fan-in` parallelism; a dedicated loop primitive and engine-level runaway guard; multi-user auth and private workspaces; scheduled (cron) and inbound webhook *triggers* (the `webhook_wait` node exists, but trigger registration does not); external notification transports (email/Teams/Slack); a native API-level tool-use agent loop (agency is delegated to harnesses).
+**Deferred (post-MVP):** `fan-out`/`fan-in` parallelism; a dedicated loop primitive and engine-level runaway guard; multi-user auth and private workspaces; scheduled (cron) and inbound webhook *triggers* (the `webhook_wait` node exists, but trigger registration does not); additional external notification transports beyond Teams (email/Slack); a native API-level tool-use agent loop (agency is delegated to harnesses).

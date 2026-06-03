@@ -47,6 +47,11 @@ type RouterDeps struct {
 	FileReader          FileReader
 	EventBus            engine.EventBus
 	Config              *config.Config
+	// Settings is the synchronized owner of runtime-mutable Teams settings. When
+	// nil, NewRouterFromDeps seeds one from Config so the HTTP handler stays the
+	// sole writer; production wiring shares one store across HTTP, MCP, and the
+	// Teams notifier so all three observe the same locked state.
+	Settings            *config.SettingsStore
 	QueueManager        QueueManagerPort
 	QueueRepo           instance.QueueRepository
 	DashboardHandler    http.Handler
@@ -132,7 +137,11 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
-	sysHandler := &SystemHandler{config: d.Config, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
+	settings := d.Settings
+	if settings == nil {
+		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)
+	}
+	sysHandler := &SystemHandler{config: d.Config, settings: settings, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
 
 	var interactiveHandler *InteractiveHandler
 	if d.ConversationHandler != nil {
@@ -150,6 +159,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 
 		r.Get("/system/config", sysHandler.GetConfig)
 		r.Put("/system/config/queue", sysHandler.UpdateQueueConfig)
+		r.Put("/system/config/teams", sysHandler.UpdateTeamsConfig)
 
 		// Workflow endpoints
 		r.Route("/workflows", func(r chi.Router) {
@@ -236,61 +246,16 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // SystemHandler handles system configuration endpoints.
 type SystemHandler struct {
-	mu           sync.Mutex
+	mu           sync.Mutex // guards the runtime-mutable Queue caps on config
 	config       *config.Config
+	settings     *config.SettingsStore // synchronized owner of Teams settings
 	queueManager QueueManagerPort
 	queueRepo    instance.QueueRepository
 }
 
-// systemConfigResponse is the JSON representation of system configuration
-// with sensitive fields redacted.
-type systemConfigResponse struct {
-	Server    serverConfigResponse    `json:"server"`
-	Database  databaseConfigResponse  `json:"database"`
-	Workspace workspaceConfigResponse `json:"workspace"`
-	LLM       llmConfigResponse       `json:"llm"`
-	Logging   loggingConfigResponse   `json:"logging"`
-	Tracing   tracingConfigResponse   `json:"tracing"`
-	Queue     queueConfigResponse     `json:"queue"`
-}
-
-type serverConfigResponse struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
-}
-
-type databaseConfigResponse struct {
-	Configured bool `json:"configured"`
-}
-
-type workspaceConfigResponse struct {
-	Path string `json:"path"`
-}
-
-type llmConfigResponse struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
-}
-
-type loggingConfigResponse struct {
-	Level string `json:"level"`
-	File  string `json:"file"`
-}
-
-type tracingConfigResponse struct {
-	Enabled   bool   `json:"enabled"`
-	ExportDir string `json:"exportDir"`
-}
-
-type queueConfigResponse struct {
-	GlobalCap    int `json:"globalCap"`
-	PerUserCap   int `json:"perUserCap"`
-	RunningCount int `json:"runningCount"`
-	QueuedCount  int `json:"queuedCount"`
-	WaitingCount int `json:"waitingCount"`
-}
-
-// GetConfig handles GET /system/config.
+// GetConfig handles GET /system/config. It marshals the shared
+// config.RedactedConfig allow-list projection (the same one the MCP
+// system_config tool uses) augmented with live queue counts.
 func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	var running, queued, waiting int
 	if h.queueRepo != nil {
@@ -299,42 +264,14 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		waiting, _ = h.queueRepo.CountWaiting(r.Context())
 	}
 
+	teams := h.settings.GetTeams()
 	h.mu.Lock()
-	globalCap := h.config.Queue.GlobalCap
-	perUserCap := h.config.Queue.PerUserCap
+	resp := config.Redact(h.config, teams)
 	h.mu.Unlock()
 
-	resp := systemConfigResponse{
-		Server: serverConfigResponse{
-			Host: h.config.Server.Host,
-			Port: h.config.Server.Port,
-		},
-		Database: databaseConfigResponse{
-			Configured: h.config.Database.Path != "",
-		},
-		Workspace: workspaceConfigResponse{
-			Path: h.config.Workspace.Path,
-		},
-		LLM: llmConfigResponse{
-			Provider: h.config.LLM.Provider,
-			APIKey:   "**REDACTED**",
-		},
-		Logging: loggingConfigResponse{
-			Level: h.config.Logging.Level,
-			File:  h.config.Logging.File,
-		},
-		Tracing: tracingConfigResponse{
-			Enabled:   h.config.Tracing.Enabled,
-			ExportDir: h.config.Tracing.ExportDir,
-		},
-		Queue: queueConfigResponse{
-			GlobalCap:    globalCap,
-			PerUserCap:   perUserCap,
-			RunningCount: running,
-			QueuedCount:  queued,
-			WaitingCount: waiting,
-		},
-	}
+	resp.Queue.RunningCount = running
+	resp.Queue.QueuedCount = queued
+	resp.Queue.WaitingCount = waiting
 	WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -396,5 +333,41 @@ func (h *SystemHandler) UpdateQueueConfig(w http.ResponseWriter, r *http.Request
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"globalCap":  newGlobalCap,
 		"perUserCap": newPerUserCap,
+	})
+}
+
+// updateTeamsConfigRequest is the JSON body for updating Teams notification
+// config. Pointer fields distinguish "absent" (leave unchanged) from "set".
+type updateTeamsConfigRequest struct {
+	WebhookURL *string `json:"webhookUrl"`
+	Enabled    *bool   `json:"enabled"`
+}
+
+// UpdateTeamsConfig handles PUT /system/config/teams. Partial updates are
+// supported via pointer fields. A non-empty webhook URL must pass
+// config.ValidateTeamsWebhookURL (absolute https + non-private host);
+// otherwise the request is rejected and config is left unchanged.
+func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req updateTeamsConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+
+	if req.WebhookURL != nil {
+		if err := config.ValidateTeamsWebhookURL(*req.WebhookURL); err != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+	}
+
+	// Route the partial update through the synchronized store so the HTTP
+	// writer, the MCP writer, and the notifier's live read all share one mutex.
+	result := h.settings.SetTeams(req.WebhookURL, req.Enabled)
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"enabled":    result.Enabled,
+		"webhookUrl": config.RedactWebhookURL(result.WebhookURL),
 	})
 }

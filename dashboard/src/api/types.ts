@@ -89,7 +89,7 @@ export interface WorkflowSummary {
 
 /** System configuration returned by /system/config. */
 export interface SystemConfig {
-  server: { host: string; port: number }
+  server: { host: string; port: number; publicBaseUrl: string }
   database: { connected: boolean }
   workspace: { path: string }
   llm: { provider: string; apiKey: string }
@@ -102,12 +102,20 @@ export interface SystemConfig {
     queuedCount: number
     waitingCount: number
   }
+  /** webhookUrl is redacted by the API: "" (unset) or "**REDACTED**" (set). */
+  teams: { enabled: boolean; webhookUrl: string }
 }
 
 /** Queue configuration update response. */
 export interface QueueConfigUpdate {
   globalCap: number
   perUserCap: number
+}
+
+/** Teams configuration update response (webhookUrl redacted). */
+export interface TeamsConfigUpdate {
+  enabled: boolean
+  webhookUrl: string
 }
 
 /** Workflow usage statistics over a date range. */
