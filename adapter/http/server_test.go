@@ -709,3 +709,162 @@ func TestRouter_GetConfig_ReflectsUpdatedQueueCaps(t *testing.T) {
 	assert.Equal(t, float64(50), after["queue"].(map[string]any)["globalCap"], "globalCap must reflect PUT update")
 	assert.Equal(t, float64(15), after["queue"].(map[string]any)["perUserCap"], "perUserCap must reflect PUT update")
 }
+
+// Success: GET /system/config exposes redacted teams config + publicBaseUrl.
+func TestRouter_SystemConfig_TeamsRedactedAndBaseURL(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Server.PublicBaseURL = "http://localhost:8080"
+	cfg.Notifications.Teams.WebhookURL = "https://example.com/hook"
+	cfg.Notifications.Teams.Enabled = true
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	teams, ok := resp["teams"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "**REDACTED**", teams["webhookUrl"])
+	assert.Equal(t, true, teams["enabled"])
+
+	server, ok := resp["server"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "http://localhost:8080", server["publicBaseUrl"])
+}
+
+// Edge-case: unset webhook reads back as "" with enabled=false.
+func TestRouter_SystemConfig_TeamsUnset(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	teams := resp["teams"].(map[string]any)
+	assert.Equal(t, "", teams["webhookUrl"])
+	assert.Equal(t, false, teams["enabled"])
+}
+
+// Success: PUT /system/config/teams updates URL + toggle; GET reflects it.
+func TestRouter_UpdateTeamsConfig_Success(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	body := `{"webhookUrl":"https://example.com/hook","enabled":true}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "https://example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Edge-case: a toggle-only PUT preserves the existing webhook URL.
+func TestRouter_UpdateTeamsConfig_PartialPreservesURL(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Notifications.Teams.WebhookURL = "https://kept.example.com/hook"
+	cfg.Notifications.Teams.Enabled = true
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	body := `{"enabled":false}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "https://kept.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.False(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Failure: a non-http(s) webhook URL is rejected with 400, config unchanged.
+func TestRouter_UpdateTeamsConfig_InvalidURL(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	body := `{"webhookUrl":"ftp://nope"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// Security: an SSRF target (cloud metadata, loopback, RFC1918) is rejected at
+// the HTTP boundary and leaves the stored config unchanged.
+func TestRouter_UpdateTeamsConfig_RejectsSSRFTargets(t *testing.T) {
+	for _, raw := range []string{
+		"https://169.254.169.254/latest/meta-data",
+		"https://127.0.0.1/hook",
+		"https://localhost/hook",
+		"https://10.1.2.3/hook",
+		"http://example.com/hook", // non-https also rejected now
+	} {
+		wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+		cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+		router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+		body := `{"webhookUrl":"` + raw + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, "expected %q to be rejected", raw)
+		assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL, "config must be unchanged for %q", raw)
+	}
+}
+
+// Error: a malformed JSON body is rejected with 400.
+func TestRouter_UpdateTeamsConfig_MalformedJSON(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(`{not json`))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// Error: a body larger than the MaxBytesReader limit (1 MiB) is rejected with
+// 400 and leaves the stored config unchanged. This is the Phase 1 design's
+// "oversize body" error category, distinct from the malformed-JSON error above.
+func TestRouter_UpdateTeamsConfig_OversizeBody(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	// A valid-JSON body whose webhookUrl value pushes the payload past 1 MiB.
+	body := `{"webhookUrl":"https://example.com/` + strings.Repeat("a", (1<<20)+16) + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// Edge-case: clearing the URL with an explicit empty string is allowed.
+func TestRouter_UpdateTeamsConfig_ClearURL(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	body := `{"webhookUrl":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "", cfg.Notifications.Teams.WebhookURL)
+}

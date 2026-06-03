@@ -21,6 +21,14 @@ export default function Settings() {
   const [queuedCount, setQueuedCount] = useState(0)
   const [waitingCount, setWaitingCount] = useState(0)
 
+  // Editable Teams notification config.
+  const [teamsEnabled, setTeamsEnabled] = useState(false)
+  const [teamsConfigured, setTeamsConfigured] = useState(false)
+  const [teamsWebhook, setTeamsWebhook] = useState('')
+  const [teamsSaving, setTeamsSaving] = useState(false)
+  const [teamsSaveMsg, setTeamsSaveMsg] = useState<string | null>(null)
+  const [teamsSaveErr, setTeamsSaveErr] = useState<string | null>(null)
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -33,6 +41,8 @@ export default function Settings() {
           setRunningCount(data.queue.runningCount)
           setQueuedCount(data.queue.queuedCount)
           setWaitingCount(data.queue.waitingCount)
+          setTeamsEnabled(data.teams.enabled)
+          setTeamsConfigured(data.teams.webhookUrl !== '')
         }
       } catch (err) {
         if (!cancelled)
@@ -97,6 +107,25 @@ export default function Settings() {
     }
   }, [globalCap, perUserCap])
 
+  const handleSaveTeams = useCallback(async () => {
+    setTeamsSaving(true)
+    setTeamsSaveMsg(null)
+    setTeamsSaveErr(null)
+    try {
+      const body: { webhookUrl?: string; enabled?: boolean } = { enabled: teamsEnabled }
+      const trimmed = teamsWebhook.trim()
+      if (trimmed !== '') body.webhookUrl = trimmed
+      await api.system.updateTeamsConfig(body)
+      if (trimmed !== '') setTeamsConfigured(true)
+      setTeamsWebhook('')
+      setTeamsSaveMsg('Saved successfully.')
+    } catch (err) {
+      setTeamsSaveErr(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setTeamsSaving(false)
+    }
+  }, [teamsEnabled, teamsWebhook])
+
   if (loading) {
     return <div className={styles.loading}>Loading settings...</div>
   }
@@ -157,6 +186,54 @@ export default function Settings() {
               disabled={saving}
             >
               {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Teams Notifications (editable) */}
+      <div className={styles.card}>
+        <div className={styles.cardHeader}>Teams Notifications</div>
+        <div className={styles.cardBody}>
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>Status</span>
+            <span className={styles.fieldValue}>
+              {teamsConfigured ? 'Configured' : 'Not configured'}
+            </span>
+          </div>
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>Webhook URL</span>
+            <input
+              className={styles.numberInput}
+              type="text"
+              placeholder={teamsConfigured ? 'Leave blank to keep current' : 'https://...'}
+              value={teamsWebhook}
+              onChange={(e) => setTeamsWebhook(e.target.value)}
+            />
+          </div>
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>Enabled</span>
+            <input
+              type="checkbox"
+              checked={teamsEnabled}
+              onChange={(e) => setTeamsEnabled(e.target.checked)}
+            />
+          </div>
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>Public Base URL</span>
+            <span className={styles.fieldValue}>
+              {config.server.publicBaseUrl || '(not set — deep links disabled)'}
+            </span>
+          </div>
+          <div className={styles.saveRow}>
+            {teamsSaveMsg && <span className={styles.saveMessage}>{teamsSaveMsg}</span>}
+            {teamsSaveErr && <span className={styles.saveError}>{teamsSaveErr}</span>}
+            <button
+              className={styles.saveButton}
+              onClick={handleSaveTeams}
+              disabled={teamsSaving}
+            >
+              {teamsSaving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>

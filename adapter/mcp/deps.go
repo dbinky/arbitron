@@ -51,6 +51,11 @@ type Deps struct {
 	FileReader          engine.FileReader
 	EventBus            engine.EventBus
 	Config              *config.Config
+	// Settings is the synchronized owner of runtime-mutable Teams settings,
+	// shared with the HTTP adapter and the Teams notifier so all three route
+	// reads/writes through one mutex. Required for the system_config and
+	// system_update_teams_config tools.
+	Settings            *config.SettingsStore
 	QueueManager        QueueManagerPort
 	QueueRepo           instance.QueueRepository
 	Notifications       notification.Repository
