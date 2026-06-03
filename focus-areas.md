@@ -40,20 +40,26 @@ a single runnable command instead of only prose in `RALPH.md`.
 - [x] Made the two-suite expectation explicit and runnable: `make test-all` runs
       the Go suite then the dashboard suite. Confirmed green end-to-end.
 
-## 3. End-to-end engine → Teams seam coverage  ⟶ GAP-003 (MEDIUM)
+## ~~3. End-to-end engine → Teams seam coverage~~  ✅ DONE ⟶ GAP-003 (MEDIUM)
 
-Each piece is unit-tested, but nothing proves the spec's headline outcome —
+~~Each piece is unit-tested, but nothing proves the spec's headline outcome —
 "every notification-raising event produces a corresponding Teams message" — across
-the real seam `engine.emitNotification` → `MultiNotifier` → `TeamsNotifier` → HTTP.
-The closest test (`default_notifier_test.go`) starts at the factory, not the engine.
+the real seam `engine.emitNotification` → `MultiNotifier` → `TeamsNotifier` → HTTP.~~
+**Closed:** added `domain/engine/engine_teams_integration_test.go`, which drives a
+real `Engine` wired with `SetExternalNotifier(NewDefaultExternalNotifier(cfg, …))`
+against an `httptest` Teams webhook stub and asserts a parsed Adaptive Card
+(Event/Workflow/Instance facts + deep-link action) for **each** of the three types.
 
-- [ ] Add a test that drives `Engine` (with `SetExternalNotifier(NewDefaultExternalNotifier(cfg, …))`
+- [x] Added a test that drives `Engine` (with `SetExternalNotifier(NewDefaultExternalNotifier(cfg, …))`
       and a stub notification repo) and asserts an `httptest` Teams stub receives a
-      card for **each** of the three types (`needs_interaction`, `failed`,
-      `completed`).
-- [ ] Assert the in-app path (notification repo `Create` + `notification.created`
-      event) still fires regardless of Teams success/failure (spec: Teams is *in
-      addition to*, never replaces, the in-app bell).
+      card for **each** of the three types: `TestEngine_TeamsSeam_CompletedForwardsCard`,
+      `_FailedForwardsCard`, `_NeedsInteractionForwardsCard` (the last via an
+      interactive node returning `IsWait`; fixtures now register
+      `NodeTypeInteractive`). Deep link asserted as `<baseURL>/instances/<id>`.
+- [x] Asserted the in-app path (notification repo `Create` + `notification.created`
+      event) still fires when Teams delivery fails (stub returns 500):
+      `TestEngine_TeamsSeam_InAppFiresWhenTeamsFails` — instance still completes,
+      the in-app notification is persisted, and the bell event is published.
 
 ## 4. Fill the missing TDD scenario categories  ⟶ GAP-004 (MEDIUM)
 

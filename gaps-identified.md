@@ -34,18 +34,25 @@ suite green" could silently skip the dashboard.
 and `test-all` (`test test-ui`) Make targets. The full DoD gate is now one command,
 `make test-all`; confirmed green (Go suite + 121 dashboard tests, tsc clean).
 
-### GAP-003: No end-to-end engine → Teams coverage  (MEDIUM)
+### ~~GAP-003: No end-to-end engine → Teams coverage~~  ✅ CLOSED (MEDIUM)
 **Area:** `domain/engine/engine.go` (`emitNotification`), `adapter/notification/*`
 **Focus area:** 3
-**What's wrong:** Units are covered in isolation, but no test exercises the real
+**What was wrong:** Units were covered in isolation, but no test exercised the real
 seam `emitNotification` → `MultiNotifier` → `TeamsNotifier` → webhook for each of
-the three notification types. The spec's headline outcome ("every
-notification-raising event produces a corresponding Teams message") is therefore
-asserted only by construction, not by an integration test. `default_notifier_test.go`
-starts at the factory, bypassing the engine.
-**Fix:** Add an engine-level test with an `httptest` Teams stub asserting a card
-per type, plus an assertion that the in-app notification path fires regardless of
-Teams delivery outcome.
+the three notification types. The spec's headline outcome was asserted only by
+construction. `default_notifier_test.go` starts at the factory, bypassing the engine.
+**Closed:** added `domain/engine/engine_teams_integration_test.go`. Four tests drive
+a real `Engine` wired with `NewDefaultExternalNotifier(cfg, …)` against an `httptest`
+Teams webhook stub that parses each received Adaptive Card:
+- `_CompletedForwardsCard` (happy) — asserts Event/Workflow/Instance facts and the
+  `<baseURL>/instances/<id>` deep-link action.
+- `_FailedForwardsCard` (failure) — failing node ⇒ `failed` card.
+- `_NeedsInteractionForwardsCard` (edge) — interactive node returning `IsWait` ⇒
+  `needs_interaction` card (fixtures now register `NodeTypeInteractive`).
+- `_InAppFiresWhenTeamsFails` (error/best-effort) — stub returns 500; the instance
+  still completes, the in-app notification is persisted, and the `notification.created`
+  bell event still fires. Proves Teams is *in addition to*, never replaces, the bell.
+All four green; full `go test ./...` + `go vet ./...` clean.
 
 ### GAP-004: Missing TDD scenario categories on three public functions  (MEDIUM)
 **Area:** `adapter/http/server.go`, `adapter/notification/teams_payload.go`, `adapter/mcp/tools_system.go`
