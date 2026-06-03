@@ -20,7 +20,7 @@
 
 ### 1. Write the failing test: GET returns redacted teams + publicBaseUrl
 
-- [ ] In `adapter/http/server_test.go`, add at the end of the file:
+- [x] In `adapter/http/server_test.go`, add at the end of the file:
 
 ```go
 // Success: GET /system/config exposes redacted teams config + publicBaseUrl.
@@ -69,13 +69,13 @@ func TestRouter_SystemConfig_TeamsUnset(t *testing.T) {
 
 ### 2. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/http/ -run TestRouter_SystemConfig_Teams
 ```
 
-- [ ] Expected: panic/failure because `resp["teams"]` is `nil` (`not ok`):
+- [x] Expected: panic/failure because `resp["teams"]` is `nil` (`not ok`):
 
 ```
 --- FAIL: TestRouter_SystemConfig_TeamsRedactedAndBaseURL (0.00s)
@@ -85,7 +85,7 @@ FAIL
 
 ### 3. Add the response structs + populate them in `GetConfig`
 
-- [ ] In `adapter/http/server.go`, add `PublicBaseURL` to `serverConfigResponse`:
+- [x] In `adapter/http/server.go`, add `PublicBaseURL` to `serverConfigResponse`:
 
 ```go
 type serverConfigResponse struct {
@@ -95,7 +95,7 @@ type serverConfigResponse struct {
 }
 ```
 
-- [ ] Add a `teamsConfigResponse` type next to the other `*ConfigResponse` types:
+- [x] Add a `teamsConfigResponse` type next to the other `*ConfigResponse` types:
 
 ```go
 type teamsConfigResponse struct {
@@ -104,7 +104,7 @@ type teamsConfigResponse struct {
 }
 ```
 
-- [ ] Add a `Teams` field to `systemConfigResponse`:
+- [x] Add a `Teams` field to `systemConfigResponse`:
 
 ```go
 type systemConfigResponse struct {
@@ -119,7 +119,7 @@ type systemConfigResponse struct {
 }
 ```
 
-- [ ] In `GetConfig`, read the Teams config under the existing mutex. Replace the locked block:
+- [x] In `GetConfig`, read the Teams config under the existing mutex. Replace the locked block:
 
 ```go
 	h.mu.Lock()
@@ -145,7 +145,7 @@ with:
 	}
 ```
 
-- [ ] In the same function, set `PublicBaseURL` in the `Server` field and add the `Teams` field to the `resp` literal. Replace the `Server:` line and add `Teams:` before the closing `}` of `systemConfigResponse{...}`:
+- [x] In the same function, set `PublicBaseURL` in the `Server` field and add the `Teams` field to the `resp` literal. Replace the `Server:` line and add `Teams:` before the closing `}` of `systemConfigResponse{...}`:
 
 ```go
 		Server: serverConfigResponse{
@@ -166,17 +166,17 @@ and add (after the `Queue:` block, before the closing brace):
 
 ### 4. Run — confirm the GET tests PASS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/http/ -run TestRouter_SystemConfig_Teams
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Write the failing test: PUT success + partial update
 
-- [ ] In `adapter/http/server_test.go`, add:
+- [x] In `adapter/http/server_test.go`, add:
 
 ```go
 // Success: PUT /system/config/teams updates URL + toggle; GET reflects it.
@@ -256,13 +256,13 @@ func TestRouter_UpdateTeamsConfig_ClearURL(t *testing.T) {
 
 ### 6. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/http/ -run TestRouter_UpdateTeamsConfig
 ```
 
-- [ ] Expected: all subtests fail with `404` (route not registered) so status assertions fail:
+- [x] Expected: all subtests fail with `404` (route not registered) so status assertions fail:
 
 ```
 --- FAIL: TestRouter_UpdateTeamsConfig_Success (0.00s)
@@ -272,7 +272,7 @@ go test ./adapter/http/ -run TestRouter_UpdateTeamsConfig
 
 ### 7. Register the route
 
-- [ ] In `adapter/http/server.go`, immediately after the queue route (`server.go:152`):
+- [x] In `adapter/http/server.go`, immediately after the queue route (`server.go:152`):
 
 ```go
 		r.Put("/system/config/queue", sysHandler.UpdateQueueConfig)
@@ -281,11 +281,11 @@ go test ./adapter/http/ -run TestRouter_UpdateTeamsConfig
 
 ### 8. Add the `net/url` import
 
-- [ ] In `adapter/http/server.go`, add `"net/url"` to the import block (keep imports grouped/sorted with the other stdlib imports).
+- [x] In `adapter/http/server.go`, add `"net/url"` to the import block (keep imports grouped/sorted with the other stdlib imports).
 
 ### 9. Implement `UpdateTeamsConfig`
 
-- [ ] In `adapter/http/server.go`, add immediately after `UpdateQueueConfig` (after `server.go:400`):
+- [x] In `adapter/http/server.go`, add immediately after `UpdateQueueConfig` (after `server.go:400`):
 
 ```go
 // updateTeamsConfigRequest is the JSON body for updating Teams notification
@@ -353,27 +353,27 @@ func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request
 
 ### 10. Run — confirm the PUT tests PASS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/http/ -run TestRouter_UpdateTeamsConfig
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 11. Run the full HTTP package suite (no regressions)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/http/
 ```
 
-- [ ] Expected: `ok` (all existing handler tests still pass).
+- [x] Expected: `ok` (all existing handler tests still pass).
 
 ### 12. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/http/server.go adapter/http/server_test.go
