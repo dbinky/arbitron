@@ -83,15 +83,28 @@ func TestParseEvent(t *testing.T) {
 		assert.False(t, ok)
 	})
 
-	t.Run("text content block over 4096 chars is truncated", func(t *testing.T) {
+	t.Run("realistic large text block passes through untruncated", func(t *testing.T) {
+		// A single assistant turn (design doc, plan, code file) is routinely
+		// tens of KB. The defensive cap must not silently chop legitimate
+		// output — that manifested as interactive_agent replies cut off
+		// mid-word. The cap is a guard against pathological blocks only.
+		doc := strings.Repeat("z", 50000)
+		line := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"` + doc + `"}]}}`)
+		ev, ok, err := parseEvent(line)
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, 50000, len(ev.Text), "a 50KB block must flow through whole")
+	})
+
+	t.Run("text content block over the defensive cap is truncated", func(t *testing.T) {
 		// SF13 / PR #8 thread 3291945042: defensive cap on a single text
 		// block so a hostile prompt cannot balloon downstream string
 		// handling before the runner's per-request bytes cap trips.
-		big := strings.Repeat("z", 5000)
+		big := strings.Repeat("z", maxContentBlockChars+1000)
 		line := []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"` + big + `"}]}}`)
 		ev, ok, err := parseEvent(line)
 		require.NoError(t, err)
 		require.True(t, ok)
-		assert.Equal(t, 4096, len(ev.Text))
+		assert.Equal(t, maxContentBlockChars, len(ev.Text))
 	})
 }
