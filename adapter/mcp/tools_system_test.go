@@ -587,3 +587,37 @@ func TestSystemUpdateTeamsConfig_InvalidURL(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
 }
+
+// Error: a non-string webhookUrl is a type error; config is left unchanged.
+func TestSystemUpdateTeamsConfig_WebhookURLNotString(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": 123})
+
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "webhookUrl must be a string")
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// Error: a non-bool enabled is a type error; config is left unchanged.
+func TestSystemUpdateTeamsConfig_EnabledNotBool(t *testing.T) {
+	cfg := &config.Config{
+		Notifications: config.NotificationsConfig{
+			Teams: config.TeamsConfig{WebhookURL: "https://kept.example.com/hook", Enabled: true},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+	result := callTool(t, srv, "system_update_teams_config", map[string]any{"enabled": "yes"})
+
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "enabled must be a boolean")
+	// Config unchanged: enabled stays true, URL preserved.
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+	assert.Equal(t, "https://kept.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}

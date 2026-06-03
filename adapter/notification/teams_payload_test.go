@@ -80,6 +80,42 @@ func TestBuildTeamsPayload_WellFormed(t *testing.T) {
 	assert.Equal(t, "http://localhost:8080/instances/11111111-1111-1111-1111-111111111111", att.Content.Actions[0].URL)
 }
 
+// Failure/Error categories — recorded N/A decision (TDD coverage completeness).
+//
+// buildTeamsPayload is a pure function whose only fallible operation is
+// json.Marshal of fixed-shape structs containing nothing but strings and slices
+// of strings/structs — no channels, funcs, cyclic pointers, or json.Marshaler
+// implementations that could fail. Go's encoder cannot return an error for such
+// values, so a "failure" (caller-misuse) or "error" (internal fault) scenario is
+// not reachable. Rather than leave that as an unexplained omission, this test
+// pins the contract: across inputs that exercise every JSON-escaping path
+// (quotes, backslashes, control characters, multibyte unicode, empty fields),
+// the function still returns valid JSON and no error. If a future change adds a
+// genuinely-fallible field, this test will start failing and force a real
+// failure/error scenario to be written.
+func TestBuildTeamsPayload_NeverErrors_RecordedNA(t *testing.T) {
+	id := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	stressNames := []string{
+		``,                       // empty workflow name
+		`quote"and\backslash`,    // characters that must be JSON-escaped
+		"tab\tand\nnewline",      // control characters
+		"emoji-🚀-and-üñïçödé",    // multibyte unicode
+		`</script><b>html</b>`,   // HTML-significant runes (Go escapes <, >, &)
+	}
+	for _, name := range stressNames {
+		n := &notification.Notification{
+			ID:           id,
+			InstanceID:   id,
+			WorkflowName: name,
+			Type:         notification.TypeNeedsInteraction,
+			CreatedAt:    time.Date(2026, 6, 2, 15, 4, 5, 0, time.UTC),
+		}
+		raw, err := buildTeamsPayload(n, "http://localhost:8080")
+		require.NoError(t, err, "buildTeamsPayload must never error (workflow=%q)", name)
+		assert.True(t, json.Valid(raw), "payload must be valid JSON (workflow=%q)", name)
+	}
+}
+
 // Edge-case: empty baseURL omits the OpenUrl action but the card stays valid.
 func TestBuildTeamsPayload_NoBaseURL_OmitsAction(t *testing.T) {
 	raw, err := buildTeamsPayload(testNotification(), "")

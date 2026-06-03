@@ -61,20 +61,28 @@ against an `httptest` Teams webhook stub and asserts a parsed Adaptive Card
       `TestEngine_TeamsSeam_InAppFiresWhenTeamsFails` — instance still completes,
       the in-app notification is persisted, and the bell event is published.
 
-## 4. Fill the missing TDD scenario categories  ⟶ GAP-004 (MEDIUM)
+## ~~4. Fill the missing TDD scenario categories~~  ✅ DONE ⟶ GAP-004 (MEDIUM)
 
-The designs require all five categories per public function. A few are missing:
+~~The designs require all five categories per public function. A few are missing.~~
+**Closed:** added the three missing scenario tests; full Go suite + `go vet` green.
 
-- [ ] **HTTP** `UpdateTeamsConfig` — add the *error* case the Phase 1 design calls
-      out: an over-limit body is rejected by `MaxBytesReader` (the malformed-JSON
-      error case exists; the oversize case does not).
-- [ ] **Payload builder** `buildTeamsPayload` — it has happy + edge; document (or
-      assert) why *failure/error* are N/A for a pure `json.Marshal` of a
-      fixed-shape struct, so the omission is a deliberate, recorded decision rather
-      than a gap.
-- [ ] **MCP** `system_update_teams_config` — confirm the non-string `webhookUrl`
-      and non-bool `enabled` type-error branches are exercised (handler returns an
-      error result); add the missing one(s).
+- [x] **HTTP** `UpdateTeamsConfig` — added `TestRouter_UpdateTeamsConfig_OversizeBody`:
+      a valid-JSON body whose `webhookUrl` value pushes the payload past the 1 MiB
+      `MaxBytesReader` limit is rejected with 400 and leaves the stored config
+      unchanged (distinct from the existing malformed-JSON error case; the URL is
+      otherwise valid, so the test genuinely exercises the `MaxBytesReader` path).
+- [x] **Payload builder** `buildTeamsPayload` — added
+      `TestBuildTeamsPayload_NeverErrors_RecordedNA`, which records the deliberate
+      *failure/error = N/A* decision: the function's only fallible op is
+      `json.Marshal` of fixed-shape string-only structs (no channels/funcs/cyclic
+      pointers/custom Marshalers), so an error is unreachable. The test pins that
+      contract across every JSON-escaping path (quotes, backslashes, control chars,
+      multibyte unicode, HTML runes, empty fields) — if a future fallible field is
+      added it will fail and force a real failure/error scenario.
+- [x] **MCP** `system_update_teams_config` — added
+      `TestSystemUpdateTeamsConfig_WebhookURLNotString` (non-string `webhookUrl`)
+      and `TestSystemUpdateTeamsConfig_EnabledNotBool` (non-bool `enabled`); each
+      asserts the error result message and that config is left unchanged.
 
 ## 5. Robustness polish on the notifier path  ⟶ GAP-005 (LOW)
 

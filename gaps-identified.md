@@ -54,21 +54,27 @@ Teams webhook stub that parses each received Adaptive Card:
   bell event still fires. Proves Teams is *in addition to*, never replaces, the bell.
 All four green; full `go test ./...` + `go vet ./...` clean.
 
-### GAP-004: Missing TDD scenario categories on three public functions  (MEDIUM)
+### ~~GAP-004: Missing TDD scenario categories on three public functions~~  ✅ CLOSED (MEDIUM)
 **Area:** `adapter/http/server.go`, `adapter/notification/teams_payload.go`, `adapter/mcp/tools_system.go`
 **Focus area:** 4
-**What's wrong:** The designs mandate all five categories (happy/success/failure/
-error/edge) per public function. Gaps found:
-- HTTP `UpdateTeamsConfig`: the Phase 1 *error* category lists an over-limit body
-  (`MaxBytesReader`) being rejected, but only the malformed-JSON error case is
-  tested.
-- `buildTeamsPayload`: has happy + edge; failure/error are absent. For a pure
-  `json.Marshal` of a fixed struct this is arguably N/A — but that should be a
-  recorded decision, not an unexplained omission.
-- MCP `system_update_teams_config`: the non-string `webhookUrl` / non-bool
-  `enabled` type-error branches exist in the handler; confirm they are exercised
-  and add whichever is missing.
-**Fix:** Add the missing tests (TDD: red first), or document N/A explicitly.
+**What was wrong:** The designs mandate all five categories (happy/success/failure/
+error/edge) per public function. Three were missing.
+**Closed:**
+- HTTP `UpdateTeamsConfig`: added `TestRouter_UpdateTeamsConfig_OversizeBody` —
+  a body past the 1 MiB `MaxBytesReader` limit (otherwise-valid `webhookUrl`) is
+  rejected 400, config unchanged. Genuinely exercises the limiter, not just the
+  decode path.
+- `buildTeamsPayload`: added `TestBuildTeamsPayload_NeverErrors_RecordedNA`, which
+  records the deliberate failure/error = N/A decision and pins it: the only
+  fallible op is `json.Marshal` of fixed string-only structs (no
+  channels/funcs/cyclic pointers/custom Marshalers ⇒ unreachable error). Asserts
+  no error + valid JSON across every escaping path; will fail loudly if a fallible
+  field is ever added.
+- MCP `system_update_teams_config`: added
+  `TestSystemUpdateTeamsConfig_WebhookURLNotString` and
+  `TestSystemUpdateTeamsConfig_EnabledNotBool` — both type-error branches now
+  assert the error message and that config is left unchanged.
+All new tests green; `go build ./...`, `go vet ./adapter/...`, `go test ./...` clean.
 
 ### GAP-005: Notifier path robustness — nil logger & timeout  (LOW)
 **Area:** `adapter/notification/teams_notifier.go`, `multi_notifier.go`

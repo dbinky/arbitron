@@ -812,6 +812,24 @@ func TestRouter_UpdateTeamsConfig_MalformedJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// Error: a body larger than the MaxBytesReader limit (1 MiB) is rejected with
+// 400 and leaves the stored config unchanged. This is the Phase 1 design's
+// "oversize body" error category, distinct from the malformed-JSON error above.
+func TestRouter_UpdateTeamsConfig_OversizeBody(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	// A valid-JSON body whose webhookUrl value pushes the payload past 1 MiB.
+	body := `{"webhookUrl":"https://example.com/` + strings.Repeat("a", (1<<20)+16) + `"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
 // Edge-case: clearing the URL with an explicit empty string is allowed.
 func TestRouter_UpdateTeamsConfig_ClearURL(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
