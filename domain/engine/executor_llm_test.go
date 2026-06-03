@@ -179,7 +179,9 @@ func TestLLMCallExecutor_TemplateSubstitution(t *testing.T) {
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
-	assert.Equal(t, "Hello Alice, summarize AI safety", capturedPrompt)
+	// Contains (not Equal): a schema'd node also gets the JSON-only instruction
+	// appended, so the resolved template is a substring of the final prompt.
+	assert.Contains(t, capturedPrompt, "Hello Alice, summarize AI safety")
 }
 
 // Error: ChatProvider.Chat error -> wrapped provider call error.
@@ -306,7 +308,7 @@ func TestLLMCallExecutor_RequestFields(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "claude-resolved-model", capturedReq.Model)
-	assert.Equal(t, "test prompt", capturedReq.Prompt)
+	assert.Contains(t, capturedReq.Prompt, "test prompt")
 	assert.Equal(t, 1000, capturedReq.MaxTokens)
 	assert.Equal(t, 0.5, capturedReq.Temperature)
 	assert.Equal(t, schema, capturedReq.OutputSchema)
@@ -386,6 +388,82 @@ func TestLLMCallExecutor_SchemaStripsJSONCodeFence(t *testing.T) {
 			assert.Equal(t, "ok", m["notes"])
 		})
 	}
+}
+
+// Category 1c (happy path, real-world): assessor-style models intermittently
+// wrap the JSON verdict in a heading, a prose preamble, or a trailing sentence.
+// processLLMOutput extracts the embedded JSON object instead of failing on the
+// leading '#'/'B'/'`' — these are the exact impl-assess failures observed.
+func TestLLMCallExecutor_SchemaToleratesProseWrappedJSON(t *testing.T) {
+	const obj = `{"all_tasks_complete": false, "tasks_remaining": 3, "notes": "work remains"}`
+	cases := map[string]string{
+		"heading-preamble": "# Assessment\n\n" + obj,
+		"prose-preamble":   "Based on the plans:\n\n" + obj,
+		"prose-suffix":     obj + "\n\nLet me know if you need more detail.",
+		"fenced-json":      "```json\n" + obj + "\n```",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			fr := newMockFileReader()
+			fr.files["test-wf/prompt.txt"] = []byte("assess")
+			prov := &mockChatProvider{
+				callFn: func(_ context.Context, _ engine.ChatRequest) (*engine.ChatResponse, error) {
+					return &engine.ChatResponse{Output: raw, Model: "m"}, nil
+				},
+			}
+			exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+			result, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+			require.NoError(t, err)
+			m, ok := result.Output.(map[string]any)
+			require.True(t, ok, "schema output must be a map")
+			assert.Equal(t, false, m["all_tasks_complete"])
+			assert.Equal(t, "work remains", m["notes"])
+		})
+	}
+}
+
+// When a node declares an OutputSchema, the executor must tell the model to
+// emit ONLY JSON. The schema was previously never sent to the model (buildArgs
+// ignored it), so assessors freely wrapped the verdict in prose — the root
+// cause of the repeated impl-assess parse failures.
+func TestLLMCallExecutor_InjectsSchemaInstruction(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("assess the work")
+	var gotPrompt string
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			gotPrompt = req.Prompt
+			return &engine.ChatResponse{Output: `{}`, Model: "m"}, nil
+		},
+	}
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+	_, err := exec.Execute(context.Background(), llmNodeWithSchema(), variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	assert.Contains(t, gotPrompt, "assess the work", "original template content is preserved")
+	assert.Contains(t, gotPrompt, "JSON", "instructs the model to emit JSON")
+	assert.Contains(t, gotPrompt, "ONLY", "instructs the model to emit only JSON")
+}
+
+// A node with NO schema must NOT get the JSON instruction appended.
+func TestLLMCallExecutor_NoSchemaNoInstruction(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/prompt.txt"] = []byte("just chat")
+	var gotPrompt string
+	prov := &mockChatProvider{
+		callFn: func(_ context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
+			gotPrompt = req.Prompt
+			return &engine.ChatResponse{Output: "hello", Model: "m"}, nil
+		},
+	}
+	node := workflow.Node{
+		ID:   "chat1",
+		Type: workflow.NodeTypeLLMCall,
+		Config: workflow.NodeConfig{TemplateFile: "prompt.txt", ModelProfile: "chat-default"},
+	}
+	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))
+	_, err := exec.Execute(context.Background(), node, variable.NewStore(), "test-wf")
+	require.NoError(t, err)
+	assert.Equal(t, "just chat", gotPrompt, "no schema -> prompt is the bare template")
 }
 
 // Category 2 (contract guard): every ChatProvider now returns RAW text under a

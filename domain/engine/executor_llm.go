@@ -48,6 +48,15 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 	// Resolve substitutions in template.
 	prompt := variable.Resolve(string(templateBytes), vars)
 
+	// When the node declares an OutputSchema, instruct the model to emit ONLY
+	// JSON conforming to it. The claude-cli adapter does not pass OutputSchema
+	// to the model, so without this the model sees only the template prose and
+	// intermittently wraps its JSON in a heading/prose/code fence — the root
+	// cause of repeated structured-output parse failures (e.g. impl-assess).
+	if node.Config.OutputSchema != nil {
+		prompt += structuredOutputInstruction(node.Config.OutputSchema)
+	}
+
 	// Resolve the chat profile alias to a concrete model. The request stays
 	// tool-suppressed by construction (the ChatProvider never has tools), so
 	// llm_call can no longer edit files.
@@ -115,8 +124,17 @@ func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("structured output: expected raw string from provider, got %T", resp.Output)
 		}
+		cleaned := stripCodeFence(s)
 		var parsed any
-		if err := json.Unmarshal([]byte(stripCodeFence(s)), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
+			// Tolerate prose/markdown around the JSON: extract the first
+			// balanced object and parse that. Models intermittently wrap the
+			// verdict in a heading or sentence even when asked for raw JSON.
+			if obj, ok := extractJSONObject(cleaned); ok {
+				if err2 := json.Unmarshal([]byte(obj), &parsed); err2 == nil {
+					return parsed, nil
+				}
+			}
 			return nil, fmt.Errorf("parse structured output: %w", err)
 		}
 		return parsed, nil
@@ -140,6 +158,62 @@ func parseOrWrapText(text string) any {
 		return parsed
 	}
 	return map[string]any{"response": text}
+}
+
+// structuredOutputInstruction returns the directive appended to a prompt when
+// the node declares an OutputSchema. The claude-cli adapter never forwards the
+// schema to the model, so this is the only signal telling the model to produce
+// JSON (and which shape). Demanding raw JSON with no prose/markdown/fences is
+// what makes structured llm_call output reliable.
+func structuredOutputInstruction(schema any) string {
+	var schemaText string
+	if b, err := json.Marshal(schema); err == nil {
+		schemaText = string(b)
+	}
+	return "\n\n---\nIMPORTANT: Respond with ONLY a single JSON object conforming to the " +
+		"schema below. Do not include any prose, explanation, markdown, headings, or code " +
+		"fences. Your entire response must be valid JSON beginning with '{'.\n\nJSON schema:\n" +
+		schemaText
+}
+
+// extractJSONObject returns the first balanced {...} object in s, ignoring any
+// surrounding prose/markdown. Brace counting is string- and escape-aware so
+// braces inside string values do not throw off the depth. ok is false when no
+// balanced object is found.
+func extractJSONObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return "", false
+	}
+	depth := 0
+	inStr := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 // stripCodeFence removes a single surrounding markdown code fence from s, if
