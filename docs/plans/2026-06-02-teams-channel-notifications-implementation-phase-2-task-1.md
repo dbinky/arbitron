@@ -19,7 +19,7 @@
 
 ### 1. Write the failing test
 
-- [ ] Create `adapter/notification/teams_payload_test.go`:
+- [x] Create `adapter/notification/teams_payload_test.go`:
 
 ```go
 package notification
@@ -122,17 +122,17 @@ func TestBuildTeamsPayload_NoBaseURL_OmitsAction(t *testing.T) {
 
 ### 2. Run — confirm it FAILS (does not compile)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestBuildTeamsPayload
 ```
 
-- [ ] Expected: build failure, `undefined: buildTeamsPayload`.
+- [x] Expected: build failure, `undefined: buildTeamsPayload`.
 
 ### 3. Implement the builder
 
-- [ ] Create `adapter/notification/teams_payload.go`:
+- [x] Create `adapter/notification/teams_payload.go`:
 
 ```go
 package notification
@@ -225,27 +225,27 @@ func buildTeamsPayload(n *notification.Notification, baseURL string) ([]byte, er
 
 ### 4. Run — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestBuildTeamsPayload
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Run the full notification package (no regressions)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/
 ```
 
-- [ ] Expected: `ok` (existing `TestLogNotifier_*` still pass).
+- [x] Expected: `ok` (existing `TestLogNotifier_*` still pass).
 
 ### 6. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/notification/teams_payload.go adapter/notification/teams_payload_test.go
