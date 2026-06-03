@@ -7,6 +7,7 @@ import type {
   Priority,
   QueueConfigUpdate,
   SystemConfig,
+  TeamsConfigUpdate,
   WorkflowStats,
   WorkflowSummary,
 } from './types'
@@ -163,6 +164,14 @@ export const api = {
     /** Update queue configuration. */
     updateQueueConfig(globalCap: number, perUserCap: number): Promise<QueueConfigUpdate> {
       return put('/api/v1/system/config/queue', { globalCap, perUserCap })
+    },
+
+    /**
+     * Update Teams notification config. Omitting `webhookUrl` leaves the stored
+     * (redacted) secret unchanged; passing a value replaces it.
+     */
+    updateTeamsConfig(body: { webhookUrl?: string; enabled?: boolean }): Promise<TeamsConfigUpdate> {
+      return put('/api/v1/system/config/teams', body)
     },
   },
   notifications: {

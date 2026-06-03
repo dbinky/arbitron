@@ -19,7 +19,7 @@
 
 ### 1. Write the failing client test
 
-- [ ] Create `dashboard/src/api/client.test.ts`:
+- [x] Create `dashboard/src/api/client.test.ts`:
 
 ```ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -61,17 +61,17 @@ describe('api.system.updateTeamsConfig', () => {
 
 ### 2. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx vitest run src/api/client.test.ts
 ```
 
-- [ ] Expected: failure — `api.system.updateTeamsConfig is not a function` (TypeScript/runtime error), suite red.
+- [x] Expected: failure — `api.system.updateTeamsConfig is not a function` (TypeScript/runtime error), suite red.
 
 ### 3. Extend the `SystemConfig` type
 
-- [ ] In `dashboard/src/api/types.ts`, replace the `SystemConfig` interface (lines 90-105):
+- [x] In `dashboard/src/api/types.ts`, replace the `SystemConfig` interface (lines 90-105):
 
 ```ts
 /** System configuration returned by /system/config. */
@@ -94,7 +94,7 @@ export interface SystemConfig {
 }
 ```
 
-- [ ] In `dashboard/src/api/types.ts`, add a response type after `QueueConfigUpdate` (after line 111):
+- [x] In `dashboard/src/api/types.ts`, add a response type after `QueueConfigUpdate` (after line 111):
 
 ```ts
 /** Teams configuration update response (webhookUrl redacted). */
@@ -106,14 +106,14 @@ export interface TeamsConfigUpdate {
 
 ### 4. Add the client method
 
-- [ ] In `dashboard/src/api/client.ts`, add `TeamsConfigUpdate` to the type import block (after `SystemConfig,`):
+- [x] In `dashboard/src/api/client.ts`, add `TeamsConfigUpdate` to the type import block (after `SystemConfig,`):
 
 ```ts
   SystemConfig,
   TeamsConfigUpdate,
 ```
 
-- [ ] In `dashboard/src/api/client.ts`, in the `system:` block, add after `updateQueueConfig` (after line 166):
+- [x] In `dashboard/src/api/client.ts`, in the `system:` block, add after `updateQueueConfig` (after line 166):
 
 ```ts
     /**
@@ -127,13 +127,13 @@ export interface TeamsConfigUpdate {
 
 ### 5. Run — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx vitest run src/api/client.test.ts
 ```
 
-- [ ] Expected:
+- [x] Expected:
 
 ```
  ✓ src/api/client.test.ts (2 tests)
@@ -142,17 +142,17 @@ cd dashboard && npx vitest run src/api/client.test.ts
 
 ### 6. Typecheck the dashboard
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx tsc --noEmit
 ```
 
-- [ ] Expected: no output, exit code 0.
+- [x] Expected: no output, exit code 0.
 
 ### 7. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add dashboard/src/api/types.ts dashboard/src/api/client.ts dashboard/src/api/client.test.ts
