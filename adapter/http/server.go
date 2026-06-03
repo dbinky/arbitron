@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -428,26 +427,10 @@ type updateTeamsConfigRequest struct {
 	Enabled    *bool   `json:"enabled"`
 }
 
-// validateTeamsWebhookURL reports whether raw is an acceptable webhook URL.
-// An empty string is acceptable (clears the webhook); a non-empty value must
-// be an absolute http or https URL with a host.
-func validateTeamsWebhookURL(raw string) bool {
-	if raw == "" {
-		return true
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	return u.Host != ""
-}
-
 // UpdateTeamsConfig handles PUT /system/config/teams. Partial updates are
-// supported via pointer fields. A non-empty webhook URL must be an absolute
-// http(s) URL; otherwise the request is rejected and config is left unchanged.
+// supported via pointer fields. A non-empty webhook URL must pass
+// config.ValidateTeamsWebhookURL (absolute https + non-private host);
+// otherwise the request is rejected and config is left unchanged.
 func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req updateTeamsConfigRequest
@@ -456,9 +439,11 @@ func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.WebhookURL != nil && !validateTeamsWebhookURL(*req.WebhookURL) {
-		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "webhookUrl must be an absolute http(s) URL")
-		return
+	if req.WebhookURL != nil {
+		if err := config.ValidateTeamsWebhookURL(*req.WebhookURL); err != nil {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
 	}
 
 	h.mu.Lock()
@@ -469,16 +454,11 @@ func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request
 		h.config.Notifications.Teams.Enabled = *req.Enabled
 	}
 	enabled := h.config.Notifications.Teams.Enabled
-	webhookSet := h.config.Notifications.Teams.WebhookURL != ""
+	webhookURL := h.config.Notifications.Teams.WebhookURL
 	h.mu.Unlock()
-
-	redactedWebhook := ""
-	if webhookSet {
-		redactedWebhook = "**REDACTED**"
-	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"enabled":    enabled,
-		"webhookUrl": redactedWebhook,
+		"webhookUrl": config.RedactWebhookURL(webhookURL),
 	})
 }

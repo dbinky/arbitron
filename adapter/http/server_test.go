@@ -800,6 +800,30 @@ func TestRouter_UpdateTeamsConfig_InvalidURL(t *testing.T) {
 	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
 }
 
+// Security: an SSRF target (cloud metadata, loopback, RFC1918) is rejected at
+// the HTTP boundary and leaves the stored config unchanged.
+func TestRouter_UpdateTeamsConfig_RejectsSSRFTargets(t *testing.T) {
+	for _, raw := range []string{
+		"https://169.254.169.254/latest/meta-data",
+		"https://127.0.0.1/hook",
+		"https://localhost/hook",
+		"https://10.1.2.3/hook",
+		"http://example.com/hook", // non-https also rejected now
+	} {
+		wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+		cfg.Notifications.Teams.WebhookURL = "https://old.example.com/hook"
+		router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+		body := `{"webhookUrl":"` + raw + `"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/system/config/teams", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, "expected %q to be rejected", raw)
+		assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL, "config must be unchanged for %q", raw)
+	}
+}
+
 // Error: a malformed JSON body is rejected with 400.
 func TestRouter_UpdateTeamsConfig_MalformedJSON(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()

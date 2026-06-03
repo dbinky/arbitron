@@ -3,13 +3,13 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strconv"
 	"time"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/notification"
 )
 
@@ -174,22 +174,6 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 	}
 }
 
-// validTeamsWebhookURL reports whether raw is acceptable as a Teams webhook
-// URL: an empty string (clears it) or an absolute http(s) URL with a host.
-func validTeamsWebhookURL(raw string) bool {
-	if raw == "" {
-		return true
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	return u.Host != ""
-}
-
 func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		if srv.deps.Config == nil {
@@ -202,8 +186,8 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 			if !ok {
 				return gomcp.NewToolResultError("webhookUrl must be a string"), nil
 			}
-			if !validTeamsWebhookURL(webhookURL) {
-				return gomcp.NewToolResultError("webhookUrl must be an absolute http(s) URL"), nil
+			if err := config.ValidateTeamsWebhookURL(webhookURL); err != nil {
+				return gomcp.NewToolResultError(err.Error()), nil
 			}
 			srv.deps.Config.Notifications.Teams.WebhookURL = webhookURL
 		}
@@ -216,15 +200,10 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 			srv.deps.Config.Notifications.Teams.Enabled = enabled
 		}
 
-		redactedWebhook := ""
-		if srv.deps.Config.Notifications.Teams.WebhookURL != "" {
-			redactedWebhook = "**REDACTED**"
-		}
-
 		return MarshalResult(map[string]any{
 			"status":     "updated",
 			"enabled":    srv.deps.Config.Notifications.Teams.Enabled,
-			"webhookUrl": redactedWebhook,
+			"webhookUrl": config.RedactWebhookURL(srv.deps.Config.Notifications.Teams.WebhookURL),
 		})
 	}
 }

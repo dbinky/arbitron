@@ -588,6 +588,29 @@ func TestSystemUpdateTeamsConfig_InvalidURL(t *testing.T) {
 	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
 }
 
+// Security: an SSRF target is rejected at the MCP boundary, config unchanged.
+func TestSystemUpdateTeamsConfig_RejectsSSRFTargets(t *testing.T) {
+	for _, raw := range []string{
+		"https://169.254.169.254/latest/meta-data",
+		"https://127.0.0.1/hook",
+		"https://localhost/hook",
+		"https://192.168.0.1/hook",
+		"http://example.com/hook", // non-https also rejected now
+	} {
+		cfg := &config.Config{
+			Notifications: config.NotificationsConfig{
+				Teams: config.TeamsConfig{WebhookURL: "https://old.example.com/hook"},
+			},
+		}
+		srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+
+		result := callTool(t, srv, "system_update_teams_config", map[string]any{"webhookUrl": raw})
+
+		assert.True(t, result.IsError, "expected %q to be rejected", raw)
+		assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL, "config must be unchanged for %q", raw)
+	}
+}
+
 // Error: a non-string webhookUrl is a type error; config is left unchanged.
 func TestSystemUpdateTeamsConfig_WebhookURLNotString(t *testing.T) {
 	cfg := &config.Config{
