@@ -12,20 +12,17 @@ built artifact — **not** missing behavior.
 
 ## Open Issues
 
-### GAP-001: Embedded dashboard `dist` is stale — Teams card invisible on a real server run  (HIGH)
+### ~~GAP-001: Embedded dashboard `dist` is stale — Teams card invisible on a real server run~~  ✅ CLOSED (HIGH)
 **Area:** `adapter/dashboard/dist` (embedded via `//go:embed`), `dashboard/src/routes/Settings.tsx`
 **Focus area:** 1
-**What's wrong:** `dashboard/src` gained the "Teams Notifications" card in commit
-`c34b6c6`, but `adapter/dashboard/dist` was last rebuilt in merge `9829cf9`
-(pre-Teams). `grep -rl "Teams Notifications" adapter/dashboard/dist` returns
-nothing. Because a host `go build` / `./arbitron serve` serves the embedded
-`adapter/dashboard/dist`, the Phase 3 card never appears in a real run — so the
-spec's "admins configure … in the existing System Configuration area" criterion
-and the Phase 3 design outcome are unmet outside `vitest`.
-**Fix:** `make ui` (or `cd dashboard && npm run build` then copy to
-`adapter/dashboard/dist`); verify the card string is present; commit the refreshed
-artifact. The Makefile explicitly requires committing the refreshed dist so it
-does not drift.
+**What was wrong:** `dashboard/src` gained the "Teams Notifications" card in commit
+`c34b6c6`, but `adapter/dashboard/dist` was last rebuilt pre-Teams, so the card
+never appeared in a real `./arbitron serve` run.
+**Closed:** rebuilt the dashboard offline (`npm run build`) and copied
+`dashboard/dist` → `adapter/dashboard/dist`. `grep -rl "Teams Notifications"
+adapter/dashboard/dist` now matches (`assets/index-BRHMsNHu.js`). `go build ./...`,
+`make test`, and `cd dashboard && npx tsc --noEmit && npx vitest run` (121 tests)
+all green with the refreshed artifact embedded. Committed.
 
 ### GAP-002: `make test` excludes the dashboard suite  (MEDIUM)
 **Area:** `Makefile`, CI/verification expectations

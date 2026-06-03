@@ -12,20 +12,19 @@ coverage and end-to-end-confidence gaps, then polish.
 
 ---
 
-## 1. Ship the dashboard UI — rebuild & commit the embedded `dist`  ⟶ GAP-001 (HIGH)
+## ~~1. Ship the dashboard UI — rebuild & commit the embedded `dist`~~  ✅ DONE ⟶ GAP-001 (HIGH)
 
-The Phase 3 "Teams Notifications" card exists in `dashboard/src` but the embedded
-`adapter/dashboard/dist` artifact predates it (last rebuilt at merge `9829cf9`,
-before any Teams work). A host `go build` / `./arbitron serve` embeds
-`adapter/dashboard/dist` via `//go:embed`, so **the card is invisible on a real
-server run** — the Phase 3 design outcome and the spec's "admins configure via the
-existing System Configuration area" criterion are unmet in practice.
+~~The Phase 3 "Teams Notifications" card exists in `dashboard/src` but the embedded
+`adapter/dashboard/dist` artifact predates it.~~ **Closed:** rebuilt `dashboard/dist`
+offline (`npm run build`) and copied it to `adapter/dashboard/dist`. A host
+`go build` now embeds the card via `//go:embed`.
 
-- [ ] Run `make ui` (or `cd dashboard && npm run build` offline, then copy
+- [x] Run `make ui` (or `cd dashboard && npm run build` offline, then copy
       `dashboard/dist` → `adapter/dashboard/dist`).
-- [ ] Confirm the rebuilt artifact contains the card: `grep -rl "Teams
-      Notifications" adapter/dashboard/dist` returns a match.
-- [ ] Commit the refreshed `adapter/dashboard/dist` so the checked-in artifact no
+- [x] Confirm the rebuilt artifact contains the card: `grep -rl "Teams
+      Notifications" adapter/dashboard/dist` returns a match
+      (`adapter/dashboard/dist/assets/index-BRHMsNHu.js`).
+- [x] Commit the refreshed `adapter/dashboard/dist` so the checked-in artifact no
       longer drifts from `dashboard/src`.
 
 ## 2. Make the full test suite the gate — include the dashboard suite  ⟶ GAP-002 (MEDIUM)
