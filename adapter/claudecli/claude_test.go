@@ -117,6 +117,28 @@ func TestBuildArgs(t *testing.T) {
 		assert.NotContains(t, args, "Read,Bash")
 	})
 
+	t.Run("FAIL-CLOSED: skip-permissions with empty AllowedTools emits --allowedTools \"\" (no tools), never falls through to all-tools", func(t *testing.T) {
+		// SECURITY (PR #18 CRITICAL, comment 4614956545): an empty AllowedTools
+		// with SkipPermissions=true MUST NOT mean "all tools". The claude CLI
+		// treats an absent --allowedTools as "everything allowed", which under
+		// --dangerously-skip-permissions is RCE-equivalent over untrusted prompt
+		// content. The safe-looking default (empty allowlist) must fail closed to
+		// the empty set, not the universal set.
+		args := buildArgs(engine.ChatRequest{}, argsPolicy{SkipPermissions: true})
+		require.Contains(t, args, "--dangerously-skip-permissions")
+		require.Contains(t, args, "--allowedTools",
+			"empty AllowedTools under skip-permissions must still emit --allowedTools to bound the agent")
+		for i, a := range args {
+			if a == "--allowedTools" {
+				require.Less(t, i+1, len(args), "--allowedTools must have a value")
+				assert.Equal(t, "", args[i+1],
+					"empty AllowedTools under skip-permissions must fail closed to the empty set")
+				return
+			}
+		}
+		t.Fatal("--allowedTools not found")
+	})
+
 	t.Run("agent combination: skip-permissions plus non-empty AllowedTools emits both", func(t *testing.T) {
 		args := buildArgs(engine.ChatRequest{}, argsPolicy{
 			SkipPermissions: true,

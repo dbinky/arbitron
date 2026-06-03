@@ -83,6 +83,23 @@ func extractSentinelResult(text, nonce string) (map[string]any, bool, error) {
 	return out, true, nil
 }
 
+// schemaDirective marshals an OutputSchema to its JSON text for embedding in a
+// prompt. It is the single shared schema-rendering convention used by both
+// structuredOutputInstruction (llm_call) and sentinelInstruction (interactive),
+// so a change to how schemas are rendered to the model happens in one place
+// (SF1, PR #18 comment 3350531254). A nil schema or a marshal failure yields the
+// empty string; each caller wraps the result in its own envelope.
+func schemaDirective(schema any) string {
+	if schema == nil {
+		return ""
+	}
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // sentinelInstruction returns the text appended to an interactive agent's
 // prompt telling it how to complete the session. nonce is the per-instance
 // unguessable identifier; schema is the node's outputSchema (may be nil).
@@ -94,11 +111,9 @@ func sentinelInstruction(nonce string, schema any) string {
 	b.WriteString("{...}")
 	b.WriteString(SentinelCloseTag(nonce))
 	b.WriteString("\nwhere {...} is a JSON object")
-	if schema != nil {
-		if schemaJSON, err := json.Marshal(schema); err == nil {
-			b.WriteString(" conforming to this schema:\n")
-			b.Write(schemaJSON)
-		}
+	if directive := schemaDirective(schema); directive != "" {
+		b.WriteString(" conforming to this schema:\n")
+		b.WriteString(directive)
 	}
 	b.WriteString("\n")
 	return b.String()

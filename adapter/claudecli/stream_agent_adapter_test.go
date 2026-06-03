@@ -65,8 +65,11 @@ func TestStreamAgentAdapterChat(t *testing.T) {
 		assert.Equal(t, "Read,Bash", val)
 	})
 
-	// Happy path — no AllowedTools in config: --allowedTools flag absent.
-	t.Run("no --allowedTools flag when config AllowedTools is empty", func(t *testing.T) {
+	// SECURITY (PR #18 CRITICAL, comment 4614956545): with no AllowedTools in
+	// config the agent path must FAIL CLOSED, emitting --allowedTools "" (the
+	// empty set) rather than omitting the flag — an absent --allowedTools under
+	// --dangerously-skip-permissions means "all tools" and is RCE-equivalent.
+	t.Run("FAIL-CLOSED: empty config AllowedTools emits --allowedTools \"\" (no tools)", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","result":"ok","session_id":"s"}`,
 		}}
@@ -78,8 +81,9 @@ func TestStreamAgentAdapterChat(t *testing.T) {
 		_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp"})
 		require.NoError(t, err)
 
-		_, ok := argValue(fr.gotSpec.Args, "--allowedTools")
-		assert.False(t, ok, "--allowedTools must not be present when AllowedTools is empty")
+		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
+		require.True(t, ok, "--allowedTools must be present (fail closed) when AllowedTools is empty")
+		assert.Equal(t, "", val, "empty AllowedTools must fail closed to the empty set, never fall through to all-tools")
 	})
 
 	// Edge — WorkDir is forwarded to RunSpec.Dir.
@@ -135,8 +139,10 @@ func TestStreamAgentAdapterStreamChat(t *testing.T) {
 		assert.Equal(t, 5, last.TokensOut)
 	})
 
-	// Happy path — stream path has skip-permissions and no tool-suppression.
-	t.Run("stream path emits --dangerously-skip-permissions and no empty --allowedTools", func(t *testing.T) {
+	// SECURITY (PR #18 CRITICAL, comment 4614956545): the stream path emits
+	// skip-permissions and, with no configured AllowedTools, fails closed to
+	// --allowedTools "" rather than the (RCE-equivalent) all-tools fall-through.
+	t.Run("stream path emits --dangerously-skip-permissions and FAILS CLOSED to empty --allowedTools", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","result":"ok","session_id":"s"}`,
 		}}
@@ -148,9 +154,8 @@ func TestStreamAgentAdapterStreamChat(t *testing.T) {
 
 		assert.Contains(t, fr.gotSpec.Args, "--dangerously-skip-permissions")
 		val, ok := argValue(fr.gotSpec.Args, "--allowedTools")
-		if ok {
-			assert.NotEqual(t, "", val, "must not suppress tools with empty --allowedTools")
-		}
+		require.True(t, ok, "--allowedTools must be present (fail closed) under skip-permissions with empty AllowedTools")
+		assert.Equal(t, "", val, "empty AllowedTools must fail closed to the empty set, never fall through to all-tools")
 	})
 
 	// Edge — tool_use + tool_result frames in stream do not corrupt text or crash.

@@ -103,6 +103,27 @@ func TestExtractSentinelResult(t *testing.T) {
 	})
 }
 
+func TestSchemaDirective(t *testing.T) {
+	// SF1 (PR #18, comment 3350531254): the shared schema-marshal helper both
+	// structuredOutputInstruction and sentinelInstruction call.
+	t.Run("marshals the schema to its JSON text", func(t *testing.T) {
+		got := schemaDirective(map[string]any{"type": "object"})
+		assert.Equal(t, `{"type":"object"}`, got)
+	})
+
+	t.Run("nil schema yields empty string", func(t *testing.T) {
+		assert.Equal(t, "", schemaDirective(nil))
+	})
+
+	t.Run("both callers embed the shared directive", func(t *testing.T) {
+		schema := map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "string"}}}
+		directive := schemaDirective(schema)
+		require.NotEmpty(t, directive)
+		assert.Contains(t, structuredOutputInstruction(schema), directive)
+		assert.Contains(t, sentinelInstruction("n", schema), directive)
+	})
+}
+
 func TestSentinelInstruction(t *testing.T) {
 	t.Run("includes the nonce in both tags", func(t *testing.T) {
 		instr := sentinelInstruction("xyz", nil)

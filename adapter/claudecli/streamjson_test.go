@@ -107,4 +107,17 @@ func TestParseEvent(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, maxContentBlockChars, len(ev.Text))
 	})
+
+	t.Run("inner/outer guard invariant: MaxResponseBytes is >= 256x maxContentBlockChars", func(t *testing.T) {
+		// PR #18 (security LOW, comment 3350479602 / 3350533606): the two
+		// memory guards are now load-bearing in relation to each other —
+		// maxContentBlockChars bounds a single block, the per-request
+		// MaxResponseBytes bounds the whole stream. The "256x headroom" claim in
+		// the maxContentBlockChars doc comment must not silently rot if someone
+		// bumps either bound. defaultMaxResponseBytes mirrors the production
+		// default wired by adapter/config (llm.maxresponsebytes = 256 MiB).
+		const defaultMaxResponseBytes int64 = 256 * 1024 * 1024
+		assert.GreaterOrEqual(t, defaultMaxResponseBytes/int64(maxContentBlockChars), int64(256),
+			"the per-request backstop must stay comfortably (>=256x) above the per-block cap")
+	})
 }

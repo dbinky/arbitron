@@ -905,3 +905,132 @@ func TestInteractiveExecutor_ResumeAfterSessionComplete_ReturnsExistingOutput(t 
 	require.NotNil(t, inst)
 	assert.Equal(t, instance.StateRunning, inst.State)
 }
+
+// ---------------------------------------------------------------------------
+// Tests: binding.Kind <-> node.Type guard (Item 6, comment 4614897... /
+// executor_interactive.go:112). The InteractiveExecutor is registered under
+// BOTH interactive_llm and interactive_agent and routes purely on binding.Kind.
+// A snapshot loaded from a pre-validation workflow, or a programmatically built
+// node, can present a node whose Type disagrees with the resolved binding.Kind.
+// The two paths have OPPOSITE tool postures (chat = tool-suppressed, agent =
+// YOLO/--dangerously-skip-permissions), so a mismatch is a config-driven
+// privilege escalation. The executor must fail closed at the Execute boundary
+// with a hard, named error — not depend on upstream validation having run.
+// ---------------------------------------------------------------------------
+
+func TestInteractiveExecutor_KindTypeMismatch_AgentNodeChatBinding_FailsClosed(t *testing.T) {
+	instRepo, nodeExecRepo, _, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	chatProv := newMockStreamingChatProvider()
+	chatProv.streamCallFn = cannedStream([]string{"should not run"}, 1, 1)
+	agentProv := newMockStreamingChatProvider()
+	agentProv.streamCallFn = cannedStream([]string{"should not run"}, 1, 1)
+
+	// Profile resolves to a CHAT binding, but the node is interactive_agent.
+	resolver := newFakeResolver(provider.Profile{
+		Alias: "mismatch-prof",
+		Kind:  provider.ProfileKindChat,
+		Model: "claude-sonnet",
+	})
+	sel := &fakeStreamSelector{chatProv: chatProv, agentProv: agentProv}
+
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, sel, resolver, fileReader, eventBus, queueMgr,
+	)
+
+	node := interactiveNode()
+	node.Type = workflow.NodeTypeInteractiveAgent
+	node.Config.ModelProfile = "mismatch-prof"
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, engine.ErrBindingKindMismatch)
+	// No provider may have been invoked: the guard fails closed before streaming.
+	assert.Empty(t, chatProv.getCapturedReqs(), "no stream may start on a kind/type mismatch")
+	assert.Empty(t, agentProv.getCapturedReqs(), "no stream may start on a kind/type mismatch")
+	// No node execution record may be persisted as succeeded.
+	execs, _ := nodeExecRepo.ListByInstance(context.Background(), instanceID)
+	assert.Empty(t, execs, "no node execution record may be written on a kind/type mismatch")
+}
+
+func TestInteractiveExecutor_KindTypeMismatch_LLMNodeAgentBinding_FailsClosed(t *testing.T) {
+	instRepo, nodeExecRepo, _, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	chatProv := newMockStreamingChatProvider()
+	chatProv.streamCallFn = cannedStream([]string{"should not run"}, 1, 1)
+	agentProv := newMockStreamingChatProvider()
+	agentProv.streamCallFn = cannedStream([]string{"should not run"}, 1, 1)
+
+	// Profile resolves to an AGENT binding (YOLO posture), but the node is
+	// declared interactive_llm (expects tool-suppressed chat). This is the
+	// chat->RCE escalation the security reviewer flagged.
+	resolver := newFakeResolver(provider.Profile{
+		Alias: "escalate-prof",
+		Kind:  provider.ProfileKindAgent,
+		Model: "claude-opus-agent",
+	})
+	sel := &fakeStreamSelector{chatProv: chatProv, agentProv: agentProv}
+
+	executor := engine.NewInteractiveExecutor(
+		instRepo, nodeExecRepo, sel, resolver, fileReader, eventBus, queueMgr,
+	)
+
+	node := interactiveNode() // Type is interactive_llm
+	node.Config.ModelProfile = "escalate-prof"
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, node, variable.NewStore(), "test-wf")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, engine.ErrBindingKindMismatch)
+	assert.Empty(t, chatProv.getCapturedReqs(), "no stream may start on a kind/type mismatch")
+	assert.Empty(t, agentProv.getCapturedReqs(), "no stream may start on a kind/type mismatch")
+}
+
+// ---------------------------------------------------------------------------
+// Tests: stream closed without a Done chunk (Item 5, comment 4614891622 /
+// executor_interactive.go:141-166). On mid-stream context cancellation
+// (instance cancel, shutdown, timeout) makeSendChunk drops the terminal Done
+// chunk and the channel closes silently. A turn that was actually cancelled or
+// truncated must NOT be recorded as NodeStatusSucceeded; the executor must
+// return an error so the conversation does not advance on partial data.
+// ---------------------------------------------------------------------------
+
+func TestInteractiveExecutor_StreamClosesWithoutDone_ReturnsError(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+
+	fileReader.files["test-wf/orchestration.md"] = []byte("Orchestration")
+	fileReader.files["test-wf/template.md"] = []byte("Template")
+
+	// Stream emits a partial token then closes WITHOUT a Done chunk and WITHOUT
+	// an error chunk — exactly the makeSendChunk ctx-cancel drop path.
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		ch := make(chan engine.ChatChunk, 1)
+		ch <- engine.ChatChunk{Token: "partial"}
+		close(ch)
+		return ch, nil
+	}
+
+	executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
+
+	ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+	_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+	require.Error(t, err, "a stream that closes without a Done chunk must be an error, not a success")
+	assert.Contains(t, err.Error(), "stream closed without completion")
+
+	// The node must NOT be persisted as succeeded on a truncated turn.
+	execs, _ := nodeExecRepo.ListByInstance(context.Background(), instanceID)
+	for _, e := range execs {
+		assert.NotEqual(t, instance.NodeStatusSucceeded, e.Status,
+			"a truncated/cancelled turn must not be recorded as a completed success")
+	}
+}

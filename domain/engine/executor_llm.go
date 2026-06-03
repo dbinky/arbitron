@@ -65,6 +65,14 @@ func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars 
 		return nil, fmt.Errorf("llm_call %q: resolve profile: %w", node.ID, err)
 	}
 
+	// FAIL CLOSED on a binding.Kind <-> node.Type mismatch (mirrors the
+	// interactive executor). An llm_call must resolve to a chat (tool-suppressed)
+	// binding; an agent-kind binding here would be a posture mismatch. Guard
+	// before selecting/calling any provider — see ErrBindingKindMismatch.
+	if err := assertBindingKind(node.ID, node.Type, binding.Kind); err != nil {
+		return nil, fmt.Errorf("llm_call %q: %w", node.ID, err)
+	}
+
 	// Select the concrete chat backend for this node from binding.Provider
 	// (claude-cli / openrouter / azure). No adapter is imported here.
 	chatProvider, err := e.selector.ChatProviderFor(binding)
@@ -130,12 +138,25 @@ func processLLMOutput(resp *ChatResponse, outputSchema any) (any, error) {
 			// Tolerate prose/markdown around the JSON: extract the first
 			// balanced object and parse that. Models intermittently wrap the
 			// verdict in a heading or sentence even when asked for raw JSON.
-			if obj, ok := extractJSONObject(cleaned); ok {
-				if err2 := json.Unmarshal([]byte(obj), &parsed); err2 == nil {
-					return parsed, nil
-				}
+			obj, found := extractJSONObject(cleaned)
+			if !found {
+				// LOUD FAILURE (PR #18, comment 3350531055): a node declaring an
+				// OutputSchema must NOT get a silent {"response": rawtext}
+				// fallback when nothing parseable is recovered — that would
+				// persist a malformed verdict as a valid structured result.
+				return nil, fmt.Errorf("parse structured output: no JSON object found in model output: %w", err)
 			}
-			return nil, fmt.Errorf("parse structured output: %w", err)
+			if err2 := json.Unmarshal([]byte(obj), &parsed); err2 != nil {
+				return nil, fmt.Errorf("parse structured output: %w", err2)
+			}
+		}
+		// STRICT SCHEMA VALIDATION (PR #18 HIGH, comment 4614959041): fail
+		// closed on any object that does not conform to the declared schema.
+		// This stops a forged verdict lifted from attacker-influenced prose
+		// (e.g. {"done":true}) from being accepted as the authoritative,
+		// control-flow-gating result.
+		if err := validateAgainstSchema(parsed, outputSchema); err != nil {
+			return nil, fmt.Errorf("structured output does not conform to schema: %w", err)
 		}
 		return parsed, nil
 	}
@@ -166,14 +187,10 @@ func parseOrWrapText(text string) any {
 // JSON (and which shape). Demanding raw JSON with no prose/markdown/fences is
 // what makes structured llm_call output reliable.
 func structuredOutputInstruction(schema any) string {
-	var schemaText string
-	if b, err := json.Marshal(schema); err == nil {
-		schemaText = string(b)
-	}
 	return "\n\n---\nIMPORTANT: Respond with ONLY a single JSON object conforming to the " +
 		"schema below. Do not include any prose, explanation, markdown, headings, or code " +
 		"fences. Your entire response must be valid JSON beginning with '{'.\n\nJSON schema:\n" +
-		schemaText
+		schemaDirective(schema)
 }
 
 // extractJSONObject returns the first balanced {...} object in s, ignoring any

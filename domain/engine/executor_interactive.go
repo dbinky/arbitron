@@ -113,6 +113,16 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: resolve profile: %w", node.ID, err)
 	}
+
+	// 6b. FAIL CLOSED on a binding.Kind <-> node.Type mismatch BEFORE selecting
+	// a stream provider, so no tool-enabled stream can start on a chat node (or
+	// vice versa). This is the tool-posture escalation boundary — see
+	// ErrBindingKindMismatch. The guard does not depend on workflow validation
+	// having run upstream (a snapshot or programmatic node can bypass it).
+	if err := assertBindingKind(node.ID, node.Type, binding.Kind); err != nil {
+		return nil, fmt.Errorf("interactive %q: %w", node.ID, err)
+	}
+
 	streamProvider, err := e.selector.StreamProviderFor(binding)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: select stream provider: %w", node.ID, err)
@@ -137,6 +147,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	var responseBuilder strings.Builder
 	var tokensIn, tokensOut int
 	var sessionID string
+	var sawDone bool
 
 	for chunk := range stream {
 		if chunk.Error != nil {
@@ -159,8 +170,20 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 		if chunk.Done {
 			tokensIn = chunk.TokensIn
 			tokensOut = chunk.TokensOut
+			sawDone = true
 			break
 		}
+	}
+
+	// DATA INTEGRITY (PR #18, comment 4614891622): if the stream channel closed
+	// without ever delivering a terminal Done chunk (and without an error chunk),
+	// the turn was cancelled or truncated mid-stream — makeSendChunk drops the
+	// Done chunk on a mid-stream context cancellation (instance cancel, shutdown,
+	// timeout). Recording that as NodeStatusSucceeded and advancing the
+	// conversation on partial data is a silent data-integrity bug. Fail closed:
+	// return an error so the node is NOT persisted as a completed success.
+	if !sawDone {
+		return nil, fmt.Errorf("interactive %q: stream closed without completion", node.ID)
 	}
 
 	fullResponse := responseBuilder.String()

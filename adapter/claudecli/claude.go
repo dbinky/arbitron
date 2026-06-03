@@ -36,6 +36,14 @@ type argsPolicy struct {
 // configure cfg.LLM.AllowedTools so the agent runs against an explicit
 // allowlist.
 //
+// SECURITY (PR #18 CRITICAL, comment 4614956545): when SkipPermissions is true
+// but AllowedTools is empty, buildArgs FAILS CLOSED by emitting
+// `--allowedTools ""` (the empty set) rather than omitting the flag. An absent
+// --allowedTools is interpreted by the claude CLI as "all tools allowed", so
+// the previously safe-looking default (no allowlist) was actually the most
+// dangerous one. Failing closed means a misconfigured agent runs with no tools
+// instead of every tool.
+//
 // policy.SuppressTools produces a no-tools chat invocation: it emits
 // `--allowedTools ""` (an empty allowed-tools set) and ignores AllowedTools,
 // so `claude -p` behaves as a plain completion with no tool access. It is
@@ -54,6 +62,18 @@ func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 		args = append(args, "--allowedTools", "")
 	case len(policy.AllowedTools) > 0:
 		args = append(args, "--allowedTools", strings.Join(policy.AllowedTools, ","))
+	case policy.SkipPermissions:
+		// FAIL CLOSED (PR #18 security CRITICAL, comment 4614956545): an empty
+		// AllowedTools combined with --dangerously-skip-permissions must NOT
+		// fall through to "all tools". The claude CLI treats an absent
+		// --allowedTools as "everything allowed", which under skip-permissions
+		// is RCE-equivalent when prompt content is influenced by untrusted
+		// input. Emitting --allowedTools "" pins the agent to the empty set:
+		// the safe-looking default (no allowlist configured) becomes the safe
+		// behaviour (no tools) instead of the most dangerous one. An operator
+		// who wants a tool-enabled agent MUST configure an explicit minimal
+		// AllowedTools allowlist.
+		args = append(args, "--allowedTools", "")
 	}
 
 	model := req.Model
