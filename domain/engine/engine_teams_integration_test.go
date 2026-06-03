@@ -153,6 +153,17 @@ func teamsCfg(webhookURL string) *config.Config {
 	}
 }
 
+// teamsExternalNotifier wires the real default external notifier (log + Teams)
+// against a synchronized SettingsStore seeded from a stub-pointed config.
+func teamsExternalNotifier(webhookURL string, logger *slog.Logger) notification.ExternalNotifier {
+	cfg := teamsCfg(webhookURL)
+	return adaptnotif.NewDefaultExternalNotifier(
+		config.NewSettingsStore(&cfg.Notifications.Teams),
+		cfg.Server.PublicBaseURL,
+		logger,
+	)
+}
+
 // interactiveWorkflow is a single interactive node that waits for input, which
 // drives emitNotification(TypeNeedsInteraction).
 func interactiveWorkflow() *workflow.Workflow {
@@ -177,7 +188,7 @@ func TestEngine_TeamsSeam_CompletedForwardsCard(t *testing.T) {
 	f.engine.SetNotifications(notifRepo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(adaptnotif.NewDefaultExternalNotifier(teamsCfg(srv.URL), logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
 
 	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
@@ -210,7 +221,7 @@ func TestEngine_TeamsSeam_FailedForwardsCard(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(adaptnotif.NewDefaultExternalNotifier(teamsCfg(srv.URL), logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
 
 	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
@@ -241,7 +252,7 @@ func TestEngine_TeamsSeam_NeedsInteractionForwardsCard(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(adaptnotif.NewDefaultExternalNotifier(teamsCfg(srv.URL), logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
 
 	id, _, err := f.engine.Trigger("interactive-wf", nil, "normal")
 	require.NoError(t, err)
@@ -268,7 +279,7 @@ func TestEngine_TeamsSeam_InAppFiresWhenTeamsFails(t *testing.T) {
 	f.engine.SetNotifications(notifRepo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(adaptnotif.NewDefaultExternalNotifier(teamsCfg(srv.URL), logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
 
 	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)

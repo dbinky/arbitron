@@ -143,6 +143,7 @@ func newSystemServer(
 ) *adaptmcp.Server {
 	deps := &adaptmcp.Deps{
 		Config:        cfg,
+		Settings:      config.NewSettingsStore(&cfg.Notifications.Teams),
 		QueueRepo:     queueRepo,
 		QueueManager:  queueMgr,
 		Notifications: notifRepo,

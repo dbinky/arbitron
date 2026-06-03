@@ -48,7 +48,7 @@ func TestTeamsNotifier_Notify_PostsCard(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", srv.Client(), discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	assert.Equal(t, "application/json", gotContentType)
@@ -67,7 +67,7 @@ func TestTeamsNotifier_Notify_DisabledNoOp(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", srv.Client(), discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
@@ -78,7 +78,7 @@ func TestTeamsNotifier_Notify_EmptyURLNoOp(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: "", Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", http.DefaultClient, discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", http.DefaultClient, discardLogger())
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 }
 
@@ -94,7 +94,7 @@ func TestTeamsNotifier_Notify_Non2xxSwallowed(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), logger)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	assert.Contains(t, logBuf.String(), "non-success")
@@ -111,7 +111,7 @@ func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: url, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "", http.DefaultClient, logger)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", http.DefaultClient, logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	assert.Contains(t, logBuf.String(), "failed")
@@ -128,7 +128,7 @@ func TestTeamsNotifier_Notify_NilLoggerNoPanic(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), nil)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), nil)
 
 	require.NotPanics(t, func() {
 		require.NoError(t, n.Notify(context.Background(), sampleNotification()))
@@ -151,7 +151,7 @@ func TestTeamsNotifier_Notify_TimeoutBoundsHungEndpoint(t *testing.T) {
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
 	client := &http.Client{Timeout: 50 * time.Millisecond}
-	n := adaptnotif.NewTeamsNotifier(cfg, "", client, logger)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", client, logger)
 
 	done := make(chan error, 1)
 	start := time.Now()
@@ -179,7 +179,7 @@ func TestTeamsNotifier_Notify_LiveConfigEdit(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
 	}}
-	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))

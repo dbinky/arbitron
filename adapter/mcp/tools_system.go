@@ -103,7 +103,7 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 		// Teams webhook) are never echoed and a newly added Config field defaults
 		// to NOT exposed. This is the same projection the HTTP GET /system/config
 		// surface uses.
-		redacted := config.Redact(srv.deps.Config, srv.deps.Config.Notifications.Teams)
+		redacted := config.Redact(srv.deps.Config, srv.deps.Settings.GetTeams())
 		redacted.Queue.RunningCount = running
 		redacted.Queue.QueuedCount = queued
 		redacted.Queue.WaitingCount = waiting
@@ -169,10 +169,15 @@ func systemUpdateQueueConfigHandler(srv *Server) server.ToolHandlerFunc {
 
 func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Config == nil {
-			return gomcp.NewToolResultError("config not available"), nil
+		if srv.deps.Settings == nil {
+			return gomcp.NewToolResultError("settings not available"), nil
 		}
 		args := request.GetArguments()
+
+		// Build the partial update, validating before any mutation so a bad input
+		// leaves the stored config unchanged.
+		var webhookPtr *string
+		var enabledPtr *bool
 
 		if raw, ok := args["webhookUrl"]; ok {
 			webhookURL, ok := raw.(string)
@@ -182,7 +187,7 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 			if err := config.ValidateTeamsWebhookURL(webhookURL); err != nil {
 				return gomcp.NewToolResultError(err.Error()), nil
 			}
-			srv.deps.Config.Notifications.Teams.WebhookURL = webhookURL
+			webhookPtr = &webhookURL
 		}
 
 		if raw, ok := args["enabled"]; ok {
@@ -190,13 +195,17 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 			if !ok {
 				return gomcp.NewToolResultError("enabled must be a boolean"), nil
 			}
-			srv.deps.Config.Notifications.Teams.Enabled = enabled
+			enabledPtr = &enabled
 		}
+
+		// Apply atomically through the synchronized store (shared with HTTP and
+		// the notifier).
+		result := srv.deps.Settings.SetTeams(webhookPtr, enabledPtr)
 
 		return MarshalResult(map[string]any{
 			"status":     "updated",
-			"enabled":    srv.deps.Config.Notifications.Teams.Enabled,
-			"webhookUrl": config.RedactWebhookURL(srv.deps.Config.Notifications.Teams.WebhookURL),
+			"enabled":    result.Enabled,
+			"webhookUrl": config.RedactWebhookURL(result.WebhookURL),
 		})
 	}
 }

@@ -35,7 +35,7 @@ func TestNewDefaultExternalNotifier_FansOut(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	en := adaptnotif.NewDefaultExternalNotifier(cfg, logger)
+	en := adaptnotif.NewDefaultExternalNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), cfg.Server.PublicBaseURL, logger)
 	require.NotNil(t, en)
 	require.NoError(t, en.Notify(context.Background(), sampleNotification()))
 
@@ -60,7 +60,7 @@ func TestNewDefaultExternalNotifier_TeamsDisabled(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	en := adaptnotif.NewDefaultExternalNotifier(cfg, logger)
+	en := adaptnotif.NewDefaultExternalNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), cfg.Server.PublicBaseURL, logger)
 	require.NoError(t, en.Notify(context.Background(), sampleNotification()))
 
 	assert.Equal(t, int32(0), atomic.LoadInt32(&teamsCalls))

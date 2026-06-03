@@ -47,6 +47,11 @@ type RouterDeps struct {
 	FileReader          FileReader
 	EventBus            engine.EventBus
 	Config              *config.Config
+	// Settings is the synchronized owner of runtime-mutable Teams settings. When
+	// nil, NewRouterFromDeps seeds one from Config so the HTTP handler stays the
+	// sole writer; production wiring shares one store across HTTP, MCP, and the
+	// Teams notifier so all three observe the same locked state.
+	Settings            *config.SettingsStore
 	QueueManager        QueueManagerPort
 	QueueRepo           instance.QueueRepository
 	DashboardHandler    http.Handler
@@ -132,7 +137,11 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
-	sysHandler := &SystemHandler{config: d.Config, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
+	settings := d.Settings
+	if settings == nil {
+		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)
+	}
+	sysHandler := &SystemHandler{config: d.Config, settings: settings, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
 
 	var interactiveHandler *InteractiveHandler
 	if d.ConversationHandler != nil {
@@ -237,8 +246,9 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // SystemHandler handles system configuration endpoints.
 type SystemHandler struct {
-	mu           sync.Mutex
+	mu           sync.Mutex // guards the runtime-mutable Queue caps on config
 	config       *config.Config
+	settings     *config.SettingsStore // synchronized owner of Teams settings
 	queueManager QueueManagerPort
 	queueRepo    instance.QueueRepository
 }
@@ -254,8 +264,9 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		waiting, _ = h.queueRepo.CountWaiting(r.Context())
 	}
 
+	teams := h.settings.GetTeams()
 	h.mu.Lock()
-	resp := config.Redact(h.config, h.config.Notifications.Teams)
+	resp := config.Redact(h.config, teams)
 	h.mu.Unlock()
 
 	resp.Queue.RunningCount = running
@@ -351,19 +362,12 @@ func (h *SystemHandler) UpdateTeamsConfig(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	h.mu.Lock()
-	if req.WebhookURL != nil {
-		h.config.Notifications.Teams.WebhookURL = *req.WebhookURL
-	}
-	if req.Enabled != nil {
-		h.config.Notifications.Teams.Enabled = *req.Enabled
-	}
-	enabled := h.config.Notifications.Teams.Enabled
-	webhookURL := h.config.Notifications.Teams.WebhookURL
-	h.mu.Unlock()
+	// Route the partial update through the synchronized store so the HTTP
+	// writer, the MCP writer, and the notifier's live read all share one mutex.
+	result := h.settings.SetTeams(req.WebhookURL, req.Enabled)
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"enabled":    enabled,
-		"webhookUrl": config.RedactWebhookURL(webhookURL),
+		"enabled":    result.Enabled,
+		"webhookUrl": config.RedactWebhookURL(result.WebhookURL),
 	})
 }

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/notification"
 )
 
@@ -22,16 +21,17 @@ const defaultTeamsTimeout = 10 * time.Second
 // Delivery is best-effort and silent: gating and failures never produce an
 // error, so the engine's notification path is never blocked.
 type TeamsNotifier struct {
-	config        *config.Config // shared pointer; read live each call
+	settings      notification.TeamsSettings // narrow live-read port (synchronized)
 	publicBaseURL string
 	client        *http.Client
 	logger        *slog.Logger
 }
 
-// NewTeamsNotifier constructs a TeamsNotifier. A nil client gets a default
-// client with a bounded timeout; a nil logger defaults to a discard logger so
-// the best-effort failure paths never panic.
-func NewTeamsNotifier(cfg *config.Config, publicBaseURL string, client *http.Client, logger *slog.Logger) *TeamsNotifier {
+// NewTeamsNotifier constructs a TeamsNotifier reading its live webhook config
+// through the narrow settings port. A nil client gets a default client with a
+// bounded timeout; a nil logger defaults to a discard logger so the best-effort
+// failure paths never panic.
+func NewTeamsNotifier(settings notification.TeamsSettings, publicBaseURL string, client *http.Client, logger *slog.Logger) *TeamsNotifier {
 	if client == nil {
 		client = &http.Client{Timeout: defaultTeamsTimeout}
 	}
@@ -39,7 +39,7 @@ func NewTeamsNotifier(cfg *config.Config, publicBaseURL string, client *http.Cli
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &TeamsNotifier{
-		config:        cfg,
+		settings:      settings,
 		publicBaseURL: publicBaseURL,
 		client:        client,
 		logger:        logger,
@@ -50,8 +50,7 @@ func NewTeamsNotifier(cfg *config.Config, publicBaseURL string, client *http.Cli
 // Adaptive Card to the webhook. Disabled/empty is a clean no-op. Any build,
 // transport, or non-2xx error is logged and swallowed; Notify always nil.
 func (t *TeamsNotifier) Notify(ctx context.Context, n *notification.Notification) error {
-	enabled := t.config.Notifications.Teams.Enabled
-	webhookURL := t.config.Notifications.Teams.WebhookURL
+	webhookURL, enabled := t.settings.TeamsWebhook()
 	if !enabled || webhookURL == "" {
 		return nil
 	}
