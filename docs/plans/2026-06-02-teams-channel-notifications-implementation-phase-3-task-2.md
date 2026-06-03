@@ -19,7 +19,7 @@
 
 ### 1. Write the failing component test
 
-- [ ] Create `dashboard/src/routes/Settings.test.tsx`:
+- [x] Create `dashboard/src/routes/Settings.test.tsx`:
 
 ```tsx
 import { render, screen, waitFor } from '@testing-library/react'
@@ -150,17 +150,17 @@ it('renders the error path when initial config load fails', async () => {
 
 ### 2. Run — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx vitest run src/routes/Settings.test.tsx
 ```
 
-- [ ] Expected: failures — `Unable to find an element with the text: Teams Notifications` / no `checkbox` role, suite red.
+- [x] Expected: failures — `Unable to find an element with the text: Teams Notifications` / no `checkbox` role, suite red.
 
 ### 3. Add Teams state to the component
 
-- [ ] In `dashboard/src/routes/Settings.tsx`, add after the live-status state (after line 22, the `waitingCount` declaration):
+- [x] In `dashboard/src/routes/Settings.tsx`, add after the live-status state (after line 22, the `waitingCount` declaration):
 
 ```tsx
   // Editable Teams notification config.
@@ -174,7 +174,7 @@ cd dashboard && npx vitest run src/routes/Settings.test.tsx
 
 ### 4. Populate Teams state on load
 
-- [ ] In `dashboard/src/routes/Settings.tsx`, inside `load()`, in the `if (!cancelled) { ... }` block (after `setWaitingCount(data.queue.waitingCount)` at line 35), add:
+- [x] In `dashboard/src/routes/Settings.tsx`, inside `load()`, in the `if (!cancelled) { ... }` block (after `setWaitingCount(data.queue.waitingCount)` at line 35), add:
 
 ```tsx
           setTeamsEnabled(data.teams.enabled)
@@ -183,7 +183,7 @@ cd dashboard && npx vitest run src/routes/Settings.test.tsx
 
 ### 5. Add the Teams save handler
 
-- [ ] In `dashboard/src/routes/Settings.tsx`, add after `handleSave` (after line 98):
+- [x] In `dashboard/src/routes/Settings.tsx`, add after `handleSave` (after line 98):
 
 ```tsx
   const handleSaveTeams = useCallback(async () => {
@@ -208,7 +208,7 @@ cd dashboard && npx vitest run src/routes/Settings.test.tsx
 
 ### 6. Render the Teams card
 
-- [ ] In `dashboard/src/routes/Settings.tsx`, insert this block immediately after the closing `</div>` of the Queue Configuration card (after line 163, before the `{/* Queue Status (live) */}` comment):
+- [x] In `dashboard/src/routes/Settings.tsx`, insert this block immediately after the closing `</div>` of the Queue Configuration card (after line 163, before the `{/* Queue Status (live) */}` comment):
 
 ```tsx
       {/* Teams Notifications (editable) */}
@@ -262,13 +262,13 @@ cd dashboard && npx vitest run src/routes/Settings.test.tsx
 
 ### 7. Run — confirm the component tests PASS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx vitest run src/routes/Settings.test.tsx
 ```
 
-- [ ] Expected:
+- [x] Expected:
 
 ```
  ✓ src/routes/Settings.test.tsx (6 tests)
@@ -277,13 +277,13 @@ cd dashboard && npx vitest run src/routes/Settings.test.tsx
 
 ### 8. Typecheck + full dashboard test sweep (no regressions)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 cd dashboard && npx tsc --noEmit && npx vitest run
 ```
 
-- [ ] Expected: typecheck clean (exit 0); all test files pass, including the existing component/hook tests.
+- [x] Expected: typecheck clean (exit 0); all test files pass, including the existing component/hook tests.
 
 ### 9. Commit
 
