@@ -153,15 +153,20 @@ func teamsCfg(webhookURL string) *config.Config {
 	}
 }
 
-// teamsExternalNotifier wires the real default external notifier (log + Teams)
+// teamsExternalNotifier wires the real fan-out external notifier (log + Teams)
 // against a synchronized SettingsStore seeded from a stub-pointed config.
-func teamsExternalNotifier(webhookURL string, logger *slog.Logger) notification.ExternalNotifier {
-	cfg := teamsCfg(webhookURL)
-	return adaptnotif.NewDefaultExternalNotifier(
-		config.NewSettingsStore(&cfg.Notifications.Teams),
-		cfg.Server.PublicBaseURL,
-		logger,
-	)
+//
+// PR #18 item 14: the production default Teams client carries a dial-time SSRF
+// guard that (correctly) blocks loopback, so a loopback httptest stub cannot be
+// reached through NewDefaultExternalNotifier's default client. These seam tests
+// inject the stub's own loopback-capable client into the Teams child while
+// composing the same fan-out NewDefaultExternalNotifier builds. The guard
+// itself is unit-tested in adapter/notification/ssrf_guard_test.go.
+func teamsExternalNotifier(srv *httptest.Server, logger *slog.Logger) notification.ExternalNotifier {
+	cfg := teamsCfg(srv.URL)
+	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
+	teams := adaptnotif.NewTeamsNotifier(settings, cfg.Server.PublicBaseURL, srv.Client(), logger)
+	return adaptnotif.NewMultiNotifier(logger, adaptnotif.NewLogNotifier(logger), teams)
 }
 
 // interactiveWorkflow is a single interactive node that waits for input, which
@@ -188,7 +193,7 @@ func TestEngine_TeamsSeam_CompletedForwardsCard(t *testing.T) {
 	f.engine.SetNotifications(notifRepo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
 	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
@@ -221,7 +226,7 @@ func TestEngine_TeamsSeam_FailedForwardsCard(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
 	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
 	require.NoError(t, err)
@@ -252,7 +257,7 @@ func TestEngine_TeamsSeam_NeedsInteractionForwardsCard(t *testing.T) {
 	})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
 	id, _, err := f.engine.Trigger("interactive-wf", nil, "normal")
 	require.NoError(t, err)
@@ -279,7 +284,7 @@ func TestEngine_TeamsSeam_InAppFiresWhenTeamsFails(t *testing.T) {
 	f.engine.SetNotifications(notifRepo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.engine.SetExternalNotifier(teamsExternalNotifier(srv.URL, logger))
+	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
 	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
 	require.NoError(t, err)
