@@ -116,6 +116,10 @@ func TestInteractiveStreamSelector_AgentKind_NonClaudeProvider(t *testing.T) {
 	require.Error(t, err, "non-claude-cli agent binding must return an error")
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "openrouter")
+	// SF3 (PR #18, comment 3350533149): the error must be a package-level
+	// sentinel wrapped with %w so callers can distinguish unsupported-provider
+	// from other failures via errors.Is.
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentProvider)
 }
 
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an

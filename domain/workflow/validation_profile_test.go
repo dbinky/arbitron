@@ -322,3 +322,59 @@ func TestValidate_InteractiveAgent_WithChatProfile_KindMismatch(t *testing.T) {
 	assert.Contains(t, mismatch.Message, "agent")
 	assert.Contains(t, mismatch.Message, "chat")
 }
+
+// ---------------------------------------------------------------------------
+// SF2 (PR #18, comment 3350531429): node.Config.Model is dead for any node that
+// resolves via model_profile (the model always comes from the resolved
+// binding). A workflow that sets BOTH model and model_profile is a maintenance
+// trap — the model knob is silently ignored. Validation must reject it with an
+// explicit, conflict-naming error rather than a silent no-op.
+// ---------------------------------------------------------------------------
+
+func TestValidate_ModelAndModelProfileConflict_Rejected(t *testing.T) {
+	for _, nodeType := range []workflow.NodeType{
+		workflow.NodeTypeLLMCall,
+		workflow.NodeTypeAgentCall,
+		workflow.NodeTypeInteractiveLLM,
+		workflow.NodeTypeInteractiveAgent,
+	} {
+		t.Run(string(nodeType), func(t *testing.T) {
+			wantKind := "chat"
+			if nodeType == workflow.NodeTypeAgentCall || nodeType == workflow.NodeTypeInteractiveAgent {
+				wantKind = "agent"
+			}
+			wf := callNodeWorkflow(nodeType, "prof")
+			wf.Nodes[0].Config.Model = "claude-opus-4" // the dead, conflicting field
+
+			checker := &mockProfileChecker{kinds: map[string]string{"prof": wantKind}}
+			errs := workflow.Validate(wf, nil, checker, nil)
+
+			codes := make([]string, len(errs))
+			var conflictMsg string
+			for i, e := range errs {
+				codes[i] = e.Code
+				if e.Code == "MODEL_PROFILE_CONFLICT" {
+					conflictMsg = e.Message
+				}
+			}
+			require.Equal(t, 1, countCode(codes, "MODEL_PROFILE_CONFLICT"),
+				"setting model alongside model_profile must produce exactly one conflict error")
+			// The message must name the conflict, not be a bare "invalid config".
+			assert.Contains(t, conflictMsg, "model")
+			assert.Contains(t, conflictMsg, "model_profile")
+		})
+	}
+}
+
+func TestValidate_ModelProfileWithoutModel_OK(t *testing.T) {
+	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "prof")
+	wf.Nodes[0].Config.Model = "" // no conflict
+	checker := &mockProfileChecker{kinds: map[string]string{"prof": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := make([]string, len(errs))
+	for i, e := range errs {
+		codes[i] = e.Code
+	}
+	assert.NotContains(t, codes, "MODEL_PROFILE_CONFLICT")
+}
