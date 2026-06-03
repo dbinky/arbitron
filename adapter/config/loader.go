@@ -60,14 +60,18 @@ func defaults() map[string]interface{} {
 		// clone validate those workflows honestly instead of passing
 		// workflow_validate and then dying mid-run with "unknown profile alias"
 		// (PR #18 Must Fix item 4, comment 4614860006).
-		// SECURITY (PR #18 item 1b): each AGENT profile carries an explicit
-		// minimal AllowedTools allowlist so a tool-enabled agent runs bounded
-		// rather than against the YOLO all-tools default. Reviewers are read +
-		// comment only (Read/Grep/Glob + scoped gh/git; NO Write/Edit, NO bare
-		// Bash) because they process attacker-authored PR content; the coder
-		// gets full dev tools; interviewer/planner get write-capable scopes for
-		// artifact authoring. Chat profiles stay tool-suppressed (no allowlist).
-		// Deployment config.yaml SHOULD mirror these scopes when overriding.
+		// DEFENSE-IN-DEPTH (PR #18 item 1b): each AGENT profile carries an
+		// explicit minimal AllowedTools allowlist documenting what it is meant to
+		// touch (reviewers read + scoped gh/git, NO Write/Edit/bare Bash since
+		// they process attacker-authored PR content; coder gets full dev tools;
+		// interviewer/planner get write scopes for artifact authoring).
+		// IMPORTANT (VERIFIED, PR #18): this allowlist is NOT a security boundary
+		// for these profiles — agents run with --dangerously-skip-permissions,
+		// which the claude CLI confirmed BYPASSES --allowedTools entirely. The
+		// scopes only take effect if skip-permissions is disabled, and document
+		// intent. The real isolation boundary is the OS/container the agent runs
+		// in (no host secrets, controlled egress). Deployment config.yaml SHOULD
+		// mirror these scopes when overriding.
 		"profiles": []map[string]interface{}{
 			{"alias": "default-chat", "kind": "chat", "model": ""},
 			{"alias": "default-agent", "kind": "agent", "model": ""},

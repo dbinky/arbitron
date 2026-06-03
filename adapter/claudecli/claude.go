@@ -29,20 +29,23 @@ type argsPolicy struct {
 // Operator-policy flags (skip-permissions, allowed-tools) come from policy.
 //
 // SECURITY: `--dangerously-skip-permissions` is only emitted when
-// policy.SkipPermissions is true. The default in cfg.LLM.SkipPermissions is
-// false; flipping it allows the agent to run any tool (Bash, Write, ...) with
-// no human confirmation, which is RCE-equivalent when prompt content is
-// influenced by untrusted input. Operators flipping the default MUST also
-// configure cfg.LLM.AllowedTools so the agent runs against an explicit
-// allowlist.
+// policy.SkipPermissions is true. It runs the agent with no human confirmation,
+// which is RCE-equivalent when prompt content is influenced by untrusted input
+// (e.g. a pr-review persona reading an attacker-authored PR diff).
 //
-// SECURITY (PR #18 CRITICAL, comment 4614956545): when SkipPermissions is true
-// but AllowedTools is empty, buildArgs FAILS CLOSED by emitting
-// `--allowedTools ""` (the empty set) rather than omitting the flag. An absent
-// --allowedTools is interpreted by the claude CLI as "all tools allowed", so
-// the previously safe-looking default (no allowlist) was actually the most
-// dangerous one. Failing closed means a misconfigured agent runs with no tools
-// instead of every tool.
+// SECURITY — VERIFIED (PR #18): the --allowedTools allowlist is NOT a security
+// boundary for a skip-permissions agent. Empirical testing of the claude CLI
+// (2.1.x) showed --dangerously-skip-permissions BYPASSES --allowedTools
+// entirely: with skip-permissions set, a tool outside the allowlist — and even
+// an empty allowlist — still executes (permission_denials comes back empty).
+// The allowlist is enforced ONLY when skip-permissions is absent (then a
+// disallowed tool is cleanly denied in headless mode, not prompted). Because
+// agent profiles always set skip-permissions, the AllowedTools emitted below
+// are DEFENSE-IN-DEPTH / intent only: they bound a hypothetical
+// non-skip-permissions invocation and document what a profile is meant to
+// touch, but they do NOT contain a prompt-injected agent. The real isolation
+// boundary is the OS/container the agent runs in — it MUST be a sandbox with no
+// host secrets and controlled network egress. See the PR #18 verification.
 //
 // policy.SuppressTools produces a no-tools chat invocation: it emits
 // `--allowedTools ""` (an empty allowed-tools set) and ignores AllowedTools,
@@ -63,16 +66,12 @@ func buildArgs(req engine.ChatRequest, policy argsPolicy) []string {
 	case len(policy.AllowedTools) > 0:
 		args = append(args, "--allowedTools", strings.Join(policy.AllowedTools, ","))
 	case policy.SkipPermissions:
-		// FAIL CLOSED (PR #18 security CRITICAL, comment 4614956545): an empty
-		// AllowedTools combined with --dangerously-skip-permissions must NOT
-		// fall through to "all tools". The claude CLI treats an absent
-		// --allowedTools as "everything allowed", which under skip-permissions
-		// is RCE-equivalent when prompt content is influenced by untrusted
-		// input. Emitting --allowedTools "" pins the agent to the empty set:
-		// the safe-looking default (no allowlist configured) becomes the safe
-		// behaviour (no tools) instead of the most dangerous one. An operator
-		// who wants a tool-enabled agent MUST configure an explicit minimal
-		// AllowedTools allowlist.
+		// Emit the empty allowlist for defense-in-depth / intent only. NOTE
+		// (VERIFIED, PR #18): under --dangerously-skip-permissions the claude
+		// CLI ignores --allowedTools, so this does NOT restrict a
+		// skip-permissions agent — it only takes effect if skip-permissions is
+		// ever disabled. The container is the real boundary (see the SECURITY
+		// note on buildArgs above).
 		args = append(args, "--allowedTools", "")
 	}
 

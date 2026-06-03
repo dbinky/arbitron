@@ -67,7 +67,10 @@ func TestStreamAgentAdapterChat(t *testing.T) {
 
 	// PR #18 item 1b: a per-request ToolScope (from the resolved profile's
 	// AllowedTools) takes precedence over the adapter's global AllowedTools, so
-	// each agent profile runs against its own explicit minimal allowlist.
+	// the emitted --allowedTools reflects the profile's declared scope. NOTE
+	// (VERIFIED, PR #18): this scope is defense-in-depth / intent only — under
+	// --dangerously-skip-permissions the CLI ignores --allowedTools. This test
+	// pins the precedence/emission, not a runtime security guarantee.
 	t.Run("per-request ToolScope overrides the adapter's global AllowedTools", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
 			`{"type":"result","result":"ok","session_id":"s"}`,
