@@ -59,9 +59,13 @@ func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[
 	return nil
 }
 
-func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
-func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
-func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error                      { return nil }
+func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error {
+	return nil
+}
+func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error {
+	return nil
+}
+func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error { return nil }
 func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
 	return nil
 }
@@ -439,15 +443,19 @@ func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
 
 // mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)
 type mockQueueRepo struct {
-	mu        sync.Mutex
-	instRepo  *mockInstanceRepo
+	mu       sync.Mutex
+	instRepo *mockInstanceRepo
 }
 
-func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error)                             { return 0, nil }
-func (r *mockQueueRepo) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)        { return 0, nil }
-func (r *mockQueueRepo) CountQueued(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error)                             { return 0, nil }
-func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) { return nil, nil }
+func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepo) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (r *mockQueueRepo) CountQueued(_ context.Context) (int, error)  { return 0, nil }
+func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
+	return nil, nil
+}
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
 	if r.instRepo != nil {
 		r.instRepo.mu.Lock()
@@ -459,8 +467,12 @@ func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time
 	}
 	return nil
 }
-func (r *mockQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error)    { return nil, nil }
-func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error)  { return nil, nil }
+func (r *mockQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 // mockEventBus implements engine.EventBus
 type mockEventBus struct {
@@ -602,12 +614,13 @@ func newTestFixtures() *testFixtures {
 	qm := newMockQueueManager()
 
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeLLMCall:     exec,
-		workflow.NodeTypeScript:      exec,
-		workflow.NodeTypeToolCall:    exec,
-		workflow.NodeTypeConditional: exec,
-		workflow.NodeTypeTransform:   exec,
-		workflow.NodeTypeInteractive: exec,
+		workflow.NodeTypeLLMCall:          exec,
+		workflow.NodeTypeScript:           exec,
+		workflow.NodeTypeToolCall:         exec,
+		workflow.NodeTypeConditional:      exec,
+		workflow.NodeTypeTransform:        exec,
+		workflow.NodeTypeInteractiveLLM:   exec,
+		workflow.NodeTypeInteractiveAgent: exec,
 	}
 
 	// The mock queue manager's default Enqueue calls StartInstance directly,
@@ -683,7 +696,8 @@ func linearWorkflow() *workflow.Workflow {
 
 // conditionalWorkflow creates a workflow with a conditional branch.
 // A (conditional) --high--> B
-//                  --low-->  C
+//
+//	--low-->  C
 func conditionalWorkflow() *workflow.Workflow {
 	return &workflow.Workflow{
 		Name:        "conditional-wf",
@@ -2062,9 +2076,9 @@ func TestEngine_SkipConditionalNodeRoutesViaDefaultOutput(t *testing.T) {
 		Name: "cond-skip-wf",
 		Nodes: []workflow.Node{
 			{
-				ID:         "gate",
-				Type:       workflow.NodeTypeConditional,
-				Entrypoint: true,
+				ID:            "gate",
+				Type:          workflow.NodeTypeConditional,
+				Entrypoint:    true,
 				ErrorBehavior: workflow.ErrorBehavior{Type: "skip"},
 				Config: workflow.NodeConfig{
 					Conditions:    []workflow.Condition{{Field: "x", Operator: "eq", Value: 1, Output: "branch-a"}},
@@ -2491,9 +2505,9 @@ func TestEngine_RunLoop_ParseFailure_NotifiesCapacity(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockNotificationRepo struct {
-	mu            sync.Mutex
-	created       []notification.Notification
-	createErr     error
+	mu        sync.Mutex
+	created   []notification.Notification
+	createErr error
 }
 
 func newMockNotificationRepo() *mockNotificationRepo {

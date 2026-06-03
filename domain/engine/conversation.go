@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
@@ -31,13 +32,17 @@ type ConversationHandler interface {
 	EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
 }
 
-// conversationHandler implements ConversationHandler.
+// conversationHandler implements ConversationHandler. It is profile-aware: a
+// resumed turn resolves the waiting node's model_profile to a binding and
+// selects the streaming backend via the InteractiveStreamSelector (chat profile
+// -> tool-suppressed chat stream; agent profile -> tool-enabled stream).
 type conversationHandler struct {
-	instances   instance.InstanceRepository
-	nodeExecs   instance.NodeExecutionRepository
-	llmProvider ChatProvider
-	eventBus    EventBus
-	queueMgr    QueueManager
+	instances instance.InstanceRepository
+	nodeExecs instance.NodeExecutionRepository
+	selector  InteractiveStreamSelector
+	resolver  provider.ProfileResolver
+	eventBus  EventBus
+	queueMgr  QueueManager
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -45,16 +50,18 @@ type conversationHandler struct {
 func NewConversationHandler(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
-	llmProvider ChatProvider,
+	selector InteractiveStreamSelector,
+	resolver provider.ProfileResolver,
 	eventBus EventBus,
 	queueMgr QueueManager,
 ) ConversationHandler {
 	return &conversationHandler{
-		instances:   instances,
-		nodeExecs:   nodeExecs,
-		llmProvider: llmProvider,
-		eventBus:    eventBus,
-		queueMgr:    queueMgr,
+		instances: instances,
+		nodeExecs: nodeExecs,
+		selector:  selector,
+		resolver:  resolver,
+		eventBus:  eventBus,
+		queueMgr:  queueMgr,
 	}
 }
 
@@ -107,19 +114,32 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 5. Publish interactive.message event for user message.
 	publishInteractiveMessage(h.eventBus, instanceID, "user", content)
 
+	// 5a. Resolve the waiting node's model_profile to a binding and select the
+	// streaming backend the same way the InteractiveExecutor does on the first
+	// turn: a chat binding yields the tool-suppressed chat stream, an agent
+	// binding yields the tool-enabled stream. The model comes from the binding.
+	binding, err := h.resolver.Resolve(ctx, nodeConfig.ModelProfile)
+	if err != nil {
+		return fmt.Errorf("conversation: resolve profile: %w", err)
+	}
+	streamProvider, err := h.selector.StreamProviderFor(binding)
+	if err != nil {
+		return fmt.Errorf("conversation: select stream provider: %w", err)
+	}
+
 	// 6. Build the request: resume the stored session, send only the new
 	//    user message. WorkDir comes from the instance's seeded workspace.
 	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
 	req := ChatRequest{
 		SystemPrompt: nodeConfig.SystemPrompt,
 		Prompt:       content,
-		Model:        nodeConfig.Model,
+		Model:        binding.Model,
 		SessionID:    SessionID(nodeExec.LLMConversation),
 		WorkDir:      workDir,
 	}
 
 	// 7. Call the provider with streaming.
-	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, req)
+	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req)
 	if err != nil {
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
@@ -249,9 +269,10 @@ func (h *conversationHandler) completeSession(
 func (h *conversationHandler) streamChatResponse(
 	ctx context.Context,
 	instanceID uuid.UUID,
+	chatProvider ChatProvider,
 	req ChatRequest,
 ) (response string, sessionID string, err error) {
-	stream, err := h.llmProvider.StreamChat(ctx, req)
+	stream, err := chatProvider.StreamChat(ctx, req)
 	if err != nil {
 		return "", "", fmt.Errorf("conversation: stream call: %w", err)
 	}
@@ -314,7 +335,7 @@ func findInteractiveNodeConfig(snapshot map[string]any, nodeID string) (workflow
 		return workflow.NodeConfig{}, fmt.Errorf("conversation: %w", err)
 	}
 
-	if node.Type != workflow.NodeTypeInteractive {
+	if !workflow.IsInteractive(node.Type) {
 		return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
 	}
 	return node.Config, nil

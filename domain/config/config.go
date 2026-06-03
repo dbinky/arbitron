@@ -23,6 +23,15 @@ type ProfileConfig struct {
 	Kind          string // "chat" | "agent"
 	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string
+	// AllowedTools is the per-profile tool allowlist for agent-kind profiles
+	// (PR #18 item 1b). It is forwarded as the per-request tool scope to the
+	// agent adapter and takes precedence over the adapter's global
+	// cfg.LLM.AllowedTools, so each agent profile (reviewer/coder/...) runs
+	// against an explicit minimal allowlist rather than the YOLO all-tools
+	// default. Empty/omitted means "use the adapter's global scope" (which,
+	// under the fail-closed buildArgs default, is the empty set when unset).
+	// Ignored for chat-kind profiles, which are tool-suppressed by construction.
+	AllowedTools []string
 }
 
 // ScriptConfig holds settings for script/tool_call process nodes.

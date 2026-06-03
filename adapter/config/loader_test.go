@@ -506,3 +506,67 @@ func TestLoad_Teams_DefaultsDisabledEmpty(t *testing.T) {
 	assert.False(t, cfg.Notifications.Teams.Enabled)
 	assert.Equal(t, "", cfg.Server.PublicBaseURL)
 }
+
+// TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases verifies the
+// in-repo default profile registry satisfies the contracts of the workflows
+// shipped in this repo (PR #18 Must Fix item 4, comment 4614860006). A fresh
+// install with no deployment config.yaml must validate workspaces/pr-review and
+// workspaces/feature-pipeline honestly — those reference reviewer/coder/planner
+// (agent), interviewer (agent), and assessor (chat). Without these defaults a
+// clean clone passes workflow_validate and then dies mid-run with "unknown
+// profile alias".
+func TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	byAlias := make(map[string]string, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		byAlias[p.Alias] = p.Kind
+	}
+
+	wantKinds := map[string]string{
+		"assessor":    "chat",
+		"interviewer": "agent",
+		"reviewer":    "agent",
+		"coder":       "agent",
+		"planner":     "agent",
+	}
+	for alias, kind := range wantKinds {
+		got, ok := byAlias[alias]
+		require.True(t, ok, "default profile registry must include alias %q", alias)
+		assert.Equal(t, kind, got, "alias %q must be kind %q", alias, kind)
+	}
+}
+
+// TestLoad_DefaultProfileRegistry_AgentToolScopes verifies the in-repo default
+// registry ships an explicit minimal AllowedTools per agent profile (PR #18
+// item 1b). Reviewers are read + comment only (no Write/Edit); coder gets full
+// dev; interviewer/planner get write-capable scopes for artifact authoring.
+// Chat profiles (assessor) stay tool-suppressed (no AllowedTools).
+func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+
+	byAlias := map[string][]string{}
+	for _, p := range cfg.Profiles {
+		byAlias[p.Alias] = p.AllowedTools
+	}
+
+	assert.Equal(t, []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}, byAlias["reviewer"],
+		"reviewer is read + comment only; no Write/Edit, no bare Bash")
+	assert.Equal(t, []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}, byAlias["coder"])
+	assert.Equal(t, []string{"Read", "Write", "Grep", "Glob", "Bash"}, byAlias["interviewer"])
+	assert.Equal(t, []string{"Read", "Write", "Grep", "Glob", "Bash"}, byAlias["planner"])
+
+	// Chat-kind assessor stays tool-suppressed: no per-profile allowlist.
+	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
+}

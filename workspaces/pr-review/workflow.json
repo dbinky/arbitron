@@ -5,7 +5,7 @@
     "retryDelaySeconds": 30,
     "type": "retry"
   },
-  "description": "Multi-persona PR review pipeline (Architect R1 -\u003e 10x R1 -\u003e Architect R2 -\u003e 10x R2 -\u003e Security -\u003e Manager) with optional senior-engineer auto-implement of selected fix tier. Intended to be triggered by a GitHub Action on PR open/update.",
+  "description": "Multi-persona PR review pipeline (Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security -> Manager) with optional senior-engineer auto-implement of selected fix tier. Intended to be triggered by a GitHub Action on PR open/update.",
   "edges": [
     {
       "source": "architect-r1",
@@ -50,7 +50,7 @@
       "type": "number"
     },
     {
-      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron). Must be cloned into ~/Repos/\u003cowner\u003e/\u003cname\u003e on the container host.",
+      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron). Must be cloned into ~/Repos/<owner>/<name> on the container host.",
       "name": "repo",
       "required": true,
       "type": "string"
@@ -67,7 +67,8 @@
   "nodes": [
     {
       "config": {
-        "templateFile": "architect-r1.md"
+        "templateFile": "architect-r1.md",
+        "model_profile": "reviewer"
       },
       "description": "Ivory Tower Architect first pass; posts inline + general comments",
       "entrypoint": true,
@@ -78,11 +79,12 @@
         "x": 130,
         "y": 0
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
-        "templateFile": "10x-r1.md"
+        "templateFile": "10x-r1.md",
+        "model_profile": "reviewer"
       },
       "description": "10x GSD Engineer first pass; replies to architect threads, adds practical findings",
       "errorBehavior": {},
@@ -92,11 +94,12 @@
         "x": 130,
         "y": 160
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
-        "templateFile": "architect-r2.md"
+        "templateFile": "architect-r2.md",
+        "model_profile": "reviewer"
       },
       "description": "Architect second pass; concedes or doubles down in existing threads only",
       "errorBehavior": {},
@@ -106,11 +109,12 @@
         "x": 130,
         "y": 320
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
-        "templateFile": "10x-r2.md"
+        "templateFile": "10x-r2.md",
+        "model_profile": "reviewer"
       },
       "description": "10x second pass; final positions in existing threads",
       "errorBehavior": {},
@@ -120,11 +124,12 @@
         "x": 130,
         "y": 480
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
-        "templateFile": "security.md"
+        "templateFile": "security.md",
+        "model_profile": "reviewer"
       },
       "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
       "errorBehavior": {},
@@ -134,11 +139,12 @@
         "x": 130,
         "y": 640
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
-        "templateFile": "manager.md"
+        "templateFile": "manager.md",
+        "model_profile": "reviewer"
       },
       "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
       "errorBehavior": {},
@@ -148,7 +154,7 @@
         "x": 130,
         "y": 800
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {
@@ -174,7 +180,8 @@
     },
     {
       "config": {
-        "templateFile": "senior-engineer.md"
+        "templateFile": "senior-engineer.md",
+        "model_profile": "coder"
       },
       "description": "Implements selected fix tier locally on the PR branch; does NOT push (manual review before push)",
       "errorBehavior": {},
@@ -184,7 +191,7 @@
         "x": 0,
         "y": 1120
       },
-      "type": "llm_call"
+      "type": "agent_call"
     },
     {
       "config": {},

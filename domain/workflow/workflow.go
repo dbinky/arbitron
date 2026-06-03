@@ -5,16 +5,22 @@ package workflow
 type NodeType string
 
 const (
-	NodeTypeLLMCall     NodeType = "llm_call"
-	NodeTypeScript      NodeType = "script"
-	NodeTypeToolCall    NodeType = "tool_call"
-	NodeTypeConditional NodeType = "conditional"
-	NodeTypeTransform   NodeType = "transform"
-	NodeTypeTimerDelay  NodeType = "timer_delay"
-	NodeTypeWebhookWait NodeType = "webhook_wait"
-	NodeTypeInteractive NodeType = "interactive"
-	NodeTypeAgentCall   NodeType = "agent_call"
+	NodeTypeLLMCall          NodeType = "llm_call"
+	NodeTypeScript           NodeType = "script"
+	NodeTypeToolCall         NodeType = "tool_call"
+	NodeTypeConditional      NodeType = "conditional"
+	NodeTypeTransform        NodeType = "transform"
+	NodeTypeTimerDelay       NodeType = "timer_delay"
+	NodeTypeWebhookWait      NodeType = "webhook_wait"
+	NodeTypeInteractiveLLM   NodeType = "interactive_llm"
+	NodeTypeInteractiveAgent NodeType = "interactive_agent"
+	NodeTypeAgentCall        NodeType = "agent_call"
 )
+
+// IsInteractive reports whether t is one of the human-in-the-loop node types.
+func IsInteractive(t NodeType) bool {
+	return t == NodeTypeInteractiveLLM || t == NodeTypeInteractiveAgent
+}
 
 // Workflow is the top-level definition of a directed graph of processing nodes.
 type Workflow struct {

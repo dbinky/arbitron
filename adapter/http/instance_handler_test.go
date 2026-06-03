@@ -1465,7 +1465,7 @@ func TestInstanceHandler_Get_InteractiveWait_HasInteractiveFields(t *testing.T) 
 		"nodes": []any{
 			map[string]any{
 				"id":   "review-design",
-				"type": "interactive",
+				"type": "interactive_llm",
 				"config": map[string]any{
 					"systemPrompt": "You are a reviewer.",
 				},

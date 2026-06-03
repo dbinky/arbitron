@@ -36,7 +36,17 @@ func TestNewDefaultExternalNotifier_FansOut(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	en := adaptnotif.NewDefaultExternalNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), cfg.Server.PublicBaseURL, logger)
+	// PR #18 item 14: the production default client carries a dial-time SSRF
+	// guard that (correctly) blocks loopback, so the httptest server on
+	// 127.0.0.1 cannot be reached through NewDefaultExternalNotifier's default
+	// client. Compose the same fan-out (log + Teams) with an injected,
+	// guard-free client to verify the wiring reaches both children. Real Teams
+	// delivery is covered against loopback in teams_notifier_test.go via the
+	// same injected-client seam; production loopback delivery is intentionally
+	// refused.
+	settings := config.NewSettingsStore(&cfg.Notifications.Teams)
+	teams := adaptnotif.NewTeamsNotifier(settings, cfg.Server.PublicBaseURL, srv.Client(), logger)
+	en := adaptnotif.NewMultiNotifier(logger, adaptnotif.NewLogNotifier(logger), teams)
 	require.NotNil(t, en)
 	require.NoError(t, en.Notify(context.Background(), sampleNotification()))
 

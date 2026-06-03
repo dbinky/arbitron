@@ -97,3 +97,29 @@
 .content strong {
   color: var(--text-primary);
 }
+
+.content del {
+  color: var(--text-muted);
+}
+
+/* GitHub-flavored markdown tables (remark-gfm) */
+.content table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+  font-size: 12px;
+}
+
+.content th,
+.content td {
+  border: 1px solid var(--border-subtle);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.content th {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+}

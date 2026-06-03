@@ -30,7 +30,7 @@ func interactiveWaitInstance() (*instance.Instance, *instance.NodeExecution) {
 		"nodes": []any{
 			map[string]any{
 				"id":   "review-design",
-				"type": "interactive",
+				"type": "interactive_llm",
 				"config": map[string]any{
 					"systemPrompt": "You are a reviewer.",
 					"model":        "claude-sonnet-4-20250514",

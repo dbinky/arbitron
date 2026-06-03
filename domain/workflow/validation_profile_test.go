@@ -251,3 +251,130 @@ func TestValidate_CapabilityRunsWithinValidate(t *testing.T) {
 	assert.Contains(t, codes, "MISSING_REQUIRED_CONFIG", "structural template check still fires")
 	assert.Contains(t, codes, "PROFILE_KIND_MISMATCH", "capability check runs within Validate")
 }
+
+// ---------------------------------------------------------------------------
+// Tests: interactive node kind-checking (interactive_llm requires chat;
+// interactive_agent requires agent).
+// ---------------------------------------------------------------------------
+
+// interactiveCallNodeWorkflow builds a minimal workflow whose entry node is of
+// the given interactive type with both required config fields (orchestrationFile
+// + templateFile) set, so only the profile-kind validation is under test.
+func interactiveCallNodeWorkflow(nodeType workflow.NodeType, alias string) *workflow.Workflow {
+	wf := minimalValidWorkflow()
+	wf.Nodes[0].Type = nodeType
+	wf.Nodes[0].Config.ModelProfile = alias
+	wf.Nodes[0].Config.TemplateFile = "prompt.hbs"
+	wf.Nodes[0].Config.OrchestrationFile = "orch.yaml"
+	return wf
+}
+
+func TestValidate_InteractiveLLM_WithChatProfile_OK(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveLLM, "my-chat")
+	checker := &mockProfileChecker{kinds: map[string]string{"my-chat": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidate_InteractiveAgent_WithAgentProfile_OK(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveAgent, "my-agent")
+	checker := &mockProfileChecker{kinds: map[string]string{"my-agent": "agent"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	assert.Empty(t, errs)
+}
+
+func TestValidate_InteractiveLLM_WithAgentProfile_KindMismatch(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveLLM, "agentp")
+	checker := &mockProfileChecker{kinds: map[string]string{"agentp": "agent"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
+
+	var mismatch workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			mismatch = e
+		}
+	}
+	assert.Equal(t, "entry", mismatch.NodeID)
+	assert.Contains(t, mismatch.Message, "chat")
+	assert.Contains(t, mismatch.Message, "agent")
+}
+
+func TestValidate_InteractiveAgent_WithChatProfile_KindMismatch(t *testing.T) {
+	wf := interactiveCallNodeWorkflow(workflow.NodeTypeInteractiveAgent, "chatp")
+	checker := &mockProfileChecker{kinds: map[string]string{"chatp": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := extractCodes(errs)
+	require.Equal(t, 1, countCode(codes, "PROFILE_KIND_MISMATCH"))
+
+	var mismatch workflow.ValidationError
+	for _, e := range errs {
+		if e.Code == "PROFILE_KIND_MISMATCH" {
+			mismatch = e
+		}
+	}
+	assert.Equal(t, "entry", mismatch.NodeID)
+	assert.Contains(t, mismatch.Message, "agent")
+	assert.Contains(t, mismatch.Message, "chat")
+}
+
+// ---------------------------------------------------------------------------
+// SF2 (PR #18, comment 3350531429): node.Config.Model is dead for any node that
+// resolves via model_profile (the model always comes from the resolved
+// binding). A workflow that sets BOTH model and model_profile is a maintenance
+// trap — the model knob is silently ignored. Validation must reject it with an
+// explicit, conflict-naming error rather than a silent no-op.
+// ---------------------------------------------------------------------------
+
+func TestValidate_ModelAndModelProfileConflict_Rejected(t *testing.T) {
+	for _, nodeType := range []workflow.NodeType{
+		workflow.NodeTypeLLMCall,
+		workflow.NodeTypeAgentCall,
+		workflow.NodeTypeInteractiveLLM,
+		workflow.NodeTypeInteractiveAgent,
+	} {
+		t.Run(string(nodeType), func(t *testing.T) {
+			wantKind := "chat"
+			if nodeType == workflow.NodeTypeAgentCall || nodeType == workflow.NodeTypeInteractiveAgent {
+				wantKind = "agent"
+			}
+			wf := callNodeWorkflow(nodeType, "prof")
+			wf.Nodes[0].Config.Model = "claude-opus-4" // the dead, conflicting field
+
+			checker := &mockProfileChecker{kinds: map[string]string{"prof": wantKind}}
+			errs := workflow.Validate(wf, nil, checker, nil)
+
+			codes := make([]string, len(errs))
+			var conflictMsg string
+			for i, e := range errs {
+				codes[i] = e.Code
+				if e.Code == "MODEL_PROFILE_CONFLICT" {
+					conflictMsg = e.Message
+				}
+			}
+			require.Equal(t, 1, countCode(codes, "MODEL_PROFILE_CONFLICT"),
+				"setting model alongside model_profile must produce exactly one conflict error")
+			// The message must name the conflict, not be a bare "invalid config".
+			assert.Contains(t, conflictMsg, "model")
+			assert.Contains(t, conflictMsg, "model_profile")
+		})
+	}
+}
+
+func TestValidate_ModelProfileWithoutModel_OK(t *testing.T) {
+	wf := callNodeWorkflow(workflow.NodeTypeLLMCall, "prof")
+	wf.Nodes[0].Config.Model = "" // no conflict
+	checker := &mockProfileChecker{kinds: map[string]string{"prof": "chat"}}
+
+	errs := workflow.Validate(wf, nil, checker, nil)
+	codes := make([]string, len(errs))
+	for i, e := range errs {
+		codes[i] = e.Code
+	}
+	assert.NotContains(t, codes, "MODEL_PROFILE_CONFLICT")
+}

@@ -109,6 +109,34 @@ describe('ChatInput — disabled state', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Focus management: return focus to the input after an assistant reply
+// (disabled flips true -> false), but never steal focus on first mount.
+// ---------------------------------------------------------------------------
+
+describe('ChatInput — focus management', () => {
+  it('refocuses the textarea when re-enabled after being disabled', () => {
+    const { rerender } = render(<ChatInput onSend={vi.fn()} disabled />)
+    const textarea = screen.getByRole('textbox')
+    expect(textarea).not.toHaveFocus()
+
+    // Assistant finished streaming: input becomes enabled again.
+    rerender(<ChatInput onSend={vi.fn()} disabled={false} />)
+    expect(textarea).toHaveFocus()
+  })
+
+  it('does not steal focus on initial mount when already enabled', () => {
+    render(<ChatInput onSend={vi.fn()} />)
+    expect(screen.getByRole('textbox')).not.toHaveFocus()
+  })
+
+  it('does not focus the textarea while it stays disabled', () => {
+    const { rerender } = render(<ChatInput onSend={vi.fn()} disabled />)
+    rerender(<ChatInput onSend={vi.fn()} disabled />)
+    expect(screen.getByRole('textbox')).not.toHaveFocus()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Integration: multiple sends work correctly in sequence
 // ---------------------------------------------------------------------------
 

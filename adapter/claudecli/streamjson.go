@@ -17,7 +17,12 @@ import (
 // Hostile blocks are truncated (not rejected) so legitimate output still
 // flows; the consumer sees the truncated text. SECURITY: PR #8 thread
 // 3291945042.
-const maxContentBlockChars = 4096
+//
+// 1 MiB: a single assistant turn (interactive_agent design docs, plans, code)
+// is routinely tens of KB — the previous 4 KiB cap silently chopped real
+// output mid-word. 1 MiB leaves generous headroom for legitimate turns while
+// staying 256x below the per-request MaxResponseBytes backstop.
+const maxContentBlockChars = 1 << 20
 
 // NOTE on json.Decoder.DisallowUnknownFields(): the stream-json envelope
 // from the claude CLI carries forward-compat fields the engine intentionally

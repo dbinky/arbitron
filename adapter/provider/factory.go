@@ -22,7 +22,7 @@ var ErrUnknownProvider = errors.New("provider: no adapter for provider")
 
 // Canonical provider strings, after normalization (trim + lowercase).
 const (
-	providerClaudeCLI    = "claude-cli"
+	providerClaudeCLI    = ProviderClaudeCLI
 	providerOpenRouter   = "openrouter"
 	providerLiteLLM      = "litellm"
 	providerAzureOpenAI  = "azure-openai"

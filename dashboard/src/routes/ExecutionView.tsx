@@ -63,7 +63,7 @@ function buildExecutionStates(
   return states
 }
 
-function GraphView({
+export function GraphView({
   instance,
   workflowDef,
   trace,
@@ -76,18 +76,26 @@ function GraphView({
   onNodeClick: (nodeId: string) => void
   selectedNodeId: string | null
 }) {
-  const executionStates = buildExecutionStates(instance, trace, workflowDef)
+  // Memoize so identity only changes when the inputs actually change. Without
+  // this, every re-render (e.g. each live WebSocket event) produces a fresh
+  // executionStates object, defeating useGraphLayout's memo — dagre re-runs and
+  // ReactFlow re-renders every node, which reads as a per-event "flicker".
+  const executionStates = useMemo(
+    () => buildExecutionStates(instance, trace, workflowDef),
+    [instance, trace, workflowDef],
+  )
   const { rfNodes, rfEdges } = useGraphLayout({
     nodes: workflowDef?.nodes ?? [],
     edges: workflowDef?.edges ?? [],
     executionStates,
   })
 
-  // Mark selected node
-  const nodesWithSelection = rfNodes.map((n) => ({
-    ...n,
-    selected: n.id === selectedNodeId,
-  }))
+  // Mark selected node. Memoized on the stable rfNodes so the array reference
+  // only changes when the layout or selection changes — not on every render.
+  const nodesWithSelection = useMemo(
+    () => rfNodes.map((n) => ({ ...n, selected: n.id === selectedNodeId })),
+    [rfNodes, selectedNodeId],
+  )
 
   return (
     <div className={styles.graphContainer}>

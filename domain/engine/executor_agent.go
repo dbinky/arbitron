@@ -67,13 +67,24 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 	// silently running.
 	workDirStr, _ := WorkDirFromVars(vars)
 
+	// Tool scope precedence (PR #18 item 1b): the resolved profile's per-profile
+	// AllowedTools is authoritative for the mission, so reviewer/coder/planner
+	// run against their explicit minimal allowlist rather than the adapter's
+	// YOLO all-tools default. node.Config.ToolScope remains the fallback when a
+	// profile carries no allowlist (back-compat for nodes that scoped tools
+	// directly). The adapter applies its own global scope only if both are empty.
+	toolScope := binding.AllowedTools
+	if len(toolScope) == 0 {
+		toolScope = node.Config.ToolScope
+	}
+
 	// Build the mission. SessionID is left empty in P1 — single-shot mission per
 	// step; cross-step resume is a Phase-3 decision pending the opencode spike.
 	mission := AgentMission{
 		Model:     binding.Model,
 		Prompt:    prompt,
 		WorkDir:   workDirStr,
-		ToolScope: node.Config.ToolScope,
+		ToolScope: toolScope,
 		Timeout:   time.Duration(node.Config.TimeoutSeconds) * time.Second,
 	}
 

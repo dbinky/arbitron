@@ -163,6 +163,10 @@ func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationEr
 			wantKind = "chat"
 		case NodeTypeAgentCall:
 			wantKind = "agent"
+		case NodeTypeInteractiveLLM:
+			wantKind = "chat"
+		case NodeTypeInteractiveAgent:
+			wantKind = "agent"
 		default:
 			continue
 		}
@@ -174,6 +178,20 @@ func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationEr
 				NodeID:  n.ID,
 			})
 			continue
+		}
+
+		// SF2 (PR #18, comment 3350531429): node.Config.Model is read by no
+		// execution path once the node resolves via model_profile — the model
+		// always comes from the resolved binding. Setting both is a silent
+		// no-op (the model knob is ignored), so reject it with an explicit,
+		// conflict-naming error rather than letting the operator discover the
+		// trap at runtime (or never).
+		if n.Config.Model != "" {
+			errs = append(errs, ValidationError{
+				Code:    "MODEL_PROFILE_CONFLICT",
+				Message: "node " + n.ID + " sets model but resolves via model_profile; model is ignored — remove the model field",
+				NodeID:  n.ID,
+			})
 		}
 
 		kind, ok := profiles.ProfileKind(n.Config.ModelProfile)
@@ -518,7 +536,7 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
-		case NodeTypeInteractive:
+		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
 	}

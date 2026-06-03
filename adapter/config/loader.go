@@ -52,9 +52,34 @@ func defaults() map[string]interface{} {
 		// Profile registry: alias -> capability kind + model-id. A fresh
 		// install ships a chat/agent pair so a basic workflow validates; empty
 		// model means "use the claude-cli default model" (cfg.LLM.Model).
+		//
+		// The reviewer/coder/planner/interviewer/assessor aliases are the
+		// in-repo default registry for the workflows shipped in this repo
+		// (workspaces/pr-review, workspaces/feature-pipeline). Shipping them as
+		// defaults (overridable by the deployment config.yaml) lets a fresh
+		// clone validate those workflows honestly instead of passing
+		// workflow_validate and then dying mid-run with "unknown profile alias"
+		// (PR #18 Must Fix item 4, comment 4614860006).
+		// DEFENSE-IN-DEPTH (PR #18 item 1b): each AGENT profile carries an
+		// explicit minimal AllowedTools allowlist documenting what it is meant to
+		// touch (reviewers read + scoped gh/git, NO Write/Edit/bare Bash since
+		// they process attacker-authored PR content; coder gets full dev tools;
+		// interviewer/planner get write scopes for artifact authoring).
+		// IMPORTANT (VERIFIED, PR #18): this allowlist is NOT a security boundary
+		// for these profiles — agents run with --dangerously-skip-permissions,
+		// which the claude CLI confirmed BYPASSES --allowedTools entirely. The
+		// scopes only take effect if skip-permissions is disabled, and document
+		// intent. The real isolation boundary is the OS/container the agent runs
+		// in (no host secrets, controlled egress). Deployment config.yaml SHOULD
+		// mirror these scopes when overriding.
 		"profiles": []map[string]interface{}{
 			{"alias": "default-chat", "kind": "chat", "model": ""},
 			{"alias": "default-agent", "kind": "agent", "model": ""},
+			{"alias": "assessor", "kind": "chat", "model": ""},
+			{"alias": "interviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
+			{"alias": "reviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}},
+			{"alias": "coder", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
+			{"alias": "planner", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
 		},
 	}
 }
@@ -117,6 +142,36 @@ profiles:
   - alias: "default-agent"
     kind: "agent"
     model: ""
+  # In-repo default registry for the workflows shipped in this repo
+  # (workspaces/pr-review, workspaces/feature-pipeline). Override the model-id
+  # per alias to repoint a persona at a specific backend; remove an alias only
+  # if you are not running its workflow.
+  #
+  # SECURITY (PR #18 item 1b): each AGENT profile sets an explicit minimal
+  # allowedtools allowlist so a tool-enabled agent runs bounded instead of
+  # against the YOLO all-tools default. Reviewers are read + comment only
+  # (no Write/Edit, no bare Bash) because they read attacker-authored PR
+  # content; the coder gets full dev tools; interviewer/planner write artifacts.
+  # Mirror these scopes if you override this block.
+  - alias: "assessor"
+    kind: "chat"
+    model: ""
+  - alias: "interviewer"
+    kind: "agent"
+    model: ""
+    allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
+  - alias: "reviewer"
+    kind: "agent"
+    model: ""
+    allowedtools: ["Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"]
+  - alias: "coder"
+    kind: "agent"
+    model: ""
+    allowedtools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
+  - alias: "planner"
+    kind: "agent"
+    model: ""
+    allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
 logging:
   level: "info"
   file: "arbitron.log"

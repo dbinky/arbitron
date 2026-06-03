@@ -1,4 +1,5 @@
 import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { InteractiveMessage } from '../api/types'
 import styles from './ChatMessage.module.css'
 
@@ -34,7 +35,9 @@ export default function ChatMessage({ message }: ChatMessageProps) {
     <div className={`${styles.message} ${roleClass}`}>
       <div className={styles.roleLabel}>{roleLabels[message.role]}</div>
       <div className={styles.content}>
-        <Markdown urlTransform={sanitizeUrl}>{message.content}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} urlTransform={sanitizeUrl}>
+          {message.content}
+        </Markdown>
       </div>
     </div>
   )

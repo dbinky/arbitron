@@ -15,7 +15,7 @@ import (
 func interactiveNode(id string, entry bool) workflow.Node {
 	return workflow.Node{
 		ID:         id,
-		Type:       workflow.NodeTypeInteractive,
+		Type:       workflow.NodeTypeInteractiveLLM,
 		Entrypoint: entry,
 		Config: workflow.NodeConfig{
 			OrchestrationFile: "orch.md",
@@ -231,6 +231,62 @@ func TestLintWorkflow_NoInteractiveNoCycle_Empty(t *testing.T) {
 		},
 	}
 	assert.Empty(t, workflow.LintWorkflow(acyclic))
+}
+
+// interactiveAgentNode returns a fully-configured interactive_agent node so the
+// hard validation passes; config fields exist only to satisfy validateNodeConfigs.
+func interactiveAgentNode(id string, entry bool) workflow.Node {
+	return workflow.Node{
+		ID:         id,
+		Type:       workflow.NodeTypeInteractiveAgent,
+		Entrypoint: entry,
+		Config: workflow.NodeConfig{
+			OrchestrationFile: "orch.md",
+			TemplateFile:      "tmpl.md",
+		},
+	}
+}
+
+// Happy path: an interactive_agent node sitting on a cycle is flagged exactly once.
+func TestLintWorkflow_InteractiveAgentOnCycle_Flagged(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "agent-loop",
+		Nodes: []workflow.Node{
+			transformNode("entry", true),
+			interactiveAgentNode("ask", false),
+			transformNode("work", false),
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "ask"},
+			{Source: "ask", Target: "work"},
+			{Source: "work", Target: "ask"}, // back-edge: ask is on a cycle
+		},
+	}
+
+	findings := workflow.LintWorkflow(wf)
+
+	flagged := findingsWithCode(findings, "INTERACTIVE_IN_LOOP")
+	require.Len(t, flagged, 1)
+	assert.Equal(t, "ask", flagged[0].NodeID)
+	assert.Equal(t, "warning", flagged[0].Severity)
+}
+
+// A linear (acyclic) interactive_agent node yields no finding.
+func TestLintWorkflow_LinearInteractiveAgent_NotFlagged(t *testing.T) {
+	wf := &workflow.Workflow{
+		Name: "agent-linear",
+		Nodes: []workflow.Node{
+			transformNode("entry", true),
+			interactiveAgentNode("ask", false),
+			transformNode("done", false),
+		},
+		Edges: []workflow.Edge{
+			{Source: "entry", Target: "ask"},
+			{Source: "ask", Target: "done"},
+		},
+	}
+
+	assert.Empty(t, findingsWithCode(workflow.LintWorkflow(wf), "INTERACTIVE_IN_LOOP"))
 }
 
 // Multiple interactive nodes on the same cycle each produce their own finding.

@@ -39,6 +39,16 @@ func TestNodeConfig_AgentCallFields_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, cfg.ToolScope, back.ToolScope)
 }
 
+// Happy path: the two interactive node type constants carry their wire values.
+func TestInteractiveNodeTypeConstants(t *testing.T) {
+	if workflow.NodeTypeInteractiveLLM != "interactive_llm" {
+		t.Errorf("NodeTypeInteractiveLLM = %q, want interactive_llm", workflow.NodeTypeInteractiveLLM)
+	}
+	if workflow.NodeTypeInteractiveAgent != "interactive_agent" {
+		t.Errorf("NodeTypeInteractiveAgent = %q, want interactive_agent", workflow.NodeTypeInteractiveAgent)
+	}
+}
+
 // Edge case: omitempty keeps the new fields out of the wire form when unset.
 func TestNodeConfig_AgentCallFields_OmitEmpty(t *testing.T) {
 	data, err := json.Marshal(workflow.NodeConfig{})

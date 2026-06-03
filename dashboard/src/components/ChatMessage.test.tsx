@@ -39,6 +39,31 @@ describe('ChatMessage — happy path', () => {
 })
 
 // ---------------------------------------------------------------------------
+// GitHub-flavored markdown: tables / strikethrough (needs remark-gfm).
+// Assistant replies routinely use tables to lay out options; without GFM they
+// render as raw "| ... |" text.
+// ---------------------------------------------------------------------------
+
+describe('ChatMessage — GitHub-flavored markdown', () => {
+  it('renders a markdown table as a real <table>', () => {
+    const content = '| Option | Scope |\n|---|---|\n| A | All |\n| B | Some |'
+    const { container } = render(
+      <ChatMessage message={{ role: 'assistant', content }} />,
+    )
+    expect(container.querySelector('table')).not.toBeNull()
+    expect(screen.getByRole('columnheader', { name: 'Option' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'All' })).toBeInTheDocument()
+  })
+
+  it('renders strikethrough as <del>', () => {
+    const { container } = render(
+      <ChatMessage message={{ role: 'assistant', content: '~~gone~~' }} />,
+    )
+    expect(container.querySelector('del')).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Edge: empty content renders without crashing
 // ---------------------------------------------------------------------------
 
