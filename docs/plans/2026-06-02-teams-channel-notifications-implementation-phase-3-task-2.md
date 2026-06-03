@@ -287,7 +287,7 @@ cd dashboard && npx tsc --noEmit && npx vitest run
 
 ### 9. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add dashboard/src/routes/Settings.tsx dashboard/src/routes/Settings.test.tsx
