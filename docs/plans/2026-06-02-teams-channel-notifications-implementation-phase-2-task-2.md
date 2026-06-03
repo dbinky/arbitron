@@ -20,7 +20,7 @@
 
 ### 1. Write the failing test
 
-- [ ] Create `adapter/notification/teams_notifier_test.go`:
+- [x] Create `adapter/notification/teams_notifier_test.go`:
 
 ```go
 package notification_test
@@ -167,17 +167,17 @@ func TestTeamsNotifier_Notify_LiveConfigEdit(t *testing.T) {
 
 ### 2. Run — confirm it FAILS (does not compile)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestTeamsNotifier
 ```
 
-- [ ] Expected: build failure, `undefined: adaptnotif.NewTeamsNotifier`.
+- [x] Expected: build failure, `undefined: adaptnotif.NewTeamsNotifier`.
 
 ### 3. Implement the notifier
 
-- [ ] Create `adapter/notification/teams_notifier.go`:
+- [x] Create `adapter/notification/teams_notifier.go`:
 
 ```go
 package notification
@@ -264,27 +264,27 @@ func (t *TeamsNotifier) Notify(ctx context.Context, n *notification.Notification
 
 ### 4. Run — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/notification/ -run TestTeamsNotifier
 ```
 
-- [ ] Expected: `ok`.
+- [x] Expected: `ok`.
 
 ### 5. Run the full notification package + race detector
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test -race ./adapter/notification/
 ```
 
-- [ ] Expected: `ok` (no data races in the sequential tests).
+- [x] Expected: `ok` (no data races in the sequential tests).
 
 ### 6. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/notification/teams_notifier.go adapter/notification/teams_notifier_test.go

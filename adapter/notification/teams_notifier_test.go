@@ -1,0 +1,140 @@
+package notification_test
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
+	"github.com/arbitron/arbitron/domain/config"
+	"github.com/arbitron/arbitron/domain/notification"
+)
+
+func sampleNotification() *notification.Notification {
+	return &notification.Notification{
+		ID:           uuid.New(),
+		InstanceID:   uuid.New(),
+		WorkflowName: "wf",
+		Type:         notification.TypeCompleted,
+		CreatedAt:    time.Now(),
+	}
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// Success: an enabled notifier POSTs a JSON Adaptive Card to the webhook.
+func TestTeamsNotifier_Notify_PostsCard(t *testing.T) {
+	var gotBody []byte
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotContentType = r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", srv.Client(), discardLogger())
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Equal(t, "application/json", gotContentType)
+	assert.Contains(t, string(gotBody), "AdaptiveCard")
+}
+
+// Edge-case: disabled config produces zero HTTP calls and no error.
+func TestTeamsNotifier_Notify_DisabledNoOp(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", srv.Client(), discardLogger())
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
+}
+
+// Edge-case: enabled but empty URL is also a zero-HTTP no-op.
+func TestTeamsNotifier_Notify_EmptyURLNoOp(t *testing.T) {
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: "", Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "http://localhost:8080", http.DefaultClient, discardLogger())
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+}
+
+// Failure: a 500 response is logged and swallowed (Notify returns nil).
+func TestTeamsNotifier_Notify_Non2xxSwallowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), logger)
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Contains(t, logBuf.String(), "non-success")
+}
+
+// Error: an unreachable host is logged and swallowed (Notify returns nil).
+func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	url := srv.URL
+	srv.Close() // now unreachable
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: url, Enabled: true},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "", http.DefaultClient, logger)
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Contains(t, logBuf.String(), "failed")
+}
+
+// Edge-case: a live config edit between calls is observed on the second call.
+func TestTeamsNotifier_Notify_LiveConfigEdit(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := &config.Config{Notifications: config.NotificationsConfig{
+		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
+	}}
+	n := adaptnotif.NewTeamsNotifier(cfg, "", srv.Client(), discardLogger())
+
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&calls))
+
+	cfg.Notifications.Teams.Enabled = true // live edit via shared pointer
+	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
+}
