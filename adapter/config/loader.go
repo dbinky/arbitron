@@ -65,6 +65,11 @@ func defaultYAMLContent() string {
 	return `server:
   host: "127.0.0.1"
   port: 8080
+  # publicbaseurl: ""
+  #   Externally reachable base URL of the dashboard (e.g.
+  #   "http://localhost:8080"). Used to build deep links in outbound
+  #   notifications (Teams). Trailing slashes are trimmed automatically.
+  #   Override via ARBITRON_SERVER_PUBLICBASEURL.
 database:
   path: "./arbitron.db"
 workspace:
@@ -115,6 +120,15 @@ profiles:
 logging:
   level: "info"
   file: "arbitron.log"
+notifications:
+  # teams:
+  #   webhookurl: ""
+  #     Microsoft Teams Workflows webhook URL. Sensitive: never echoed back on
+  #     read. Override via ARBITRON_NOTIFICATIONS_TEAMS_WEBHOOKURL.
+  #   enabled: false
+  #     When true, every in-app notification is also forwarded to the Teams
+  #     channel (best-effort, silent). Override via
+  #     ARBITRON_NOTIFICATIONS_TEAMS_ENABLED.
 tracing:
   enabled: false
   exportdir: "./traces"
@@ -201,13 +215,16 @@ func Load(configPath string) (*domainconfig.Config, error) {
 // Flooring it keeps the whole timeout story from being disabled by misconfig.
 const DefaultTimeoutSeconds = 1800
 
-// normalize applies safety floors to a loaded config in place. It clamps a
-// non-positive llm.timeoutseconds up to DefaultTimeoutSeconds so a misconfigured
-// 0 cannot disable every deadline.
+// normalize applies safety floors and value normalization to a loaded config in
+// place. It clamps a non-positive llm.timeoutseconds up to DefaultTimeoutSeconds
+// so a misconfigured 0 cannot disable every deadline, and trims trailing
+// slashes from the public base URL so callers can concatenate "/instances/<id>"
+// deterministically.
 func normalize(cfg *domainconfig.Config) {
 	if cfg.LLM.TimeoutSeconds <= 0 {
 		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
 	}
+	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.

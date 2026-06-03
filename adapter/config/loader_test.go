@@ -429,3 +429,80 @@ func TestLoad_TimeoutSecondsFloor(t *testing.T) {
 		})
 	}
 }
+
+// Happy-path: notifications.teams.* and server.public_base_url load from YAML.
+func TestLoad_TeamsAndPublicBaseURL_FromYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+server:
+  host: "127.0.0.1"
+  port: 8080
+  publicbaseurl: "http://localhost:8080"
+notifications:
+  teams:
+    webhookurl: "https://example.com/hook"
+    enabled: true
+`
+	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
+	require.NoError(t, err)
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "http://localhost:8080", cfg.Server.PublicBaseURL)
+	assert.Equal(t, "https://example.com/hook", cfg.Notifications.Teams.WebhookURL)
+	assert.True(t, cfg.Notifications.Teams.Enabled)
+}
+
+// Edge-case: a trailing slash on the public base URL is normalized away.
+func TestLoad_PublicBaseURL_TrailingSlashTrimmed(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+server:
+  publicbaseurl: "http://localhost:8080/"
+`
+	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
+	require.NoError(t, err)
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:8080", cfg.Server.PublicBaseURL)
+}
+
+// Edge-case: multiple trailing slashes are all trimmed.
+func TestLoad_PublicBaseURL_MultipleTrailingSlashesTrimmed(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := `
+server:
+  publicbaseurl: "http://localhost:8080///"
+`
+	err := os.WriteFile(configPath, []byte(yamlContent), 0644)
+	require.NoError(t, err)
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:8080", cfg.Server.PublicBaseURL)
+}
+
+// Edge-case: unset Teams config round-trips as disabled + empty.
+func TestLoad_Teams_DefaultsDisabledEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.Notifications.Teams.WebhookURL)
+	assert.False(t, cfg.Notifications.Teams.Enabled)
+	assert.Equal(t, "", cfg.Server.PublicBaseURL)
+}

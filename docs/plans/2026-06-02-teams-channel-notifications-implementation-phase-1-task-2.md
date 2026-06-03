@@ -19,7 +19,7 @@
 
 ### 1. Write the failing test: YAML maps the new keys
 
-- [ ] In `adapter/config/loader_test.go`, add this test at the end of the file:
+- [x] In `adapter/config/loader_test.go`, add this test at the end of the file:
 
 ```go
 // Happy-path: notifications.teams.* and server.public_base_url load from YAML.
@@ -102,13 +102,13 @@ func TestLoad_Teams_DefaultsDisabledEmpty(t *testing.T) {
 
 ### 2. Run the test — confirm it FAILS
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/config/ -run 'TestLoad_Teams|TestLoad_PublicBaseURL'
 ```
 
-- [ ] Expected: `TestLoad_PublicBaseURL_TrailingSlashTrimmed` and `..._MultipleTrailingSlashesTrimmed` FAIL because no trimming happens yet:
+- [x] Expected: `TestLoad_PublicBaseURL_TrailingSlashTrimmed` and `..._MultipleTrailingSlashesTrimmed` FAIL because no trimming happens yet:
 
 ```
 --- FAIL: TestLoad_PublicBaseURL_TrailingSlashTrimmed (0.00s)
@@ -122,7 +122,7 @@ FAIL
 
 ### 3. Add trailing-slash normalization to `normalize`
 
-- [ ] In `adapter/config/loader.go`, replace the `normalize` function:
+- [x] In `adapter/config/loader.go`, replace the `normalize` function:
 
 ```go
 // normalize applies safety floors and value normalization to a loaded config in
@@ -142,7 +142,7 @@ func normalize(cfg *domainconfig.Config) {
 
 ### 4. Document the new keys in the default YAML
 
-- [ ] In `adapter/config/loader.go`, inside `defaultYAMLContent()`, replace the `server:` block (currently `host` + `port` only) with:
+- [x] In `adapter/config/loader.go`, inside `defaultYAMLContent()`, replace the `server:` block (currently `host` + `port` only) with:
 
 ```go
 	return `server:
@@ -155,7 +155,7 @@ func normalize(cfg *domainconfig.Config) {
   #   Override via ARBITRON_SERVER_PUBLICBASEURL.
 ```
 
-- [ ] Then, in the same `defaultYAMLContent()` string, add a `notifications` block immediately before the closing `tracing:` block. Replace:
+- [x] Then, in the same `defaultYAMLContent()` string, add a `notifications` block immediately before the closing `tracing:` block. Replace:
 
 ```go
 tracing:
@@ -184,13 +184,13 @@ tracing:
 
 ### 5. Run the test — confirm it PASSES
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/config/ -run 'TestLoad_Teams|TestLoad_PublicBaseURL'
 ```
 
-- [ ] Expected:
+- [x] Expected:
 
 ```
 ok  	github.com/arbitron/arbitron/adapter/config	0.0Ns
@@ -198,17 +198,17 @@ ok  	github.com/arbitron/arbitron/adapter/config	0.0Ns
 
 ### 6. Run the full config package test suite (no regressions)
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 go test ./adapter/config/
 ```
 
-- [ ] Expected: `ok` with all existing `TestLoad_*` tests still passing.
+- [x] Expected: `ok` with all existing `TestLoad_*` tests still passing.
 
 ### 7. Commit
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 git add adapter/config/loader.go adapter/config/loader_test.go
