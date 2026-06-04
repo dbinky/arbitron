@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA18-P2-01: MCP `safeWorkflowName` accepted `"."` — HTTP correctly rejected it
+**Area**: Focus Area 18 — Publish/copy & publisher store (Pass 2)
+**Fix**: Added `&& name != "."` to `safeWorkflowName` in `adapter/mcp/helpers.go` to match HTTP's implementation. `"."` resolves via `filepath.Join(scopeRoot, ".")` to the scope root itself, which `resolveWorkflowDir` catches with `ErrInvalidName` — but that falls to the `default:` handler case and returns an opaque error. The fix catches it at the adapter boundary, consistent with how HTTP handles it. Added `TestWorkflowTool_Publish_DotName` and `TestWorkflowTool_Copy_DotName` (4 subtests) to pin the behavior on both source and destination names.
+
 ### GAP-FA17-P2-01: HTTP and MCP surfaces had no test for `ErrSharedReadOnly` → 409/tool-error on `Update`/`Delete`
 **Area**: Focus Area 17 — Workflow service authz (Pass 2)
 **Fix**: Added `"returns 409 when workflow is shared-only"` to `TestWorkflowHandler_Update` and `TestWorkflowHandler_Delete` in `adapter/http/workflow_handler_test.go`, and `"shared-only workflow returns tool error"` to `TestWorkflowUpdate` and `TestWorkflowDelete` in `adapter/mcp/tools_workflow_test.go`. Both surfaces now pin that `ErrSharedReadOnly` from the domain service is correctly mapped to HTTP 409 Conflict / MCP tool error with "shared and read-only" text. Also confirmed that `withChiURLParam` automatically injects `testIdentity` into all HTTP handler tests, so the service's `caller()` check is always satisfied.

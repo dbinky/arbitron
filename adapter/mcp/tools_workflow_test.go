@@ -1010,6 +1010,43 @@ func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "invalid published name")
 }
 
+// TestWorkflowTool_Publish_DotName verifies that "." is rejected as both source
+// name and publishedName at the MCP adapter layer, not silently passed through to
+// the filesystem where it would match the scope root and return an opaque error.
+func TestWorkflowTool_Publish_DotName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	t.Run("dot source name rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_publish", map[string]any{"name": ".", "publishedName": "pub"})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid workflow name")
+	})
+	t.Run("dot publishedName rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "."})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid published name")
+	})
+}
+
+// TestWorkflowTool_Copy_DotName verifies that "." is rejected as both source
+// and destination name at the MCP adapter layer.
+func TestWorkflowTool_Copy_DotName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	t.Run("dot source name rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_copy", map[string]any{"name": ".", "newName": "mine"})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid workflow name")
+	})
+	t.Run("dot newName rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "."})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid new name")
+	})
+}
+
 func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
 	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
 	srv, repo := newPublishServer(t, store)
