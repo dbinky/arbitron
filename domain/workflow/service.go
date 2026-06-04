@@ -204,6 +204,19 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 // Publish copies the caller's private workflow into the shared scope under
 // publishedName and records the caller as publisher. Only the original
 // publisher may overwrite an existing published name.
+//
+// ORDERING INVARIANT: the shared tree is copied FIRST (repo.CopyTree), then the
+// publication is recorded (published.Upsert). These are two separate stores with
+// no shared transaction, so the failure handling is path-dependent:
+//
+//   - FRESH publish (!overwrite): if Upsert fails after a successful copy, the
+//     copied tree is compensated with repo.Delete — there was nothing at the
+//     destination before, so deleting it restores the prior state cleanly and
+//     avoids an orphaned, unattributed shared copy.
+//   - OVERWRITE (re-publish by the same publisher): a CopyTree(overwrite=true)
+//     has already replaced a previously-good shared copy. If Upsert then fails we
+//     must NOT delete — that would destroy the shared copy entirely (data loss).
+//     The error is surfaced loudly so the operator can retry the record.
 func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string) error {
 	id, err := caller(ctx)
 	if err != nil {
@@ -236,8 +249,25 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 	if err := s.repo.CopyTree(ctx, Private(id.UserID), privateName, Shared(), publishedName, overwrite); err != nil {
 		return err
 	}
-	// Record the publication after the folder is in place.
-	return s.published.Upsert(ctx, publishedName, id.UserID, privateName)
+	// Record the publication after the folder is in place (copy-then-record).
+	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName); err != nil {
+		if !overwrite {
+			// FRESH path: compensate by deleting the just-copied tree. The
+			// destination was empty before, so this restores the prior state. The
+			// rollback is best-effort; if it also fails, surface the original Upsert
+			// error joined with the rollback error so neither is lost.
+			if delErr := s.repo.Delete(ctx, Shared(), publishedName); delErr != nil {
+				return errors.Join(
+					fmt.Errorf("recording publication for %q: %w", publishedName, err),
+					fmt.Errorf("rolling back copied shared tree: %w", delErr),
+				)
+			}
+		}
+		// OVERWRITE path (or after a successful fresh rollback): surface the error
+		// loudly; on overwrite we deliberately do NOT delete the shared copy.
+		return fmt.Errorf("recording publication for %q: %w", publishedName, err)
+	}
+	return nil
 }
 
 // Copy duplicates a shared workflow into the caller's private scope. The copy

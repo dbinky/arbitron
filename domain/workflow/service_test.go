@@ -132,6 +132,9 @@ func (r *fakeRepo) CopyTree(_ context.Context, src workflow.Scope, srcName strin
 // fakePublishers is a fake PublishedStore (lookup + write).
 type fakePublishers struct {
 	pub map[string]uuid.UUID
+	// upsertErr, when set, makes Upsert fail so the Publish compensation paths are
+	// observable.
+	upsertErr error
 }
 
 func newFakePublishers() *fakePublishers {
@@ -144,6 +147,9 @@ func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID,
 }
 
 func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+	if p.upsertErr != nil {
+		return p.upsertErr
+	}
 	p.pub[name] = publisher
 	return nil
 }
@@ -771,4 +777,66 @@ func TestService_ListFiles_DoesNotLeakOtherUsersPrivate(t *testing.T) {
 	_, err := svc.ListFiles(ctxWith(b, false), "secret")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// --- Publish compensation (copy-then-record ordering invariant) ---
+
+// Happy path: a fresh publish copies the private tree into shared and records
+// the publisher.
+func TestService_Publish_Fresh_CopiesAndRecords(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "mine", "shared-name"))
+
+	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
+	assert.True(t, exists, "shared tree present after publish")
+	pubID, ok, _ := pubs.PublisherOf(context.Background(), "shared-name")
+	require.True(t, ok)
+	assert.Equal(t, owner, pubID)
+}
+
+// Failure (fresh path): when recording the publication (Upsert) fails on a fresh
+// publish, the just-copied shared tree must be compensated (deleted) so no
+// orphaned, unattributed shared copy is left behind.
+func TestService_Publish_FreshUpsertFailure_RollsBackCopiedTree(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	pubs.upsertErr = errors.New("db write failed")
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	err := svc.Publish(ctxWith(owner, false), "mine", "shared-name")
+	require.Error(t, err, "Upsert failure must surface")
+	assert.ErrorIs(t, err, pubs.upsertErr)
+
+	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
+	assert.False(t, exists, "fresh-publish Upsert failure must roll back (delete) the copied shared tree")
+}
+
+// Failure (overwrite path): when recording the publication (Upsert) fails on a
+// re-publish by the same publisher, the error must surface loudly and the
+// previously-good shared copy must NOT be deleted (no data loss).
+func TestService_Publish_OverwriteUpsertFailure_DoesNotDelete(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	// First publish succeeds (records owner as publisher).
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "mine", "shared-name"))
+
+	// Re-publish by the same owner, but Upsert now fails.
+	pubs.upsertErr = errors.New("db write failed")
+	err := svc.Publish(ctxWith(owner, false), "mine", "shared-name")
+	require.Error(t, err, "overwrite Upsert failure must surface loudly")
+	assert.ErrorIs(t, err, pubs.upsertErr)
+
+	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
+	assert.True(t, exists, "overwrite-publish Upsert failure must NOT delete the previously-good shared copy")
 }
