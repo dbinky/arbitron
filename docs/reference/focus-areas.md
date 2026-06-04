@@ -27,7 +27,7 @@ result for that area.
 | 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [x] | [x] | Done |
 | 10 | Token service & surface (`TokenService` Mint/List/Revoke owner-scoped; REST `/api/v1/tokens`; MCP `token_create`/`token_list`/`token_revoke`; plaintext once, hash never echoed) | [x] | [x] | Done |
 | 11 | Bearer-token auth path (`AuthMiddleware.resolve` bearer branch — prefix pre-filter, hashed `GetByHash`, async `TouchLastUsed`, revoked→401; REST/`/mcp`/WS) | [x] | [x] | Done |
-| 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [ ] | [ ] | Pending |
+| 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [x] | [ ] | Pending |
 | 13 | JIT provisioning & bootstrap admin (`instance.Provisioner.Resolve` — GetBySubject-else-Create, default User, bootstrap promote email-ci-then-subject; wired in OIDC callback) | [ ] | [ ] | Pending |
 | 14 | Role management (`instance.UserService.SetRole` admin-only; bootstrap-admin floor; last-admin guard; REST `/api/v1/users`+`/role`; MCP `user_list`/`user_set_role`) | [ ] | [ ] | Pending |
 | 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [ ] | [ ] | Pending |

@@ -148,28 +148,53 @@ func TestDeviceHandler_Validation(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// Error/failure: pending/denied poll map to the RFC error codes.
+// Error/failure: pending/denied/expired poll map to the RFC 8628 error codes.
 func TestDeviceHandler_PollStates(t *testing.T) {
-	h, devRepo, _ := newDeviceHandler()
+	t.Run("pending -> authorization_pending", func(t *testing.T) {
+		h, _, _ := newDeviceHandler()
+		w := httptest.NewRecorder()
+		h.Start(w, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
+		var start startResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &start))
 
-	// Start a flow.
-	w := httptest.NewRecorder()
-	h.Start(w, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
-	var start startResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &start))
+		wp := httptest.NewRecorder()
+		h.Token(wp, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"device_code":"`+start.DeviceCode+`"}`)))
+		assert.Equal(t, http.StatusBadRequest, wp.Code)
+		assert.Contains(t, wp.Body.String(), "authorization_pending")
+	})
 
-	// Pending poll.
-	wp := httptest.NewRecorder()
-	h.Token(wp, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"device_code":"`+start.DeviceCode+`"}`)))
-	assert.Equal(t, http.StatusBadRequest, wp.Code)
-	assert.Contains(t, wp.Body.String(), "authorization_pending")
+	t.Run("denied -> access_denied", func(t *testing.T) {
+		h, devRepo, _ := newDeviceHandler()
+		w := httptest.NewRecorder()
+		h.Start(w, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
+		var start startResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &start))
 
-	// Denied poll.
-	require.NoError(t, devRepo.Deny(context.Background(), start.UserCode))
-	wd := httptest.NewRecorder()
-	h.Token(wd, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"device_code":"`+start.DeviceCode+`"}`)))
-	assert.Equal(t, http.StatusBadRequest, wd.Code)
-	assert.Contains(t, wd.Body.String(), "access_denied")
+		require.NoError(t, devRepo.Deny(context.Background(), start.UserCode))
+		wd := httptest.NewRecorder()
+		h.Token(wd, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"device_code":"`+start.DeviceCode+`"}`)))
+		assert.Equal(t, http.StatusBadRequest, wd.Code)
+		assert.Contains(t, wd.Body.String(), "access_denied")
+	})
+
+	t.Run("expired -> expired_token", func(t *testing.T) {
+		// Directly back-date the stored row to simulate TTL elapse, then poll.
+		// The service checks expiry after the hash lookup, so this exercises the
+		// expired_token branch in writeDeviceGrantError.
+		h, devRepo, _ := newDeviceHandler()
+		w := httptest.NewRecorder()
+		h.Start(w, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
+		var start startResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &start))
+
+		hash := identity.HashToken(start.DeviceCode)
+		devRepo.byHash[hash].ExpiresAt = time.Now().Add(-time.Minute)
+
+		we := httptest.NewRecorder()
+		h.Token(we, httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"device_code":"`+start.DeviceCode+`"}`)))
+		assert.Equal(t, http.StatusBadRequest, we.Code)
+		assert.Contains(t, we.Body.String(), "expired_token")
+	})
 }
 
 // Boundary: a consumed (second) poll yields invalid_grant.
@@ -210,4 +235,57 @@ func TestDeviceHandler_Approve_RequiresIdentity(t *testing.T) {
 	wa := httptest.NewRecorder()
 	h.Approve(wa, devReq(http.MethodPost, `{"user_code":"`+start.UserCode+`"}`, nil))
 	assert.Equal(t, http.StatusUnauthorized, wa.Code)
+}
+
+// Happy path: Deny marks the code denied and returns 200 {"status":"denied"}.
+func TestDeviceHandler_Deny_HappyPath(t *testing.T) {
+	h, devRepo, _ := newDeviceHandler()
+
+	// Start a flow.
+	ws := httptest.NewRecorder()
+	h.Start(ws, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
+	var start startResponse
+	require.NoError(t, json.Unmarshal(ws.Body.Bytes(), &start))
+
+	// An authenticated user denies it.
+	denier := uuid.New()
+	wd := httptest.NewRecorder()
+	h.Deny(wd, devReq(http.MethodPost, `{"user_code":"`+start.UserCode+`"}`, &denier))
+	require.Equal(t, http.StatusOK, wd.Code)
+	assert.Contains(t, wd.Body.String(), "denied")
+
+	// Row is now denied; a subsequent poll must return access_denied.
+	dc, err := devRepo.GetByUserCode(context.Background(), start.UserCode)
+	require.NoError(t, err)
+	assert.Equal(t, identity.DeviceCodeDenied, dc.Status, "row must be denied after Deny call")
+}
+
+// Isolation/security: Deny with no identity in ctx returns 401 — the service
+// guards it and the row is not mutated.
+func TestDeviceHandler_Deny_RequiresIdentity(t *testing.T) {
+	h, devRepo, _ := newDeviceHandler()
+
+	ws := httptest.NewRecorder()
+	h.Start(ws, httptest.NewRequest(http.MethodPost, "/auth/device/code", nil))
+	var start startResponse
+	require.NoError(t, json.Unmarshal(ws.Body.Bytes(), &start))
+
+	// Deny with nil uid = no identity injected into the context.
+	wd := httptest.NewRecorder()
+	h.Deny(wd, devReq(http.MethodPost, `{"user_code":"`+start.UserCode+`"}`, nil))
+	assert.Equal(t, http.StatusUnauthorized, wd.Code)
+
+	// Row must still be pending.
+	dc, err := devRepo.GetByUserCode(context.Background(), start.UserCode)
+	require.NoError(t, err)
+	assert.Equal(t, identity.DeviceCodePending, dc.Status, "Deny without auth must not change row status")
+}
+
+// Failure: Deny with an unknown user_code returns 404.
+func TestDeviceHandler_Deny_NotFound(t *testing.T) {
+	h, _, _ := newDeviceHandler()
+	denier := uuid.New()
+	wd := httptest.NewRecorder()
+	h.Deny(wd, devReq(http.MethodPost, `{"user_code":"UNKN-0000"}`, &denier))
+	assert.Equal(t, http.StatusNotFound, wd.Code)
 }

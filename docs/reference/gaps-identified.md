@@ -4,6 +4,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+### GAP-FA12-P1-01: `Deny` HTTP handler completely untested; `expired_token` RFC path uncovered at handler level
+**Area**: Focus Area 12 — Device-code login (Pass 1)
+**Fix**: Added three tests for the `Deny` handler in `adapter/http/device_handler_test.go`: `TestDeviceHandler_Deny_HappyPath` (happy path → 200 `{"status":"denied"}`, repo row status confirmed Denied), `TestDeviceHandler_Deny_RequiresIdentity` (no identity → 401, row stays Pending), `TestDeviceHandler_Deny_NotFound` (unknown user_code → 404). Also expanded `TestDeviceHandler_PollStates` into subtests and added a third: "expired → expired_token" — backdates the stored row's ExpiresAt via the memDeviceRepo and asserts the handler returns 400 with body `"expired_token"`. Previously `writeDeviceGrantError`'s `ErrExpired` branch was dead from a test perspective at the HTTP layer.
+
 ### GAP-FA11-P2-01: REST/MCP/WS surface-parity test checked status codes but not resolved identity
 **Area**: Focus Area 11 — Bearer-token auth path (Pass 2)
 **Fix**: Strengthened `TestAuthMiddleware_Bearer_Security` "REST/MCP/WS identical under bearer" in `adapter/http/auth_middleware_test.go`. The existing test loop used `_, plaintext := seedBearer(...)` (discarding the UID) and only asserted `rec.Code == 200`, proving access was granted but not that it was granted to the correct user. Changed to capture `uid` from `seedBearer`, added `assert.Equal(t, uid, probe.id.UserID, ...)` and `assert.Equal(t, "carol", probe.id.Username, ...)` for each surface. This pins the cross-surface identity parity guarantee: a bearer token authenticates as its exact owner on REST, /mcp, and /ws — any divergence in the identity derivation path would be caught immediately.
