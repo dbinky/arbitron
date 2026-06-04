@@ -224,6 +224,21 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 	return inst.ID, started, nil
 }
 
+// ListInstances returns the instances visible to the caller. The owner filter
+// is derived from the request identity: a non-admin sees only their own
+// instances; an admin sees all. Any OwnerID the caller set on filters is
+// overwritten here so scope cannot be widened from request input. A request
+// with no identity returns ErrNotFound (reveal nothing) and never queries the
+// repository.
+func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	owner, ok := ownerConstraint(ctx)
+	if !ok {
+		return nil, instance.ErrNotFound // no identity: reveal nothing
+	}
+	filters.OwnerID = owner // service-set; ignore any caller-supplied value
+	return e.instances.List(ctx, filters)
+}
+
 // StartInstance transitions a queued instance to running and launches the
 // graph walker goroutine. It implements queue.InstanceStarter.
 func (e *Engine) StartInstance(ctx context.Context, id uuid.UUID) error {

@@ -73,6 +73,7 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 
 type stubEngine struct {
 	triggerFn     func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
+	listFn        func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	pauseFn       func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
@@ -86,6 +87,13 @@ func (s *stubEngine) Trigger(_ context.Context, wfName string, vars map[string]a
 		return s.triggerFn(wfName, vars, priority)
 	}
 	return uuid.New(), false, nil
+}
+
+func (s *stubEngine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if s.listFn != nil {
+		return s.listFn(ctx, filters)
+	}
+	return nil, nil
 }
 
 func (s *stubEngine) Pause(id uuid.UUID) error {
@@ -133,6 +141,15 @@ func (s *stubEngine) SetPriority(id uuid.UUID, priority string) error {
 // --- Helpers ---
 
 func newInstanceServer(instRepo *stubInstanceRepo, eng *stubEngine) *adaptmcp.Server {
+	// instance_list now flows through the scoped Engine.ListInstances service.
+	// Default the engine's list to the repo's listFn so the existing list-filter
+	// tests (which seed instRepo.listFn) keep exercising the same path; scoping is
+	// unit-tested in the engine.
+	if eng.listFn == nil && instRepo != nil {
+		eng.listFn = func(ctx context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
+			return instRepo.List(ctx, f)
+		}
+	}
 	deps := &adaptmcp.Deps{
 		Instances: instRepo,
 		Engine:    eng,
@@ -201,6 +218,26 @@ func TestInstanceList(t *testing.T) {
 		result := callTool(t, srv, "instance_list", nil)
 
 		assert.True(t, result.IsError)
+	})
+
+	t.Run("delegates to the scoped Engine.ListInstances, not the repo", func(t *testing.T) {
+		// The repo's List must NOT be consulted; scoping lives in the engine
+		// service. Make the repo error so a regression to the repo path is loud.
+		repo := &stubInstanceRepo{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, errors.New("repo path must not be used")
+			},
+		}
+		eng := &stubEngine{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return []instance.InstanceSummary{{ID: uuid.New(), WorkflowName: "scoped-wf"}}, nil
+			},
+		}
+		srv := newInstanceServer(repo, eng)
+		result := callTool(t, srv, "instance_list", nil)
+
+		assert.False(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "scoped-wf")
 	})
 
 	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {

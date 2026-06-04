@@ -20,6 +20,7 @@ import (
 // decoupled from the concrete Engine implementation.
 type EngineService interface {
 	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	Pause(instanceID uuid.UUID) error
 	Resume(instanceID uuid.UUID) error
 	Cancel(instanceID uuid.UUID) error

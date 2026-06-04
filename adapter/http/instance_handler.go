@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 // InstanceService defines the engine methods needed by instance handlers.
 type InstanceService interface {
+	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	Pause(id uuid.UUID) error
 	Resume(id uuid.UUID) error
 	Cancel(id uuid.UUID) error
@@ -209,8 +211,13 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	summaries, err := h.instances.List(r.Context(), filters)
+	summaries, err := h.service.ListInstances(r.Context(), filters)
 	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			// No identity in context (defence-in-depth); reveal nothing.
+			WriteJSON(w, http.StatusOK, []instance.InstanceSummary{})
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return
 	}

@@ -272,12 +272,20 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
+	listFn        func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	pauseFn       func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
 	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
 	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
 	setPriorityFn func(id uuid.UUID, priority string) error
+}
+
+func (m *mockInstanceService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, filters)
+	}
+	return nil, nil
 }
 
 func (m *mockInstanceService) Pause(id uuid.UUID) error {
@@ -346,6 +354,11 @@ func newInstanceHandler() (*adapthttp.InstanceHandler, *mockInstanceRepo, *mockN
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &mockInstanceService{}
+	// By default the scoped list service delegates to the repo (admin-equivalent,
+	// unconstrained scope) so List filter tests that seed instRepo keep passing.
+	// Scoping itself is unit-tested in the engine; these tests cover the handler
+	// wiring (delegation to the service) and query-param parsing.
+	svc.listFn = instRepo.List
 	h := adapthttp.NewInstanceHandler(instRepo, nodeExecRepo, snapRepo, svc)
 	return h, instRepo, nodeExecRepo, snapRepo, svc
 }
@@ -436,6 +449,49 @@ func TestInstanceHandler_List(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.List(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("delegates to the scoped list service (not the repo)", func(t *testing.T) {
+		h, instRepo, nodeExecRepo, snapRepo, svc := newInstanceHandler()
+		// Seed the repo with an instance the handler must NOT see if it bypasses
+		// the service. The service returns its own fixed set.
+		hidden := testInstance(instance.StateRunning)
+		instRepo.instances[hidden.ID] = hidden
+
+		called := false
+		fixed := []instance.InstanceSummary{{ID: uuid.New(), WorkflowName: "scoped"}}
+		svc.listFn = func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+			called = true
+			return fixed, nil
+		}
+		h = adapthttp.NewInstanceHandler(instRepo, nodeExecRepo, snapRepo, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, called, "List must delegate to the scoped service so the owner constraint is enforced")
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp, 1)
+		assert.Equal(t, "scoped", resp[0].WorkflowName)
+	})
+
+	t.Run("does not read an owner query param", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		var got instance.ListFilters
+		svc.listFn = func(_ context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
+			got = f
+			return nil, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances?ownerId="+uuid.New().String(), nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Nil(t, got.OwnerID, "handler must not let a caller set the owner filter from query input")
 	})
 }
 
@@ -1086,7 +1142,10 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInstanceHandler_List_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	svc := &mockInstanceService{listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+		return nil, fmt.Errorf("db down")
+	}}
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), svc)
 
 	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
 	w := httptest.NewRecorder()

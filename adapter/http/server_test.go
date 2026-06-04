@@ -51,6 +51,7 @@ func authedRouter(next http.Handler) http.Handler {
 // routerMockService implements both WorkflowService and InstanceService.
 type routerMockService struct {
 	triggerFn     func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	listFn        func() ([]instance.InstanceSummary, error)
 	pauseFn       func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
@@ -64,6 +65,13 @@ func (m *routerMockService) Trigger(_ context.Context, workflowName string, vari
 		return m.triggerFn(workflowName, variables, priority)
 	}
 	return uuid.New(), true, nil
+}
+
+func (m *routerMockService) ListInstances(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if m.listFn != nil {
+		return m.listFn()
+	}
+	return nil, nil
 }
 
 func (m *routerMockService) Pause(id uuid.UUID) error {

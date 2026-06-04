@@ -109,7 +109,7 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 			filters.WorkflowName = &wfName
 		}
 
-		summaries, err := srv.deps.Instances.List(ctx, filters)
+		summaries, err := srv.deps.Engine.ListInstances(ctx, filters)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list instances: %s", err)), nil
 		}

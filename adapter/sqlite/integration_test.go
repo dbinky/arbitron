@@ -273,6 +273,52 @@ func TestInstanceRepo_List(t *testing.T) {
 	}
 }
 
+func TestInstanceRepo_List_OwnerFilter(t *testing.T) {
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+
+	ownerA, err := userRepo.GetDefaultUser(ctx)
+	require.NoError(t, err)
+
+	ownerB := uuid.New()
+	subjectB := "owner-b-subject"
+	require.NoError(t, userRepo.Create(ctx, &instance.User{
+		ID:       ownerB,
+		Subject:  &subjectB,
+		Username: "owner-b",
+		Role:     "user",
+	}))
+
+	instA := newTestInstance(t, ownerA)
+	instB := newTestInstance(t, ownerB)
+	require.NoError(t, repo.Create(ctx, instA))
+	require.NoError(t, repo.Create(ctx, instB))
+
+	// OwnerID = ownerA -> only ownerA's row.
+	scoped, err := repo.List(ctx, instance.ListFilters{OwnerID: &ownerA, Limit: 100})
+	require.NoError(t, err)
+	ids := summaryIDs(scoped)
+	assert.Contains(t, ids, instA.ID)
+	assert.NotContains(t, ids, instB.ID, "owner filter must hide another owner's instances")
+
+	// OwnerID = nil -> both rows (admin/unconstrained).
+	all, err := repo.List(ctx, instance.ListFilters{Limit: 100})
+	require.NoError(t, err)
+	allIDs := summaryIDs(all)
+	assert.Contains(t, allIDs, instA.ID)
+	assert.Contains(t, allIDs, instB.ID)
+}
+
+func summaryIDs(s []instance.InstanceSummary) []uuid.UUID {
+	ids := make([]uuid.UUID, len(s))
+	for i, x := range s {
+		ids[i] = x.ID
+	}
+	return ids
+}
+
 func TestInstanceRepo_ListRunning(t *testing.T) {
 	db := setupTestDB(t)
 	userRepo := NewUserRepo(db.DB)
