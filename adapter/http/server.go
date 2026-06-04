@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/config"
@@ -18,6 +20,12 @@ import (
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// authRateLimitPerMinute caps requests per client IP to the unauthenticated
+// /auth/* endpoints (login, callback, logout, device code/token). It throttles
+// credential brute-force and auth-availability DoS while leaving normal
+// interactive login well within budget.
+const authRateLimitPerMinute = 20
 
 // EngineService combines both WorkflowService and InstanceService interfaces.
 // The concrete engine.Engine satisfies both.
@@ -311,23 +319,30 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		r.Mount("/mcp", mcp)
 	}
 
-	// OIDC browser login flow (Phase 6). Registered OUTSIDE the /api/v1 group and
-	// BEFORE the dashboard NotFound, and NOT wrapped by d.Auth -- these routes
-	// establish the session the middleware later validates, so they cannot
-	// require one.
-	if d.AuthHandler != nil {
-		r.Get("/auth/login", d.AuthHandler.Login)
-		r.Get("/auth/callback", d.AuthHandler.Callback)
-		r.Post("/auth/logout", d.AuthHandler.Logout)
-	}
+	// Unauthenticated /auth/* surface (OIDC login flow + device-grant
+	// code/token). These are registered OUTSIDE the /api/v1 group and NOT wrapped
+	// by d.Auth — they establish the session the middleware later validates, so
+	// they cannot require one. Because they are unauthenticated and credential-
+	// adjacent, they are the natural DoS/brute-force target, so the whole group is
+	// rate-limited per client IP (RealIP middleware above sets the key).
+	r.Group(func(r chi.Router) {
+		r.Use(httprate.LimitByIP(authRateLimitPerMinute, time.Minute))
 
-	// Device authorization grant: /code (start) and /token (poll) are
-	// unauthenticated — the browserless client has no session yet. The
-	// approve/deny actions are registered INSIDE /api/v1 above (session-gated).
-	if deviceHandler != nil {
-		r.Post("/auth/device/code", deviceHandler.Start)
-		r.Post("/auth/device/token", deviceHandler.Token)
-	}
+		// OIDC browser login flow (Phase 6).
+		if d.AuthHandler != nil {
+			r.Get("/auth/login", d.AuthHandler.Login)
+			r.Get("/auth/callback", d.AuthHandler.Callback)
+			r.Post("/auth/logout", d.AuthHandler.Logout)
+		}
+
+		// Device authorization grant: /code (start) and /token (poll) are
+		// unauthenticated — the browserless client has no session yet. The
+		// approve/deny actions are registered INSIDE /api/v1 above (session-gated).
+		if deviceHandler != nil {
+			r.Post("/auth/device/code", deviceHandler.Start)
+			r.Post("/auth/device/token", deviceHandler.Token)
+		}
+	})
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
 	//

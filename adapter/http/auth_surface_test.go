@@ -133,6 +133,47 @@ func TestSurface_AuthRoutesOutsideGuard(t *testing.T) {
 	})
 }
 
+// Security: the unauthenticated /auth/* group is rate-limited per client IP, so
+// a flood from one IP is throttled (429) once it exceeds the per-minute budget.
+func TestSurface_AuthRoutes_RateLimitedPerIP(t *testing.T) {
+	router, _, _, _ := orgSurface(t)
+	const ip = "203.0.113.7"
+
+	var got429 bool
+	// One request over the budget must trip the limiter.
+	for i := 0; i < authRateLimitPerMinute+1; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+		req.Header.Set("X-Real-IP", ip) // RealIP middleware keys the limiter on this
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+	}
+	assert.True(t, got429, "exceeding the per-IP budget on /auth/* must return 429")
+}
+
+// A different client IP must not be throttled by another IP's burst (per-IP, not
+// global).
+func TestSurface_AuthRoutes_RateLimitIsPerIP(t *testing.T) {
+	router, _, _, _ := orgSurface(t)
+
+	// Exhaust IP A's budget.
+	for i := 0; i < authRateLimitPerMinute+1; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+		req.Header.Set("X-Real-IP", "203.0.113.10")
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// IP B's first request must still pass (redirect to IdP).
+	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	req.Header.Set("X-Real-IP", "203.0.113.11")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusFound, rec.Code, "a distinct IP must not be throttled by another IP's burst")
+}
+
 func TestSurface_OrgMode_Anonymous_AllRejected(t *testing.T) {
 	router, _, _, mcp := orgSurface(t)
 
