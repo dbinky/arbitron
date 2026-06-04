@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -100,6 +100,53 @@ beforeEach(() => {
   renderCount.value = 0
   setCenterSpy.mockClear()
   lastReactFlowProps = null
+})
+
+// ---------------------------------------------------------------------------
+// Seam: anchor selection → follow hook (Paired Review #19).
+// Verifies that when instance.currentNodeId advances, GraphView passes the new
+// anchorPos to useFollowActiveNode and a follow-animation setCenter call fires.
+// ---------------------------------------------------------------------------
+
+describe('GraphView — follow animation on instance advance', () => {
+  it('calls setCenter with the new anchor position when currentNodeId advances while following', async () => {
+    // Two-node workflow: a → b.
+    function Harness() {
+      const [inst, setInst] = useState({ currentNodeId: 'a', state: 'running' } as unknown as Instance)
+      return (
+        <>
+          <button onClick={() => setInst({ currentNodeId: 'b', state: 'running' } as unknown as Instance)}>
+            advance
+          </button>
+          <GraphView
+            instance={inst}
+            workflowDef={workflowDef}
+            trace={trace}
+            onNodeClick={() => {}}
+            selectedNodeId={null}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    // Mount centering fires once on 'a'.
+    expect(setCenterSpy).toHaveBeenCalledTimes(1)
+    setCenterSpy.mockClear()
+
+    // Advance to 'b' — this changes anchorId from 'a' to 'b'.
+    await userEvent.click(screen.getByRole('button', { name: 'advance' }))
+
+    // Follow animation fires for the new anchor ('b').
+    const bNode = lastReactFlowProps!.nodes.find((n) => n.id === 'b')!
+    await waitFor(() => {
+      expect(setCenterSpy).toHaveBeenCalledWith(
+        bNode.position!.x + 100,
+        bNode.position!.y + 40,
+        expect.objectContaining({ duration: expect.any(Number) }),
+      )
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

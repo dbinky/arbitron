@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-19-001: No GraphView integration test for follow animation when execution advances
+**Area**: Paired review #19 — anchor + follow seam (`dashboard/src/routes/GraphView.test.tsx`)
+**Fixed**: Iteration 37
+**Detail**: `selectAnchorNodeId → anchorId → anchorPos → useFollowActiveNode` is a reactive chain. When `instance.currentNodeId` advances, `anchorPos` changes and `useFollowActiveNode` should call `setCenter` with the new node's position (the follow animation). The hook is unit-tested for this, but there was no integration test at the `GraphView` level verifying that a changed `instance` prop produces the follow-animation setCenter call with the new node's position. Added `GraphView — follow animation on instance advance` describe block: renders a Harness that holds instance state, verifies mount centering fires once on 'a', clears the spy, advances to 'b', then waits for setCenter to be called with b's position (+ NODE_WIDTH/2, + NODE_HEIGHT/2) and a duration. Also added `waitFor` to the @testing-library/react import.
+
+---
+
 ### PAIR-18-001: Back-edge data.box not verified to match the container node's position+size
 **Area**: Paired review #18 — geometry + back-edge rendering seam (`dashboard/src/graph/useGraphLayout.test.ts`)
 **Fixed**: Iteration 36
