@@ -9,6 +9,14 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-24-001: No test verifies edgeTypes/nodeTypes props are passed to ReactFlow in a loop workflow
+**Area**: Paired review #24 — GraphView integration, Phase 1 + Phase 2 coexistence (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 42
+**Detail**: `GraphView.loops.test.tsx` captured only `nodes` and `edges` from the ReactFlow mock — not `edgeTypes`, `nodeTypes`, or `fitView`. If someone dropped `edgeTypes={edgeTypes}` from the `<ReactFlow>` call in ExecutionView.tsx, loop back-edges would fall back to default smoothstep rendering without any test failing. Updated the mock to also capture `edgeTypes`, `nodeTypes`, and `fitView`. Added `GraphView — Phase 1 + Phase 2 coexistence` describe block with three tests: (1) `edgeTypes` contains `loopBackEdge` — pinning that Phase 1's custom edge renderer is wired; (2) `nodeTypes` contains `loopContainer` — pinning that Phase 1's container node renderer is wired; (3) `fitView` is falsy — pinning the Phase 2 requirement that viewport is managed via manual `setCenter(…, { zoom: DEFAULT_ZOOM })` rather than ReactFlow's automatic fit, which would override the fixed 0.9 zoom and follow behavior.
+
+
+## Fixed Previously
+
 ### PAIR-23-001: Restore endpoint has no per-user scoping test
 **Area**: Paired review #23 — currentUser seam + all dismissal endpoints (`adapter/http/dismissal_handler_test.go`)
 **Fixed**: Iteration 41

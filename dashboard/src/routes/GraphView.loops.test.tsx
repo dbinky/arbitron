@@ -3,12 +3,27 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Instance, NodeExecution } from '../api/types'
 import type { WorkflowDefinition } from '../graph/types'
 
-const captured: { nodes?: Array<{ type?: string }>; edges?: Array<{ type?: string }> } = {}
+const captured: {
+  nodes?: Array<{ type?: string }>
+  edges?: Array<{ type?: string }>
+  edgeTypes?: Record<string, unknown>
+  nodeTypes?: Record<string, unknown>
+  fitView?: unknown
+} = {}
 
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes, edges }: { nodes: Array<{ type?: string }>; edges: Array<{ type?: string }> }) => {
-    captured.nodes = nodes
-    captured.edges = edges
+  ReactFlow: (props: {
+    nodes: Array<{ type?: string }>
+    edges: Array<{ type?: string }>
+    edgeTypes?: Record<string, unknown>
+    nodeTypes?: Record<string, unknown>
+    fitView?: unknown
+  }) => {
+    captured.nodes = props.nodes
+    captured.edges = props.edges
+    captured.edgeTypes = props.edgeTypes
+    captured.nodeTypes = props.nodeTypes
+    captured.fitView = props.fitView
     return <div data-testid="rf" />
   },
   ReactFlowProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -140,5 +155,34 @@ describe('GraphView — loop rendering integration', () => {
     const outer = containers.find((c) => c.data?.label === 'Loop until outer done')
     expect(inner?.data?.depth).toBe(1)
     expect(outer?.data?.depth).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Seam: Phase 1 (edgeTypes + nodeTypes) coexists with Phase 2 (manual setCenter
+// zoom/follow). These tests verify that GraphView passes the custom renderer maps
+// to ReactFlow regardless of the follow/viewport logic, and that fitView is
+// absent (Phase 2 uses setCenter for manual zoom control, not ReactFlow's auto-fit).
+// ---------------------------------------------------------------------------
+
+describe('GraphView — Phase 1 + Phase 2 coexistence', () => {
+  it('passes edgeTypes containing loopBackEdge to ReactFlow for a loop workflow', () => {
+    renderView(loopWorkflow)
+    expect(captured.edgeTypes).toBeDefined()
+    expect('loopBackEdge' in (captured.edgeTypes ?? {})).toBe(true)
+  })
+
+  it('passes nodeTypes containing loopContainer to ReactFlow for a loop workflow', () => {
+    renderView(loopWorkflow)
+    expect(captured.nodeTypes).toBeDefined()
+    expect('loopContainer' in (captured.nodeTypes ?? {})).toBe(true)
+  })
+
+  // Phase 2 spec: viewport is set via setCenter(…, { zoom: DEFAULT_ZOOM }), not
+  // ReactFlow's fitView. A fitView prop would re-fit the viewport to all nodes on
+  // every render, overriding the manual follow behavior and the fixed 0.9 zoom.
+  it('does not pass fitView to ReactFlow (viewport managed by setCenter, not auto-fit)', () => {
+    renderView(loopWorkflow)
+    expect(captured.fitView).toBeFalsy()
   })
 })

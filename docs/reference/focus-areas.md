@@ -43,7 +43,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 21 | List marking + Queue UI (`dismissed`/`includeDismissed` contract match; order preservation drives chronological reveal) | [x] | Done |
 | 22 | Dismiss slice + engine retry resurface (dismiss then retry clears; item reappears active→terminal) | [x] | Done |
 | 23 | Cross-cutting: currentUser seam + all dismissal endpoints (per-user scoping consistent everywhere; local-mode correct) | [x] | Done |
-| 24 | Cross-cutting: GraphView integration (Phase 1 edgeTypes + loop containers coexist with Phase 2 zoom/follow; no fitView regression) | [ ] | |
+| 24 | Cross-cutting: GraphView integration (Phase 1 edgeTypes + loop containers coexist with Phase 2 zoom/follow; no fitView regression) | [x] | Done |
 
 ---
 
