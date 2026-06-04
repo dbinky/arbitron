@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### EDGE-002: chooseSide never tested with asymmetric sourceX/targetX
+**Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
+**Fixed**: Iteration 6
+**Detail**: All three existing `chooseSide` tests used `sourceX === targetX`, meaning the midpoint averaging formula `(sourceX + targetX) / 2` was never exercised with unequal x values. Diamond loops in production can have tail and head nodes at different horizontal positions. Added a test covering: tie-at-center with asymmetric inputs (routes right), midpoint-right-of-center (routes left), midpoint-left-of-center (routes right).
+
 ### EDGE-001: LoopBackEdge fallback-box path untested
 **Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
 **Fixed**: Iteration 5

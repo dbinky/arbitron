@@ -57,6 +57,22 @@ describe('chooseSide', () => {
     const r = chooseSide({ sourceX: 200, targetX: 200, boxX: 100, boxWidth: 200 })
     expect(r.side).toBe('right')
   })
+
+  it('averages asymmetric sourceX/targetX to determine side (diamond loops)', () => {
+    // source (tail) at x=50, target (head) at x=350 → midpoint=200 = box center → right (tie rule)
+    const tie = chooseSide({ sourceX: 50, targetX: 350, boxX: 100, boxWidth: 200 })
+    expect(tie.side).toBe('right')
+
+    // source at x=100, target at x=400 → midpoint=250 > box center=200 → left
+    const left = chooseSide({ sourceX: 100, targetX: 400, boxX: 100, boxWidth: 200 })
+    expect(left.side).toBe('left')
+    expect(left.gutterX).toBe(100 - GUTTER_OFFSET)
+
+    // source at x=0, target at x=200 → midpoint=100 < box center=200 → right
+    const right = chooseSide({ sourceX: 0, targetX: 200, boxX: 100, boxWidth: 200 })
+    expect(right.side).toBe('right')
+    expect(right.gutterX).toBe(100 + 200 + GUTTER_OFFSET)
+  })
 })
 
 describe('LoopBackEdge — fallback: endpoint-derived box when box is absent', () => {
