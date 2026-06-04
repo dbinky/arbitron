@@ -154,6 +154,42 @@ func TestEngine_RerunYieldsUndismissedNewInstance(t *testing.T) {
 	assert.Equal(t, 0, dis.clearedCount(newID), "rerun does not clear dismissals")
 }
 
+// Edge: Retry calls ClearForInstance even when the instance was never dismissed —
+// the clear is unconditional (idempotent no-op when no rows exist). A conditional
+// "only clear if dismissed" optimization would violate this invariant.
+func TestEngine_RetryCallsClearEvenIfNotDismissed(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	dis := newDismissalRecorder()
+	f.engine.SetDismissals(dis)
+
+	firstRun := true
+	var mu sync.Mutex
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		mu.Lock()
+		isFirst := firstRun
+		firstRun = false
+		mu.Unlock()
+		if isFirst {
+			return nil, fmt.Errorf("node A failed")
+		}
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	// Do NOT dismiss — retry must call ClearForInstance regardless.
+	require.NoError(t, f.engine.Retry(id, nil))
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	assert.GreaterOrEqual(t, dis.clearedCount(id), 1,
+		"Retry must always call ClearForInstance, even when the instance was never dismissed")
+}
+
 // When the dismissal repo fails to clear on Retry, Retry propagates the error
 // before launching the run goroutine.
 func TestEngine_RetryClearDismissalError(t *testing.T) {

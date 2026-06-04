@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### ENGINE-001: Unconditional-clear invariant for Retry untested
+**Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
+**Fixed**: Iteration 17
+**Detail**: `TestEngine_RetryClearsDismissal` only tested the case where the instance WAS dismissed before retry. The `ClearForInstance` call is unconditional (idempotent no-op when no rows exist), but no test verified this. A future "optimization" that adds `if isDismissed { ClearForInstance() }` would violate the always-clear contract without failing any test. Added `TestEngine_RetryCallsClearEvenIfNotDismissed`: trigger → fail → retry WITHOUT dismissing first → assert clearedCount >= 1.
+
 ### LIST-002: All-dismissed edge case: empty-array vs null response untested
 **Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
 **Fixed**: Iteration 16
