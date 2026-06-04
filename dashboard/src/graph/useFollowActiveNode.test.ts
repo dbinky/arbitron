@@ -117,6 +117,35 @@ describe('useFollowActiveNode — recenter', () => {
   })
 })
 
+describe('useFollowActiveNode — recenter after advance-while-paused', () => {
+  it('recenter jumps to the latest anchor even if execution advanced while paused', () => {
+    // Real risk: user pauses, workflow advances several nodes. Clicking Recenter must
+    // jump to where the workflow IS NOW, not where it was at pause-time.
+    // The implementation always updates prevAnchorRef even when following=false,
+    // so this test verifies that invariant is preserved.
+    const { result, rerender } = renderHook(
+      ({ a }: { a: { x: number; y: number } }) => useFollowActiveNode(a, true),
+      { initialProps: { a: { x: 10, y: 20 } } },
+    )
+
+    // Advance once while following: animates to (100, 200).
+    rerender({ a: { x: 100, y: 200 } })
+    expect(setCenter).toHaveBeenCalledWith(100, 200, expect.objectContaining({ zoom: 1.5 }))
+
+    // User pans — pauses follow.
+    act(() => result.current.onMoveStart({ type: 'pointerdown' }))
+    setCenter.mockClear()
+
+    // Execution advances to (300, 400) while paused — no animation, but ref updates.
+    rerender({ a: { x: 300, y: 400 } })
+    expect(setCenter).not.toHaveBeenCalled()
+
+    // Recenter must use the current anchor (300, 400), not the stale (100, 200).
+    act(() => result.current.recenter())
+    expect(setCenter).toHaveBeenCalledWith(300, 400, { zoom: 0.9 })
+  })
+})
+
 describe('useFollowActiveNode — edge case: null anchor (empty graph)', () => {
   it('does not call setCenter and does not throw when anchor is null', () => {
     // The design doc: "Empty graph / no anchor: skip centering (no-op); nothing throws."

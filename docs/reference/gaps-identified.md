@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### FOLLOW-002: Recenter-after-advance-while-paused behavior untested
+**Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
+**Fixed**: Iteration 10
+**Detail**: The implementation always updates `prevAnchorRef` even when `following=false`, so clicking Recenter after execution advances while paused jumps to the *current* anchor (where the node is now) rather than the stale pause-time position. The existing recenter test only covered the static case (single anchor, no intermediate advance). Added `useFollowActiveNode — recenter after advance-while-paused` to verify: animate to (100,200) → pause → advance to (300,400) while paused (no animation) → recenter calls setCenter with (300,400), not (100,200).
+
 ### FOLLOW-001: Null-anchor edge case untested
 **Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
 **Fixed**: Iteration 9
