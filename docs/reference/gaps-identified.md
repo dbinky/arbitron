@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA16-P1-01: `LoadVisible`, `ListFilesVisible`, `ReadScopes`, and `OwnerFromContext` had zero test coverage
+**Area**: Focus Area 16 — Scope resolution at call sites (Pass 1)
+**Fix**: Created `domain/workflow/resolve_test.go` with 12 tests covering `ReadScopes` (valid owner, ordering), `LoadVisible` (private hit, shared fallback, neither found, non-ErrNotFound aborts, private-precedes-shared), and `ListFilesVisible` (same five categories). Created `domain/engine/runcontext_test.go` with 5 tests covering `OwnerFromContext` (set+get, absent returns uuid.Nil, child context inherits, shadow override, explicit uuid.Nil propagation). Also added `baseRepo`, `fakeFilesRepo`, and error-injection stubs for the resolve tests so the abort-on-non-ErrNotFound invariant can be pinned at the domain level.
+
 ### GAP-FA15-P2-01: `WriteFile`/`DeleteFile` did not protect `workflow.json` from direct targeting
 **Area**: Focus Area 15 — Workflow scope & repo (Pass 2)
 **Fix**: Added a manifest-protection guard to both `WriteFile` and `DeleteFile` in `adapter/filesystem/workflow_repo.go`. After the traversal check resolves `targetPath`, both methods now compare it to `filepath.Join(wfDir, "workflow.json")` and return `ErrInvalidFilePath` if they match. The manifest is a structured domain object; allowing raw bytes through the file API would bypass schema validation and could leave the workflow directory in an unloadable state. Both HTTP (`PUT /workflows/{name}/files/*`) and MCP (`workflow_write_file`/`workflow_delete_file`) already handle `ErrInvalidFilePath` with a 400/tool-error response, so no adapter changes were needed. Added `TestWorkflowRepo_WriteFile_ManifestProtected` and `TestWorkflowRepo_DeleteFile_ManifestProtected` to pin the new guard.
