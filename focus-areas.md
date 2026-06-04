@@ -26,20 +26,16 @@ terminal→dismiss, and active→no control. 205 → 208 tests, all green.
 - [x] Added test: active (running) instance renders no dismiss or restore control.
 - [x] Ran `npx vitest run` — 208 tests pass; `tsc --noEmit` clean.
 
-## 2. GraphView integration coverage for failed/static-preview centering  ⟶ GAP-002 (MEDIUM)
+## ~~2. GraphView integration coverage for failed/static-preview centering~~  ✅ DONE ⟶ GAP-002 (MEDIUM)
 
-`GraphView.test.tsx` covers initial centering for a running instance (active node)
-and a completed instance (final node). Two spec-required centering cases are not
-tested at the integration level:
-- **Failed instance** → should center on the failed node.
-- **Static workflow preview** (no instance) → should center on the entry node.
+~~`GraphView.test.tsx` lacked integration coverage for failed-instance and
+static-preview centering — both covered only at the `selectAnchorNodeId` unit
+level.~~ **Closed:** added two tests under `'GraphView — default-zoom centering on
+mount'`: one for a failed instance (centers on failed node) and one for a static
+preview with `instance={null}` (centers on entry node). 208 → 210 tests, all green.
 
-`selectAnchorNodeId` unit tests cover both branches; the gap is that broken wiring
-in `GraphView` specifically for these branches would go undetected.
-
-- [ ] Add test to `GraphView.test.tsx`: failed instance with `executionStates` marking
-      node `b` as `failed`; assert `setCenter` called on node `b`'s position at
-      `DEFAULT_ZOOM=0.9`.
-- [ ] Add test to `GraphView.test.tsx`: `instance={null}` (static preview with an
-      entrypoint node flagged); assert `setCenter` called on the entry node's position.
-- [ ] Run `cd dashboard && npx vitest run` — all tests pass.
+- [x] Added test: failed instance (`state:'failed'`, `failedNodeId:'b'`, trace marking
+      'b' failed) → `setCenter` called on node 'b' at `DEFAULT_ZOOM=0.9`.
+- [x] Added test: static preview (`instance={null}`, node 'a' has `entrypoint:true`) →
+      `setCenter` called on node 'a' at `DEFAULT_ZOOM=0.9`.
+- [x] Ran `npx vitest run` — 210 tests pass; `tsc --noEmit` clean.

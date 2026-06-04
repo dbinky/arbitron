@@ -227,6 +227,75 @@ describe('GraphView — default-zoom centering on mount', () => {
       expect.objectContaining({ zoom: 0.9 }),
     )
   })
+
+  it('centers on the failed node for a failed instance', () => {
+    const failedInstance = {
+      ...instance,
+      state: 'failed',
+      currentNodeId: undefined,
+      failedNodeId: 'b',
+    } as unknown as Instance
+    const failedTrace: NodeExecution[] = [
+      {
+        id: 'e-a',
+        instanceId: 'i',
+        nodeId: 'a',
+        attempt: 1,
+        status: 'succeeded',
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:01Z',
+      } as NodeExecution,
+      {
+        id: 'e-b',
+        instanceId: 'i',
+        nodeId: 'b',
+        attempt: 1,
+        status: 'failed',
+        startedAt: '2026-01-01T00:00:02Z',
+        completedAt: '2026-01-01T00:00:03Z',
+      } as NodeExecution,
+    ]
+    render(
+      <GraphView
+        instance={failedInstance}
+        workflowDef={workflowDef}
+        trace={failedTrace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    const bNode = lastReactFlowProps!.nodes.find((n) => n.id === 'b')!
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      bNode.position!.x + 100,
+      bNode.position!.y + 40,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
+  })
+
+  it('centers on the entry node for a static workflow preview (no instance)', () => {
+    const previewDef: typeof workflowDef = {
+      ...workflowDef,
+      nodes: [
+        { id: 'a', type: 'llm_call', label: 'A', description: '', config: {}, entrypoint: true },
+        { id: 'b', type: 'llm_call', label: 'B', description: '', config: {} },
+      ],
+    }
+    render(
+      <GraphView
+        instance={null}
+        workflowDef={previewDef}
+        trace={[]}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    const aNode = lastReactFlowProps!.nodes.find((n) => n.id === 'a')!
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      aNode.position!.x + 100,
+      aNode.position!.y + 40,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
+  })
 })
 
 describe('GraphView — Recenter / Follow control', () => {

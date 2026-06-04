@@ -11,22 +11,20 @@ completeness — **not** missing behavior.
 
 ## Open Issues
 
-### GAP-002: GraphView integration coverage missing failed/static centering scenarios
+### ~~GAP-002: GraphView integration coverage missing failed/static centering scenarios~~  ✅ CLOSED (MEDIUM)
 **Area:** `dashboard/src/routes/ExecutionView.tsx` (`GraphView`), `dashboard/src/routes/GraphView.test.tsx`
 **Focus area:** 2
-**What is wrong:** `GraphView.test.tsx` covers two initial-centering scenarios at the
-integration level: a running instance (centers on active node) and a completed
-instance (centers on final node). Two cases from the Phase 2 spec are covered only
-at the `selectAnchorNodeId` unit level:
-- **Failed instance** → centers on the failed node (spec requirement).
-- **Static workflow preview** (no instance) → centers on the entry node (spec requirement).
-If `GraphView`'s wiring of `selectAnchorNodeId` were broken specifically for those
-branches, no integration test would catch it.
-**Fix:** Add two tests to `GraphView.test.tsx`:
-1. Renders with a failed instance + a node marked `failed` in `executionStates` and
-   asserts `setCenter` is called on the failed node's position.
-2. Renders with `instance={null}` (no instance / static preview) and asserts
-   `setCenter` is called on the entry/source node's position.
+**What was wrong:** `GraphView.test.tsx` covered running and completed instance centering
+at the integration level, but not failed or static-preview — those were only covered
+at the `selectAnchorNodeId` unit level. Broken wiring in `GraphView` specifically for
+those branches would go undetected.
+**Closed:** Added two tests to `GraphView.test.tsx` under `'GraphView — default-zoom
+centering on mount'`:
+- `centers on the failed node for a failed instance` — instance with `state:'failed'`
+  + `failedNodeId:'b'` + trace marking 'b' failed; asserts `setCenter` on node 'b'.
+- `centers on the entry node for a static workflow preview (no instance)` — `instance={null}`
+  with `entrypoint:true` on node 'a'; asserts `setCenter` on node 'a'.
+Both pass; full dashboard suite green (208 → 210 tests).
 
 ## Closed Issues
 
