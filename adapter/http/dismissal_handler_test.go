@@ -81,10 +81,20 @@ func (e *errDismissalRepo) ClearForInstance(_ context.Context, _ uuid.UUID) erro
 
 var _ instance.DismissalRepository = (*errDismissalRepo)(nil)
 
+// errUserRepo always returns an error from GetDefaultUser.
+type errUserRepo struct{ err error }
+
+func (e *errUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
+	return uuid.UUID{}, e.err
+}
+
+var _ instance.UserRepository = (*errUserRepo)(nil)
+
 // newDismissalTestServer builds a router with the dismissal deps wired and
 // returns an httptest server. It reuses the http_test mock constructors.
 // dis accepts any DismissalRepository implementation (including error mocks).
-func newDismissalTestServer(t *testing.T, instRepo *mockInstanceRepo, dis instance.DismissalRepository, users *mockUserRepo) *httptest.Server {
+// users accepts any UserRepository implementation (including error mocks).
+func newDismissalTestServer(t *testing.T, instRepo *mockInstanceRepo, dis instance.DismissalRepository, users instance.UserRepository) *httptest.Server {
 	t.Helper()
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:    &routerMockService{},
@@ -278,6 +288,56 @@ func TestDismissAll_ListError_500(t *testing.T) {
 		Users:      &mockUserRepo{id: uuid.New()},
 	})
 	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestDismiss_UserResolutionError_500(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &errUserRepo{err: fmt.Errorf("auth error")})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestRestore_UserResolutionError_500(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &errUserRepo{err: fmt.Errorf("auth error")})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+uuid.New().String()+"/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestDismissAll_UserResolutionError_500(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &errUserRepo{err: fmt.Errorf("auth error")})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestDismissAll_DismissItemError_500(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	// errDismissalRepo fails on Dismiss — the per-item write inside the DismissAll loop.
+	// instances.List succeeds (mockInstanceRepo) so the loop body is reached.
+	srv := newDismissalTestServer(t, instRepo, &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: user})
 	defer srv.Close()
 
 	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")

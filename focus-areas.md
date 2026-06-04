@@ -40,6 +40,20 @@ error paths.
 - [x] Added `TestDismissAll_ListError_500` (instances.List fails).
 - [x] `go test ./adapter/http/...` and `make test-all` green.
 
+## ~~4. Dismissal handler currentUser + DismissAll-loop error coverage~~  ✅ DONE ⟶ GAP-004 (LOW)
+
+~~Four error paths in `Dismiss`, `Restore`, and `DismissAll` were untested: `currentUser.CurrentUser`
+returning an error (all three handlers) and `dismissals.Dismiss` failing inside the `DismissAll`
+per-item loop.~~ **Closed:** added `errUserRepo`; widened `newDismissalTestServer` users param to
+`instance.UserRepository`; added four tests covering all missing error branches.
+
+- [x] Added `errUserRepo` always-error user-repo mock.
+- [x] Widened `newDismissalTestServer` users param to `instance.UserRepository` (interface).
+- [x] Added `TestDismiss_UserResolutionError_500`, `TestRestore_UserResolutionError_500`,
+      `TestDismissAll_UserResolutionError_500` (currentUser resolution fails → 500).
+- [x] Added `TestDismissAll_DismissItemError_500` (instances.List succeeds, per-item Dismiss fails → 500).
+- [x] `go test ./adapter/http/...` (18 dismissal tests pass) and `make test-all` green.
+
 ## ~~2. GraphView integration coverage for failed/static-preview centering~~  ✅ DONE ⟶ GAP-002 (MEDIUM)
 
 ~~`GraphView.test.tsx` lacked integration coverage for failed-instance and

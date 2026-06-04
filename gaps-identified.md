@@ -15,6 +15,19 @@ _No open issues. All identified gaps are closed._
 
 ## Closed Issues
 
+### ~~GAP-004: Dismissal HTTP handlers missing currentUser + DismissAll-loop error coverage~~  ✅ CLOSED (LOW)
+**Area:** `adapter/http/dismissal_handler_test.go`
+**What was wrong:** Four error-branch paths in `Dismiss`, `Restore`, and `DismissAll` were untested:
+- `h.currentUser.CurrentUser(r)` returning an error in all three handlers → must return 500.
+  `TestDismiss_UserResolutionError_500`, `TestRestore_UserResolutionError_500`, and
+  `TestDismissAll_UserResolutionError_500` were missing.
+- `h.dismissals.Dismiss` returning an error inside the `DismissAll` per-item loop (after
+  `instances.List` succeeds) → must return 500. `TestDismissAll_DismissItemError_500` was missing.
+**Closed:** added `errUserRepo` (always-error user repo, parallel to `errDismissalRepo`);
+widened `newDismissalTestServer`'s `users` parameter from `*mockUserRepo` to the
+`instance.UserRepository` interface; added four tests covering the missing error paths.
+`go test ./adapter/http/...` and `make test-all` green (18 dismissal tests, 210 dashboard tests).
+
 ### ~~GAP-003: Dismissal HTTP handlers missing error-scenario coverage~~  ✅ CLOSED (MEDIUM)
 **Area:** `adapter/http/dismissal_handler_test.go`
 **What was wrong:** The dismissal HTTP tests covered the happy path, business-rule
