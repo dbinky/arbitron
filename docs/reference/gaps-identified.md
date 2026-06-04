@@ -6,6 +6,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA17-P1-01: `Delete`, `WriteFile`, `DeleteFile`, `SaveNodePositions`, and `ListFiles` had zero service-level tests
+**Area**: Focus Area 17 — Workflow service authz (Pass 1)
+**Fix**: Added 25 tests to `domain/workflow/service_test.go` covering all five previously untested public methods, with 5 scenario categories each. Key invariants pinned: (a) `Delete`/`WriteFile`/`DeleteFile`/`SaveNodePositions` on a shared-only workflow returns `ErrSharedReadOnly`, not `ErrNotFound` — via `translateWrite`; (b) each write method only targets the caller's own private scope, never another user's; (c) no-identity context is rejected with `ErrInvalidName` on every write path; (d) `ListFiles` falls back to shared and does not expose another user's private files.
+
+### GAP-FA16-P2-01: HTTP and MCP `ReadFile` tests never verified owner threading from context to FileReader
+**Area**: Focus Area 16 — Scope resolution at call sites (Pass 2)
+**Fix**: Added `capturedOwner uuid.UUID` field to `contentFileReader` (HTTP) and `stubFileReader` (MCP); each `ReadFile` method now records the owner it receives before dispatching to the configurable `readFileFn`. Added `TestWorkflowHandler_ReadFile/"caller identity UserID is forwarded to file reader as owner"` and `TestWorkflowReadFile/"caller identity UserID is forwarded to file reader as owner"` — both assert that the captured owner equals the known test identity UserID (`testUserID` / `mcpTestUserID`). A regression in `callerOwner(ctx)` wiring (e.g., passing `uuid.Nil` or the wrong user) is now caught immediately on both surfaces.
+
 ### GAP-FA16-P1-01: `LoadVisible`, `ListFilesVisible`, `ReadScopes`, and `OwnerFromContext` had zero test coverage
 **Area**: Focus Area 16 — Scope resolution at call sites (Pass 1)
 **Fix**: Created `domain/workflow/resolve_test.go` with 12 tests covering `ReadScopes` (valid owner, ordering), `LoadVisible` (private hit, shared fallback, neither found, non-ErrNotFound aborts, private-precedes-shared), and `ListFilesVisible` (same five categories). Created `domain/engine/runcontext_test.go` with 5 tests covering `OwnerFromContext` (set+get, absent returns uuid.Nil, child context inherits, shadow override, explicit uuid.Nil propagation). Also added `baseRepo`, `fakeFilesRepo`, and error-injection stubs for the resolve tests so the abort-on-non-ErrNotFound invariant can be pinned at the domain level.

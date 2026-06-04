@@ -31,8 +31,8 @@ result for that area.
 | 13 | JIT provisioning & bootstrap admin (`instance.Provisioner.Resolve` — GetBySubject-else-Create, default User, bootstrap promote email-ci-then-subject; wired in OIDC callback) | [x] | [x] | Done |
 | 14 | Role management (`instance.UserService.SetRole` admin-only; bootstrap-admin floor; last-admin guard; REST `/api/v1/users`+`/role`; MCP `user_list`/`user_set_role`) | [x] | [x] | Done |
 | 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [x] | [x] | Done |
-| 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [x] | [ ] | Pending |
-| 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [ ] | [ ] | Pending |
+| 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [x] | [x] | Done |
+| 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [x] | [ ] | Pending |
 | 18 | Publish/copy & publisher store (migration 006 `published_workflows`; `PublishedWorkflowRepo`; `Publish` publisher-only-overwrite+unique name; `Copy` independent; atomic `CopyTree`; REST+MCP) | [ ] | [ ] | Pending |
 | 19 | Flat-store migration & run-shared-directly (marker-guarded startup move into `users/<default-user>/`; `Trigger(ctx,...)` resolves visible scope, owner=triggering user) | [ ] | [ ] | Pending |
 | 20 | Instance list scoping (`instance.ListFilters.OwnerID`; `domain/engine/authz.go` `ownerConstraint`/`canView`; `Engine.ListInstances` service-set owner; `instances.sql` predicate; HTTP/MCP repointed) | [ ] | [ ] | Pending |

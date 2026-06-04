@@ -442,3 +442,302 @@ func TestService_Copy_DuplicatePrivateName_AlreadyExists(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrAlreadyExists)
 }
+
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
+
+// Happy path: Delete removes a workflow from the caller's private scope.
+func TestService_Delete_TargetsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	require.NoError(t, svc.Delete(ctxWith(owner, false), "mine"))
+
+	_, ok := repo.bucket(workflow.Private(owner))["mine"]
+	assert.False(t, ok, "workflow must be removed from private scope after delete")
+}
+
+// Failure: deleting a shared-only workflow returns ErrSharedReadOnly (not ErrNotFound).
+func TestService_Delete_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	err := svc.Delete(ctxWith(owner, false), "pub")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+	assert.NotErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Error: no identity in context is rejected.
+func TestService_Delete_NoIdentity_Rejected(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.Delete(context.Background(), "w")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// Failure: deleting a workflow that exists in neither scope returns ErrNotFound.
+func TestService_Delete_Nowhere_ReturnsNotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.Delete(ctxWith(uuid.New(), false), "ghost")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Edge: Delete only removes the caller's private copy; another user's private
+// copy with the same name is untouched.
+func TestService_Delete_OnlyAffectsCallerPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(a), "shared-name", wf("shared-name")))
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
+
+	require.NoError(t, svc.Delete(ctxWith(a, false), "shared-name"))
+
+	_, aGone := repo.bucket(workflow.Private(a))["shared-name"]
+	assert.False(t, aGone, "caller a's copy removed")
+	_, bStill := repo.bucket(workflow.Private(b))["shared-name"]
+	assert.True(t, bStill, "user b's copy must be untouched")
+}
+
+// ---------------------------------------------------------------------------
+// WriteFile (service-level)
+// ---------------------------------------------------------------------------
+
+// Happy path: WriteFile routes to the caller's private scope.
+func TestService_WriteFile_TargetsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "wf", wf("wf")))
+
+	err := svc.WriteFile(ctxWith(owner, false), "wf", "run.sh", []byte("#!/bin/bash"))
+	assert.NoError(t, err)
+}
+
+// Failure: writing into a shared-only workflow returns ErrSharedReadOnly.
+func TestService_WriteFile_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	err := svc.WriteFile(ctxWith(owner, false), "pub", "a.sh", []byte("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+}
+
+// Error: no identity is rejected.
+func TestService_WriteFile_NoIdentity_Rejected(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.WriteFile(context.Background(), "wf", "a.sh", []byte("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// Failure: workflow exists in neither scope returns ErrNotFound.
+func TestService_WriteFile_Nowhere_ReturnsNotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.WriteFile(ctxWith(uuid.New(), false), "ghost", "a.sh", []byte("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Edge: WriteFile does not touch another user's private workflow.
+func TestService_WriteFile_OnlyAffectsCallerPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
+
+	// a has no private "shared-name" — WriteFile must not silently target b's.
+	err := svc.WriteFile(ctxWith(a, false), "shared-name", "a.sh", []byte("x"))
+	require.Error(t, err, "must not write into another user's private scope")
+}
+
+// ---------------------------------------------------------------------------
+// DeleteFile (service-level)
+// ---------------------------------------------------------------------------
+
+// Happy path: DeleteFile routes to the caller's private scope.
+func TestService_DeleteFile_TargetsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "wf", wf("wf")))
+
+	err := svc.DeleteFile(ctxWith(owner, false), "wf", "run.sh")
+	assert.NoError(t, err)
+}
+
+// Failure: deleting a file from a shared-only workflow returns ErrSharedReadOnly.
+func TestService_DeleteFile_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	err := svc.DeleteFile(ctxWith(owner, false), "pub", "a.sh")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+}
+
+// Error: no identity is rejected.
+func TestService_DeleteFile_NoIdentity_Rejected(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.DeleteFile(context.Background(), "wf", "a.sh")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// Failure: workflow in neither scope returns ErrNotFound.
+func TestService_DeleteFile_Nowhere_ReturnsNotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.DeleteFile(ctxWith(uuid.New(), false), "ghost", "a.sh")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Edge: DeleteFile does not reach another user's private workflow.
+func TestService_DeleteFile_OnlyAffectsCallerPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
+
+	err := svc.DeleteFile(ctxWith(a, false), "shared-name", "a.sh")
+	require.Error(t, err, "must not target another user's private scope")
+}
+
+// ---------------------------------------------------------------------------
+// SaveNodePositions (service-level)
+// ---------------------------------------------------------------------------
+
+// Happy path: SaveNodePositions routes to the caller's private scope.
+func TestService_SaveNodePositions_TargetsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "wf", wf("wf")))
+
+	err := svc.SaveNodePositions(ctxWith(owner, false), "wf", map[string]workflow.NodePosition{"n1": {X: 1, Y: 2}})
+	assert.NoError(t, err)
+}
+
+// Failure: saving positions on a shared-only workflow returns ErrSharedReadOnly.
+func TestService_SaveNodePositions_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	err := svc.SaveNodePositions(ctxWith(owner, false), "pub", map[string]workflow.NodePosition{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+}
+
+// Error: no identity is rejected.
+func TestService_SaveNodePositions_NoIdentity_Rejected(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.SaveNodePositions(context.Background(), "wf", map[string]workflow.NodePosition{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// Failure: workflow in neither scope returns ErrNotFound.
+func TestService_SaveNodePositions_Nowhere_ReturnsNotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	err := svc.SaveNodePositions(ctxWith(uuid.New(), false), "ghost", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Edge: SaveNodePositions does not reach another user's private workflow.
+func TestService_SaveNodePositions_OnlyAffectsCallerPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
+
+	err := svc.SaveNodePositions(ctxWith(a, false), "shared-name", map[string]workflow.NodePosition{})
+	require.Error(t, err, "must not reach another user's private scope")
+}
+
+// ---------------------------------------------------------------------------
+// ListFiles (service-level)
+// ---------------------------------------------------------------------------
+
+// Happy path: ListFiles returns files from the caller's private workflow.
+func TestService_ListFiles_PrivateHit(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "wf", wf("wf")))
+
+	files, err := svc.ListFiles(ctxWith(owner, false), "wf")
+	require.NoError(t, err)
+	assert.NotNil(t, files)
+}
+
+// Success: ListFiles falls back to shared when the workflow is absent from private.
+func TestService_ListFiles_SharedFallback(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	files, err := svc.ListFiles(ctxWith(owner, false), "pub")
+	require.NoError(t, err)
+	assert.NotNil(t, files)
+}
+
+// Failure: workflow absent from both scopes returns ErrNotFound.
+func TestService_ListFiles_Nowhere_ReturnsNotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	_, err := svc.ListFiles(ctxWith(uuid.New(), false), "ghost")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// Error: no identity is rejected.
+func TestService_ListFiles_NoIdentity_Rejected(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+
+	_, err := svc.ListFiles(context.Background(), "wf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// Edge: ListFiles does not expose another user's private files — it reads only
+// the caller's private partition (or shared).
+func TestService_ListFiles_DoesNotLeakOtherUsersPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(a), "secret", wf("secret")))
+
+	// b does not own "secret" and it is not in shared — must get ErrNotFound.
+	_, err := svc.ListFiles(ctxWith(b, false), "secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}

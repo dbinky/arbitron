@@ -107,12 +107,17 @@ func (s *stubWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ strin
 	return nil
 }
 
+// stubFileReader is the configurable FileReader used in MCP tool tests.
+// capturedOwner records the last owner UUID passed to ReadFile so tests can
+// verify that callerOwner(ctx) is correctly forwarded by the MCP tool handler.
 type stubFileReader struct {
-	readFileFn   func(workflowName, path string) ([]byte, error)
-	fileExistsFn func(workflowName, path string) bool
+	readFileFn    func(workflowName, path string) ([]byte, error)
+	fileExistsFn  func(workflowName, path string) bool
+	capturedOwner uuid.UUID
 }
 
-func (s *stubFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
+func (s *stubFileReader) ReadFile(owner uuid.UUID, workflowName, relativePath string) ([]byte, error) {
+	s.capturedOwner = owner
 	if s.readFileFn != nil {
 		return s.readFileFn(workflowName, relativePath)
 	}
@@ -743,6 +748,22 @@ func TestWorkflowReadFile(t *testing.T) {
 		result := callTool(t, srv, "workflow_read_file", map[string]any{"name": "wf1", "path": "missing.txt"})
 
 		assert.True(t, result.IsError)
+	})
+
+	// Edge: verify that the MCP tool handler forwards the caller's UserID from
+	// context through callerOwner() into the FileReader. callTool injects
+	// mcpTestUserID via identity.WithIdentity — a regression would serve files
+	// from the wrong owner partition silently.
+	t.Run("caller identity UserID is forwarded to file reader as owner", func(t *testing.T) {
+		fr := &stubFileReader{
+			readFileFn: func(_, _ string) ([]byte, error) { return []byte("data"), nil },
+		}
+		srv := newWorkflowServer(&stubWorkflowRepo{}, fr)
+		result := callTool(t, srv, "workflow_read_file", map[string]any{"name": "wf1", "path": "readme.txt"})
+
+		assert.False(t, result.IsError)
+		assert.Equal(t, mcpTestUserID, fr.capturedOwner,
+			"workflow_read_file must pass the caller's UserID to FileReader, not uuid.Nil or a different user")
 	})
 }
 

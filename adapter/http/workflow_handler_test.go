@@ -1077,9 +1077,12 @@ func (r *crudWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name
 }
 
 // contentFileReader extends mockFileReader with configurable ReadFile content.
+// capturedOwner records the last owner UUID passed to ReadFile so tests can
+// verify that callerOwner(ctx) is correctly threaded through.
 type contentFileReader struct {
 	mockFileReader
-	readFileFn func(workflowName, relativePath string) ([]byte, error)
+	readFileFn    func(workflowName, relativePath string) ([]byte, error)
+	capturedOwner uuid.UUID
 }
 
 func newContentFileReader() *contentFileReader {
@@ -1088,7 +1091,8 @@ func newContentFileReader() *contentFileReader {
 	}
 }
 
-func (r *contentFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
+func (r *contentFileReader) ReadFile(owner uuid.UUID, workflowName, relativePath string) ([]byte, error) {
+	r.capturedOwner = owner
 	if r.readFileFn != nil {
 		return r.readFileFn(workflowName, relativePath)
 	}
@@ -1572,6 +1576,28 @@ func TestWorkflowHandler_ReadFile(t *testing.T) {
 		h.ReadFile(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	// Edge: verify that the caller's UserID is threaded from the request context
+	// through callerOwner() into the FileReader — a regression here would silently
+	// serve files from the wrong owner's partition without any other test catching it.
+	t.Run("caller identity UserID is forwarded to file reader as owner", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		fr := newContentFileReader()
+		fr.readFileFn = func(_, _ string) ([]byte, error) { return []byte("data"), nil }
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, fr, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/files/readme.txt", nil)
+		req = withTestIdentity(req) // injects testUserID
+		req = withChiURLParam(req, "name", "test-wf")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("*", "readme.txt")
+		w := httptest.NewRecorder()
+		h.ReadFile(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, testUserID, fr.capturedOwner,
+			"ReadFile must receive the caller's UserID from context, not uuid.Nil or a different user")
 	})
 }
 
