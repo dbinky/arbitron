@@ -6,15 +6,56 @@ package workflows_test
 
 import (
 	"context"
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// exampleOwner owns the private workspace the example is loaded into.
+var exampleOwner = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+
+// ownerBoundChecker adapts the owner-aware FileReader to the owner-blind
+// workflow.FileChecker by binding the example owner.
+type ownerBoundChecker struct {
+	fr    *filesystem.FileReaderAdapter
+	owner uuid.UUID
+}
+
+func (c ownerBoundChecker) FileExists(workflowName, relativePath string) bool {
+	return c.fr.FileExists(c.owner, workflowName, relativePath)
+}
+
+// copyExampleDir recursively copies src into dst.
+func copyExampleDir(t *testing.T, src, dst string) {
+	t.Helper()
+	entries, err := os.ReadDir(src)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			copyExampleDir(t, s, d)
+			continue
+		}
+		in, err := os.Open(s)
+		require.NoError(t, err)
+		out, err := os.Create(d)
+		require.NoError(t, err)
+		_, err = io.Copy(out, in)
+		require.NoError(t, err)
+		require.NoError(t, in.Close())
+		require.NoError(t, out.Close())
+	}
+}
 
 // mockProfileChecker resolves the worked example's aliases to their capability
 // kinds. Mirrors the real ProfileChecker: an unknown alias reports ok=false.
@@ -33,14 +74,21 @@ const nativeRalphLoop = "native-ralph-loop"
 // filesystem repo rooted at this examples directory.
 func loadExample(t *testing.T) (*workflow.Workflow, *filesystem.FileReaderAdapter) {
 	t.Helper()
-	// Test runs with cwd = this package dir; use an absolute base path so the
-	// repo's path-traversal guard accepts the workflow name.
-	base, err := os.Getwd()
+	// The example folder is committed flat in this package dir. The scope-aware
+	// repo expects per-user partitions, so copy the example into a temp
+	// basePath under the owner's private workspace and load it from there.
+	cwd, err := os.Getwd()
 	require.NoError(t, err)
+	src := filepath.Join(cwd, nativeRalphLoop)
+
+	base := t.TempDir()
+	dst := filepath.Join(base, "users", exampleOwner.String(), nativeRalphLoop)
+	copyExampleDir(t, src, dst)
+
 	repo := filesystem.NewWorkflowRepo(base)
 	reader := filesystem.NewFileReader(base)
 
-	wf, err := repo.Load(context.Background(), nativeRalphLoop)
+	wf, err := repo.Load(context.Background(), workflow.Private(exampleOwner), nativeRalphLoop)
 	require.NoError(t, err, "loading committed example workflow")
 	return wf, reader
 }
@@ -57,7 +105,7 @@ func TestNativeRalphLoop_ParsesAndValidates(t *testing.T) {
 		"assessor": "chat",
 	}}
 
-	errs := workflow.Validate(wf, reader, checker, nil)
+	errs := workflow.Validate(wf, ownerBoundChecker{fr: reader, owner: exampleOwner}, checker, nil)
 	assert.Empty(t, errs, "committed example must validate cleanly under the correct binding")
 }
 
@@ -147,7 +195,7 @@ func TestNativeRalphLoop_UnknownAliasFailsValidation(t *testing.T) {
 	// Empty checker — no aliases known.
 	checker := &mockProfileChecker{kinds: map[string]string{}}
 
-	errs := workflow.Validate(wf, reader, checker, nil)
+	errs := workflow.Validate(wf, ownerBoundChecker{fr: reader, owner: exampleOwner}, checker, nil)
 
 	var codes []string
 	for _, e := range errs {
@@ -166,7 +214,7 @@ func TestNativeRalphLoop_UnknownAliasFailsValidation(t *testing.T) {
 func TestNativeRalphLoop_AssessmentTemplateInjectsEditorOutput(t *testing.T) {
 	_, reader := loadExample(t)
 
-	content, err := reader.ReadFile(nativeRalphLoop, "assessment.md")
+	content, err := reader.ReadFile(exampleOwner, nativeRalphLoop, "assessment.md")
 	require.NoError(t, err, "reading assessment.md")
 
 	// Resolve the template with a sentinel editor output. If {{editor}} is
@@ -193,7 +241,7 @@ func TestNativeRalphLoop_ChatProfileOnEditorFailsValidation(t *testing.T) {
 		"assessor": "chat",
 	}}
 
-	errs := workflow.Validate(wf, reader, checker, nil)
+	errs := workflow.Validate(wf, ownerBoundChecker{fr: reader, owner: exampleOwner}, checker, nil)
 
 	var codes []string
 	for _, e := range errs {

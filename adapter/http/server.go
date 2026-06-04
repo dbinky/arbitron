@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
@@ -25,11 +26,13 @@ type EngineService interface {
 	InstanceService
 }
 
-// FileReader provides access to workflow-associated files on disk.
+// FileReader provides access to workflow-associated files on disk. The owner
+// selects which user's private workspace to search first, with a shared
+// fallback (uuid.Nil searches shared only).
 type FileReader interface {
-	ReadFile(workflowName string, relativePath string) ([]byte, error)
-	ResolvePath(workflowName string, relativePath string) (string, error)
-	FileExists(workflowName string, relativePath string) bool
+	ReadFile(owner uuid.UUID, workflowName string, relativePath string) ([]byte, error)
+	ResolvePath(owner uuid.UUID, workflowName string, relativePath string) (string, error)
+	FileExists(owner uuid.UUID, workflowName string, relativePath string) bool
 }
 
 // QueueManagerPort defines the queue manager operations used by the API layer.

@@ -77,13 +77,13 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	startTime := time.Now()
 
 	// 3. Read the orchestration file.
-	orchBytes, err := e.fileReader.ReadFile(workflowName, node.Config.OrchestrationFile)
+	orchBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.OrchestrationFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read orchestration: %w", node.ID, err)
 	}
 
 	// 4. Read the template file.
-	templateBytes, err := e.fileReader.ReadFile(workflowName, node.Config.TemplateFile)
+	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read template: %w", node.ID, err)
 	}

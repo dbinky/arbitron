@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -36,7 +37,7 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 	return &mockWorkflowRepo{workflows: make(map[string]*workflow.Workflow)}
 }
 
-func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
+func (r *mockWorkflowRepo) Load(_ context.Context, _ workflow.Scope, name string) (*workflow.Workflow, error) {
 	wf, ok := r.workflows[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
@@ -44,7 +45,7 @@ func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workf
 	return wf, nil
 }
 
-func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error) {
+func (r *mockWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	var summaries []workflow.WorkflowSummary
 	for _, wf := range r.workflows {
 		summaries = append(summaries, workflow.WorkflowSummary{
@@ -57,37 +58,60 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
 }
 
-func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
-func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return nil }
-func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error                      { return nil }
-func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+func (r *mockWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
-func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return nil }
-func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+func (r *mockWorkflowRepo) Update(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
+	return nil
+}
+func (r *mockWorkflowRepo) Delete(_ context.Context, _ workflow.Scope, _ string) error { return nil }
+func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ workflow.Scope, _ string, _ string, _ []byte) error {
+	return nil
+}
+func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ workflow.Scope, _ string, _ string) error {
+	return nil
+}
+func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ workflow.Scope, _ string) ([]string, error) {
 	return nil, nil
+}
+func (r *mockWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, name string) (bool, error) {
+	_, ok := r.workflows[name]
+	return ok, nil
 }
 
 type errWorkflowRepo struct{ err error }
 
-func (r *errWorkflowRepo) Load(_ context.Context, _ string) (*workflow.Workflow, error) { return nil, r.err }
-func (r *errWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error)  { return nil, r.err }
-func (r *errWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
-	return r.err
-}
-func (r *errWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error { return r.err }
-func (r *errWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error { return r.err }
-func (r *errWorkflowRepo) Delete(_ context.Context, _ string) error                      { return r.err }
-func (r *errWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
-	return r.err
-}
-func (r *errWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return r.err }
-func (r *errWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+func (r *errWorkflowRepo) Load(_ context.Context, _ workflow.Scope, _ string) (*workflow.Workflow, error) {
 	return nil, r.err
+}
+func (r *errWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	return nil, r.err
+}
+func (r *errWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
+	return r.err
+}
+func (r *errWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
+	return r.err
+}
+func (r *errWorkflowRepo) Update(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
+	return r.err
+}
+func (r *errWorkflowRepo) Delete(_ context.Context, _ workflow.Scope, _ string) error { return r.err }
+func (r *errWorkflowRepo) WriteFile(_ context.Context, _ workflow.Scope, _ string, _ string, _ []byte) error {
+	return r.err
+}
+func (r *errWorkflowRepo) DeleteFile(_ context.Context, _ workflow.Scope, _ string, _ string) error {
+	return r.err
+}
+func (r *errWorkflowRepo) ListFiles(_ context.Context, _ workflow.Scope, _ string) ([]string, error) {
+	return nil, r.err
+}
+func (r *errWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
+	return false, r.err
 }
 
 type mockWorkflowService struct {
@@ -109,15 +133,15 @@ func newMockFileReader() *mockFileReader {
 	return &mockFileReader{existingFiles: make(map[string]bool)}
 }
 
-func (r *mockFileReader) ReadFile(workflowName, relativePath string) ([]byte, error) {
+func (r *mockFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
 	return nil, nil
 }
 
-func (r *mockFileReader) ResolvePath(workflowName, relativePath string) (string, error) {
+func (r *mockFileReader) ResolvePath(_ uuid.UUID, workflowName, relativePath string) (string, error) {
 	return "", nil
 }
 
-func (r *mockFileReader) FileExists(workflowName, relativePath string) bool {
+func (r *mockFileReader) FileExists(_ uuid.UUID, workflowName, relativePath string) bool {
 	key := workflowName + "/" + relativePath
 	return r.existingFiles[key]
 }
@@ -126,6 +150,22 @@ func (r *mockFileReader) FileExists(workflowName, relativePath string) bool {
 // Helper to create chi context with URL params
 // ---------------------------------------------------------------------------
 
+// testUserID is the default authenticated caller injected into handler test
+// requests; the Phase 1 auth middleware normally supplies this in production.
+var testUserID = uuid.MustParse("99999999-9999-9999-9999-999999999999")
+
+// withTestIdentity injects a default authenticated identity into the request
+// context so handlers that resolve the caller's scope via
+// identity.MustFromContext do not panic. The production auth middleware
+// guarantees this presence.
+func withTestIdentity(r *http.Request) *http.Request {
+	return r.WithContext(identity.WithIdentity(r.Context(), identity.Identity{
+		UserID:   testUserID,
+		Username: "tester",
+		Role:     identity.RoleUser,
+	}))
+}
+
 func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	rctx := chi.RouteContext(r.Context())
 	if rctx == nil {
@@ -133,7 +173,12 @@ func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	}
 	rctx.URLParams.Add(key, value)
 	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, rctx)
-	return r.WithContext(ctx)
+	r = r.WithContext(ctx)
+	// Ensure every handler request carries an authenticated identity.
+	if _, ok := identity.FromContext(r.Context()); !ok {
+		r = withTestIdentity(r)
+	}
+	return r
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +214,7 @@ func TestWorkflowHandler_List(t *testing.T) {
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+		req = withTestIdentity(req)
 		w := httptest.NewRecorder()
 		h.List(w, req)
 
@@ -186,6 +232,7 @@ func TestWorkflowHandler_List(t *testing.T) {
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+		req = withTestIdentity(req)
 		w := httptest.NewRecorder()
 		h.List(w, req)
 
@@ -644,6 +691,7 @@ func TestWorkflowHandler_List_RepoError(t *testing.T) {
 	h := adapthttp.NewWorkflowHandler(&errWorkflowRepo{err: fmt.Errorf("db down")}, &mockWorkflowService{}, newMockFileReader(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+	req = withTestIdentity(req)
 	w := httptest.NewRecorder()
 	h.List(w, req)
 
@@ -698,7 +746,7 @@ func newCapturingWorkflowRepo() *capturingWorkflowRepo {
 	}
 }
 
-func (r *capturingWorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
+func (r *capturingWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, name string, positions map[string]workflow.NodePosition) error {
 	if r.saveErr != nil {
 		return r.saveErr
 	}
@@ -956,42 +1004,42 @@ func newCrudWorkflowRepo() *crudWorkflowRepo {
 	}
 }
 
-func (r *crudWorkflowRepo) Create(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (r *crudWorkflowRepo) Create(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if r.createFn != nil {
 		return r.createFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (r *crudWorkflowRepo) Update(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (r *crudWorkflowRepo) Update(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if r.updateFn != nil {
 		return r.updateFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (r *crudWorkflowRepo) Delete(ctx context.Context, name string) error {
+func (r *crudWorkflowRepo) Delete(ctx context.Context, _ workflow.Scope, name string) error {
 	if r.deleteFn != nil {
 		return r.deleteFn(ctx, name)
 	}
 	return nil
 }
 
-func (r *crudWorkflowRepo) WriteFile(ctx context.Context, name, path string, data []byte) error {
+func (r *crudWorkflowRepo) WriteFile(ctx context.Context, _ workflow.Scope, name, path string, data []byte) error {
 	if r.writeFileFn != nil {
 		return r.writeFileFn(ctx, name, path, data)
 	}
 	return nil
 }
 
-func (r *crudWorkflowRepo) DeleteFile(ctx context.Context, name, path string) error {
+func (r *crudWorkflowRepo) DeleteFile(ctx context.Context, _ workflow.Scope, name, path string) error {
 	if r.deleteFileFn != nil {
 		return r.deleteFileFn(ctx, name, path)
 	}
 	return nil
 }
 
-func (r *crudWorkflowRepo) ListFiles(ctx context.Context, name string) ([]string, error) {
+func (r *crudWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name string) ([]string, error) {
 	if r.listFilesFn != nil {
 		return r.listFilesFn(ctx, name)
 	}
@@ -1010,7 +1058,7 @@ func newContentFileReader() *contentFileReader {
 	}
 }
 
-func (r *contentFileReader) ReadFile(workflowName, relativePath string) ([]byte, error) {
+func (r *contentFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
 	if r.readFileFn != nil {
 		return r.readFileFn(workflowName, relativePath)
 	}
@@ -1030,7 +1078,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusCreated, w.Code)
 		var resp workflow.Workflow
@@ -1049,7 +1097,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusConflict, w.Code)
 		var resp adapthttp.ErrorResponse
@@ -1064,7 +1112,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader("{not json"))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -1077,7 +1125,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp adapthttp.ErrorResponse
@@ -1093,7 +1141,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -1108,7 +1156,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		var resp adapthttp.ErrorResponse
@@ -1127,7 +1175,7 @@ func TestWorkflowHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/workflows", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		h.Create(w, req)
+		h.Create(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})

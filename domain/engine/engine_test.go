@@ -32,17 +32,17 @@ func newMockWorkflowRepo() *mockWorkflowRepo {
 	return &mockWorkflowRepo{workflows: make(map[string]*workflow.Workflow)}
 }
 
-func (r *mockWorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
+func (r *mockWorkflowRepo) Load(_ context.Context, _ workflow.Scope, name string) (*workflow.Workflow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	wf, ok := r.workflows[name]
 	if !ok {
-		return nil, fmt.Errorf("workflow not found: %s", name)
+		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 	return wf, nil
 }
 
-func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, error) {
+func (r *mockWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var summaries []workflow.WorkflowSummary
@@ -55,23 +55,31 @@ func (r *mockWorkflowRepo) List(_ context.Context) ([]workflow.WorkflowSummary, 
 	return summaries, nil
 }
 
-func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+func (r *mockWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
 }
 
-func (r *mockWorkflowRepo) Create(_ context.Context, _ string, _ *workflow.Workflow) error {
+func (r *mockWorkflowRepo) Create(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
-func (r *mockWorkflowRepo) Update(_ context.Context, _ string, _ *workflow.Workflow) error {
+func (r *mockWorkflowRepo) Update(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
 	return nil
 }
-func (r *mockWorkflowRepo) Delete(_ context.Context, _ string) error { return nil }
-func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ string, _ string, _ []byte) error {
+func (r *mockWorkflowRepo) Delete(_ context.Context, _ workflow.Scope, _ string) error { return nil }
+func (r *mockWorkflowRepo) WriteFile(_ context.Context, _ workflow.Scope, _ string, _ string, _ []byte) error {
 	return nil
 }
-func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ string, _ string) error { return nil }
-func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ string) ([]string, error) {
+func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ workflow.Scope, _ string, _ string) error {
+	return nil
+}
+func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ workflow.Scope, _ string) ([]string, error) {
 	return nil, nil
+}
+func (r *mockWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, name string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.workflows[name]
+	return ok, nil
 }
 
 func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {

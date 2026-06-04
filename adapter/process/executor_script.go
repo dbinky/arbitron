@@ -42,7 +42,7 @@ func NewScriptExecutor(fr engine.FileReader, envPassthrough []string) *ScriptExe
 // Execute resolves the script path, runs it with the configured interpreter,
 // pipes the variable store as JSON to stdin, and parses stdout as JSON.
 func (e *ScriptExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*engine.NodeResult, error) {
-	scriptPath, err := e.fileReader.ResolvePath(workflowName, node.Config.ScriptFile)
+	scriptPath, err := e.fileReader.ResolvePath(engine.OwnerFromContext(ctx), workflowName, node.Config.ScriptFile)
 	if err != nil {
 		return nil, fmt.Errorf("script %q: resolve path: %w", node.ID, err)
 	}

@@ -19,10 +19,30 @@ import (
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
+
+// routerTestUserID is the authenticated caller injected by authedRouter; the
+// production AuthMiddleware supplies an identity on every /api/v1 request.
+var routerTestUserID = uuid.MustParse("77777777-7777-7777-7777-777777777777")
+
+// authedRouter wraps a router with a middleware that injects a default
+// authenticated identity, mirroring the production AuthMiddleware so handlers
+// that resolve the caller's scope via identity.MustFromContext work in the
+// route-wiring tests (which build the router without the auth middleware).
+func authedRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := identity.WithIdentity(r.Context(), identity.Identity{
+			UserID:   routerTestUserID,
+			Username: "router-tester",
+			Role:     identity.RoleAdmin,
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 // ---------------------------------------------------------------------------
 // Full router integration mocks
@@ -189,7 +209,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+	router := authedRouter(adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil))
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)

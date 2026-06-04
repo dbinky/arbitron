@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,9 +15,34 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// callerOwner returns the authenticated caller's user ID from context. The
+// Phase 1 auth middleware guarantees an identity is present on every request
+// reaching these handlers.
+func callerOwner(ctx context.Context) uuid.UUID {
+	return identity.MustFromContext(ctx).UserID
+}
+
+// callerPrivate returns the caller's private storage scope.
+func callerPrivate(ctx context.Context) workflow.Scope {
+	return workflow.Private(callerOwner(ctx))
+}
+
+// ownerBoundChecker adapts a scope-aware engine.FileReader to the owner-blind
+// workflow.FileChecker by binding the caller's owner, so validation searches
+// the caller's private workspace first then shared.
+type ownerBoundChecker struct {
+	fr    engine.FileReader
+	owner uuid.UUID
+}
+
+func (c ownerBoundChecker) FileExists(workflowName, relativePath string) bool {
+	return c.fr.FileExists(c.owner, workflowName, relativePath)
+}
 
 // WorkflowService defines the engine methods needed by workflow handlers.
 type WorkflowService interface {
@@ -81,7 +107,9 @@ func safeWorkflowName(name string) bool {
 
 // List handles GET /workflows and returns a JSON array of workflow summaries.
 func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
-	summaries, err := h.repo.List(r.Context())
+	// TODO(task-3): merge shared workflows into the listing, tagged with scope
+	// and publisher. For now list the caller's private workspace only.
+	summaries, err := h.repo.List(r.Context(), callerPrivate(r.Context()))
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list workflows")
 		return
@@ -99,7 +127,7 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(r.Context(), name)
+	wf, _, err := workflow.LoadVisible(r.Context(), h.repo, callerOwner(r.Context()), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -118,7 +146,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(r.Context(), name)
+	wf, _, err := workflow.LoadVisible(r.Context(), h.repo, callerOwner(r.Context()), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -128,7 +156,8 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader, h.profileChecker, h.connChecker)
+	checker := ownerBoundChecker{fr: h.fileReader, owner: callerOwner(r.Context())}
+	errs := workflow.Validate(wf, checker, h.profileChecker, h.connChecker)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}
@@ -215,7 +244,7 @@ func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
+	if err := h.repo.SaveNodePositions(r.Context(), callerPrivate(r.Context()), name, req.Positions); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
@@ -283,7 +312,7 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.Create(r.Context(), wf.Name, &wf); err != nil {
+	if err := h.repo.Create(r.Context(), callerPrivate(r.Context()), wf.Name, &wf); err != nil {
 		if errors.Is(err, workflow.ErrAlreadyExists) {
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
@@ -312,7 +341,7 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// body contained so workflow.json stays consistent with its directory name.
 	wf.Name = name
 
-	if err := h.repo.Update(r.Context(), name, &wf); err != nil {
+	if err := h.repo.Update(r.Context(), callerPrivate(r.Context()), name, &wf); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
@@ -331,7 +360,7 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), name); err != nil {
+	if err := h.repo.Delete(r.Context(), callerPrivate(r.Context()), name); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 			return
@@ -351,7 +380,7 @@ func (h *WorkflowHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := h.repo.ListFiles(r.Context(), name)
+	files, _, err := workflow.ListFilesVisible(r.Context(), h.repo, callerOwner(r.Context()), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -380,9 +409,9 @@ func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := h.fileReader.ReadFile(name, filePath)
+	data, err := h.fileReader.ReadFile(callerOwner(r.Context()), name, filePath)
 	if err != nil {
-		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) || errors.Is(err, os.ErrNotExist) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}
@@ -415,7 +444,7 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.WriteFile(r.Context(), name, filePath, data); err != nil {
+	if err := h.repo.WriteFile(r.Context(), callerPrivate(r.Context()), name, filePath, data); err != nil {
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
@@ -444,7 +473,7 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.DeleteFile(r.Context(), name, filePath); err != nil {
+	if err := h.repo.DeleteFile(r.Context(), callerPrivate(r.Context()), name, filePath); err != nil {
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return

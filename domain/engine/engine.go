@@ -105,7 +105,16 @@ type edgeTarget struct {
 func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	ctx := context.Background()
 
-	wf, err := e.workflows.Load(ctx, workflowName)
+	// Resolve the triggering owner. Trigger has no context identity yet (Task 7
+	// threads ctx through and resolves the triggering user); the interim path
+	// uses the default user as the owner so the private-then-shared read still
+	// works for background/system triggers.
+	owner, err := e.users.GetDefaultUser(ctx)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("failed to get default user: %w", err)
+	}
+
+	wf, _, err := workflow.LoadVisible(ctx, e.workflows, owner, workflowName)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
@@ -152,11 +161,10 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		return uuid.Nil, false, fmt.Errorf("failed to parse workflow snapshot: %w", err)
 	}
 
-	// Get default user for OwnerID.
-	ownerID, err := e.users.GetDefaultUser(ctx)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to get default user: %w", err)
-	}
+	// OwnerID is the triggering user; for background/system triggers (no
+	// identity in context) this is the default user resolved above. Task 7
+	// replaces this with the triggering identity when present.
+	ownerID := owner
 
 	now := time.Now()
 	snap := vars.Snapshot()
@@ -264,6 +272,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		return
 	}
 	workflowName = inst.WorkflowName
+
+	// Carry the instance owner into the run context so file-reading executors
+	// resolve workflow files from the owner's private workspace (with a shared
+	// fallback) via the scope-aware FileReader.
+	ctx = withOwner(ctx, inst.OwnerID)
 
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)

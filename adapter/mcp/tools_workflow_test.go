@@ -11,8 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 )
+
+// mcpTestUserID is the authenticated caller injected into MCP tool-call
+// contexts (the Phase 1 auth middleware supplies this in production).
+var mcpTestUserID = uuid.MustParse("88888888-8888-8888-8888-888888888888")
 
 // --- Mocks ---
 
@@ -27,64 +33,68 @@ type stubWorkflowRepo struct {
 	listFilesFn  func(ctx context.Context, name string) ([]string, error)
 }
 
-func (s *stubWorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, error) {
+func (s *stubWorkflowRepo) List(ctx context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	if s.listFn != nil {
 		return s.listFn(ctx)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) Load(ctx context.Context, name string) (*workflow.Workflow, error) {
+func (s *stubWorkflowRepo) Load(ctx context.Context, _ workflow.Scope, name string) (*workflow.Workflow, error) {
 	if s.loadFn != nil {
 		return s.loadFn(ctx, name)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) Create(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (s *stubWorkflowRepo) Create(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if s.createFn != nil {
 		return s.createFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) Update(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (s *stubWorkflowRepo) Update(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if s.updateFn != nil {
 		return s.updateFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) Delete(ctx context.Context, name string) error {
+func (s *stubWorkflowRepo) Delete(ctx context.Context, _ workflow.Scope, name string) error {
 	if s.deleteFn != nil {
 		return s.deleteFn(ctx, name)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) WriteFile(ctx context.Context, name, relativePath string, content []byte) error {
+func (s *stubWorkflowRepo) WriteFile(ctx context.Context, _ workflow.Scope, name, relativePath string, content []byte) error {
 	if s.writeFileFn != nil {
 		return s.writeFileFn(ctx, name, relativePath, content)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) DeleteFile(ctx context.Context, name, relativePath string) error {
+func (s *stubWorkflowRepo) DeleteFile(ctx context.Context, _ workflow.Scope, name, relativePath string) error {
 	if s.deleteFileFn != nil {
 		return s.deleteFileFn(ctx, name, relativePath)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) ListFiles(ctx context.Context, name string) ([]string, error) {
+func (s *stubWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name string) ([]string, error) {
 	if s.listFilesFn != nil {
 		return s.listFilesFn(ctx, name)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
+}
+
+func (s *stubWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
+	return false, nil
 }
 
 type stubFileReader struct {
@@ -92,16 +102,16 @@ type stubFileReader struct {
 	fileExistsFn func(workflowName, path string) bool
 }
 
-func (s *stubFileReader) ReadFile(workflowName, relativePath string) ([]byte, error) {
+func (s *stubFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
 	if s.readFileFn != nil {
 		return s.readFileFn(workflowName, relativePath)
 	}
 	return nil, nil
 }
 
-func (s *stubFileReader) ResolvePath(_, _ string) (string, error) { return "", nil }
+func (s *stubFileReader) ResolvePath(_ uuid.UUID, _, _ string) (string, error) { return "", nil }
 
-func (s *stubFileReader) FileExists(workflowName, relativePath string) bool {
+func (s *stubFileReader) FileExists(_ uuid.UUID, workflowName, relativePath string) bool {
 	if s.fileExistsFn != nil {
 		return s.fileExistsFn(workflowName, relativePath)
 	}
@@ -128,7 +138,12 @@ func callTool(t *testing.T, srv *adaptmcp.Server, name string, args map[string]a
 	req.Params.Name = name
 	req.Params.Arguments = args
 
-	result := srv.MCPServer().HandleMessage(context.Background(), mustMarshal(t, map[string]any{
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:   mcpTestUserID,
+		Username: "tester",
+		Role:     identity.RoleUser,
+	})
+	result := srv.MCPServer().HandleMessage(ctx, mustMarshal(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",

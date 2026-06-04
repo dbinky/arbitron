@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -437,8 +438,24 @@ type harness struct {
 	resolver    *providersadapter.StaticProfileResolver
 	connChecker *providersadapter.ConnChecker
 	fileReader  *filesystem.FileReaderAdapter
+	defaultUser uuid.UUID
 	logBuf      *bytes.Buffer
 	binding     binding
+}
+
+// fileChecker returns the owner-bound workflow.FileChecker for this harness's
+// default user, used by validation scenarios (the FileReader is owner-aware).
+func (h *harness) fileChecker() workflow.FileChecker {
+	return harnessFileChecker{fr: h.fileReader, owner: h.defaultUser}
+}
+
+type harnessFileChecker struct {
+	fr    *filesystem.FileReaderAdapter
+	owner uuid.UUID
+}
+
+func (c harnessFileChecker) FileExists(workflowName, relativePath string) bool {
+	return c.fr.FileExists(c.owner, workflowName, relativePath)
 }
 
 // newHarness wires the full stack for one binding. It installs a buffer-backed
@@ -479,9 +496,15 @@ func newHarness(t *testing.T, b binding) *harness {
 	require.NoError(t, err)
 	connChecker := providersadapter.NewConnChecker(b.profiles, connStore)
 
-	// Real filesystem repo + reader rooted at examples/workflows (worked example
-	// loaded as data from disk). Real per-instance workspace under a temp dir.
-	root := examplesRoot(t)
+	// Real filesystem repo + reader. The worked example is committed flat under
+	// examples/workflows; the scope-aware repo expects per-user partitions, so
+	// copy it into a temp basePath under the default user's private workspace
+	// (the owner the engine resolves for background/system triggers).
+	defaultUser, err := users.GetDefaultUser(context.Background())
+	require.NoError(t, err)
+	root := t.TempDir()
+	copyDirTree(t, filepath.Join(examplesRoot(t), workedExample),
+		filepath.Join(root, "users", defaultUser.String(), workedExample))
 	workflowRepo := filesystem.NewWorkflowRepo(root)
 	fileReader := filesystem.NewFileReader(root)
 	wsMgr, err := filesystem.NewWorkspaceManager(t.TempDir())
@@ -541,6 +564,7 @@ func newHarness(t *testing.T, b binding) *harness {
 		resolver:    resolver,
 		connChecker: connChecker,
 		fileReader:  fileReader,
+		defaultUser: defaultUser,
 		logBuf:      &logBuf,
 		binding:     b,
 	}
@@ -603,11 +627,35 @@ func (h *harness) waitForTerminal(t *testing.T, id uuid.UUID, timeout time.Durat
 }
 
 // loadWorkedExampleGraph loads the worked example via the real filesystem repo
-// (the same definition the engine snapshots and runs).
+// (the same definition the engine snapshots and runs). The example is copied
+// into a temp basePath under a private partition for the scope-aware repo.
 func loadWorkedExampleGraph(t *testing.T) *workflow.Workflow {
 	t.Helper()
-	repo := filesystem.NewWorkflowRepo(examplesRoot(t))
-	wf, err := repo.Load(context.Background(), workedExample)
+	owner := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	root := t.TempDir()
+	copyDirTree(t, filepath.Join(examplesRoot(t), workedExample),
+		filepath.Join(root, "users", owner.String(), workedExample))
+	repo := filesystem.NewWorkflowRepo(root)
+	wf, err := repo.Load(context.Background(), workflow.Private(owner), workedExample)
 	require.NoError(t, err)
 	return wf
+}
+
+// copyDirTree recursively copies src into dst.
+func copyDirTree(t *testing.T, src, dst string) {
+	t.Helper()
+	entries, err := os.ReadDir(src)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			copyDirTree(t, s, d)
+			continue
+		}
+		data, err := os.ReadFile(s)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(d, data, 0o644))
+	}
 }

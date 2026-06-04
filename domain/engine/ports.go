@@ -10,11 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// FileReader provides access to workflow-associated files on disk.
+// FileReader provides access to workflow-associated files on disk. The owner
+// selects which user's private workspace to search first; the reader falls
+// back to the shared (published) space. For shared/system reads pass
+// uuid.Nil to search the shared space only.
 type FileReader interface {
-	ReadFile(workflowName string, relativePath string) ([]byte, error)
-	ResolvePath(workflowName string, relativePath string) (string, error)
-	FileExists(workflowName string, relativePath string) bool
+	ReadFile(owner uuid.UUID, workflowName string, relativePath string) ([]byte, error)
+	ResolvePath(owner uuid.UUID, workflowName string, relativePath string) (string, error)
+	FileExists(owner uuid.UUID, workflowName string, relativePath string) bool
 }
 
 // WorkspaceManager provides per-instance working directories for agent nodes.

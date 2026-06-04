@@ -40,7 +40,7 @@ func NewLLMCallExecutor(fr FileReader, selector ChatProviderSelector, resolver p
 // LLM provider, and processes the response.
 func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
 	// Read template file.
-	templateBytes, err := e.fileReader.ReadFile(workflowName, node.Config.TemplateFile)
+	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("llm_call %q: read template: %w", node.ID, err)
 	}
