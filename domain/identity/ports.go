@@ -12,6 +12,15 @@ import (
 // expired. Adapters wrap it with fmt.Errorf %w so errors.Is works at call sites.
 var ErrNotFound = errors.New("identity: not found")
 
+// ErrUnauthenticated is returned by domain services when the request carries no
+// identity in context. The auth middleware should already reject such requests
+// in org mode; the service check is defense-in-depth.
+var ErrUnauthenticated = errors.New("identity: unauthenticated")
+
+// ErrInvalidLabel is returned by TokenService.Mint when the token label is empty
+// or whitespace-only.
+var ErrInvalidLabel = errors.New("identity: token label is required")
+
 // Session is a server-side login session. ID is the RAW high-entropy token that
 // lives in the browser cookie; the store persists only sha256(ID) (see the
 // sqlite adapter), so a DB read leak cannot mint a session.

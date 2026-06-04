@@ -8,6 +8,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -73,6 +74,10 @@ type Deps struct {
 	// Create/Update and is sealed immediately; it is never returned by Get/List.
 	// Optional: when nil, the connection tools report the store as unavailable.
 	Connections provider.ConnectionStore
+	// Tokens powers the token_* tools. Every operation is scoped to the calling
+	// user's identity (carried on the tool ctx by the auth middleware). Optional:
+	// when nil, the token tools report the service as unavailable.
+	Tokens *identity.TokenService
 	// Logger is the structured logger used by tool handlers. SECURITY: the
 	// connection tools log the connection NAME only, never the api_key. Optional:
 	// a nil logger falls back to slog.Default().

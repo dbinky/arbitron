@@ -12,6 +12,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -77,6 +78,10 @@ type RouterDeps struct {
 	// (these routes establish the session). Nil in local mode / when auth is
 	// disabled.
 	AuthHandler *AuthHandler
+	// Tokens powers the personal API token endpoints under /api/v1/tokens. The
+	// service scopes every operation to the request identity, so the routes sit
+	// inside the authenticated group. Nil disables the token routes.
+	Tokens *identity.TokenService
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -230,6 +235,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 				r.Post("/{id}/interact/end", interactiveHandler.EndSession)
 			}
 		})
+
+		// Personal API token endpoints. The service scopes every call to the
+		// request identity injected by the auth middleware above, so a caller can
+		// only manage their own tokens.
+		if d.Tokens != nil {
+			th := NewTokenHandler(d.Tokens)
+			r.Route("/tokens", func(r chi.Router) {
+				r.Post("/", th.Create)
+				r.Get("/", th.List)
+				r.Delete("/{id}", th.Revoke)
+			})
+		}
 	})
 
 	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools

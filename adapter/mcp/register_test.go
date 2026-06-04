@@ -61,6 +61,10 @@ var expectedTools = []string{
 	"connection_delete",
 	"connection_get",
 	"connection_list",
+	// Personal API tokens (3)
+	"token_create",
+	"token_list",
+	"token_revoke",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {
