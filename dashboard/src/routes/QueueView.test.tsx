@@ -87,6 +87,41 @@ describe('QueueView dismiss handlers', () => {
     dismissAll.mockResolvedValue({ status: 'ok' })
   })
 
+  // Slice: the item must actually disappear from the UI after dismiss + refetch.
+  // This tests the observable outcome: setInstances is called with the new (empty) list
+  // and the component re-renders. A bug where the refetch result is silently discarded
+  // (e.g. setState not called) would not be caught by the call-count assertions below.
+  it('dismissed item disappears from UI after successful dismiss and refetch', async () => {
+    const inst = {
+      id: 'gone',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    list.mockImplementation((params: { state?: string } = {}) =>
+      Promise.resolve(params.state === 'failed' ? [inst] : []),
+    )
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    // Row is visible with a Dismiss button.
+    await screen.findByRole('button', { name: 'Dismiss' })
+
+    // After dismiss succeeds, switch the mock so refetch returns an empty list.
+    list.mockResolvedValue([])
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    // The Dismiss button must be gone once the refetch has been consumed.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    })
+  })
+
   // Happy: dismiss handler calls api.instances.dismiss with the instance id, then refetches.
   // The Failed section is expanded by default so the row is visible without extra interaction.
   it('handleDismiss calls api.instances.dismiss with the instance id, then refetches', async () => {

@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### SLICE-001: Dismiss vertical slice missing observable UI outcome test
+**Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 29
+**Detail**: The `handleDismiss` test verified that `api.instances.dismiss` and subsequent `list` refetch were called, but NOT the observable UI outcome: item disappears after the refetch returns an empty list. A regression where the component discarded the refetch result (e.g. `setInstances` call removed) would not fail any existing test. Added `dismissed item disappears from UI after successful dismiss and refetch`: initial list returns `[inst]`, dismiss is clicked, list mock is switched to return `[]`, then asserts the Dismiss button is gone.
+
+---
+
 ### DISMISS-002: DismissAll since-filter not tested at handler level
 **Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`)
 **Fixed**: Iteration 28
