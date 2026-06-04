@@ -136,3 +136,97 @@ func TestUserRepo_GetBySubject_NullSubjectNotMatched(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, instance.ErrNotFound)
 }
+
+func TestUserRepo_UpdateUsername_ChangesDisplayName(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	u := &instance.User{ID: uuid.New(), Subject: ptr("sub-upd"), Username: "before", Role: identity.RoleUser}
+	require.NoError(t, repo.Create(ctx, u))
+
+	require.NoError(t, repo.UpdateUsername(ctx, u.ID, "after"))
+
+	got, err := repo.GetByID(ctx, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "after", got.Username)
+}
+
+// Edge: UpdateUsername on a non-existent ID is a silent no-op (0 rows affected,
+// no error). Callers must ensure existence before calling (Provisioner.Resolve
+// always does GetBySubject first).
+func TestUserRepo_UpdateUsername_NonExistentUserNoError(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	err := repo.UpdateUsername(context.Background(), uuid.New(), "ghost")
+	assert.NoError(t, err, "UpdateUsername of a missing row must not return an error")
+}
+
+func TestUserRepo_List_ReturnsAllUsers(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, &instance.User{ID: uuid.New(), Subject: ptr("s1"), Username: "u1", Role: identity.RoleUser}))
+	require.NoError(t, repo.Create(ctx, &instance.User{ID: uuid.New(), Subject: ptr("s2"), Username: "u2", Role: identity.RoleAdmin}))
+
+	users, err := repo.List(ctx)
+	require.NoError(t, err)
+	// at least 3: the seeded 'local' user plus the two we added
+	assert.GreaterOrEqual(t, len(users), 3)
+	names := make(map[string]bool)
+	for _, u := range users {
+		names[u.Username] = true
+	}
+	assert.True(t, names["u1"])
+	assert.True(t, names["u2"])
+	assert.True(t, names["local"], "default 'local' user must appear in List")
+}
+
+func TestUserRepo_UpdateRole_ChangesRole(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	u := &instance.User{ID: uuid.New(), Subject: ptr("sub-role"), Username: "roleuser", Role: identity.RoleUser}
+	require.NoError(t, repo.Create(ctx, u))
+
+	require.NoError(t, repo.UpdateRole(ctx, u.ID, string(identity.RoleAdmin)))
+
+	got, err := repo.GetByID(ctx, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, got.Role)
+}
+
+// Edge: UpdateRole on a non-existent ID is a silent no-op. Callers (UserService.SetRole)
+// check existence first via GetByID.
+func TestUserRepo_UpdateRole_NonExistentUserNoError(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	err := repo.UpdateRole(context.Background(), uuid.New(), string(identity.RoleUser))
+	assert.NoError(t, err, "UpdateRole of a missing row must not return an error")
+}
+
+func TestUserRepo_CountAdmins_ReflectsCurrentAdmins(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	// The seeded 'local' user is an admin.
+	n, err := repo.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the default admin should be present initially")
+
+	// Add a second admin.
+	u := &instance.User{ID: uuid.New(), Subject: ptr("sub-adm2"), Username: "adm2", Role: identity.RoleAdmin}
+	require.NoError(t, repo.Create(ctx, u))
+	n2, err := repo.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n2)
+
+	// Demote to user role; count drops back to 1.
+	require.NoError(t, repo.UpdateRole(ctx, u.ID, string(identity.RoleUser)))
+	n3, err := repo.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n3)
+}

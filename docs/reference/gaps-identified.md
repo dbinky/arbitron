@@ -8,6 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
+### GAP-FA4-P1-01: `UpdateUsername`, `List`, `UpdateRole`, `CountAdmins` had no test coverage
+**Area**: Focus Area 4 — Users schema & repo (Pass 1)
+**Fix**: Added 6 tests to `adapter/sqlite/user_repo_test.go`: `TestUserRepo_UpdateUsername_ChangesDisplayName`, `TestUserRepo_UpdateUsername_NonExistentUserNoError` (documents silent-no-op contract), `TestUserRepo_List_ReturnsAllUsers`, `TestUserRepo_UpdateRole_ChangesRole`, `TestUserRepo_UpdateRole_NonExistentUserNoError`, `TestUserRepo_CountAdmins_ReflectsCurrentAdmins` (covers initial state, add second admin, demote back to 1).
+
 ### GAP-FA3-P2-01: `Token.TokenHash` and `DeviceCode.HashedCode` had no `json:"-"` tag
 **Area**: Focus Area 3 — Identity ports (Pass 2)
 **Fix**: Added `json:"-"` to `Token.TokenHash` and `DeviceCode.HashedCode` in `domain/identity/ports.go`. Added `TestToken_JSONMarshal_HashNeverLeaks` and `TestDeviceCode_JSONMarshal_HashedCodeNeverLeaks` in `ports_test.go` — each marshals the struct directly and asserts neither the field value nor field name (`"TokenHash"`, `"token_hash"`, `"HashedCode"`, `"hashed_code"`) appears in the output. The tag makes the secrecy guarantee self-enforcing at the type level rather than relying solely on DTOs and documentation.
