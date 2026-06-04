@@ -20,6 +20,7 @@ export interface ListInstancesParams {
   since?: string
   limit?: number
   offset?: number
+  includeDismissed?: boolean
 }
 
 /** Throws on non-2xx responses with a descriptive message. */
@@ -65,6 +66,7 @@ export const api = {
       if (params?.since) q.set('since', params.since)
       if (params?.limit != null) q.set('limit', String(params.limit))
       if (params?.offset != null) q.set('offset', String(params.offset))
+      if (params?.includeDismissed) q.set('includeDismissed', 'true')
       const qs = q.toString()
       return request(`/api/v1/instances${qs ? `?${qs}` : ''}`)
     },
@@ -97,6 +99,29 @@ export const api = {
     /** Rerun a completed/failed instance, creating a new instance. */
     rerun(id: string): Promise<{ instanceId: string; state: string }> {
       return post(`/api/v1/instances/${id}/rerun`)
+    },
+
+    /** Dismiss a terminal instance from the acting user's view (per user). */
+    dismiss(id: string): Promise<{ status: string }> {
+      return post(`/api/v1/instances/${id}/dismiss`)
+    },
+
+    /** Restore a previously dismissed instance for the acting user. */
+    restore(id: string): Promise<{ status: string }> {
+      return post(`/api/v1/instances/${id}/restore`)
+    },
+
+    /**
+     * Dismiss every currently listed instance in a terminal category. Pass the
+     * same `since` window the view uses (Failed/Completed are windowed to
+     * `daysAgo(5)`) so the backend dismisses exactly what the user sees, matching
+     * the spec's "every item currently listed in that category." Omitting `since`
+     * dismisses the full server-side window for that state (up to the list limit).
+     */
+    dismissAll(state: 'failed' | 'completed', since?: string): Promise<{ status: string }> {
+      const q = new URLSearchParams({ state })
+      if (since) q.set('since', since)
+      return post(`/api/v1/instances/dismiss-all?${q.toString()}`)
     },
 
     /** Get the execution trace for an instance. */
