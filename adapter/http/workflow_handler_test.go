@@ -1095,6 +1095,70 @@ func (r *crudWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name
 	return []string{}, nil
 }
 
+// scopeCapturingWorkflowRepo wraps mockWorkflowRepo and records the last
+// non-shared scope passed to Create and List so tests can assert that the
+// private workspace scope is derived from the request context identity.
+type scopeCapturingWorkflowRepo struct {
+	mockWorkflowRepo
+	lastPrivateScope workflow.Scope
+}
+
+func newScopeCapturingWorkflowRepo() *scopeCapturingWorkflowRepo {
+	return &scopeCapturingWorkflowRepo{mockWorkflowRepo: *newMockWorkflowRepo()}
+}
+
+func (r *scopeCapturingWorkflowRepo) Create(_ context.Context, s workflow.Scope, _ string, _ *workflow.Workflow) error {
+	r.lastPrivateScope = s
+	return nil
+}
+
+func (r *scopeCapturingWorkflowRepo) List(_ context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	if s.Kind == workflow.ScopePrivate {
+		r.lastPrivateScope = s
+	}
+	return nil, nil
+}
+
+// TestWorkflowHandler_ScopeFromContextIdentity pins the FA-30 paired invariant:
+// the private workspace scope used by every operation is derived solely from the
+// authenticated caller's identity in the request context — not from any URL
+// parameter or request body field. Two callers with different identities have
+// completely separate private scopes.
+func TestWorkflowHandler_ScopeFromContextIdentity(t *testing.T) {
+	repo := newScopeCapturingWorkflowRepo()
+	h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+	userA := uuid.New()
+	userB := uuid.New()
+
+	// User A creates a workflow — private scope OwnerID must be userA.
+	reqA := httptest.NewRequest(http.MethodPost, "/workflows",
+		strings.NewReader(`{"name":"wf-a","description":"A's workflow"}`))
+	reqA = reqA.WithContext(identity.WithIdentity(reqA.Context(), identity.Identity{
+		UserID: userA, Role: identity.RoleUser,
+	}))
+	wA := httptest.NewRecorder()
+	h.Create(wA, reqA)
+	require.Equal(t, http.StatusCreated, wA.Code)
+	assert.Equal(t, workflow.ScopePrivate, repo.lastPrivateScope.Kind)
+	assert.Equal(t, userA, repo.lastPrivateScope.OwnerID,
+		"private scope must be keyed to user A (the authenticated caller)")
+
+	// User B makes a List call — the private list scope must be userB, not userA.
+	reqB := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+	reqB = reqB.WithContext(identity.WithIdentity(reqB.Context(), identity.Identity{
+		UserID: userB, Role: identity.RoleUser,
+	}))
+	wB := httptest.NewRecorder()
+	h.List(wB, reqB)
+	require.Equal(t, http.StatusOK, wB.Code)
+	assert.Equal(t, workflow.ScopePrivate, repo.lastPrivateScope.Kind)
+	assert.Equal(t, userB, repo.lastPrivateScope.OwnerID,
+		"private scope must switch to user B's identity — scope is context-derived, not global")
+	assert.NotEqual(t, userA, repo.lastPrivateScope.OwnerID,
+		"user B must not inherit user A's scope")
+}
+
 // contentFileReader extends mockFileReader with configurable ReadFile content.
 // capturedOwner records the last owner UUID passed to ReadFile so tests can
 // verify that callerOwner(ctx) is correctly threaded through.
