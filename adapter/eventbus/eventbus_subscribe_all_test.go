@@ -29,11 +29,15 @@ func TestSubscribeAll_ReceivesEventsFromAnyInstance(t *testing.T) {
 	bus.Publish(id2, evt2)
 	bus.Publish(id3, evt3)
 
-	for i, expected := range []engine.Event{evt1, evt2, evt3} {
+	for i, tc := range []struct {
+		evt engine.Event
+		id  uuid.UUID
+	}{{evt1, id1}, {evt2, id2}, {evt3, id3}} {
 		select {
 		case received := <-ch:
-			assert.Equal(t, expected.Type, received.Type, "event %d type", i)
-			assert.Equal(t, expected.Data, received.Data, "event %d data", i)
+			assert.Equal(t, tc.evt.Type, received.Event.Type, "event %d type", i)
+			assert.Equal(t, tc.evt.Data, received.Event.Data, "event %d data", i)
+			assert.Equal(t, tc.id, received.InstanceID, "event %d instance ID is carried on the ScopedEvent", i)
 		case <-time.After(time.Second):
 			t.Fatalf("timed out waiting for event %d", i)
 		}
@@ -91,7 +95,8 @@ func TestSubscribeAll_CoexistsWithPerInstanceSubscribe(t *testing.T) {
 
 	select {
 	case received := <-allCh:
-		assert.Equal(t, "test", received.Type)
+		assert.Equal(t, "test", received.Event.Type)
+		assert.Equal(t, instanceID, received.InstanceID)
 	case <-time.After(time.Second):
 		t.Fatal("allCh timed out")
 	}
@@ -109,7 +114,8 @@ func TestSubscribeAll_CoexistsWithPerInstanceSubscribe(t *testing.T) {
 
 	select {
 	case received := <-allCh:
-		assert.Equal(t, "other", received.Type)
+		assert.Equal(t, "other", received.Event.Type)
+		assert.Equal(t, otherID, received.InstanceID)
 	case <-time.After(time.Second):
 		t.Fatal("allCh timed out for other instance")
 	}
@@ -133,13 +139,46 @@ func TestSubscribeAll_MultipleAllSubscribers(t *testing.T) {
 	evt := engine.Event{Type: "broadcast", Timestamp: time.Now(), Data: "hello"}
 	bus.Publish(uuid.New(), evt)
 
-	for i, ch := range []<-chan engine.Event{ch1, ch2} {
+	for i, ch := range []<-chan engine.ScopedEvent{ch1, ch2} {
 		select {
 		case received := <-ch:
-			assert.Equal(t, "broadcast", received.Type, "subscriber %d", i)
+			assert.Equal(t, "broadcast", received.Event.Type, "subscriber %d", i)
 		case <-time.After(time.Second):
 			t.Fatalf("subscriber %d timed out", i)
 		}
+	}
+}
+
+func TestSubscribeAll_DeliversScopedEventWithInstanceID(t *testing.T) {
+	bus := eventbus.New()
+
+	allCh, allUnsub := bus.SubscribeAll()
+	defer allUnsub()
+
+	instanceID := uuid.New()
+	instCh, instUnsub := bus.Subscribe(instanceID)
+	defer instUnsub()
+
+	evt := engine.Event{Type: "node_started", Timestamp: time.Now(), Data: "payload"}
+	bus.Publish(instanceID, evt)
+
+	// SubscribeAll yields a ScopedEvent carrying the instance ID + the event.
+	select {
+	case sev := <-allCh:
+		assert.Equal(t, instanceID, sev.InstanceID)
+		assert.Equal(t, evt.Type, sev.Event.Type)
+		assert.Equal(t, evt.Data, sev.Event.Data)
+	case <-time.After(time.Second):
+		t.Fatal("SubscribeAll timed out")
+	}
+
+	// The per-instance Subscribe channel still yields a bare Event (unchanged).
+	select {
+	case received := <-instCh:
+		assert.Equal(t, evt.Type, received.Type)
+		assert.Equal(t, evt.Data, received.Data)
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe timed out")
 	}
 }
 

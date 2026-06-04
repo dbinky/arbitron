@@ -210,11 +210,23 @@ type Event struct {
 	Data      any       `json:"data"`
 }
 
+// ScopedEvent pairs an event with the instance it was published for, so
+// SubscribeAll consumers (the system stream) can authorize delivery per event
+// by instance ownership. The per-instance Subscribe channel stays a bare Event
+// (its instance is already the subscription key), so the on-the-wire Event JSON
+// is unchanged.
+type ScopedEvent struct {
+	InstanceID uuid.UUID
+	Event      Event
+}
+
 // EventBus defines the port for publishing and subscribing to workflow execution events.
 // The unsubscribe function returned by Subscribe and SubscribeAll MUST close
 // the returned channel so that consumers ranging over the channel terminate.
 type EventBus interface {
 	Publish(instanceID uuid.UUID, event Event)
 	Subscribe(instanceID uuid.UUID) (<-chan Event, func())
-	SubscribeAll() (<-chan Event, func())
+	// SubscribeAll yields ScopedEvent so consumers can authorize each event by
+	// the instance it belongs to.
+	SubscribeAll() (<-chan ScopedEvent, func())
 }

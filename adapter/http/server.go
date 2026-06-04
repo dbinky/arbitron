@@ -171,8 +171,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
-	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
-	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
+	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler, d.Service)
+	sysStreamHandler := NewSystemStreamHandler(d.EventBus, d.Instances)
 	settings := d.Settings
 	if settings == nil {
 		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)

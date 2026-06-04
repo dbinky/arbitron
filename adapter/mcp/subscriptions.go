@@ -69,7 +69,7 @@ func (m *SubscriptionManager) SubscribeSystem() error {
 	m.sysSub = unsub
 	m.mu.Unlock()
 
-	go m.forward(uuid.Nil, ch)
+	go m.forwardScoped(ch)
 
 	return nil
 }
@@ -126,6 +126,22 @@ func (m *SubscriptionManager) forward(instanceID uuid.UUID, ch <-chan engine.Eve
 
 		if cb != nil {
 			cb(instanceID, evt)
+		}
+	}
+}
+
+// forwardScoped reads ScopedEvents from the system-wide channel and calls
+// OnEvent with the event's real instance ID (rather than uuid.Nil), so MCP
+// system-stream consumers can attribute each event to its instance. It exits
+// when the channel is closed.
+func (m *SubscriptionManager) forwardScoped(ch <-chan engine.ScopedEvent) {
+	for sev := range ch {
+		m.mu.Lock()
+		cb := m.OnEvent
+		m.mu.Unlock()
+
+		if cb != nil {
+			cb(sev.InstanceID, sev.Event)
 		}
 	}
 }

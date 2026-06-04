@@ -18,6 +18,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
@@ -70,13 +71,119 @@ func newStreamTestServerWithConvo(instRepo *mockInstanceRepo, bus engine.EventBu
 	return newStreamTestServerFull(instRepo, nil, bus, convo)
 }
 
+// streamGetterFunc adapts a function to the connect-time GetInstance check the
+// stream handler needs. The default test wiring delegates to the repo with an
+// unconstrained (admin-equivalent) view; auth-specific tests inject their own.
+type streamGetterFunc func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+
+func (f streamGetterFunc) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	return f(ctx, id)
+}
+
 func newStreamTestServerFull(instRepo *mockInstanceRepo, nodeExecRepo instance.NodeExecutionRepository, bus engine.EventBus, convo engine.ConversationHandler) *httptest.Server {
-	sh := adapthttp.NewStreamHandler(instRepo, nodeExecRepo, bus, convo)
+	// Default: the connect-time check resolves the instance unconstrained, so the
+	// existing stream tests (no identity injected) keep passing. Per-user connect
+	// scoping is covered explicitly in TestStreamHandler_ConnectAuthorization.
+	getter := streamGetterFunc(func(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+		return instRepo.Get(ctx, id)
+	})
+	sh := adapthttp.NewStreamHandler(instRepo, nodeExecRepo, bus, convo, getter)
 
 	r := chi.NewRouter()
 	r.Get("/instances/{id}/ws", sh.HandleWebSocket)
 
 	return httptest.NewServer(r)
+}
+
+// scopedStreamServer wires a per-instance stream handler behind an
+// identity-injecting middleware, with a getter that applies the same
+// owner-or-admin rule the engine's GetInstance enforces (returning ErrNotFound
+// for a non-viewer). This exercises the connect-time authorization without
+// importing the engine's unexported canView.
+func scopedStreamServer(instRepo *mockInstanceRepo, bus engine.EventBus, id identity.Identity) *httptest.Server {
+	getter := streamGetterFunc(func(ctx context.Context, instID uuid.UUID) (*instance.Instance, error) {
+		inst, err := instRepo.Get(ctx, instID)
+		if err != nil {
+			return nil, err
+		}
+		if !id.IsAdmin() && inst.OwnerID != id.UserID {
+			return nil, instance.ErrNotFound
+		}
+		return inst, nil
+	})
+	sh := adapthttp.NewStreamHandler(instRepo, nil, bus, nil, getter)
+	r := chi.NewRouter()
+	r.Get("/instances/{id}/ws", withIdentityMiddleware(id, sh.HandleWebSocket))
+	return httptest.NewServer(r)
+}
+
+// --- Per-instance connect authorization (Phase 4 Task 3) ---
+
+func TestStreamHandler_ConnectAuthorization(t *testing.T) {
+	owner := identity.Identity{UserID: uuid.New(), Username: "owner", Role: identity.RoleUser}
+	other := identity.Identity{UserID: uuid.New(), Username: "other", Role: identity.RoleUser}
+	admin := identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin}
+
+	newInst := func(repo *mockInstanceRepo) *instance.Instance {
+		inst := testInstance(instance.StateRunning)
+		inst.OwnerID = owner.UserID
+		repo.instances[inst.ID] = inst
+		return inst
+	}
+
+	t.Run("owner connects: upgrade succeeds", func(t *testing.T) {
+		repo := newMockInstanceRepo()
+		inst := newInst(repo)
+		bus := eventbus.New()
+		srv := scopedStreamServer(repo, bus, owner)
+		defer srv.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		require.NoError(t, err)
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		time.Sleep(50 * time.Millisecond)
+		bus.Publish(inst.ID, engine.Event{Type: "node_started", Timestamp: time.Now().UTC(), Data: map[string]any{}})
+		_, _, err = conn.Read(ctx)
+		require.NoError(t, err)
+	})
+
+	t.Run("admin (non-owner) connects: upgrade succeeds", func(t *testing.T) {
+		repo := newMockInstanceRepo()
+		inst := newInst(repo)
+		bus := eventbus.New()
+		srv := scopedStreamServer(repo, bus, admin)
+		defer srv.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		require.NoError(t, err)
+		conn.Close(websocket.StatusNormalClosure, "")
+	})
+
+	t.Run("non-owner non-admin: 404 before upgrade, no socket", func(t *testing.T) {
+		repo := newMockInstanceRepo()
+		inst := newInst(repo)
+		bus := eventbus.New()
+		srv := scopedStreamServer(repo, bus, other)
+		defer srv.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+		conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+		assert.Error(t, err, "non-owner must be rejected before the WS upgrade")
+		if conn != nil {
+			conn.Close(websocket.StatusNormalClosure, "")
+		}
+		require.NotNil(t, resp)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "rejected with 404, identical to a missing instance")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +782,11 @@ func TestStreamHandler_StateChangedMapNoStateKey(t *testing.T) {
 func TestStreamHandler_InstanceRepoError(t *testing.T) {
 	bus := eventbus.New()
 
-	sh := adapthttp.NewStreamHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, nil, bus, nil)
+	errRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	getter := streamGetterFunc(func(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+		return errRepo.Get(ctx, id)
+	})
+	sh := adapthttp.NewStreamHandler(errRepo, nil, bus, nil, getter)
 	r := chi.NewRouter()
 	r.Get("/instances/{id}/ws", sh.HandleWebSocket)
 	srv := httptest.NewServer(r)

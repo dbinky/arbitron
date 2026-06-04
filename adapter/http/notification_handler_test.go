@@ -39,8 +39,8 @@ func (b *notifMockEventBus) Subscribe(_ uuid.UUID) (<-chan engine.Event, func())
 	return ch, func() { close(ch) }
 }
 
-func (b *notifMockEventBus) SubscribeAll() (<-chan engine.Event, func()) {
-	ch := make(chan engine.Event)
+func (b *notifMockEventBus) SubscribeAll() (<-chan engine.ScopedEvent, func()) {
+	ch := make(chan engine.ScopedEvent)
 	return ch, func() { close(ch) }
 }
 

@@ -38,22 +38,32 @@ type interactiveErrorEvent struct {
 // library, which prevents memory exhaustion from oversized payloads.
 const wsMaxReadMessageSize = 64 * 1024 // 64 KiB
 
+// streamInstanceGetter is the scoped read the per-instance stream uses to
+// authorize a connection: GetInstance returns ErrNotFound for both a missing
+// instance and one the caller may not view (no existence leak).
+type streamInstanceGetter interface {
+	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+}
+
 // StreamHandler handles WebSocket connections for streaming workflow events.
 type StreamHandler struct {
 	instances           instance.InstanceRepository
 	nodeExecs           instance.NodeExecutionRepository
 	eventBus            engine.EventBus
 	conversationHandler engine.ConversationHandler
+	service             streamInstanceGetter
 }
 
 // NewStreamHandler creates a new StreamHandler with its dependencies.
 // nodeExecs and conversationHandler may be nil if interactive messaging is not needed.
-func NewStreamHandler(instances instance.InstanceRepository, nodeExecs instance.NodeExecutionRepository, eventBus engine.EventBus, conversationHandler engine.ConversationHandler) *StreamHandler {
+// service provides the connect-time ownership check (Engine.GetInstance).
+func NewStreamHandler(instances instance.InstanceRepository, nodeExecs instance.NodeExecutionRepository, eventBus engine.EventBus, conversationHandler engine.ConversationHandler, service streamInstanceGetter) *StreamHandler {
 	return &StreamHandler{
 		instances:           instances,
 		nodeExecs:           nodeExecs,
 		eventBus:            eventBus,
 		conversationHandler: conversationHandler,
+		service:             service,
 	}
 }
 
@@ -102,21 +112,12 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// SECURITY / TRUST MODEL (per-instance VISIBILITY scoping — distinct from auth):
-	// As of Phase 6, AUTHENTICATION now exists: this WS upgrade runs behind the
-	// auth middleware (mounted on the /api/v1 group), so in org mode an anonymous
-	// caller is rejected (401) before reaching here, and identity.FromContext is
-	// always populated. What is NOT yet enforced is per-USER visibility scoping:
-	// any AUTHENTICATED caller who knows the instance UUID can subscribe, with no
-	// owner check. That parity with the REST instance handlers (which also
-	// authorize on instance UUID alone) is intentional; per-user row visibility is
-	// a later Phase 6 milestone, not a local fix. DO NOT bolt an ad-hoc owner
-	// check onto this one endpoint; it must land uniformly across the REST + WS +
-	// MCP surfaces. instance.OwnerID is still the fixed "local" user until org
-	// provisioning assigns real owners.
-
-	// Verify instance exists before upgrading.
-	inst, err := h.instances.Get(r.Context(), id)
+	// Authorize before upgrading: GetInstance enforces per-user visibility and
+	// returns ErrNotFound for both a missing instance and one the caller may not
+	// view (no existence leak). Rejection happens before websocket.Accept, so an
+	// unauthorized client gets a plain HTTP 404 and never an upgraded socket or a
+	// bus subscription.
+	inst, err := h.service.GetInstance(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found")

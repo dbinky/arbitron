@@ -529,8 +529,8 @@ func (b *mockEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event, fun
 	return ch, func() {}
 }
 
-func (b *mockEventBus) SubscribeAll() (<-chan engine.Event, func()) {
-	ch := make(chan engine.Event)
+func (b *mockEventBus) SubscribeAll() (<-chan engine.ScopedEvent, func()) {
+	ch := make(chan engine.ScopedEvent)
 	close(ch)
 	return ch, func() {}
 }
