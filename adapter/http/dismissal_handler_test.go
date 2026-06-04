@@ -315,6 +315,35 @@ func TestRestore_NonDismissed_OK_NoOp(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode) // no-op success
 }
 
+// Seam: Restore must scope to the ACTING user only — it must not clear
+// dismissals for other users who independently dismissed the same instance.
+// A bug that called ClearForInstance (cross-user) instead of per-user Restore,
+// or that passed the wrong user ID, would incorrectly un-dismiss the instance
+// for unrelated users. Using two distinct users pins this scoping contract.
+func TestRestore_ScopedToActingUserNotOtherUsers(t *testing.T) {
+	userA := uuid.New() // acting user (restores their own dismissal)
+	userB := uuid.New() // another user who dismissed independently
+	ctx := context.Background()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{
+		ID: id, OwnerID: userA, WorkflowName: "wf", State: instance.StateCompleted,
+	}))
+	dis := newMockDismissalRepo()
+	require.NoError(t, dis.Dismiss(ctx, userA, id))
+	require.NoError(t, dis.Dismiss(ctx, userB, id))
+
+	// Acting as userA: restore must remove only A's dismissal.
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: userA})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.False(t, dis.dismissed[userA][id], "acting user's dismissal must be removed by restore")
+	assert.True(t, dis.dismissed[userB][id], "other user's dismissal must not be affected by A's restore")
+}
+
 func TestDismissAll_DismissesEveryListedInCategory(t *testing.T) {
 	user := uuid.New()
 	instRepo := newMockInstanceRepo()

@@ -9,6 +9,14 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-23-001: Restore endpoint has no per-user scoping test
+**Area**: Paired review #23 — currentUser seam + all dismissal endpoints (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 41
+**Detail**: Dismiss, DismissAll, and List each had a test using distinct UUIDs for acting user vs another user, pinning that the per-user operation scopes only to the acting user. Restore had no such test. A bug that called `ClearForInstance` (cross-user) instead of per-user `Restore`, or passed the wrong user ID, would un-dismiss the instance for all users — but all existing Restore tests used a single user so they would still pass. Added `TestRestore_ScopedToActingUserNotOtherUsers`: two users each dismiss the same instance, acting user A restores via the endpoint — asserts `dis.dismissed[userA][id]` is false (A's dismissal removed) and `dis.dismissed[userB][id]` is true (B's dismissal unaffected). This completes the per-user scoping coverage across all four dismissal endpoints.
+
+
+## Fixed Previously
+
 ### PAIR-22-001: No HTTP-level test that ClearForInstance (called by engine.Retry) resurfaces item in List
 **Area**: Paired review #22 — dismiss slice + engine retry resurface (`adapter/http/instance_list_dismissal_test.go`)
 **Fixed**: Iteration 40
