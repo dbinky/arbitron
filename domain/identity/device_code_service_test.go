@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -193,6 +194,91 @@ func TestDeviceCodeService_PollStates(t *testing.T) {
 		_, _, err := svc.Poll(ctx, start.DeviceCode)
 		assert.ErrorIs(t, err, ErrExpired)
 	})
+}
+
+// Security/isolation: Poll always mints the token for the APPROVER (dc.UserID),
+// not for whatever identity happens to be in the polling context. A caller who
+// injects their own identity cannot steal the token ownership.
+func TestDeviceCodeService_Poll_OwnerIsApproverNotPoller(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	tokRepo := &countingTokenRepo{}
+	svc := newDeviceSvc(repo, NewTokenService(tokRepo), nil)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	approver := uuid.New()
+	approveCtx := WithIdentity(ctx, Identity{UserID: approver, Role: RoleUser})
+	require.NoError(t, svc.Approve(approveCtx, start.UserCode))
+
+	// Poll with a DIFFERENT user's identity injected.
+	poller := uuid.New()
+	pollCtx := WithIdentity(ctx, Identity{UserID: poller, Role: RoleUser})
+	_, tok, err := svc.Poll(pollCtx, start.DeviceCode)
+	require.NoError(t, err)
+	require.NotNil(t, tok)
+
+	require.Len(t, tokRepo.created, 1)
+	assert.Equal(t, approver, tokRepo.created[0].UserID,
+		"minted token must belong to the approver, not the poller")
+	assert.NotEqual(t, poller, tokRepo.created[0].UserID,
+		"poller must not become the token owner")
+}
+
+// Security/edge: an Approved row with nil UserID (defensive guard) returns
+// ErrInvalidGrant — existence is not confirmed.
+func TestDeviceCodeService_Poll_ApprovedNilUserID(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), nil)
+
+	// Inject a corrupted approved row directly.
+	corruptDC := &DeviceCode{
+		HashedCode: "corrupthash",
+		UserCode:   "CRPT",
+		Status:     DeviceCodeApproved,
+		UserID:     nil, // no approver recorded
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	_ = repo.Create(ctx, corruptDC)
+
+	// We need to poll by hashing the raw device code. Build a fake raw that hashes
+	// to "corrupthash" is impossible — instead override the repo lookup directly
+	// by seeding byHash with the pre-set HashedCode and calling GetByHash manually
+	// to confirm, then craft a raw device code whose hash matches.
+	//
+	// Simpler approach: use a known raw and seed byHash with HashToken of that raw.
+	rawCode := "known-raw-code"
+	knownHash := HashToken(rawCode)
+	repo.byHash[knownHash] = &DeviceCode{
+		HashedCode: knownHash,
+		UserCode:   "KNWN",
+		Status:     DeviceCodeApproved,
+		UserID:     nil,
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+
+	_, _, err := svc.Poll(ctx, rawCode)
+	assert.ErrorIs(t, err, ErrInvalidGrant,
+		"approved row with nil UserID must return ErrInvalidGrant")
+}
+
+// Error/failure: Start propagates an error from the newCodes seam without
+// persisting anything.
+func TestDeviceCodeService_Start_NewCodesFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), nil)
+	svc.newCodes = func() (string, string, error) {
+		return "", "", errors.New("entropy exhausted")
+	}
+
+	resp, err := svc.Start(ctx, "uri")
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	// Nothing should have been persisted.
+	assert.Empty(t, repo.byHash, "no device-code row must be created on Start failure")
 }
 
 // Boundary: double-consume mints exactly once.

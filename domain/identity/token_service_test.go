@@ -174,6 +174,36 @@ func TestTokenService_NoIdentity_Unauthenticated(t *testing.T) {
 	assert.Zero(t, repo.deleteCalls)
 }
 
+// Security: the returned *Token struct must never contain the plaintext.
+// TokenHash is the sha256 hex (not the plaintext), Prefix is the clear prefix
+// (not secret), and no field may equal the plaintext value.
+func TestTokenService_Mint_TokenStructNeverContainsPlaintext(t *testing.T) {
+	repo := &fakeTokenRepo{}
+	svc := NewTokenService(repo)
+	ctx := ctxWithUser(uuid.New())
+
+	plaintext, tok, err := svc.Mint(ctx, "my-key")
+	require.NoError(t, err)
+	require.NotNil(t, tok)
+
+	assert.NotEqual(t, plaintext, tok.TokenHash, "TokenHash must be a hash, not the plaintext")
+	assert.NotEqual(t, plaintext, tok.Prefix, "Prefix must be a non-secret segment, not the full plaintext")
+	assert.NotEqual(t, plaintext, tok.Label, "Label must not contain the plaintext")
+	assert.False(t, strings.Contains(tok.TokenHash, plaintext), "hash must not contain the plaintext")
+}
+
+// Error/failure: Revoke propagates non-ErrNotFound repo errors to the caller.
+func TestTokenService_Revoke_RepoErrorPropagation(t *testing.T) {
+	boom := errors.New("connection reset")
+	repo := &fakeTokenRepo{deleteErr: boom}
+	svc := NewTokenService(repo)
+	ctx := ctxWithUser(uuid.New())
+
+	err := svc.Revoke(ctx, uuid.New())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+}
+
 // Error/failure: List propagates a repo error to the caller.
 func TestTokenService_List_RepoError(t *testing.T) {
 	boom := errors.New("db down")
