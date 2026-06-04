@@ -269,4 +269,28 @@ describe('GraphView — Recenter / Follow control', () => {
         .getAttribute('aria-pressed'),
     ).toBe('true')
   })
+
+  it('re-centers on the active node at DEFAULT_ZOOM when Recenter is clicked', () => {
+    render(
+      <GraphView
+        instance={instance}
+        workflowDef={workflowDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    // Pause via a user move, then clear the mount-center call.
+    fireEvent.click(screen.getByTestId('rf-fire-user-move'))
+    setCenterSpy.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /recenter/i }))
+
+    const aNode = lastReactFlowProps!.nodes.find((n) => n.id === 'a')!
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      aNode.position!.x + 100, // NODE_WIDTH / 2
+      aNode.position!.y + 40, // NODE_HEIGHT / 2
+      { zoom: 0.9 },
+    )
+  })
 })
