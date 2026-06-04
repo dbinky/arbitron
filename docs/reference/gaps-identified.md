@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA25-01: `fakeSessionRepo.Get` did not check `ExpiresAt` — expired-but-present session would authenticate
+**Area**: Focus Area 25 — Auth middleware + session store (paired)
+**Fix**: Updated `fakeSessionRepo.Get` in `adapter/http/auth_middleware_test.go` to mirror real `SessionRepo.Get` behavior: if `ExpiresAt` is set and not after `time.Now()`, return `identity.ErrNotFound`. All existing tests use zero-value `ExpiresAt` so no regressions. Added `TestAuthMiddleware_Org_ExpiredSessionPresent_401` which seeds a session with `ExpiresAt: time.Now().Add(-time.Hour)`, sends the cookie, and asserts 401 + handler never called. Previously `TestAuthMiddleware_Org_ExpiredSession_401` modeled expiry only by absence (token not seeded), so the fake would have incorrectly returned an expired-but-present session. This closes the integration-seam gap: the fake now faithfully models the real repo's `expires_at > now` SQL filter.
+
 ### GAP-FA24-P2-01: HTTP intervention handlers missing non-owner 404 tests for Resume/Cancel/Retry/Rerun/SetPriority
 **Area**: Focus Area 24 — Intervention authz & attribution (Pass 2)
 **Fix**: Added "non-owner gets 404 (intervention gate enforced in the service)" sub-tests to `TestInstanceHandler_Resume`, `TestInstanceHandler_Cancel`, `TestInstanceHandler_Retry`, `TestInstanceHandler_Rerun`, and `TestInstanceHandler_SetPriority_NonOwner_404` in `adapter/http/instance_handler_test.go`. Each test injects `instance.ErrNotFound` from the mock service (the signal `authorizeIntervention` sends for non-owner access) and asserts HTTP 404 with `NOT_FOUND` code — identical to a genuinely missing instance (no existence leak). `TestInstanceHandler_Pause` already had this test; this change makes all six intervention HTTP handlers consistently covered. The domain-level gate is tested in `engine_intervention_authz_test.go`; these tests pin that each HTTP adapter handler correctly propagates `ErrNotFound` to 404 without leaking whether the instance exists.

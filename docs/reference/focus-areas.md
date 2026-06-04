@@ -47,7 +47,7 @@ result for that area.
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 25 | Auth middleware + session store (cookie→hashed lookup→identity; expired/forged cookie never matches; sweep removes only past-due) | [ ] | Pending |
+| 25 | Auth middleware + session store (cookie→hashed lookup→identity; expired/forged cookie never matches; sweep removes only past-due) | [x] | Done |
 | 26 | Auth middleware + token service (bearer→hashed `GetByHash`→identity; revoked token fails closed; one user cannot resolve another's token) | [ ] | Pending |
 | 27 | OIDC handlers + provisioner (callback exchange→JIT create→bootstrap-admin promotion; state/nonce binding; email persisted for later floor checks) | [ ] | Pending |
 | 28 | Device-code + token service (approval consumes the request exactly once and mints exactly one Arbitron token; never returns a raw IdP token) | [ ] | Pending |

@@ -103,10 +103,16 @@ func (r *fakeSessionRepo) Create(_ context.Context, s *identity.Session) error {
 }
 
 func (r *fakeSessionRepo) Get(_ context.Context, id string) (*identity.Session, error) {
-	if s, ok := r.byToken[id]; ok {
-		return s, nil
+	s, ok := r.byToken[id]
+	if !ok {
+		return nil, identity.ErrNotFound
 	}
-	return nil, identity.ErrNotFound
+	// Mirror real SessionRepo.Get: expires_at > now (strict). A zero ExpiresAt
+	// means no expiry is set (used by legacy helper sessions in tests).
+	if !s.ExpiresAt.IsZero() && !s.ExpiresAt.After(time.Now()) {
+		return nil, identity.ErrNotFound
+	}
+	return s, nil
 }
 
 func (r *fakeSessionRepo) Delete(_ context.Context, id string) error {
@@ -362,6 +368,32 @@ func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.False(t, probe.called)
+}
+
+// TestAuthMiddleware_Org_ExpiredSessionPresent_401 covers the path where a
+// session row IS present in the store but has a past ExpiresAt. The real
+// SessionRepo.Get filters these server-side (expires_at > now in SQL); the fake
+// must model the same behavior so this test does not false-pass.
+func TestAuthMiddleware_Org_ExpiredSessionPresent_401(t *testing.T) {
+	users := newFakeUserRepo()
+	uid := uuid.New()
+	users.byID[uid] = &instance.User{ID: uid, Username: "alice", Role: identity.RoleUser}
+	sessions := newFakeSessionRepo()
+	sessions.byToken["stale"] = &identity.Session{
+		ID:        "stale",
+		UserID:    uid,
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "stale"})
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.False(t, probe.called, "expired session in store must not authenticate")
 }
 
 func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
