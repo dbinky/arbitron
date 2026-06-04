@@ -401,6 +401,47 @@ func TestAuthHandler_Callback_TamperedStateCookie(t *testing.T) {
 	assert.Empty(t, sessions.byToken)
 }
 
+// Edge: OIDC callback rejects when the state credentials are absent.
+// Two sub-cases pin the CSRF guard:
+//  1. No state cookie: the server has no record of initiating this login
+//     round-trip — a direct CSRF or replayed callback attempt.
+//  2. No state query param: the callback URL is incomplete or tampered.
+//
+// Both must return 400 and create no session.
+func TestAuthHandler_Callback_MissingStateCredentials_Rejected(t *testing.T) {
+	tests := []struct {
+		name      string
+		url       string
+		addCookie bool
+	}{
+		{"no state cookie (CSRF attempt)", "/auth/callback?code=ok&state=x", false},
+		{"no state param", "/auth/callback?code=ok", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
+			sessions := newFakeSessionRepo()
+			h := newAuthHandler(oidc, sessions, newFakeUserRepo())
+
+			loginRec := httptest.NewRecorder()
+			h.Login(loginRec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+			stateCookie := findCookie(loginRec.Result().Cookies(), stateCookieName)
+			require.NotNil(t, stateCookie)
+
+			cbReq := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			if tc.addCookie {
+				cbReq.AddCookie(stateCookie)
+			}
+			cbRec := httptest.NewRecorder()
+			h.Callback(cbRec, cbReq)
+
+			assert.Equal(t, http.StatusBadRequest, cbRec.Code, "callback must reject when state credentials are absent")
+			assert.Empty(t, sessions.byToken, "no session must be created without valid state credentials")
+			assert.Nil(t, findCookie(cbRec.Result().Cookies(), "arbitron_session"))
+		})
+	}
+}
+
 // helpers shared with this test file only.
 func strptr(s string) *string { return &s }
 
