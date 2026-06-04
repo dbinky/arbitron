@@ -6,6 +6,12 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA31-01: Re-publish correctness had two missing tests: shared-content-update and snapshot-immutability
+**Area**: Focus Area 31 — Publish/copy + published store (paired)
+**Fix**: Added two tests:
+1. `TestService_Publish_SamePublisher_SharedContentUpdated` in `domain/workflow/service_test.go` — The existing `TestService_Publish_SamePublisher_Overwrites` only asserted `NoError` for the second publish call; it did not verify the shared workspace was actually updated with the new content. The new test publishes "v1", overwrites the private source with "v2", re-publishes, and asserts the shared entry now has description "v2".
+2. `TestEngine_WorkflowSnapshotImmutableAfterRePublish` in `domain/engine/engine_test.go` — Pins the FA-31 paired invariant that re-publish leaves running instances' snapshots untouched. Triggers id1 with "wf" at "v1", overwrites the repo with "v2", triggers id2, and asserts id1's snapshot still contains "v1" (frozen at trigger time) while id2's snapshot contains "v2". This invariant is structural (engine snapshots at trigger time via `json.Marshal(wf)` → `inst.WorkflowSnapshot`, and execution reads from `inst.WorkflowSnapshot`, not the repo), but was unpinned by any test.
+
 ### GAP-FA30-01: No adapter-level test proved workflow private scope is keyed to context identity (not global)
 **Area**: Focus Area 30 — Workflow scope/repo + workflow service authz (paired)
 **Fix**: Added `scopeCapturingWorkflowRepo` and `TestWorkflowHandler_ScopeFromContextIdentity` to `adapter/http/workflow_handler_test.go`. The existing `mockWorkflowRepo.bucket()` returns the same `workflows` map for ALL private scopes regardless of OwnerID — meaning no existing test could detect if the handler wired scope to a global constant instead of the caller's identity. The new test uses a scope-capturing repo that records the `workflow.Scope` passed to `Create` and `List`. User A calls Create → asserts `scope.OwnerID == userA`. User B calls List → asserts `scope.OwnerID == userB && scope.OwnerID != userA`. This pins the FA-30 paired invariant: `domain/workflow/service.go` calls `caller(ctx)` → `Private(id.UserID)`, so the private workspace is determined solely by the authenticated caller's identity — the HTTP adapter has no way to substitute a different owner, and two callers are guaranteed to operate on isolated private workspaces.

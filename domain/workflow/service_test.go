@@ -399,6 +399,37 @@ func TestService_Publish_SamePublisher_Overwrites(t *testing.T) {
 	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
 }
 
+// TestService_Publish_SamePublisher_SharedContentUpdated pins the re-publish
+// overwrite: when the same publisher publishes a modified source, the shared
+// workspace must reflect the new content — not the original version.
+func TestService_Publish_SamePublisher_SharedContentUpdated(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+
+	// V1: initial publish.
+	v1 := &workflow.Workflow{Name: "src", Description: "v1", Author: "a"}
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", v1))
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+
+	// Confirm v1 is in shared.
+	got, ok := repo.bucket(workflow.Shared())["pub"]
+	require.True(t, ok)
+	assert.Equal(t, "v1", got.Description, "initial publish must write v1 content")
+
+	// V2: overwrite private source, then re-publish.
+	v2 := &workflow.Workflow{Name: "src", Description: "v2", Author: "a"}
+	repo.bucket(workflow.Private(owner))["src"] = v2
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+
+	// Shared must now reflect v2.
+	got, ok = repo.bucket(workflow.Shared())["pub"]
+	require.True(t, ok)
+	assert.Equal(t, "v2", got.Description,
+		"re-publish by same publisher must overwrite shared workspace with new content")
+}
+
 func TestService_Publish_NoStore_Errors(t *testing.T) {
 	repo := newFakeRepo()
 	svc := workflow.NewWorkflowService(repo, nil) // no published store

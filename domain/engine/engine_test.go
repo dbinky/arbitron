@@ -1456,6 +1456,53 @@ func TestEngine_WorkflowSnapshotStored(t *testing.T) {
 	assert.Contains(t, string(snapshotBytes), "linear-wf")
 }
 
+// TestEngine_WorkflowSnapshotImmutableAfterRePublish pins the FA-31 invariant:
+// when the underlying workflow definition changes (e.g. via re-publish), any
+// already-triggered instance continues to execute from its frozen snapshot —
+// the new definition is only picked up by instances triggered after the change.
+func TestEngine_WorkflowSnapshotImmutableAfterRePublish(t *testing.T) {
+	f := newTestFixtures()
+
+	// Trigger first instance with description "v1".
+	v1 := &workflow.Workflow{
+		Name:        "wf",
+		Description: "v1",
+		Nodes:       []workflow.Node{{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true}},
+	}
+	f.workflowRepo.add(v1)
+	id1, _, err := f.engine.Trigger(context.Background(), "wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id1, 5*time.Second, instance.StateCompleted)
+
+	// Simulate a re-publish: overwrite the repo entry with a different description.
+	v2 := &workflow.Workflow{
+		Name:        "wf",
+		Description: "v2",
+		Nodes:       []workflow.Node{{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true}},
+	}
+	f.workflowRepo.add(v2)
+
+	// Trigger second instance — it should see v2.
+	id2, _, err := f.engine.Trigger(context.Background(), "wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id2, 5*time.Second, instance.StateCompleted)
+
+	inst1, err := f.instanceRepo.Get(context.Background(), id1)
+	require.NoError(t, err)
+	inst2, err := f.instanceRepo.Get(context.Background(), id2)
+	require.NoError(t, err)
+
+	snap1, _ := json.Marshal(inst1.WorkflowSnapshot)
+	snap2, _ := json.Marshal(inst2.WorkflowSnapshot)
+
+	assert.Contains(t, string(snap1), "v1",
+		"first instance snapshot must be frozen at trigger time — re-publish must not overwrite it")
+	assert.NotContains(t, string(snap1), "v2",
+		"first instance snapshot must not reflect the post-trigger re-publish")
+	assert.Contains(t, string(snap2), "v2",
+		"second instance snapshot must reflect the workflow state at its trigger time")
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Variable snapshots created per node
 // ---------------------------------------------------------------------------
