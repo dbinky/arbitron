@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA20-P2-01: HTTP `List` no-identity defence-in-depth path had no test
+**Area**: Focus Area 20 — Instance list scoping (Pass 2)
+**Fix**: Added `"no-identity defence-in-depth: ErrNotFound from service returns 200 empty array"` subtest to `TestInstanceHandler_List` in `adapter/http/instance_handler_test.go`. Seeds a mock service that returns `instance.ErrNotFound` from `ListInstances` (the signal the engine sends when no identity is present in context), calls `h.List`, and asserts HTTP 200 with an empty JSON array. This pins the unusual-but-intentional behavior: the handler does NOT return 404 or 500 when the engine refuses to list due to a missing identity — it returns an empty list so a probe cannot distinguish "no instances" from "access denied". The auth middleware in org mode would have already rejected such a request before reaching the handler; this test documents the defense-in-depth fallback.
+
 ### GAP-FA20-P1-01: MCP `TestInstanceList` missing context-forwarding assertion — identity not verified on `ListInstances` path
 **Area**: Focus Area 20 — Instance list scoping (Pass 1)
 **Fix**: Added `capturedListCtx context.Context` field to `stubEngine` in `adapter/mcp/tools_instance_test.go`. Updated `ListInstances` to always capture `ctx` before delegating to `listFn`. Added `"caller identity context is forwarded to engine"` subtest to `TestInstanceList`: calls `instance_list` via `callTool` (which injects `mcpTestUserID`), then asserts `identity.FromContext(eng.capturedListCtx)` returns the expected test user ID. A regression where the handler passed `context.Background()` instead of the call context would immediately fail, breaking the `ownerConstraint` scoping in the domain engine.

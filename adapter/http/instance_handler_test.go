@@ -646,6 +646,28 @@ func TestInstanceHandler_List(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Nil(t, got.OwnerID, "handler must not let a caller set the owner filter from query input")
 	})
+
+	t.Run("no-identity defence-in-depth: ErrNotFound from service returns 200 empty array", func(t *testing.T) {
+		// When auth middleware is somehow bypassed the scoped engine returns
+		// ErrNotFound (no identity = reveal nothing). The List handler must map
+		// this to HTTP 200 with an empty array — not 404 or 500 — so a probe
+		// cannot distinguish "no instances" from "access denied".
+		svc := &mockInstanceService{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, instance.ErrNotFound
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Empty(t, resp, "unauthenticated caller must see an empty list, not an error")
+	})
 }
 
 // ---------------------------------------------------------------------------
