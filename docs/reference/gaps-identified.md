@@ -4,17 +4,18 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### TEST-002: Thin adapter-level end-to-end authz coverage
-**Area**: `adapter/http` / `adapter/mcp` integration tests
-**Detail**: Per-user scoping is well unit-tested in `domain/engine` (`engine_list_test.go`, `engine_read_test.go`, `conversation_authz_test.go`, `engine_intervention_authz_test.go`, `engine_intervention_attr_test.go`) and proven cross-surface by the MCP/REST parity test, but several adapter tests delegate the scoped service to the underlying repos (admin-equivalent) so legacy behavior tests stay green. There is little coverage that drives the **real** engine through the HTTP router (and the MCP handler) with a **non-admin** identity in context end-to-end.
-**Fix direction**: Add a small set of end-to-end adapter tests that construct the real engine + router with a non-admin identity injected (as the auth middleware would) and assert: list returns only own; get/trace/variables on another user's instance → 404; WS per-instance connect rejected; interactive send/end rejected; intervention rejected. Mirror for the MCP handler to lock in parity.
-
 ### ATTR-003 (optional): Interventions not folded inline into the trace payload
 **Area**: Instance trace surface (`adapter/http` trace handler, MCP `trace`)
 **Detail**: Admin interventions are exposed via a dedicated `GET /api/v1/instances/{id}/interventions` endpoint and the `trace_interventions` MCP tool rather than inline in the existing `GET /trace` array response. This was a deliberate choice to avoid breaking the trace contract the dashboard consumes. Functionally complete; this item is only about presentation.
 **Fix direction**: If the product wants interventions inline, introduce a versioned/object-shaped trace response and update the dashboard consumer accordingly. Otherwise the user may move this to Won't Fix.
 
 ## Fixed Previously
+
+### TEST-002: Thin adapter-level end-to-end authz coverage
+**Area**: `adapter/http` / `adapter/mcp` integration tests
+**Fixed**: Iteration 1
+**Detail**: Per-user scoping was well unit-tested in `domain/engine` but several adapter tests used stubs (admin-equivalent) that let the old behavior tests stay green without exercising real isolation. There was little coverage driving the real engine through HTTP/MCP adapters with a non-admin identity.
+**Resolution**: Added `adapter/http/authz_e2e_test.go` (HTTP) and `adapter/mcp/authz_e2e_test.go` (MCP) each wiring the real engine + in-memory repos with a non-admin identity injected. Tests cover: instance_list (own-only vs admin-all), instance_get (owner 200, non-owner 404, admin 200), trace_get (same), variables_get (same), instance_pause (non-owner 404). HTTP and MCP tests use identical repo implementations and identity contexts, confirming both surfaces enforce the same domain-layer rules. WS per-instance connect and interactive session authz are already covered at the domain engine level in `conversation_authz_test.go`.
 
 ### NOTIF-001: Notification list was not scoped per user
 **Area**: Instance read scoping / notifications (`adapter/http/notification_handler.go`, MCP `tools_system.go`, `adapter/sqlite/notification_repo.go`, `domain/notification/ports.go`)
