@@ -11,6 +11,15 @@ const node = (id: string): WorkflowNode => ({
   config: {},
 })
 
+describe('useGraphLayout — error/invalid: empty nodes list', () => {
+  it('returns empty arrays and needsAutoSave=false when nodes is empty', () => {
+    const { result } = renderHook(() => useGraphLayout({ nodes: [], edges: [] }))
+    expect(result.current.rfNodes).toEqual([])
+    expect(result.current.rfEdges).toEqual([])
+    expect(result.current.needsAutoSave).toBe(false)
+  })
+})
+
 describe('useGraphLayout — no loops', () => {
   it('emits no loopContainer nodes and no loopBackEdge edges', () => {
     const nodes = [node('a'), node('b'), node('c')]

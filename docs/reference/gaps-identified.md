@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LAYOUT-001: useGraphLayout empty-nodes early-return path untested
+**Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
+**Fixed**: Iteration 3
+**Detail**: The hook early-returns `{ rfNodes: [], rfEdges: [], needsAutoSave: false }` when `nodes.length === 0` but no test exercised that path — the "error/invalid input" category was absent for the hook. Added a `useGraphLayout — error/invalid: empty nodes list` describe block covering this branch.
+
 ### LOOP-003: No three-level nesting test — depth=2 was unverified
 **Area**: Loop detection (`dashboard/src/graph/loops.ts`)
 **Fixed**: Iteration 2
