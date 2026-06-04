@@ -94,6 +94,41 @@ describe('QueueView show/hide dismissed toggle', () => {
       expect(calledWithInclude).toBe(true)
     })
   })
+
+  // Slice: toggling back to "Hide Dismissed" must stop sending includeDismissed so
+  // the backend omits dismissed items. A regression leaving includeDismissed=true
+  // permanently would make dismissed items always visible after one toggle.
+  it('omits includeDismissed after toggling back to Hide Dismissed', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    // Show dismissed.
+    const showBtn = await screen.findByRole('button', { name: /show dismissed/i })
+    fireEvent.click(showBtn)
+    await screen.findByRole('button', { name: /hide dismissed/i })
+
+    // Hide dismissed again.
+    list.mockClear()
+    const hideBtn = screen.getByRole('button', { name: /hide dismissed/i })
+    fireEvent.click(hideBtn)
+    await screen.findByRole('button', { name: /show dismissed/i })
+
+    // The re-fetch after hiding must NOT include includeDismissed=true.
+    await waitFor(() => {
+      const terminalCalls = list.mock.calls.filter(
+        (c) => ['failed', 'completed'].includes(
+          (c[0] as { state?: string })?.state ?? '',
+        ),
+      )
+      expect(terminalCalls.length).toBeGreaterThanOrEqual(1)
+      const anyWithInclude = terminalCalls.some(
+        (c) => (c[0] as { includeDismissed?: boolean })?.includeDismissed === true,
+      )
+      expect(anyWithInclude).toBe(false)
+    })
+  })
 })
 
 describe('QueueView loading and error states', () => {

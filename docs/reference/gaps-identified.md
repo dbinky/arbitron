@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### SLICE-003: Show/hide dismissed toggle — hide direction not tested
+**Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 31
+**Detail**: The toggle test verified Show→Hide flip and that enabling sends `includeDismissed=true`. But there was no test for the hide direction: toggling back omits `includeDismissed` from the subsequent refetch. A regression leaving `includeDismissed=true` permanently would make dismissed items always visible. Added `omits includeDismissed after toggling back to Hide Dismissed`: show → hide → verify no terminal list call after the hide toggle includes `includeDismissed=true`.
+
+---
+
 ### SLICE-002: fetchAll never verified to pass since-date to terminal list calls
 **Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
 **Fixed**: Iteration 30
