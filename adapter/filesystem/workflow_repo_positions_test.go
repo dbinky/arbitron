@@ -13,15 +13,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTempWorkflow creates a temporary workflow directory with the given JSON
-// content and returns the base path (parent of the workflow dir).
+// posScope is the private scope the position tests operate within; its owner
+// matches the partition newTempWorkflow lays the workflow under.
+func posScope() workflow.Scope { return testScope() }
+
+// newTempWorkflow creates a temporary workflow directory (under the position
+// test scope's private partition) with the given JSON content and returns the
+// repo basePath. Callers build on-disk paths via posDir.
 func newTempWorkflow(t *testing.T, name string, content []byte) string {
 	t.Helper()
 	base := t.TempDir()
-	dir := filepath.Join(base, name)
+	dir := posDir(t, base, name)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "workflow.json"), content, 0o644))
 	return base
+}
+
+// posDir returns the on-disk directory for the named workflow under the
+// position test scope's private partition rooted at base.
+func posDir(t *testing.T, base, name string) string {
+	t.Helper()
+	return filepath.Join(scopeRootFor(t, base, posScope()), name)
 }
 
 func TestSaveNodePositions_WritesCorrectly(t *testing.T) {
@@ -44,11 +56,11 @@ func TestSaveNodePositions_WritesCorrectly(t *testing.T) {
 		"B": {X: 300.5, Y: 400.75},
 	}
 
-	err := repo.SaveNodePositions(context.Background(), "pos-test", positions)
+	err := repo.SaveNodePositions(context.Background(), posScope(), "pos-test", positions)
 	require.NoError(t, err)
 
 	// Re-read the file and verify positions were written.
-	data, err := os.ReadFile(filepath.Join(base, "pos-test", "workflow.json"))
+	data, err := os.ReadFile(filepath.Join(posDir(t, base, "pos-test"), "workflow.json"))
 	require.NoError(t, err)
 
 	var raw map[string]any
@@ -98,10 +110,10 @@ func TestSaveNodePositions_PreservesExistingFields(t *testing.T) {
 		"N1": {X: 42, Y: 84},
 	}
 
-	err := repo.SaveNodePositions(context.Background(), "preserve-test", positions)
+	err := repo.SaveNodePositions(context.Background(), posScope(), "preserve-test", positions)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(base, "preserve-test", "workflow.json"))
+	data, err := os.ReadFile(filepath.Join(posDir(t, base, "preserve-test"), "workflow.json"))
 	require.NoError(t, err)
 
 	var raw map[string]any
@@ -140,7 +152,7 @@ func TestSaveNodePositions_WorkflowNotFound(t *testing.T) {
 	base := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(base)
 
-	err := repo.SaveNodePositions(context.Background(), "nonexistent", map[string]workflow.NodePosition{
+	err := repo.SaveNodePositions(context.Background(), posScope(), "nonexistent", map[string]workflow.NodePosition{
 		"A": {X: 1, Y: 2},
 	})
 	require.Error(t, err)
@@ -168,10 +180,10 @@ func TestSaveNodePositions_PartialMatch(t *testing.T) {
 		"C": {X: 50, Y: 60},
 	}
 
-	err := repo.SaveNodePositions(context.Background(), "partial-test", positions)
+	err := repo.SaveNodePositions(context.Background(), posScope(), "partial-test", positions)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(base, "partial-test", "workflow.json"))
+	data, err := os.ReadFile(filepath.Join(posDir(t, base, "partial-test"), "workflow.json"))
 	require.NoError(t, err)
 
 	var raw map[string]any
@@ -199,7 +211,7 @@ func TestSaveNodePositions_PathTraversalRejected(t *testing.T) {
 	base := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(base)
 
-	err := repo.SaveNodePositions(context.Background(), "../escape", map[string]workflow.NodePosition{
+	err := repo.SaveNodePositions(context.Background(), posScope(), "../escape", map[string]workflow.NodePosition{
 		"A": {X: 1, Y: 2},
 	})
 	require.Error(t, err)
@@ -214,7 +226,7 @@ func TestSaveNodePositions_NoNodesField(t *testing.T) {
 	base := newTempWorkflow(t, "no-nodes", wfJSON)
 	repo := filesystem.NewWorkflowRepo(base)
 
-	err := repo.SaveNodePositions(context.Background(), "no-nodes", map[string]workflow.NodePosition{
+	err := repo.SaveNodePositions(context.Background(), posScope(), "no-nodes", map[string]workflow.NodePosition{
 		"A": {X: 10, Y: 20},
 	})
 	require.NoError(t, err, "missing nodes field must be a no-op, not an error")

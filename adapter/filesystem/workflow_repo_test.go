@@ -3,49 +3,101 @@ package filesystem_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// testScope is the default Private scope used across most adapter tests.
+var testOwner = uuid.MustParse("11111111-1111-1111-1111-111111111111")
+
+func testScope() workflow.Scope { return workflow.Private(testOwner) }
+
 func testdataPath(t *testing.T) string {
 	t.Helper()
-	// testdata is relative to this test file
 	dir, err := filepath.Abs("testdata")
 	require.NoError(t, err)
 	return dir
 }
 
-func TestWorkflowRepo_Load_ValidWorkflow(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+// repoWithTestdata builds a repo over a fresh tempdir and copies the flat
+// testdata fixtures into the given scope's root so the read-oriented tests
+// (which rely on the canned fixtures) work against the scope-aware layout.
+func repoWithTestdata(t *testing.T, scope workflow.Scope) *filesystem.WorkflowRepo {
+	t.Helper()
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
 
-	wf, err := repo.Load(context.Background(),"valid-workflow")
+	root := scopeRootFor(t, base, scope)
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	copyTree(t, testdataPath(t), root)
+	return repo
+}
+
+func scopeRootFor(t *testing.T, base string, scope workflow.Scope) string {
+	t.Helper()
+	switch scope.Kind {
+	case workflow.ScopePrivate:
+		return filepath.Join(base, "users", scope.OwnerID.String())
+	case workflow.ScopeShared:
+		return filepath.Join(base, "shared")
+	default:
+		t.Fatalf("unknown scope kind %v", scope.Kind)
+		return ""
+	}
+}
+
+func copyTree(t *testing.T, src, dst string) {
+	t.Helper()
+	entries, err := os.ReadDir(src)
+	require.NoError(t, err)
+	for _, e := range entries {
+		s := filepath.Join(src, e.Name())
+		d := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			require.NoError(t, os.MkdirAll(d, 0o755))
+			copyTree(t, s, d)
+			continue
+		}
+		in, err := os.Open(s)
+		require.NoError(t, err)
+		out, err := os.Create(d)
+		require.NoError(t, err)
+		_, err = io.Copy(out, in)
+		require.NoError(t, err)
+		require.NoError(t, in.Close())
+		require.NoError(t, out.Close())
+	}
+}
+
+func TestWorkflowRepo_Load_ValidWorkflow(t *testing.T) {
+	repo := repoWithTestdata(t, testScope())
+
+	wf, err := repo.Load(context.Background(), testScope(), "valid-workflow")
 	require.NoError(t, err)
 	require.NotNil(t, wf)
 
-	// Top-level fields
 	assert.Equal(t, "valid-workflow", wf.Name)
 	assert.Equal(t, "A test workflow with one transform node", wf.Description)
 	assert.Equal(t, "test-author", wf.Author)
 
-	// Default error behavior
 	assert.Equal(t, "retry", wf.DefaultErrorBehavior.Type)
 	assert.Equal(t, 3, wf.DefaultErrorBehavior.Retries)
 	assert.Equal(t, 5, wf.DefaultErrorBehavior.RetryDelaySeconds)
 
-	// Inputs
 	require.Len(t, wf.Inputs, 1)
 	assert.Equal(t, "inputText", wf.Inputs[0].Name)
 	assert.Equal(t, "string", wf.Inputs[0].Type)
 	assert.Equal(t, "The text to transform", wf.Inputs[0].Description)
 	assert.True(t, wf.Inputs[0].Required)
 
-	// Nodes
 	require.Len(t, wf.Nodes, 1)
 	node := wf.Nodes[0]
 	assert.Equal(t, "transform-1", node.ID)
@@ -54,50 +106,47 @@ func TestWorkflowRepo_Load_ValidWorkflow(t *testing.T) {
 	assert.Equal(t, "Transforms input to uppercase", node.Description)
 	assert.True(t, node.Entrypoint)
 
-	// Node config operations
 	require.Len(t, node.Config.Operations, 1)
 	op := node.Config.Operations[0]
 	assert.Equal(t, "outputText", op.Variable)
 	assert.Equal(t, "uppercase", op.Operation)
 	assert.Equal(t, "{{ inputText }}", op.Value)
 
-	// Edges
 	assert.Empty(t, wf.Edges)
 }
 
 func TestWorkflowRepo_Load_MissingDirectory(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	wf, err := repo.Load(context.Background(),"nonexistent-workflow")
+	wf, err := repo.Load(context.Background(), testScope(), "nonexistent-workflow")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent-workflow")
 }
 
 func TestWorkflowRepo_Load_MissingManifest(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	wf, err := repo.Load(context.Background(),"empty-dir")
+	wf, err := repo.Load(context.Background(), testScope(), "empty-dir")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "empty-dir")
 }
 
 func TestWorkflowRepo_Load_MalformedJSON(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	wf, err := repo.Load(context.Background(),"malformed-json")
+	wf, err := repo.Load(context.Background(), testScope(), "malformed-json")
 	assert.Nil(t, wf)
 	assert.Error(t, err)
 }
 
 func TestWorkflowRepo_List(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	summaries, err := repo.List(context.Background())
+	summaries, err := repo.List(context.Background(), testScope())
 	require.NoError(t, err)
 
-	// Should find all-node-types and valid-workflow; skip empty-dir and malformed-json.
 	require.Len(t, summaries, 2)
 
 	names := make([]string, len(summaries))
@@ -109,9 +158,9 @@ func TestWorkflowRepo_List(t *testing.T) {
 }
 
 func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	wf, err := repo.Load(context.Background(),"all-node-types")
+	wf, err := repo.Load(context.Background(), testScope(), "all-node-types")
 	require.NoError(t, err)
 	require.NotNil(t, wf)
 	require.Len(t, wf.Nodes, 5)
@@ -121,7 +170,6 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 		byID[n.ID] = n
 	}
 
-	// LLM node
 	llm := byID["llm-node"]
 	assert.Equal(t, workflow.NodeTypeLLMCall, llm.Type)
 	assert.Equal(t, "prompt.md", llm.Config.TemplateFile)
@@ -130,7 +178,6 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 	assert.Equal(t, 0.7, llm.Config.Temperature)
 	assert.NotNil(t, llm.Config.OutputSchema)
 
-	// Script node
 	script := byID["script-node"]
 	assert.Equal(t, workflow.NodeTypeScript, script.Type)
 	assert.Equal(t, "run.sh", script.Config.ScriptFile)
@@ -138,14 +185,12 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 	assert.Equal(t, []string{"--input", "{{llm-node.result}}"}, script.Config.Args)
 	assert.Equal(t, 30, script.Config.TimeoutSeconds)
 
-	// Tool call node
 	tool := byID["tool-node"]
 	assert.Equal(t, workflow.NodeTypeToolCall, tool.Type)
 	assert.Equal(t, "git", tool.Config.Command)
 	assert.Equal(t, []string{"status"}, tool.Config.Args)
 	assert.Equal(t, 10, tool.Config.TimeoutSeconds)
 
-	// Conditional node
 	cond := byID["cond-node"]
 	assert.Equal(t, workflow.NodeTypeConditional, cond.Type)
 	require.Len(t, cond.Config.Conditions, 1)
@@ -154,7 +199,6 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 	assert.Equal(t, "high", cond.Config.Conditions[0].Output)
 	assert.Equal(t, "low", cond.Config.DefaultOutput)
 
-	// Transform node
 	transform := byID["transform-node"]
 	assert.Equal(t, workflow.NodeTypeTransform, transform.Type)
 	require.Len(t, transform.Config.Operations, 1)
@@ -163,36 +207,161 @@ func TestWorkflowRepo_Load_AllNodeTypes(t *testing.T) {
 }
 
 func TestWorkflowRepo_List_EmptyWorkspace(t *testing.T) {
-	// Create a temporary empty directory
-	tmpDir, err := os.MkdirTemp("", "arbitron-test-empty-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	dir := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(dir)
 
-	repo := filesystem.NewWorkflowRepo(tmpDir)
-
-	summaries, err := repo.List(context.Background())
+	summaries, err := repo.List(context.Background(), testScope())
 	require.NoError(t, err)
 	assert.Empty(t, summaries)
 }
 
 func TestWorkflowRepo_Load_PathTraversalRejected(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(testdataPath(t))
+	repo := repoWithTestdata(t, testScope())
 
-	// A name like "../sibling" could escape the workspace root.
-	_, err := repo.Load(context.Background(),"../sibling")
+	_, err := repo.Load(context.Background(), testScope(), "../sibling")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 // ---------------------------------------------------------------------------
-// Helper: create a temp dir for write tests
+// Scope-specific tests
 // ---------------------------------------------------------------------------
 
-func tmpWorkspace(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	return dir
+func TestWorkflowRepo_Scope_PrivateAndSharedRoots(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	owner := uuid.New()
+	require.NoError(t, repo.Create(ctx, workflow.Private(owner), "p", sampleWorkflow("p")))
+	require.NoError(t, repo.Create(ctx, workflow.Shared(), "s", sampleWorkflow("s")))
+
+	// Private lands under users/<owner>/p
+	_, err := os.Stat(filepath.Join(base, "users", owner.String(), "p", "workflow.json"))
+	require.NoError(t, err)
+	// Shared lands under shared/s
+	_, err = os.Stat(filepath.Join(base, "shared", "s", "workflow.json"))
+	require.NoError(t, err)
 }
+
+func TestWorkflowRepo_Scope_PrivateRequiresOwner(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	err := repo.Create(ctx, workflow.Private(uuid.Nil), "x", sampleWorkflow("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+func TestWorkflowRepo_Scope_UnknownKindRejected(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	bad := workflow.Scope{Kind: workflow.ScopeKind(99), OwnerID: uuid.New()}
+	err := repo.Create(ctx, bad, "x", sampleWorkflow("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+func TestWorkflowRepo_List_IsolatedPerOwner(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(ctx, workflow.Private(a), "a-only", sampleWorkflow("a-only")))
+	require.NoError(t, repo.Create(ctx, workflow.Private(b), "b-only", sampleWorkflow("b-only")))
+
+	listA, err := repo.List(ctx, workflow.Private(a))
+	require.NoError(t, err)
+	require.Len(t, listA, 1)
+	assert.Equal(t, "a-only", listA[0].Name)
+}
+
+func TestWorkflowRepo_List_NeverCreatedScopeRootIsEmpty(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	// No private workflows ever created for this owner: the users/<id> dir
+	// does not exist. List must return an empty slice, not an error.
+	out, err := repo.List(ctx, workflow.Private(uuid.New()))
+	require.NoError(t, err)
+	assert.NotNil(t, out)
+	assert.Empty(t, out)
+}
+
+func TestWorkflowRepo_Exists(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	exists, err := repo.Exists(ctx, testScope(), "ghost")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	require.NoError(t, repo.Create(ctx, testScope(), "ghost", sampleWorkflow("ghost")))
+
+	exists, err = repo.Exists(ctx, testScope(), "ghost")
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+func TestWorkflowRepo_Create_UserDirIs0700(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	owner := uuid.New()
+	require.NoError(t, repo.Create(ctx, workflow.Private(owner), "w", sampleWorkflow("w")))
+
+	userDir := filepath.Join(base, "users", owner.String())
+	usersParent := filepath.Join(base, "users")
+	wfDir := filepath.Join(userDir, "w")
+
+	uinfo, err := os.Stat(userDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), uinfo.Mode().Perm(), "per-user dir must be 0o700")
+
+	pinfo, err := os.Stat(usersParent)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), pinfo.Mode().Perm(), "users/ parent must be 0o700")
+
+	winfo, err := os.Stat(wfDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), winfo.Mode().Perm(), "workflow dir itself is 0o755")
+}
+
+func TestWorkflowRepo_Scope_CrossScopeEscapeRejected(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+
+	a := uuid.New()
+	other := uuid.New()
+
+	// Cannot reach another user's partition from a Private scope.
+	err := repo.Create(ctx, workflow.Private(a), "../"+other.String()+"/secret", sampleWorkflow("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+
+	// Cannot reach shared/ from a Private scope.
+	err = repo.Create(ctx, workflow.Private(a), "../../shared/x", sampleWorkflow("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+
+	// Cannot reach a user partition from the Shared scope.
+	err = repo.Create(ctx, workflow.Shared(), "../users/"+a.String()+"/x", sampleWorkflow("x"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// ---------------------------------------------------------------------------
+// Helper: sample workflow
+// ---------------------------------------------------------------------------
 
 func sampleWorkflow(name string) *workflow.Workflow {
 	return &workflow.Workflow{
@@ -210,16 +379,15 @@ func sampleWorkflow(name string) *workflow.Workflow {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_Create_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("my-workflow")
-	err := repo.Create(ctx, "my-workflow", wf)
+	err := repo.Create(ctx, testScope(), "my-workflow", wf)
 	require.NoError(t, err)
 
-	// Verify the workflow.json was written
-	data, err := os.ReadFile(filepath.Join(dir, "my-workflow", "workflow.json"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "my-workflow", "workflow.json"))
 	require.NoError(t, err)
 
 	var loaded workflow.Workflow
@@ -231,39 +399,38 @@ func TestWorkflowRepo_Create_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowRepo_Create_AlreadyExists(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("existing")
-	require.NoError(t, repo.Create(ctx, "existing", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "existing", wf))
 
-	// Creating again should fail
-	err := repo.Create(ctx, "existing", wf)
+	err := repo.Create(ctx, testScope(), "existing", wf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
 
 func TestWorkflowRepo_Create_PathTraversalRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("evil")
-	err := repo.Create(ctx, "../escape", wf)
+	err := repo.Create(ctx, testScope(), "../escape", wf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_Create_LoadRoundTrip(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("roundtrip")
-	require.NoError(t, repo.Create(ctx, "roundtrip", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "roundtrip", wf))
 
-	loaded, err := repo.Load(ctx, "roundtrip")
+	loaded, err := repo.Load(ctx, testScope(), "roundtrip")
 	require.NoError(t, err)
 	assert.Equal(t, wf.Name, loaded.Name)
 	assert.Equal(t, wf.Description, loaded.Description)
@@ -271,42 +438,51 @@ func TestWorkflowRepo_Create_LoadRoundTrip(t *testing.T) {
 	assert.Len(t, loaded.Nodes, len(wf.Nodes))
 }
 
-func TestWorkflowRepo_Create_SpecialCharsInName(t *testing.T) {
-	dir := tmpWorkspace(t)
+func TestWorkflowRepo_Create_SharedRoundTrip(t *testing.T) {
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	// Workflow names with dashes, numbers, underscores should be fine
+	wf := sampleWorkflow("shared-rt")
+	require.NoError(t, repo.Create(ctx, workflow.Shared(), "shared-rt", wf))
+
+	loaded, err := repo.Load(ctx, workflow.Shared(), "shared-rt")
+	require.NoError(t, err)
+	assert.Equal(t, "shared-rt", loaded.Name)
+}
+
+func TestWorkflowRepo_Create_SpecialCharsInName(t *testing.T) {
+	dir := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
 	wf := sampleWorkflow("my_workflow-2")
-	err := repo.Create(ctx, "my_workflow-2", wf)
+	err := repo.Create(ctx, testScope(), "my_workflow-2", wf)
 	require.NoError(t, err)
 
-	loaded, err := repo.Load(ctx, "my_workflow-2")
+	loaded, err := repo.Load(ctx, testScope(), "my_workflow-2")
 	require.NoError(t, err)
 	assert.Equal(t, "my_workflow-2", loaded.Name)
 }
 
 func TestWorkflowRepo_Create_AtomicManifestWrite(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("atomic-create")
-	require.NoError(t, repo.Create(ctx, "atomic-create", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "atomic-create", wf))
 
-	// No .tmp files should remain after a successful create
-	entries, err := os.ReadDir(filepath.Join(dir, "atomic-create"))
+	entries, err := os.ReadDir(filepath.Join(scopeRootFor(t, dir, testScope()), "atomic-create"))
 	require.NoError(t, err)
 	for _, e := range entries {
 		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
 	}
 
-	// Exactly one file: workflow.json
 	require.Len(t, entries, 1)
 	assert.Equal(t, "workflow.json", entries[0].Name())
 
-	// Content must be a valid, parseable manifest
-	loaded, err := repo.Load(ctx, "atomic-create")
+	loaded, err := repo.Load(ctx, testScope(), "atomic-create")
 	require.NoError(t, err)
 	assert.Equal(t, "atomic-create", loaded.Name)
 }
@@ -316,95 +492,87 @@ func TestWorkflowRepo_Create_AtomicManifestWrite(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_Update_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("updatable")
-	require.NoError(t, repo.Create(ctx, "updatable", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "updatable", wf))
 
-	// Modify the workflow
 	wf.Description = "updated description"
 	wf.Author = "new-author"
-	err := repo.Update(ctx, "updatable", wf)
+	err := repo.Update(ctx, testScope(), "updatable", wf)
 	require.NoError(t, err)
 
-	// Verify changes persisted
-	loaded, err := repo.Load(ctx, "updatable")
+	loaded, err := repo.Load(ctx, testScope(), "updatable")
 	require.NoError(t, err)
 	assert.Equal(t, "updated description", loaded.Description)
 	assert.Equal(t, "new-author", loaded.Author)
 }
 
 func TestWorkflowRepo_Update_NotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("ghost")
-	err := repo.Update(ctx, "ghost", wf)
+	err := repo.Update(ctx, testScope(), "ghost", wf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_Update_PathTraversalRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("evil")
-	err := repo.Update(ctx, "../escape", wf)
+	err := repo.Update(ctx, testScope(), "../escape", wf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_Update_PreservesOtherFiles(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "with-files", sampleWorkflow("with-files")))
-	require.NoError(t, repo.WriteFile(ctx, "with-files", "script.sh", []byte("#!/bin/bash")))
-	require.NoError(t, repo.WriteFile(ctx, "with-files", "templates/prompt.md", []byte("# prompt")))
+	require.NoError(t, repo.Create(ctx, testScope(), "with-files", sampleWorkflow("with-files")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "with-files", "script.sh", []byte("#!/bin/bash")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "with-files", "templates/prompt.md", []byte("# prompt")))
 
-	// Update the manifest — other files must survive.
 	updated := sampleWorkflow("with-files")
 	updated.Description = "updated"
-	require.NoError(t, repo.Update(ctx, "with-files", updated))
+	require.NoError(t, repo.Update(ctx, testScope(), "with-files", updated))
 
-	// Manifest reflects the new description.
-	loaded, err := repo.Load(ctx, "with-files")
+	loaded, err := repo.Load(ctx, testScope(), "with-files")
 	require.NoError(t, err)
 	assert.Equal(t, "updated", loaded.Description)
 
-	// Supporting files are untouched.
-	files, err := repo.ListFiles(ctx, "with-files")
+	files, err := repo.ListFiles(ctx, testScope(), "with-files")
 	require.NoError(t, err)
 	assert.Contains(t, files, "script.sh")
 	assert.Contains(t, files, "templates/prompt.md")
 }
 
 func TestWorkflowRepo_Update_AtomicWrite(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("atomic")
-	require.NoError(t, repo.Create(ctx, "atomic", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "atomic", wf))
 
-	// Update should not leave temp files behind
 	wf.Description = "atomically updated"
-	require.NoError(t, repo.Update(ctx, "atomic", wf))
+	require.NoError(t, repo.Update(ctx, testScope(), "atomic", wf))
 
-	// Verify no .tmp files remain
-	entries, err := os.ReadDir(filepath.Join(dir, "atomic"))
+	entries, err := os.ReadDir(filepath.Join(scopeRootFor(t, dir, testScope()), "atomic"))
 	require.NoError(t, err)
 	for _, e := range entries {
 		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
 	}
 
-	// Verify the update landed
-	loaded, err := repo.Load(ctx, "atomic")
+	loaded, err := repo.Load(ctx, testScope(), "atomic")
 	require.NoError(t, err)
 	assert.Equal(t, "atomically updated", loaded.Description)
 }
@@ -414,74 +582,66 @@ func TestWorkflowRepo_Update_AtomicWrite(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_Delete_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("doomed")
-	require.NoError(t, repo.Create(ctx, "doomed", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "doomed", wf))
 
-	// Verify it exists
-	_, err := repo.Load(ctx, "doomed")
+	_, err := repo.Load(ctx, testScope(), "doomed")
 	require.NoError(t, err)
 
-	// Delete
-	err = repo.Delete(ctx, "doomed")
+	err = repo.Delete(ctx, testScope(), "doomed")
 	require.NoError(t, err)
 
-	// Verify it's gone
-	_, err = repo.Load(ctx, "doomed")
+	_, err = repo.Load(ctx, testScope(), "doomed")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 
-	// Verify directory is removed
-	_, err = os.Stat(filepath.Join(dir, "doomed"))
+	_, err = os.Stat(filepath.Join(scopeRootFor(t, dir, testScope()), "doomed"))
 	assert.True(t, os.IsNotExist(err))
 }
 
 func TestWorkflowRepo_Delete_NotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.Delete(ctx, "nonexistent")
+	err := repo.Delete(ctx, testScope(), "nonexistent")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_Delete_PathTraversalRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.Delete(ctx, "../escape")
+	err := repo.Delete(ctx, testScope(), "../escape")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_Delete_EmptyNameRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	// An empty name resolves to the basePath itself; deleting it would wipe
-	// the entire workspace. The repo must reject this without touching anything.
-	err := repo.Delete(ctx, "")
+	err := repo.Delete(ctx, testScope(), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 
-	// The workspace directory itself must still exist.
 	_, statErr := os.Stat(dir)
 	require.NoError(t, statErr, "basePath must not be removed by Delete with empty name")
 }
 
 func TestWorkflowRepo_Delete_DotNameRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	// "." resolves to the basePath just like "".
-	err := repo.Delete(ctx, ".")
+	err := repo.Delete(ctx, testScope(), ".")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 
@@ -490,23 +650,22 @@ func TestWorkflowRepo_Delete_DotNameRejected(t *testing.T) {
 }
 
 func TestWorkflowRepo_Delete_WithExtraFiles(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
 	wf := sampleWorkflow("with-files")
-	require.NoError(t, repo.Create(ctx, "with-files", wf))
+	require.NoError(t, repo.Create(ctx, testScope(), "with-files", wf))
 
-	// Add extra files
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "with-files", "script.sh"), []byte("#!/bin/bash"), 0o644))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "with-files", "sub"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "with-files", "sub", "data.txt"), []byte("data"), 0o644))
+	wfDir := filepath.Join(scopeRootFor(t, dir, testScope()), "with-files")
+	require.NoError(t, os.WriteFile(filepath.Join(wfDir, "script.sh"), []byte("#!/bin/bash"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(wfDir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(wfDir, "sub", "data.txt"), []byte("data"), 0o644))
 
-	// Delete should remove everything
-	err := repo.Delete(ctx, "with-files")
+	err := repo.Delete(ctx, testScope(), "with-files")
 	require.NoError(t, err)
 
-	_, err = os.Stat(filepath.Join(dir, "with-files"))
+	_, err = os.Stat(wfDir)
 	assert.True(t, os.IsNotExist(err))
 }
 
@@ -515,101 +674,97 @@ func TestWorkflowRepo_Delete_WithExtraFiles(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_WriteFile_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf1", sampleWorkflow("wf1")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf1", sampleWorkflow("wf1")))
 
-	err := repo.WriteFile(ctx, "wf1", "script.sh", []byte("#!/bin/bash\necho hi"))
+	err := repo.WriteFile(ctx, testScope(), "wf1", "script.sh", []byte("#!/bin/bash\necho hi"))
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "wf1", "script.sh"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "wf1", "script.sh"))
 	require.NoError(t, err)
 	assert.Equal(t, "#!/bin/bash\necho hi", string(data))
 }
 
 func TestWorkflowRepo_WriteFile_NestedDirs(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf2", sampleWorkflow("wf2")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf2", sampleWorkflow("wf2")))
 
-	err := repo.WriteFile(ctx, "wf2", "templates/prompt.md", []byte("# Hello"))
+	err := repo.WriteFile(ctx, testScope(), "wf2", "templates/prompt.md", []byte("# Hello"))
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "wf2", "templates", "prompt.md"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "wf2", "templates", "prompt.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "# Hello", string(data))
 }
 
 func TestWorkflowRepo_WriteFile_EmptyContent(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf3", sampleWorkflow("wf3")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf3", sampleWorkflow("wf3")))
 
-	err := repo.WriteFile(ctx, "wf3", "empty.txt", []byte{})
+	err := repo.WriteFile(ctx, testScope(), "wf3", "empty.txt", []byte{})
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, "wf3", "empty.txt"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "wf3", "empty.txt"))
 	require.NoError(t, err)
 	assert.Empty(t, data)
 }
 
 func TestWorkflowRepo_WriteFile_WorkflowNotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.WriteFile(ctx, "nonexistent", "file.txt", []byte("data"))
+	err := repo.WriteFile(ctx, testScope(), "nonexistent", "file.txt", []byte("data"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_WriteFile_PathTraversalWorkflowName(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.WriteFile(ctx, "../escape", "file.txt", []byte("data"))
+	err := repo.WriteFile(ctx, testScope(), "../escape", "file.txt", []byte("data"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_WriteFile_PathTraversalRelativePath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf4", sampleWorkflow("wf4")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf4", sampleWorkflow("wf4")))
 
-	err := repo.WriteFile(ctx, "wf4", "../escape.txt", []byte("evil"))
+	err := repo.WriteFile(ctx, testScope(), "wf4", "../escape.txt", []byte("evil"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file path")
 
-	// Also try double traversal
-	err = repo.WriteFile(ctx, "wf4", "sub/../../escape.txt", []byte("evil"))
+	err = repo.WriteFile(ctx, testScope(), "wf4", "sub/../../escape.txt", []byte("evil"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file path")
 }
 
 func TestWorkflowRepo_WriteFile_OverwriteExisting(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf5", sampleWorkflow("wf5")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf5", sampleWorkflow("wf5")))
 
-	// Write once
-	require.NoError(t, repo.WriteFile(ctx, "wf5", "data.txt", []byte("v1")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf5", "data.txt", []byte("v1")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf5", "data.txt", []byte("v2")))
 
-	// Overwrite
-	require.NoError(t, repo.WriteFile(ctx, "wf5", "data.txt", []byte("v2")))
-
-	data, err := os.ReadFile(filepath.Join(dir, "wf5", "data.txt"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "wf5", "data.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(data))
 }
@@ -619,77 +774,75 @@ func TestWorkflowRepo_WriteFile_OverwriteExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_DeleteFile_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-del", sampleWorkflow("wf-del")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-del", "script.sh", []byte("#!/bin/bash")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-del", sampleWorkflow("wf-del")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-del", "script.sh", []byte("#!/bin/bash")))
 
-	err := repo.DeleteFile(ctx, "wf-del", "script.sh")
+	err := repo.DeleteFile(ctx, testScope(), "wf-del", "script.sh")
 	require.NoError(t, err)
 
-	_, err = os.Stat(filepath.Join(dir, "wf-del", "script.sh"))
+	_, err = os.Stat(filepath.Join(scopeRootFor(t, dir, testScope()), "wf-del", "script.sh"))
 	assert.True(t, os.IsNotExist(err))
 }
 
 func TestWorkflowRepo_DeleteFile_FileNotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-del2", sampleWorkflow("wf-del2")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-del2", sampleWorkflow("wf-del2")))
 
-	err := repo.DeleteFile(ctx, "wf-del2", "nonexistent.txt")
+	err := repo.DeleteFile(ctx, testScope(), "wf-del2", "nonexistent.txt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_DeleteFile_WorkflowNotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.DeleteFile(ctx, "ghost-wf", "file.txt")
+	err := repo.DeleteFile(ctx, testScope(), "ghost-wf", "file.txt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_DeleteFile_PathTraversalWorkflowName(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	err := repo.DeleteFile(ctx, "../escape", "file.txt")
+	err := repo.DeleteFile(ctx, testScope(), "../escape", "file.txt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_DeleteFile_PathTraversalRelativePath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-del3", sampleWorkflow("wf-del3")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-del3", sampleWorkflow("wf-del3")))
 
-	err := repo.DeleteFile(ctx, "wf-del3", "../workflow.json")
+	err := repo.DeleteFile(ctx, testScope(), "wf-del3", "../workflow.json")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file path")
 }
 
 func TestWorkflowRepo_DeleteFile_LeavesManifestIntact(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-del4", sampleWorkflow("wf-del4")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-del4", "only-file.txt", []byte("content")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-del4", sampleWorkflow("wf-del4")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-del4", "only-file.txt", []byte("content")))
 
-	// Delete the only non-manifest file
-	require.NoError(t, repo.DeleteFile(ctx, "wf-del4", "only-file.txt"))
+	require.NoError(t, repo.DeleteFile(ctx, testScope(), "wf-del4", "only-file.txt"))
 
-	// Manifest should still be there
-	_, err := repo.Load(ctx, "wf-del4")
+	_, err := repo.Load(ctx, testScope(), "wf-del4")
 	require.NoError(t, err)
 }
 
@@ -698,18 +851,17 @@ func TestWorkflowRepo_DeleteFile_LeavesManifestIntact(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWorkflowRepo_ListFiles_HappyPath(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-list", sampleWorkflow("wf-list")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list", "script.sh", []byte("#!/bin/bash")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list", "templates/prompt.md", []byte("# Hi")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-list", sampleWorkflow("wf-list")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list", "script.sh", []byte("#!/bin/bash")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list", "templates/prompt.md", []byte("# Hi")))
 
-	files, err := repo.ListFiles(ctx, "wf-list")
+	files, err := repo.ListFiles(ctx, testScope(), "wf-list")
 	require.NoError(t, err)
 
-	// Should include script.sh and templates/prompt.md but NOT workflow.json
 	assert.Contains(t, files, "script.sh")
 	assert.Contains(t, files, "templates/prompt.md")
 	assert.NotContains(t, files, "workflow.json")
@@ -717,87 +869,83 @@ func TestWorkflowRepo_ListFiles_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowRepo_ListFiles_ExcludesWorkflowJSON(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-list2", sampleWorkflow("wf-list2")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-list2", sampleWorkflow("wf-list2")))
 
-	// Only workflow.json exists
-	files, err := repo.ListFiles(ctx, "wf-list2")
+	files, err := repo.ListFiles(ctx, testScope(), "wf-list2")
 	require.NoError(t, err)
 	assert.Empty(t, files)
 }
 
 func TestWorkflowRepo_ListFiles_WorkflowNotFound(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	_, err := repo.ListFiles(ctx, "nonexistent")
+	_, err := repo.ListFiles(ctx, testScope(), "nonexistent")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestWorkflowRepo_ListFiles_PathTraversalRejected(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	_, err := repo.ListFiles(ctx, "../escape")
+	_, err := repo.ListFiles(ctx, testScope(), "../escape")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid workflow name")
 }
 
 func TestWorkflowRepo_ListFiles_ForwardSlashes(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-list3", sampleWorkflow("wf-list3")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list3", "a/b/c/deep.txt", []byte("deep")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-list3", sampleWorkflow("wf-list3")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list3", "a/b/c/deep.txt", []byte("deep")))
 
-	files, err := repo.ListFiles(ctx, "wf-list3")
+	files, err := repo.ListFiles(ctx, testScope(), "wf-list3")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
-	// Paths must use forward slashes regardless of OS
 	assert.Equal(t, "a/b/c/deep.txt", files[0])
 }
 
 func TestWorkflowRepo_WriteFile_AtomicWrite(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-atomic", sampleWorkflow("wf-atomic")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-atomic", sampleWorkflow("wf-atomic")))
 
-	// Overwrite to trigger the atomic path
-	require.NoError(t, repo.WriteFile(ctx, "wf-atomic", "data.txt", []byte("v1")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-atomic", "data.txt", []byte("v2")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-atomic", "data.txt", []byte("v1")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-atomic", "data.txt", []byte("v2")))
 
-	// No .tmp files should remain after a successful write
-	entries, err := os.ReadDir(filepath.Join(dir, "wf-atomic"))
+	entries, err := os.ReadDir(filepath.Join(scopeRootFor(t, dir, testScope()), "wf-atomic"))
 	require.NoError(t, err)
 	for _, e := range entries {
 		assert.False(t, filepath.Ext(e.Name()) == ".tmp", "temp file should not remain: %s", e.Name())
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "wf-atomic", "data.txt"))
+	data, err := os.ReadFile(filepath.Join(scopeRootFor(t, dir, testScope()), "wf-atomic", "data.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(data))
 }
 
 func TestWorkflowRepo_ListFiles_NestedDirs(t *testing.T) {
-	dir := tmpWorkspace(t)
+	dir := t.TempDir()
 	repo := filesystem.NewWorkflowRepo(dir)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Create(ctx, "wf-list4", sampleWorkflow("wf-list4")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "scripts/run.sh", []byte("run")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "scripts/setup.sh", []byte("setup")))
-	require.NoError(t, repo.WriteFile(ctx, "wf-list4", "templates/main.md", []byte("main")))
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-list4", sampleWorkflow("wf-list4")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list4", "scripts/run.sh", []byte("run")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list4", "scripts/setup.sh", []byte("setup")))
+	require.NoError(t, repo.WriteFile(ctx, testScope(), "wf-list4", "templates/main.md", []byte("main")))
 
-	files, err := repo.ListFiles(ctx, "wf-list4")
+	files, err := repo.ListFiles(ctx, testScope(), "wf-list4")
 	require.NoError(t, err)
 	assert.Len(t, files, 3)
 	assert.Contains(t, files, "scripts/run.sh")

@@ -10,14 +10,23 @@ import (
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 )
 
 // Compile-time assertion: WorkflowRepo satisfies workflow.WorkflowRepository.
 var _ workflow.WorkflowRepository = (*WorkflowRepo)(nil)
 
+// userScopeDirMode is the permission applied to the per-user partition root
+// (and its users/ parent). It mirrors workspace.go's per-instance dir mode:
+// these dirs can hold one user's private workflows and must not be group- or
+// world-readable.
+const userScopeDirMode os.FileMode = 0o700
+
 // WorkflowRepo implements workflow.WorkflowRepository by reading workflow
-// definitions from the local filesystem. Each workflow lives in its own
-// subdirectory under basePath and contains a workflow.json manifest.
+// definitions from the local filesystem. Workflows live under a scope root:
+// basePath/users/<ownerID>/<name>/ for private workspaces and
+// basePath/shared/<name>/ for the shared (published) space. Each workflow
+// contains a workflow.json manifest.
 type WorkflowRepo struct {
 	basePath string
 }
@@ -27,21 +36,67 @@ func NewWorkflowRepo(basePath string) *WorkflowRepo {
 	return &WorkflowRepo{basePath: basePath}
 }
 
+// scopeRoot returns the directory that contains workflow folders for the
+// given scope: basePath/users/<ownerID> for Private, basePath/shared for
+// Shared. It does not create the directory.
+func (r *WorkflowRepo) scopeRoot(scope workflow.Scope) (string, error) {
+	switch scope.Kind {
+	case workflow.ScopePrivate:
+		if scope.OwnerID == uuid.Nil {
+			return "", fmt.Errorf("%w: private scope requires owner", workflow.ErrInvalidName)
+		}
+		return filepath.Join(r.basePath, "users", scope.OwnerID.String()), nil
+	case workflow.ScopeShared:
+		return filepath.Join(r.basePath, "shared"), nil
+	default:
+		return "", fmt.Errorf("%w: unknown scope kind", workflow.ErrInvalidName)
+	}
+}
+
+// ensureScopeRoot creates the scope root dir (and, for private scopes, the
+// parent users/ dir) with 0o700 perms, chmodding to defeat umask relaxation,
+// matching adapter/filesystem/workspace.go's security precedent.
+func (r *WorkflowRepo) ensureScopeRoot(scope workflow.Scope) (string, error) {
+	scopeRoot, err := r.scopeRoot(scope)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(scopeRoot, userScopeDirMode); err != nil {
+		return "", fmt.Errorf("creating scope root: %w", err)
+	}
+	if scope.Kind == workflow.ScopePrivate {
+		// Tighten the per-user dir and its users/ parent (MkdirAll honours umask).
+		if err := os.Chmod(filepath.Dir(scopeRoot), userScopeDirMode); err != nil {
+			return "", fmt.Errorf("tighten users dir: %w", err)
+		}
+		if err := os.Chmod(scopeRoot, userScopeDirMode); err != nil {
+			return "", fmt.Errorf("tighten user dir: %w", err)
+		}
+	}
+	return scopeRoot, nil
+}
+
 // resolveWorkflowDir validates a workflow name and returns the absolute path
-// to its directory. It rejects names that resolve to the basePath itself or
-// escape it via path traversal (e.g., "../sibling", ".", "").
-func (r *WorkflowRepo) resolveWorkflowDir(name string) (string, error) {
-	root := filepath.Clean(r.basePath) + string(os.PathSeparator)
-	wfDir := filepath.Join(r.basePath, name)
-	if wfDir == filepath.Clean(r.basePath) || !strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
+// to its directory within the given scope. It rejects names that resolve to
+// the scope root itself or escape it via path traversal (e.g., "../sibling",
+// ".", "") including cross-scope escapes.
+func (r *WorkflowRepo) resolveWorkflowDir(scope workflow.Scope, name string) (string, error) {
+	scopeRoot, err := r.scopeRoot(scope)
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Clean(scopeRoot) + string(os.PathSeparator)
+	wfDir := filepath.Join(scopeRoot, name)
+	if wfDir == filepath.Clean(scopeRoot) ||
+		!strings.HasPrefix(wfDir+string(os.PathSeparator), root) {
 		return "", fmt.Errorf("%w: %s", workflow.ErrInvalidName, name)
 	}
 	return wfDir, nil
 }
 
 // Load reads and parses the workflow.json file from the named subdirectory.
-func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow, error) {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) Load(_ context.Context, scope workflow.Scope, name string) (*workflow.Workflow, error) {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		// Load historically returns ErrNotFound for invalid names.
 		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
@@ -64,12 +119,22 @@ func (r *WorkflowRepo) Load(_ context.Context, name string) (*workflow.Workflow,
 	return &wf, nil
 }
 
-// List scans subdirectories of basePath and returns a summary for each valid
-// workflow (i.e. each directory that contains a parseable workflow.json).
-// Directories without a valid manifest are silently skipped.
-func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, error) {
-	entries, err := os.ReadDir(r.basePath)
+// List scans subdirectories of the scope root and returns a summary for each
+// valid workflow (i.e. each directory that contains a parseable workflow.json).
+// Directories without a valid manifest are silently skipped. A scope root that
+// does not exist yet (e.g. a user who has never created a private workflow)
+// returns an empty slice with no error.
+func (r *WorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	scopeRoot, err := r.scopeRoot(scope)
 	if err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(scopeRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []workflow.WorkflowSummary{}, nil
+		}
 		return nil, fmt.Errorf("listing workflows: %w", err)
 	}
 
@@ -79,7 +144,7 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 			continue
 		}
 
-		wf, err := r.Load(ctx, entry.Name())
+		wf, err := r.Load(ctx, scope, entry.Name())
 		if err != nil {
 			// Skip directories that don't contain a valid workflow
 			continue
@@ -99,8 +164,8 @@ func (r *WorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, er
 // SaveNodePositions updates the position field of each node in the workflow's
 // manifest file. It reads the raw JSON (preserving unknown fields), patches
 // matching nodes, and writes the file back with indentation.
-func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positions map[string]workflow.NodePosition) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) SaveNodePositions(_ context.Context, scope workflow.Scope, name string, positions map[string]workflow.NodePosition) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
@@ -164,8 +229,8 @@ func (r *WorkflowRepo) SaveNodePositions(_ context.Context, name string, positio
 
 // Create creates a new workflow directory and writes its workflow.json manifest.
 // It returns an error if the workflow already exists or the name is invalid.
-func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workflow) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) Create(_ context.Context, scope workflow.Scope, name string, wf *workflow.Workflow) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return err
 	}
@@ -173,6 +238,12 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 	// Fail if the directory already exists.
 	if _, err := os.Stat(wfDir); err == nil {
 		return fmt.Errorf("%w: %s", workflow.ErrAlreadyExists, name)
+	}
+
+	// Ensure the scope partition root exists with the correct (0o700) perms
+	// before creating the per-workflow dir.
+	if _, err := r.ensureScopeRoot(scope); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -205,8 +276,8 @@ func (r *WorkflowRepo) Create(_ context.Context, name string, wf *workflow.Workf
 
 // Update atomically replaces the workflow.json manifest for an existing workflow.
 // It returns an error if the workflow does not exist.
-func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workflow) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) Update(_ context.Context, scope workflow.Scope, name string, wf *workflow.Workflow) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return err
 	}
@@ -240,8 +311,8 @@ func (r *WorkflowRepo) Update(_ context.Context, name string, wf *workflow.Workf
 
 // Delete removes an entire workflow directory and all its contents.
 // It returns an error if the workflow does not exist.
-func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) Delete(_ context.Context, scope workflow.Scope, name string) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return err
 	}
@@ -260,10 +331,26 @@ func (r *WorkflowRepo) Delete(_ context.Context, name string) error {
 	return nil
 }
 
+// Exists reports whether a workflow with the given name exists in scope.
+func (r *WorkflowRepo) Exists(_ context.Context, scope workflow.Scope, name string) (bool, error) {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
+	if err != nil {
+		return false, err
+	}
+	_, statErr := os.Stat(filepath.Join(wfDir, "workflow.json"))
+	if statErr == nil {
+		return true, nil
+	}
+	if os.IsNotExist(statErr) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking workflow %q: %w", name, statErr)
+}
+
 // WriteFile writes content to a file at relativePath inside the named workflow
 // directory, creating intermediate directories as needed.
-func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath string, content []byte) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) WriteFile(_ context.Context, scope workflow.Scope, name string, relativePath string, content []byte) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return err
 	}
@@ -304,8 +391,8 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, name string, relativePath st
 }
 
 // DeleteFile removes a single file from inside the named workflow directory.
-func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath string) error {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) DeleteFile(_ context.Context, scope workflow.Scope, name string, relativePath string) error {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return err
 	}
@@ -338,8 +425,8 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, name string, relativePath s
 // ListFiles returns all file paths inside the named workflow directory,
 // excluding workflow.json and .tmp crash artifacts. Paths use forward slashes
 // and are relative to the workflow directory.
-func (r *WorkflowRepo) ListFiles(_ context.Context, name string) ([]string, error) {
-	wfDir, err := r.resolveWorkflowDir(name)
+func (r *WorkflowRepo) ListFiles(_ context.Context, scope workflow.Scope, name string) ([]string, error) {
+	wfDir, err := r.resolveWorkflowDir(scope, name)
 	if err != nil {
 		return nil, err
 	}
