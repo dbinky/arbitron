@@ -4,6 +4,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+### GAP-FA11-P1-01: `TouchLastUsed` channel drain discarded the touched token ID — correct token not pinned
+**Area**: Focus Area 11 — Bearer-token auth path (Pass 1)
+**Fix**: Strengthened `TestAuthMiddleware_Bearer_HappyPath` in `adapter/http/auth_middleware_test.go`. The existing `select { case <-tokens.touchedIDs: }` verified the goroutine fired but discarded the ID, proving only that *some* touch happened, not that the *correct* token was named. Replaced with `case touchedID := <-tokens.touchedIDs: assert.Equal(t, tokens.byHash[hash].ID, touchedID, ...)`. Now pins the invariant that the async `go func(tid uuid.UUID)` closure captures `tok.ID` from the hash-lookup result, not an ambient variable or a different token. A future refactor that accidentally shadowed the captured ID would be caught immediately.
+
 ## Fixed Previously
 
 ### GAP-FA10-P2-01: MCP cross-user revoke was untested — no existence-oracle check on MCP surface

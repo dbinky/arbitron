@@ -429,9 +429,11 @@ func TestAuthMiddleware_Bearer_HappyPath(t *testing.T) {
 	assert.Equal(t, "carol", probe.id.Username)
 	assert.Equal(t, identity.RoleUser, probe.id.Role)
 
-	// TouchLastUsed runs exactly once for the matched token.
+	// TouchLastUsed runs exactly once and names the matched token's ID.
+	hash := identity.HashToken(plaintext)
 	select {
-	case <-tokens.touchedIDs:
+	case touchedID := <-tokens.touchedIDs:
+		assert.Equal(t, tokens.byHash[hash].ID, touchedID, "TouchLastUsed must be called with the matched token's ID")
 	case <-time.After(time.Second):
 		t.Fatal("TouchLastUsed was never invoked")
 	}
