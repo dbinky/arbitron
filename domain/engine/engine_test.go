@@ -414,7 +414,8 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockUserRepo implements instance.UserRepository
 type mockUserRepo struct {
-	defaultUserID uuid.UUID
+	defaultUserID  uuid.UUID
+	defaultUserErr error // if non-nil, GetDefaultUser returns this error
 }
 
 func newMockUserRepo() *mockUserRepo {
@@ -422,6 +423,9 @@ func newMockUserRepo() *mockUserRepo {
 }
 
 func (r *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
+	if r.defaultUserErr != nil {
+		return uuid.Nil, r.defaultUserErr
+	}
 	return r.defaultUserID, nil
 }
 

@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA19-P1-01: `Trigger` missing error-category test — no-identity + default-user unavailable
+**Area**: Focus Area 19 — Flat-store migration & run-shared-directly (Pass 1)
+**Fix**: Added `defaultUserErr error` field to `mockUserRepo` in `domain/engine/engine_test.go`. Added `TestTrigger_DefaultUserUnavailable_FailsClosed` in `domain/engine/engine_trigger_scope_test.go`: seeds `defaultUserErr` to simulate a DB failure, calls `Trigger` with no identity in context, asserts error containing "failed to resolve triggering user" and confirms no instance was created. Documents the fail-closed invariant: a system trigger with an unavailable default user must not create an instance with a nil OwnerID, which would break all visibility scoping.
+
 ### GAP-FA18-P2-01: MCP `safeWorkflowName` accepted `"."` — HTTP correctly rejected it
 **Area**: Focus Area 18 — Publish/copy & publisher store (Pass 2)
 **Fix**: Added `&& name != "."` to `safeWorkflowName` in `adapter/mcp/helpers.go` to match HTTP's implementation. `"."` resolves via `filepath.Join(scopeRoot, ".")` to the scope root itself, which `resolveWorkflowDir` catches with `ErrInvalidName` — but that falls to the `default:` handler case and returns an opaque error. The fix catches it at the adapter boundary, consistent with how HTTP handles it. Added `TestWorkflowTool_Publish_DotName` and `TestWorkflowTool_Copy_DotName` (4 subtests) to pin the behavior on both source and destination names.

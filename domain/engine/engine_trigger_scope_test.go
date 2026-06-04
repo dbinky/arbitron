@@ -177,6 +177,22 @@ func TestTrigger_UnknownName_NotFound(t *testing.T) {
 	assert.True(t, errors.Is(err, workflow.ErrNotFound))
 }
 
+// TestTrigger_DefaultUserUnavailable_FailsClosed verifies that a system trigger
+// (no identity in context) fails closed when the default user cannot be resolved
+// rather than proceeding with a nil owner. A nil owner would silently assign
+// the instance to no real user, breaking all visibility scoping.
+func TestTrigger_DefaultUserUnavailable_FailsClosed(t *testing.T) {
+	h := newTriggerHarness()
+	h.users.defaultUserErr = errors.New("db unavailable")
+	h.repo.put(workflow.Shared(), sharedWf("sys-wf"))
+
+	_, _, err := h.engine.Trigger(context.Background(), "sys-wf", nil, "normal")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to resolve triggering user")
+	// No instance created.
+	assert.Empty(t, h.instances.instances)
+}
+
 // --- Boundary ---
 
 func TestTrigger_PrivateWinsOverShared(t *testing.T) {
