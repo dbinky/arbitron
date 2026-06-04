@@ -4,24 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### ATTR-003 (optional): Interventions not folded inline into the trace payload
-**Area**: Instance trace surface (`adapter/http` trace handler, MCP `trace`)
-**Detail**: Admin interventions are exposed via a dedicated `GET /api/v1/instances/{id}/interventions` endpoint and the `trace_interventions` MCP tool rather than inline in the existing `GET /trace` array response. This was a deliberate choice to avoid breaking the trace contract the dashboard consumes. Functionally complete; this item is only about presentation.
-**Fix direction**: If the product wants interventions inline, introduce a versioned/object-shaped trace response and update the dashboard consumer accordingly. Otherwise the user may move this to Won't Fix.
+_(none)_
 
 ## Fixed Previously
 
-### TEST-002: Thin adapter-level end-to-end authz coverage
-**Area**: `adapter/http` / `adapter/mcp` integration tests
-**Fixed**: Iteration 1
-**Detail**: Per-user scoping was well unit-tested in `domain/engine` but several adapter tests used stubs (admin-equivalent) that let the old behavior tests stay green without exercising real isolation. There was little coverage driving the real engine through HTTP/MCP adapters with a non-admin identity.
-**Resolution**: Added `adapter/http/authz_e2e_test.go` (HTTP) and `adapter/mcp/authz_e2e_test.go` (MCP) each wiring the real engine + in-memory repos with a non-admin identity injected. Tests cover: instance_list (own-only vs admin-all), instance_get (owner 200, non-owner 404, admin 200), trace_get (same), variables_get (same), instance_pause (non-owner 404). HTTP and MCP tests use identical repo implementations and identity contexts, confirming both surfaces enforce the same domain-layer rules. WS per-instance connect and interactive session authz are already covered at the domain engine level in `conversation_authz_test.go`.
-
-### NOTIF-001: Notification list was not scoped per user
-**Area**: Instance read scoping / notifications (`adapter/http/notification_handler.go`, MCP `tools_system.go`, `adapter/sqlite/notification_repo.go`, `domain/notification/ports.go`)
-**Fixed**: Iteration 1
-**Detail**: Phase 4 read scoping returned `ErrNotFound` for non-owners on instances/traces/variables, but the notification surface was un-scoped. A non-admin could list, count unread, mark-read, and dismiss notifications from other users in org mode.
-**Resolution**: Added `OwnerID *uuid.UUID` to `notification.ListFilters` and updated `CountUnread`/`MarkAllRead`/`Dismiss` signatures to accept `ownerID *uuid.UUID` (nil = admin, non-nil = filter to owner). Scoping in the SQLite repo is done via JOIN with `instances.owner_id` — no schema migration required. Both the HTTP handler (`NotificationHandler`) and MCP handler extract the caller identity from context and pass the constraint, matching the pattern used by `domain/engine.ownerConstraint`. Cross-user `Dismiss` fails closed with `ErrNotFound`. Isolation verified by `TestNotificationRepo_IsolationByOwner` (SQLite level) and `TestNotificationHandler_OwnerScoping` (handler level, all four methods).
+_(none yet)_
 
 ## Won't Fix (Beyond Current Scope)
 
