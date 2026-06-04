@@ -128,7 +128,7 @@ The MVP is complete when all of the following hold:
 
 **Non-goals (explicitly out of scope for this MVP):**
 
-- **Fan-out / fan-in (parallelism).** Deferred to Phase 8 per the project overview. The native loop iterates a dynamic task list one-at-a-time; this is slower, not blocked.
+- **Fan-out / fan-in (parallelism).** Deferred to a future release (formerly Phase 8) per the project overview. The native loop iterates a dynamic task list one-at-a-time; this is slower, not blocked.
 - **A dedicated loop/iteration primitive.** The cyclic-edge pattern is the supported idiom; a first-class loop construct is not built.
 - **The feature-pipeline workflow content.** Authored separately; this spec delivers only the enabling layer.
 - **A native API-level tool-use agent loop.** Agency is delegated to harnesses (`claude -p`, `opencode`); Arbitron does not reimplement a coding agent.

@@ -59,6 +59,12 @@ type Instance struct {
 	WebhookReceivedAt sql.NullString
 }
 
+type InstanceDismissal struct {
+	UserID      string
+	InstanceID  string
+	DismissedAt string
+}
+
 type InstanceIntervention struct {
 	ID          string
 	InstanceID  string
@@ -119,6 +125,11 @@ type User struct {
 	CreatedAt string
 	Subject   sql.NullString
 	Email     sql.NullString
+}
+
+type UserDepartment struct {
+	UserID     string
+	Department string
 }
 
 type VariableSnapshot struct {

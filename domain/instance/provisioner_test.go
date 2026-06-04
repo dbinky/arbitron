@@ -62,6 +62,12 @@ func (r *fakeProvUserRepo) UpdateUsername(_ context.Context, id uuid.UUID, usern
 func (r *fakeProvUserRepo) List(context.Context) ([]User, error)                { return nil, nil }
 func (r *fakeProvUserRepo) UpdateRole(context.Context, uuid.UUID, string) error { return nil }
 func (r *fakeProvUserRepo) CountAdmins(context.Context) (int, error)            { return 0, nil }
+func (r *fakeProvUserRepo) ListDepartments(context.Context, uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+func (r *fakeProvUserRepo) ReplaceDepartments(context.Context, uuid.UUID, []string) error {
+	return nil
+}
 
 // Happy path: an unknown, non-bootstrap subject creates a plain user.
 func TestProvisioner_Resolve_NewPlainUser(t *testing.T) {

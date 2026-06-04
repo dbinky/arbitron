@@ -454,6 +454,14 @@ func (r *mockUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) erro
 
 func (r *mockUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, nil }
 
+func (r *mockUserRepo) ListDepartments(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (r *mockUserRepo) ReplaceDepartments(_ context.Context, _ uuid.UUID, _ []string) error {
+	return nil
+}
+
 // mockQueueManager implements engine.QueueManager
 type mockQueueManager struct {
 	mu                    sync.Mutex

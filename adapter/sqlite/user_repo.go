@@ -144,3 +144,43 @@ func (r *UserRepo) CountAdmins(ctx context.Context) (int, error) {
 	}
 	return int(n), nil
 }
+
+// ListDepartments returns the user's persisted department set, sorted by the
+// ORDER BY department in the query.
+func (r *UserRepo) ListDepartments(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := r.queries.ListUserDepartments(ctx, uuidToString(userID))
+	if err != nil {
+		return nil, fmt.Errorf("listing departments for user %s: %w", userID, err)
+	}
+	return rows, nil
+}
+
+// ReplaceDepartments atomically supersedes the user's department set: delete-all
+// then insert each value, in a single transaction. The caller passes already
+// NORMALIZED values; ON CONFLICT DO NOTHING makes duplicate values within one
+// call harmless. An empty/nil slice clears the set.
+func (r *UserRepo) ReplaceDepartments(ctx context.Context, userID uuid.UUID, departments []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning replace-departments transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	qtx := r.queries.WithTx(tx)
+	uid := uuidToString(userID)
+	if err := qtx.DeleteUserDepartments(ctx, uid); err != nil {
+		return fmt.Errorf("clearing departments for user %s: %w", userID, err)
+	}
+	for _, d := range departments {
+		if err := qtx.InsertUserDepartment(ctx, generated.InsertUserDepartmentParams{
+			UserID:     uid,
+			Department: d,
+		}); err != nil {
+			return fmt.Errorf("inserting department %q for user %s: %w", d, userID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing replace-departments transaction: %w", err)
+	}
+	return nil
+}

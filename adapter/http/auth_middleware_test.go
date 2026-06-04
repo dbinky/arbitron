@@ -21,10 +21,11 @@ type fakeUserRepo struct {
 	defaultID uuid.UUID
 	byID      map[uuid.UUID]*instance.User
 	bySubject map[string]*instance.User
+	depts     map[uuid.UUID][]string
 }
 
 func newFakeUserRepo() *fakeUserRepo {
-	return &fakeUserRepo{defaultID: uuid.New(), byID: map[uuid.UUID]*instance.User{}}
+	return &fakeUserRepo{defaultID: uuid.New(), byID: map[uuid.UUID]*instance.User{}, depts: map[uuid.UUID][]string{}}
 }
 
 func (r *fakeUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) { return r.defaultID, nil }
@@ -87,6 +88,18 @@ func (r *fakeUserRepo) CountAdmins(_ context.Context) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func (r *fakeUserRepo) ListDepartments(_ context.Context, userID uuid.UUID) ([]string, error) {
+	return append([]string(nil), r.depts[userID]...), nil
+}
+
+func (r *fakeUserRepo) ReplaceDepartments(_ context.Context, userID uuid.UUID, departments []string) error {
+	if r.depts == nil {
+		r.depts = map[uuid.UUID][]string{}
+	}
+	r.depts[userID] = append([]string(nil), departments...)
+	return nil
 }
 
 type fakeSessionRepo struct {

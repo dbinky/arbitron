@@ -11,7 +11,7 @@ The system runs in one of two modes, selected by configuration:
 
 Phase 6 also closes the authentication gaps left open in earlier phases: in org mode, **every** request-handling surface is authenticated — the REST API, the WebSocket streams, the interactive-session endpoints, and the MCP endpoint. None of these may be reachable anonymously when org mode is on.
 
-Out of scope: scheduled and webhook triggers (Phase 7) and parallel fan-out/fan-in execution (Phase 8).
+Out of scope: scheduled and webhook triggers (Phase 7) and parallel fan-out/fan-in execution (deferred — future, formerly Phase 8).
 
 ---
 

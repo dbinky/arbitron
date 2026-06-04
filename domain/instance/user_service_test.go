@@ -69,6 +69,12 @@ func (r *fakeUserSvcRepo) CountAdmins(context.Context) (int, error) {
 	}
 	return r.adminCount, nil
 }
+func (r *fakeUserSvcRepo) ListDepartments(context.Context, uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+func (r *fakeUserSvcRepo) ReplaceDepartments(context.Context, uuid.UUID, []string) error {
+	return nil
+}
 
 // stubBootstrap records the args it was called with.
 type stubBootstrap struct {

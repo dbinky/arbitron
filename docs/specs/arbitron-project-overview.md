@@ -12,7 +12,7 @@ The Arbitron ultimately replaces both ralph-o-matic (the refinement engine) and 
 
 - **Workflow Instance** — a single execution of a workflow. Has its own variable state, execution trace, and lifecycle (queued, running, waiting, completed, failed, cancelled, paused). Instances snapshot the workflow definition at creation time — later edits to the workflow don't affect running instances.
 
-- **Node** — a step in the workflow. Ten types across three categories:
+- **Node** — a step in the workflow. Ten types across three categories (two of which — Fan-out and Fan-in — are deferred to a future release; see [Deferred Items](#appendix-deferred-items)):
 
   **Execution Nodes** (do work, produce output):
   1. **LLM Call** — sends a markdown template (with `{{variable}}` substitution) to an LLM and collects structured JSON output. Model is selectable per node.
@@ -23,8 +23,8 @@ The Arbitron ultimately replaces both ralph-o-matic (the refinement engine) and 
   **Flow Control Nodes** (route and shape execution):
   5. **Conditional (If)** — evaluates conditions against the current instance state (including upstream node output) and routes to one of multiple outputs. One input, two or more outputs based on configurable conditions. Includes a default/fallback output.
   6. **Transform** — lightweight variable manipulation (increment, concatenate, set, conditional assign) with no external execution environment.
-  7. **Fan-out** — splits execution into parallel branches. All outgoing edges activate simultaneously.
-  8. **Fan-in** — waits for all incoming parallel branches to complete and collects their outputs as an ordered array. Used as a pair with fan-out.
+  7. **Fan-out** *(future — deferred, see below)* — splits execution into parallel branches. All outgoing edges activate simultaneously.
+  8. **Fan-in** *(future — deferred, see below)* — waits for all incoming parallel branches to complete and collects their outputs as an ordered array. Used as a pair with fan-out.
 
   **Wait Nodes** (pause execution):
   9. **Timer Delay** — pauses execution for a configured duration.
@@ -111,10 +111,12 @@ The engine walks the directed graph starting from a designated entry node. For e
 For flow control nodes:
 - **Conditional (If)** — evaluates its conditions against instance state, activates the matching output
 - **Transform** — performs variable manipulation, passes through to its single output
-- **Fan-out** — activates all outgoing branches simultaneously
-- **Fan-in** — waits until all incoming branches have completed, collects their outputs as an ordered array, then continues
+- **Fan-out** *(future — deferred)* — activates all outgoing branches simultaneously
+- **Fan-in** *(future — deferred)* — waits until all incoming branches have completed, collects their outputs as an ordered array, then continues
 
-### Parallel Execution (Fan-out / Fan-in)
+### Parallel Execution (Fan-out / Fan-in) — *Future / Deferred*
+
+> **Deferred to a future release.** The design below is retained for reference; it is not part of the current roadmap. See [Deferred Items](#appendix-deferred-items).
 
 When a fan-out node activates, all downstream branches execute simultaneously. Each branch operates on its own copy of the instance variables at the point of fan-out. When branches converge at a fan-in node, the fan-in receives an array of outputs (one per branch, preserving order). Instance variables are NOT automatically merged from branches — the fan-in output is the array, and a downstream transform or script node can reconcile variables as needed.
 
@@ -376,13 +378,11 @@ MCP server wrapping the REST API. Three Claude Code skills: workflow authoring, 
 
 OAuth integration (Cloudflare Zero Trust or Entra, decision deferred). User and admin roles. Private workspaces and shared workflow directory. Publishing model (copy, unique names, read-only shared, re-publish). Visibility rules (users see own, admins see all). Admin intervention capabilities.
 
-### Phase 7: Triggers & Scheduling
+### Phase 7: Triggers & Scheduling — *Last pre-planned phase*
 
 Scheduled triggers (cron). Webhook triggers (auto-generated endpoints, request body mapping). Multiple triggers per workflow.
 
-### Phase 8: Parallel Execution
-
-Fan-out / fan-in nodes. Parallel branch execution with isolated variable copies. Fan-in collects outputs as ordered array.
+**Phase 7 is the last pre-planned phase.** Functionality beyond it is treated as future work rather than a scheduled phase. Most notably, **parallel execution (fan-out / fan-in)** — previously slated as Phase 8 — is deferred as future functionality; its design is retained in the [Parallel Execution](#parallel-execution-fan-out--fan-in--future--deferred) section and tracked in [Deferred Items](#appendix-deferred-items) for when the work is picked up.
 
 ---
 
@@ -390,6 +390,7 @@ Fan-out / fan-in nodes. Parallel branch execution with isolated variable copies.
 
 The following items were discussed and explicitly deferred for future consideration:
 
+- **Parallel execution (Fan-out / Fan-in)** — formerly Phase 8. Fan-out / fan-in node types, parallel branch execution with isolated per-branch variable copies, and fan-in collecting branch outputs as an ordered array. The design is retained in the [Parallel Execution](#parallel-execution-fan-out--fan-in--future--deferred) section but is not on the current roadmap.
 - **Sub-workflows** — a node that is itself an entire workflow. Excluded due to complexity (nested state, error propagation, variable scoping). Can be approximated by chaining workflows via triggers.
 - **Workflow version history with rollback** — the data model should leave architectural space for this, but no version tracking or rollback in v1.
 - **Data retention and cleanup policies** — automatic cleanup of old instances, storage limits, archiving. Keep everything for now.
