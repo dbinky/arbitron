@@ -11,14 +11,16 @@ completeness — **not** missing behavior.
 
 ## Open Issues
 
+_No open issues. All identified gaps are closed._
+
+## Closed Issues
+
 ### ~~GAP-003: Dismissal HTTP handlers missing error-scenario coverage~~  ✅ CLOSED (MEDIUM)
 **Area:** `adapter/http/dismissal_handler_test.go`
 **What was wrong:** The dismissal HTTP tests covered the happy path, business-rule
 failures (409), and ErrNotFound (404), but three error scenarios were not tested:
 - **Invalid instance ID** (non-UUID in the URL) → handler must return 400 BAD_REQUEST.
-  `TestDismiss_InvalidID_400` and `TestRestore_InvalidID_400` were missing; the
-  `parseInstanceID` error branch was exercised only by the test for `TestGet_NotFound`
-  in the main handler tests, not by the dismissal-specific tests.
+  `TestDismiss_InvalidID_400` and `TestRestore_InvalidID_400` were missing.
 - **Repo write failure** → `Dismiss` and `Restore` return 500 when the repo fails.
   `TestDismiss_RepoError_500` and `TestRestore_RepoError_500` were missing.
 - **List failure in DismissAll** → `DismissAll` returns 500 when `instances.List`
@@ -31,7 +33,6 @@ and `make test-all` green.
 
 ### ~~GAP-002: GraphView integration coverage missing failed/static centering scenarios~~  ✅ CLOSED (MEDIUM)
 **Area:** `dashboard/src/routes/ExecutionView.tsx` (`GraphView`), `dashboard/src/routes/GraphView.test.tsx`
-**Focus area:** 2
 **What was wrong:** `GraphView.test.tsx` covered running and completed instance centering
 at the integration level, but not failed or static-preview — those were only covered
 at the `selectAnchorNodeId` unit level. Broken wiring in `GraphView` specifically for
@@ -43,8 +44,6 @@ centering on mount'`:
 - `centers on the entry node for a static workflow preview (no instance)` — `instance={null}`
   with `entrypoint:true` on node 'a'; asserts `setCenter` on node 'a'.
 Both pass; full dashboard suite green (208 → 210 tests).
-
-## Closed Issues
 
 ### ~~GAP-001: QueueSection missing dismissed-row dimming coverage~~  ✅ CLOSED (MEDIUM)
 **Area:** `dashboard/src/components/QueueSection.test.tsx`
