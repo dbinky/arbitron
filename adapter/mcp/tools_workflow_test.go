@@ -1036,6 +1036,33 @@ func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "already exists")
 }
 
+// TestWorkflowTool_Publish_DifferentPublisher_Unauthorized verifies the publisher-only-overwrite
+// invariant on the MCP surface: a caller cannot re-publish under a name already owned by
+// a different user.
+func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
+	otherUser := uuid.New()
+	// Pre-seed the store so "pub" is already owned by a different user.
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{"pub": otherUser}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+// TestWorkflowTool_Copy_SharedMissing_NotFound verifies that copying a shared workflow
+// that does not exist returns a not-found tool error, not a server error.
+func TestWorkflowTool_Copy_SharedMissing_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "ghost", "newName": "mine"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
 func ctxWithMCPIdentity() context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: mcpTestUserID, Username: "tester", Role: identity.RoleUser})
 }
