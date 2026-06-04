@@ -73,6 +73,10 @@ type RouterDeps struct {
 	// handler so REST, WS, and MCP all inherit one authz boundary. Nil disables
 	// auth (legacy/tests) -- production wiring always sets it (Task 8).
 	Auth *AuthMiddleware
+	// AuthHandler serves the /auth/* login flow OUTSIDE the auth middleware
+	// (these routes establish the session). Nil in local mode / when auth is
+	// disabled.
+	AuthHandler *AuthHandler
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -243,6 +247,16 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			mcp = d.Auth.Handler(mcp)
 		}
 		r.Mount("/mcp", mcp)
+	}
+
+	// OIDC browser login flow (Phase 6). Registered OUTSIDE the /api/v1 group and
+	// BEFORE the dashboard NotFound, and NOT wrapped by d.Auth -- these routes
+	// establish the session the middleware later validates, so they cannot
+	// require one.
+	if d.AuthHandler != nil {
+		r.Get("/auth/login", d.AuthHandler.Login)
+		r.Get("/auth/callback", d.AuthHandler.Callback)
+		r.Post("/auth/logout", d.AuthHandler.Logout)
 	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.

@@ -19,6 +19,7 @@ import (
 type fakeUserRepo struct {
 	defaultID uuid.UUID
 	byID      map[uuid.UUID]*instance.User
+	bySubject map[string]*instance.User
 }
 
 func newFakeUserRepo() *fakeUserRepo {
@@ -34,12 +35,24 @@ func (r *fakeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User,
 	return nil, instance.ErrNotFound
 }
 
-func (r *fakeUserRepo) GetBySubject(context.Context, string) (*instance.User, error) {
+func (r *fakeUserRepo) GetBySubject(_ context.Context, subject string) (*instance.User, error) {
+	if subject == "" {
+		return nil, instance.ErrNotFound
+	}
+	if u, ok := r.bySubject[subject]; ok {
+		return u, nil
+	}
 	return nil, instance.ErrNotFound
 }
 
 func (r *fakeUserRepo) Create(_ context.Context, u *instance.User) error {
 	r.byID[u.ID] = u
+	if u.Subject != nil {
+		if r.bySubject == nil {
+			r.bySubject = map[string]*instance.User{}
+		}
+		r.bySubject[*u.Subject] = u
+	}
 	return nil
 }
 
