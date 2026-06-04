@@ -937,6 +937,63 @@ func TestRouter_UpdateTeamsConfig_MalformedJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// SECURITY: GET /system/config must never echo any raw OIDC field value
+// (clientSecret, clientId, issuerUrl, redirectUrl) even when auth is org mode
+// and those fields are fully populated. The RedactedAuth positive allow-list
+// exposes only mode and oidcConfigured. This test is the surface-level counterpart
+// to the Redact unit tests in domain/config/redact_auth_test.go; it guards against
+// a regression where a new field accidentally lands in RedactedAuth.
+func TestRouter_GetConfig_AuthSection_NeverLeaksOIDCSecret(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Auth = config.AuthConfig{
+		Mode: "org",
+		OIDC: config.OIDCConfig{
+			IssuerURL:    "https://idp.example.com/SHOULD-NOT-APPEAR",
+			ClientID:     "client-SHOULD-NOT-APPEAR",
+			ClientSecret: "secret-SHOULD-NOT-APPEAR",
+			RedirectURL:  "https://app.example.com/SHOULD-NOT-APPEAR/auth/callback",
+		},
+	}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.NotContains(t, body, "SHOULD-NOT-APPEAR",
+		"GET /system/config must never echo any raw OIDC field value")
+
+	// The auth section must be present with the correct mode and oidcConfigured flag.
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(strings.NewReader(body)).Decode(&resp))
+	auth, ok := resp["auth"].(map[string]any)
+	require.True(t, ok, "response must contain an 'auth' section")
+	assert.Equal(t, "org", auth["mode"], "auth.mode must reflect the configured mode")
+	assert.Equal(t, true, auth["oidcConfigured"], "auth.oidcConfigured must be true when ClientSecret is set")
+}
+
+// Success: GET /system/config auth section reports local mode with oidcConfigured=false
+// when no OIDC is configured. This is the default frictionless local-mode state.
+func TestRouter_GetConfig_AuthSection_LocalMode(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Auth = config.AuthConfig{Mode: config.AuthModeLocal}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	auth, ok := resp["auth"].(map[string]any)
+	require.True(t, ok, "response must contain an 'auth' section")
+	assert.Equal(t, config.AuthModeLocal, auth["mode"], "auth.mode must be 'local' in local mode")
+	assert.Equal(t, false, auth["oidcConfigured"], "oidcConfigured must be false when no ClientSecret is set")
+}
+
 // Error: a body larger than the MaxBytesReader limit (1 MiB) is rejected with
 // 400 and leaves the stored config unchanged. This is the Phase 1 design's
 // "oversize body" error category, distinct from the malformed-JSON error above.

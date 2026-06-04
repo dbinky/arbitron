@@ -645,6 +645,35 @@ func TestSystemUpdateTeamsConfig_WebhookURLNotString(t *testing.T) {
 	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
 }
 
+// SECURITY: system_config must never echo any raw OIDC field value (clientSecret,
+// clientId, issuerUrl, redirectUrl) even when auth is org mode and those fields
+// are fully populated. Mirrors TestRouter_GetConfig_AuthSection_NeverLeaksOIDCSecret
+// for the MCP surface. Both surfaces call config.Redact, but this test guards the
+// MCP code path against a regression independently.
+func TestSystemConfig_NeverLeaksOIDCSecret(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Mode: "org",
+			OIDC: config.OIDCConfig{
+				IssuerURL:    "https://idp.example.com/SHOULD-NOT-APPEAR",
+				ClientID:     "client-SHOULD-NOT-APPEAR",
+				ClientSecret: "secret-SHOULD-NOT-APPEAR",
+				RedirectURL:  "https://app.example.com/SHOULD-NOT-APPEAR/auth/callback",
+			},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.NotContains(t, text, "SHOULD-NOT-APPEAR",
+		"system_config must never echo any raw OIDC field value on the MCP surface")
+	// The auth section must be present with the correct fields.
+	assert.Contains(t, text, `"mode"`)
+	assert.Contains(t, text, `"oidcConfigured"`)
+}
+
 // Error: a non-bool enabled is a type error; config is left unchanged.
 func TestSystemUpdateTeamsConfig_EnabledNotBool(t *testing.T) {
 	cfg := &config.Config{

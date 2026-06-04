@@ -16,6 +16,10 @@ _(none)_
 **Area**: Focus Area 1 — Auth config & mode
 **Fix**: Added `TestLoad_AuthBootstrapAdmins_FromYAML` in `adapter/config/loader_test.go` verifying YAML native-list loading for the security-critical bootstrap admins field.
 
+### GAP-FA1-P2-01: No surface-level secrecy test for OIDC secret on REST/MCP
+**Area**: Focus Area 1 — Auth config & mode (Pass 2)
+**Fix**: Added `TestRouter_GetConfig_AuthSection_NeverLeaksOIDCSecret` and `TestRouter_GetConfig_AuthSection_LocalMode` to `adapter/http/server_test.go`, and `TestSystemConfig_NeverLeaksOIDCSecret` to `adapter/mcp/tools_system_test.go`. Both surfaces now have a regression guard for the OIDC client-secret / field-value leak, mirroring the existing LLM API key and Teams webhook tests.
+
 ### GAP-FA1-03: Session CookieSecure=false via YAML had no test
 **Area**: Focus Area 1 — Auth config & mode
 **Fix**: Added `TestLoad_AuthSession_CookieSecure_Override` in `adapter/config/loader_test.go` verifying CookieSecure can be set to false via YAML for local HTTP dev.
