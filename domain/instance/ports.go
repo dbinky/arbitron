@@ -58,6 +58,16 @@ type VariableSnapshotRepository interface {
 // expanded in place (Phase 6) so the engine, which already imports it for
 // GetDefaultUser, picks up the new methods without a relocation. Implementations
 // must wrap a missing row as ErrNotFound via fmt.Errorf %w.
+//
+// TODO(group-permissions phase): KNOWN DEBT — bounded-context inversion. The
+// identity-account model (User, UserRepository, Provisioner, UserService, role
+// sentinels) lives in domain/instance for now, which forces authentication code
+// (adapter/http/auth_handler.go, the auth middleware) to import the
+// workflow-instance domain purely to authenticate. The correct home is
+// domain/identity (the dependency floor); instance should keep only OwnerID.
+// The relocation is DEFERRED to the FIRST task of the group-permissions phase
+// (it is a genuine prerequisite there, and reshaping the package twice is churn).
+// Tracked via PR #20 review (thread r3358274543). Do not relocate piecemeal.
 type UserRepository interface {
 	GetDefaultUser(ctx context.Context) (uuid.UUID, error)             // existing, unchanged
 	GetByID(ctx context.Context, id uuid.UUID) (*User, error)          // ErrNotFound if absent
