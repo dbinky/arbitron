@@ -77,6 +77,23 @@ const instance = {
   state: 'running',
 } as unknown as Instance
 
+// Loop workflow: b↔c are in a loop body; a is outside.
+const loopWorkflowDef: WorkflowDefinition = {
+  name: 'wf',
+  description: '',
+  author: '',
+  nodes: [
+    { id: 'a', type: 'llm_call', label: 'A', description: '', config: {} },
+    { id: 'b', type: 'llm_call', label: 'B', description: '', config: {} },
+    { id: 'c', type: 'llm_call', label: 'C', description: '', config: {} },
+  ],
+  edges: [
+    { source: 'a', target: 'b' },
+    { source: 'b', target: 'c' },
+    { source: 'c', target: 'b', label: 'retry' },
+  ],
+}
+
 const trace: NodeExecution[] = []
 
 beforeEach(() => {
@@ -319,6 +336,40 @@ describe('GraphView — default-zoom centering on mount', () => {
     expect(setCenterSpy).toHaveBeenCalledWith(
       aNode.position!.x + 100,
       aNode.position!.y + 40,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
+  })
+
+  // Domain: design doc says "loop-container overlay nodes are excluded from
+  // anchor candidates." The container IS present in rfNodes (the exclusion is not
+  // because containers are absent), so we must verify the centering targets the
+  // step node specifically. Without this test, a bug routing the anchor to the
+  // container would still pass all other tests.
+  it('centers on the active step node, not the loop container, for a running workflow with a loop', () => {
+    const runningInLoop = {
+      currentNodeId: 'b',  // 'b' is inside the loop body
+      state: 'running',
+    } as unknown as Instance
+    render(
+      <GraphView
+        instance={runningInLoop}
+        workflowDef={loopWorkflowDef}
+        trace={[]}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    const bNode = lastReactFlowProps!.nodes.find((n) => n.id === 'b')!
+    // The loop container IS present alongside the step nodes.
+    expect(
+      lastReactFlowProps!.nodes.some(
+        (n) => (n as { type?: string }).type === 'loopContainer',
+      ),
+    ).toBe(true)
+    // Centering must target the step node 'b', not the container.
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      bNode.position!.x + 100,
+      bNode.position!.y + 40,
       expect.objectContaining({ zoom: 0.9 }),
     )
   })

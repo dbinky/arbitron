@@ -8,6 +8,13 @@ _(none)_
 
 ## Fixed Previously
 
+### VIEW-003: No integration test that loop containers are excluded from anchor selection
+**Area**: Domain viewport behavior (`dashboard/src/routes/GraphView.test.tsx`)
+**Fixed**: Iteration 25
+**Detail**: The design doc says "loop-container overlay nodes are excluded from anchor candidates — only real step nodes." The exclusion is structural (selectAnchorNodeId searches workflowDef.nodes, containers are never there), but no test verified the end result. Added `loopWorkflowDef` fixture (a→b→c with c→b back-edge) and `centers on the active step node, not the loop container, for a running workflow with a loop`: renders GraphView with `currentNodeId='b'` (a node inside the loop body), verifies the loop container IS present in rfNodes, then asserts setCenter is called with 'b's position at zoom 0.9.
+
+---
+
 ### LOOP-005: Nested-loop depth propagation not verified at GraphView integration level
 **Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
 **Fixed**: Iteration 24

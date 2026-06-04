@@ -24,7 +24,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 9 | Engine retry resurface + wiring (`domain/engine/engine.go`, `cmd/arbitron/main.go` — Retry→ClearForInstance, SetDismissals, rerun new-instance) | [x] | [x] | Done |
 | 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [x] | [x] | Done |
 | 11 | Domain: loop semantics end-to-end (workflow def back-edge + label → detection → layout/container → on-screen) | [x] | [x] | Done |
-| 12 | Domain: viewport behavior (default zoom + follow + manual override) as a cross-cutting graph concern | [ ] | [ ] | |
+| 12 | Domain: viewport behavior (default zoom + follow + manual override) as a cross-cutting graph concern | [x] | [ ] | |
 | 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [ ] | [ ] | |
 | 14 | Vertical slice: dismiss action ([x] → POST /instances/{id}/dismiss → repo → list omits → UI updates) | [ ] | [ ] | |
 | 15 | Vertical slice: show/hide dismissed (toggle → list `includeDismissed=true` → marked → dimmed render + ↺ restore) | [ ] | [ ] | |
