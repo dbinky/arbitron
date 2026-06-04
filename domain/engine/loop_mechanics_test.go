@@ -221,7 +221,7 @@ func TestLoop_HappyPath_ExitsOnDone(t *testing.T) {
 		map[string]any{"done": true},
 	)
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -246,7 +246,7 @@ func TestLoop_ExitsOnCounterReachesMax(t *testing.T) {
 	// assessor never reports done; only the counter condition can exit the loop.
 	f.agent.script("assessor", map[string]any{"done": false})
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -270,7 +270,7 @@ func TestLoop_MalformedCounter_HaltsInsteadOfSpinning(t *testing.T) {
 	f.workflowRepo.add(loopWorkflow(100, false))
 	f.agent.script("assessor", map[string]any{"done": false})
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
@@ -297,7 +297,7 @@ func TestLoop_BackEdgeReExecutesAgentNode(t *testing.T) {
 		map[string]any{"done": true},
 	)
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -343,7 +343,7 @@ func TestLoop_CounterPersistedAndVisibleInTrace(t *testing.T) {
 		map[string]any{"done": true},
 	)
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -412,10 +412,10 @@ func TestLoop_NoExitLoop_EngineDoesNotAutoKill(t *testing.T) {
 	const guard = 6
 	f.agent.mu.Lock()
 	f.agent.maxPasses = guard
-	f.agent.cancel = func() { _ = f.engine.Cancel(<-idCh) }
+	f.agent.cancel = func() { _ = f.engine.Cancel(bgAdmin(), <-idCh) }
 	f.agent.mu.Unlock()
 
-	id, _, err := f.engine.Trigger("loop-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")
 	require.NoError(t, err)
 	idCh <- id
 

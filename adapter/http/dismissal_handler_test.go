@@ -18,10 +18,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockUserRepo implements instance.UserRepository.
+// mockUserRepo implements instance.UserRepository. Only GetDefaultUser is
+// exercised by the dismissal seam; the remaining Phase 6-interface methods are
+// no-op stubs.
 type mockUserRepo struct{ id uuid.UUID }
 
 func (m *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) { return m.id, nil }
+func (m *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
+func (m *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
+func (m *mockUserRepo) Create(_ context.Context, _ *instance.User) error { return nil }
+func (m *mockUserRepo) UpdateUsername(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (m *mockUserRepo) List(_ context.Context) ([]instance.User, error) { return nil, nil }
+func (m *mockUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (m *mockUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, nil }
+
+var _ instance.UserRepository = (*mockUserRepo)(nil)
 
 func TestCurrentUser_ResolvesDefaultUser(t *testing.T) {
 	want := uuid.New()
@@ -181,6 +200,25 @@ func (e *errUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 	return uuid.UUID{}, e.err
 }
 
+// The remaining UserRepository methods are unused by the dismissal seam (which
+// only calls GetDefaultUser); they exist to satisfy the Phase 6-expanded
+// interface and return the configured error / zero values.
+func (e *errUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
+	return nil, e.err
+}
+func (e *errUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
+	return nil, e.err
+}
+func (e *errUserRepo) Create(_ context.Context, _ *instance.User) error { return e.err }
+func (e *errUserRepo) UpdateUsername(_ context.Context, _ uuid.UUID, _ string) error {
+	return e.err
+}
+func (e *errUserRepo) List(_ context.Context) ([]instance.User, error) { return nil, e.err }
+func (e *errUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) error {
+	return e.err
+}
+func (e *errUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, e.err }
+
 var _ instance.UserRepository = (*errUserRepo)(nil)
 
 // newDismissalTestServer builds a router with the dismissal deps wired and
@@ -190,15 +228,15 @@ var _ instance.UserRepository = (*errUserRepo)(nil)
 func newDismissalTestServer(t *testing.T, instRepo *mockInstanceRepo, dis instance.DismissalRepository, users instance.UserRepository) *httptest.Server {
 	t.Helper()
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
-		Service:    &routerMockService{},
-		Workflows:  newMockWorkflowRepo(),
-		Instances:  instRepo,
-		NodeExecs:  newMockNodeExecRepo(),
-		Snapshots:  newMockSnapshotRepo(),
-		EventBus:   eventbus.NewNoOp(),
-		Config:     &config.Config{},
-		Dismissals: dis,
-		Users:      users,
+		Service:        &routerMockService{listWithFiltersFn: instRepo.List},
+		Workflows:      newMockWorkflowRepo(),
+		Instances:      instRepo,
+		NodeExecs:      newMockNodeExecRepo(),
+		Snapshots:      newMockSnapshotRepo(),
+		EventBus:       eventbus.NewNoOp(),
+		Config:         &config.Config{},
+		Dismissals:     dis,
+		DismissalUsers: users,
 	})
 	srv := httptest.NewServer(router)
 	return srv
@@ -577,15 +615,15 @@ func TestDismissAll_ListError_500(t *testing.T) {
 	// Use errInstanceRepo so List fails; wire a working dismissal repo.
 	// Construct the server manually since newDismissalTestServer uses mockInstanceRepo.
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
-		Service:    &routerMockService{},
-		Workflows:  newMockWorkflowRepo(),
-		Instances:  &errInstanceRepo{err: fmt.Errorf("db down")},
-		NodeExecs:  newMockNodeExecRepo(),
-		Snapshots:  newMockSnapshotRepo(),
-		EventBus:   eventbus.NewNoOp(),
-		Config:     &config.Config{},
-		Dismissals: newMockDismissalRepo(),
-		Users:      &mockUserRepo{id: uuid.New()},
+		Service:        &routerMockService{},
+		Workflows:      newMockWorkflowRepo(),
+		Instances:      &errInstanceRepo{err: fmt.Errorf("db down")},
+		NodeExecs:      newMockNodeExecRepo(),
+		Snapshots:      newMockSnapshotRepo(),
+		EventBus:       eventbus.NewNoOp(),
+		Config:         &config.Config{},
+		Dismissals:     newMockDismissalRepo(),
+		DismissalUsers: &mockUserRepo{id: uuid.New()},
 	})
 	srv := httptest.NewServer(router)
 	defer srv.Close()

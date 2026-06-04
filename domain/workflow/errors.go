@@ -22,4 +22,12 @@ var (
 	// ErrFileNotFound indicates the requested file does not exist within
 	// the workflow directory.
 	ErrFileNotFound = errors.New("file not found")
+
+	// ErrSharedReadOnly indicates a caller attempted to mutate a workflow in the
+	// shared scope; shared workflows are only written via publish.
+	ErrSharedReadOnly = errors.New("shared workflows are read-only; copy to edit or re-publish")
+
+	// ErrUnauthorized indicates the caller is not permitted to perform the
+	// requested operation (e.g. a non-admin loading another user's private workflow).
+	ErrUnauthorized = errors.New("not authorized")
 )

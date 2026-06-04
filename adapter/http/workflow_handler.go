@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,14 +15,61 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
-// WorkflowService defines the engine methods needed by workflow handlers.
-type WorkflowService interface {
-	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+// callerOwner returns the authenticated caller's user ID from context. The
+// Phase 1 auth middleware guarantees an identity is present on every request
+// reaching these handlers.
+func callerOwner(ctx context.Context) uuid.UUID {
+	return identity.MustFromContext(ctx).UserID
 }
+
+// callerPrivate returns the caller's private storage scope.
+func callerPrivate(ctx context.Context) workflow.Scope {
+	return workflow.Private(callerOwner(ctx))
+}
+
+// ownerBoundChecker adapts a scope-aware engine.FileReader to the owner-blind
+// workflow.FileChecker by binding the caller's owner, so validation searches
+// the caller's private workspace first then shared.
+type ownerBoundChecker struct {
+	fr    engine.FileReader
+	owner uuid.UUID
+}
+
+func (c ownerBoundChecker) FileExists(workflowName, relativePath string) bool {
+	return c.fr.FileExists(c.owner, workflowName, relativePath)
+}
+
+// writeSharedReadOnlyOrNotFound maps a write-path error to the right HTTP
+// status: shared-read-only → 409, not-found → 404; returns false if the error
+// is neither (caller handles the remaining cases).
+func writeSharedReadOnlyOrNotFound(w http.ResponseWriter, name string, err error) bool {
+	switch {
+	case errors.Is(err, workflow.ErrSharedReadOnly):
+		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		return true
+	case errors.Is(err, workflow.ErrNotFound):
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return true
+	}
+	return false
+}
+
+// TriggerService defines the engine trigger method needed by workflow handlers.
+// The request context carries the triggering identity (injected by the auth
+// middleware) so the engine resolves the caller's visible scopes and stamps the
+// triggering user as the instance owner.
+type TriggerService interface {
+	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+}
+
+// WorkflowService is an alias retained for the EngineService composition in
+// server.go; it carries the Trigger method the engine satisfies.
+type WorkflowService = TriggerService
 
 // workflowStatsReader is a consumer-side interface for reading workflow
 // execution statistics. It avoids importing the full InstanceRepository and
@@ -33,7 +81,8 @@ type workflowStatsReader interface {
 // WorkflowHandler handles REST API requests for workflow operations.
 type WorkflowHandler struct {
 	repo           workflow.WorkflowRepository
-	service        WorkflowService
+	wfSvc          *workflow.WorkflowService
+	service        TriggerService
 	fileReader     engine.FileReader
 	stats          workflowStatsReader
 	profileChecker workflow.ProfileChecker
@@ -51,17 +100,26 @@ func (h *WorkflowHandler) SetConnectionChecker(cc workflow.ConnectionChecker) {
 // An optional workflow.ProfileChecker may be supplied as the final argument to
 // enable model_profile validation; when omitted (or nil), the model_profile
 // validation pass is skipped.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service WorkflowService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
+func NewWorkflowHandler(repo workflow.WorkflowRepository, service TriggerService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
 	var pc workflow.ProfileChecker
 	if len(profileChecker) > 0 {
 		pc = profileChecker[0]
 	}
 	return &WorkflowHandler{
 		repo:           repo,
+		wfSvc:          workflow.NewWorkflowService(repo, nil),
 		service:        service,
 		fileReader:     fileReader,
 		stats:          stats,
 		profileChecker: pc,
+	}
+}
+
+// SetWorkflowService overrides the internally-constructed WorkflowService, e.g.
+// to wire a real PublisherLookup once the published_workflows repo exists.
+func (h *WorkflowHandler) SetWorkflowService(svc *workflow.WorkflowService) {
+	if svc != nil {
+		h.wfSvc = svc
 	}
 }
 
@@ -81,7 +139,7 @@ func safeWorkflowName(name string) bool {
 
 // List handles GET /workflows and returns a JSON array of workflow summaries.
 func (h *WorkflowHandler) List(w http.ResponseWriter, r *http.Request) {
-	summaries, err := h.repo.List(r.Context())
+	summaries, err := h.wfSvc.List(r.Context())
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list workflows")
 		return
@@ -99,7 +157,7 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(r.Context(), name)
+	wf, err := h.wfSvc.Load(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -118,7 +176,7 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
 		return
 	}
-	wf, err := h.repo.Load(r.Context(), name)
+	wf, err := h.wfSvc.Load(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -128,7 +186,8 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs := workflow.Validate(wf, h.fileReader, h.profileChecker, h.connChecker)
+	checker := ownerBoundChecker{fr: h.fileReader, owner: callerOwner(r.Context())}
+	errs := workflow.Validate(wf, checker, h.profileChecker, h.connChecker)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}
@@ -164,7 +223,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		req.Priority = "normal"
 	}
 
-	id, started, err := h.service.Trigger(name, req.Variables, req.Priority)
+	id, started, err := h.service.Trigger(r.Context(), name, req.Variables, req.Priority)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -191,6 +250,86 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// publishRequest is the JSON body for publishing a private workflow.
+type publishRequest struct {
+	PublishedName string `json:"publishedName"`
+}
+
+// copyRequest is the JSON body for copying a shared workflow.
+type copyRequest struct {
+	NewName string `json:"newName"`
+}
+
+// Publish handles POST /workflows/{name}/publish and copies the caller's
+// private workflow into the shared workspace under publishedName.
+func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req publishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if !safeWorkflowName(req.PublishedName) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid published name: "+req.PublishedName)
+		return
+	}
+
+	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrUnauthorized):
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		case errors.Is(err, workflow.ErrAlreadyExists):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to publish workflow")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "published", "name": req.PublishedName})
+}
+
+// Copy handles POST /workflows/{name}/copy and copies a shared workflow into
+// the caller's private workspace under newName.
+func (h *WorkflowHandler) Copy(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req copyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if !safeWorkflowName(req.NewName) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid new name: "+req.NewName)
+		return
+	}
+
+	if err := h.wfSvc.Copy(r.Context(), name, req.NewName); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrAlreadyExists):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to copy workflow")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "copied", "name": req.NewName})
+}
+
 // saveLayoutRequest is the JSON body for saving node positions.
 type saveLayoutRequest struct {
 	Positions map[string]workflow.NodePosition `json:"positions"`
@@ -215,9 +354,8 @@ func (h *WorkflowHandler) SaveLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
-		if errors.Is(err, workflow.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+	if err := h.wfSvc.SaveNodePositions(r.Context(), name, req.Positions); err != nil {
+		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to save layout")
@@ -283,7 +421,7 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.Create(r.Context(), wf.Name, &wf); err != nil {
+	if err := h.wfSvc.Create(r.Context(), wf.Name, &wf); err != nil {
 		if errors.Is(err, workflow.ErrAlreadyExists) {
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
@@ -312,9 +450,8 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// body contained so workflow.json stays consistent with its directory name.
 	wf.Name = name
 
-	if err := h.repo.Update(r.Context(), name, &wf); err != nil {
-		if errors.Is(err, workflow.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+	if err := h.wfSvc.Update(r.Context(), name, &wf); err != nil {
+		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update workflow")
@@ -331,9 +468,8 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.Delete(r.Context(), name); err != nil {
-		if errors.Is(err, workflow.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+	if err := h.wfSvc.Delete(r.Context(), name); err != nil {
+		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
@@ -351,7 +487,7 @@ func (h *WorkflowHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files, err := h.repo.ListFiles(r.Context(), name)
+	files, err := h.wfSvc.ListFiles(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
@@ -380,9 +516,9 @@ func (h *WorkflowHandler) ReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := h.fileReader.ReadFile(name, filePath)
+	data, err := h.fileReader.ReadFile(callerOwner(r.Context()), name, filePath)
 	if err != nil {
-		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
+		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) || errors.Is(err, os.ErrNotExist) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "file not found: "+filePath)
 			return
 		}
@@ -415,13 +551,12 @@ func (h *WorkflowHandler) WriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.WriteFile(r.Context(), name, filePath, data); err != nil {
+	if err := h.wfSvc.WriteFile(r.Context(), name, filePath, data); err != nil {
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
-		if errors.Is(err, workflow.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to write file")
@@ -444,9 +579,13 @@ func (h *WorkflowHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.DeleteFile(r.Context(), name, filePath); err != nil {
+	if err := h.wfSvc.DeleteFile(r.Context(), name, filePath); err != nil {
 		if errors.Is(err, workflow.ErrInvalidFilePath) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		if errors.Is(err, workflow.ErrSharedReadOnly) {
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
 		}
 		if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {

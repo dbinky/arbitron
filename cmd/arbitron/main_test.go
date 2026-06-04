@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
@@ -100,4 +101,25 @@ func TestDomainStack_Close_NilOptionalsDoNotPanic(t *testing.T) {
 	// All optional fields (scheduler, tracing, db, logCloser) are nil.
 	// Close must complete without panicking.
 	assert.NotPanics(t, func() { ds.Close(context.Background()) })
+}
+
+// The org-mode session sweep must be cancelled on Close so its goroutine stops
+// cleanly on shutdown (no leaked ticker writing to a closed DB).
+func TestDomainStack_Close_CancelsSessionSweep(t *testing.T) {
+	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	cancelled := false
+	ds := &domainStack{eng: eng, sweepCancel: func() { cancelled = true }}
+	assert.NotPanics(t, func() { ds.Close(context.Background()) })
+	assert.True(t, cancelled, "Close must cancel the org-mode session sweep")
+}
+
+// Org-mode wiring fails fast when the OIDC issuer is unreachable: main.go calls
+// adaptoidc.New with the configured issuer and aborts initDomain on error. This
+// exercises that exact construction call (without the heavyweight full init).
+func TestOrgModeOIDC_FailsFastOnUnreachableIssuer(t *testing.T) {
+	_, err := adaptoidc.New(context.Background(), adaptoidc.Config{
+		IssuerURL: "http://127.0.0.1:1/unreachable",
+		ClientID:  "c",
+	})
+	require.Error(t, err, "org mode with an unreachable issuer must fail fast")
 }

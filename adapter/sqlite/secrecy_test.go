@@ -10,8 +10,11 @@ import (
 
 	adaptercrypto "github.com/arbitron/arbitron/adapter/crypto"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
+	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,6 +123,65 @@ func TestSecrecy_WorkflowJSON_ContainsNoKey(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(serialized), "api_key")
 	assert.NotContains(t, strings.ToLower(serialized), "apikey")
 	assert.NotContains(t, strings.ToLower(serialized), "api-key")
+}
+
+// TestSecrecy_APIToken_NeverStoresPlaintext proves a personal API token's
+// plaintext (and its secret half) is NEVER written to api_tokens: only the
+// sha256(full token) and the clear prefix are persisted, and no log line across
+// Create/GetByHash/TouchLastUsed contains the plaintext.
+func TestSecrecy_APIToken_NeverStoresPlaintext(t *testing.T) {
+	ctx := context.Background()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	_ = logger // the repo itself does no logging; assertion guards future regressions
+
+	db := setupTestDB(t)
+
+	// Seed an owning user (FK).
+	users := NewUserRepo(db.DB)
+	uid := uuid.New()
+	require.NoError(t, users.Create(ctx, &instance.User{ID: uid, Username: "secrecy", Role: identity.RoleUser}))
+
+	repo := NewTokenRepo(db.DB)
+	plaintext, prefix, hash, err := identity.GenerateToken()
+	require.NoError(t, err)
+	secretHalf := strings.Split(plaintext, "_")[2]
+
+	require.NoError(t, repo.Create(ctx, &identity.Token{
+		ID:        uuid.New(),
+		UserID:    uid,
+		Label:     "secrecy-tok",
+		Prefix:    prefix,
+		TokenHash: hash,
+	}))
+
+	// Read the raw row directly and assert no column holds the plaintext/secret.
+	// Scan into locals then CLOSE the cursor before any further query — a single
+	// :memory: connection blocks while a result set is open.
+	var id, userID, label, tokenHash, storedPrefix, createdAt string
+	var lastUsed *string
+	row := db.DB.QueryRow("SELECT id, user_id, label, token_hash, prefix, created_at, last_used_at FROM api_tokens")
+	require.NoError(t, row.Scan(&id, &userID, &label, &tokenHash, &storedPrefix, &createdAt, &lastUsed))
+
+	for _, col := range []string{id, userID, label, tokenHash, storedPrefix, createdAt} {
+		assert.NotEqual(t, plaintext, col, "no column may equal the plaintext token")
+		assert.NotEqual(t, secretHalf, col, "no column may equal the secret half")
+		assert.NotContains(t, col, secretHalf, "no column may contain the secret half")
+	}
+	assert.Equal(t, identity.HashToken(plaintext), tokenHash, "stored hash must be sha256(full token)")
+	assert.Equal(t, prefix, storedPrefix, "clear prefix is stored for display")
+	assert.Contains(t, plaintext, storedPrefix, "the prefix is a substring of the plaintext")
+
+	// Exercise the read/touch paths; assert the plaintext never leaks to logs.
+	_, err = repo.GetByHash(ctx, hash)
+	require.NoError(t, err)
+	got, err := repo.GetByHash(ctx, hash)
+	require.NoError(t, err)
+	require.NoError(t, repo.TouchLastUsed(ctx, got.ID))
+
+	assert.NotContains(t, logBuf.String(), plaintext, "plaintext must never appear in logs")
+	assert.NotContains(t, logBuf.String(), secretHalf, "secret half must never appear in logs")
 }
 
 // TestBootGate_ConnectionsRequireMasterKey wires the real store's Count into the

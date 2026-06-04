@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
@@ -33,6 +34,7 @@ type Engine struct {
 	notifications    notification.Repository
 	dismissals       instance.DismissalRepository
 	externalNotifier notification.ExternalNotifier
+	interventions    instance.InterventionRepository
 	workspaceManager WorkspaceManager
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
@@ -100,20 +102,84 @@ func (e *Engine) SetWorkspaceManager(wm WorkspaceManager) {
 	e.workspaceManager = wm
 }
 
+// SetInterventions wires the intervention audit repository. When unset,
+// attribution rows are not written (nil-safe), but the instance.intervened
+// event is still published so live viewers see admin actions.
+func (e *Engine) SetInterventions(repo instance.InterventionRepository) {
+	e.interventions = repo
+}
+
+// recordIntervention writes an audit row and publishes instance.intervened when
+// the acting identity is NOT the instance owner. Owner self-actions (and
+// identity-less system actions) are skipped. Attribution is best-effort: a
+// repo write failure is logged, never returned, so the operation that already
+// succeeded is not undone.
+func (e *Engine) recordIntervention(ctx context.Context, inst *instance.Instance, action string, detail *string) {
+	id, ok := identity.FromContext(ctx)
+	if !ok || id.UserID == inst.OwnerID {
+		return // owner self-action (or no identity): not logged
+	}
+	if e.interventions != nil {
+		iv := &instance.Intervention{
+			ID:          uuid.New(),
+			InstanceID:  inst.ID,
+			ActorUserID: id.UserID,
+			Action:      action,
+			Detail:      detail,
+			CreatedAt:   time.Now(),
+		}
+		if err := e.interventions.Create(ctx, iv); err != nil {
+			slog.Error("failed to record intervention", "instanceID", inst.ID, "error", err)
+		}
+	}
+	e.eventBus.Publish(inst.ID, Event{
+		Type:      "instance.intervened",
+		Timestamp: time.Now(),
+		Data:      map[string]any{"actorUserId": id.UserID.String(), "action": action},
+	})
+}
+
 // edgeTarget describes a destination from a graph edge.
 type edgeTarget struct {
 	nodeID     string
 	outputPort string
 }
 
+// triggerOwner returns the triggering user's id: the context identity when
+// present (REST/MCP triggers), otherwise the default user (scheduler/webhook
+// system triggers that carry no identity). The bool is false only when no
+// identity is present and the default user cannot be resolved.
+func triggerOwner(ctx context.Context, users instance.UserRepository) (uuid.UUID, bool) {
+	if id, ok := identity.FromContext(ctx); ok {
+		return id.UserID, true
+	}
+	def, err := users.GetDefaultUser(ctx)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return def, true
+}
+
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
 // and delegates to the queue manager for capacity-based scheduling.
 // The second return value indicates whether the instance started immediately (true)
 // or stayed in queued state (false).
-func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
-	ctx := context.Background()
+func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	wf, err := e.workflows.Load(ctx, workflowName)
+	// Resolve the triggering owner: the context identity for REST/MCP triggers,
+	// or the default user for system triggers (scheduler/webhook) that carry no
+	// identity. The workflow is resolved across the owner's visible scopes
+	// (private first, then shared) so a shared workflow runs directly with no
+	// private copy.
+	owner, ok := triggerOwner(ctx, e.users)
+	if !ok {
+		return uuid.Nil, false, fmt.Errorf("failed to resolve triggering user")
+	}
+
+	wf, _, err := workflow.LoadVisible(ctx, e.workflows, owner, workflowName)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
@@ -160,11 +226,10 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		return uuid.Nil, false, fmt.Errorf("failed to parse workflow snapshot: %w", err)
 	}
 
-	// Get default user for OwnerID.
-	ownerID, err := e.users.GetDefaultUser(ctx)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to get default user: %w", err)
-	}
+	// OwnerID is the triggering user resolved above (the context identity, or the
+	// default user for system triggers). A shared workflow therefore runs in the
+	// triggering user's queue, independent of the publisher.
+	ownerID := owner
 
 	now := time.Now()
 	snap := vars.Snapshot()
@@ -203,6 +268,119 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 	}
 
 	return inst.ID, started, nil
+}
+
+// ListInstances returns the instances visible to the caller. The owner filter
+// is derived from the request identity: a non-admin sees only their own
+// instances; an admin sees all. Any OwnerID the caller set on filters is
+// overwritten here so scope cannot be widened from request input. A request
+// with no identity returns ErrNotFound (reveal nothing) and never queries the
+// repository.
+func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	owner, ok := ownerConstraint(ctx)
+	if !ok {
+		return nil, instance.ErrNotFound // no identity: reveal nothing
+	}
+	filters.OwnerID = owner // service-set; ignore any caller-supplied value
+	return e.instances.List(ctx, filters)
+}
+
+// GetInstance loads an instance the caller may view, else ErrNotFound. Both an
+// absent instance and a not-owned instance collapse to ErrNotFound so existence
+// is never leaked to a non-owner non-admin.
+func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	inst, err := e.instances.Get(ctx, id)
+	if err != nil {
+		return nil, err // already ErrNotFound-wrapped on absence; infra errors pass through
+	}
+	if inst == nil {
+		// Defensive: a repo that returns (nil, nil) is treated as absence so the
+		// caller never dereferences a nil instance and existence is not leaked.
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	if !canView(ctx, inst.OwnerID) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	return inst, nil
+}
+
+// authorizeView is the shared guard for the sub-resource reads (trace,
+// variables, history): it loads the owning instance and returns ErrNotFound if
+// the caller may not view it. It returns the loaded instance for callers that
+// need its fields (e.g. GetVariables). Sub-resource repos are only touched after
+// this guard passes, so a non-viewer never causes a node-execution or snapshot
+// read.
+func (e *Engine) authorizeView(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	return e.GetInstance(ctx, id)
+}
+
+// authorizeIntervention loads the instance and confirms the caller may act on
+// it (owner or admin). It returns the loaded instance so the caller reuses it
+// (avoiding a second Get). A non-viewer gets ErrNotFound so a write probe cannot
+// distinguish "exists but forbidden" from "absent" (existence not leaked),
+// consistent with the read posture.
+func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	inst, err := e.instances.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instance: %w", err)
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	if !canView(ctx, inst.OwnerID) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	return inst, nil
+}
+
+// GetTrace returns the ordered node executions for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.nodeExecutions.ListByInstance(ctx, id)
+}
+
+// GetNodeTrace returns a single node execution for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.nodeExecutions.GetByInstanceAndNode(ctx, id, nodeID)
+}
+
+// GetVariables returns the current variables for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	inst, err := e.authorizeView(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return inst.Variables, nil
+}
+
+// GetVariableHistory returns the variable snapshot history for an instance the
+// caller may view, else ErrNotFound.
+func (e *Engine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.snapshots.ListByInstance(ctx, id)
+}
+
+// GetInterventions returns the intervention audit trail for an instance the
+// caller may view (owner or admin), else ErrNotFound. When no intervention
+// repository is wired it returns an empty list.
+func (e *Engine) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	if e.interventions == nil {
+		return []instance.Intervention{}, nil
+	}
+	return e.interventions.ListByInstance(ctx, id)
 }
 
 // StartInstance transitions a queued instance to running and launches the
@@ -272,6 +450,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		return
 	}
 	workflowName = inst.WorkflowName
+
+	// Carry the instance owner into the run context so file-reading executors
+	// resolve workflow files from the owner's private workspace (with a shared
+	// fallback) via the scope-aware FileReader.
+	ctx = withOwner(ctx, inst.OwnerID)
 
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
@@ -781,11 +964,10 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 // Pause sets a running or waiting instance to paused state. The graph walker will
 // detect this on its next iteration and stop. For waiting instances, the timer
 // keeps counting (do NOT cancel the scheduler entry).
-func (e *Engine) Pause(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Pause(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 
 	switch inst.State {
@@ -812,6 +994,7 @@ func (e *Engine) Pause(instanceID uuid.UUID) error {
 	default:
 		return fmt.Errorf("instance %s is not running (state: %s): %w", instanceID, inst.State, instance.ErrNotRunning)
 	}
+	e.recordIntervention(ctx, inst, instance.ActionPause, nil)
 	return nil
 }
 
@@ -822,23 +1005,29 @@ func (e *Engine) Pause(instanceID uuid.UUID) error {
 //   - Timer not expired: transition back to waiting
 //
 // If the instance was paused from running (WaitingUntil is nil), resume normally.
-func (e *Engine) Resume(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Resume(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StatePaused {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
 	}
 
-	if inst.WebhookToken != nil {
-		return e.resumeFromWebhookWait(ctx, instanceID, inst)
+	var resumeErr error
+	switch {
+	case inst.WebhookToken != nil:
+		resumeErr = e.resumeFromWebhookWait(ctx, instanceID, inst)
+	case inst.WaitingUntil != nil:
+		resumeErr = e.resumeFromTimerWait(ctx, instanceID, inst)
+	default:
+		resumeErr = e.resumeFromRunning(ctx, instanceID)
 	}
-	if inst.WaitingUntil != nil {
-		return e.resumeFromTimerWait(ctx, instanceID, inst)
+	if resumeErr != nil {
+		return resumeErr
 	}
-	return e.resumeFromRunning(ctx, instanceID)
+	e.recordIntervention(ctx, inst, instance.ActionResume, nil)
+	return nil
 }
 
 // resumeFromWebhookWait handles resume for instances paused during a webhook wait.
@@ -934,11 +1123,10 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
 // cancels its context/timer as appropriate.
-func (e *Engine) Cancel(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 
 	switch inst.State {
@@ -972,6 +1160,7 @@ func (e *Engine) Cancel(instanceID uuid.UUID) error {
 	default:
 		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
+	e.recordIntervention(ctx, inst, instance.ActionCancel, nil)
 	return nil
 }
 
@@ -996,11 +1185,10 @@ func (e *Engine) publishCancelledEvent(instanceID uuid.UUID) {
 
 // Retry resumes a failed instance from the failed node, optionally
 // applying variable edits.
-func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Retry(ctx context.Context, instanceID uuid.UUID, variableEdits map[string]any) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StateFailed {
 		return fmt.Errorf("instance %s is not failed (state: %s): %w", instanceID, inst.State, instance.ErrNotFailed)
@@ -1053,17 +1241,17 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 
 	e.wg.Add(1)
 	go e.run(runCtx, instanceID)
+	e.recordIntervention(ctx, inst, instance.ActionRetry, nil)
 	return nil
 }
 
 // Rerun creates a new instance from a completed instance's original variables
 // and triggers it. Only terminal instances (completed, failed, cancelled) can
 // be rerun.
-func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, error) {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to get instance: %w", err)
+		return uuid.Nil, err
 	}
 
 	switch inst.State {
@@ -1077,12 +1265,25 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
+	// Forward the request ctx into Trigger so the new instance is owned by the
+	// acting caller (Phase 3 Task 7's triggerOwner resolves the identity from ctx,
+	// falling back to the default user for system triggers). The new instance is
+	// independently scoped and owned by the actor, not the source's owner.
+	//
 	// Rerun creates a brand-new instance id via Trigger; new instances have no
 	// dismissal rows, so the rerun is inherently un-dismissed for every user.
 	// The original instance's historical dismissal (if any) is intentionally
 	// left intact. No dismissal bookkeeping is needed here.
-	id, _, err := e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
-	return id, err
+	id, _, err := e.Trigger(ctx, inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
+	if err != nil {
+		return id, err
+	}
+	// Attribute on the SOURCE instance so its owner sees an admin reran it; the
+	// detail is the new instance's ID. The new instance is owned by the actor and
+	// needs no attribution of its own.
+	newIDStr := id.String()
+	e.recordIntervention(ctx, inst, instance.ActionRerun, &newIDStr)
+	return id, nil
 }
 
 // SetQueueManager sets the queue manager on the engine. This is used to break
@@ -1092,16 +1293,20 @@ func (e *Engine) SetQueueManager(qm QueueManager) {
 }
 
 // SetPriority changes the priority of a queued or waiting instance.
-func (e *Engine) SetPriority(id uuid.UUID, priority string) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, id)
+func (e *Engine) SetPriority(ctx context.Context, id uuid.UUID, priority string) error {
+	inst, err := e.authorizeIntervention(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StateQueued && inst.State != instance.StateWaiting {
 		return fmt.Errorf("instance %s is not queued (state: %s): %w", id, inst.State, instance.ErrNotQueued)
 	}
-	return e.instances.UpdatePriority(ctx, id, instance.Priority(priority))
+	if err := e.instances.UpdatePriority(ctx, id, instance.Priority(priority)); err != nil {
+		return err
+	}
+	p := priority
+	e.recordIntervention(ctx, inst, instance.ActionSetPriority, &p)
+	return nil
 }
 
 // Shutdown gracefully waits for all in-flight workflow goroutines to finish.

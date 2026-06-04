@@ -10,4 +10,6 @@ func RegisterAllTools(srv *Server) {
 	RegisterStreamingTools(srv)
 	RegisterInteractiveTools(srv)
 	RegisterConnectionTools(srv)
+	RegisterTokenTools(srv)
+	RegisterUserTools(srv)
 }

@@ -130,6 +130,11 @@ type ListFilters struct {
 	State        *State
 	WorkflowName *string
 	Since        *time.Time
-	Limit        int
-	Offset       int
+	// OwnerID, when non-nil, restricts results to instances owned by that user.
+	// SECURITY: this is set by the engine's ListInstances service from the
+	// request identity (non-admin => own UserID); list callers (HTTP/MCP handlers)
+	// MUST NOT set it from request input, or a non-admin could widen scope.
+	OwnerID *uuid.UUID
+	Limit   int
+	Offset  int
 }

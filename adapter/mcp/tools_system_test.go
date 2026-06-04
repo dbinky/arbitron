@@ -81,10 +81,10 @@ func (s *stubQueueManager) Evaluate(ctx context.Context) error {
 }
 
 type stubNotificationRepo struct {
-	listFn         func(ctx context.Context, filters notification.ListFilters) ([]notification.Notification, error)
-	countUnreadFn  func(ctx context.Context) (int, error)
-	markAllReadFn  func(ctx context.Context) error
-	dismissFn      func(ctx context.Context, id uuid.UUID) error
+	listFn        func(ctx context.Context, filters notification.ListFilters) ([]notification.Notification, error)
+	countUnreadFn func(ctx context.Context, ownerID *uuid.UUID) (int, error)
+	markAllReadFn func(ctx context.Context, ownerID *uuid.UUID) error
+	dismissFn     func(ctx context.Context, id uuid.UUID, ownerID *uuid.UUID) error
 }
 
 func (s *stubNotificationRepo) Create(_ context.Context, _ *notification.Notification) error {
@@ -98,23 +98,23 @@ func (s *stubNotificationRepo) List(ctx context.Context, filters notification.Li
 	return nil, nil
 }
 
-func (s *stubNotificationRepo) CountUnread(ctx context.Context) (int, error) {
+func (s *stubNotificationRepo) CountUnread(ctx context.Context, ownerID *uuid.UUID) (int, error) {
 	if s.countUnreadFn != nil {
-		return s.countUnreadFn(ctx)
+		return s.countUnreadFn(ctx, ownerID)
 	}
 	return 0, nil
 }
 
-func (s *stubNotificationRepo) MarkAllRead(ctx context.Context) error {
+func (s *stubNotificationRepo) MarkAllRead(ctx context.Context, ownerID *uuid.UUID) error {
 	if s.markAllReadFn != nil {
-		return s.markAllReadFn(ctx)
+		return s.markAllReadFn(ctx, ownerID)
 	}
 	return nil
 }
 
-func (s *stubNotificationRepo) Dismiss(ctx context.Context, id uuid.UUID) error {
+func (s *stubNotificationRepo) Dismiss(ctx context.Context, id uuid.UUID, ownerID *uuid.UUID) error {
 	if s.dismissFn != nil {
-		return s.dismissFn(ctx, id)
+		return s.dismissFn(ctx, id, ownerID)
 	}
 	return nil
 }
@@ -333,7 +333,7 @@ func TestNotificationList(t *testing.T) {
 func TestNotificationUnreadCount(t *testing.T) {
 	t.Run("happy path returns count", func(t *testing.T) {
 		notifRepo := &stubNotificationRepo{
-			countUnreadFn: func(_ context.Context) (int, error) { return 7, nil },
+			countUnreadFn: func(_ context.Context, _ *uuid.UUID) (int, error) { return 7, nil },
 		}
 		srv := newSystemServer(&config.Config{}, &stubQueueRepo{}, &stubQueueManager{}, notifRepo, &stubInstanceRepo{})
 		result := callTool(t, srv, "notification_unread_count", nil)
@@ -345,7 +345,7 @@ func TestNotificationUnreadCount(t *testing.T) {
 
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		notifRepo := &stubNotificationRepo{
-			countUnreadFn: func(_ context.Context) (int, error) {
+			countUnreadFn: func(_ context.Context, _ *uuid.UUID) (int, error) {
 				return 0, errors.New("db error")
 			},
 		}
@@ -360,7 +360,7 @@ func TestNotificationMarkRead(t *testing.T) {
 	t.Run("happy path marks all read", func(t *testing.T) {
 		var called bool
 		notifRepo := &stubNotificationRepo{
-			markAllReadFn: func(_ context.Context) error {
+			markAllReadFn: func(_ context.Context, _ *uuid.UUID) error {
 				called = true
 				return nil
 			},
@@ -374,7 +374,7 @@ func TestNotificationMarkRead(t *testing.T) {
 
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		notifRepo := &stubNotificationRepo{
-			markAllReadFn: func(_ context.Context) error {
+			markAllReadFn: func(_ context.Context, _ *uuid.UUID) error {
 				return errors.New("db error")
 			},
 		}
@@ -399,7 +399,7 @@ func TestNotificationDismiss(t *testing.T) {
 		expectedID := uuid.New()
 		var capturedID uuid.UUID
 		notifRepo := &stubNotificationRepo{
-			dismissFn: func(_ context.Context, id uuid.UUID) error {
+			dismissFn: func(_ context.Context, id uuid.UUID, _ *uuid.UUID) error {
 				capturedID = id
 				return nil
 			},
@@ -420,7 +420,7 @@ func TestNotificationDismiss(t *testing.T) {
 
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		notifRepo := &stubNotificationRepo{
-			dismissFn: func(_ context.Context, _ uuid.UUID) error {
+			dismissFn: func(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 				return errors.New("not found")
 			},
 		}
@@ -643,6 +643,35 @@ func TestSystemUpdateTeamsConfig_WebhookURLNotString(t *testing.T) {
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "webhookUrl must be a string")
 	assert.Equal(t, "https://old.example.com/hook", cfg.Notifications.Teams.WebhookURL)
+}
+
+// SECURITY: system_config must never echo any raw OIDC field value (clientSecret,
+// clientId, issuerUrl, redirectUrl) even when auth is org mode and those fields
+// are fully populated. Mirrors TestRouter_GetConfig_AuthSection_NeverLeaksOIDCSecret
+// for the MCP surface. Both surfaces call config.Redact, but this test guards the
+// MCP code path against a regression independently.
+func TestSystemConfig_NeverLeaksOIDCSecret(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{
+			Mode: "org",
+			OIDC: config.OIDCConfig{
+				IssuerURL:    "https://idp.example.com/SHOULD-NOT-APPEAR",
+				ClientID:     "client-SHOULD-NOT-APPEAR",
+				ClientSecret: "secret-SHOULD-NOT-APPEAR",
+				RedirectURL:  "https://app.example.com/SHOULD-NOT-APPEAR/auth/callback",
+			},
+		},
+	}
+	srv := newSystemServer(cfg, &stubQueueRepo{}, &stubQueueManager{}, &stubNotificationRepo{}, &stubInstanceRepo{})
+	result := callTool(t, srv, "system_config", nil)
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.NotContains(t, text, "SHOULD-NOT-APPEAR",
+		"system_config must never echo any raw OIDC field value on the MCP surface")
+	// The auth section must be present with the correct fields.
+	assert.Contains(t, text, `"mode"`)
+	assert.Contains(t, text, `"oidcConfigured"`)
 }
 
 // Error: a non-bool enabled is a type error; config is left unchanged.

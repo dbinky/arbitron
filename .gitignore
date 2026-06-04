@@ -4,6 +4,7 @@
 node_modules/
 dashboard/.vite/
 .worktrees/
+.claude/worktrees/
 # SQLite runtime database (created by `arbitron serve`)
 arbitron.db
 arbitron.db-shm

@@ -8,6 +8,16 @@ import (
 	"database/sql"
 )
 
+type ApiToken struct {
+	ID         string
+	UserID     string
+	Label      string
+	TokenHash  string
+	Prefix     string
+	CreatedAt  string
+	LastUsedAt sql.NullString
+}
+
 type Connection struct {
 	Name         string
 	Provider     string
@@ -17,6 +27,15 @@ type Connection struct {
 	APIKeyNonce  []byte
 	CreatedAt    string
 	UpdatedAt    string
+}
+
+type DeviceCode struct {
+	DeviceCodeHash string
+	UserCode       string
+	Status         string
+	UserID         sql.NullString
+	CreatedAt      string
+	ExpiresAt      string
 }
 
 type Instance struct {
@@ -38,6 +57,15 @@ type Instance struct {
 	WebhookToken      sql.NullString
 	WebhookSecretHash sql.NullString
 	WebhookReceivedAt sql.NullString
+}
+
+type InstanceIntervention struct {
+	ID          string
+	InstanceID  string
+	ActorUserID string
+	Action      string
+	Detail      sql.NullString
+	CreatedAt   string
 }
 
 type NodeExecution struct {
@@ -70,11 +98,27 @@ type Notification struct {
 	UpdatedAt  string
 }
 
+type PublishedWorkflow struct {
+	Name        string
+	PublisherID string
+	SourceName  string
+	PublishedAt string
+}
+
+type Session struct {
+	IDHash    string
+	UserID    string
+	CreatedAt string
+	ExpiresAt string
+}
+
 type User struct {
 	ID        string
 	Username  string
 	Role      string
 	CreatedAt string
+	Subject   sql.NullString
+	Email     sql.NullString
 }
 
 type VariableSnapshot struct {

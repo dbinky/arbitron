@@ -33,16 +33,7 @@ func newDismissalRepo(t *testing.T) (*DismissalRepo, testDB) {
 	return NewDismissalRepo(db.DB), db
 }
 
-// seedUser inserts a user row and returns its UUID.
-func seedUser(t *testing.T, db testDB, username string) uuid.UUID {
-	t.Helper()
-	id := uuid.New()
-	_, err := db.DB.Exec(
-		`INSERT INTO users (id, username, role) VALUES (?, ?, 'user')`,
-		uuidToString(id), username)
-	require.NoError(t, err)
-	return id
-}
+// seedUser is defined in token_repo_test.go (same package) and reused here.
 
 // seedInstance inserts a minimal instance owned by ownerID and returns its
 // UUID. workflow_snapshot/variables default to '{}' via the schema but are set

@@ -54,7 +54,33 @@ type VariableSnapshotRepository interface {
 	ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]VariableSnapshot, error)
 }
 
-// UserRepository defines the port for querying users.
+// UserRepository defines the port for querying and persisting users. It is
+// expanded in place (Phase 6) so the engine, which already imports it for
+// GetDefaultUser, picks up the new methods without a relocation. Implementations
+// must wrap a missing row as ErrNotFound via fmt.Errorf %w.
+//
+// TODO(group-permissions phase): KNOWN DEBT — bounded-context inversion. The
+// identity-account model (User, UserRepository, Provisioner, UserService, role
+// sentinels) lives in domain/instance for now, which forces authentication code
+// (adapter/http/auth_handler.go, the auth middleware) to import the
+// workflow-instance domain purely to authenticate. The correct home is
+// domain/identity (the dependency floor); instance should keep only OwnerID.
+// The relocation is DEFERRED to the FIRST task of the group-permissions phase
+// (it is a genuine prerequisite there, and reshaping the package twice is churn).
+// Tracked via PR #20 review (thread r3358274543). Do not relocate piecemeal.
 type UserRepository interface {
-	GetDefaultUser(ctx context.Context) (uuid.UUID, error)
+	GetDefaultUser(ctx context.Context) (uuid.UUID, error)             // existing, unchanged
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error)          // ErrNotFound if absent
+	GetBySubject(ctx context.Context, subject string) (*User, error)   // ErrNotFound if new (JIT in Phase 2)
+	Create(ctx context.Context, u *User) error
+	// UpdateUsername refreshes a user's display name (used when the IdP changes
+	// it on re-login). The IdP subject, not the username, is the identity.
+	UpdateUsername(ctx context.Context, id uuid.UUID, username string) error
+	// List returns all users (admin user-management surface).
+	List(ctx context.Context) ([]User, error)
+	// UpdateRole sets a user's role ('user' or 'admin').
+	UpdateRole(ctx context.Context, id uuid.UUID, role string) error
+	// CountAdmins returns the number of users with the admin role (the
+	// last-admin demotion floor reads it).
+	CountAdmins(ctx context.Context) (int, error)
 }

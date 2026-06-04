@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // RedactedConfig is the safe-to-echo projection of Config shared by every read
 // surface (HTTP GET /system/config and the MCP system_config tool).
 //
@@ -17,6 +19,15 @@ type RedactedConfig struct {
 	Tracing   RedactedTracing   `json:"tracing"`
 	Queue     RedactedQueue     `json:"queue"`
 	Teams     RedactedTeams     `json:"teams"`
+	Auth      RedactedAuth      `json:"auth"`
+}
+
+// RedactedAuth surfaces the operating mode and whether OIDC is configured.
+// SECURITY: it exposes ONLY the mode and a boolean — the OIDC client secret is
+// never a field here, so it cannot be serialized onto any read surface.
+type RedactedAuth struct {
+	Mode           string `json:"mode"`
+	OIDCConfigured bool   `json:"oidcConfigured"`
 }
 
 type RedactedServer struct {
@@ -86,6 +97,10 @@ func Redact(cfg *Config, teams TeamsConfig) RedactedConfig {
 		Teams: RedactedTeams{
 			Enabled:    teams.Enabled,
 			WebhookURL: RedactWebhookURL(teams.WebhookURL),
+		},
+		Auth: RedactedAuth{
+			Mode:           cfg.Auth.Mode,
+			OIDCConfigured: strings.TrimSpace(cfg.Auth.OIDC.ClientSecret) != "",
 		},
 	}
 }

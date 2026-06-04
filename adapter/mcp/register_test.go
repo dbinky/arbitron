@@ -11,7 +11,7 @@ import (
 // expectedTools is the complete API surface per the Phase 5 design doc.
 // Any rename, addition, or removal must update both this list and the code.
 var expectedTools = []string{
-	// Workflow management (10)
+	// Workflow management (12)
 	"workflow_list",
 	"workflow_get",
 	"workflow_create",
@@ -22,6 +22,8 @@ var expectedTools = []string{
 	"workflow_read_file",
 	"workflow_write_file",
 	"workflow_delete_file",
+	"workflow_publish",
+	"workflow_copy",
 	// Instance operations (9)
 	"instance_list",
 	"instance_get",
@@ -32,11 +34,12 @@ var expectedTools = []string{
 	"instance_retry",
 	"instance_rerun",
 	"instance_set_priority",
-	// Execution trace & variables (4)
+	// Execution trace & variables (5)
 	"trace_get",
 	"trace_get_node",
 	"variables_get",
 	"variables_history",
+	"trace_interventions",
 	// System, queue & notifications (8)
 	"system_config",
 	"system_update_queue_config",
@@ -61,6 +64,13 @@ var expectedTools = []string{
 	"connection_delete",
 	"connection_get",
 	"connection_list",
+	// Personal API tokens (3)
+	"token_create",
+	"token_list",
+	"token_revoke",
+	// User/role management (2)
+	"user_list",
+	"user_set_role",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {

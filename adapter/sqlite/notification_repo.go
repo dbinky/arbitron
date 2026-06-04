@@ -44,14 +44,27 @@ FROM notifications n
 LEFT JOIN instances i ON i.id = n.instance_id`
 
 	args := []any{}
+	var conditions []string
+
+	if filters.OwnerID != nil {
+		conditions = append(conditions, "i.owner_id = ?")
+		args = append(args, uuidToString(*filters.OwnerID))
+	}
 
 	if filters.Dismissed != nil {
 		dismissed := 0
 		if *filters.Dismissed {
 			dismissed = 1
 		}
-		query += " WHERE n.dismissed = ?"
+		conditions = append(conditions, "n.dismissed = ?")
 		args = append(args, dismissed)
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + conditions[0]
+		for _, c := range conditions[1:] {
+			query += " AND " + c
+		}
 	}
 
 	query += " ORDER BY n.created_at DESC"
@@ -104,30 +117,65 @@ LEFT JOIN instances i ON i.id = n.instance_id`
 	return notifications, nil
 }
 
-func (r *NotificationRepo) CountUnread(ctx context.Context) (int, error) {
-	query := `SELECT COUNT(*) FROM notifications WHERE read = 0 AND dismissed = 0`
+func (r *NotificationRepo) CountUnread(ctx context.Context, ownerID *uuid.UUID) (int, error) {
 	var count int
-	err := r.db.QueryRowContext(ctx, query).Scan(&count)
+	var err error
+	if ownerID == nil {
+		err = r.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM notifications WHERE read = 0 AND dismissed = 0`,
+		).Scan(&count)
+	} else {
+		err = r.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM notifications n
+			 JOIN instances i ON i.id = n.instance_id
+			 WHERE n.read = 0 AND n.dismissed = 0 AND i.owner_id = ?`,
+			uuidToString(*ownerID),
+		).Scan(&count)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("counting unread notifications: %w", err)
 	}
 	return count, nil
 }
 
-func (r *NotificationRepo) MarkAllRead(ctx context.Context) error {
+func (r *NotificationRepo) MarkAllRead(ctx context.Context, ownerID *uuid.UUID) error {
 	now := timeToString(time.Now().UTC())
-	query := `UPDATE notifications SET read = 1, updated_at = ? WHERE read = 0`
-	_, err := r.db.ExecContext(ctx, query, now)
+	var err error
+	if ownerID == nil {
+		_, err = r.db.ExecContext(ctx,
+			`UPDATE notifications SET read = 1, updated_at = ? WHERE read = 0`,
+			now,
+		)
+	} else {
+		_, err = r.db.ExecContext(ctx,
+			`UPDATE notifications SET read = 1, updated_at = ?
+			 WHERE read = 0 AND instance_id IN (SELECT id FROM instances WHERE owner_id = ?)`,
+			now, uuidToString(*ownerID),
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("marking all notifications read: %w", err)
 	}
 	return nil
 }
 
-func (r *NotificationRepo) Dismiss(ctx context.Context, id uuid.UUID) error {
+func (r *NotificationRepo) Dismiss(ctx context.Context, id uuid.UUID, ownerID *uuid.UUID) error {
 	now := timeToString(time.Now().UTC())
-	query := `UPDATE notifications SET dismissed = 1, updated_at = ? WHERE id = ?`
-	result, err := r.db.ExecContext(ctx, query, now, uuidToString(id))
+	var result sql.Result
+	var err error
+	if ownerID == nil {
+		result, err = r.db.ExecContext(ctx,
+			`UPDATE notifications SET dismissed = 1, updated_at = ? WHERE id = ?`,
+			now, uuidToString(id),
+		)
+	} else {
+		// Fail closed: treat a notification owned by another user as not found.
+		result, err = r.db.ExecContext(ctx,
+			`UPDATE notifications SET dismissed = 1, updated_at = ?
+			 WHERE id = ? AND instance_id IN (SELECT id FROM instances WHERE owner_id = ?)`,
+			now, uuidToString(id), uuidToString(*ownerID),
+		)
+	}
 	if err != nil {
 		return fmt.Errorf("dismissing notification: %w", err)
 	}

@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
@@ -72,58 +74,118 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 }
 
 type stubEngine struct {
-	triggerFn     func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
-	pauseFn       func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, vars map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
+	capturedTriggerCtx context.Context
+	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	capturedListCtx    context.Context
+	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn            func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn        func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn        func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	varHistFn          func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn    func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn            func(id uuid.UUID) error
+	resumeFn           func(id uuid.UUID) error
+	cancelFn           func(id uuid.UUID) error
+	retryFn            func(id uuid.UUID, vars map[string]any) error
+	rerunFn            func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn      func(id uuid.UUID, priority string) error
 }
 
-func (s *stubEngine) Trigger(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+func (s *stubEngine) Trigger(ctx context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+	s.capturedTriggerCtx = ctx
 	if s.triggerFn != nil {
 		return s.triggerFn(wfName, vars, priority)
 	}
 	return uuid.New(), false, nil
 }
 
-func (s *stubEngine) Pause(id uuid.UUID) error {
+func (s *stubEngine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	s.capturedListCtx = ctx
+	if s.listFn != nil {
+		return s.listFn(ctx, filters)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if s.traceFn != nil {
+		return s.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if s.nodeTraceFn != nil {
+		return s.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if s.variablesFn != nil {
+		return s.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if s.varHistFn != nil {
+		return s.varHistFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	if s.interventionsFn != nil {
+		return s.interventionsFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) Pause(_ context.Context, id uuid.UUID) error {
 	if s.pauseFn != nil {
 		return s.pauseFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Resume(id uuid.UUID) error {
+func (s *stubEngine) Resume(_ context.Context, id uuid.UUID) error {
 	if s.resumeFn != nil {
 		return s.resumeFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Cancel(id uuid.UUID) error {
+func (s *stubEngine) Cancel(_ context.Context, id uuid.UUID) error {
 	if s.cancelFn != nil {
 		return s.cancelFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Retry(id uuid.UUID, vars map[string]any) error {
+func (s *stubEngine) Retry(_ context.Context, id uuid.UUID, vars map[string]any) error {
 	if s.retryFn != nil {
 		return s.retryFn(id, vars)
 	}
 	return nil
 }
 
-func (s *stubEngine) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (s *stubEngine) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if s.rerunFn != nil {
 		return s.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (s *stubEngine) SetPriority(id uuid.UUID, priority string) error {
+func (s *stubEngine) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if s.setPriorityFn != nil {
 		return s.setPriorityFn(id, priority)
 	}
@@ -133,6 +195,20 @@ func (s *stubEngine) SetPriority(id uuid.UUID, priority string) error {
 // --- Helpers ---
 
 func newInstanceServer(instRepo *stubInstanceRepo, eng *stubEngine) *adaptmcp.Server {
+	// instance_list now flows through the scoped Engine.ListInstances service.
+	// Default the engine's list to the repo's listFn so the existing list-filter
+	// tests (which seed instRepo.listFn) keep exercising the same path; scoping is
+	// unit-tested in the engine.
+	if eng.listFn == nil && instRepo != nil {
+		eng.listFn = func(ctx context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
+			return instRepo.List(ctx, f)
+		}
+	}
+	if eng.getFn == nil && instRepo != nil {
+		eng.getFn = func(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+			return instRepo.Get(ctx, id)
+		}
+	}
 	deps := &adaptmcp.Deps{
 		Instances: instRepo,
 		Engine:    eng,
@@ -203,6 +279,26 @@ func TestInstanceList(t *testing.T) {
 		assert.True(t, result.IsError)
 	})
 
+	t.Run("delegates to the scoped Engine.ListInstances, not the repo", func(t *testing.T) {
+		// The repo's List must NOT be consulted; scoping lives in the engine
+		// service. Make the repo error so a regression to the repo path is loud.
+		repo := &stubInstanceRepo{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, errors.New("repo path must not be used")
+			},
+		}
+		eng := &stubEngine{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return []instance.InstanceSummary{{ID: uuid.New(), WorkflowName: "scoped-wf"}}, nil
+			},
+		}
+		srv := newInstanceServer(repo, eng)
+		result := callTool(t, srv, "instance_list", nil)
+
+		assert.False(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "scoped-wf")
+	})
+
 	t.Run("nil repo result produces JSON array not null", func(t *testing.T) {
 		// Edge case: repo returns nil slice (zero instances); handler must normalise
 		// to [] so LLM clients can iterate without a nil-dereference on JSON null.
@@ -217,6 +313,23 @@ func TestInstanceList(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Equal(t, "[]", text)
+	})
+
+	t.Run("caller identity context is forwarded to engine", func(t *testing.T) {
+		// Verifies the MCP tool passes its call context (which carries the auth
+		// identity injected by callTool) through to Engine.ListInstances, so the
+		// engine's ownerConstraint resolves the authenticated caller rather than
+		// falling back to the default user.
+		eng := &stubEngine{}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+
+		result := callTool(t, srv, "instance_list", nil)
+		assert.False(t, result.IsError, extractText(t, result))
+
+		require.NotNil(t, eng.capturedListCtx, "engine ListInstances must receive the MCP call context")
+		id, ok := identity.FromContext(eng.capturedListCtx)
+		require.True(t, ok, "engine context must carry the caller identity")
+		assert.Equal(t, mcpTestUserID, id.UserID, "forwarded identity must be the authenticated caller")
 	})
 }
 
@@ -367,6 +480,22 @@ func TestInstanceTrigger(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "invalid priority")
 	})
+
+	t.Run("caller identity context is forwarded to engine", func(t *testing.T) {
+		// Verifies the MCP tool passes its call context (which carries the auth
+		// identity injected by callTool) through to the engine, so triggerOwner
+		// resolves the authenticated user rather than falling back to the default user.
+		eng := &stubEngine{}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+
+		result := callTool(t, srv, "instance_trigger", map[string]any{"workflowName": "wf"})
+		assert.False(t, result.IsError, extractText(t, result))
+
+		require.NotNil(t, eng.capturedTriggerCtx, "engine Trigger must receive the MCP call context")
+		id, ok := identity.FromContext(eng.capturedTriggerCtx)
+		require.True(t, ok, "engine context must carry the caller identity")
+		assert.Equal(t, mcpTestUserID, id.UserID, "forwarded identity must be the authenticated caller")
+	})
 }
 
 func TestInstancePause(t *testing.T) {
@@ -417,6 +546,21 @@ func TestInstancePause(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "id is required")
 	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance (existence not leaked).
+		eng := &stubEngine{
+			pauseFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_pause", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+	})
 }
 
 func TestInstanceResume(t *testing.T) {
@@ -463,6 +607,21 @@ func TestInstanceResume(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "id is required")
 	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance (existence not leaked).
+		eng := &stubEngine{
+			resumeFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_resume", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+	})
 }
 
 func TestInstanceCancel(t *testing.T) {
@@ -490,6 +649,21 @@ func TestInstanceCancel(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "already terminal")
+	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance.
+		eng := &stubEngine{
+			cancelFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
 	})
 
 	t.Run("invalid id returns error", func(t *testing.T) {

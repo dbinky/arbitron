@@ -12,3 +12,6 @@ sql:
           llm_model: "LLMModel"
           llm_tokens_in: "LLMTokensIn"
           llm_tokens_out: "LLMTokensOut"
+          base_url: "BaseURL"
+          api_key_cipher: "APIKeyCipher"
+          api_key_nonce: "APIKeyNonce"

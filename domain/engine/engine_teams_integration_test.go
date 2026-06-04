@@ -195,7 +195,7 @@ func TestEngine_TeamsSeam_CompletedForwardsCard(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
-	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "linear-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 	waitForTeamsCard(t, stub, notification.TypeCompleted, 2*time.Second)
@@ -228,7 +228,7 @@ func TestEngine_TeamsSeam_FailedForwardsCard(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
-	id, _, err := f.engine.Trigger("error-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "error-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 	waitForTeamsCard(t, stub, notification.TypeFailed, 2*time.Second)
@@ -259,7 +259,7 @@ func TestEngine_TeamsSeam_NeedsInteractionForwardsCard(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
-	id, _, err := f.engine.Trigger("interactive-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "interactive-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 	waitForTeamsCard(t, stub, notification.TypeNeedsInteraction, 2*time.Second)
@@ -286,7 +286,7 @@ func TestEngine_TeamsSeam_InAppFiresWhenTeamsFails(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.engine.SetExternalNotifier(teamsExternalNotifier(srv, logger))
 
-	id, _, err := f.engine.Trigger("linear-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "linear-wf", nil, "normal")
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)

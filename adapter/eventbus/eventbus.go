@@ -16,13 +16,20 @@ const bufferSize = 256
 type InProcessEventBus struct {
 	mu             sync.RWMutex
 	subscribers    map[uuid.UUID][]*subscriber
-	allSubscribers []*subscriber
+	allSubscribers []*allSubscriber
 }
 
-// subscriber holds the channel. The closed field is only accessed under the
-// parent InProcessEventBus mutex.
+// subscriber holds a per-instance channel. The closed field is only accessed
+// under the parent InProcessEventBus mutex.
 type subscriber struct {
 	ch     chan engine.Event
+	closed bool
+}
+
+// allSubscriber holds a system-wide channel that carries the instance ID with
+// each event so the consumer can authorize delivery.
+type allSubscriber struct {
+	ch     chan engine.ScopedEvent
 	closed bool
 }
 
@@ -60,12 +67,13 @@ func (b *InProcessEventBus) Publish(instanceID uuid.UUID, event engine.Event) {
 		}
 	}
 
+	scoped := engine.ScopedEvent{InstanceID: instanceID, Event: event}
 	for _, s := range b.allSubscribers {
 		if s.closed {
 			continue
 		}
 		select {
-		case s.ch <- event:
+		case s.ch <- scoped:
 		default:
 			slog.Warn("event bus dropped event for slow all-subscriber",
 				"instanceID", instanceID,
@@ -118,9 +126,9 @@ func (b *InProcessEventBus) Subscribe(instanceID uuid.UUID) (<-chan engine.Event
 // SubscribeAll creates a buffered channel that receives events from all instances.
 // It returns the channel and an unsubscribe function. The unsubscribe function
 // closes the channel and removes the subscriber. It is safe to call multiple times.
-func (b *InProcessEventBus) SubscribeAll() (<-chan engine.Event, func()) {
-	ch := make(chan engine.Event, bufferSize)
-	s := &subscriber{ch: ch}
+func (b *InProcessEventBus) SubscribeAll() (<-chan engine.ScopedEvent, func()) {
+	ch := make(chan engine.ScopedEvent, bufferSize)
+	s := &allSubscriber{ch: ch}
 
 	b.mu.Lock()
 	b.allSubscribers = append(b.allSubscribers, s)

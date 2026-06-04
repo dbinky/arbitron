@@ -37,7 +37,7 @@ func TestAcceptance_06_CapabilityValidation(t *testing.T) {
 		}
 		h := newHarness(t, b)
 
-		errs := workflow.Validate(wf, h.fileReader,
+		errs := workflow.Validate(wf, h.fileChecker(),
 			providersadapter.NewResolverChecker(h.resolver), h.connChecker)
 
 		codes := codesOf(errs)
@@ -61,7 +61,7 @@ func TestAcceptance_06_CapabilityValidation(t *testing.T) {
 		runner := newFakeRunner()
 		h := newHarness(t, claudeBinding(runner))
 
-		errs := workflow.Validate(wf, h.fileReader,
+		errs := workflow.Validate(wf, h.fileChecker(),
 			providersadapter.NewResolverChecker(h.resolver), h.connChecker)
 
 		require.Empty(t, errs, "the worked example validates cleanly under the correct (editor=agent, assessor=chat) binding")

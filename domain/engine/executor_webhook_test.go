@@ -540,7 +540,7 @@ func TestCancel_WebhookWaiting_DeactivatesEndpoint(t *testing.T) {
 
 	f.workflowRepo.add(webhookWorkflow())
 
-	id, _, err := eng.Trigger("webhook-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "webhook-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
@@ -550,7 +550,7 @@ func TestCancel_WebhookWaiting_DeactivatesEndpoint(t *testing.T) {
 	token := registry.registerCalls[0].Token
 	registry.mu.Unlock()
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -570,11 +570,11 @@ func TestCancel_WebhookWaiting_CancelsTimeout(t *testing.T) {
 
 	f.workflowRepo.add(webhookWorkflow())
 
-	id, _, err := eng.Trigger("webhook-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "webhook-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	// Scheduler cancel should have been called.
@@ -591,11 +591,11 @@ func TestPause_WebhookWaiting_EndpointStaysActive(t *testing.T) {
 
 	f.workflowRepo.add(webhookWorkflow())
 
-	id, _, err := eng.Trigger("webhook-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "webhook-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -615,12 +615,12 @@ func TestResume_WebhookPaused_ReceivedWhilePaused_GoesToQueued(t *testing.T) {
 
 	f.workflowRepo.add(webhookWorkflow())
 
-	id, _, err := eng.Trigger("webhook-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "webhook-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause the instance.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
@@ -631,7 +631,7 @@ func TestResume_WebhookPaused_ReceivedWhilePaused_GoesToQueued(t *testing.T) {
 	f.instanceRepo.mu.Unlock()
 
 	// Resume — should go to queued since webhook was received.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -646,17 +646,17 @@ func TestResume_WebhookPaused_NotReceived_GoesToWaiting(t *testing.T) {
 
 	f.workflowRepo.add(webhookWorkflow())
 
-	id, _, err := eng.Trigger("webhook-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "webhook-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause the instance.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Resume without webhook received — should go back to waiting.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)

@@ -5,16 +5,27 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
+	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// authRateLimitPerMinute caps requests per client IP to the unauthenticated
+// /auth/* endpoints (login, callback, logout, device code/token). It throttles
+// credential brute-force and auth-availability DoS while leaving normal
+// interactive login well within budget.
+const authRateLimitPerMinute = 20
 
 // EngineService combines both WorkflowService and InstanceService interfaces.
 // The concrete engine.Engine satisfies both.
@@ -23,11 +34,13 @@ type EngineService interface {
 	InstanceService
 }
 
-// FileReader provides access to workflow-associated files on disk.
+// FileReader provides access to workflow-associated files on disk. The owner
+// selects which user's private workspace to search first, with a shared
+// fallback (uuid.Nil searches shared only).
 type FileReader interface {
-	ReadFile(workflowName string, relativePath string) ([]byte, error)
-	ResolvePath(workflowName string, relativePath string) (string, error)
-	FileExists(workflowName string, relativePath string) bool
+	ReadFile(owner uuid.UUID, workflowName string, relativePath string) ([]byte, error)
+	ResolvePath(owner uuid.UUID, workflowName string, relativePath string) (string, error)
+	FileExists(owner uuid.UUID, workflowName string, relativePath string) bool
 }
 
 // QueueManagerPort defines the queue manager operations used by the API layer.
@@ -41,15 +54,21 @@ type QueueManagerPort interface {
 type RouterDeps struct {
 	Service   EngineService
 	Workflows workflow.WorkflowRepository
-	Instances instance.InstanceRepository
-	NodeExecs instance.NodeExecutionRepository
-	Snapshots instance.VariableSnapshotRepository
+	// WorkflowSvc resolves storage scope/authorization from the request identity
+	// for the workflow CRUD/list/load handlers. Optional: when nil, a default
+	// service over Workflows (no publisher lookup) is constructed by the handler.
+	WorkflowSvc *workflow.WorkflowService
+	Instances   instance.InstanceRepository
+	NodeExecs   instance.NodeExecutionRepository
+	Snapshots   instance.VariableSnapshotRepository
 	// Dismissals is the per-user instance dismissal repository. When non-nil
-	// (together with Users), the dismiss/restore/dismiss-all routes are
+	// (together with DismissalUsers), the dismiss/restore/dismiss-all routes are
 	// registered and GET /instances becomes per-user-aware.
 	Dismissals instance.DismissalRepository
-	// Users sources the acting user for the dismissal seam (GetDefaultUser today).
-	Users      instance.UserRepository
+	// DismissalUsers sources the acting user for the dismissal seam
+	// (GetDefaultUser today). Distinct from Users, which is the admin
+	// role-management UserService.
+	DismissalUsers instance.UserRepository
 	FileReader FileReader
 	EventBus   engine.EventBus
 	Config     *config.Config
@@ -75,6 +94,28 @@ type RouterDeps struct {
 	// existing connection during workflow validation. May be nil to skip the
 	// connection-reference validation pass.
 	ConnChecker workflow.ConnectionChecker
+	// Auth, when non-nil, is mounted at the top of /api/v1 and wraps the /mcp
+	// handler so REST, WS, and MCP all inherit one authz boundary. Nil disables
+	// auth (legacy/tests) -- production wiring always sets it (Task 8).
+	Auth *AuthMiddleware
+	// AuthHandler serves the /auth/* login flow OUTSIDE the auth middleware
+	// (these routes establish the session). Nil in local mode / when auth is
+	// disabled.
+	AuthHandler *AuthHandler
+	// Tokens powers the personal API token endpoints under /api/v1/tokens. The
+	// service scopes every operation to the request identity, so the routes sit
+	// inside the authenticated group. Nil disables the token routes.
+	Tokens *identity.TokenService
+	// DeviceCodes powers the OAuth 2.0 device-grant endpoints. /auth/device/code
+	// and /auth/device/token are unauthenticated (mounted outside /api/v1); the
+	// approve/deny actions run behind the auth middleware. Nil disables them.
+	DeviceCodes *identity.DeviceCodeService
+	// PublicBaseURL is the externally reachable base URL used to build the device
+	// verification_uri shown to the human approver.
+	PublicBaseURL string
+	// Users powers the admin-only role-management endpoints under /api/v1/users.
+	// The admin gate and demotion floors live in the service. Nil disables them.
+	Users *instance.UserService
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -130,13 +171,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(securityHeaders)
-	// TODO(phase-6): Add authentication middleware here when multi-user support
-	// lands. Currently all endpoints (REST and WebSocket) are unauthenticated.
-	// The interactive session endpoints (WebSocket messaging and POST .../interact/end)
-	// are especially sensitive — without auth, any client can send messages to or
-	// terminate any instance's interactive session.
+	// Authentication (Phase 6): d.Auth is mounted at the top of the /api/v1 group
+	// (covering REST + the WS upgrade GETs) and wraps the /mcp handler below, so
+	// all three surfaces share one authz boundary. In local mode it injects the
+	// default admin identity (frictionless); in org mode it requires a valid
+	// session. The /auth/* routes are registered OUTSIDE this guard. A nil Auth
+	// disables authentication (legacy/tests only).
+	//
+	// NOTE: this is AUTHENTICATION (who is calling), not per-user VISIBILITY
+	// scoping (which rows a caller may see) -- that is a later Phase 6 milestone.
 
 	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances, d.ProfileChecker)
+	wfHandler.SetWorkflowService(d.WorkflowSvc)
 	if d.ConnChecker != nil {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
@@ -146,9 +192,9 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	// Object repo + resolver so the handler body never nil-checks the seam. The
 	// dismiss/restore/dismiss-all routes are still only registered when enabled
 	// (so the endpoints 404 rather than no-op-200 when the feature is off).
-	dismissalsEnabled := d.Dismissals != nil && d.Users != nil
+	dismissalsEnabled := d.Dismissals != nil && d.DismissalUsers != nil
 	if dismissalsEnabled {
-		instHandler.SetDismissals(d.Dismissals, NewCurrentUserResolver(d.Users))
+		instHandler.SetDismissals(d.Dismissals, NewCurrentUserResolver(d.DismissalUsers))
 	} else {
 		var (
 			noopDismissals instance.DismissalRepository = nullDismissalRepository{}
@@ -156,8 +202,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		)
 		instHandler.SetDismissals(noopDismissals, noopResolver)
 	}
-	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
-	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
+	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler, d.Service)
+	sysStreamHandler := NewSystemStreamHandler(d.EventBus, d.Instances)
 	settings := d.Settings
 	if settings == nil {
 		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)
@@ -169,7 +215,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		interactiveHandler = NewInteractiveHandler(d.ConversationHandler, d.Instances, d.NodeExecs)
 	}
 
+	var deviceHandler *DeviceHandler
+	if d.DeviceCodes != nil {
+		deviceHandler = NewDeviceHandler(d.DeviceCodes, strings.TrimRight(d.PublicBaseURL, "/")+"/auth/device")
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
+		if d.Auth != nil {
+			// Covers every REST route AND the WS upgrade GETs in this group, since
+			// the session cookie is sent on the upgrade request.
+			r.Use(d.Auth.Handler)
+		}
+
 		// System-wide WebSocket stream
 		r.Get("/ws", sysStreamHandler.HandleWebSocket)
 
@@ -191,6 +248,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
+			r.Post("/{name}/publish", wfHandler.Publish)
+			r.Post("/{name}/copy", wfHandler.Copy)
 			r.Put("/{name}/layout", wfHandler.SaveLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
 			r.Get("/{name}/files", wfHandler.ListFiles)
@@ -237,28 +296,99 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Get("/{id}/trace/{nodeId}", instHandler.GetNodeTrace)
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
+			r.Get("/{id}/interventions", instHandler.GetInterventions)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 			if interactiveHandler != nil {
 				r.Post("/{id}/interact/end", interactiveHandler.EndSession)
 			}
 		})
+
+		// Personal API token endpoints. The service scopes every call to the
+		// request identity injected by the auth middleware above, so a caller can
+		// only manage their own tokens.
+		if d.Tokens != nil {
+			th := NewTokenHandler(d.Tokens)
+			r.Route("/tokens", func(r chi.Router) {
+				r.Post("/", th.Create)
+				r.Get("/", th.List)
+				r.Delete("/{id}", th.Revoke)
+			})
+		}
+
+		// Device-grant approval actions run behind the auth middleware: the
+		// approver must be a logged-in browser (the service reads their identity
+		// from context to own the eventual token).
+		if deviceHandler != nil {
+			r.Post("/auth/device/approve", deviceHandler.Approve)
+			r.Post("/auth/device/deny", deviceHandler.Deny)
+		}
+
+		// Admin-only user/role management. The service enforces admin + the
+		// demotion floors; the routes sit inside the authenticated group.
+		if d.Users != nil {
+			uh := NewUserHandler(d.Users)
+			r.Route("/users", func(r chi.Router) {
+				r.Get("/", uh.List)
+				r.Put("/{id}/role", uh.SetRole)
+			})
+		}
 	})
 
 	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
 	// over HTTP instead of (or in addition to) the stdio transport.
 	//
-	// WARNING: The /mcp endpoint currently has NO authentication. It exposes
-	// destructive tools (workflow_delete, workflow_write_file, instance_cancel,
-	// system_update_queue_config). This endpoint MUST NOT be exposed on untrusted
-	// networks. Authentication middleware should be added before any production
-	// or multi-user deployment.
+	// AUTH (Phase 6): /mcp is a sibling of the /api/v1 group, so it is wrapped
+	// explicitly with d.Auth. It exposes destructive tools (workflow_delete,
+	// instance_cancel, system_update_queue_config); in org mode an anonymous
+	// request is rejected at the middleware before reaching any tool. In local
+	// mode the default admin identity is injected. With auth disabled (nil) the
+	// endpoint is unauthenticated and MUST NOT be exposed on untrusted networks.
 	if d.MCPHandler != nil {
-		r.Mount("/mcp", d.MCPHandler)
+		mcp := d.MCPHandler
+		if d.Auth != nil {
+			mcp = d.Auth.Handler(mcp)
+		}
+		r.Mount("/mcp", mcp)
 	}
 
+	// Unauthenticated /auth/* surface (OIDC login flow + device-grant
+	// code/token). These are registered OUTSIDE the /api/v1 group and NOT wrapped
+	// by d.Auth — they establish the session the middleware later validates, so
+	// they cannot require one. Because they are unauthenticated and credential-
+	// adjacent, they are the natural DoS/brute-force target, so the whole group is
+	// rate-limited per client IP (RealIP middleware above sets the key).
+	r.Group(func(r chi.Router) {
+		r.Use(httprate.LimitByIP(authRateLimitPerMinute, time.Minute))
+
+		// OIDC browser login flow (Phase 6).
+		if d.AuthHandler != nil {
+			r.Get("/auth/login", d.AuthHandler.Login)
+			r.Get("/auth/callback", d.AuthHandler.Callback)
+			r.Post("/auth/logout", d.AuthHandler.Logout)
+		}
+
+		// Device authorization grant: /code (start) and /token (poll) are
+		// unauthenticated — the browserless client has no session yet. The
+		// approve/deny actions are registered INSIDE /api/v1 above (session-gated).
+		if deviceHandler != nil {
+			r.Post("/auth/device/code", deviceHandler.Start)
+			r.Post("/auth/device/token", deviceHandler.Token)
+		}
+	})
+
 	// Serve the embedded dashboard SPA for any route not matched by the API.
+	//
+	// AUTH (Phase 6): the SPA is the browser-navigation surface, so it is wrapped
+	// with d.Auth too. In org mode an anonymous navigation (GET, Accept text/html)
+	// is redirected to /auth/login by the middleware's reject(); after login the
+	// session cookie is present and assets load. In local mode the default admin
+	// identity is injected. /auth/* is registered above, OUTSIDE this guard.
 	if d.DashboardHandler != nil {
-		r.NotFound(d.DashboardHandler.ServeHTTP)
+		dash := d.DashboardHandler
+		if d.Auth != nil {
+			dash = d.Auth.Handler(dash)
+		}
+		r.NotFound(dash.ServeHTTP)
 	}
 
 	return r

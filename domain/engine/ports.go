@@ -10,11 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// FileReader provides access to workflow-associated files on disk.
+// FileReader provides access to workflow-associated files on disk. The owner
+// selects which user's private workspace to search first; the reader falls
+// back to the shared (published) space. For shared/system reads pass
+// uuid.Nil to search the shared space only.
 type FileReader interface {
-	ReadFile(workflowName string, relativePath string) ([]byte, error)
-	ResolvePath(workflowName string, relativePath string) (string, error)
-	FileExists(workflowName string, relativePath string) bool
+	ReadFile(owner uuid.UUID, workflowName string, relativePath string) ([]byte, error)
+	ResolvePath(owner uuid.UUID, workflowName string, relativePath string) (string, error)
+	FileExists(owner uuid.UUID, workflowName string, relativePath string) bool
 }
 
 // WorkspaceManager provides per-instance working directories for agent nodes.
@@ -207,11 +210,23 @@ type Event struct {
 	Data      any       `json:"data"`
 }
 
+// ScopedEvent pairs an event with the instance it was published for, so
+// SubscribeAll consumers (the system stream) can authorize delivery per event
+// by instance ownership. The per-instance Subscribe channel stays a bare Event
+// (its instance is already the subscription key), so the on-the-wire Event JSON
+// is unchanged.
+type ScopedEvent struct {
+	InstanceID uuid.UUID
+	Event      Event
+}
+
 // EventBus defines the port for publishing and subscribing to workflow execution events.
 // The unsubscribe function returned by Subscribe and SubscribeAll MUST close
 // the returned channel so that consumers ranging over the channel terminate.
 type EventBus interface {
 	Publish(instanceID uuid.UUID, event Event)
 	Subscribe(instanceID uuid.UUID) (<-chan Event, func())
-	SubscribeAll() (<-chan Event, func())
+	// SubscribeAll yields ScopedEvent so consumers can authorize each event by
+	// the instance it belongs to.
+	SubscribeAll() (<-chan ScopedEvent, func())
 }

@@ -97,6 +97,9 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 	if filters.Since != nil {
 		params.Since = timeToString(*filters.Since)
 	}
+	if filters.OwnerID != nil {
+		params.OwnerID = uuidToString(*filters.OwnerID)
+	}
 
 	rows, err := r.queries.ListInstances(ctx, params)
 	if err != nil {

@@ -570,3 +570,381 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 	// Chat-kind assessor stays tool-suppressed: no per-profile allowlist.
 	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
 }
+
+// ---- Phase 6 Task 1: AuthConfig loading & validation ----
+
+func TestLoad_AuthDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "local", cfg.Auth.Mode)
+	assert.Equal(t, "arbitron_session", cfg.Auth.Session.CookieName)
+	assert.Equal(t, 43200, cfg.Auth.Session.TTLSeconds)
+	assert.True(t, cfg.Auth.Session.CookieSecure)
+	assert.Equal(t, []string{"openid", "profile", "email"}, cfg.Auth.OIDC.Scopes)
+	assert.Empty(t, cfg.Auth.BootstrapAdmins)
+}
+
+func TestLoad_AuthOrgMode_Valid(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    issuerurl: "https://login.example.com"
+    clientid: "client-abc"
+    clientsecret: "shhh"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "org", cfg.Auth.Mode)
+	assert.Equal(t, "https://login.example.com", cfg.Auth.OIDC.IssuerURL)
+	assert.Equal(t, "client-abc", cfg.Auth.OIDC.ClientID)
+	assert.Equal(t, "shhh", cfg.Auth.OIDC.ClientSecret)
+	assert.Equal(t, "https://app.example.com/auth/callback", cfg.Auth.OIDC.RedirectURL)
+}
+
+func TestLoad_AuthMode_Normalized(t *testing.T) {
+	t.Run("uppercase normalizes to org", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "ORG"
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+	})
+
+	t.Run("padded normalizes to org", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: " org "
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+	})
+
+	t.Run("unknown mode is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"cloud\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "invalid auth.mode")
+	})
+}
+
+func TestLoad_AuthOrgMode_MissingOIDC(t *testing.T) {
+	t.Run("missing clientsecret", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.clientsecret")
+	})
+
+	t.Run("missing issuerurl", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.issuerurl")
+	})
+}
+
+func TestLoad_AuthSessionTTLFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantTTL int
+	}{
+		{"zero floors to default", "auth:\n  session:\n    ttlseconds: 0\n", adapterconfig.DefaultSessionTTLSeconds},
+		{"negative floors to default", "auth:\n  session:\n    ttlseconds: -1\n", adapterconfig.DefaultSessionTTLSeconds},
+		{"positive preserved", "auth:\n  session:\n    ttlseconds: 1\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTTL, cfg.Auth.Session.TTLSeconds)
+		})
+	}
+}
+
+func TestLoad_AuthBootstrapAdmins_FromEnv(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_BOOTSTRAPADMINS", "a@x.com, b@x.com,, ")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a@x.com", "b@x.com"}, cfg.Auth.BootstrapAdmins)
+}
+
+func TestLoad_AuthOIDCScopes_FromEnv(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_OIDC_SCOPES", "openid, groups")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openid", "groups"}, cfg.Auth.OIDC.Scopes)
+}
+
+// TestLoad_AuthOrgMode_MissingOIDC_AllFields verifies that each of the four
+// required OIDC fields is individually validated and that omitting all four at
+// once produces an error that names all four.
+func TestLoad_AuthOrgMode_MissingOIDC_AllFields(t *testing.T) {
+	// Each sub-test omits exactly one required field; the error must name it.
+	cases := []struct {
+		name        string
+		yaml        string
+		wantMissing string
+	}{
+		{
+			"missing clientid",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientsecret: \"s\"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.clientid",
+		},
+		{
+			"missing redirecturl",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientid: \"c\"\n    clientsecret: \"s\"\n",
+			"auth.oidc.redirecturl",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), tc.wantMissing)
+		})
+	}
+
+	t.Run("all four missing names all in error", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath,
+			[]byte("auth:\n  mode: \"org\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.issuerurl")
+		assert.Contains(t, err.Error(), "auth.oidc.clientid")
+		assert.Contains(t, err.Error(), "auth.oidc.clientsecret")
+		assert.Contains(t, err.Error(), "auth.oidc.redirecturl")
+	})
+}
+
+// TestLoad_AuthMode_FromEnv verifies that ARBITRON_AUTH_MODE switches the mode
+// via the environment-variable overlay (the env provider maps _ to . so
+// ARBITRON_AUTH_MODE → auth.mode).
+func TestLoad_AuthMode_FromEnv(t *testing.T) {
+	t.Run("env switches to org with complete OIDC also from env", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "org")
+		t.Setenv("ARBITRON_AUTH_OIDC_ISSUERURL", "https://idp.example.com")
+		t.Setenv("ARBITRON_AUTH_OIDC_CLIENTID", "env-client")
+		t.Setenv("ARBITRON_AUTH_OIDC_CLIENTSECRET", "env-secret")
+		t.Setenv("ARBITRON_AUTH_OIDC_REDIRECTURL", "https://app.example.com/auth/callback")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+		assert.Equal(t, "https://idp.example.com", cfg.Auth.OIDC.IssuerURL)
+		assert.Equal(t, "env-client", cfg.Auth.OIDC.ClientID)
+	})
+
+	t.Run("env switches to org but missing OIDC still fails fast", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "org")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "org mode requires OIDC config")
+	})
+}
+
+// TestLoad_AuthBootstrapAdmins_FromYAML verifies that bootstrap admins load
+// correctly from a YAML list. The env path is already tested; this covers the
+// YAML-native list form which is the typical deployment pattern.
+// Bootstrap admins are promoted to Admin on first login, making the YAML path
+// security-critical: a silent regression would leave no admins after fresh setup.
+func TestLoad_AuthBootstrapAdmins_FromYAML(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  bootstrapadmins:
+    - "alice@example.com"
+    - "bob@example.com"
+    - "sub|abc123"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com", "sub|abc123"},
+		cfg.Auth.BootstrapAdmins,
+		"bootstrap admins must load from YAML list with preserved order and values")
+}
+
+// TestLoad_AuthSession_CookieSecure_Override verifies that CookieSecure can be
+// explicitly set to false via YAML, which is the supported path for local HTTP
+// dev (the config template comments say so). The default (true) is tested
+// elsewhere; this closes the coverage gap on the false override.
+func TestLoad_AuthSession_CookieSecure_Override(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := "auth:\n  session:\n    cookiesecure: false\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.False(t, cfg.Auth.Session.CookieSecure,
+		"CookieSecure must be overridable to false via YAML for local HTTP dev")
+}
+
+// TestLoad_AuthSession_EmptyCookieNameFallback verifies that an explicitly
+// blank session.cookiename in YAML is replaced with the hardcoded default
+// during normalization — an empty cookie name would silently break all session
+// auth in org mode.
+func TestLoad_AuthSession_EmptyCookieNameFallback(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("auth:\n  session:\n    cookiename: \"\"\n"), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "arbitron_session", cfg.Auth.Session.CookieName,
+		"blank cookiename must fall back to the default to prevent silent session-auth breakage")
+}
+
+// ---- Phase 6 Focus Area 1 Pass 2: robustness & security ----
+
+// TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField verifies that a field set to
+// all-whitespace is rejected the same as an absent field. This locks the
+// TrimSpace pre-check in validateAuth so a YAML value of "   " cannot sneak
+// past org-mode validation and produce a runtime error on the first login.
+func TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string // expected substring in error
+	}{
+		{
+			"whitespace clientsecret rejected",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientid: \"c\"\n    clientsecret: \"   \"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.clientsecret",
+		},
+		{
+			"whitespace issuerurl rejected",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"   \"\n    clientid: \"c\"\n    clientsecret: \"s\"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.issuerurl",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.Error(t, err, "whitespace-only OIDC field must fail validation the same as absent")
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+// TestLoad_LocalMode_IgnoresOIDCConfig verifies that local mode stays
+// frictionless even when OIDC fields are populated (e.g. a shared config file
+// that switches modes via an env override). Local mode must never require OIDC.
+func TestLoad_LocalMode_IgnoresOIDCConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	// Local mode with fully populated (but bogus) OIDC fields — must succeed.
+	yamlContent := `
+auth:
+  mode: "local"
+  oidc:
+    issuerurl: "https://idp.example.com"
+    clientid: "some-client"
+    clientsecret: "some-secret"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err, "local mode must not validate or require OIDC config")
+	require.NotNil(t, cfg)
+	assert.Equal(t, "local", cfg.Auth.Mode)
+}
+
+// TestLoad_CreatedConfigFile_HasRestrictivePermissions verifies that the
+// default config file created by Load (when none exists) uses 0600 permissions
+// so only the process owner can read the OIDC client secret or session key if
+// they are later added to the file.
+func TestLoad_CreatedConfigFile_HasRestrictivePermissions(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	// File must not exist yet.
+	_, err := os.Stat(configPath)
+	require.True(t, os.IsNotExist(err))
+
+	_, err = adapterconfig.Load(configPath)
+	require.NoError(t, err)
+
+	info, err := os.Stat(configPath)
+	require.NoError(t, err)
+	// Mask to the permission bits only (ignore file-type bits).
+	perm := info.Mode().Perm()
+	assert.Equal(t, os.FileMode(0600), perm,
+		"default config file must be 0600 (owner-only r/w) to protect future secrets written into it")
+}

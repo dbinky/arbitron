@@ -116,14 +116,16 @@ FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
 AND (?3 IS NULL OR created_at >= ?3)
+AND (?4 IS NULL OR owner_id = ?4)
 ORDER BY created_at DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListInstancesParams struct {
 	State        interface{}
 	WorkflowName interface{}
 	Since        interface{}
+	OwnerID      interface{}
 	Offset       int64
 	Limit        int64
 }
@@ -145,6 +147,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 		arg.State,
 		arg.WorkflowName,
 		arg.Since,
+		arg.OwnerID,
 		arg.Offset,
 		arg.Limit,
 	)

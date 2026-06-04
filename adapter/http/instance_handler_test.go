@@ -272,54 +272,154 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
-	pauseFn       func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	listFn           func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn            func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn          func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn      func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn      func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn   func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn  func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn          func(id uuid.UUID) error
+	resumeFn         func(id uuid.UUID) error
+	cancelFn         func(id uuid.UUID) error
+	retryFn          func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn          func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn    func(id uuid.UUID, priority string) error
 }
 
-func (m *mockInstanceService) Pause(id uuid.UUID) error {
+func (m *mockInstanceService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, filters)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if m.traceFn != nil {
+		return m.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if m.nodeTraceFn != nil {
+		return m.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if m.variablesFn != nil {
+		return m.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if m.variableHistFn != nil {
+		return m.variableHistFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	if m.interventionsFn != nil {
+		return m.interventionsFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Resume(id uuid.UUID) error {
+func (m *mockInstanceService) Resume(_ context.Context, id uuid.UUID) error {
 	if m.resumeFn != nil {
 		return m.resumeFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Cancel(id uuid.UUID) error {
+func (m *mockInstanceService) Cancel(_ context.Context, id uuid.UUID) error {
 	if m.cancelFn != nil {
 		return m.cancelFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Retry(id uuid.UUID, variableEdits map[string]any) error {
+func (m *mockInstanceService) Retry(_ context.Context, id uuid.UUID, variableEdits map[string]any) error {
 	if m.retryFn != nil {
 		return m.retryFn(id, variableEdits)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (m *mockInstanceService) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if m.rerunFn != nil {
 		return m.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (m *mockInstanceService) SetPriority(id uuid.UUID, priority string) error {
+func (m *mockInstanceService) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if m.setPriorityFn != nil {
 		return m.setPriorityFn(id, priority)
 	}
 	return nil
+}
+
+// TestInstanceHandler_GetInterventions covers the audit-trail endpoint: a viewer
+// (owner/admin) gets 200 with the rows; a non-viewer gets 404 (the service
+// returns ErrNotFound), identical to a missing instance.
+func TestInstanceHandler_GetInterventions(t *testing.T) {
+	t.Run("viewer gets 200 with rows", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		detail := "high"
+		svc.interventionsFn = func(_ context.Context, gotID uuid.UUID) ([]instance.Intervention, error) {
+			assert.Equal(t, id, gotID)
+			return []instance.Intervention{
+				{ID: uuid.New(), InstanceID: id, ActorUserID: uuid.New(), Action: instance.ActionSetPriority, Detail: &detail, CreatedAt: time.Now()},
+			}, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/interventions", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetInterventions(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp, 1)
+		assert.Equal(t, "set_priority", resp[0]["action"])
+		assert.Equal(t, "high", resp[0]["detail"])
+	})
+
+	t.Run("non-viewer gets 404", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.interventionsFn = func(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+			return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/interventions", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetInterventions(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -346,8 +446,74 @@ func newInstanceHandler() (*adapthttp.InstanceHandler, *mockInstanceRepo, *mockN
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &mockInstanceService{}
+	// By default the scoped read/list services delegate to the repos
+	// (admin-equivalent, unconstrained scope) so existing handler tests that seed
+	// the repos keep passing. Scoping itself is unit-tested in the engine; these
+	// tests cover the handler wiring (delegation to the service) and parsing.
+	svc.listFn = instRepo.List
+	svc.getFn = instRepo.Get
+	svc.traceFn = func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.ListByInstance(ctx, id)
+	}
+	svc.nodeTraceFn = func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+	}
+	svc.variablesFn = func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+		inst, err := instRepo.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Variables, nil
+	}
+	svc.variableHistFn = func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return snapRepo.ListByInstance(ctx, id)
+	}
 	h := adapthttp.NewInstanceHandler(instRepo, nodeExecRepo, snapRepo, svc)
 	return h, instRepo, nodeExecRepo, snapRepo, svc
+}
+
+// serviceOverRepos builds a mockInstanceService whose read methods delegate to
+// the given repos (unconstrained scope), so the pre-existing internal-error
+// path tests — which seed error repos and expect the handler to surface 500 —
+// keep exercising the same repo error through the service seam.
+func serviceOverRepos(instRepo instance.InstanceRepository, nodeExecRepo instance.NodeExecutionRepository, snapRepo instance.VariableSnapshotRepository) *mockInstanceService {
+	return &mockInstanceService{
+		getFn: instRepo.Get,
+		traceFn: func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return nodeExecRepo.ListByInstance(ctx, id)
+		},
+		nodeTraceFn: func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+		},
+		variablesFn: func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+			inst, err := instRepo.Get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return inst.Variables, nil
+		},
+		variableHistFn: func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return snapRepo.ListByInstance(ctx, id)
+		},
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +603,71 @@ func TestInstanceHandler_List(t *testing.T) {
 		h.List(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+
+	t.Run("delegates to the scoped list service (not the repo)", func(t *testing.T) {
+		h, instRepo, nodeExecRepo, snapRepo, svc := newInstanceHandler()
+		// Seed the repo with an instance the handler must NOT see if it bypasses
+		// the service. The service returns its own fixed set.
+		hidden := testInstance(instance.StateRunning)
+		instRepo.instances[hidden.ID] = hidden
+
+		called := false
+		fixed := []instance.InstanceSummary{{ID: uuid.New(), WorkflowName: "scoped"}}
+		svc.listFn = func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+			called = true
+			return fixed, nil
+		}
+		h = adapthttp.NewInstanceHandler(instRepo, nodeExecRepo, snapRepo, svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, called, "List must delegate to the scoped service so the owner constraint is enforced")
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp, 1)
+		assert.Equal(t, "scoped", resp[0].WorkflowName)
+	})
+
+	t.Run("does not read an owner query param", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		var got instance.ListFilters
+		svc.listFn = func(_ context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
+			got = f
+			return nil, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances?ownerId="+uuid.New().String(), nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Nil(t, got.OwnerID, "handler must not let a caller set the owner filter from query input")
+	})
+
+	t.Run("no-identity defence-in-depth: ErrNotFound from service returns 200 empty array", func(t *testing.T) {
+		// When auth middleware is somehow bypassed the scoped engine returns
+		// ErrNotFound (no identity = reveal nothing). The List handler must map
+		// this to HTTP 200 with an empty array — not 404 or 500 — so a probe
+		// cannot distinguish "no instances" from "access denied".
+		svc := &mockInstanceService{
+			listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, instance.ErrNotFound
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), svc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+		w := httptest.NewRecorder()
+		h.List(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []instance.InstanceSummary
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Empty(t, resp, "unauthenticated caller must see an empty list, not an error")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +715,29 @@ func TestInstanceHandler_Get(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("non-owner gets 404 identical to a missing instance (no existence leak)", func(t *testing.T) {
+		// The scoped engine returns ErrNotFound for a non-owner; the handler must
+		// surface a 404 whose body is identical to a genuinely missing instance so
+		// a probe cannot confirm the instance exists just because someone else owns it.
+		id := uuid.New()
+		notFoundSvc := &mockInstanceService{
+			getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), notFoundSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String(), nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Get(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +759,26 @@ func TestInstanceHandler_Pause(t *testing.T) {
 		h.Pause(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the handler maps it to 404, identical to a missing instance.
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.pauseFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Pause(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
@@ -570,6 +844,26 @@ func TestInstanceHandler_Resume(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the handler maps it to 404, identical to a missing instance.
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.resumeFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Resume(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
+
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
@@ -628,6 +922,24 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		h.Cancel(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.cancelFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Cancel(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
@@ -709,6 +1021,24 @@ func TestInstanceHandler_Retry(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.retryFn = func(gotID uuid.UUID, _ map[string]any) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
+
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
@@ -786,6 +1116,24 @@ func TestInstanceHandler_Rerun(t *testing.T) {
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, newID.String(), resp["instanceId"])
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.rerunFn = func(gotID uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/rerun", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Rerun(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
@@ -869,6 +1217,28 @@ func TestInstanceHandler_GetTrace(t *testing.T) {
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Len(t, resp, 2)
+	})
+
+	t.Run("non-owner gets 404 identical to a missing instance (no existence leak)", func(t *testing.T) {
+		// The scoped service returns ErrNotFound for a non-owner; the handler must
+		// surface a 404 whose body is identical to a genuinely missing instance.
+		id := uuid.New()
+		notFoundSvc := &mockInstanceService{
+			traceFn: func(_ context.Context, _ uuid.UUID) ([]instance.NodeExecution, error) {
+				return nil, instance.ErrNotFound
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), notFoundSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetTrace(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 400 for bad UUID", func(t *testing.T) {
@@ -1070,7 +1440,9 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 		instRepo := newMockInstanceRepo()
 		inst := testInstance(instance.StateCompleted)
 		instRepo.instances[inst.ID] = inst
-		h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), &errSnapshotRepo{err: fmt.Errorf("db down")}, &mockInstanceService{})
+		nodeRepo := newMockNodeExecRepo()
+		snapRepo := &errSnapshotRepo{err: fmt.Errorf("db down")}
+		h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, snapRepo, serviceOverRepos(instRepo, nodeRepo, snapRepo))
 
 		req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/variables/history", nil)
 		req = withChiURLParam(req, "id", inst.ID.String())
@@ -1086,7 +1458,10 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInstanceHandler_List_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	svc := &mockInstanceService{listFn: func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+		return nil, fmt.Errorf("db down")
+	}}
+	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), svc)
 
 	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
 	w := httptest.NewRecorder()
@@ -1099,7 +1474,8 @@ func TestInstanceHandler_List_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_Get_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String(), nil)
@@ -1181,7 +1557,8 @@ func TestInstanceHandler_GetTrace_NodeExecsError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	inst := testInstance(instance.StateCompleted)
 	instRepo.instances[inst.ID] = inst
-	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+	nodeRepo := &errNodeExecRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, newMockSnapshotRepo(), serviceOverRepos(instRepo, nodeRepo, newMockSnapshotRepo()))
 
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace", nil)
 	req = withChiURLParam(req, "id", inst.ID.String())
@@ -1195,7 +1572,8 @@ func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	inst := testInstance(instance.StateRunning)
 	instRepo.instances[inst.ID] = inst
-	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+	nodeRepo := &errNodeExecRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, newMockSnapshotRepo(), serviceOverRepos(instRepo, nodeRepo, newMockSnapshotRepo()))
 
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace/A", nil)
 	req = withChiURLParam(req, "id", inst.ID.String())
@@ -1207,7 +1585,8 @@ func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetNodeTrace_InstanceNotFound(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := newMockInstanceRepo()
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
@@ -1220,7 +1599,8 @@ func TestInstanceHandler_GetNodeTrace_InstanceNotFound(t *testing.T) {
 }
 
 func TestInstanceHandler_GetNodeTrace_InstanceRepoError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
@@ -1233,7 +1613,8 @@ func TestInstanceHandler_GetNodeTrace_InstanceRepoError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetVariables_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables", nil)
@@ -1245,7 +1626,8 @@ func TestInstanceHandler_GetVariables_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetVariableHistory_InstanceError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables/history", nil)
@@ -1444,6 +1826,28 @@ func TestInstanceHandler_SetPriority_ServiceError_Conflict(t *testing.T) {
 	h.SetPriority(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestInstanceHandler_SetPriority_NonOwner_404(t *testing.T) {
+	// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+	// the handler maps it to 404, identical to a missing instance.
+	h, _, _, _, svc := newInstanceHandler()
+	svc.setPriorityFn = func(gotID uuid.UUID, _ string) error {
+		return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+	}
+
+	instanceID := uuid.New()
+	body := `{"priority":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+	req = withChiURLParam(req, "id", instanceID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "NOT_FOUND", resp.Code)
 }
 
 // ---------------------------------------------------------------------------

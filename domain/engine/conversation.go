@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -37,12 +39,13 @@ type ConversationHandler interface {
 // selects the streaming backend via the InteractiveStreamSelector (chat profile
 // -> tool-suppressed chat stream; agent profile -> tool-enabled stream).
 type conversationHandler struct {
-	instances instance.InstanceRepository
-	nodeExecs instance.NodeExecutionRepository
-	selector  InteractiveStreamSelector
-	resolver  provider.ProfileResolver
-	eventBus  EventBus
-	queueMgr  QueueManager
+	instances     instance.InstanceRepository
+	nodeExecs     instance.NodeExecutionRepository
+	selector      InteractiveStreamSelector
+	resolver      provider.ProfileResolver
+	eventBus      EventBus
+	queueMgr      QueueManager
+	interventions instance.InterventionRepository // optional; nil-safe attribution
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -65,6 +68,13 @@ func NewConversationHandler(
 	}
 }
 
+// SetInterventions wires the intervention audit repository so admin
+// participation in an interactive session is attributed. Nil-safe: when unset,
+// no attribution row is written (the actor tag is still added to events).
+func (h *conversationHandler) SetInterventions(repo instance.InterventionRepository) {
+	h.interventions = repo
+}
+
 // publishInteractiveMessage publishes a single interactive.message event for a
 // chat message with the given role and content. It is the one place that
 // defines the wire shape of that event (type constant, the role/content keys,
@@ -83,6 +93,37 @@ func publishInteractiveMessage(bus EventBus, instanceID uuid.UUID, role, content
 			"content": content,
 		},
 	})
+}
+
+// nonOwnerActor returns the acting user's id and true when the context identity
+// is present AND differs from the instance owner (i.e. an admin participating in
+// another user's session). Owner self-participation and identity-less calls
+// return false, so they are not attributed.
+func (h *conversationHandler) nonOwnerActor(ctx context.Context, inst *instance.Instance) (uuid.UUID, bool) {
+	id, ok := identity.FromContext(ctx)
+	if !ok || id.UserID == inst.OwnerID {
+		return uuid.Nil, false
+	}
+	return id.UserID, true
+}
+
+// recordInteractiveIntervention writes a best-effort attribution row for admin
+// interactive participation. Nil-safe and non-fatal: a write failure is logged.
+func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context, inst *instance.Instance, actor uuid.UUID, action string, detail *string) {
+	if h.interventions == nil {
+		return
+	}
+	iv := &instance.Intervention{
+		ID:          uuid.New(),
+		InstanceID:  inst.ID,
+		ActorUserID: actor,
+		Action:      action,
+		Detail:      detail,
+		CreatedAt:   time.Now(),
+	}
+	if err := h.interventions.Create(ctx, iv); err != nil {
+		slog.Error("failed to record interactive intervention", "instanceID", inst.ID, "error", err)
+	}
 }
 
 // HandleMessage processes a user message in an active interactive session.
@@ -111,8 +152,22 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		"content": content,
 	})
 
-	// 5. Publish interactive.message event for user message.
-	publishInteractiveMessage(h.eventBus, instanceID, "user", content)
+	// 5. Publish interactive.message event for user message, tagging the actor
+	// when an admin (non-owner) is participating, and record an attribution row.
+	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
+		h.eventBus.Publish(instanceID, Event{
+			Type:      EventTypeInteractiveMessage,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"role":        "user",
+				"content":     content,
+				"actorUserId": actor.String(),
+			},
+		})
+		h.recordInteractiveIntervention(ctx, inst, actor, instance.ActionInteractiveMsg, nil)
+	} else {
+		publishInteractiveMessage(h.eventBus, instanceID, "user", content)
+	}
 
 	// 5a. Resolve the waiting node's model_profile to a binding and select the
 	// streaming backend the same way the InteractiveExecutor does on the first
@@ -247,14 +302,21 @@ func (h *conversationHandler) completeSession(
 		return fmt.Errorf("conversation: transition to queued: %w", err)
 	}
 
-	// 3. Publish interactive.ended event.
+	// 3. Publish interactive.ended event, tagging the actor when an admin
+	// (non-owner) ended the session, and record an attribution row.
+	endedData := map[string]any{
+		"reason": reason,
+		"output": output,
+	}
+	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
+		endedData["actorUserId"] = actor.String()
+		r := reason
+		h.recordInteractiveIntervention(ctx, inst, actor, instance.ActionInteractiveEnded, &r)
+	}
 	h.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInteractiveEnded,
 		Timestamp: time.Now(),
-		Data: map[string]any{
-			"reason": reason,
-			"output": output,
-		},
+		Data:      endedData,
 	})
 
 	// 4. Notify capacity freed.
@@ -307,6 +369,16 @@ func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uu
 	inst, err := h.instances.Get(ctx, instanceID)
 	if err != nil {
 		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: load instance: %w", err)
+	}
+
+	// Authorization: participating in (writing to) an interactive session is
+	// allowed only for the instance owner or an admin. A non-viewer gets
+	// ErrNotFound so the interactive surface does not leak existence. This gate
+	// runs before the state check so a non-viewer never learns the session's
+	// state. Because both HandleMessage and EndSession funnel through here, the
+	// WS, REST, and MCP interactive surfaces all inherit it.
+	if !canView(ctx, inst.OwnerID) {
+		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrNotFound)
 	}
 
 	if inst.State != instance.StateWaiting {

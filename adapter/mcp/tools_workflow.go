@@ -8,9 +8,39 @@ import (
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
+
+// callerOwner returns the authenticated caller's user ID from the tool ctx.
+// The Phase 1 auth middleware wraps /mcp, so an identity is always present.
+func callerOwner(ctx context.Context) uuid.UUID {
+	return identity.MustFromContext(ctx).UserID
+}
+
+// workflowSvc returns the WorkflowService for the workflow_* tools, building a
+// default one over the repository when Deps.WorkflowSvc is unset.
+func workflowSvc(srv *Server) *workflow.WorkflowService {
+	if srv.deps.WorkflowSvc != nil {
+		return srv.deps.WorkflowSvc
+	}
+	return workflow.NewWorkflowService(srv.deps.Workflows, nil)
+}
+
+// ownerBoundChecker adapts a scope-aware engine.FileReader to the owner-blind
+// workflow.FileChecker by binding the caller's owner.
+type ownerBoundChecker struct {
+	fr    interface {
+		FileExists(owner uuid.UUID, workflowName, relativePath string) bool
+	}
+	owner uuid.UUID
+}
+
+func (c ownerBoundChecker) FileExists(workflowName, relativePath string) bool {
+	return c.fr.FileExists(c.owner, workflowName, relativePath)
+}
 
 // RegisterWorkflowTools registers all workflow management tools with the server.
 func RegisterWorkflowTools(srv *Server) {
@@ -97,11 +127,29 @@ func RegisterWorkflowTools(srv *Server) {
 		),
 		workflowDeleteFileHandler(srv),
 	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_publish",
+			gomcp.WithDescription("Publish a private workflow to the shared workspace"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Private workflow name to publish")),
+			gomcp.WithString("publishedName", gomcp.Required(), gomcp.Description("Name to publish under in the shared workspace")),
+		),
+		workflowPublishHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_copy",
+			gomcp.WithDescription("Copy a shared workflow into your private workspace"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Shared workflow name to copy")),
+			gomcp.WithString("newName", gomcp.Required(), gomcp.Description("New private workflow name")),
+		),
+		workflowCopyHandler(srv),
+	)
 }
 
 func workflowListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		summaries, err := srv.deps.Workflows.List(ctx)
+		summaries, err := workflowSvc(srv).List(ctx)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list workflows: %s", err)), nil
 		}
@@ -124,7 +172,7 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		wf, err := srv.deps.Workflows.Load(ctx, name)
+		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -155,7 +203,7 @@ func workflowCreateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", wf.Name)), nil
 		}
 
-		if err := srv.deps.Workflows.Create(ctx, wf.Name, &wf); err != nil {
+		if err := workflowSvc(srv).Create(ctx, wf.Name, &wf); err != nil {
 			if errors.Is(err, workflow.ErrAlreadyExists) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow already exists: %s", wf.Name)), nil
 			}
@@ -190,7 +238,10 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		// contained so workflow.json stays consistent with its directory name.
 		wf.Name = name
 
-		if err := srv.deps.Workflows.Update(ctx, name, &wf); err != nil {
+		if err := workflowSvc(srv).Update(ctx, name, &wf); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -212,7 +263,10 @@ func workflowDeleteHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		if err := srv.deps.Workflows.Delete(ctx, name); err != nil {
+		if err := workflowSvc(srv).Delete(ctx, name); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -234,7 +288,7 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		wf, err := srv.deps.Workflows.Load(ctx, name)
+		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -245,7 +299,8 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("workflow not found"), nil
 		}
 
-		validationErrors := workflow.Validate(wf, srv.deps.FileReader, srv.deps.ProfileChecker, srv.deps.ConnChecker)
+		checker := ownerBoundChecker{fr: srv.deps.FileReader, owner: callerOwner(ctx)}
+		validationErrors := workflow.Validate(wf, checker, srv.deps.ProfileChecker, srv.deps.ConnChecker)
 		if validationErrors == nil {
 			validationErrors = []workflow.ValidationError{}
 		}
@@ -269,7 +324,7 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		files, err := srv.deps.Workflows.ListFiles(ctx, name)
+		files, err := workflowSvc(srv).ListFiles(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -300,7 +355,7 @@ func workflowReadFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("path is required"), nil
 		}
 
-		content, err := srv.deps.FileReader.ReadFile(name, path)
+		content, err := srv.deps.FileReader.ReadFile(callerOwner(ctx), name, path)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to read file: %s", err)), nil
 		}
@@ -338,7 +393,10 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("content too large: %d bytes exceeds %d byte limit", len(content), maxWriteFileContentBytes)), nil
 		}
 
-		if err := srv.deps.Workflows.WriteFile(ctx, name, path, []byte(content)); err != nil {
+		if err := workflowSvc(srv).WriteFile(ctx, name, path, []byte(content)); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -368,7 +426,10 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("path is required"), nil
 		}
 
-		if err := srv.deps.Workflows.DeleteFile(ctx, name, path); err != nil {
+		if err := workflowSvc(srv).DeleteFile(ctx, name, path); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("not found: %s", err)), nil
 			}
@@ -378,5 +439,71 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to delete file: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "deleted", "name": name, "path": path})
+	}
+}
+
+func workflowPublishHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		publishedName, _ := args["publishedName"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if publishedName == "" {
+			return gomcp.NewToolResultError("publishedName is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if !safeWorkflowName(publishedName) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid published name: %s", publishedName)), nil
+		}
+
+		if err := workflowSvc(srv).Publish(ctx, name, publishedName); err != nil {
+			switch {
+			case errors.Is(err, workflow.ErrUnauthorized):
+				return gomcp.NewToolResultError(fmt.Sprintf("not authorized to publish %q: %s", publishedName, err)), nil
+			case errors.Is(err, workflow.ErrNotFound):
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			case errors.Is(err, workflow.ErrAlreadyExists):
+				return gomcp.NewToolResultError(fmt.Sprintf("published name already exists: %s", publishedName)), nil
+			default:
+				return gomcp.NewToolResultError(fmt.Sprintf("failed to publish workflow: %s", err)), nil
+			}
+		}
+		return MarshalResult(map[string]string{"status": "published", "name": publishedName})
+	}
+}
+
+func workflowCopyHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		newName, _ := args["newName"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if newName == "" {
+			return gomcp.NewToolResultError("newName is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if !safeWorkflowName(newName) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid new name: %s", newName)), nil
+		}
+
+		if err := workflowSvc(srv).Copy(ctx, name, newName); err != nil {
+			switch {
+			case errors.Is(err, workflow.ErrAlreadyExists):
+				return gomcp.NewToolResultError(fmt.Sprintf("private workflow already exists: %s", newName)), nil
+			case errors.Is(err, workflow.ErrNotFound):
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			default:
+				return gomcp.NewToolResultError(fmt.Sprintf("failed to copy workflow: %s", err)), nil
+			}
+		}
+		return MarshalResult(map[string]string{"status": "copied", "name": newName})
 	}
 }

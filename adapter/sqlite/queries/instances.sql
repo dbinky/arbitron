@@ -12,6 +12,7 @@ FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))
 AND (sqlc.narg('since') IS NULL OR created_at >= sqlc.narg('since'))
+AND (sqlc.narg('owner_id') IS NULL OR owner_id = sqlc.narg('owner_id'))
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 

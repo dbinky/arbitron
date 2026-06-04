@@ -476,7 +476,7 @@ func TestRun_WaitResult_ExitsCleanly(t *testing.T) {
 	}
 	f.queueManager.mu.Unlock()
 
-	id, _, err := eng.Trigger("timer-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-wf", nil, "normal")
 	require.NoError(t, err)
 
 	// Wait for the instance to reach waiting state.
@@ -529,7 +529,7 @@ func TestRun_WaitResult_DoesNotFollowEdges(t *testing.T) {
 	}
 	f.queueManager.mu.Unlock()
 
-	id, _, err := eng.Trigger("timer-no-follow-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-no-follow-wf", nil, "normal")
 	require.NoError(t, err)
 
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
@@ -595,11 +595,11 @@ func TestCancel_WaitingInstance_CancelsTimer(t *testing.T) {
 
 	f.workflowRepo.add(timerWorkflow("60"))
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -618,7 +618,7 @@ func TestCancel_WaitingInstance_NotifiesQueueManager(t *testing.T) {
 
 	f.workflowRepo.add(timerWorkflow("60"))
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
@@ -627,7 +627,7 @@ func TestCancel_WaitingInstance_NotifiesQueueManager(t *testing.T) {
 		<-f.queueManager.notifyCapacityFreedCh
 	}
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	select {
@@ -645,11 +645,11 @@ func TestPause_WaitingInstance_TransitionsToPaused(t *testing.T) {
 
 	f.workflowRepo.add(timerWorkflow("60"))
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -663,11 +663,11 @@ func TestPause_WaitingInstance_DoesNotCancelTimer(t *testing.T) {
 
 	f.workflowRepo.add(timerWorkflow("60"))
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	// Scheduler cancel should NOT have been called.
@@ -684,18 +684,18 @@ func TestResume_PausedFromWaiting_TimerExpired_GoesToQueued(t *testing.T) {
 	// Use a very short timer so it expires quickly.
 	f.workflowRepo.add(timerWorkflow("0"))
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause it.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// waitingUntil was set to "now" (0 duration), so it's already expired.
 	// Resume should go to queued.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -709,17 +709,17 @@ func TestResume_PausedFromWaiting_TimerNotExpired_GoesToWaiting(t *testing.T) {
 
 	f.workflowRepo.add(timerWorkflow("3600")) // 1 hour — definitely not expired
 
-	id, _, err := eng.Trigger("timer-ops-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "timer-ops-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause it.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Resume — timer not expired, go back to waiting.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -768,11 +768,11 @@ func TestResume_PausedFromRunning_StartsInstance(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, _, err := f.engine.Trigger("normal-resume-wf", nil, "normal")
+	id, _, err := f.engine.Trigger(context.Background(), "normal-resume-wf", nil, "normal")
 	require.NoError(t, err)
 
 	<-bStarted
-	err = f.engine.Pause(id)
+	err = f.engine.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	close(bDone)
 
@@ -783,7 +783,7 @@ func TestResume_PausedFromRunning_StartsInstance(t *testing.T) {
 	assert.Nil(t, inst.WaitingUntil)
 
 	// Resume should restart from current node and eventually complete.
-	err = f.engine.Resume(id)
+	err = f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	finalInst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -853,7 +853,7 @@ func TestTimerDelay_FullFlow(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	id, _, err := eng.Trigger("full-flow-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "full-flow-wf", nil, "normal")
 	require.NoError(t, err)
 
 	// Instance should go to waiting after executing A and reaching timer.
@@ -893,12 +893,12 @@ func TestTimerDelay_WithCancel(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	id, _, err := eng.Trigger("cancel-timer-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "cancel-timer-wf", nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Cancel the waiting instance.
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -932,7 +932,7 @@ func TestTimerDelay_ZeroDuration(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	id, _, err := eng.Trigger("zero-dur-wf", nil, "normal")
+	id, _, err := eng.Trigger(context.Background(), "zero-dur-wf", nil, "normal")
 	require.NoError(t, err)
 
 	// Zero duration: instance goes to waiting, then immediately eligible.
@@ -966,7 +966,7 @@ func TestTimerDelay_SubstitutionVariable(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	id, _, err := eng.Trigger("subst-timer-wf", map[string]any{"delay": float64(5)}, "normal")
+	id, _, err := eng.Trigger(context.Background(), "subst-timer-wf", map[string]any{"delay": float64(5)}, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
@@ -1000,7 +1000,7 @@ func TestTimerDelay_NonNumericDuration_FailsInstance(t *testing.T) {
 	}
 	f.workflowRepo.add(wf)
 
-	id, _, err := eng.Trigger("bad-dur-wf", map[string]any{"delay": "abc"}, "normal")
+	id, _, err := eng.Trigger(context.Background(), "bad-dur-wf", map[string]any{"delay": "abc"}, "normal")
 	require.NoError(t, err)
 
 	// The node should fail, and with default "halt" error behavior, instance should fail.

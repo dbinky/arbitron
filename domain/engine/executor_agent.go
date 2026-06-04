@@ -40,7 +40,7 @@ func NewAgentCallExecutor(fr FileReader, selector AgentProviderSelector, resolve
 // records the steps/summary/tokens on the result.
 func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
 	// Read mission template file.
-	templateBytes, err := e.fileReader.ReadFile(workflowName, node.Config.TemplateFile)
+	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: read template: %w", node.ID, err)
 	}

@@ -27,11 +27,13 @@ import (
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
+	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -41,6 +43,37 @@ import (
 
 // Compile-time assertion that *engine.Engine satisfies the HTTP adapter's EngineService.
 var _ adapthttp.EngineService = (*engine.Engine)(nil)
+
+const (
+	// deviceCodeTTL is how long a device-authorization code remains valid before
+	// it expires unapproved/unconsumed.
+	deviceCodeTTL = 10 * time.Minute
+	// deviceCodePollInterval is the RFC 8628 poll interval (seconds) returned to
+	// the client.
+	deviceCodePollInterval = 5
+	// deviceCodeSweepInterval is how often expired device codes are purged.
+	deviceCodeSweepInterval = 5 * time.Minute
+)
+
+// sweepExpiredDeviceCodes purges expired device-authorization rows on a ticker
+// until ctx is cancelled. Errors are logged, not fatal — a transient DB error on
+// one tick must not kill the loop.
+func sweepExpiredDeviceCodes(ctx context.Context, svc *identity.DeviceCodeService, interval time.Duration, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if n, err := svc.DeleteExpired(ctx, now.UTC()); err != nil {
+				log.Error("device-code sweep failed", "error", err)
+			} else if n > 0 {
+				log.Debug("device-code sweep removed expired codes", "count", n)
+			}
+		}
+	}
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -88,6 +121,8 @@ type domainStack struct {
 	db                  *sql.DB
 	eng                 *engine.Engine
 	workflowRepo        workflow.WorkflowRepository
+	workflowSvc         *workflow.WorkflowService
+	publishedRepo       *adaptsqlite.PublishedWorkflowRepo
 	instanceRepo        instance.InstanceRepository
 	nodeExecRepo        instance.NodeExecutionRepository
 	snapshotRepo        instance.VariableSnapshotRepository
@@ -100,12 +135,24 @@ type domainStack struct {
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
 	dismissalRepo       instance.DismissalRepository
-	userRepo            instance.UserRepository
 	conversationHandler engine.ConversationHandler
 	profileChecker      workflow.ProfileChecker
 	connChecker         workflow.ConnectionChecker
 	connStore           provider.ConnectionStore
 	tracingShutdown     func(ctx context.Context) error
+	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
+	// authHandler and sweepCancel are nil in local mode.
+	sessionRepo identity.SessionRepository
+	tokenRepo   identity.TokenRepository
+	tokenSvc    *identity.TokenService
+	deviceRepo  identity.DeviceCodeRepository
+	deviceSvc   *identity.DeviceCodeService
+	provisioner *instance.Provisioner
+	userRepo    instance.UserRepository
+	userSvc     *instance.UserService
+	authMW      *adapthttp.AuthMiddleware
+	authHandler *adapthttp.AuthHandler
+	sweepCancel context.CancelFunc
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -124,6 +171,15 @@ func (ds *domainStack) Close(ctx context.Context) {
 			ds.logger.Error("tracing shutdown error", "error", err)
 		}
 	}
+	// Stop the org-mode session sweep before closing the DB it writes to.
+	if ds.sweepCancel != nil {
+		ds.sweepCancel()
+	}
+	// Stop the bearer last-used flusher's owned goroutine, draining any pending
+	// touches synchronously before the DB closes.
+	if ds.authMW != nil {
+		ds.authMW.Stop()
+	}
 	if ds.db != nil {
 		ds.db.Close()
 	}
@@ -137,6 +193,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 	return &adaptmcp.Deps{
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
@@ -151,6 +208,8 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
 		Connections:         ds.connStore,
+		Tokens:              ds.tokenSvc,
+		Users:               ds.userSvc,
 		Logger:              ds.logger,
 	}
 }
@@ -202,9 +261,73 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	snapshotRepo := adaptsqlite.NewVariableSnapshotRepo(db)
 	userRepo := adaptsqlite.NewUserRepo(db)
 
+	// 5a. Auth (Phase 6). The session store is always constructed (migration 003
+	// created its table); the middleware and OIDC provider differ by mode. In org
+	// mode an unreachable/invalid issuer is a fatal boot error (fail-fast,
+	// consistent with the other init gates).
+	sessionRepo := adaptsqlite.NewSessionRepo(db)
+	// Personal API token store + service (Phase 6, Phase 2). The service scopes
+	// every operation to the request identity; it powers the REST /tokens routes
+	// and the token_* MCP tools, and is consumed by the bearer middleware branch.
+	tokenRepo := adaptsqlite.NewTokenRepo(db)
+	tokenSvc := identity.NewTokenService(tokenRepo)
+	// Device authorization grant (Phase 6, Phase 2). Browserless clients log in
+	// via /auth/device/* and receive a minted arb_ token. 10m TTL, 5s poll.
+	deviceRepo := adaptsqlite.NewDeviceCodeRepo(db)
+	deviceSvc := identity.NewDeviceCodeService(deviceRepo, tokenSvc, deviceCodeTTL, deviceCodePollInterval)
+	// JIT provisioner (Phase 6, Phase 2). Resolves verified OIDC claims to a
+	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
+	// callback and Task 6's role-management demotion floor (one bootstrap rule).
+	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins)
+	// Admin-only role management (Phase 6, Phase 2). The demotion floor shares the
+	// provisioner's bootstrap rule so a bootstrap (incl. by-email) admin is
+	// protected using only the persisted User.
+	userSvc := instance.NewUserService(userRepo, provisioner)
+	authMode := identity.ModeFromString(cfg.Auth.Mode)
+	var authHandler *adapthttp.AuthHandler
+	if authMode == identity.ModeOrg {
+		oidcProvider, oerr := adaptoidc.New(context.Background(), adaptoidc.Config{
+			IssuerURL:    cfg.Auth.OIDC.IssuerURL,
+			ClientID:     cfg.Auth.OIDC.ClientID,
+			ClientSecret: cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:  cfg.Auth.OIDC.RedirectURL,
+			Scopes:       cfg.Auth.OIDC.Scopes,
+		})
+		if oerr != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("initialising OIDC provider: %w", oerr)
+		}
+		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
+	}
+	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo)
+
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
+
+	// One-time, marker-guarded migration of any pre-existing flat workflow store
+	// into the default user's private workspace (users/<defaultUser>/). Runs
+	// after the DB migrations seed the default user and before serving begins.
+	flatMigrateUser, err := userRepo.GetDefaultUser(context.Background())
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("resolving default user for flat-store migration: %w", err)
+	}
+	if err := migrateFlatStore(cfg.Workspace.Path, flatMigrateUser); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("flat-store migration: %w", err)
+	}
+	logger.Info("flat-store migration complete", "defaultUser", flatMigrateUser)
+	// PublishedWorkflowRepo is the authority for the shared workspace's
+	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
+	// WorkflowService uses to tag shared list entries with their publisher.
+	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
+	// WorkflowService resolves storage scope/authorization from the request
+	// identity.
+	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -404,6 +527,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
+	// 12a-bis. Create the intervention audit repo and wire it to the engine so
+	// admin actions on other users' instances are attributed.
+	interventionRepo := adaptsqlite.NewInterventionRepo(db)
+	eng.SetInterventions(interventionRepo)
 	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
@@ -440,6 +567,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	conversationHandler := engine.NewConversationHandler(
 		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, bus, queueMgr,
 	)
+	// Wire the intervention repo so admin participation in another user's
+	// interactive session is attributed. The setter lives on the concrete type.
+	if s, ok := conversationHandler.(interface {
+		SetInterventions(instance.InterventionRepository)
+	}); ok {
+		s.SetInterventions(interventionRepo)
+	}
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
@@ -491,6 +625,17 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering webhooks: %w", err)
 	}
 
+	// 14b. Start the org-mode session-expiry sweep (no-op in local mode), plus a
+	// device-code expiry sweep (device login is org-mode only).
+	var sweepCancel context.CancelFunc
+	if authMode == identity.ModeOrg {
+		var sweepCtx context.Context
+		sweepCtx, sweepCancel = context.WithCancel(context.Background())
+		go adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
+			time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
+		go sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger)
+	}
+
 	return &domainStack{
 		cfg:                 cfg,
 		settings:            settings,
@@ -499,6 +644,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		db:                  db,
 		eng:                 eng,
 		workflowRepo:        workflowRepo,
+		workflowSvc:         workflowSvc,
+		publishedRepo:       publishedRepo,
 		instanceRepo:        instanceRepo,
 		nodeExecRepo:        nodeExecRepo,
 		snapshotRepo:        snapshotRepo,
@@ -511,12 +658,22 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		webhookRegistry:     webhookRegistry,
 		notifRepo:           notifRepo,
 		dismissalRepo:       dismissalRepo,
-		userRepo:            userRepo,
 		conversationHandler: conversationHandler,
 		profileChecker:      profileChecker,
 		connChecker:         connChecker,
 		connStore:           connStore,
 		tracingShutdown:     tracingShutdown,
+		sessionRepo:         sessionRepo,
+		tokenRepo:           tokenRepo,
+		tokenSvc:            tokenSvc,
+		deviceRepo:          deviceRepo,
+		deviceSvc:           deviceSvc,
+		provisioner:         provisioner,
+		userRepo:            userRepo,
+		userSvc:             userSvc,
+		authMW:              authMW,
+		authHandler:         authHandler,
+		sweepCancel:         sweepCancel,
 	}, nil
 }
 
@@ -543,11 +700,12 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:             ds.eng,
 		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
 		Dismissals:          ds.dismissalRepo,
-		Users:               ds.userRepo,
+		DismissalUsers:      ds.userRepo,
 		FileReader:          ds.fileReader,
 		EventBus:            ds.bus,
 		Config:              ds.cfg,
@@ -561,6 +719,12 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		MCPHandler:          mcpSrv.HTTPHandler(),
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
+		Auth:                ds.authMW,
+		AuthHandler:         ds.authHandler,
+		Tokens:              ds.tokenSvc,
+		DeviceCodes:         ds.deviceSvc,
+		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
+		Users:               ds.userSvc,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).
@@ -568,10 +732,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	addr := fmt.Sprintf("%s:%d", ds.cfg.Server.Host, ds.cfg.Server.Port)
 
-	// Warn if binding to a non-loopback address. The API has no authentication,
-	// so exposing it on the network is a security risk.
-	if ds.cfg.Server.Host != "127.0.0.1" && ds.cfg.Server.Host != "localhost" && ds.cfg.Server.Host != "::1" {
-		ds.logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
+	// Warn if binding to a non-loopback address in LOCAL mode. Local mode has no
+	// authentication (a fixed auto-admin), so exposing it on the network is a
+	// security risk. In ORG mode the API IS authenticated, so binding non-loopback
+	// is the intended deployment and the warning is suppressed.
+	if ds.cfg.Auth.Mode == config.AuthModeLocal &&
+		ds.cfg.Server.Host != "127.0.0.1" && ds.cfg.Server.Host != "localhost" && ds.cfg.Server.Host != "::1" {
+		ds.logger.Warn("local mode is binding to a non-loopback address -- local mode has no authentication and should not be exposed on the network",
 			"host", ds.cfg.Server.Host)
 	}
 
@@ -652,6 +819,10 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
 	adaptmcp.RegisterAllTools(mcpSrv)
 
+	// NOTE (Phase 6 scope): the stdio MCP transport is NOT behind the HTTP auth
+	// middleware. Phase 1 auth covers the HTTP surfaces (REST, /mcp HTTP, WS);
+	// the stdio transport is operator-local (a process the operator launched),
+	// so stdio-MCP identity is deferred.
 	ds.logger.Info("MCP stdio server starting")
 	return mcpSrv.ServeStdio(ctx)
 }

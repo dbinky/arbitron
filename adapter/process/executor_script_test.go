@@ -12,6 +12,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/process"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func newMockFileReader() *mockFileReader {
 	}
 }
 
-func (m *mockFileReader) ReadFile(workflowName, relativePath string) ([]byte, error) {
+func (m *mockFileReader) ReadFile(_ uuid.UUID, workflowName, relativePath string) ([]byte, error) {
 	key := workflowName + "/" + relativePath
 	data, ok := m.files[key]
 	if !ok {
@@ -38,7 +39,7 @@ func (m *mockFileReader) ReadFile(workflowName, relativePath string) ([]byte, er
 	return data, nil
 }
 
-func (m *mockFileReader) ResolvePath(workflowName, relativePath string) (string, error) {
+func (m *mockFileReader) ResolvePath(_ uuid.UUID, workflowName, relativePath string) (string, error) {
 	key := workflowName + "/" + relativePath
 	p, ok := m.paths[key]
 	if !ok {
@@ -47,7 +48,7 @@ func (m *mockFileReader) ResolvePath(workflowName, relativePath string) (string,
 	return p, nil
 }
 
-func (m *mockFileReader) FileExists(workflowName, relativePath string) bool {
+func (m *mockFileReader) FileExists(_ uuid.UUID, workflowName, relativePath string) bool {
 	key := workflowName + "/" + relativePath
 	_, ok := m.paths[key]
 	return ok

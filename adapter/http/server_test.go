@@ -19,10 +19,30 @@ import (
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
+
+// routerTestUserID is the authenticated caller injected by authedRouter; the
+// production AuthMiddleware supplies an identity on every /api/v1 request.
+var routerTestUserID = uuid.MustParse("77777777-7777-7777-7777-777777777777")
+
+// authedRouter wraps a router with a middleware that injects a default
+// authenticated identity, mirroring the production AuthMiddleware so handlers
+// that resolve the caller's scope via identity.MustFromContext work in the
+// route-wiring tests (which build the router without the auth middleware).
+func authedRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := identity.WithIdentity(r.Context(), identity.Identity{
+			UserID:   routerTestUserID,
+			Username: "router-tester",
+			Role:     identity.RoleAdmin,
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 // ---------------------------------------------------------------------------
 // Full router integration mocks
@@ -30,58 +50,118 @@ import (
 
 // routerMockService implements both WorkflowService and InstanceService.
 type routerMockService struct {
-	triggerFn     func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
-	pauseFn       func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	listFn    func() ([]instance.InstanceSummary, error)
+	// listWithFiltersFn, when set, takes precedence over listFn and receives the
+	// request context and filters — used by tests that delegate to a repo mock so
+	// the state/workflow/paging filters are actually applied (e.g. the per-user
+	// dismissal list tests).
+	listWithFiltersFn func(context.Context, instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn             func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn           func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn       func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn       func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn    func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	pauseFn           func(id uuid.UUID) error
+	resumeFn          func(id uuid.UUID) error
+	cancelFn          func(id uuid.UUID) error
+	retryFn           func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn           func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn     func(id uuid.UUID, priority string) error
 }
 
-func (m *routerMockService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *routerMockService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
 	return uuid.New(), true, nil
 }
 
-func (m *routerMockService) Pause(id uuid.UUID) error {
+func (m *routerMockService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if m.listWithFiltersFn != nil {
+		return m.listWithFiltersFn(ctx, filters)
+	}
+	if m.listFn != nil {
+		return m.listFn()
+	}
+	return nil, nil
+}
+
+func (m *routerMockService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if m.traceFn != nil {
+		return m.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *routerMockService) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if m.nodeTraceFn != nil {
+		return m.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if m.variablesFn != nil {
+		return m.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if m.variableHistFn != nil {
+		return m.variableHistFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *routerMockService) GetInterventions(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+	return nil, nil
+}
+
+func (m *routerMockService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Resume(id uuid.UUID) error {
+func (m *routerMockService) Resume(_ context.Context, id uuid.UUID) error {
 	if m.resumeFn != nil {
 		return m.resumeFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Cancel(id uuid.UUID) error {
+func (m *routerMockService) Cancel(_ context.Context, id uuid.UUID) error {
 	if m.cancelFn != nil {
 		return m.cancelFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Retry(id uuid.UUID, variableEdits map[string]any) error {
+func (m *routerMockService) Retry(_ context.Context, id uuid.UUID, variableEdits map[string]any) error {
 	if m.retryFn != nil {
 		return m.retryFn(id, variableEdits)
 	}
 	return nil
 }
 
-func (m *routerMockService) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (m *routerMockService) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if m.rerunFn != nil {
 		return m.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (m *routerMockService) SetPriority(id uuid.UUID, priority string) error {
+func (m *routerMockService) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if m.setPriorityFn != nil {
 		return m.setPriorityFn(id, priority)
 	}
@@ -91,20 +171,30 @@ func (m *routerMockService) SetPriority(id uuid.UUID, priority string) error {
 // mockQueueManagerForRouter implements adapthttp.QueueManagerPort
 type mockQueueManagerForRouter struct{}
 
-func (m *mockQueueManagerForRouter) UpdateConfig(_, _ int)                    {}
-func (m *mockQueueManagerForRouter) Evaluate(_ context.Context) error         { return nil }
+func (m *mockQueueManagerForRouter) UpdateConfig(_, _ int)            {}
+func (m *mockQueueManagerForRouter) Evaluate(_ context.Context) error { return nil }
 
 // mockQueueRepoForRouter implements instance.QueueRepository
 type mockQueueRepoForRouter struct{}
 
-func (r *mockQueueRepoForRouter) CountRunning(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockQueueRepoForRouter) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)         { return 0, nil }
-func (r *mockQueueRepoForRouter) CountQueued(_ context.Context) (int, error)                               { return 0, nil }
-func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) { return nil, nil }
-func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error              { return nil }
-func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error)     { return nil, nil }
-func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error)   { return nil, nil }
+func (r *mockQueueRepoForRouter) CountRunning(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepoForRouter) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (r *mockQueueRepoForRouter) CountQueued(_ context.Context) (int, error)  { return 0, nil }
+func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
+}
+func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config, adapthttp.QueueManagerPort, instance.QueueRepository) {
 	wfRepo := newMockWorkflowRepo()
@@ -112,6 +202,35 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &routerMockService{}
+	// Default the scoped read services to the repos (unconstrained scope) so
+	// router-level route tests that seed the repos keep asserting 200 OK on the
+	// read endpoints; scoping is unit-tested in the engine.
+	svc.getFn = instRepo.Get
+	svc.traceFn = func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.ListByInstance(ctx, id)
+	}
+	svc.nodeTraceFn = func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+	}
+	svc.variablesFn = func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+		inst, err := instRepo.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Variables, nil
+	}
+	svc.variableHistFn = func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return snapRepo.ListByInstance(ctx, id)
+	}
 	fileReader := newMockFileReader()
 	bus := eventbus.NewNoOp()
 	cfg := &config.Config{
@@ -189,7 +308,7 @@ func TestRouter_WorkflowRoutes(t *testing.T) {
 			{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true},
 		},
 	}
-	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+	router := authedRouter(adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil))
 
 	t.Run("GET /api/v1/workflows", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows", nil)
@@ -448,12 +567,12 @@ func TestRouter_UpdateQueueConfig_InvalidBody_400(t *testing.T) {
 func TestRouter_InstanceRoutes_SetPriority(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
 	inst := &instance.Instance{
-		ID:           uuid.New(),
-		State:        instance.StateQueued,
-		Priority:     instance.PriorityNormal,
-		Variables:    map[string]any{},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:        uuid.New(),
+		State:     instance.StateQueued,
+		Priority:  instance.PriorityNormal,
+		Variables: map[string]any{},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
 	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
@@ -481,9 +600,9 @@ type mockCountingQueueRepo struct {
 	waiting int
 }
 
-func (r *mockCountingQueueRepo) CountRunning(_ context.Context) (int, error)  { return r.running, nil }
-func (r *mockCountingQueueRepo) CountQueued(_ context.Context) (int, error)   { return r.queued, nil }
-func (r *mockCountingQueueRepo) CountWaiting(_ context.Context) (int, error)  { return r.waiting, nil }
+func (r *mockCountingQueueRepo) CountRunning(_ context.Context) (int, error) { return r.running, nil }
+func (r *mockCountingQueueRepo) CountQueued(_ context.Context) (int, error)  { return r.queued, nil }
+func (r *mockCountingQueueRepo) CountWaiting(_ context.Context) (int, error) { return r.waiting, nil }
 
 type mockCapturingQueueManager struct {
 	mu             sync.Mutex
@@ -834,6 +953,63 @@ func TestRouter_UpdateTeamsConfig_MalformedJSON(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// SECURITY: GET /system/config must never echo any raw OIDC field value
+// (clientSecret, clientId, issuerUrl, redirectUrl) even when auth is org mode
+// and those fields are fully populated. The RedactedAuth positive allow-list
+// exposes only mode and oidcConfigured. This test is the surface-level counterpart
+// to the Redact unit tests in domain/config/redact_auth_test.go; it guards against
+// a regression where a new field accidentally lands in RedactedAuth.
+func TestRouter_GetConfig_AuthSection_NeverLeaksOIDCSecret(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Auth = config.AuthConfig{
+		Mode: "org",
+		OIDC: config.OIDCConfig{
+			IssuerURL:    "https://idp.example.com/SHOULD-NOT-APPEAR",
+			ClientID:     "client-SHOULD-NOT-APPEAR",
+			ClientSecret: "secret-SHOULD-NOT-APPEAR",
+			RedirectURL:  "https://app.example.com/SHOULD-NOT-APPEAR/auth/callback",
+		},
+	}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	assert.NotContains(t, body, "SHOULD-NOT-APPEAR",
+		"GET /system/config must never echo any raw OIDC field value")
+
+	// The auth section must be present with the correct mode and oidcConfigured flag.
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(strings.NewReader(body)).Decode(&resp))
+	auth, ok := resp["auth"].(map[string]any)
+	require.True(t, ok, "response must contain an 'auth' section")
+	assert.Equal(t, "org", auth["mode"], "auth.mode must reflect the configured mode")
+	assert.Equal(t, true, auth["oidcConfigured"], "auth.oidcConfigured must be true when ClientSecret is set")
+}
+
+// Success: GET /system/config auth section reports local mode with oidcConfigured=false
+// when no OIDC is configured. This is the default frictionless local-mode state.
+func TestRouter_GetConfig_AuthSection_LocalMode(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	cfg.Auth = config.AuthConfig{Mode: config.AuthModeLocal}
+	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	auth, ok := resp["auth"].(map[string]any)
+	require.True(t, ok, "response must contain an 'auth' section")
+	assert.Equal(t, config.AuthModeLocal, auth["mode"], "auth.mode must be 'local' in local mode")
+	assert.Equal(t, false, auth["oidcConfigured"], "oidcConfigured must be false when no ClientSecret is set")
 }
 
 // Error: a body larger than the MaxBytesReader limit (1 MiB) is rejected with

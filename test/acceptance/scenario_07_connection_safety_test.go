@@ -69,7 +69,7 @@ func TestAcceptance_07_ConnectionSafety_EnvInjectionAndSecrecy(t *testing.T) {
 	assert.Contains(t, string(snapJSON), "\"model_profile\":\"assessor\"")
 
 	// And the on-disk workflow.json itself carries no key (it is pure data).
-	wfBytes, err := h.fileReader.ReadFile(workedExample, "workflow.json")
+	wfBytes, err := h.fileReader.ReadFile(h.defaultUser, workedExample, "workflow.json")
 	require.NoError(t, err)
 	assert.NotContains(t, string(wfBytes), "sk-SENTINEL")
 	assert.NotContains(t, string(wfBytes), "api-key")

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/notification"
 )
 
@@ -47,10 +48,26 @@ type notificationListResponse struct {
 	HasMore bool                   `json:"hasMore"`
 }
 
+// notifOwnerID returns the owner restriction for the calling identity:
+// nil for admins (see all), &userID for non-admins (see own only).
+// When no identity is in context (local mode) nil is returned so local mode
+// remains frictionless and every notification is visible.
+func notifOwnerID(r *http.Request) *uuid.UUID {
+	id, ok := identity.FromContext(r.Context())
+	if !ok || id.IsAdmin() {
+		return nil
+	}
+	uid := id.UserID
+	return &uid
+}
+
 // List handles GET /api/v1/notifications.
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	userLimit := 20
-	filters := notification.ListFilters{Offset: 0}
+	filters := notification.ListFilters{
+		Offset:  0,
+		OwnerID: notifOwnerID(r),
+	}
 
 	if v := r.URL.Query().Get("dismissed"); v != "" {
 		d, err := strconv.ParseBool(v)
@@ -114,7 +131,7 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // UnreadCount handles GET /api/v1/notifications/unread-count.
 func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
-	count, err := h.repo.CountUnread(r.Context())
+	count, err := h.repo.CountUnread(r.Context(), notifOwnerID(r))
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to count unread notifications")
 		return
@@ -124,7 +141,7 @@ func (h *NotificationHandler) UnreadCount(w http.ResponseWriter, r *http.Request
 
 // MarkRead handles POST /api/v1/notifications/mark-read.
 func (h *NotificationHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
-	if err := h.repo.MarkAllRead(r.Context()); err != nil {
+	if err := h.repo.MarkAllRead(r.Context(), notifOwnerID(r)); err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to mark notifications read")
 		return
 	}
@@ -146,7 +163,7 @@ func (h *NotificationHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.Dismiss(r.Context(), id); err != nil {
+	if err := h.repo.Dismiss(r.Context(), id, notifOwnerID(r)); err != nil {
 		if errors.Is(err, notification.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "notification not found")
 			return

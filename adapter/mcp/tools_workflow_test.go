@@ -4,15 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/filesystem"
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 )
+
+// mcpTestUserID is the authenticated caller injected into MCP tool-call
+// contexts (the Phase 1 auth middleware supplies this in production).
+var mcpTestUserID = uuid.MustParse("88888888-8888-8888-8888-888888888888")
 
 // --- Mocks ---
 
@@ -27,81 +35,99 @@ type stubWorkflowRepo struct {
 	listFilesFn  func(ctx context.Context, name string) ([]string, error)
 }
 
-func (s *stubWorkflowRepo) List(ctx context.Context) ([]workflow.WorkflowSummary, error) {
+func (s *stubWorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	// The canned listing represents the caller's PRIVATE workspace; the shared
+	// scope is empty so the service's private+shared merge doesn't double it.
+	if scope.Kind == workflow.ScopeShared {
+		return nil, nil
+	}
 	if s.listFn != nil {
 		return s.listFn(ctx)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) Load(ctx context.Context, name string) (*workflow.Workflow, error) {
+func (s *stubWorkflowRepo) Load(ctx context.Context, _ workflow.Scope, name string) (*workflow.Workflow, error) {
 	if s.loadFn != nil {
 		return s.loadFn(ctx, name)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) Create(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (s *stubWorkflowRepo) Create(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if s.createFn != nil {
 		return s.createFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) Update(ctx context.Context, name string, wf *workflow.Workflow) error {
+func (s *stubWorkflowRepo) Update(ctx context.Context, _ workflow.Scope, name string, wf *workflow.Workflow) error {
 	if s.updateFn != nil {
 		return s.updateFn(ctx, name, wf)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) Delete(ctx context.Context, name string) error {
+func (s *stubWorkflowRepo) Delete(ctx context.Context, _ workflow.Scope, name string) error {
 	if s.deleteFn != nil {
 		return s.deleteFn(ctx, name)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) WriteFile(ctx context.Context, name, relativePath string, content []byte) error {
+func (s *stubWorkflowRepo) WriteFile(ctx context.Context, _ workflow.Scope, name, relativePath string, content []byte) error {
 	if s.writeFileFn != nil {
 		return s.writeFileFn(ctx, name, relativePath, content)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) DeleteFile(ctx context.Context, name, relativePath string) error {
+func (s *stubWorkflowRepo) DeleteFile(ctx context.Context, _ workflow.Scope, name, relativePath string) error {
 	if s.deleteFileFn != nil {
 		return s.deleteFileFn(ctx, name, relativePath)
 	}
 	return nil
 }
 
-func (s *stubWorkflowRepo) ListFiles(ctx context.Context, name string) ([]string, error) {
+func (s *stubWorkflowRepo) ListFiles(ctx context.Context, _ workflow.Scope, name string) ([]string, error) {
 	if s.listFilesFn != nil {
 		return s.listFilesFn(ctx, name)
 	}
 	return nil, nil
 }
 
-func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ string, _ map[string]workflow.NodePosition) error {
+func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope, _ string, _ map[string]workflow.NodePosition) error {
 	return nil
 }
 
-type stubFileReader struct {
-	readFileFn   func(workflowName, path string) ([]byte, error)
-	fileExistsFn func(workflowName, path string) bool
+func (s *stubWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
+	return false, nil
 }
 
-func (s *stubFileReader) ReadFile(workflowName, relativePath string) ([]byte, error) {
+func (s *stubWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string, _ workflow.Scope, _ string, _ bool) error {
+	return nil
+}
+
+// stubFileReader is the configurable FileReader used in MCP tool tests.
+// capturedOwner records the last owner UUID passed to ReadFile so tests can
+// verify that callerOwner(ctx) is correctly forwarded by the MCP tool handler.
+type stubFileReader struct {
+	readFileFn    func(workflowName, path string) ([]byte, error)
+	fileExistsFn  func(workflowName, path string) bool
+	capturedOwner uuid.UUID
+}
+
+func (s *stubFileReader) ReadFile(owner uuid.UUID, workflowName, relativePath string) ([]byte, error) {
+	s.capturedOwner = owner
 	if s.readFileFn != nil {
 		return s.readFileFn(workflowName, relativePath)
 	}
 	return nil, nil
 }
 
-func (s *stubFileReader) ResolvePath(_, _ string) (string, error) { return "", nil }
+func (s *stubFileReader) ResolvePath(_ uuid.UUID, _, _ string) (string, error) { return "", nil }
 
-func (s *stubFileReader) FileExists(workflowName, relativePath string) bool {
+func (s *stubFileReader) FileExists(_ uuid.UUID, workflowName, relativePath string) bool {
 	if s.fileExistsFn != nil {
 		return s.fileExistsFn(workflowName, relativePath)
 	}
@@ -128,7 +154,12 @@ func callTool(t *testing.T, srv *adaptmcp.Server, name string, args map[string]a
 	req.Params.Name = name
 	req.Params.Arguments = args
 
-	result := srv.MCPServer().HandleMessage(context.Background(), mustMarshal(t, map[string]any{
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:   mcpTestUserID,
+		Username: "tester",
+		Role:     identity.RoleUser,
+	})
+	result := srv.MCPServer().HandleMessage(ctx, mustMarshal(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
@@ -402,6 +433,25 @@ func TestWorkflowUpdate(t *testing.T) {
 		require.NotNil(t, capturedWF)
 		assert.Equal(t, "real-name", capturedWF.Name)
 	})
+
+	// Failure: updating a shared-only workflow returns a tool error with the
+	// "shared and read-only" message — not a generic internal error.
+	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			updateFn: func(_ context.Context, _ string, _ *workflow.Workflow) error {
+				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_update", map[string]any{
+			"name":     "pub",
+			"manifest": `{"name":"pub"}`,
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "shared and read-only")
+	})
 }
 
 func TestWorkflowDelete(t *testing.T) {
@@ -439,6 +489,22 @@ func TestWorkflowDelete(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow not found")
+	})
+
+	// Failure: deleting a shared-only workflow returns a tool error with the
+	// "shared and read-only" message — not a generic internal error.
+	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			deleteFn: func(_ context.Context, _ string) error {
+				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "pub"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "shared and read-only")
 	})
 }
 
@@ -719,6 +785,22 @@ func TestWorkflowReadFile(t *testing.T) {
 
 		assert.True(t, result.IsError)
 	})
+
+	// Edge: verify that the MCP tool handler forwards the caller's UserID from
+	// context through callerOwner() into the FileReader. callTool injects
+	// mcpTestUserID via identity.WithIdentity — a regression would serve files
+	// from the wrong owner partition silently.
+	t.Run("caller identity UserID is forwarded to file reader as owner", func(t *testing.T) {
+		fr := &stubFileReader{
+			readFileFn: func(_, _ string) ([]byte, error) { return []byte("data"), nil },
+		}
+		srv := newWorkflowServer(&stubWorkflowRepo{}, fr)
+		result := callTool(t, srv, "workflow_read_file", map[string]any{"name": "wf1", "path": "readme.txt"})
+
+		assert.False(t, result.IsError)
+		assert.Equal(t, mcpTestUserID, fr.capturedOwner,
+			"workflow_read_file must pass the caller's UserID to FileReader, not uuid.Nil or a different user")
+	})
 }
 
 func TestWorkflowWriteFile(t *testing.T) {
@@ -850,4 +932,174 @@ func TestWorkflowDeleteFile(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "not found")
 	})
+}
+
+// --- Publish / Copy ---
+
+// fakePublishedStore is a workflow.PublishedStore for MCP publish/copy tests.
+type fakePublishedStore struct {
+	pub map[string]uuid.UUID
+}
+
+func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	id, ok := p.pub[name]
+	return id, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+	if p.pub == nil {
+		p.pub = map[string]uuid.UUID{}
+	}
+	p.pub[name] = publisher
+	return nil
+}
+func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
+	delete(p.pub, name)
+	return nil
+}
+
+// newPublishServer builds an MCP server whose WorkflowSvc is backed by a real
+// filesystem repo (temp dir) and the given publisher store, so the publish/copy
+// tools exercise the real service path.
+func newPublishServer(t *testing.T, store *fakePublishedStore) (*adaptmcp.Server, *filesystem.WorkflowRepo) {
+	t.Helper()
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: workflow.NewWorkflowService(repo, store),
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+	return srv, repo
+}
+
+func sampleManifest(name string) *workflow.Workflow {
+	return &workflow.Workflow{Name: name, Description: "d", Author: "a"}
+}
+
+func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	// Seed the caller's private source under the test identity's user id.
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Shared(), "pub")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestWorkflowTool_Publish_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "../escape"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid published name")
+}
+
+// TestWorkflowTool_Publish_DotName verifies that "." is rejected as both source
+// name and publishedName at the MCP adapter layer, not silently passed through to
+// the filesystem where it would match the scope root and return an opaque error.
+func TestWorkflowTool_Publish_DotName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	t.Run("dot source name rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_publish", map[string]any{"name": ".", "publishedName": "pub"})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid workflow name")
+	})
+	t.Run("dot publishedName rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "."})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid published name")
+	})
+}
+
+// TestWorkflowTool_Copy_DotName verifies that "." is rejected as both source
+// and destination name at the MCP adapter layer.
+func TestWorkflowTool_Copy_DotName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	t.Run("dot source name rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_copy", map[string]any{"name": ".", "newName": "mine"})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid workflow name")
+	})
+	t.Run("dot newName rejected", func(t *testing.T) {
+		result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "."})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "invalid new name")
+	})
+}
+
+func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "mine"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "mine")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "mine", sampleManifest("mine")))
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "mine"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "already exists")
+}
+
+// TestWorkflowTool_Publish_DifferentPublisher_Unauthorized verifies the publisher-only-overwrite
+// invariant on the MCP surface: a caller cannot re-publish under a name already owned by
+// a different user.
+func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
+	otherUser := uuid.New()
+	// Pre-seed the store so "pub" is already owned by a different user.
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{"pub": otherUser}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+// TestWorkflowTool_Copy_SharedMissing_NotFound verifies that copying a shared workflow
+// that does not exist returns a not-found tool error, not a server error.
+func TestWorkflowTool_Copy_SharedMissing_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "ghost", "newName": "mine"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func ctxWithMCPIdentity() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: mcpTestUserID, Username: "tester", Role: identity.RoleUser})
 }

@@ -120,7 +120,7 @@ func TestEngine_RetryClearsDismissal(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	id, _, err := f.engine.Trigger(bgAdmin(), wf.Name, nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -129,7 +129,7 @@ func TestEngine_RetryClearsDismissal(t *testing.T) {
 	require.NoError(t, dis.Dismiss(context.Background(), user, id))
 
 	// Retry it.
-	require.NoError(t, f.engine.Retry(id, nil))
+	require.NoError(t, f.engine.Retry(bgAdmin(), id, nil))
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
 	assert.GreaterOrEqual(t, dis.clearedCount(id), 1, "Retry must ClearForInstance the dismissal")
@@ -162,7 +162,7 @@ func TestEngine_RetryClearsDismissalForAllUsers(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	id, _, err := f.engine.Trigger(bgAdmin(), wf.Name, nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
@@ -172,7 +172,7 @@ func TestEngine_RetryClearsDismissalForAllUsers(t *testing.T) {
 	require.NoError(t, dis.Dismiss(context.Background(), userA, id))
 	require.NoError(t, dis.Dismiss(context.Background(), userB, id))
 
-	require.NoError(t, f.engine.Retry(id, nil))
+	require.NoError(t, f.engine.Retry(bgAdmin(), id, nil))
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
 	idsA, _ := dis.DismissedIDs(context.Background(), userA)
@@ -191,7 +191,7 @@ func TestEngine_RerunYieldsUndismissedNewInstance(t *testing.T) {
 	dis := newDismissalRecorder()
 	f.engine.SetDismissals(dis)
 
-	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	id, _, err := f.engine.Trigger(bgAdmin(), wf.Name, nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
@@ -199,7 +199,7 @@ func TestEngine_RerunYieldsUndismissedNewInstance(t *testing.T) {
 	user := uuid.New()
 	require.NoError(t, dis.Dismiss(context.Background(), user, id))
 
-	newID, err := f.engine.Rerun(id)
+	newID, err := f.engine.Rerun(bgAdmin(), id)
 	require.NoError(t, err)
 	assert.NotEqual(t, id, newID, "rerun must create a new instance id")
 
@@ -233,12 +233,12 @@ func TestEngine_RetryCallsClearEvenIfNotDismissed(t *testing.T) {
 		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
 	})
 
-	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	id, _, err := f.engine.Trigger(bgAdmin(), wf.Name, nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
 	// Do NOT dismiss — retry must call ClearForInstance regardless.
-	require.NoError(t, f.engine.Retry(id, nil))
+	require.NoError(t, f.engine.Retry(bgAdmin(), id, nil))
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
 	assert.GreaterOrEqual(t, dis.clearedCount(id), 1,
@@ -261,11 +261,11 @@ func TestEngine_RetryClearDismissalError(t *testing.T) {
 		return nil, fmt.Errorf("node A failed")
 	})
 
-	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	id, _, err := f.engine.Trigger(bgAdmin(), wf.Name, nil, "normal")
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
-	retryErr := f.engine.Retry(id, nil)
+	retryErr := f.engine.Retry(bgAdmin(), id, nil)
 	assert.ErrorContains(t, retryErr, "failed to clear dismissals on retry")
 
 	// Ordering invariant: ClearForInstance runs BEFORE the instance is flipped to

@@ -90,7 +90,10 @@ func interactiveGetHistoryHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		inst, err := srv.deps.Instances.Get(ctx, id)
+		// Scoped read: GetInstance returns ErrNotFound for a non-owner non-admin
+		// (no existence leak), so interactive history is only readable by the
+		// instance owner or an admin.
+		inst, err := srv.deps.Engine.GetInstance(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get instance: %s", err)), nil
 		}

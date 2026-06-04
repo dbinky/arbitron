@@ -44,6 +44,34 @@ func RegisterTraceTools(srv *Server) {
 		),
 		variablesHistoryHandler(srv),
 	)
+
+	srv.AddTool(
+		gomcp.NewTool("trace_interventions",
+			gomcp.WithDescription("Get the intervention audit trail (admin actions) for a workflow instance"),
+			gomcp.WithString("id", gomcp.Required(), gomcp.Description("Instance UUID")),
+		),
+		traceInterventionsHandler(srv),
+	)
+}
+
+func traceInterventionsHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		id, err := ParseUUID(request, "id")
+		if err != nil {
+			return gomcp.NewToolResultError(err.Error()), nil
+		}
+
+		// Scoped read: GetInterventions returns ErrNotFound for a non-owner
+		// non-admin (existence not leaked). Visible to owner + admins.
+		ivs, err := srv.deps.Engine.GetInterventions(ctx, id)
+		if err != nil {
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to get interventions: %s", err)), nil
+		}
+		if ivs == nil {
+			ivs = []instance.Intervention{}
+		}
+		return MarshalResult(ivs)
+	}
 }
 
 func traceGetHandler(srv *Server) server.ToolHandlerFunc {
@@ -53,7 +81,7 @@ func traceGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		execs, err := srv.deps.NodeExecs.ListByInstance(ctx, id)
+		execs, err := srv.deps.Engine.GetTrace(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get trace: %s", err)), nil
 		}
@@ -77,7 +105,7 @@ func traceGetNodeHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("nodeId is required"), nil
 		}
 
-		exec, err := srv.deps.NodeExecs.GetByInstanceAndNode(ctx, instID, nodeID)
+		exec, err := srv.deps.Engine.GetNodeTrace(ctx, instID, nodeID)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get node execution: %s", err)), nil
 		}
@@ -95,14 +123,11 @@ func variablesGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		inst, err := srv.deps.Instances.Get(ctx, id)
+		vars, err := srv.deps.Engine.GetVariables(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get instance: %s", err)), nil
 		}
-		if inst == nil {
-			return gomcp.NewToolResultError("instance not found"), nil
-		}
-		return MarshalResult(inst.Variables)
+		return MarshalResult(vars)
 	}
 }
 
@@ -113,7 +138,7 @@ func variablesHistoryHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		snapshots, err := srv.deps.Snapshots.ListByInstance(ctx, id)
+		snapshots, err := srv.deps.Engine.GetVariableHistory(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get variable history: %s", err)), nil
 		}

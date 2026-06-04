@@ -10,7 +10,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/arbitron/arbitron/domain/config"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/google/uuid"
 )
 
 // RegisterSystemTools registers all system, notification, and stats tools with the server.
@@ -210,6 +212,17 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 	}
 }
 
+// mcpNotifOwnerID returns the owner restriction for the calling MCP identity:
+// nil for admins (see all), &userID for non-admins (see own only).
+func mcpNotifOwnerID(ctx context.Context) *uuid.UUID {
+	id, ok := identity.FromContext(ctx)
+	if !ok || id.IsAdmin() {
+		return nil
+	}
+	uid := id.UserID
+	return &uid
+}
+
 func notificationListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		if srv.deps.Notifications == nil {
@@ -217,7 +230,7 @@ func notificationListHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		args := request.GetArguments()
 
-		var filters notification.ListFilters
+		filters := notification.ListFilters{OwnerID: mcpNotifOwnerID(ctx)}
 		if dismissed, ok := args["dismissed"]; ok {
 			if b, ok := dismissed.(bool); ok {
 				filters.Dismissed = &b
@@ -240,7 +253,7 @@ func notificationUnreadCountHandler(srv *Server) server.ToolHandlerFunc {
 		if srv.deps.Notifications == nil {
 			return gomcp.NewToolResultError("notifications not available"), nil
 		}
-		count, err := srv.deps.Notifications.CountUnread(ctx)
+		count, err := srv.deps.Notifications.CountUnread(ctx, mcpNotifOwnerID(ctx))
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to count unread: %s", err)), nil
 		}
@@ -253,7 +266,7 @@ func notificationMarkReadHandler(srv *Server) server.ToolHandlerFunc {
 		if srv.deps.Notifications == nil {
 			return gomcp.NewToolResultError("notifications not available"), nil
 		}
-		if err := srv.deps.Notifications.MarkAllRead(ctx); err != nil {
+		if err := srv.deps.Notifications.MarkAllRead(ctx, mcpNotifOwnerID(ctx)); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to mark read: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "all marked read"})
@@ -270,7 +283,7 @@ func notificationDismissHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		if err := srv.deps.Notifications.Dismiss(ctx, id); err != nil {
+		if err := srv.deps.Notifications.Dismiss(ctx, id, mcpNotifOwnerID(ctx)); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to dismiss notification: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "dismissed", "id": id.String()})

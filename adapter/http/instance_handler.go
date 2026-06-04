@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,12 +19,19 @@ import (
 
 // InstanceService defines the engine methods needed by instance handlers.
 type InstanceService interface {
-	Pause(id uuid.UUID) error
-	Resume(id uuid.UUID) error
-	Cancel(id uuid.UUID) error
-	Retry(id uuid.UUID, variableEdits map[string]any) error
-	Rerun(id uuid.UUID) (uuid.UUID, error)
-	SetPriority(id uuid.UUID, priority string) error
+	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	Pause(ctx context.Context, id uuid.UUID) error
+	Resume(ctx context.Context, id uuid.UUID) error
+	Cancel(ctx context.Context, id uuid.UUID) error
+	Retry(ctx context.Context, id uuid.UUID, variableEdits map[string]any) error
+	Rerun(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	SetPriority(ctx context.Context, id uuid.UUID, priority string) error
 }
 
 // InstanceHandler handles REST API requests for instance operations.
@@ -300,8 +308,13 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	summaries, err := h.instances.List(r.Context(), filters)
+	summaries, err := h.service.ListInstances(r.Context(), filters)
 	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			// No identity in context (defence-in-depth); reveal nothing.
+			WriteJSON(w, http.StatusOK, []instance.InstanceSummary{})
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return
 	}
@@ -346,7 +359,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(r.Context(), id)
+	inst, err := h.service.GetInstance(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -367,7 +380,7 @@ func (h *InstanceHandler) Pause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Pause(id); err != nil {
+	if err := h.service.Pause(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -384,7 +397,7 @@ func (h *InstanceHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Resume(id); err != nil {
+	if err := h.service.Resume(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -401,7 +414,7 @@ func (h *InstanceHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Cancel(id); err != nil {
+	if err := h.service.Cancel(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -427,7 +440,7 @@ func (h *InstanceHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.service.Retry(id, req.Variables); err != nil {
+	if err := h.service.Retry(r.Context(), id, req.Variables); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -444,7 +457,7 @@ func (h *InstanceHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newID, err := h.service.Rerun(id)
+	newID, err := h.service.Rerun(r.Context(), id)
 	if err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
@@ -615,17 +628,12 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
+	execs, err := h.service.GetTrace(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
-	execs, err := h.nodeExecs.ListByInstance(r.Context(), id)
-	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list trace records")
 		return
 	}
@@ -645,19 +653,12 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if errors.Is(err, instance.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
 	nodeID := chi.URLParam(r, "nodeId")
-	exec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, nodeID)
+	exec, err := h.service.GetNodeTrace(r.Context(), id, nodeID)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
+			// Covers both an unauthorized/absent instance and a missing node
+			// execution; the message stays node-oriented to match prior behavior.
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
 			return
 		}
@@ -695,7 +696,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(r.Context(), id)
+	vars, err := h.service.GetVariables(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -705,7 +706,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, inst.Variables)
+	WriteJSON(w, http.StatusOK, vars)
 }
 
 // GetVariableHistory handles GET /instances/{id}/variables/history and returns
@@ -717,17 +718,12 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
+	snaps, err := h.service.GetVariableHistory(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
-	snaps, err := h.snapshots.ListByInstance(r.Context(), id)
-	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list variable history")
 		return
 	}
@@ -735,6 +731,54 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 	resp := make([]variableSnapshotResponse, len(snaps))
 	for i, snap := range snaps {
 		resp[i] = toVariableSnapshotResponse(&snap)
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// interventionResponse is a JSON-friendly representation of an intervention.
+type interventionResponse struct {
+	ID          string  `json:"id"`
+	InstanceID  string  `json:"instanceId"`
+	ActorUserID string  `json:"actorUserId"`
+	Action      string  `json:"action"`
+	Detail      *string `json:"detail,omitempty"`
+	CreatedAt   string  `json:"createdAt"`
+}
+
+func toInterventionResponse(iv *instance.Intervention) interventionResponse {
+	return interventionResponse{
+		ID:          iv.ID.String(),
+		InstanceID:  iv.InstanceID.String(),
+		ActorUserID: iv.ActorUserID.String(),
+		Action:      iv.Action,
+		Detail:      iv.Detail,
+		CreatedAt:   iv.CreatedAt.Format(APITimeFormat),
+	}
+}
+
+// GetInterventions handles GET /instances/{id}/interventions and returns the
+// intervention audit trail. Visible to the instance owner and admins; a
+// non-viewer gets 404 (existence not leaked).
+func (h *InstanceHandler) GetInterventions(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	ivs, err := h.service.GetInterventions(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interventions")
+		return
+	}
+
+	resp := make([]interventionResponse, len(ivs))
+	for i := range ivs {
+		resp[i] = toInterventionResponse(&ivs[i])
 	}
 	WriteJSON(w, http.StatusOK, resp)
 }
@@ -772,7 +816,7 @@ func (h *InstanceHandler) SetPriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.SetPriority(id, req.Priority); err != nil {
+	if err := h.service.SetPriority(r.Context(), id, req.Priority); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return

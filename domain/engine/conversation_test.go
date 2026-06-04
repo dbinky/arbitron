@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -18,6 +19,15 @@ import (
 // ---------------------------------------------------------------------------
 // Helpers for conversation handler tests
 // ---------------------------------------------------------------------------
+
+// convoTestOwner owns the interactive instances created by the conversation
+// test setups. convoCtx carries that owner identity so the ownership gate in
+// loadAndValidate (Phase 4 Task 4) admits the participate calls.
+var convoTestOwner = uuid.New()
+
+func convoCtx() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: convoTestOwner, Username: "owner", Role: identity.RoleUser})
+}
 
 // conversationTestSetup creates the standard mock dependencies and an instance
 // in the "waiting" state on an interactive node, with an existing node execution
@@ -73,6 +83,7 @@ func conversationTestSetup(t *testing.T) (
 	instRepo.mu.Lock()
 	instRepo.instances[instanceID] = &instance.Instance{
 		ID:               instanceID,
+		OwnerID:          convoTestOwner,
 		State:            instance.StateWaiting,
 		CurrentNodeID:    &nodeID,
 		WorkflowSnapshot: wfSnapshot,
@@ -132,7 +143,7 @@ func TestConversationHandler_HandleMessage_AppendsUserMessage(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "What is the weather?")
+	err := handler.HandleMessage(convoCtx(), instanceID, "What is the weather?")
 	require.NoError(t, err)
 
 	// Verify user message was appended to the conversation.
@@ -155,7 +166,7 @@ func TestConversationHandler_HandleMessage_PublishesUserMessageEvent(t *testing.
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.NoError(t, err)
 
 	// Verify interactive.message event was published for the user message.
@@ -176,7 +187,7 @@ func TestConversationHandler_HandleMessage_PublishesTokenEvents(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hi")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hi")
 	require.NoError(t, err)
 
 	tokenEvents := eventBus.eventsOfType(instanceID, "interactive.token")
@@ -198,7 +209,7 @@ func TestConversationHandler_HandleMessage_AppendsAssistantResponse(t *testing.T
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Help me")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Help me")
 	require.NoError(t, err)
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
@@ -217,7 +228,7 @@ func TestConversationHandler_HandleMessage_PublishesAssistantMessageEvent(t *tes
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Go")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Go")
 	require.NoError(t, err)
 
 	msgEvents := eventBus.eventsOfType(instanceID, "interactive.message")
@@ -236,7 +247,7 @@ func TestConversationHandler_HandleMessage_ResumesStoredSession(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "New question")
+	err := handler.HandleMessage(convoCtx(), instanceID, "New question")
 	require.NoError(t, err)
 
 	reqs := llmProvider.getCapturedReqs()
@@ -285,6 +296,7 @@ func TestConversationHandler_HandleMessage_AgentProfile_UsesAgentStreamAndBindin
 	instRepo.mu.Lock()
 	instRepo.instances[instanceID] = &instance.Instance{
 		ID:               instanceID,
+		OwnerID:          convoTestOwner,
 		State:            instance.StateWaiting,
 		CurrentNodeID:    &nodeID,
 		WorkflowSnapshot: wfSnapshot,
@@ -320,7 +332,7 @@ func TestConversationHandler_HandleMessage_AgentProfile_UsesAgentStreamAndBindin
 
 	handler := engine.NewConversationHandler(instRepo, nodeExecRepo, sel, resolver, eventBus, queueMgr)
 
-	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "Do the thing"))
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "Do the thing"))
 
 	assert.Equal(t, provider.ProfileKindAgent, sel.gotKind)
 	assert.Empty(t, chatProv.getCapturedReqs(), "chat provider must not be used for an agent profile")
@@ -362,7 +374,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_ExtractsOutput(t *t
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Please summarize")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Please summarize")
 	require.NoError(t, err)
 
 	// Verify output was stored on node execution record.
@@ -380,7 +392,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_UpdatesInstanceVari
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Wrap up")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Wrap up")
 	require.NoError(t, err)
 
 	// Verify instance variables were updated with node output namespaced under node ID.
@@ -401,7 +413,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_TransitionsToQueued
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Finish")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Finish")
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -417,7 +429,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_PublishesEndedEvent
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "End it")
+	err := handler.HandleMessage(convoCtx(), instanceID, "End it")
 	require.NoError(t, err)
 
 	endedEvents := eventBus.eventsOfType(instanceID, "interactive.ended")
@@ -437,7 +449,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_NotifiesCapacityFre
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Finish")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Finish")
 	require.NoError(t, err)
 
 	// Verify NotifyCapacityFreed was called.
@@ -457,7 +469,7 @@ func TestConversationHandler_HandleMessage_SessionCompletion_PersistsConversatio
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Summarize")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Summarize")
 	require.NoError(t, err)
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
@@ -484,7 +496,7 @@ func TestConversationHandler_HandleMessage_NotWaiting_ReturnsError(t *testing.T)
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, instance.ErrNotInteractiveWait)
 }
@@ -517,6 +529,7 @@ func TestConversationHandler_HandleMessage_NotInteractiveNode_ReturnsError(t *te
 	instRepo.mu.Lock()
 	instRepo.instances[instanceID] = &instance.Instance{
 		ID:               instanceID,
+		OwnerID:          convoTestOwner,
 		State:            instance.StateWaiting,
 		CurrentNodeID:    &nodeID,
 		WorkflowSnapshot: wfSnapshot,
@@ -526,7 +539,7 @@ func TestConversationHandler_HandleMessage_NotInteractiveNode_ReturnsError(t *te
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not interactive")
 }
@@ -540,7 +553,7 @@ func TestConversationHandler_HandleMessage_InstanceNotFound_ReturnsError(t *test
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), uuid.New(), "Hello")
+	err := handler.HandleMessage(convoCtx(), uuid.New(), "Hello")
 	require.Error(t, err)
 }
 
@@ -554,7 +567,7 @@ func TestConversationHandler_HandleMessage_NodeExecNotFound_ReturnsError(t *test
 
 	handler := buildConversationHandler(instRepo, emptyNodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "load node execution")
 }
@@ -575,7 +588,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_PreservesOutput(t *te
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	// Verify the existing output was preserved.
@@ -595,7 +608,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_TransitionsToQueued(t
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -614,7 +627,7 @@ func TestConversationHandler_EndSession_WithExistingOutput_UpdatesVariables(t *t
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -635,7 +648,7 @@ func TestConversationHandler_EndSession_WithoutOutput_StoresEmptyObject(t *testi
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
@@ -649,7 +662,7 @@ func TestConversationHandler_EndSession_WithoutOutput_TransitionsToQueued(t *tes
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	inst := instRepo.get(instanceID)
@@ -662,7 +675,7 @@ func TestConversationHandler_EndSession_PublishesEndedEvent(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	endedEvents := eventBus.eventsOfType(instanceID, "interactive.ended")
@@ -678,7 +691,7 @@ func TestConversationHandler_EndSession_NotifiesCapacityFreed(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.NoError(t, err)
 
 	select {
@@ -702,7 +715,7 @@ func TestConversationHandler_EndSession_NotWaiting_ReturnsError(t *testing.T) {
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, instance.ErrNotInteractiveWait)
 }
@@ -715,7 +728,7 @@ func TestConversationHandler_EndSession_InstanceNotFound_ReturnsError(t *testing
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), uuid.New())
+	_, err := handler.EndSession(convoCtx(), uuid.New())
 	require.Error(t, err)
 }
 
@@ -728,7 +741,7 @@ func TestConversationHandler_EndSession_NodeExecNotFound_ReturnsError(t *testing
 
 	handler := buildConversationHandler(instRepo, emptyNodeExecRepo, nil, eventBus, queueMgr)
 
-	_, err := handler.EndSession(context.Background(), instanceID)
+	_, err := handler.EndSession(convoCtx(), instanceID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "load node execution")
 }
@@ -756,7 +769,7 @@ func TestConversationHandler_HandleMessage_NilConversationHistory_StartsFirstMes
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello from scratch")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello from scratch")
 	require.NoError(t, err)
 
 	reqs := llmProvider.getCapturedReqs()
@@ -790,7 +803,7 @@ func TestConversationHandler_HandleMessage_ResumesViaStoredSessionID(t *testing.
 	llmProvider.streamCallFn = cannedStream([]string{"resumed reply"}, 5, 10)
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
-	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "next message"))
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "next message"))
 
 	reqs := llmProvider.getCapturedReqs()
 	require.Len(t, reqs, 1)
@@ -811,7 +824,7 @@ func TestConversationHandler_HandleMessage_SentinelCompletesSession(t *testing.T
 		map[string]any{"picked": []any{"a", "b"}}, "s-final")
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
-	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "choose"))
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "choose"))
 
 	nodeExec, err := nodeExecRepo.GetByInstanceAndNode(context.Background(), instanceID, "interact")
 	require.NoError(t, err)
@@ -830,7 +843,7 @@ func TestConversationHandler_HandleMessage_NoSentinelIsNormalTurn(t *testing.T) 
 	llmProvider.streamCallFn = cannedStream([]string{"just chatting"}, 5, 10)
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
-	require.NoError(t, handler.HandleMessage(context.Background(), instanceID, "hi"))
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "hi"))
 
 	inst := instRepo.get(instanceID)
 	require.NotNil(t, inst)
@@ -855,7 +868,7 @@ func TestConversationHandler_HandleMessage_StreamError_ReturnsError(t *testing.T
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "LLM unavailable")
 }
@@ -873,7 +886,7 @@ func TestConversationHandler_HandleMessage_StreamChunkError_ReturnsError(t *test
 
 	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
 
-	err := handler.HandleMessage(context.Background(), instanceID, "Hello")
+	err := handler.HandleMessage(convoCtx(), instanceID, "Hello")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connection lost")
 }

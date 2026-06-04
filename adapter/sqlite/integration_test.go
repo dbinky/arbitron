@@ -273,6 +273,128 @@ func TestInstanceRepo_List(t *testing.T) {
 	}
 }
 
+func TestInstanceRepo_List_OwnerFilter(t *testing.T) {
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+
+	ownerA, err := userRepo.GetDefaultUser(ctx)
+	require.NoError(t, err)
+
+	ownerB := uuid.New()
+	subjectB := "owner-b-subject"
+	require.NoError(t, userRepo.Create(ctx, &instance.User{
+		ID:       ownerB,
+		Subject:  &subjectB,
+		Username: "owner-b",
+		Role:     "user",
+	}))
+
+	instA := newTestInstance(t, ownerA)
+	instB := newTestInstance(t, ownerB)
+	require.NoError(t, repo.Create(ctx, instA))
+	require.NoError(t, repo.Create(ctx, instB))
+
+	// OwnerID = ownerA -> only ownerA's row.
+	scoped, err := repo.List(ctx, instance.ListFilters{OwnerID: &ownerA, Limit: 100})
+	require.NoError(t, err)
+	ids := summaryIDs(scoped)
+	assert.Contains(t, ids, instA.ID)
+	assert.NotContains(t, ids, instB.ID, "owner filter must hide another owner's instances")
+
+	// OwnerID = nil -> both rows (admin/unconstrained).
+	all, err := repo.List(ctx, instance.ListFilters{Limit: 100})
+	require.NoError(t, err)
+	allIDs := summaryIDs(all)
+	assert.Contains(t, allIDs, instA.ID)
+	assert.Contains(t, allIDs, instB.ID)
+}
+
+func summaryIDs(s []instance.InstanceSummary) []uuid.UUID {
+	ids := make([]uuid.UUID, len(s))
+	for i, x := range s {
+		ids[i] = x.ID
+	}
+	return ids
+}
+
+// ---------------------------------------------------------------------------
+// InterventionRepo + migration 007 tests
+// ---------------------------------------------------------------------------
+
+func TestMigration007_InterventionsTableExists(t *testing.T) {
+	db := setupTestDB(t)
+	var name string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='instance_interventions'").Scan(&name))
+	assert.Equal(t, "instance_interventions", name)
+
+	var idx string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_instance_interventions_instance'").Scan(&idx))
+	assert.Equal(t, "idx_instance_interventions_instance", idx)
+}
+
+func TestInterventionRepo_CreateAndList(t *testing.T) {
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	instRepo := NewInstanceRepo(db.DB)
+	ivRepo := NewInterventionRepo(db.DB)
+	ctx := context.Background()
+
+	owner, err := userRepo.GetDefaultUser(ctx)
+	require.NoError(t, err)
+	inst := newTestInstance(t, owner)
+	require.NoError(t, instRepo.Create(ctx, inst))
+
+	actor := uuid.New()
+	detail := "high"
+	require.NoError(t, ivRepo.Create(ctx, &instance.Intervention{
+		ID:          uuid.New(),
+		InstanceID:  inst.ID,
+		ActorUserID: actor,
+		Action:      instance.ActionSetPriority,
+		Detail:      &detail,
+	}))
+	// A second row with a nil detail.
+	require.NoError(t, ivRepo.Create(ctx, &instance.Intervention{
+		ID:          uuid.New(),
+		InstanceID:  inst.ID,
+		ActorUserID: actor,
+		Action:      instance.ActionPause,
+		Detail:      nil,
+	}))
+
+	rows, err := ivRepo.ListByInstance(ctx, inst.ID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	// Ordered by created_at ASC; both share the actor and instance.
+	assert.Equal(t, actor, rows[0].ActorUserID)
+	assert.Equal(t, inst.ID, rows[0].InstanceID)
+
+	var sawSetPriority, sawPause bool
+	for _, r := range rows {
+		switch r.Action {
+		case instance.ActionSetPriority:
+			sawSetPriority = true
+			require.NotNil(t, r.Detail)
+			assert.Equal(t, "high", *r.Detail)
+		case instance.ActionPause:
+			sawPause = true
+			assert.Nil(t, r.Detail, "nullable detail is preserved as nil")
+		}
+	}
+	assert.True(t, sawSetPriority)
+	assert.True(t, sawPause)
+
+	// A different instance has none.
+	none, err := ivRepo.ListByInstance(ctx, uuid.New())
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
 func TestInstanceRepo_ListRunning(t *testing.T) {
 	db := setupTestDB(t)
 	userRepo := NewUserRepo(db.DB)
@@ -538,12 +660,12 @@ func TestNotificationRepo_CountUnread(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), n))
 
-	count, err := repo.CountUnread(context.Background())
+	count, err := repo.CountUnread(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	require.NoError(t, repo.MarkAllRead(context.Background()))
-	count, err = repo.CountUnread(context.Background())
+	require.NoError(t, repo.MarkAllRead(context.Background(), nil))
+	count, err = repo.CountUnread(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -565,7 +687,7 @@ func TestNotificationRepo_Dismiss(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), n))
 
-	require.NoError(t, repo.Dismiss(context.Background(), n.ID))
+	require.NoError(t, repo.Dismiss(context.Background(), n.ID, nil))
 
 	dismissed := true
 	list, err := repo.List(context.Background(), notification.ListFilters{Dismissed: &dismissed, Limit: 10})
@@ -578,8 +700,89 @@ func TestNotificationRepo_Dismiss_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewNotificationRepo(db.DB)
 
-	err := repo.Dismiss(context.Background(), uuid.New())
+	err := repo.Dismiss(context.Background(), uuid.New(), nil)
 	assert.ErrorIs(t, err, notification.ErrNotFound)
+}
+
+func TestNotificationRepo_IsolationByOwner(t *testing.T) {
+	// Two users each have a notification. Verify every method returns only
+	// the caller's own records when ownerID is set (non-admin), and all
+	// records when ownerID is nil (admin).
+
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	instRepo := NewInstanceRepo(db.DB)
+	notifRepo := NewNotificationRepo(db.DB)
+
+	// Create two distinct users.
+	user1 := &instance.User{ID: uuid.New(), Username: "alice", Role: "user"}
+	user2 := &instance.User{ID: uuid.New(), Username: "bob", Role: "user"}
+	require.NoError(t, userRepo.Create(context.Background(), user1))
+	require.NoError(t, userRepo.Create(context.Background(), user2))
+
+	// Each user owns one instance.
+	inst1 := newTestInstance(t, user1.ID)
+	inst2 := newTestInstance(t, user2.ID)
+	require.NoError(t, instRepo.Create(context.Background(), inst1))
+	require.NoError(t, instRepo.Create(context.Background(), inst2))
+
+	// One notification per instance (per user).
+	n1 := &notification.Notification{ID: uuid.New(), InstanceID: inst1.ID, Type: notification.TypeCompleted}
+	n2 := &notification.Notification{ID: uuid.New(), InstanceID: inst2.ID, Type: notification.TypeFailed}
+	require.NoError(t, notifRepo.Create(context.Background(), n1))
+	require.NoError(t, notifRepo.Create(context.Background(), n2))
+
+	t.Run("List with ownerID returns only that user's notifications", func(t *testing.T) {
+		list, err := notifRepo.List(context.Background(), notification.ListFilters{OwnerID: &user1.ID, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, n1.ID, list[0].ID)
+	})
+
+	t.Run("List with nil ownerID (admin) returns all notifications", func(t *testing.T) {
+		list, err := notifRepo.List(context.Background(), notification.ListFilters{Limit: 10})
+		require.NoError(t, err)
+		assert.Len(t, list, 2)
+	})
+
+	t.Run("CountUnread with ownerID counts only that user's unread", func(t *testing.T) {
+		count, err := notifRepo.CountUnread(context.Background(), &user1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		count, err = notifRepo.CountUnread(context.Background(), &user2.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("CountUnread with nil ownerID counts all unread", func(t *testing.T) {
+		count, err := notifRepo.CountUnread(context.Background(), nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("MarkAllRead with ownerID marks only that user's notifications read", func(t *testing.T) {
+		require.NoError(t, notifRepo.MarkAllRead(context.Background(), &user1.ID))
+
+		count1, err := notifRepo.CountUnread(context.Background(), &user1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count1)
+
+		count2, err := notifRepo.CountUnread(context.Background(), &user2.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count2, "user2's notification must remain unread")
+	})
+
+	t.Run("Dismiss by another user's ownerID returns ErrNotFound", func(t *testing.T) {
+		// user2 trying to dismiss user1's notification must fail.
+		err := notifRepo.Dismiss(context.Background(), n1.ID, &user2.ID)
+		assert.ErrorIs(t, err, notification.ErrNotFound, "cross-user dismiss must fail closed")
+	})
+
+	t.Run("Dismiss with nil ownerID (admin) can dismiss any notification", func(t *testing.T) {
+		err := notifRepo.Dismiss(context.Background(), n2.ID, nil)
+		assert.NoError(t, err)
+	})
 }
 
 // ---------------------------------------------------------------------------
