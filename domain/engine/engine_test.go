@@ -410,6 +410,18 @@ func (r *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 	return r.defaultUserID, nil
 }
 
+func (r *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
+
+func (r *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
+
+func (r *mockUserRepo) Create(_ context.Context, _ *instance.User) error {
+	return nil
+}
+
 // mockQueueManager implements engine.QueueManager
 type mockQueueManager struct {
 	mu                    sync.Mutex

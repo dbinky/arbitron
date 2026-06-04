@@ -70,11 +70,20 @@ type Notification struct {
 	UpdatedAt  string
 }
 
+type Session struct {
+	IDHash    string
+	UserID    string
+	CreatedAt string
+	ExpiresAt string
+}
+
 type User struct {
 	ID        string
 	Username  string
 	Role      string
 	CreatedAt string
+	Subject   sql.NullString
+	Email     sql.NullString
 }
 
 type VariableSnapshot struct {

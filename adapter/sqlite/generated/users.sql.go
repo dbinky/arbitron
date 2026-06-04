@@ -7,17 +7,106 @@ package generated
 
 import (
 	"context"
+	"database/sql"
 )
 
-const getDefaultUser = `-- name: GetDefaultUser :one
-SELECT id, username, role, created_at FROM users WHERE username = 'local' LIMIT 1
+const createUser = `-- name: CreateUser :exec
+INSERT INTO users (id, subject, email, username, role) VALUES (?, ?, ?, ?, ?)
 `
 
-func (q *Queries) GetDefaultUser(ctx context.Context) (User, error) {
+type CreateUserParams struct {
+	ID       string
+	Subject  sql.NullString
+	Email    sql.NullString
+	Username string
+	Role     string
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
+	_, err := q.db.ExecContext(ctx, createUser,
+		arg.ID,
+		arg.Subject,
+		arg.Email,
+		arg.Username,
+		arg.Role,
+	)
+	return err
+}
+
+const getDefaultUser = `-- name: GetDefaultUser :one
+SELECT id, subject, email, username, role, created_at FROM users WHERE username = 'local' LIMIT 1
+`
+
+type GetDefaultUserRow struct {
+	ID        string
+	Subject   sql.NullString
+	Email     sql.NullString
+	Username  string
+	Role      string
+	CreatedAt string
+}
+
+func (q *Queries) GetDefaultUser(ctx context.Context) (GetDefaultUserRow, error) {
 	row := q.db.QueryRowContext(ctx, getDefaultUser)
-	var i User
+	var i GetDefaultUserRow
 	err := row.Scan(
 		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.Username,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserByID = `-- name: GetUserByID :one
+SELECT id, subject, email, username, role, created_at FROM users WHERE id = ? LIMIT 1
+`
+
+type GetUserByIDRow struct {
+	ID        string
+	Subject   sql.NullString
+	Email     sql.NullString
+	Username  string
+	Role      string
+	CreatedAt string
+}
+
+func (q *Queries) GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserByID, id)
+	var i GetUserByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.Username,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserBySubject = `-- name: GetUserBySubject :one
+SELECT id, subject, email, username, role, created_at FROM users WHERE subject = ? LIMIT 1
+`
+
+type GetUserBySubjectRow struct {
+	ID        string
+	Subject   sql.NullString
+	Email     sql.NullString
+	Username  string
+	Role      string
+	CreatedAt string
+}
+
+func (q *Queries) GetUserBySubject(ctx context.Context, subject sql.NullString) (GetUserBySubjectRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserBySubject, subject)
+	var i GetUserBySubjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
 		&i.Username,
 		&i.Role,
 		&i.CreatedAt,

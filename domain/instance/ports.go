@@ -54,7 +54,13 @@ type VariableSnapshotRepository interface {
 	ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]VariableSnapshot, error)
 }
 
-// UserRepository defines the port for querying users.
+// UserRepository defines the port for querying and persisting users. It is
+// expanded in place (Phase 6) so the engine, which already imports it for
+// GetDefaultUser, picks up the new methods without a relocation. Implementations
+// must wrap a missing row as ErrNotFound via fmt.Errorf %w.
 type UserRepository interface {
-	GetDefaultUser(ctx context.Context) (uuid.UUID, error)
+	GetDefaultUser(ctx context.Context) (uuid.UUID, error)             // existing, unchanged
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error)          // ErrNotFound if absent
+	GetBySubject(ctx context.Context, subject string) (*User, error)   // ErrNotFound if new (JIT in Phase 2)
+	Create(ctx context.Context, u *User) error
 }
