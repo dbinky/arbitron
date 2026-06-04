@@ -14,7 +14,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
 | 1 | Loop detection (`dashboard/src/graph/loops.ts` — back-edge classification, body/head/tail/depth derivation) | [x] | [x] | Done |
-| 2 | Loop geometry + container overlays (`dashboard/src/graph/loopLayout.ts`, `useGraphLayout.ts`, `nodes/LoopContainerNode.tsx` — bounding box, label rule, dagre grouping/exclusion) | [x] | [ ] | |
+| 2 | Loop geometry + container overlays (`dashboard/src/graph/loopLayout.ts`, `useGraphLayout.ts`, `nodes/LoopContainerNode.tsx` — bounding box, label rule, dagre grouping/exclusion) | [x] | [x] | Done |
 | 3 | Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`, edgeTypes, GraphView wiring — side routing, distinct style) | [ ] | [ ] | |
 | 4 | Anchor selection + default zoom (`dashboard/src/graph/selectAnchorNodeId.ts`, `constants.ts`, `routes/ExecutionView.tsx` — anchor per state, mount centering at 0.9) | [ ] | [ ] | |
 | 5 | Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts` — follow on advance, pause on manual move, reduced-motion, re-engage) | [ ] | [ ] | |

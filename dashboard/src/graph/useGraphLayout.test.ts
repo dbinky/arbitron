@@ -112,6 +112,27 @@ describe('useGraphLayout — nested loops', () => {
   })
 })
 
+describe('useGraphLayout — edge case: self-loop (node edges to itself)', () => {
+  it('wraps the self-looping node in a container and types the self-edge loopBackEdge', () => {
+    // spec: "self-loop — treated as a single-node loop; container wraps that node"
+    const nodes = [node('a'), node('b'), node('c')]
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'b', label: 'retry' },
+      { source: 'b', target: 'c' },
+    ]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const containers = result.current.rfNodes.filter((n) => n.type === 'loopContainer')
+    expect(containers).toHaveLength(1)
+    expect((containers[0].data as { label: string }).label).toBe('Loop until retry')
+    const selfEdge = result.current.rfEdges.find((e) => e.source === 'b' && e.target === 'b')!
+    expect(selfEdge.type).toBe('loopBackEdge')
+    // Forward edges are unaffected.
+    const fwd = result.current.rfEdges.find((e) => e.source === 'a' && e.target === 'b')!
+    expect(fwd.type).toBe('smoothstep')
+  })
+})
+
 describe('useGraphLayout — back-edge carries the container box', () => {
   it('includes a box on the loopBackEdge data', () => {
     const nodes: WorkflowNode[] = [

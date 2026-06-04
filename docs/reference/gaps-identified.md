@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LAYOUT-002: useGraphLayout self-loop integration untested
+**Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
+**Fixed**: Iteration 4
+**Detail**: The design doc explicitly lists "self-loop (node edges to itself): treated as a single-node loop; container wraps that node" as an edge case, and `loopContainerBox` had a standalone self-loop unit test, but the integration path through `useGraphLayout` (self-edge → loopBackEdge type, single-node container emitted, correct label) was entirely untested. Added a `useGraphLayout — edge case: self-loop` describe block covering this path. Marks focus-area #2 Pass 2 complete.
+
 ### LAYOUT-001: useGraphLayout empty-nodes early-return path untested
 **Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
 **Fixed**: Iteration 3
