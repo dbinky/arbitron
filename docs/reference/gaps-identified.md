@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA32-01: `mockInstanceRepo.List` didn't filter by OwnerID; no end-to-end test linked trigger ownership to list scoping
+**Area**: Focus Area 32 — Trigger(ctx) + instance ownership + list/read scoping (paired)
+**Fix**: (1) Updated `mockInstanceRepo.List` in `domain/engine/engine_test.go` to respect `filters.OwnerID` — the mock previously ignored it, making integration-level list-scope tests impossible. (2) Added `TestTrigger_OwnerIsExactlyWhatListScopingKeysOn` to `domain/engine/engine_trigger_scope_test.go`. The test triggers a shared workflow as user A, then calls `engine.ListInstances` as user A (sees the instance) and as user B (does not see it). This pins the FA-32 paired invariant end-to-end: the OwnerID stored at trigger time (= context identity) is exactly the key the list scoping filters on, with no URL or body parameter able to substitute a different owner. Prior tests covered these properties in isolation (trigger stores correct OwnerID; list service overrides filter with context owner) but not the full chain through real in-memory data.
+
 ### GAP-FA31-01: Re-publish correctness had two missing tests: shared-content-update and snapshot-immutability
 **Area**: Focus Area 31 — Publish/copy + published store (paired)
 **Fix**: Added two tests:

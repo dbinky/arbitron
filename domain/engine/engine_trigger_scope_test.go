@@ -8,6 +8,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -224,6 +225,39 @@ func TestTrigger_SystemTrigger_UsesDefaultUserAndShared(t *testing.T) {
 	require.NoError(t, err)
 	def, _ := h.users.GetDefaultUser(context.Background())
 	assert.Equal(t, def, inst.OwnerID, "system trigger owned by the default user")
+}
+
+// TestTrigger_OwnerIsExactlyWhatListScopingKeysOn pins the FA-32 paired
+// invariant end-to-end: a shared workflow triggered by user A creates an
+// instance owned by A, and A's owner ID is exactly the key that the list
+// scoping uses — so A sees the instance in their list and B does not.
+func TestTrigger_OwnerIsExactlyWhatListScopingKeysOn(t *testing.T) {
+	h := newTriggerHarness()
+	a := uuid.New()
+	b := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("pub-wf"))
+
+	// A triggers the shared workflow.
+	id, _, err := h.engine.Trigger(ctxAs(a), "pub-wf", nil, "normal")
+	require.NoError(t, err)
+
+	// A's ListInstances must contain the new instance.
+	listA, err := h.engine.ListInstances(ctxAs(a), instance.ListFilters{})
+	require.NoError(t, err)
+	var foundA bool
+	for _, s := range listA {
+		if s.ID == id {
+			foundA = true
+		}
+	}
+	assert.True(t, foundA, "triggering user A must see their own instance in ListInstances")
+
+	// B's ListInstances must NOT contain A's instance — ownership is disjoint.
+	listB, err := h.engine.ListInstances(ctxAs(b), instance.ListFilters{})
+	require.NoError(t, err)
+	for _, s := range listB {
+		assert.NotEqual(t, id, s.ID, "user B must not see user A's instance — owner scoping must key on the OwnerID set at trigger time")
+	}
 }
 
 // --- Isolation/security ---

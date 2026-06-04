@@ -167,6 +167,9 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 		if filters.State != nil && inst.State != *filters.State {
 			continue
 		}
+		if filters.OwnerID != nil && inst.OwnerID != *filters.OwnerID {
+			continue
+		}
 		summaries = append(summaries, instance.InstanceSummary{
 			ID:           inst.ID,
 			WorkflowName: inst.WorkflowName,
