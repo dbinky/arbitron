@@ -1,6 +1,6 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the **Vendor-Abstraction MVP** (`docs/specs/feature-pipeline-replacement-mvp.md`) for correctness, security, and robustness.
+This document tracks the systematic review of the **Dashboard UX Improvements** (`docs/specs/ui-nits-spec.md`) for correctness, robustness, and spec-spirit alignment.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -13,23 +13,22 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Provider ports (`domain/engine/ports.go` — `ChatProvider`/`AgentProvider`, `Chat*`/`Agent*` types, `ChatProviderSelector`/`AgentProviderSelector`) | [x] | [x] | Done |
-| 2 | claude-cli adapters (`adapter/claudecli/` — `ChatAdapter` tool-suppression, `AgentAdapter` tools, `argsPolicy`/`buildArgs`, shared `CommandRunner`, stream-json parsing) | [x] | [x] | Done |
-| 3 | Profile registry & resolver (`domain/provider/provider.go`, `adapter/provider/static.go` — `Profile`, `ProfileKind`, `ProfileResolver`, `ResolvedBinding`, alias resolution) | [x] | [x] | Done |
-| 4 | LLM & agent executors (`domain/engine/executor_llm.go`, `executor_agent.go` — profile resolve, provider-agnostic structured output, workspace WorkDir) | [x] | [x] | Done |
-| 5 | Capability validation & loop lint (`domain/workflow/validation.go`, `lint.go` — kind-matching, connection-existence, `INTERACTIVE_IN_LOOP` advisory) | [x] | [x] | Done |
-| 6 | Crypto (`domain/provider/crypto.go`, `adapter/crypto/` — AES-256-GCM, nonce-per-seal, master-key bootstrap, fail-fast gate) | [x] | [x] | Done |
-| 7 | Connection store (`domain/provider/connection.go`, `adapter/sqlite/connection_repo.go`, `migrations/002_connections.*`, `queries/connections.sql` — CRUD, Reveal-only decrypt, Azure api-version rule) | [x] | [x] | Done |
-| 8 | OpenRouter chat adapter (`adapter/openrouter/` — chat/completions, Bearer auth, SSE streaming, structured output, usage) | [x] | [x] | Done |
-| 9 | Azure Foundry chat adapter (`adapter/azurefoundry/` — both topologies, deployment path + api-version, api-key header, serverless endpoint) | [x] | [x] | Done |
-| 10 | opencode agent backend (`adapter/opencode/` — single-shot `RunAgent`, `opencodeEnv` credential injection, `buildArgs` isolation) | [x] | [x] | Done |
-| 11 | Provider selection factory (`adapter/provider/factory.go`, `conn_checker.go` — provider→adapter mapping, empty→claude-cli) | [x] | [x] | Done |
-| 12 | Conditional & transform executors (`domain/engine/executor_conditional.go`, `executor_transform.go` — value template-resolution, numeric compare, counter increment) | [x] | [x] | Done |
-| 13 | Connection management surface (`adapter/mcp/tools_connection.go` — create/update/delete/get/list, key-in-never-out, name-only logging) | [x] | [x] | Done |
-| 14 | Composition root wiring (`cmd/arbitron/main.go` — adapters, resolver, selectors, checkers, fail-fast gate) | [x] | [x] | Done |
-| 15 | Config & profile loading (`domain/config/config.go`, `adapter/config/loader.go`, `profiles.go` — Profiles block, ConnectionRef/Params, precedence) | [x] | [x] | Done |
-| 16 | Native ralph loop example (`examples/workflows/native-ralph-loop/` — graph, templates, seed files, both bindings, termination on both exit branches) | [x] | [x] | Done |
-| 17 | Acceptance harness (`test/acceptance/` — #1–#7 scenarios, hermetic seams, config-diff & secrecy assertions) | [x] | [x] | Done |
+| 1 | Loop detection (`dashboard/src/graph/loops.ts` — back-edge classification, body/head/tail/depth derivation) | [ ] | [ ] | |
+| 2 | Loop geometry + container overlays (`dashboard/src/graph/loopLayout.ts`, `useGraphLayout.ts`, `nodes/LoopContainerNode.tsx` — bounding box, label rule, dagre grouping/exclusion) | [ ] | [ ] | |
+| 3 | Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`, edgeTypes, GraphView wiring — side routing, distinct style) | [ ] | [ ] | |
+| 4 | Anchor selection + default zoom (`dashboard/src/graph/selectAnchorNodeId.ts`, `constants.ts`, `routes/ExecutionView.tsx` — anchor per state, mount centering at 0.9) | [ ] | [ ] | |
+| 5 | Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts` — follow on advance, pause on manual move, reduced-motion, re-engage) | [ ] | [ ] | |
+| 6 | Dismissal persistence (`adapter/sqlite/dismissal_repo.go`, `migrations/003_instance_dismissals.*`, `domain/instance` DismissalRepository — idempotency, scoping, cascade) | [ ] | [ ] | |
+| 7 | Dismissal HTTP handlers + routes + acting-user seam (`adapter/http/*`, `currentUser(r)` — dismiss/restore/dismiss-all, guards) | [ ] | [ ] | |
+| 8 | Instance list dismissed-marking (`adapter/http/instance_handler.go` — `dismissed` flag, `includeDismissed`, default omit, order preserved) | [ ] | [ ] | |
+| 9 | Engine retry resurface + wiring (`domain/engine/engine.go`, `cmd/arbitron/main.go` — Retry→ClearForInstance, SetDismissals, rerun new-instance) | [ ] | [ ] | |
+| 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [ ] | [ ] | |
+| 11 | Domain: loop semantics end-to-end (workflow def back-edge + label → detection → layout/container → on-screen) | [ ] | [ ] | |
+| 12 | Domain: viewport behavior (default zoom + follow + manual override) as a cross-cutting graph concern | [ ] | [ ] | |
+| 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [ ] | [ ] | |
+| 14 | Vertical slice: dismiss action ([x] → POST /instances/{id}/dismiss → repo → list omits → UI updates) | [ ] | [ ] | |
+| 15 | Vertical slice: show/hide dismissed (toggle → list `includeDismissed=true` → marked → dimmed render + ↺ restore) | [ ] | [ ] | |
+| 16 | Vertical slice: loop render (workflow definition → detection → layout/container → graph) | [ ] | [ ] | |
 
 ---
 
@@ -37,14 +36,14 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 18 | Provider ports + selection factory (port contract alignment; every provider string maps to an adapter; unknown→clear error) | [x] | Done |
-| 19 | Profile resolver + connection store (alias→profile→connection→binding; lazy `RevealKey` decrypts only at use; empty ConnectionRef→claude-cli no-key) | [x] | Done |
-| 20 | Capability validation + profile registry (kind-matching end-to-end; `agent_call`→chat fails before any run; unknown alias/connection errors) | [x] | Done |
-| 21 | Crypto + connection store (seal-on-write/Reveal-on-read; tampered/wrong-key → `ErrDecrypt`; no plaintext in any column) | [x] | Done |
-| 22 | opencode env-injection + connection resolution (credential delivered into the subprocess env; absent from logs and `workflow.json`) | [x] | Done |
-| 23 | Conditional executor + worked example (done-exit and `counter >= max` exit both genuinely reachable; loop terminates under the Claude binding) | [x] | Done |
-| 24 | Chat adapters (claudecli/openrouter/azurefoundry) + LLM executor (structured output parsed to a map uniformly regardless of backend; no double-parse) | [x] | Done |
-| 25 | Acceptance harness + all backends (scenarios exercise real selection/adapter/credential seams, not just unit happy paths) | [x] | Done |
+| 17 | Loop detection + Loop geometry/overlays (loops.ts output feeds loopLayout/useGraphLayout correctly; bodies map to boxes) | [ ] | |
+| 18 | Loop geometry + back-edge rendering (container box handed to the back-edge; routing avoids body nodes) | [ ] | |
+| 19 | Anchor selection + Follow hook (shared anchor identity; container overlays excluded from candidates; GraphView wiring) | [ ] | |
+| 20 | Dismissal repo + HTTP handlers (port contract: method names/signatures, error mapping, currentUser scoping) | [ ] | |
+| 21 | List marking + Queue UI (`dismissed`/`includeDismissed` contract match; order preservation drives chronological reveal) | [ ] | |
+| 22 | Dismiss slice + engine retry resurface (dismiss then retry clears; item reappears active→terminal) | [ ] | |
+| 23 | Cross-cutting: currentUser seam + all dismissal endpoints (per-user scoping consistent everywhere; local-mode correct) | [ ] | |
+| 24 | Cross-cutting: GraphView integration (Phase 1 edgeTypes + loop containers coexist with Phase 2 zoom/follow; no fitView regression) | [ ] | |
 
 ---
 
@@ -53,21 +52,21 @@ A review pass is only checked when the checklist produces a passing result for t
 ### Single Area Reviews — What To Check
 
 **Pass 1 (Correctness & Coverage):**
-- All public functions have test coverage across the 5 categories (happy, success, failure, error, edge)
-- The code does what the design doc says, and satisfies the relevant acceptance criterion (#1–#7)
-- Error handling is thorough — no silent failures (especially the `agent_call`-narrates-but-doesn't-edit failure mode)
-- Module boundaries are clean (`domain/` imports no adapter; ports stay in `domain/`)
+- All public functions have test coverage (happy / success / failure / error / edge).
+- The code does what the design doc says it should.
+- Error handling is thorough — no silent failures; HTTP guards return correct codes.
+- Module boundaries are clean (pure graph helpers free of React; domain ports free of sqlite types).
 
-**Pass 2 (Robustness & Security):**
-- Code aligns to the spirit of the spec (intent vs. backend orthogonality), not surface conformance
-- Credential safety holds: keys never serialized to `workflow.json`, never logged, encrypted at rest
-- The component is ready to be extended (e.g. a future provider behind the same ports)
-- Edge cases handled (empty inputs, missing `{{workspace}}`, unresolved templates, malformed provider output)
+**Pass 2 (Robustness & Extensibility):**
+- Code aligns to the spirit of the design, not just surface conformance.
+- The component is ready to be extended (e.g. Phase 6 swapping the currentUser seam).
+- Test assertions test real risks (loop topology edge cases, follow pause/resume, dismissal idempotency), not happy-path ceremony.
+- Edge cases handled (no-loop graphs, self-loops, nested loops; empty/degenerate graphs; non-terminal dismiss; restore of non-dismissed).
 
 ### Paired Area Reviews — What To Check
 
-Paired reviews verify two components integrate correctly:
-- Data flows cleanly across the boundary (binding fields, resolved credentials, parsed output)
-- Error propagation works end-to-end (resolve error → executor → instance failure)
-- No assumptions in one component the other doesn't satisfy (e.g. structured output shape)
-- Integration/acceptance tests cover the seams between the pair, not just unit happy paths
+Paired reviews verify that two components integrate correctly:
+- Data flows cleanly across the boundary (loop topology → geometry → edge; repo → handler → list → UI).
+- Error propagation works end-to-end.
+- No assumptions in one component that the other doesn't satisfy (param/field name contracts, ordering).
+- Integration tests cover the seams between the pair, including the shared GraphView `<ReactFlow>` element across Phases 1 and 2.
