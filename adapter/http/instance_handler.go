@@ -28,10 +28,12 @@ type InstanceService interface {
 
 // InstanceHandler handles REST API requests for instance operations.
 type InstanceHandler struct {
-	instances  instance.InstanceRepository
-	nodeExecs  instance.NodeExecutionRepository
-	snapshots  instance.VariableSnapshotRepository
-	service    InstanceService
+	instances   instance.InstanceRepository
+	nodeExecs   instance.NodeExecutionRepository
+	snapshots   instance.VariableSnapshotRepository
+	service     InstanceService
+	dismissals  instance.DismissalRepository
+	currentUser *CurrentUserResolver
 }
 
 // NewInstanceHandler creates a new InstanceHandler with its dependencies.
@@ -47,6 +49,15 @@ func NewInstanceHandler(
 		snapshots: snapshots,
 		service:   service,
 	}
+}
+
+// SetDismissals wires the per-user dismissal repository and acting-user seam so
+// the Dismiss/Restore/DismissAll handlers and the per-user List can operate.
+// Kept as a setter (rather than constructor args) so existing NewInstanceHandler
+// call sites compile unchanged. When unset, dismissal routes are not registered.
+func (h *InstanceHandler) SetDismissals(dismissals instance.DismissalRepository, currentUser *CurrentUserResolver) {
+	h.dismissals = dismissals
+	h.currentUser = currentUser
 }
 
 // instanceResponse is a JSON-friendly representation of an instance.
@@ -337,6 +348,100 @@ func (h *InstanceHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		"instanceId": newID.String(),
 		"state":      "running",
 	})
+}
+
+// isDismissibleState reports whether a state is dismissible (completed or
+// failed). Note: this is narrower than stream_handler's isTerminalState, which
+// also includes cancelled; only completed/failed items can be dismissed.
+func isDismissibleState(s instance.State) bool {
+	return s == instance.StateCompleted || s == instance.StateFailed
+}
+
+// Dismiss handles POST /instances/{id}/dismiss. Per-user; terminal-only.
+func (h *InstanceHandler) Dismiss(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+	inst, err := h.instances.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+	if !isDismissibleState(inst.State) {
+		WriteError(w, http.StatusConflict, "CONFLICT", "only completed or failed instances can be dismissed")
+		return
+	}
+	user, err := h.currentUser.CurrentUser(r)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+		return
+	}
+	if err := h.dismissals.Dismiss(r.Context(), user, id); err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss instance")
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// Restore handles POST /instances/{id}/restore. Per-user; idempotent no-op if
+// not currently dismissed.
+func (h *InstanceHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+	user, err := h.currentUser.CurrentUser(r)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+		return
+	}
+	if err := h.dismissals.Restore(r.Context(), user, id); err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to restore instance")
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DismissAll handles POST /instances/dismiss-all?state=failed|completed. It
+// dismisses every instance currently listed in that category for the acting
+// user (the same window the dashboard shows). Empty category is a no-op.
+func (h *InstanceHandler) DismissAll(w http.ResponseWriter, r *http.Request) {
+	stateParam := r.URL.Query().Get("state")
+	if stateParam != string(instance.StateFailed) && stateParam != string(instance.StateCompleted) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "state must be 'failed' or 'completed'")
+		return
+	}
+	user, err := h.currentUser.CurrentUser(r)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+		return
+	}
+	state := instance.State(stateParam)
+	filters := instance.ListFilters{State: &state, Limit: maxListLimit}
+	if s := r.URL.Query().Get("since"); s != "" {
+		if t, perr := time.Parse(time.RFC3339, s); perr == nil {
+			filters.Since = &t
+		}
+	}
+	summaries, err := h.instances.List(r.Context(), filters)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
+		return
+	}
+	for _, s := range summaries {
+		if err := h.dismissals.Dismiss(r.Context(), user, s.ID); err != nil {
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss instances")
+			return
+		}
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // nodeExecutionResponse is a JSON-friendly representation of a node execution.

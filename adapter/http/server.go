@@ -39,14 +39,20 @@ type QueueManagerPort interface {
 // RouterDeps bundles all dependencies required by NewRouter, replacing
 // the previous 14-parameter function signature.
 type RouterDeps struct {
-	Service             EngineService
-	Workflows           workflow.WorkflowRepository
-	Instances           instance.InstanceRepository
-	NodeExecs           instance.NodeExecutionRepository
-	Snapshots           instance.VariableSnapshotRepository
-	FileReader          FileReader
-	EventBus            engine.EventBus
-	Config              *config.Config
+	Service   EngineService
+	Workflows workflow.WorkflowRepository
+	Instances instance.InstanceRepository
+	NodeExecs instance.NodeExecutionRepository
+	Snapshots instance.VariableSnapshotRepository
+	// Dismissals is the per-user instance dismissal repository. When non-nil
+	// (together with Users), the dismiss/restore/dismiss-all routes are
+	// registered and GET /instances becomes per-user-aware.
+	Dismissals instance.DismissalRepository
+	// Users sources the acting user for the dismissal seam (GetDefaultUser today).
+	Users      instance.UserRepository
+	FileReader FileReader
+	EventBus   engine.EventBus
+	Config     *config.Config
 	// Settings is the synchronized owner of runtime-mutable Teams settings. When
 	// nil, NewRouterFromDeps seeds one from Config so the HTTP handler stays the
 	// sole writer; production wiring shares one store across HTTP, MCP, and the
@@ -135,6 +141,13 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
+	// Wire the per-user dismissal repo + acting-user seam when both are present.
+	// Guarded like NotifHandler: without these, dismissal routes are skipped and
+	// the list endpoint stays non-dismissal-aware.
+	dismissalsEnabled := d.Dismissals != nil && d.Users != nil
+	if dismissalsEnabled {
+		instHandler.SetDismissals(d.Dismissals, NewCurrentUserResolver(d.Users))
+	}
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
 	settings := d.Settings
@@ -195,8 +208,17 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 
 		// Instance endpoints
 		r.Route("/instances", func(r chi.Router) {
+			// Register dismiss-all first so the static segment is not captured by
+			// the {id} wildcard routes below.
+			if dismissalsEnabled {
+				r.Post("/dismiss-all", instHandler.DismissAll)
+			}
 			r.Get("/", instHandler.List)
 			r.Get("/{id}", instHandler.Get)
+			if dismissalsEnabled {
+				r.Post("/{id}/dismiss", instHandler.Dismiss)
+				r.Post("/{id}/restore", instHandler.Restore)
+			}
 			r.Post("/{id}/pause", instHandler.Pause)
 			r.Post("/{id}/resume", instHandler.Resume)
 			r.Post("/{id}/cancel", instHandler.Cancel)
