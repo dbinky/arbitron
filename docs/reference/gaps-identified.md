@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### FOLLOW-001: Null-anchor edge case untested
+**Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
+**Fixed**: Iteration 9
+**Detail**: The design doc lists "Empty graph / no anchor: skip centering (no-op); nothing throws" as an explicit edge case. The implementation guards with `if (!anchor) return` in the effect and `if (prevAnchorRef.current)` in recenter, but no test verified this behavior. Added `useFollowActiveNode — edge case: null anchor (empty graph)` with two tests: (1) null anchor from the start → no setCenter called; (2) recenter when anchor was never recorded → following re-engages but setCenter is not called.
+
 ### VIEW-002: Ghost-currentNodeId fallback untested at integration level
 **Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
 **Fixed**: Iteration 8

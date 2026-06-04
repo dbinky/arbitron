@@ -117,6 +117,30 @@ describe('useFollowActiveNode — recenter', () => {
   })
 })
 
+describe('useFollowActiveNode — edge case: null anchor (empty graph)', () => {
+  it('does not call setCenter and does not throw when anchor is null', () => {
+    // The design doc: "Empty graph / no anchor: skip centering (no-op); nothing throws."
+    renderHook(() => useFollowActiveNode(null, false))
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+
+  it('recenter re-engages following but does not call setCenter when no anchor has been recorded', () => {
+    // prevAnchorRef is never set when anchor stays null, so recenter must guard
+    // against calling setCenter with undefined coordinates.
+    const { result } = renderHook(() => useFollowActiveNode(null, false))
+    act(() => {
+      result.current.onMoveStart({ type: 'pointerdown' })
+    })
+    expect(result.current.following).toBe(false)
+
+    act(() => result.current.recenter())
+
+    expect(setCenter).not.toHaveBeenCalled()
+    // following is re-engaged so it will animate when an anchor eventually arrives.
+    expect(result.current.following).toBe(true)
+  })
+})
+
 describe('useFollowActiveNode — reduced motion', () => {
   it('uses duration 0 when prefers-reduced-motion is set', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
