@@ -111,3 +111,100 @@ func TestDismiss_TerminalInstance_OK(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.True(t, dis.dismissed[user][id], "dismiss must record the per-user row")
 }
+
+func TestDismiss_NonTerminal_409(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateRunning,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
+func TestDismiss_NotFound_404(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+uuid.New().String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 404, resp.StatusCode)
+}
+
+func TestRestore_RemovesDismissal_OK(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted,
+	}))
+	dis := newMockDismissalRepo()
+	require.NoError(t, dis.Dismiss(context.Background(), user, id))
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.False(t, dis.dismissed[user][id])
+}
+
+func TestRestore_NonDismissed_OK_NoOp(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode) // no-op success
+}
+
+func TestDismissAll_DismissesEveryListedInCategory(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	ctx := context.Background()
+	a := uuid.New()
+	b := uuid.New()
+	other := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: a, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: b, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: other, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted}))
+	dis := newMockDismissalRepo()
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[user][a])
+	assert.True(t, dis.dismissed[user][b])
+	assert.False(t, dis.dismissed[user][other], "completed item must not be dismissed by state=failed")
+}
+
+func TestDismissAll_BadState_400(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+	for _, s := range []string{"", "running", "queued", "bogus"} {
+		resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state="+s)
+		assert.Equal(t, 400, resp.StatusCode, "state=%q must be rejected", s)
+		resp.Body.Close()
+	}
+}
+
+func TestDismissAll_EmptyCategory_OK(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=completed")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode) // no-op success on empty category
+}
