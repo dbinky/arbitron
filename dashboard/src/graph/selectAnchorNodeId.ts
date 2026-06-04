@@ -7,6 +7,10 @@ function sourceNodeId(def: WorkflowDefinition): string | null {
   return source ? source.id : null
 }
 
+function nodeIdSet(def: WorkflowDefinition): Set<string> {
+  return new Set(def.nodes.map((n) => n.id))
+}
+
 /**
  * Pick the id of the real step node the viewport should center on.
  *
@@ -29,5 +33,15 @@ export function selectAnchorNodeId(
     return sourceNodeId(workflowDef) ?? workflowDef.nodes[0].id
   }
 
-  return null
+  const ids = nodeIdSet(workflowDef)
+
+  // Running / waiting: the active node.
+  if (instance.state === 'running' || instance.state === 'waiting') {
+    if (instance.currentNodeId && ids.has(instance.currentNodeId)) {
+      return instance.currentNodeId
+    }
+  }
+
+  // General fallback for any instance with no specific anchor.
+  return sourceNodeId(workflowDef) ?? workflowDef.nodes[0].id
 }

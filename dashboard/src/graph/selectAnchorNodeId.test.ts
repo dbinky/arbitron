@@ -94,3 +94,36 @@ describe('selectAnchorNodeId — static preview (no instance)', () => {
     expect(selectAnchorNodeId(null, d, noStates, [])).toBe('x')
   })
 })
+
+describe('selectAnchorNodeId — running instance', () => {
+  it('returns currentNodeId when the instance is running', () => {
+    const d = def(
+      [N('a'), N('b'), N('c')],
+      [
+        { source: 'a', target: 'b' },
+        { source: 'b', target: 'c' },
+      ],
+    )
+    const states: Record<string, NodeExecutionState> = {
+      a: 'completed',
+      b: 'running',
+      c: 'pending',
+    }
+    const i = inst({ state: 'running', currentNodeId: 'b' })
+    expect(selectAnchorNodeId(i, d, states, [exec('a', 'succeeded')])).toBe('b')
+  })
+
+  it('returns currentNodeId when the instance is waiting (interactive)', () => {
+    const d = def([N('a'), N('b')], [{ source: 'a', target: 'b' }])
+    const states: Record<string, NodeExecutionState> = { a: 'completed', b: 'waiting' }
+    const i = inst({ state: 'waiting', currentNodeId: 'b' })
+    expect(selectAnchorNodeId(i, d, states, [exec('a', 'succeeded')])).toBe('b')
+  })
+
+  it('ignores a currentNodeId that is not in the graph (fallback continues)', () => {
+    const d = def([N('a'), N('b')], [{ source: 'a', target: 'b' }])
+    const i = inst({ state: 'running', currentNodeId: 'ghost' })
+    // No completed nodes, not failed: falls through to source node 'a'.
+    expect(selectAnchorNodeId(i, d, {}, [])).toBe('a')
+  })
+})
