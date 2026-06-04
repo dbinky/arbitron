@@ -108,3 +108,20 @@
 .borderCancelled {
   border-left-color: var(--state-cancelled);
 }
+
+.dimmed {
+  opacity: 0.5;
+}
+
+.control {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 6px;
+}
+
+.control:hover {
+  color: var(--text-primary);
+}
