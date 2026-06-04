@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA17-P2-01: HTTP and MCP surfaces had no test for `ErrSharedReadOnly` → 409/tool-error on `Update`/`Delete`
+**Area**: Focus Area 17 — Workflow service authz (Pass 2)
+**Fix**: Added `"returns 409 when workflow is shared-only"` to `TestWorkflowHandler_Update` and `TestWorkflowHandler_Delete` in `adapter/http/workflow_handler_test.go`, and `"shared-only workflow returns tool error"` to `TestWorkflowUpdate` and `TestWorkflowDelete` in `adapter/mcp/tools_workflow_test.go`. Both surfaces now pin that `ErrSharedReadOnly` from the domain service is correctly mapped to HTTP 409 Conflict / MCP tool error with "shared and read-only" text. Also confirmed that `withChiURLParam` automatically injects `testIdentity` into all HTTP handler tests, so the service's `caller()` check is always satisfied.
+
 ### GAP-FA17-P1-01: `Delete`, `WriteFile`, `DeleteFile`, `SaveNodePositions`, and `ListFiles` had zero service-level tests
 **Area**: Focus Area 17 — Workflow service authz (Pass 1)
 **Fix**: Added 25 tests to `domain/workflow/service_test.go` covering all five previously untested public methods, with 5 scenario categories each. Key invariants pinned: (a) `Delete`/`WriteFile`/`DeleteFile`/`SaveNodePositions` on a shared-only workflow returns `ErrSharedReadOnly`, not `ErrNotFound` — via `translateWrite`; (b) each write method only targets the caller's own private scope, never another user's; (c) no-identity context is rejected with `ErrInvalidName` on every write path; (d) `ListFiles` falls back to shared and does not expose another user's private files.

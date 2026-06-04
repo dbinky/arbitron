@@ -1325,6 +1325,28 @@ func TestWorkflowHandler_Update(t *testing.T) {
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 		assert.Equal(t, "real-name", resp.Name)
 	})
+
+	// Failure: updating a shared-only workflow returns 409 Conflict, not 404.
+	// The service maps ErrNotFound-on-private + Exists-in-shared → ErrSharedReadOnly.
+	t.Run("returns 409 when workflow is shared-only", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		repo.updateFn = func(_ context.Context, _ string, _ *workflow.Workflow) error {
+			return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		body := `{"name":"pub","description":"changed"}`
+		req := httptest.NewRequest(http.MethodPut, "/workflows/pub", strings.NewReader(body))
+		req = withChiURLParam(req, "name", "pub")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Update(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "CONFLICT", resp.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,6 +1406,25 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 		h.Delete(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	// Failure: deleting a shared-only workflow returns 409 Conflict, not 404.
+	t.Run("returns 409 when workflow is shared-only", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		repo.deleteFn = func(_ context.Context, _ string) error {
+			return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/pub", nil)
+		req = withChiURLParam(req, "name", "pub")
+		w := httptest.NewRecorder()
+		h.Delete(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "CONFLICT", resp.Code)
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
@@ -432,6 +433,25 @@ func TestWorkflowUpdate(t *testing.T) {
 		require.NotNil(t, capturedWF)
 		assert.Equal(t, "real-name", capturedWF.Name)
 	})
+
+	// Failure: updating a shared-only workflow returns a tool error with the
+	// "shared and read-only" message — not a generic internal error.
+	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			updateFn: func(_ context.Context, _ string, _ *workflow.Workflow) error {
+				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_update", map[string]any{
+			"name":     "pub",
+			"manifest": `{"name":"pub"}`,
+		})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "shared and read-only")
+	})
 }
 
 func TestWorkflowDelete(t *testing.T) {
@@ -469,6 +489,22 @@ func TestWorkflowDelete(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "workflow not found")
+	})
+
+	// Failure: deleting a shared-only workflow returns a tool error with the
+	// "shared and read-only" message — not a generic internal error.
+	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
+		repo := &stubWorkflowRepo{
+			deleteFn: func(_ context.Context, _ string) error {
+				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			},
+		}
+		srv := newWorkflowServer(repo, &stubFileReader{})
+		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "pub"})
+
+		assert.True(t, result.IsError)
+		text := extractText(t, result)
+		assert.Contains(t, text, "shared and read-only")
 	})
 }
 
