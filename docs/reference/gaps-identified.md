@@ -8,6 +8,13 @@ _(none)_
 
 ## Fixed Previously
 
+### UI-003: Edge-case coverage missing for dismissal UI — completed dismissAll + cancelled guard
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`, `dashboard/src/components/InstanceRow.test.tsx`)
+**Fixed**: Iteration 22
+**Detail**: Two edge cases were untested. (1) `handleDismissAll` in QueueView was only tested for `state='failed'` (Failed section button, index 0). The Completed section's button (index 1) calls `handleDismissAll('completed')` — a distinct code path. Added `handleDismissAll calls dismissAll with state=completed for the Completed section` which clicks `dismissAllBtns[1]` and asserts `dismissAll` is called with `'completed'`. (2) `InstanceRow` tests covered `running` (non-terminal) but not `cancelled`. The `isTerminal` check is `state === 'failed' || state === 'completed'` — deliberately narrower than the engine's `isTerminalState` (which includes `cancelled`). Added `shows no dismiss/restore control on cancelled rows` to pin this design boundary at the UI layer.
+
+---
+
 ### UI-002: QueueView dismiss handlers had no error handling; error paths untested
 **Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `QueueView.test.tsx`)
 **Fixed**: Iteration 21

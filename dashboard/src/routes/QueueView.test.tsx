@@ -243,6 +243,33 @@ describe('QueueView dismiss handlers', () => {
     expect(list).not.toHaveBeenCalled()
   })
 
+  // Edge: the Completed section's [Dismiss All] (index 1) must pass state='completed',
+  // not 'failed'. A bug where both callbacks captured the same value would pass the
+  // failed-section test above but fail here.
+  it('handleDismissAll calls api.instances.dismissAll with state=completed for the Completed section', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    // index 1 = Completed section header; header is always visible regardless of collapsed state.
+    const dismissAllBtns = screen.getAllByRole('button', { name: 'Dismiss All' })
+    fireEvent.click(dismissAllBtns[1])
+
+    await waitFor(() => {
+      expect(dismissAll).toHaveBeenCalledWith(
+        'completed',
+        expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      )
+    })
+    await waitFor(() => {
+      expect(list).toHaveBeenCalled()
+    })
+  })
+
   // Happy: dismissAll is called with the correct state and a since date matching the 5-day
   // window the section shows, then refetches (list is called again).
   it('handleDismissAll calls api.instances.dismissAll with state and since, then refetches', async () => {

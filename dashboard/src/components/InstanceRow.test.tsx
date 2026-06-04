@@ -47,4 +47,13 @@ describe('InstanceRow dismissal controls', () => {
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
   })
+
+  // Edge: cancelled is terminal in the engine sense but intentionally excluded from
+  // dismissal per spec ("only completed/failed items can be dismissed"). isTerminal
+  // in InstanceRow is deliberately narrower — this test pins that design boundary.
+  it('shows no dismiss/restore control on cancelled rows', () => {
+    renderRow({ instance: summary({ state: 'cancelled' }), onDismiss: vi.fn(), onRestore: vi.fn() })
+    expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
+  })
 })
