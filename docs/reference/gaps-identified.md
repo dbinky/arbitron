@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA14-P2-01: Successful demotion (admin → user) never tested on REST or MCP surfaces
+**Area**: Focus Area 14 — Role management (Pass 2)
+**Fix**: Extended `TestUserHandler_HappyPath` in `adapter/http/user_handler_test.go` and `TestUserTools_HappyPath` in `adapter/mcp/tools_user_test.go` to include a successful demotion after promotion. Both tests seed a second admin to satisfy the last-admin floor, then demote the original target and assert 200/non-error + role is now `user`. This proves the full promote→demote round-trip works end-to-end on both surfaces and that the domain's authorization is wired correctly.
+
 ### GAP-FA14-P1-02: MCP `user_set_role` invalid UUID path untested
 **Area**: Focus Area 14 — Role management (Pass 1)
 **Fix**: Added `"id": "not-a-uuid"` case to `TestUserTools_Validation` in `adapter/mcp/tools_user_test.go`. The `userSetRoleHandler` does `uuid.Parse(idStr)` and returns "invalid id" — this validation path was never exercised despite the other missing-id and bad-role cases being tested.

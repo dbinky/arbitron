@@ -37,16 +37,26 @@ func userHTTPReq(method, target, body string, role identity.Role, idParam string
 	return r
 }
 
-// Happy path: admin promotes; GET /users returns userView without subject or email.
+// Happy path: admin promotes; admin demotes when another admin remains; GET /users
+// returns userView without subject or email.
 func TestUserHandler_HappyPath(t *testing.T) {
 	h, repo := newUserHandler()
 	target := uuid.New()
 	repo.byID[target] = &instance.User{ID: target, Subject: strptrH("sub-secret"), Email: strptrH("u@example.com"), Username: "u", Role: identity.RoleUser}
 
+	// Promote user -> admin.
 	w := httptest.NewRecorder()
 	h.SetRole(w, userHTTPReq(http.MethodPut, "/users/"+target.String()+"/role", `{"role":"admin"}`, identity.RoleAdmin, target.String()))
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, identity.RoleAdmin, repo.byID[target].Role)
+
+	// Successful demotion: seed a second admin so the last-admin floor does not fire.
+	other := uuid.New()
+	repo.byID[other] = &instance.User{ID: other, Subject: strptrH("other-sub"), Username: "other", Role: identity.RoleAdmin}
+	wd := httptest.NewRecorder()
+	h.SetRole(wd, userHTTPReq(http.MethodPut, "/users/"+target.String()+"/role", `{"role":"user"}`, identity.RoleAdmin, target.String()))
+	require.Equal(t, http.StatusOK, wd.Code, "demotion must succeed when another admin remains")
+	assert.Equal(t, identity.RoleUser, repo.byID[target].Role)
 
 	wl := httptest.NewRecorder()
 	h.List(wl, userHTTPReq(http.MethodGet, "/users", "", identity.RoleAdmin, ""))
@@ -58,7 +68,7 @@ func TestUserHandler_HappyPath(t *testing.T) {
 	assert.NotContains(t, body, "email", "admin list must not leak 'email' field name")
 	var views []userView
 	require.NoError(t, json.Unmarshal([]byte(body), &views))
-	assert.Len(t, views, 1)
+	assert.Len(t, views, 2)
 }
 
 // Input validation: bad UUID, invalid role, malformed JSON.
