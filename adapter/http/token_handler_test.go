@@ -118,6 +118,9 @@ func TestTokenHandler_CreateThenList_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, created.Token.Prefix)
 	assert.Equal(t, "ci", created.Token.Label)
 	plaintext := created.Plaintext
+	// Create is the highest-risk surface: it already carries the plaintext, so
+	// accidentally including the hash here would be maximally dangerous.
+	assert.NotContains(t, w.Body.String(), "token_hash", "create response must not include token_hash")
 
 	w2 := httptest.NewRecorder()
 	h.List(w2, tokenReq(http.MethodGet, "/tokens", "", uid, ""))

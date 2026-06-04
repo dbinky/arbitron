@@ -24,7 +24,7 @@ result for that area.
 | 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [x] | [x] | Done |
 | 7 | Auth middleware (`adapter/http/auth_middleware.go` — local-mode admin injection; org-mode session→bearer resolve order; 401 vs login-redirect; covers REST/`/mcp`/WS) | [x] | [x] | Done |
 | 8 | `/auth` handlers (`adapter/http` — login/callback/logout, signed state+nonce cookie, session cookie HttpOnly/SameSite/Secure, open-redirect-safe `next`) | [x] | [x] | Done |
-| 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [x] | [ ] | Pending |
+| 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [x] | [x] | Done |
 | 10 | Token service & surface (`TokenService` Mint/List/Revoke owner-scoped; REST `/api/v1/tokens`; MCP `token_create`/`token_list`/`token_revoke`; plaintext once, hash never echoed) | [ ] | [ ] | Pending |
 | 11 | Bearer-token auth path (`AuthMiddleware.resolve` bearer branch — prefix pre-filter, hashed `GetByHash`, async `TouchLastUsed`, revoked→401; REST/`/mcp`/WS) | [ ] | [ ] | Pending |
 | 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [ ] | [ ] | Pending |

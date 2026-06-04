@@ -105,6 +105,9 @@ func TestTokenTools_HappyPath(t *testing.T) {
 	body := toolText(t, res)
 	assert.Contains(t, body, "arb_")
 	assert.Contains(t, body, `"plaintext"`)
+	// Create is the highest-risk surface: it carries the plaintext, so any
+	// accidental hash inclusion here is maximally dangerous.
+	assert.NotContains(t, body, "token_hash", "create response must not include token_hash")
 
 	listRes, err := tokenListHandler(srv)(ctx, callReq(nil))
 	require.NoError(t, err)

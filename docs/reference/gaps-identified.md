@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA9-P2-01: Create response was not checked for `token_hash` absence on REST and MCP
+**Area**: Focus Area 9 — API tokens store & format (Pass 2)
+**Fix**: Added `assert.NotContains(t, w.Body.String(), "token_hash", ...)` to `TestTokenHandler_CreateThenList_HappyPath` in `adapter/http/token_handler_test.go`, and `assert.NotContains(t, body, "token_hash", ...)` to `TestTokenTools_HappyPath` in `adapter/mcp/tools_token_test.go`. The create endpoint is the highest-risk surface because it already carries the plaintext — accidentally including the hash here is maximally dangerous. The list response was already checked; now both create and list are pinned on both surfaces. The implementation is architecturally safe (`tokenView`/`tokenMeta` DTOs have no `TokenHash` field), but the test documents the security intent.
+
 ### GAP-FA9-P1-01: `TokenRepo.Delete` happy path (own-token revocation) was untested
 **Area**: Focus Area 9 — API tokens store & format (Pass 1)
 **Fix**: Added `TestTokenRepo_Delete_OwnToken` in `adapter/sqlite/token_repo_test.go`. Mints a token, deletes it with the correct owner ID, then asserts `GetByHash` returns `ErrNotFound` and `ListByUser` returns an empty slice. Documents that revocation = row delete and that the deleted token is immediately unresolvable by hash. Previously only error paths (non-existent ID, cross-user delete) were tested; the success path — the most common operational path — was absent.
