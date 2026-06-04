@@ -89,11 +89,125 @@ var (
 )
 
 func TestPorts_FakesSatisfyInterfaces(t *testing.T) {
+	ctx := context.Background()
+
 	var sr identity.SessionRepository = fakeSessionRepo{}
 	var op identity.OIDCProvider = fakeOIDC{}
+	var tr identity.TokenRepository = fakeTokenRepoP{}
+	var dc identity.DeviceCodeRepository = fakeDeviceCodeRepoP{}
 	require.NotNil(t, sr)
 	require.NotNil(t, op)
+	require.NotNil(t, tr)
+	require.NotNil(t, dc)
 
 	s := &identity.Session{ID: "tok", UserID: uuid.New(), CreatedAt: time.Now(), ExpiresAt: time.Now()}
-	require.NoError(t, sr.Create(context.Background(), s))
+	require.NoError(t, sr.Create(ctx, s))
+
+	tok := &identity.Token{ID: uuid.New(), UserID: uuid.New(), Label: "x", Prefix: "pre", TokenHash: "h"}
+	require.NoError(t, tr.Create(ctx, tok))
+	toks, err := tr.ListByUser(ctx, tok.UserID)
+	require.NoError(t, err)
+	_ = toks // nil is acceptable from a stub
+
+	code := &identity.DeviceCode{HashedCode: "h", UserCode: "AB12-CD34", Status: identity.DeviceCodePending, ExpiresAt: time.Now().Add(time.Hour)}
+	require.NoError(t, dc.Create(ctx, code))
+	n, err := dc.DeleteExpired(ctx, time.Now())
+	require.NoError(t, err)
+	_ = n
 }
+
+// TestDeviceCodeStatus_ExactStrings verifies the RFC-8628 status constants match
+// the wire strings the HTTP layer must produce. Drift here breaks polling clients.
+func TestDeviceCodeStatus_ExactStrings(t *testing.T) {
+	assert.Equal(t, identity.DeviceCodeStatus("pending"), identity.DeviceCodePending)
+	assert.Equal(t, identity.DeviceCodeStatus("approved"), identity.DeviceCodeApproved)
+	assert.Equal(t, identity.DeviceCodeStatus("denied"), identity.DeviceCodeDenied)
+	assert.Equal(t, identity.DeviceCodeStatus("consumed"), identity.DeviceCodeConsumed)
+}
+
+// TestSession_IDIsRawCookieValue documents the SessionRepository contract:
+// callers pass the RAW session token to Get and Delete (the cookie value as
+// received from the browser). Hashing to id_hash is the adapter's responsibility,
+// not the caller's. This test encodes that contract in a fake that stores by raw
+// value, confirming the caller-side API is raw-token oriented.
+func TestSession_IDIsRawCookieValue(t *testing.T) {
+	ctx := context.Background()
+
+	rawRepo := newRawSessionRepo()
+	uid := uuid.New()
+	now := time.Now()
+	raw := "raw-cookie-abc123"
+	s := &identity.Session{
+		ID:        raw,
+		UserID:    uid,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	}
+
+	require.NoError(t, rawRepo.Create(ctx, s))
+
+	// Caller passes the same raw value to Get; the contract does not require the
+	// caller to hash first.
+	got, err := rawRepo.Get(ctx, raw)
+	require.NoError(t, err)
+	assert.Equal(t, uid, got.UserID)
+	assert.Empty(t, got.ID,
+		"Get must not re-populate ID — the adapter never stored the raw token")
+
+	// Caller passes the raw value to Delete as well.
+	require.NoError(t, rawRepo.Delete(ctx, raw))
+	_, err = rawRepo.Get(ctx, raw)
+	assert.ErrorIs(t, err, identity.ErrNotFound)
+}
+
+// rawSessionEntry holds one stored session keyed by the raw ID.
+type rawSessionEntry struct {
+	s  identity.Session
+	ex time.Time
+}
+
+// rawSessionRepo is an in-memory SessionRepository that stores sessions by the
+// raw ID — illustrating the caller-side contract (callers always pass raw tokens).
+type rawSessionRepo struct {
+	store map[string]rawSessionEntry
+}
+
+func newRawSessionRepo() *rawSessionRepo {
+	return &rawSessionRepo{store: make(map[string]rawSessionEntry)}
+}
+
+func (r *rawSessionRepo) Create(_ context.Context, s *identity.Session) error {
+	r.store[s.ID] = rawSessionEntry{s: *s, ex: s.ExpiresAt}
+	return nil
+}
+
+func (r *rawSessionRepo) Get(_ context.Context, id string) (*identity.Session, error) {
+	entry, ok := r.store[id]
+	if !ok || time.Now().After(entry.ex) {
+		return nil, fmt.Errorf("get: %w", identity.ErrNotFound)
+	}
+	s := entry.s
+	s.ID = "" // the real adapter does NOT re-populate ID (it was never stored)
+	return &s, nil
+}
+
+func (r *rawSessionRepo) Delete(_ context.Context, id string) error {
+	if _, ok := r.store[id]; !ok {
+		return fmt.Errorf("delete: %w", identity.ErrNotFound)
+	}
+	delete(r.store, id)
+	return nil
+}
+
+func (r *rawSessionRepo) DeleteExpired(_ context.Context, now time.Time) (int, error) {
+	n := 0
+	for k, e := range r.store {
+		if !now.Before(e.ex) {
+			delete(r.store, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+var _ identity.SessionRepository = (*rawSessionRepo)(nil)

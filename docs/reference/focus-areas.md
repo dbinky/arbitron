@@ -18,7 +18,7 @@ result for that area.
 |---|---|---|---|---|
 | 1 | Auth config & mode (`domain/config` AuthConfig/OIDC/Session/BootstrapAdmins, `adapter/config/loader.go` — defaults, org-mode fail-fast validation, secret redaction) | [ ] | [ ] | Pending |
 | 2 | Identity package (`domain/identity` — `Identity`/`Role`/`Mode`, `WithIdentity`/`FromContext`/`MustFromContext`, no import of `domain/instance`) | [x] | [x] | Done |
-| 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [ ] | [ ] | Pending |
+| 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [x] | [ ] | Pass 1 Done |
 | 4 | Users schema & repo (migration 003 sessions+`users.subject`/`users.email`; `instance.User`; `UserRepository` GetByID/GetBySubject/Create/UpdateUsername/List/UpdateRole/CountAdmins; sqlc) | [ ] | [ ] | Pending |
 | 5 | Session store (`adapter/sqlite` SessionRepo — SHA-256 hash-on-store, expiry filter, `DeleteExpired`, sweep; secrecy test) | [ ] | [ ] | Pending |
 | 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [ ] | [ ] | Pending |
