@@ -21,6 +21,55 @@ vi.mock('../api/client', () => ({
 
 import QueueView from './QueueView'
 
+describe('QueueView fetchAll window', () => {
+  beforeEach(() => {
+    list.mockReset()
+    list.mockResolvedValue([])
+  })
+
+  // Robustness: fetchAll must pass the same 5-day since window to the terminal list
+  // calls that handleDismissAll uses. If since is dropped from list but not dismissAll,
+  // the user would see a longer history than what "Dismiss All" would clear.
+  it('passes a since date to the failed and completed list calls on mount', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+
+    // Both terminal list calls must include a since parameter.
+    const terminalCalls = list.mock.calls.filter(
+      (c) => (c[0] as { state?: string })?.state === 'failed' || (c[0] as { state?: string })?.state === 'completed',
+    )
+    expect(terminalCalls.length).toBeGreaterThanOrEqual(2)
+    for (const call of terminalCalls) {
+      const params = call[0] as { since?: string }
+      expect(params.since).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    }
+  })
+
+  it('does NOT pass a since date to the active (running/waiting/queued/paused) list calls', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+
+    const activeCalls = list.mock.calls.filter(
+      (c) => ['running', 'waiting', 'queued', 'paused'].includes(
+        (c[0] as { state?: string })?.state ?? '',
+      ),
+    )
+    expect(activeCalls.length).toBeGreaterThanOrEqual(1)
+    for (const call of activeCalls) {
+      const params = call[0] as { since?: string }
+      expect(params.since).toBeUndefined()
+    }
+  })
+})
+
 describe('QueueView show/hide dismissed toggle', () => {
   beforeEach(() => {
     list.mockReset()

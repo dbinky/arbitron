@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### SLICE-002: fetchAll never verified to pass since-date to terminal list calls
+**Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 30
+**Detail**: `fetchAll` passes `since = daysAgo(HISTORY_DAYS)` to the `failed` and `completed` list calls, matching the same window `handleDismissAll` uses. No test verified this contract. A regression dropping `since` from the list calls would cause QueueView to show ALL historical terminal instances, and "Dismiss All" scope would no longer match the displayed window. Added two tests: (1) `passes a since date to the failed and completed list calls on mount` — checks all terminal list call params include a valid ISO since date; (2) `does NOT pass a since date to the active list calls` — asserts `since` is absent for running/waiting/queued/paused calls, which should have no time window.
+
+---
+
 ### SLICE-001: Dismiss vertical slice missing observable UI outcome test
 **Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
 **Fixed**: Iteration 29
