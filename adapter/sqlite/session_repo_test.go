@@ -1,9 +1,14 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,4 +150,84 @@ func TestSecrecy_SessionToken_NeverStoredRaw(t *testing.T) {
 	got, err := repo.Get(ctx, raw)
 	require.NoError(t, err)
 	assert.Equal(t, uid, got.UserID)
+}
+
+// sweepFakeRepo is a minimal identity.SessionRepository that counts
+// DeleteExpired calls and can inject a one-shot error.
+type sweepFakeRepo struct {
+	mu      sync.Mutex
+	calls   []time.Time
+	errOnce error
+}
+
+var _ identity.SessionRepository = (*sweepFakeRepo)(nil)
+
+func (r *sweepFakeRepo) Create(context.Context, *identity.Session) error        { return nil }
+func (r *sweepFakeRepo) Get(context.Context, string) (*identity.Session, error) { return nil, nil }
+func (r *sweepFakeRepo) Delete(context.Context, string) error                   { return nil }
+func (r *sweepFakeRepo) DeleteExpired(_ context.Context, now time.Time) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	err := r.errOnce
+	r.errOnce = nil
+	r.calls = append(r.calls, now)
+	return 0, err
+}
+
+func (r *sweepFakeRepo) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
+// Happy path: SweepExpiredSessions calls DeleteExpired on each tick and exits
+// cleanly when the context is cancelled — no goroutine leak.
+func TestSweepExpiredSessions_TicksAndStops(t *testing.T) {
+	repo := &sweepFakeRepo{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		SweepExpiredSessions(ctx, repo, 5*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool { return repo.callCount() >= 2 },
+		2*time.Second, time.Millisecond,
+		"expected ≥2 DeleteExpired calls within 2 s")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SweepExpiredSessions did not exit after context cancel")
+	}
+}
+
+// Error path: a transient DeleteExpired error is logged but does not crash the
+// sweep loop — the next tick must still run.
+func TestSweepExpiredSessions_ErrorIsLoggedNotFatal(t *testing.T) {
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	repo := &sweepFakeRepo{errOnce: errors.New("db down")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		SweepExpiredSessions(ctx, repo, 5*time.Millisecond, log)
+		close(done)
+	}()
+
+	// Wait for at least 2 calls: first returns the seeded error, second succeeds.
+	require.Eventually(t, func() bool { return repo.callCount() >= 2 },
+		2*time.Second, time.Millisecond,
+		"expected ≥2 calls (error then success)")
+
+	cancel()
+	<-done
+
+	assert.Contains(t, logBuf.String(), "session sweep failed",
+		"error must be logged; loop must not have exited on first tick")
 }

@@ -8,6 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
+### GAP-FA5-P1-01: `SweepExpiredSessions` had no test coverage
+**Area**: Focus Area 5 — Session store (Pass 1)
+**Fix**: Added `sweepFakeRepo` (in-memory `identity.SessionRepository` with per-call error injection), `TestSweepExpiredSessions_TicksAndStops` (verifies DeleteExpired is called on each tick and goroutine exits cleanly on context cancel — no goroutine leak), and `TestSweepExpiredSessions_ErrorIsLoggedNotFatal` (verifies a transient DeleteExpired error is logged but the loop continues). Tests use 5 ms ticks with `require.Eventually` to remain non-flaky.
+
 ### GAP-FA4-P2-01: `User.Subject` and `User.Email` had no `json:"-"` tag; MCP had no IdP-field non-leakage assertions
 **Area**: Focus Area 4 — Users schema & repo (Pass 2)
 **Fix**: Added `json:"-"` to `User.Subject` and `User.Email` in `domain/instance/user.go`. Added `TestUser_JSONMarshal_IdPFieldsNeverLeak` in `domain/instance/user_test.go`. Strengthened `TestUserHandler_HappyPath` (HTTP) to seed Subject/Email values and assert both values and field names are absent from the list response. Strengthened `TestUserTools_HappyPath` (MCP) with the same assertions for `user_list`. Pattern mirrors the FA-3 `Token.TokenHash`/`DeviceCode.HashedCode` fix.
