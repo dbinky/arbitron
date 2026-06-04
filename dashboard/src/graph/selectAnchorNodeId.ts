@@ -11,6 +11,16 @@ function nodeIdSet(def: WorkflowDefinition): Set<string> {
   return new Set(def.nodes.map((n) => n.id))
 }
 
+function sinkNodeId(def: WorkflowDefinition): string | null {
+  const hasOutgoing = new Set(def.edges.map((e) => e.source))
+  // Last node with no outgoing edge (terminal-most in declaration order).
+  let sink: string | null = null
+  for (const n of def.nodes) {
+    if (!hasOutgoing.has(n.id)) sink = n.id
+  }
+  return sink
+}
+
 /**
  * Pick the id of the real step node the viewport should center on.
  *
@@ -22,7 +32,7 @@ export function selectAnchorNodeId(
   instance: Instance | null,
   workflowDef: WorkflowDefinition | null,
   executionStates: Record<string, NodeExecutionState>,
-  _trace: NodeExecution[],
+  trace: NodeExecution[],
 ): string | null {
   if (!workflowDef || workflowDef.nodes.length === 0) return null
 
@@ -51,6 +61,16 @@ export function selectAnchorNodeId(
       (n) => executionStates[n.id] === 'failed',
     )
     if (markedFailed) return markedFailed.id
+  }
+
+  // Completed: last completed node in trace order, else a sink node.
+  if (instance.state === 'completed') {
+    const completed = trace
+      .filter((e) => e.status === 'succeeded' && ids.has(e.nodeId))
+      .sort((a, b) => (a.completedAt ?? '').localeCompare(b.completedAt ?? ''))
+    if (completed.length > 0) return completed[completed.length - 1].nodeId
+    const sink = sinkNodeId(workflowDef)
+    if (sink) return sink
   }
 
   // General fallback for any instance with no specific anchor.

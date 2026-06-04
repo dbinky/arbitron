@@ -152,3 +152,34 @@ describe('selectAnchorNodeId — failed instance', () => {
     expect(selectAnchorNodeId(i, d, states, [])).toBe('b')
   })
 })
+
+describe('selectAnchorNodeId — completed instance', () => {
+  it('returns the last completed node by trace order', () => {
+    const d = def([N('a'), N('b'), N('c')], [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ])
+    const states: Record<string, NodeExecutionState> = {
+      a: 'completed',
+      b: 'completed',
+      c: 'completed',
+    }
+    const i = inst({ state: 'completed' })
+    const t = [
+      exec('a', 'succeeded', '2026-01-01T00:00:01Z'),
+      exec('b', 'succeeded', '2026-01-01T00:00:02Z'),
+      exec('c', 'succeeded', '2026-01-01T00:00:03Z'),
+    ]
+    expect(selectAnchorNodeId(i, d, states, t)).toBe('c')
+  })
+
+  it('falls back to a graph sink node when the trace has no completed nodes', () => {
+    const d = def([N('a'), N('b'), N('c')], [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ])
+    const i = inst({ state: 'completed' })
+    // 'c' has no outgoing edge => sink.
+    expect(selectAnchorNodeId(i, d, {}, [])).toBe('c')
+  })
+})
