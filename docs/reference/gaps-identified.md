@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA24-P2-01: HTTP intervention handlers missing non-owner 404 tests for Resume/Cancel/Retry/Rerun/SetPriority
+**Area**: Focus Area 24 — Intervention authz & attribution (Pass 2)
+**Fix**: Added "non-owner gets 404 (intervention gate enforced in the service)" sub-tests to `TestInstanceHandler_Resume`, `TestInstanceHandler_Cancel`, `TestInstanceHandler_Retry`, `TestInstanceHandler_Rerun`, and `TestInstanceHandler_SetPriority_NonOwner_404` in `adapter/http/instance_handler_test.go`. Each test injects `instance.ErrNotFound` from the mock service (the signal `authorizeIntervention` sends for non-owner access) and asserts HTTP 404 with `NOT_FOUND` code — identical to a genuinely missing instance (no existence leak). `TestInstanceHandler_Pause` already had this test; this change makes all six intervention HTTP handlers consistently covered. The domain-level gate is tested in `engine_intervention_authz_test.go`; these tests pin that each HTTP adapter handler correctly propagates `ErrNotFound` to 404 without leaking whether the instance exists.
+
 ### GAP-FA24-P1-01: `authorizeIntervention` missing no-identity fail-closed test
 **Area**: Focus Area 24 — Intervention authz & attribution (Pass 1)
 **Fix**: Added `TestIntervention_NoIdentity_FailClosed` to `domain/engine/engine_intervention_authz_test.go`. The test calls all six intervention operations (Pause, Resume, Cancel, SetPriority, Retry, Rerun) with `context.Background()` (no identity in context) and asserts each returns `ErrNotFound` and leaves instance state unchanged. This pins the fail-closed invariant in `authorizeIntervention → canView`: `identity.FromContext` returning `!ok` causes `canView` to return `false`, which maps to `ErrNotFound` — byte-for-byte identical to a non-owner request (no existence or state leak). Mirrors the no-identity fail-closed tests added for the WS handler (FA-22 P1), the per-instance WS stream (FA-22 P2), and the conversationHandler (FA-23 P2).

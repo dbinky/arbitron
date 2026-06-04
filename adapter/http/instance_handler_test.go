@@ -844,6 +844,26 @@ func TestInstanceHandler_Resume(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the handler maps it to 404, identical to a missing instance.
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.resumeFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/resume", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Resume(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
+
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
@@ -902,6 +922,24 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		h.Cancel(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.cancelFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Cancel(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
@@ -983,6 +1021,24 @@ func TestInstanceHandler_Retry(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.retryFn = func(gotID uuid.UUID, _ map[string]any) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
+
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
@@ -1060,6 +1116,24 @@ func TestInstanceHandler_Rerun(t *testing.T) {
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, newID.String(), resp["instanceId"])
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.rerunFn = func(gotID uuid.UUID) (uuid.UUID, error) {
+			return uuid.Nil, fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/rerun", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Rerun(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {
@@ -1752,6 +1826,28 @@ func TestInstanceHandler_SetPriority_ServiceError_Conflict(t *testing.T) {
 	h.SetPriority(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestInstanceHandler_SetPriority_NonOwner_404(t *testing.T) {
+	// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+	// the handler maps it to 404, identical to a missing instance.
+	h, _, _, _, svc := newInstanceHandler()
+	svc.setPriorityFn = func(gotID uuid.UUID, _ string) error {
+		return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+	}
+
+	instanceID := uuid.New()
+	body := `{"priority":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+instanceID.String()+"/priority", strings.NewReader(body))
+	req = withChiURLParam(req, "id", instanceID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SetPriority(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "NOT_FOUND", resp.Code)
 }
 
 // ---------------------------------------------------------------------------
