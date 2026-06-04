@@ -17,13 +17,18 @@ import type { WorkflowDefinition } from '../graph/types'
 // ---------------------------------------------------------------------------
 
 const renderCount = { value: 0 }
+const setCenterSpy = vi.fn()
+let lastReactFlowProps: { nodes: Array<{ id: string; position?: { x: number; y: number } }> } | null = null
 
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes }: { nodes: Array<{ id: string }> }) => {
+  ReactFlow: (props: {
+    nodes: Array<{ id: string; position?: { x: number; y: number } }>
+  }) => {
     renderCount.value += 1
+    lastReactFlowProps = props
     return (
       <div>
-        {nodes.map((n) => (
+        {props.nodes.map((n) => (
           // Keyed by stable node id: React preserves the DOM element across
           // re-renders unless the identity/key changes (a remount).
           <div key={n.id} data-testid={`node-${n.id}`} />
@@ -38,7 +43,10 @@ vi.mock('@xyflow/react', () => ({
   MarkerType: { ArrowClosed: 'arrowclosed' },
   // Referenced (not called) by CalloutConnector, imported transitively.
   useNodes: () => [],
-  useReactFlow: () => ({ flowToScreenPosition: (p: unknown) => p }),
+  useReactFlow: () => ({
+    flowToScreenPosition: (p: unknown) => p,
+    setCenter: setCenterSpy,
+  }),
 }))
 
 // Import after the mock is registered.
@@ -65,6 +73,8 @@ const trace: NodeExecution[] = []
 
 beforeEach(() => {
   renderCount.value = 0
+  setCenterSpy.mockClear()
+  lastReactFlowProps = null
 })
 
 // ---------------------------------------------------------------------------
@@ -125,5 +135,88 @@ describe('GraphView — no-remount on unrelated re-render', () => {
 
     expect(screen.getByTestId('node-a')).toBeTruthy()
     expect(screen.getByTestId('node-b')).toBeTruthy()
+  })
+})
+
+describe('GraphView — default-zoom centering on mount', () => {
+  it('centers on the active node at DEFAULT_ZOOM=0.9 on mount', () => {
+    render(
+      <GraphView
+        instance={instance}
+        workflowDef={workflowDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+
+    // Active node is 'a' (instance.currentNodeId === 'a', state 'running').
+    const aNode = lastReactFlowProps!.nodes.find((n) => n.id === 'a')!
+    const expectedX = aNode.position!.x + 200 / 2 // NODE_WIDTH / 2
+    const expectedY = aNode.position!.y + 80 / 2 // NODE_HEIGHT / 2
+
+    expect(setCenterSpy).toHaveBeenCalledTimes(1)
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      expectedX,
+      expectedY,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
+  })
+
+  it('does not call setCenter when there is no anchor (empty graph)', () => {
+    const emptyDef = { ...workflowDef, nodes: [], edges: [] }
+    render(
+      <GraphView
+        instance={instance}
+        workflowDef={emptyDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    expect(setCenterSpy).not.toHaveBeenCalled()
+  })
+
+  it('centers on the final node for a completed instance', () => {
+    const completedInstance = {
+      ...instance,
+      state: 'completed',
+      currentNodeId: undefined,
+    } as unknown as Instance
+    const completedTrace: NodeExecution[] = [
+      {
+        id: 'e-a',
+        instanceId: 'i',
+        nodeId: 'a',
+        attempt: 1,
+        status: 'succeeded',
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:01Z',
+      } as NodeExecution,
+      {
+        id: 'e-b',
+        instanceId: 'i',
+        nodeId: 'b',
+        attempt: 1,
+        status: 'succeeded',
+        startedAt: '2026-01-01T00:00:02Z',
+        completedAt: '2026-01-01T00:00:03Z',
+      } as NodeExecution,
+    ]
+    render(
+      <GraphView
+        instance={completedInstance}
+        workflowDef={workflowDef}
+        trace={completedTrace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    const bNode = lastReactFlowProps!.nodes.find((n) => n.id === 'b')!
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      bNode.position!.x + 100,
+      bNode.position!.y + 40,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
   })
 })

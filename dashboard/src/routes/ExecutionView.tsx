@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ReactFlowProvider, ReactFlow, Background, Controls } from '@xyflow/react'
+import { ReactFlowProvider, ReactFlow, Background, Controls, useReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import type { Instance, NodeExecution, WebSocketEvent } from '../api/types'
 import type { WorkflowDefinition, NodeExecutionState } from '../graph/types'
 import { api } from '../api/client'
-import { useGraphLayout } from '../graph/useGraphLayout'
+import { useGraphLayout, NODE_WIDTH, NODE_HEIGHT } from '../graph/useGraphLayout'
+import { selectAnchorNodeId } from '../graph/selectAnchorNodeId'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { edgeTypes } from '../graph/edges/edgeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
@@ -19,6 +20,8 @@ import ResizablePanel from '../components/ResizablePanel'
 import SidePanel from '../components/SidePanel'
 import InteractivePanel from '../components/InteractivePanel'
 import styles from './ExecutionView.module.css'
+
+const DEFAULT_ZOOM = 0.9
 
 /**
  * Map trace data + instance state onto per-node execution states for the graph.
@@ -98,6 +101,39 @@ export function GraphView({
     [rfNodes, selectedNodeId],
   )
 
+  const reactFlow = useReactFlow()
+
+  // The real step node the viewport should center on for this instance state.
+  const anchorId = useMemo(
+    () => selectAnchorNodeId(instance, workflowDef, executionStates, trace),
+    [instance, workflowDef, executionStates, trace],
+  )
+
+  // Resolve the anchor's node-center coordinates from the laid-out rfNodes.
+  // Loop-container overlay nodes are excluded automatically: anchorId only
+  // ever references a real workflowDef node id.
+  const anchorPos = useMemo(() => {
+    if (!anchorId) return null
+    const node = rfNodes.find((n) => n.id === anchorId)
+    if (!node) return null
+    return {
+      x: node.position.x + NODE_WIDTH / 2,
+      y: node.position.y + NODE_HEIGHT / 2,
+    }
+  }, [anchorId, rfNodes])
+
+  // Center once, on first mount, at the readable default zoom. Guarded by a ref
+  // so live WebSocket re-renders (which re-run this component) do not re-center
+  // and fight the user. Follow-on-advance behavior is added via
+  // useFollowActiveNode; this effect is the one-shot mount center.
+  const didInitialCenter = useRef(false)
+  useEffect(() => {
+    if (didInitialCenter.current) return
+    if (!anchorPos) return
+    reactFlow.setCenter(anchorPos.x, anchorPos.y, { zoom: DEFAULT_ZOOM })
+    didInitialCenter.current = true
+  }, [anchorPos, reactFlow])
+
   return (
     <div className={styles.graphContainer}>
       <ReactFlow
@@ -106,8 +142,6 @@ export function GraphView({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}

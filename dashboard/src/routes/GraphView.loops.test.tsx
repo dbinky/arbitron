@@ -16,7 +16,11 @@ vi.mock('@xyflow/react', () => ({
   Controls: () => null,
   MarkerType: { ArrowClosed: 'arrowclosed' },
   useNodes: () => [],
-  useReactFlow: () => ({ flowToScreenPosition: (p: unknown) => p }),
+  useReactFlow: () => ({
+    flowToScreenPosition: (p: unknown) => p,
+    setCenter: () => {},
+    getZoom: () => 1,
+  }),
 }))
 
 import { GraphView } from './ExecutionView'
