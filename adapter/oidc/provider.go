@@ -106,7 +106,7 @@ func (p *Provider) Exchange(ctx context.Context, code string) (identity.Claims, 
 		return identity.Claims{}, fmt.Errorf("oidc: empty subject claim")
 	}
 	username := firstNonEmpty(c.PreferredUsername, c.Name, c.Email, subject)
-	return identity.Claims{Subject: subject, Username: username, Email: c.Email}, nil
+	return identity.Claims{Subject: subject, Username: username, Email: c.Email, Nonce: c.Nonce}, nil
 }
 
 func contains(ss []string, want string) bool {

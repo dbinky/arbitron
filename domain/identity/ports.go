@@ -125,16 +125,19 @@ type DeviceCodeRepository interface {
 
 // Claims are the verified identity claims returned by the IdP after a successful
 // authorization-code exchange. Subject is the IdP-stable identifier used to
-// resolve/provision the local user.
+// resolve/provision the local user. Nonce is the value from the ID token that
+// the callback handler MUST compare (constant-time) against the nonce it minted
+// before redirecting to the IdP — this is the replay guard.
 type Claims struct {
 	Subject  string
 	Username string
 	Email    string
+	Nonce    string // ID-token nonce; callback handler must verify == minted nonce
 }
 
 // OIDCProvider abstracts the IdP so the OIDC library stays in adapter/oidc.
 // AuthCodeURL builds the redirect to the IdP; Exchange swaps the returned code
-// for verified Claims (ID-token signature + nonce verified inside the adapter).
+// for verified Claims (ID-token signature + nonce returned for caller to verify).
 type OIDCProvider interface {
 	AuthCodeURL(state, nonce string) string
 	Exchange(ctx context.Context, code string) (Claims, error)

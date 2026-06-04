@@ -135,6 +135,7 @@ func TestProvider_Exchange_Success(t *testing.T) {
 	assert.Equal(t, "subject-123", claims.Subject)
 	assert.Equal(t, "alice", claims.Username)
 	assert.Equal(t, "alice@example.com", claims.Email)
+	assert.Equal(t, "nc", claims.Nonce, "nonce from the ID token must be surfaced for the callback handler to verify")
 }
 
 func TestProvider_AuthCodeURL_BindsStateAndNonce(t *testing.T) {
@@ -217,6 +218,71 @@ func TestProvider_Exchange_WrongAudience(t *testing.T) {
 	p := newProvider(t, h)
 	_, err := p.Exchange(context.Background(), "code")
 	require.Error(t, err, "a token whose aud is a different client must be rejected")
+}
+
+func TestProvider_Exchange_WrongIssuer(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		c := baseClaims(h.issuer)
+		c["iss"] = "https://evil-issuer.example.com" // wrong issuer, correct signature
+		return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+	}
+	p := newProvider(t, h)
+	_, err := p.Exchange(context.Background(), "code")
+	require.Error(t, err, "a token with a mismatched iss must be rejected even if signature is valid")
+}
+
+func TestProvider_Exchange_ExpiredToken(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		c := baseClaims(h.issuer)
+		c["exp"] = time.Now().Add(-time.Hour).Unix()
+		c["iat"] = time.Now().Add(-2 * time.Hour).Unix()
+		return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+	}
+	p := newProvider(t, h)
+	_, err := p.Exchange(context.Background(), "code")
+	require.Error(t, err, "an expired ID token must be rejected")
+}
+
+// TestProvider_Exchange_UsernameFallbackChain verifies the fallback order:
+// preferred_username → name → email → subject. Real-world IdPs vary in which
+// fields they populate; the chain must produce a stable non-empty username.
+func TestProvider_Exchange_UsernameFallbackChain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		setExtra func(c map[string]any)
+		wantUser string
+	}{
+		{"preferred_username present", func(c map[string]any) {}, "alice"},
+		{"name fallback", func(c map[string]any) { delete(c, "preferred_username") }, "alice"},
+		{"email fallback", func(c map[string]any) {
+			delete(c, "preferred_username")
+			delete(c, "name")
+		}, "alice@example.com"},
+		{"subject fallback", func(c map[string]any) {
+			delete(c, "preferred_username")
+			delete(c, "name")
+			delete(c, "email")
+		}, "subject-123"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			h := newIDPHarness(t)
+			h.tokenFn = func(t *testing.T) (string, int) {
+				c := baseClaims(h.issuer)
+				// baseClaims only sets preferred_username and email; add name for the
+				// chain to have something to fall back to before email.
+				c["name"] = "alice"
+				tc.setExtra(c)
+				return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+			}
+			p := newProvider(t, h)
+			claims, err := p.Exchange(context.Background(), "code")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantUser, claims.Username)
+		})
+	}
 }
 
 // Structural: Claims carries no IdP access/refresh token field, reinforcing that

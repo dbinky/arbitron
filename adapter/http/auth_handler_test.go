@@ -18,13 +18,17 @@ import (
 )
 
 // fakeOIDCProvider returns a canned Claims or error.
+// AuthCodeURL captures the nonce the handler mints; Exchange echoes it back
+// unless claims.Nonce is already set (used in nonce-mismatch tests).
 type fakeOIDCProvider struct {
-	claims   identity.Claims
-	exchErr  error
-	lastCode string
+	claims        identity.Claims
+	exchErr       error
+	lastCode      string
+	capturedNonce string // set by AuthCodeURL; echoed by Exchange when claims.Nonce is empty
 }
 
 func (f *fakeOIDCProvider) AuthCodeURL(state, nonce string) string {
+	f.capturedNonce = nonce
 	return "https://idp.example.com/authorize?state=" + url.QueryEscape(state) + "&nonce=" + url.QueryEscape(nonce)
 }
 
@@ -33,7 +37,13 @@ func (f *fakeOIDCProvider) Exchange(_ context.Context, code string) (identity.Cl
 	if f.exchErr != nil {
 		return identity.Claims{}, f.exchErr
 	}
-	return f.claims, nil
+	c := f.claims
+	if c.Nonce == "" {
+		// Echo back the nonce the handler minted so the replay guard passes in
+		// tests that are not specifically testing nonce mismatch.
+		c.Nonce = f.capturedNonce
+	}
+	return c, nil
 }
 
 // failingSessionRepo wraps the in-memory fake but fails Create.
@@ -180,6 +190,19 @@ func TestAuthHandler_Callback_StateMismatch(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, cbRec.Code)
 	assert.Empty(t, sessions.byToken, "no session on state mismatch")
+}
+
+func TestAuthHandler_Callback_NonceMismatch(t *testing.T) {
+	// Exchange returns a nonce that doesn't match what the handler minted.
+	// The callback must reject with 400 to guard against replay attacks.
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u", Nonce: "WRONG_NONCE"}}
+	sessions := newFakeSessionRepo()
+	h := newAuthHandler(oidc, sessions, newFakeUserRepo())
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "nonce mismatch must be rejected with 400")
+	assert.Empty(t, sessions.byToken, "no session must be created on nonce mismatch")
+	assert.Nil(t, findCookie(rec.Result().Cookies(), "arbitron_session"))
 }
 
 func TestAuthHandler_Callback_MissingCode(t *testing.T) {

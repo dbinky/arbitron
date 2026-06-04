@@ -70,15 +70,14 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "login failed")
 		return
 	}
-	// Nonce equality (replay guard): verifier.Verify confirmed signature/issuer/
-	// audience inside the OIDC adapter; the nonce we minted is held only here, so
-	// the equality check lives in the handler. wantNonce is bound into the signed
-	// state cookie; the adapter currently does not surface the token's nonce on
-	// the Claims (the port stays clean), so this is defence-in-depth: the signed,
-	// HMAC-verified state cookie already proves this callback belongs to the login
-	// we issued. wantNonce is retained for the Phase-2 wiring that threads it into
-	// the verifier.
-	_ = wantNonce
+	// Nonce equality (replay guard): the nonce we minted at login is held in the
+	// HMAC-signed state cookie; the adapter now surfaces it via Claims.Nonce. A
+	// constant-time comparison guards against timing attacks. Mismatch means the
+	// ID token was minted for a different login session (replay).
+	if subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(wantNonce)) != 1 {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "nonce mismatch")
+		return
+	}
 
 	user, err := h.resolveOrProvision(r.Context(), claims)
 	if err != nil {

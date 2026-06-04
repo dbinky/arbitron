@@ -4,9 +4,15 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
-
 ## Fixed Previously
+
+### GAP-FA6-P2-01: OIDC nonce check deferred — ID token nonce never verified against expected nonce
+**Area**: Focus Area 6 — OIDC adapter (Pass 1)
+**Fix**: Added `Nonce string` to `identity.Claims` in `domain/identity/ports.go`. Updated `adapter/oidc/provider.go` `Exchange` to return `c.Nonce`. Replaced `_ = wantNonce` in `adapter/http/auth_handler.go` `Callback` with `subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(wantNonce)) != 1` → 400 Bad Request. Updated `fakeOIDCProvider` in `adapter/http/auth_handler_test.go` to capture the minted nonce in `AuthCodeURL` and echo it back from `Exchange` (so existing callback tests pass). Added `TestAuthHandler_Callback_NonceMismatch` which seeds `claims.Nonce = "WRONG_NONCE"` and asserts 400 + no session cookie. Added `TestProvider_Exchange_Success` assertion that `claims.Nonce == "nc"`. The replay guard is now active end-to-end.
+
+### GAP-FA6-P1-01: OIDC adapter verifier checks for wrong-issuer, expired-token, and username fallback not tested
+**Area**: Focus Area 6 — OIDC adapter (Pass 1)
+**Fix**: Added `TestProvider_Exchange_WrongIssuer` (token with mismatched `iss` but valid signature must be rejected), `TestProvider_Exchange_ExpiredToken` (expired ID token must be rejected), and `TestProvider_Exchange_UsernameFallbackChain` (table test covering all four fallback levels: `preferred_username` → `name` → `email` → `subject`). These complete the security verifier check coverage alongside the existing bad-signature and wrong-audience tests.
 
 ### GAP-FA5-P2-01: No adapter-level test that `SessionRepo.Get` never repopulates `Session.ID`
 **Area**: Focus Area 5 — Session store (Pass 2)
