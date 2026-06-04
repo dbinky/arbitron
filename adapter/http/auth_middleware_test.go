@@ -411,11 +411,12 @@ func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	assert.Equal(t, identity.RoleAdmin, probe.id.Role, "local mode ignores cookies entirely")
 }
 
-// TestAuthMiddleware_Local_DefaultUserError_FailsClosed verifies that if
+// TestAuthMiddleware_Local_DefaultUserError_ServerError verifies that if
 // GetDefaultUser returns an error (e.g. DB unavailable at startup), local mode
-// fails closed: every request gets 401 rather than a panic or a 500.  The
-// sync.Once caches the error permanently, so subsequent requests also fail.
-func TestAuthMiddleware_Local_DefaultUserError_FailsClosed(t *testing.T) {
+// fails closed with a 500: this is a server-state failure (we cannot establish
+// the default identity), distinct from a 401 (caller presented no credential).
+// The sync.Once caches the error permanently, so subsequent requests also fail.
+func TestAuthMiddleware_Local_DefaultUserError_ServerError(t *testing.T) {
 	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, &errUserRepo{newFakeUserRepo()})
 	probe := &identityProbe{}
 
@@ -423,7 +424,7 @@ func TestAuthMiddleware_Local_DefaultUserError_FailsClosed(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
 		rec := httptest.NewRecorder()
 		mw.Handler(probe.handler()).ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusUnauthorized, rec.Code, "request %d must be rejected", i)
+		assert.Equal(t, http.StatusInternalServerError, rec.Code, "request %d must be a server error", i)
 		assert.False(t, probe.called, "handler must never run when GetDefaultUser fails")
 	}
 }
@@ -461,12 +462,15 @@ func TestAuthMiddleware_Bearer_HappyPath(t *testing.T) {
 	assert.Equal(t, "carol", probe.id.Username)
 	assert.Equal(t, identity.RoleUser, probe.id.Role)
 
-	// TouchLastUsed runs exactly once and names the matched token's ID.
+	// The last-used touch is coalesced into the owned flusher; Stop() drains it
+	// synchronously (no time.Sleep), then the channel carries exactly the matched
+	// token's ID.
 	hash := identity.HashToken(plaintext)
+	mw.Stop()
 	select {
 	case touchedID := <-tokens.touchedIDs:
 		assert.Equal(t, tokens.byHash[hash].ID, touchedID, "TouchLastUsed must be called with the matched token's ID")
-	case <-time.After(time.Second):
+	default:
 		t.Fatal("TouchLastUsed was never invoked")
 	}
 }
@@ -596,9 +600,13 @@ func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		require.True(t, probe.called)
+		// The touch is coalesced into the flusher; Stop() drains it synchronously.
+		// A failing TouchLastUsed is swallowed (best-effort), so the request still
+		// returned 200 above.
+		mw.Stop()
 		select {
 		case <-tokens.touchedIDs:
-		case <-time.After(time.Second):
+		default:
 			t.Fatal("TouchLastUsed not invoked")
 		}
 	})

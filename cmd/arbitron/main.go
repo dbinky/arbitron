@@ -174,6 +174,11 @@ func (ds *domainStack) Close(ctx context.Context) {
 	if ds.sweepCancel != nil {
 		ds.sweepCancel()
 	}
+	// Stop the bearer last-used flusher's owned goroutine, draining any pending
+	// touches synchronously before the DB closes.
+	if ds.authMW != nil {
+		ds.authMW.Stop()
+	}
 	if ds.db != nil {
 		ds.db.Close()
 	}
