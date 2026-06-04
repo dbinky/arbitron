@@ -138,6 +138,33 @@ func TestProvisioner_Resolve_KnownSubject(t *testing.T) {
 	assert.False(t, refreshed, "no refresh when username unchanged")
 }
 
+// Error/edge: UpdateUsername collision must not abort login (best-effort refresh).
+// The code deliberately ignores the error from UpdateUsername so a colliding
+// username from another user's row never breaks an active login round-trip.
+func TestProvisioner_Resolve_UpdateUsernameCollisionTolerated(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	id := uuid.New()
+	sub := "sub-collision"
+	repo.bySubject[sub] = &User{ID: id, Subject: &sub, Username: "old", Role: identity.RoleUser}
+	repo.updateNameErr = errors.New("username already taken by another user")
+	p := NewProvisioner(repo, nil)
+
+	u, err := p.Resolve(context.Background(), Claims{Subject: sub, Username: "taken"})
+	require.NoError(t, err, "UpdateUsername failure must not abort login")
+	assert.Equal(t, "taken", u.Username, "in-memory username reflects the claim despite DB error")
+	assert.Equal(t, 0, repo.createCalls, "no new user must be created")
+}
+
+// Edge: username="" and email="" -> username falls back to subject (third tier).
+func TestProvisioner_Resolve_UsernameSubjectFallback(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil)
+
+	u, err := p.Resolve(context.Background(), Claims{Subject: "sub-only"})
+	require.NoError(t, err)
+	assert.Equal(t, "sub-only", u.Username, "username must fall back to subject when both username and email are empty")
+}
+
 // Isolation/security: bootstrap by subject and by email both create admins;
 // matching is case-insensitive and exact (not substring); IsBootstrapAdmin is
 // consistent with the provisioning verdict.

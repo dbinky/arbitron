@@ -4,6 +4,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+### GAP-FA13-P1-01: `UpdateUsername` collision tolerance and `pickUsername` subject-fallback untested
+**Area**: Focus Area 13 — JIT provisioning & bootstrap admin (Pass 1)
+**Fix**: Added `TestProvisioner_Resolve_UpdateUsernameCollisionTolerated` in `domain/instance/provisioner_test.go`. Sets `updateNameErr` on the fake repo and verifies that `Resolve` still returns a user with the updated in-memory username and does NOT create a new user — documenting the explicitly-designed best-effort refresh behavior (the code does `_ = p.users.UpdateUsername(...)` with a comment explaining username collision must not abort login). Also added `TestProvisioner_Resolve_UsernameSubjectFallback` verifying the third tier of `pickUsername`: when both `Username` and `Email` are empty, the subject is used as the display name.
+
 ### GAP-FA12-P2-01: `/auth/device/token` response had no `token_hash` non-leakage assertion; Start had no `hashed_code` pin
 **Area**: Focus Area 12 — Device-code login (Pass 2)
 **Fix**: Extended `TestDeviceHandler_HappyPath` in `adapter/http/device_handler_test.go`. Added `assert.NotContains(wt.Body.String(), "token_hash", ...)` to the Token endpoint response — the device token endpoint returns a newly minted arb_ access_token (highest-risk surface) and must never echo the internal token hash. Added `assert.NotContains(w.Body.String(), "hashed_code", ...)` and `assert.NotContains(w.Body.String(), "device_code_hash", ...)` to the Start response — the Start response returns the plaintext device_code (correct, once) but must never include the sha256 hash. Mirrors the FA-9 secrecy pin pattern applied to token_create and token_list.
