@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -78,6 +79,28 @@ func TestList_IncludeDismissed_MarksAndKeepsOrder(t *testing.T) {
 	}
 	assert.True(t, flags[a.String()], "dismissed item must be marked dismissed=true")
 	assert.False(t, flags[b.String()], "non-dismissed item marked dismissed=false")
+}
+
+// Error: DismissedIDs repo error causes List to return 500.
+func TestList_DismissalRepoError_500(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/instances")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+// Error: user resolution error in List returns 500 before DismissedIDs is called.
+func TestList_UserResolutionError_500(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &errUserRepo{err: fmt.Errorf("auth error")})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/instances")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
 }
 
 func TestList_DismissalScopedToActingUser(t *testing.T) {

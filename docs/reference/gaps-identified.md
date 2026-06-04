@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LIST-001: Error-path coverage missing for List dismissed-marking
+**Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 15
+**Detail**: The List handler has two error returns in its dismissal section: `currentUser.CurrentUser(r)` fails → 500, and `dismissals.DismissedIDs(...)` fails → 500. Neither was tested; the error category was entirely absent for the list endpoint. Added `TestList_DismissalRepoError_500` (errDismissalRepo returns an error) and `TestList_UserResolutionError_500` (errUserRepo returns an error) to cover both paths.
+
 ### HAND-003: DismissAll state=completed path untested
 **Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
 **Fixed**: Iteration 14
