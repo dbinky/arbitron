@@ -320,8 +320,9 @@ describe('QueueView dismiss handlers', () => {
     })
   })
 
-  // Error: handleDismiss API failure — error is caught; view stays stable and does not refetch.
-  it('handleDismiss: API failure is caught; view stays stable and does not refetch', async () => {
+  // Error: handleDismiss API failure surfaces through the shared error state
+  // instead of being silently swallowed; no refetch is attempted.
+  it('handleDismiss: API failure surfaces an error and does not refetch', async () => {
     const inst = {
       id: 'f3',
       workflowName: 'wf',
@@ -345,16 +346,14 @@ describe('QueueView dismiss handlers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
 
-    // After the failed API call the view must still render (no crash, no unhandled rejection).
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
-    })
+    // The failure must surface through the shared error surface (not be swallowed).
+    await screen.findByText(/server error/i)
     // No refetch — the rejection is caught before fetchAll is reached.
     expect(list).not.toHaveBeenCalled()
   })
 
-  // Error: handleRestore API failure — error is caught; view stays stable and does not refetch.
-  it('handleRestore: API failure is caught; view stays stable and does not refetch', async () => {
+  // Error: handleRestore API failure surfaces through the shared error state.
+  it('handleRestore: API failure surfaces an error and does not refetch', async () => {
     const inst = {
       id: 'f4',
       workflowName: 'wf',
@@ -379,14 +378,12 @@ describe('QueueView dismiss handlers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
-    })
+    await screen.findByText(/server error/i)
     expect(list).not.toHaveBeenCalled()
   })
 
-  // Error: handleDismissAll API failure — error is caught; view stays stable and does not refetch.
-  it('handleDismissAll: API failure is caught; view stays stable and does not refetch', async () => {
+  // Error: handleDismissAll API failure surfaces through the shared error state.
+  it('handleDismissAll: API failure surfaces an error and does not refetch', async () => {
     dismissAll.mockRejectedValue(new Error('server error'))
 
     render(
@@ -400,9 +397,7 @@ describe('QueueView dismiss handlers', () => {
     const [dismissAllBtn] = screen.getAllByRole('button', { name: 'Dismiss All' })
     fireEvent.click(dismissAllBtn)
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
-    })
+    await screen.findByText(/server error/i)
     expect(list).not.toHaveBeenCalled()
   })
 

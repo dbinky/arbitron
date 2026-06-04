@@ -40,6 +40,10 @@ export default function QueueView() {
     try {
       const since = daysAgo(HISTORY_DAYS)
 
+      // Seam: `showDismissed` drives the FETCH (includeDismissed), per-row
+      // `inst.dismissed` from the server drives the RENDER (Restore vs Dismiss,
+      // dimming). The server reconciles the two — do NOT re-thread showDismissed
+      // down into the rows or it reintroduces the toggle/refetch flicker.
       const [running, waiting, queued, paused, failedRes, completedRes] =
         await Promise.all([
           api.instances.list({ state: 'running' }),
@@ -66,8 +70,10 @@ export default function QueueView() {
     try {
       await api.instances.dismiss(id)
       await fetchAll()
-    } catch {
-      // best-effort: item stays visible if the API call fails
+    } catch (err) {
+      // Route failures through the shared error surface so the unhappy path
+      // isn't silent (a swallowed catch reads as "broken" to the user).
+      setError(err instanceof Error ? err.message : 'Failed to dismiss instance')
     }
   }, [fetchAll])
 
@@ -75,8 +81,8 @@ export default function QueueView() {
     try {
       await api.instances.restore(id)
       await fetchAll()
-    } catch {
-      // best-effort: item stays visible if the API call fails
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore instance')
     }
   }, [fetchAll])
 
@@ -86,8 +92,8 @@ export default function QueueView() {
       // so [Dismiss All] dismisses exactly "every item currently listed".
       await api.instances.dismissAll(state, daysAgo(HISTORY_DAYS))
       await fetchAll()
-    } catch {
-      // best-effort: items stay visible if the API call fails
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to dismiss instances')
     }
   }, [fetchAll])
 
