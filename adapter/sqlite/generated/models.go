@@ -29,6 +29,15 @@ type Connection struct {
 	UpdatedAt    string
 }
 
+type DeviceCode struct {
+	DeviceCodeHash string
+	UserCode       string
+	Status         string
+	UserID         sql.NullString
+	CreatedAt      string
+	ExpiresAt      string
+}
+
 type Instance struct {
 	ID                string
 	OwnerID           string

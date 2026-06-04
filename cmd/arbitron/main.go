@@ -44,6 +44,37 @@ import (
 // Compile-time assertion that *engine.Engine satisfies the HTTP adapter's EngineService.
 var _ adapthttp.EngineService = (*engine.Engine)(nil)
 
+const (
+	// deviceCodeTTL is how long a device-authorization code remains valid before
+	// it expires unapproved/unconsumed.
+	deviceCodeTTL = 10 * time.Minute
+	// deviceCodePollInterval is the RFC 8628 poll interval (seconds) returned to
+	// the client.
+	deviceCodePollInterval = 5
+	// deviceCodeSweepInterval is how often expired device codes are purged.
+	deviceCodeSweepInterval = 5 * time.Minute
+)
+
+// sweepExpiredDeviceCodes purges expired device-authorization rows on a ticker
+// until ctx is cancelled. Errors are logged, not fatal — a transient DB error on
+// one tick must not kill the loop.
+func sweepExpiredDeviceCodes(ctx context.Context, svc *identity.DeviceCodeService, interval time.Duration, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if n, err := svc.DeleteExpired(ctx, now.UTC()); err != nil {
+				log.Error("device-code sweep failed", "error", err)
+			} else if n > 0 {
+				log.Debug("device-code sweep removed expired codes", "count", n)
+			}
+		}
+	}
+}
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "arbitron",
@@ -111,6 +142,8 @@ type domainStack struct {
 	sessionRepo identity.SessionRepository
 	tokenRepo   identity.TokenRepository
 	tokenSvc    *identity.TokenService
+	deviceRepo  identity.DeviceCodeRepository
+	deviceSvc   *identity.DeviceCodeService
 	authMW      *adapthttp.AuthMiddleware
 	authHandler *adapthttp.AuthHandler
 	sweepCancel context.CancelFunc
@@ -225,6 +258,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// and the token_* MCP tools, and is consumed by the bearer middleware branch.
 	tokenRepo := adaptsqlite.NewTokenRepo(db)
 	tokenSvc := identity.NewTokenService(tokenRepo)
+	// Device authorization grant (Phase 6, Phase 2). Browserless clients log in
+	// via /auth/device/* and receive a minted arb_ token. 10m TTL, 5s poll.
+	deviceRepo := adaptsqlite.NewDeviceCodeRepo(db)
+	deviceSvc := identity.NewDeviceCodeService(deviceRepo, tokenSvc, deviceCodeTTL, deviceCodePollInterval)
 	authMode := identity.ModeFromString(cfg.Auth.Mode)
 	var authHandler *adapthttp.AuthHandler
 	if authMode == identity.ModeOrg {
@@ -528,13 +565,15 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering webhooks: %w", err)
 	}
 
-	// 14b. Start the org-mode session-expiry sweep (no-op in local mode).
+	// 14b. Start the org-mode session-expiry sweep (no-op in local mode), plus a
+	// device-code expiry sweep (device login is org-mode only).
 	var sweepCancel context.CancelFunc
 	if authMode == identity.ModeOrg {
 		var sweepCtx context.Context
 		sweepCtx, sweepCancel = context.WithCancel(context.Background())
 		go adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
 			time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
+		go sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger)
 	}
 
 	return &domainStack{
@@ -564,6 +603,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		sessionRepo:         sessionRepo,
 		tokenRepo:           tokenRepo,
 		tokenSvc:            tokenSvc,
+		deviceRepo:          deviceRepo,
+		deviceSvc:           deviceSvc,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
@@ -612,6 +653,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Auth:                ds.authMW,
 		AuthHandler:         ds.authHandler,
 		Tokens:              ds.tokenSvc,
+		DeviceCodes:         ds.deviceSvc,
+		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

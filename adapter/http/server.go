@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -82,6 +83,13 @@ type RouterDeps struct {
 	// service scopes every operation to the request identity, so the routes sit
 	// inside the authenticated group. Nil disables the token routes.
 	Tokens *identity.TokenService
+	// DeviceCodes powers the OAuth 2.0 device-grant endpoints. /auth/device/code
+	// and /auth/device/token are unauthenticated (mounted outside /api/v1); the
+	// approve/deny actions run behind the auth middleware. Nil disables them.
+	DeviceCodes *identity.DeviceCodeService
+	// PublicBaseURL is the externally reachable base URL used to build the device
+	// verification_uri shown to the human approver.
+	PublicBaseURL string
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -163,6 +171,11 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	var interactiveHandler *InteractiveHandler
 	if d.ConversationHandler != nil {
 		interactiveHandler = NewInteractiveHandler(d.ConversationHandler, d.Instances, d.NodeExecs)
+	}
+
+	var deviceHandler *DeviceHandler
+	if d.DeviceCodes != nil {
+		deviceHandler = NewDeviceHandler(d.DeviceCodes, strings.TrimRight(d.PublicBaseURL, "/")+"/auth/device")
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -247,6 +260,14 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 				r.Delete("/{id}", th.Revoke)
 			})
 		}
+
+		// Device-grant approval actions run behind the auth middleware: the
+		// approver must be a logged-in browser (the service reads their identity
+		// from context to own the eventual token).
+		if deviceHandler != nil {
+			r.Post("/auth/device/approve", deviceHandler.Approve)
+			r.Post("/auth/device/deny", deviceHandler.Deny)
+		}
 	})
 
 	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
@@ -274,6 +295,14 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		r.Get("/auth/login", d.AuthHandler.Login)
 		r.Get("/auth/callback", d.AuthHandler.Callback)
 		r.Post("/auth/logout", d.AuthHandler.Logout)
+	}
+
+	// Device authorization grant: /code (start) and /token (poll) are
+	// unauthenticated — the browserless client has no session yet. The
+	// approve/deny actions are registered INSIDE /api/v1 above (session-gated).
+	if deviceHandler != nil {
+		r.Post("/auth/device/code", deviceHandler.Start)
+		r.Post("/auth/device/token", deviceHandler.Token)
 	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.

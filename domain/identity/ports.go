@@ -21,6 +21,21 @@ var ErrUnauthenticated = errors.New("identity: unauthenticated")
 // or whitespace-only.
 var ErrInvalidLabel = errors.New("identity: token label is required")
 
+// Device-authorization-grant sentinels (RFC 8628). They map to the standard
+// token-endpoint error codes at the HTTP layer.
+var (
+	// ErrAuthorizationPending: the row is approved-pending; the client should
+	// keep polling.
+	ErrAuthorizationPending = errors.New("identity: authorization_pending")
+	// ErrAccessDenied: the approver denied the request (terminal).
+	ErrAccessDenied = errors.New("identity: access_denied")
+	// ErrExpired: the device code expired before approval/consumption (terminal).
+	ErrExpired = errors.New("identity: expired_token")
+	// ErrInvalidGrant: the device code is unknown, already consumed, or raced
+	// (terminal).
+	ErrInvalidGrant = errors.New("identity: invalid_grant")
+)
+
 // Session is a server-side login session. ID is the RAW high-entropy token that
 // lives in the browser cookie; the store persists only sha256(ID) (see the
 // sqlite adapter), so a DB read leak cannot mint a session.
@@ -71,6 +86,41 @@ type TokenRepository interface {
 	GetByHash(ctx context.Context, tokenHash string) (*Token, error) // ErrNotFound if absent
 	Delete(ctx context.Context, id, userID uuid.UUID) error          // ErrNotFound if no owned row
 	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+}
+
+// DeviceCodeStatus is the lifecycle state of an OAuth 2.0 device-grant row.
+type DeviceCodeStatus string
+
+const (
+	DeviceCodePending  DeviceCodeStatus = "pending"
+	DeviceCodeApproved DeviceCodeStatus = "approved"
+	DeviceCodeDenied   DeviceCodeStatus = "denied"
+	DeviceCodeConsumed DeviceCodeStatus = "consumed"
+)
+
+// DeviceCode is a stored device-authorization row. SECURITY: the polling secret
+// (the raw device_code) is NEVER held here — only its sha256 (HashedCode). The
+// short UserCode is low-entropy and shown to the human approver, so it is clear.
+type DeviceCode struct {
+	HashedCode string // sha256 of the polling secret; never the raw code
+	UserCode   string // short, human, shown to the approver
+	Status     DeviceCodeStatus
+	UserID     *uuid.UUID // nil until approved
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+}
+
+// DeviceCodeRepository persists device-authorization grant rows. Adapters wrap
+// ErrNotFound via %w. Approve/Consume return ErrNotFound when their status guard
+// matched zero rows (nothing pending to approve / nothing approved to consume).
+type DeviceCodeRepository interface {
+	Create(ctx context.Context, dc *DeviceCode) error
+	GetByHash(ctx context.Context, hashedCode string) (*DeviceCode, error)   // ErrNotFound
+	GetByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) // ErrNotFound
+	Approve(ctx context.Context, userCode string, userID uuid.UUID) error    // ErrNotFound if not pending
+	Deny(ctx context.Context, userCode string) error
+	Consume(ctx context.Context, hashedCode string) error // ErrNotFound if not 'approved'
+	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
 
 // Claims are the verified identity claims returned by the IdP after a successful
