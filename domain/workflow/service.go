@@ -248,13 +248,16 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 //     has already replaced a previously-good shared copy. If Upsert then fails we
 //     must NOT delete — that would destroy the shared copy entirely (data loss).
 //     The error is surfaced loudly so the operator can retry the record.
-func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string) error {
+func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
 	if s.published == nil {
 		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+	if err := authorizePublish(id, visibility, department); err != nil {
+		return err
 	}
 
 	// Source must exist privately.
@@ -281,7 +284,7 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		return err
 	}
 	// Record the publication after the folder is in place (copy-then-record).
-	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName, VisibilityPublic, ""); err != nil {
+	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName, visibility, department); err != nil {
 		if !overwrite {
 			// FRESH path: compensate by deleting the just-copied tree. The
 			// destination was empty before, so this restores the prior state. The
@@ -324,4 +327,69 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 		}
 	}
 	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
+}
+
+// authorizePublish validates the requested visibility/department against the
+// caller's role per spec §Workflow Visibility:
+//   - department: caller must be a MEMBER of department; department required.
+//   - public: caller must be a LEAD (of any department) or an ADMIN.
+//   - private: not a storable publication level → ErrInvalidVisibility.
+func authorizePublish(id identity.Identity, visibility Visibility, department string) error {
+	switch visibility {
+	case VisibilityDepartment:
+		if department == "" {
+			return fmt.Errorf("%w: department required for department visibility", ErrInvalidVisibility)
+		}
+		if !id.IsAdmin() && !id.InDepartment(department) {
+			return fmt.Errorf("%w: not a member of department %q", ErrUnauthorized, department)
+		}
+		return nil
+	case VisibilityPublic:
+		if id.IsAdmin() || len(id.LedDepartments) > 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: publishing to public requires a lead or admin", ErrUnauthorized)
+	default:
+		return fmt.Errorf("%w: %q is not a publishable visibility", ErrInvalidVisibility, visibility)
+	}
+}
+
+// SetVisibility changes an existing publication's level without re-copying the
+// shared tree (the metadata model makes this a cheap "column flip"). The caller
+// must be the original publisher, a lead of the relevant department, or an
+// admin; the target level is gated by the same rules as Publish (member→own
+// department, lead/admin→public). An unknown publication is ErrNotFound.
+func (s *WorkflowService) SetVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
+	id, err := caller(ctx)
+	if err != nil {
+		return err
+	}
+	if s.published == nil {
+		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+
+	cur, ok, err := s.published.PublicationOf(ctx, publishedName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNotFound, publishedName)
+	}
+
+	// Only the publisher, a lead, or an admin may mutate a publication.
+	if cur.Publisher != id.UserID && !id.IsAdmin() && len(id.LedDepartments) == 0 {
+		return fmt.Errorf("%w: cannot change visibility of %q", ErrUnauthorized, publishedName)
+	}
+	// Target level role gate (same as Publish).
+	if err := authorizePublish(id, visibility, department); err != nil {
+		return err
+	}
+
+	// Preserve the original publisher and source name (Publication carries
+	// SourceName so the NOT NULL source_name column survives the flip); only the
+	// visibility level changes.
+	if err := s.published.Upsert(ctx, publishedName, cur.Publisher, cur.SourceName, visibility, department); err != nil {
+		return fmt.Errorf("updating visibility for %q: %w", publishedName, err)
+	}
+	return nil
 }

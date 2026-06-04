@@ -148,17 +148,31 @@ func newWorkflowServer(repo *stubWorkflowRepo, fr *stubFileReader) *adaptmcp.Ser
 
 func callTool(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any) *gomcp.CallToolResult {
 	t.Helper()
-	// Find the tool handler by calling through the MCPServer.
-	// We use the server's ListTools to verify the tool exists, then call via MCPServer.
-	req := gomcp.CallToolRequest{}
-	req.Params.Name = name
-	req.Params.Arguments = args
-
-	ctx := identity.WithIdentity(context.Background(), identity.Identity{
+	return callToolWithIdentity(t, srv, name, args, identity.Identity{
 		UserID:   mcpTestUserID,
 		Username: "tester",
 		Role:     identity.RoleUser,
 	})
+}
+
+// callToolAdmin invokes a tool with an admin identity (same user id), so
+// role-gated publish/visibility tools can promote to public.
+func callToolAdmin(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any) *gomcp.CallToolResult {
+	t.Helper()
+	return callToolWithIdentity(t, srv, name, args, identity.Identity{
+		UserID:   mcpTestUserID,
+		Username: "admin",
+		Role:     identity.RoleAdmin,
+	})
+}
+
+func callToolWithIdentity(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any, id identity.Identity) *gomcp.CallToolResult {
+	t.Helper()
+	req := gomcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = args
+
+	ctx := identity.WithIdentity(context.Background(), id)
 	result := srv.MCPServer().HandleMessage(ctx, mustMarshal(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -988,7 +1002,7 @@ func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
 	// Seed the caller's private source under the test identity's user id.
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
 
-	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	result := callToolAdmin(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
 	assert.False(t, result.IsError, extractText(t, result))
 
 	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Shared(), "pub")
@@ -1000,7 +1014,7 @@ func TestWorkflowTool_Publish_NotFound(t *testing.T) {
 	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
-	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
+	result := callToolAdmin(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "not found")
 }

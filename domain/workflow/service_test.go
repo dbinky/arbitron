@@ -366,7 +366,7 @@ func TestService_Publish_HappyPath(t *testing.T) {
 	owner := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
 
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, ""))
 
 	_, ok := repo.bucket(workflow.Shared())["pub"]
 	assert.True(t, ok, "published into shared")
@@ -381,7 +381,7 @@ func TestService_Publish_SourceMissing_NotFound(t *testing.T) {
 	svc := workflow.NewWorkflowService(repo, newFakePublishers())
 	owner := uuid.New()
 
-	err := svc.Publish(ctxWith(owner, false), "ghost", "pub")
+	err := svc.Publish(ctxWith(owner, true), "ghost", "pub", workflow.VisibilityPublic, "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound)
 }
@@ -399,7 +399,7 @@ func TestService_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 
 	// b owns a private "src" and tries to publish over a's name.
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "src", wf("src")))
-	err := svc.Publish(ctxWith(b, false), "src", "pub")
+	err := svc.Publish(ctxWith(b, true), "src", "pub", workflow.VisibilityPublic, "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
 
@@ -415,9 +415,9 @@ func TestService_Publish_SamePublisher_Overwrites(t *testing.T) {
 	owner := uuid.New()
 
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, ""))
 	// Re-publish by the same owner succeeds (overwrite).
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, ""))
 }
 
 // TestService_Publish_SamePublisher_SharedContentUpdated pins the re-publish
@@ -432,7 +432,7 @@ func TestService_Publish_SamePublisher_SharedContentUpdated(t *testing.T) {
 	// V1: initial publish.
 	v1 := &workflow.Workflow{Name: "src", Description: "v1", Author: "a"}
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", v1))
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, ""))
 
 	// Confirm v1 is in shared.
 	got, ok := repo.bucket(workflow.Shared())["pub"]
@@ -442,7 +442,7 @@ func TestService_Publish_SamePublisher_SharedContentUpdated(t *testing.T) {
 	// V2: overwrite private source, then re-publish.
 	v2 := &workflow.Workflow{Name: "src", Description: "v2", Author: "a"}
 	repo.bucket(workflow.Private(owner))["src"] = v2
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, ""))
 
 	// Shared must now reflect v2.
 	got, ok = repo.bucket(workflow.Shared())["pub"]
@@ -457,7 +457,7 @@ func TestService_Publish_NoStore_Errors(t *testing.T) {
 	owner := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
 
-	err := svc.Publish(ctxWith(owner, false), "src", "pub")
+	err := svc.Publish(ctxWith(owner, true), "src", "pub", workflow.VisibilityPublic, "")
 	require.Error(t, err)
 }
 
@@ -805,7 +805,7 @@ func TestService_Publish_Fresh_CopiesAndRecords(t *testing.T) {
 	owner := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
 
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "mine", "shared-name"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, ""))
 
 	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
 	assert.True(t, exists, "shared tree present after publish")
@@ -825,7 +825,7 @@ func TestService_Publish_FreshUpsertFailure_RollsBackCopiedTree(t *testing.T) {
 	owner := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
 
-	err := svc.Publish(ctxWith(owner, false), "mine", "shared-name")
+	err := svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, "")
 	require.Error(t, err, "Upsert failure must surface")
 	assert.ErrorIs(t, err, pubs.upsertErr)
 
@@ -844,11 +844,11 @@ func TestService_Publish_OverwriteUpsertFailure_DoesNotDelete(t *testing.T) {
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
 
 	// First publish succeeds (records owner as publisher).
-	require.NoError(t, svc.Publish(ctxWith(owner, false), "mine", "shared-name"))
+	require.NoError(t, svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, ""))
 
 	// Re-publish by the same owner, but Upsert now fails.
 	pubs.upsertErr = errors.New("db write failed")
-	err := svc.Publish(ctxWith(owner, false), "mine", "shared-name")
+	err := svc.Publish(ctxWith(owner, true), "mine", "shared-name", workflow.VisibilityPublic, "")
 	require.Error(t, err, "overwrite Upsert failure must surface loudly")
 	assert.ErrorIs(t, err, pubs.upsertErr)
 
@@ -955,4 +955,162 @@ func TestService_Load_PrivateUnaffected(t *testing.T) {
 	got, err := svc.Load(ctxWithDepts(owner, false), "mine")
 	require.NoError(t, err)
 	assert.Equal(t, "mine", got.Name)
+}
+
+// --- Phase 2: role-gated publish + SetVisibility (Task 4) ---
+
+// ctxWithRoles builds a context identity with departments AND led departments.
+func ctxWithRoles(user uuid.UUID, admin bool, depts, led []string) context.Context {
+	role := identity.RoleUser
+	if admin {
+		role = identity.RoleAdmin
+	}
+	return identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: user, Username: "u", Role: role,
+		Departments: depts, LedDepartments: led,
+	})
+}
+
+func seedPrivate(repo *fakeRepo, owner uuid.UUID, name string) {
+	repo.bucket(workflow.Private(owner))[name] = wf(name)
+}
+
+func TestService_Publish_MemberToOwnDepartment_OK(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d1")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, nil), "src", "shared", workflow.VisibilityDepartment, "engineering")
+	require.NoError(t, err)
+
+	pub, ok, _ := pubs.PublicationOf(context.Background(), "shared")
+	require.True(t, ok)
+	assert.Equal(t, workflow.VisibilityDepartment, pub.Visibility)
+	assert.Equal(t, "engineering", pub.Department)
+}
+
+func TestService_Publish_MemberToOtherDepartment_Rejected(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d2")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, nil), "src", "shared", workflow.VisibilityDepartment, "sales")
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
+}
+
+func TestService_Publish_MemberToPublic_Rejected(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d3")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, nil), "src", "shared", workflow.VisibilityPublic, "")
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
+}
+
+func TestService_Publish_LeadToPublic_OK(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d4")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, []string{"engineering"}), "src", "shared", workflow.VisibilityPublic, "")
+	require.NoError(t, err)
+	pub, ok, _ := pubs.PublicationOf(context.Background(), "shared")
+	require.True(t, ok)
+	assert.Equal(t, workflow.VisibilityPublic, pub.Visibility)
+}
+
+func TestService_Publish_AdminToPublic_OK(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d5")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Publish(ctxWithRoles(owner, true, nil, nil), "src", "shared", workflow.VisibilityPublic, "")
+	require.NoError(t, err)
+}
+
+func TestService_Publish_DepartmentLevelMissingDepartment_Rejected(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d6")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, nil), "src", "shared", workflow.VisibilityDepartment, "")
+	assert.ErrorIs(t, err, workflow.ErrInvalidVisibility)
+}
+
+func TestService_Publish_PrivateVisibility_Rejected(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000d7")
+	seedPrivate(repo, owner, "src")
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+
+	err := svc.Publish(ctxWithRoles(owner, false, []string{"engineering"}, nil), "src", "shared", workflow.VisibilityPrivate, "")
+	assert.ErrorIs(t, err, workflow.ErrInvalidVisibility)
+}
+
+func TestService_SetVisibility_LeadPromotesDeptToPublic(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000e1")
+	_ = pubs.Upsert(context.Background(), "shared", owner, "src", workflow.VisibilityDepartment, "engineering")
+	repo.bucket(workflow.Shared())["shared"] = wf("shared")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.SetVisibility(ctxWithRoles(owner, false, []string{"engineering"}, []string{"engineering"}), "shared", workflow.VisibilityPublic, "")
+	require.NoError(t, err)
+	pub, _, _ := pubs.PublicationOf(context.Background(), "shared")
+	assert.Equal(t, workflow.VisibilityPublic, pub.Visibility)
+}
+
+func TestService_SetVisibility_MemberCannotPromoteToPublic(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000e2")
+	_ = pubs.Upsert(context.Background(), "shared", owner, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.SetVisibility(ctxWithRoles(owner, false, []string{"engineering"}, nil), "shared", workflow.VisibilityPublic, "")
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
+}
+
+func TestService_SetVisibility_DemotePublicToDepartment(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000e3")
+	_ = pubs.Upsert(context.Background(), "shared", owner, "src", workflow.VisibilityPublic, "")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.SetVisibility(ctxWithRoles(owner, false, []string{"engineering"}, nil), "shared", workflow.VisibilityDepartment, "engineering")
+	require.NoError(t, err)
+	pub, _, _ := pubs.PublicationOf(context.Background(), "shared")
+	assert.Equal(t, workflow.VisibilityDepartment, pub.Visibility)
+	assert.Equal(t, "engineering", pub.Department)
+	assert.Equal(t, owner, pub.Publisher, "publisher preserved through the visibility flip")
+}
+
+func TestService_SetVisibility_UnknownPublication_NotFound(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), newFakePublishers())
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000e4")
+	err := svc.SetVisibility(ctxWithRoles(owner, false, []string{"engineering"}, nil), "missing", workflow.VisibilityDepartment, "engineering")
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_SetVisibility_DifferentPublisher_Unauthorized(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000e5")
+	other := uuid.MustParse("00000000-0000-0000-0000-0000000000e6")
+	_ = pubs.Upsert(context.Background(), "shared", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.SetVisibility(ctxWithRoles(other, false, []string{"engineering"}, nil), "shared", workflow.VisibilityDepartment, "engineering")
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
 }
