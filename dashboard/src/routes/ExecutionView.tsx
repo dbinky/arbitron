@@ -9,6 +9,7 @@ import { api } from '../api/client'
 import { useGraphLayout, NODE_WIDTH, NODE_HEIGHT } from '../graph/useGraphLayout'
 import { selectAnchorNodeId } from '../graph/selectAnchorNodeId'
 import { DEFAULT_ZOOM } from '../graph/constants'
+import { useFollowActiveNode } from '../graph/useFollowActiveNode'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { edgeTypes } from '../graph/edges/edgeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
@@ -133,6 +134,12 @@ export function GraphView({
     didInitialCenter.current = true
   }, [anchorPos, reactFlow])
 
+  const isRunning = instance?.state === 'running' || instance?.state === 'waiting'
+  const { following, onMoveStart, recenter } = useFollowActiveNode(
+    anchorPos,
+    isRunning,
+  )
+
   return (
     <div className={styles.graphContainer}>
       <ReactFlow
@@ -141,12 +148,22 @@ export function GraphView({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
+        onMoveStart={(event) => onMoveStart(event)}
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#2a2a4a" gap={20} size={1} />
         <Controls showInteractive={false} />
+        <button
+          type="button"
+          className={`${styles.recenterButton} ${following ? styles.recenterButtonActive : ''}`}
+          aria-pressed={following}
+          title={following ? 'Following the active step' : 'Recenter and follow the active step'}
+          onClick={recenter}
+        >
+          {following ? 'Following' : 'Recenter'}
+        </button>
       </ReactFlow>
     </div>
   )

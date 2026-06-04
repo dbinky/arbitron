@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -23,16 +23,23 @@ let lastReactFlowProps: { nodes: Array<{ id: string; position?: { x: number; y: 
 vi.mock('@xyflow/react', () => ({
   ReactFlow: (props: {
     nodes: Array<{ id: string; position?: { x: number; y: number } }>
+    children?: React.ReactNode
+    onMoveStart?: (event: unknown) => void
   }) => {
     renderCount.value += 1
     lastReactFlowProps = props
     return (
       <div>
+        <button
+          data-testid="rf-fire-user-move"
+          onClick={() => props.onMoveStart?.({ type: 'pointerdown' })}
+        />
         {props.nodes.map((n) => (
           // Keyed by stable node id: React preserves the DOM element across
           // re-renders unless the identity/key changes (a remount).
           <div key={n.id} data-testid={`node-${n.id}`} />
         ))}
+        {props.children}
       </div>
     )
   },
@@ -46,6 +53,7 @@ vi.mock('@xyflow/react', () => ({
   useReactFlow: () => ({
     flowToScreenPosition: (p: unknown) => p,
     setCenter: setCenterSpy,
+    getZoom: () => 1,
   }),
 }))
 
@@ -106,7 +114,7 @@ describe('GraphView — no-remount on unrelated re-render', () => {
 
     // Force a parent re-render that changes nothing GraphView depends on
     // (simulates a live WebSocket event arriving on the page).
-    await userEvent.click(screen.getByRole('button'))
+    await userEvent.click(screen.getByRole('button', { name: /tick/i }))
 
     const after = screen.getByTestId('node-a')
     // Same DOM element instance => the node was not remounted => no flicker.
@@ -131,7 +139,7 @@ describe('GraphView — no-remount on unrelated re-render', () => {
     }
 
     render(<Harness />)
-    await userEvent.click(screen.getByRole('button'))
+    await userEvent.click(screen.getByRole('button', { name: /tick/i }))
 
     expect(screen.getByTestId('node-a')).toBeTruthy()
     expect(screen.getByTestId('node-b')).toBeTruthy()
@@ -218,5 +226,47 @@ describe('GraphView — default-zoom centering on mount', () => {
       bNode.position!.y + 40,
       expect.objectContaining({ zoom: 0.9 }),
     )
+  })
+})
+
+describe('GraphView — Recenter / Follow control', () => {
+  it('renders the control showing the following state by default', () => {
+    render(
+      <GraphView
+        instance={instance}
+        workflowDef={workflowDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    const btn = screen.getByRole('button', { name: /following|recenter|follow/i })
+    expect(btn).toBeTruthy()
+    // Default state is "following" — surfaced via aria-pressed.
+    expect(btn.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('switches to paused state after a user move and back after Recenter', () => {
+    render(
+      <GraphView
+        instance={instance}
+        workflowDef={workflowDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    // Simulate a user pan/zoom via the mock's forwarded onMoveStart.
+    fireEvent.click(screen.getByTestId('rf-fire-user-move'))
+    const btn = screen.getByRole('button', { name: /following|recenter|follow/i })
+    expect(btn.getAttribute('aria-pressed')).toBe('false')
+
+    // Re-engage via the control.
+    fireEvent.click(btn)
+    expect(
+      screen
+        .getByRole('button', { name: /following|recenter|follow/i })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
   })
 })
