@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-18-001: Back-edge data.box not verified to match the container node's position+size
+**Area**: Paired review #18 — geometry + back-edge rendering seam (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 36
+**Detail**: `useGraphLayout` calls `loopContainerBox(loop, positionMap)` twice — once for the container node position/size and once for `data.box` on the back-edge. The existing test only checked `box.width > 0`. Added `back-edge data.box matches the container node position and size`: asserts `box.x === container.position.x`, `box.y === container.position.y`, `box.width === container.width`, `box.height === container.height`. If either call site diverged, the back-edge would route around the wrong area.
+
+---
+
 ### PAIR-17-001: useGraphLayout stored-positions branch didn't verify container position/size
 **Area**: Paired review #17 — loop detection + geometry seam (`dashboard/src/graph/useGraphLayout.test.ts`)
 **Fixed**: Iteration 35

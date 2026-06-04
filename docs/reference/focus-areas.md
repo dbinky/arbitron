@@ -37,7 +37,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Pair | Pass | Status |
 |---|---|---|---|
 | 17 | Loop detection + Loop geometry/overlays (loops.ts output feeds loopLayout/useGraphLayout correctly; bodies map to boxes) | [x] | Done |
-| 18 | Loop geometry + back-edge rendering (container box handed to the back-edge; routing avoids body nodes) | [ ] | |
+| 18 | Loop geometry + back-edge rendering (container box handed to the back-edge; routing avoids body nodes) | [x] | Done |
 | 19 | Anchor selection + Follow hook (shared anchor identity; container overlays excluded from candidates; GraphView wiring) | [ ] | |
 | 20 | Dismissal repo + HTTP handlers (port contract: method names/signatures, error mapping, currentUser scoping) | [ ] | |
 | 21 | List marking + Queue UI (`dismissed`/`includeDismissed` contract match; order preservation drives chronological reveal) | [ ] | |

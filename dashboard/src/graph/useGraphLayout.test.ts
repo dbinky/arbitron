@@ -220,4 +220,30 @@ describe('useGraphLayout — back-edge carries the container box', () => {
     expect(box).toBeDefined()
     expect(box!.width).toBeGreaterThan(0)
   })
+
+  // Seam: the back-edge's data.box must be the SAME bounding box as the container node's
+  // position+size. Both are computed from loopContainerBox(loop, positionMap), but called
+  // separately. If either call used a different padding or positionMap, the edge would
+  // route around the wrong area while the container is displayed correctly (silent mismatch).
+  it('back-edge data.box matches the container node position and size', () => {
+    const nodes: WorkflowNode[] = [
+      { ...node('b'), position: { x: 100, y: 0 } },
+      { ...node('c'), position: { x: 100, y: 200 } },
+    ]
+    const edges: WorkflowEdge[] = [
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'b' },
+    ]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    type BoxNode = { type?: string; position?: { x: number; y: number }; width?: number; height?: number }
+    type BoxEdge = { data?: { box?: { x: number; y: number; width: number; height: number } } }
+    const container = result.current.rfNodes.find((n) => n.type === 'loopContainer') as BoxNode
+    const back = result.current.rfEdges.find((e) => e.source === 'c' && e.target === 'b') as BoxEdge
+    const box = back?.data?.box
+    expect(box).toBeDefined()
+    expect(box!.x).toBe(container.position!.x)
+    expect(box!.y).toBe(container.position!.y)
+    expect(box!.width).toBe(container.width)
+    expect(box!.height).toBe(container.height)
+  })
 })
