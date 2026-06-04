@@ -9,6 +9,14 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-20-001: Dismiss handler scoping not verified to use acting user vs instance owner
+**Area**: Paired review #20 — dismissal repo + HTTP handlers seam (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 38
+**Detail**: Every existing `TestDismiss_*` test set the acting user (from `CurrentUserResolver`) and the instance `OwnerID` to the same UUID. A regression that changed `h.dismissals.Dismiss(ctx, user, id)` to `h.dismissals.Dismiss(ctx, inst.OwnerID, id)` would have passed all tests. Added `TestDismiss_ScopedToActingUserNotOwner`: owner and actor are distinct UUIDs, actor dismisses the owner's instance — verifies `dismissed[actor][id]=true` and `dismissed[owner][id]=false`. Added `TestDismissAll_ScopedToActingUserNotOwner`: same pattern for `dismiss-all`. Both tests pin the currentUser seam at the handler level so the acting-user → repo argument order is locked.
+
+
+## Fixed Previously
+
 ### PAIR-19-001: No GraphView integration test for follow animation when execution advances
 **Area**: Paired review #19 — anchor + follow seam (`dashboard/src/routes/GraphView.test.tsx`)
 **Fixed**: Iteration 37

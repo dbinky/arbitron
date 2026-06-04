@@ -137,6 +137,55 @@ func TestDismiss_TerminalInstance_OK(t *testing.T) {
 	assert.True(t, dis.dismissed[user][id], "dismiss must record the per-user row")
 }
 
+// Seam: the Dismiss handler must scope the dismissal to the ACTING user
+// (from currentUser.CurrentUser), not to the instance's OwnerID. When the
+// acting user and the owner are the same UUID, a bug using inst.OwnerID
+// instead of the resolved user would silently pass. Using distinct UUIDs
+// catches that regression.
+func TestDismiss_ScopedToActingUserNotOwner(t *testing.T) {
+	owner := uuid.New()  // instance owner
+	actor := uuid.New()  // the user who is acting (different from owner)
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: owner, WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	dis := newMockDismissalRepo()
+
+	// Acting as 'actor', not the instance's owner.
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: actor})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[actor][id], "dismissal must be recorded for the acting user")
+	assert.False(t, dis.dismissed[owner][id], "owner's dismissal record must not be created by actor's action")
+}
+
+// Seam: DismissAll must also scope each per-item dismissal to the acting user,
+// not to each instance's individual owner. Same regression risk as Dismiss.
+func TestDismissAll_ScopedToActingUserNotOwner(t *testing.T) {
+	owner := uuid.New()
+	actor := uuid.New()
+	instRepo := newMockInstanceRepo()
+	ctx := context.Background()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{
+		ID: id, OwnerID: owner, WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	dis := newMockDismissalRepo()
+
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: actor})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[actor][id], "dismiss-all must record for the acting user")
+	assert.False(t, dis.dismissed[owner][id], "owner's dismissal record must not be created by actor")
+}
+
 // Success: dismissing a completed instance also returns 200 — isDismissibleState
 // accepts both failed and completed, but only the failed arm was tested.
 func TestDismiss_CompletedInstance_OK(t *testing.T) {
