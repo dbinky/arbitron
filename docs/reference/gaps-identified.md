@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA22-P1-01: Per-instance WS missing no-identity fail-closed test
+**Area**: Focus Area 22 — WebSocket scoping (Pass 1)
+**Fix**: Added `"no identity in context: 404 before upgrade, same as non-owner (fail-closed, no existence leak)"` sub-test to `TestStreamHandler_ConnectAuthorization` in `adapter/http/stream_handler_test.go`. Wires a getter that returns `ErrNotFound` when `identity.FromContext` reports no identity (replicating the engine's `ownerConstraint` rule) and mounts the handler without the auth middleware. Asserts HTTP 404 before the WebSocket upgrade. This pins the fail-closed invariant: an unauthenticated caller that somehow bypasses the auth middleware is rejected at the service boundary — response is byte-for-byte identical to a non-owner (no existence leak). The system stream handler already had `TestSystemStreamHandler_NoIdentity_Unauthorized` (returns 401); the per-instance stream relies on the service, not a direct identity check, so only the 404 path needed pinning.
+
 ### GAP-FA21-P2-01: HTTP `Get` handler missing explicit non-owner isolation test
 **Area**: Focus Area 21 — Instance read scoping (Pass 2)
 **Fix**: Added `"non-owner gets 404 identical to a missing instance (no existence leak)"` to `TestInstanceHandler_Get` in `adapter/http/instance_handler_test.go`. Seeds a mock service whose `GetInstance` returns `ErrNotFound` (the same signal the scoped engine sends for non-owner access), then asserts HTTP 404 with `NOT_FOUND` code. This mirrors the equivalent test already present in `TestInstanceHandler_GetTrace`, documenting the security invariant: a non-owner cannot confirm an instance exists via the GET endpoint — the response is byte-for-byte identical to a genuinely missing instance. The domain-level engine already has `TestRead_NonOwner_NotFoundNoSubReads`; this test pins that the HTTP adapter correctly threads the error through.

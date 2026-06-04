@@ -184,6 +184,41 @@ func TestStreamHandler_ConnectAuthorization(t *testing.T) {
 		require.NotNil(t, resp)
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "rejected with 404, identical to a missing instance")
 	})
+
+	t.Run("no identity in context: 404 before upgrade, same as non-owner (fail-closed, no existence leak)", func(t *testing.T) {
+		// This pins the fail-closed behaviour for an unauthenticated caller that
+		// somehow reaches the handler without the auth middleware (e.g. local test
+		// wiring, middleware misconfiguration). The handler's service replicates the
+		// engine's rule: no identity → ErrNotFound, so the caller gets a 404 before
+		// the WebSocket is accepted, and existence is not leaked.
+		repo := newMockInstanceRepo()
+		inst := newInst(repo)
+		bus := eventbus.New()
+
+		getter := streamGetterFunc(func(ctx context.Context, instID uuid.UUID) (*instance.Instance, error) {
+			if _, ok := identity.FromContext(ctx); !ok {
+				return nil, instance.ErrNotFound
+			}
+			return repo.Get(ctx, instID)
+		})
+		sh := adapthttp.NewStreamHandler(repo, nil, bus, nil, getter)
+		r := chi.NewRouter()
+		r.Get("/instances/{id}/ws", sh.HandleWebSocket) // no identity middleware
+
+		srv := httptest.NewServer(r)
+		defer srv.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+		conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+		assert.Error(t, err, "no identity must be rejected before the WS upgrade")
+		if conn != nil {
+			conn.Close(websocket.StatusNormalClosure, "")
+		}
+		require.NotNil(t, resp)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "rejected with 404, identical to non-owner (no existence leak)")
+	})
 }
 
 // ---------------------------------------------------------------------------
