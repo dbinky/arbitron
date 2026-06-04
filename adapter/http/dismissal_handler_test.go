@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/adapter/eventbus"
@@ -310,6 +311,38 @@ func TestDismissAll_CompletedCategory_DismissesAll(t *testing.T) {
 	assert.True(t, dis.dismissed[user][a])
 	assert.True(t, dis.dismissed[user][b])
 	assert.False(t, dis.dismissed[user][other], "failed item must not be dismissed by state=completed")
+}
+
+// Robustness: DismissAll must pass the since filter to List so that only items
+// in the displayed time window are dismissed. Without this filter, clicking
+// "Dismiss All" in a section would dismiss items older than the dashboard window,
+// which the user can't even see. A regression that drops filters.Since would
+// dismiss the "old" instance here and fail this test.
+func TestDismissAll_SinceFilterLimitsScope(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	ctx := context.Background()
+	cutoff := time.Now().Add(-24 * time.Hour)
+
+	old := uuid.New()
+	recent := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{
+		ID: old, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
+		CreatedAt: cutoff.Add(-time.Hour), // before the since cutoff
+	}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{
+		ID: recent, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
+		CreatedAt: cutoff.Add(time.Hour), // after the since cutoff
+	}))
+	dis := newMockDismissalRepo()
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed&since="+cutoff.UTC().Format(time.RFC3339))
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[user][recent], "recent item must be dismissed")
+	assert.False(t, dis.dismissed[user][old], "old item (before since) must not be dismissed")
 }
 
 func TestDismissAll_BadState_400(t *testing.T) {

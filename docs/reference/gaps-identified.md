@@ -6,7 +6,15 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
+
 ## Fixed Previously
+
+### DISMISS-002: DismissAll since-filter not tested at handler level
+**Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 28
+**Detail**: `DismissAll` parses a `since` query parameter and passes it as `filters.Since` to `List`, limiting the scope to the 5-day window the dashboard shows. No existing test exercised this path — all DismissAll tests omit `since`, meaning a regression that dropped `filters.Since` from the handler would silently dismiss items outside the window without failing any test. Added `TestDismissAll_SinceFilterLimitsScope`: creates an "old" instance (before cutoff) and a "recent" instance (after cutoff), calls `?state=failed&since=<cutoff>`, and asserts only the recent item is dismissed.
+
+---
 
 ### DISMISS-001: waiting and paused states not tested against dismiss guard at handler and UI layer
 **Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`, `dashboard/src/components/InstanceRow.test.tsx`)

@@ -25,7 +25,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [x] | [x] | Done |
 | 11 | Domain: loop semantics end-to-end (workflow def back-edge + label → detection → layout/container → on-screen) | [x] | [x] | Done |
 | 12 | Domain: viewport behavior (default zoom + follow + manual override) as a cross-cutting graph concern | [x] | [x] | Done |
-| 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [x] | [ ] | |
+| 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [x] | [x] | Done |
 | 14 | Vertical slice: dismiss action ([x] → POST /instances/{id}/dismiss → repo → list omits → UI updates) | [ ] | [ ] | |
 | 15 | Vertical slice: show/hide dismissed (toggle → list `includeDismissed=true` → marked → dimmed render + ↺ restore) | [ ] | [ ] | |
 | 16 | Vertical slice: loop render (workflow definition → detection → layout/container → graph) | [ ] | [ ] | |
