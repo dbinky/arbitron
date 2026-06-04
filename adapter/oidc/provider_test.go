@@ -285,6 +285,23 @@ func TestProvider_Exchange_UsernameFallbackChain(t *testing.T) {
 	}
 }
 
+// TestProvider_Exchange_EmptyNonce_Passthrough verifies that when the ID token
+// contains no nonce claim (some IdPs don't support them), Exchange faithfully
+// returns Claims{Nonce:""} rather than injecting a default. The callback handler
+// must be the one to reject the missing nonce — Exchange must not mask it.
+func TestProvider_Exchange_EmptyNonce_Passthrough(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		c := baseClaims(h.issuer)
+		delete(c, "nonce") // IdP that doesn't embed a nonce claim
+		return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+	}
+	p := newProvider(t, h)
+	claims, err := p.Exchange(context.Background(), "code")
+	require.NoError(t, err, "a token without a nonce claim is structurally valid OIDC")
+	assert.Equal(t, "", claims.Nonce, "Exchange must not inject a nonce — the empty value must propagate to the caller for rejection")
+}
+
 // Structural: Claims carries no IdP access/refresh token field, reinforcing that
 // the IdP is never on the request hot path.
 func TestProvider_Claims_DiscardsIdPTokens(t *testing.T) {

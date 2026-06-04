@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA6-P2-02: No test for ID token without nonce claim — empty nonce must be rejected, not echoed
+**Area**: Focus Area 6 — OIDC adapter (Pass 2)
+**Fix**: Added `TestProvider_Exchange_EmptyNonce_Passthrough` in `adapter/oidc/provider_test.go`: deletes `nonce` from the ID token claims map, calls `Exchange`, and asserts `claims.Nonce == ""` — documenting that Exchange never injects a nonce and the empty value propagates to the caller. Added `omitNonce bool` field to `fakeOIDCProvider` and `TestAuthHandler_Callback_EmptyNonce_Rejected` in `adapter/http/auth_handler_test.go`: forces Exchange to return `Nonce:""` (as a real nonce-less IdP would) and asserts the callback returns 400 + no session cookie. An absent nonce is indistinguishable from a replay attempt and must be rejected.
+
 ### GAP-FA6-P2-01: OIDC nonce check deferred — ID token nonce never verified against expected nonce
 **Area**: Focus Area 6 — OIDC adapter (Pass 1)
 **Fix**: Added `Nonce string` to `identity.Claims` in `domain/identity/ports.go`. Updated `adapter/oidc/provider.go` `Exchange` to return `c.Nonce`. Replaced `_ = wantNonce` in `adapter/http/auth_handler.go` `Callback` with `subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(wantNonce)) != 1` → 400 Bad Request. Updated `fakeOIDCProvider` in `adapter/http/auth_handler_test.go` to capture the minted nonce in `AuthCodeURL` and echo it back from `Exchange` (so existing callback tests pass). Added `TestAuthHandler_Callback_NonceMismatch` which seeds `claims.Nonce = "WRONG_NONCE"` and asserts 400 + no session cookie. Added `TestProvider_Exchange_Success` assertion that `claims.Nonce == "nc"`. The replay guard is now active end-to-end.

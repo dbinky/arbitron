@@ -19,12 +19,14 @@ import (
 
 // fakeOIDCProvider returns a canned Claims or error.
 // AuthCodeURL captures the nonce the handler mints; Exchange echoes it back
-// unless claims.Nonce is already set (used in nonce-mismatch tests).
+// unless claims.Nonce is already set (used in nonce-mismatch tests) or
+// omitNonce is true (used to simulate an IdP that doesn't include a nonce).
 type fakeOIDCProvider struct {
 	claims        identity.Claims
 	exchErr       error
 	lastCode      string
 	capturedNonce string // set by AuthCodeURL; echoed by Exchange when claims.Nonce is empty
+	omitNonce     bool   // if true, Exchange returns Nonce:"" even when capturedNonce is non-empty
 }
 
 func (f *fakeOIDCProvider) AuthCodeURL(state, nonce string) string {
@@ -38,7 +40,7 @@ func (f *fakeOIDCProvider) Exchange(_ context.Context, code string) (identity.Cl
 		return identity.Claims{}, f.exchErr
 	}
 	c := f.claims
-	if c.Nonce == "" {
+	if !f.omitNonce && c.Nonce == "" {
 		// Echo back the nonce the handler minted so the replay guard passes in
 		// tests that are not specifically testing nonce mismatch.
 		c.Nonce = f.capturedNonce
@@ -202,6 +204,24 @@ func TestAuthHandler_Callback_NonceMismatch(t *testing.T) {
 	rec := doLoginThenCallback(t, h, "ok", "/")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "nonce mismatch must be rejected with 400")
 	assert.Empty(t, sessions.byToken, "no session must be created on nonce mismatch")
+	assert.Nil(t, findCookie(rec.Result().Cookies(), "arbitron_session"))
+}
+
+func TestAuthHandler_Callback_EmptyNonce_Rejected(t *testing.T) {
+	// Simulates an IdP that does not embed a nonce in the ID token (no nonce
+	// support, or misconfigured). A missing nonce is indistinguishable from a
+	// replay — the callback must reject with 400. This is distinct from the
+	// WRONG_NONCE case: the ID token is structurally valid, just without a nonce.
+	oidc := &fakeOIDCProvider{
+		claims:    identity.Claims{Subject: "s", Username: "u"},
+		omitNonce: true,
+	}
+	sessions := newFakeSessionRepo()
+	h := newAuthHandler(oidc, sessions, newFakeUserRepo())
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "absent nonce must be rejected with 400")
+	assert.Empty(t, sessions.byToken, "no session created when nonce is absent")
 	assert.Nil(t, findCookie(rec.Result().Cookies(), "arbitron_session"))
 }
 

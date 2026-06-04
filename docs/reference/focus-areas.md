@@ -21,7 +21,7 @@ result for that area.
 | 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [x] | [x] | Done |
 | 4 | Users schema & repo (migration 003 sessions+`users.subject`/`users.email`; `instance.User`; `UserRepository` GetByID/GetBySubject/Create/UpdateUsername/List/UpdateRole/CountAdmins; sqlc) | [x] | [x] | Done |
 | 5 | Session store (`adapter/sqlite` SessionRepo — SHA-256 hash-on-store, expiry filter, `DeleteExpired`, sweep; secrecy test) | [x] | [x] | Done |
-| 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [x] | [ ] | Pass 1 Done |
+| 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [x] | [x] | Done |
 | 7 | Auth middleware (`adapter/http/auth_middleware.go` — local-mode admin injection; org-mode session→bearer resolve order; 401 vs login-redirect; covers REST/`/mcp`/WS) | [ ] | [ ] | Pending |
 | 8 | `/auth` handlers (`adapter/http` — login/callback/logout, signed state+nonce cookie, session cookie HttpOnly/SameSite/Secure, open-redirect-safe `next`) | [ ] | [ ] | Pending |
 | 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [ ] | [ ] | Pending |
