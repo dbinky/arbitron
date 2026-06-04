@@ -59,6 +59,38 @@ describe('chooseSide', () => {
   })
 })
 
+describe('LoopBackEdge — fallback: endpoint-derived box when box is absent', () => {
+  it('renders a path without crashing when data is entirely absent', () => {
+    const noData = { ...baseProps, data: undefined } as unknown as Parameters<typeof LoopBackEdge>[0]
+    const { getByTestId } = render(
+      <svg>
+        <LoopBackEdge {...noData} />
+      </svg>,
+    )
+    expect(getByTestId('edge-path')).toBeInTheDocument()
+    expect(getByTestId('edge-path').getAttribute('d')!.length).toBeGreaterThan(0)
+  })
+
+  it('renders a path when data has a loop but box is undefined (e.g. unpositioned body nodes)', () => {
+    // loopContainerBox returns null when no body node has a position; useGraphLayout
+    // then sets box: undefined on the edge data. The component must use the fallback.
+    const noBox = {
+      ...baseProps,
+      data: {
+        ...(baseProps as unknown as { data: object }).data,
+        box: undefined,
+      },
+    } as unknown as Parameters<typeof LoopBackEdge>[0]
+    const { getByTestId } = render(
+      <svg>
+        <LoopBackEdge {...noBox} />
+      </svg>,
+    )
+    expect(getByTestId('edge-path')).toBeInTheDocument()
+    expect(getByTestId('edge-path').getAttribute('d')!.length).toBeGreaterThan(0)
+  })
+})
+
 describe('LoopBackEdge — rendering', () => {
   it('renders an SVG path (the routed return curve)', () => {
     const { getByTestId } = render(

@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### EDGE-001: LoopBackEdge fallback-box path untested
+**Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
+**Fixed**: Iteration 5
+**Detail**: The component has a fallback box derived from edge endpoints when `data` is absent or `data.box` is undefined. This path executes in production when `loopContainerBox` returns null (all body nodes unpositioned). Both cases were untested — the "error/failure" scenario category was missing. Added a `LoopBackEdge — fallback: endpoint-derived box when box is absent` describe block with two tests.
+
 ### LAYOUT-002: useGraphLayout self-loop integration untested
 **Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
 **Fixed**: Iteration 4
