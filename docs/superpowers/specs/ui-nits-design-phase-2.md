@@ -19,6 +19,20 @@ executing step centered, without taking control away from the user.
   It is rendered inside a `ReactFlowProvider`, so `useReactFlow()` is available.
 - There is no concept of centering on, or following, a node.
 
+## Integration with Phase 1
+
+Phase 1 and this phase both modify the same `<ReactFlow>` element in
+`GraphView` (`ExecutionView.tsx`). They compose, but the implementer must apply
+this phase **on top of** Phase 1's changes, not in place of them:
+
+- Phase 1 adds `edgeTypes` (for `loopBackEdge`) and `loopContainer` nodes to the
+  graph; this phase must preserve them.
+- This phase removes `fitView`/`fitViewOptions` and adds the follow hook; it must
+  not drop Phase 1's `edgeTypes`/container handling.
+- Anchor/centering math reuses the `positionMap` and node-size constants from
+  `useGraphLayout`; loop-container overlay nodes are **excluded** from anchor
+  selection (only real step nodes are candidate anchors).
+
 ## Anchor selection
 
 Define the "anchor" node the view should center on, given instance + states:
