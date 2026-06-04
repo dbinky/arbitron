@@ -15,6 +15,21 @@ _No open issues. All identified gaps are closed._
 
 ## Closed Issues
 
+### ~~GAP-005: Engine Retry missing ClearForInstance error-path coverage~~  ✅ CLOSED (LOW)
+**Area:** `domain/engine/engine_dismissal_test.go`
+**What was wrong:** `engine.Retry` explicitly returns an error when
+`dismissals.ClearForInstance` fails (engine.go line 1036-1037:
+`return fmt.Errorf("failed to clear dismissals on retry: %w", err)`).
+The existing `TestEngine_RetryClearsDismissal` covers the happy path (clear
+succeeds), but the error path was never exercised — the "error" category was
+absent for this engine function.
+**Closed:** added `errClearRepo` (embeds `*dismissalRecorder`, overrides
+`ClearForInstance` to return a fixed error); added
+`TestEngine_RetryClearDismissalError` which triggers the instance to fail,
+then calls `Retry` and asserts the error contains
+`"failed to clear dismissals on retry"`. `go test ./domain/engine/` and
+`make test-all` green.
+
 ### ~~GAP-004: Dismissal HTTP handlers missing currentUser + DismissAll-loop error coverage~~  ✅ CLOSED (LOW)
 **Area:** `adapter/http/dismissal_handler_test.go`
 **What was wrong:** Four error-branch paths in `Dismiss`, `Restore`, and `DismissAll` were untested:

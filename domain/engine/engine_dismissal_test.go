@@ -75,6 +75,16 @@ func (d *dismissalRecorder) clearedCount(i uuid.UUID) int {
 
 var _ instance.DismissalRepository = (*dismissalRecorder)(nil)
 
+// errClearRepo delegates everything to the embedded recorder but always fails ClearForInstance.
+type errClearRepo struct {
+	*dismissalRecorder
+	err error
+}
+
+func (e *errClearRepo) ClearForInstance(_ context.Context, _ uuid.UUID) error { return e.err }
+
+var _ instance.DismissalRepository = (*errClearRepo)(nil)
+
 // Integration: retrying a dismissed FAILED instance clears its dismissal so it
 // resurfaces. Uses a single-node workflow whose node fails once then succeeds.
 func TestEngine_RetryClearsDismissal(t *testing.T) {
@@ -142,4 +152,28 @@ func TestEngine_RerunYieldsUndismissedNewInstance(t *testing.T) {
 	assert.True(t, ids[id], "original instance stays dismissed (historical)")
 	assert.False(t, ids[newID], "new instance has no dismissal rows")
 	assert.Equal(t, 0, dis.clearedCount(newID), "rerun does not clear dismissals")
+}
+
+// When the dismissal repo fails to clear on Retry, Retry propagates the error
+// before launching the run goroutine.
+func TestEngine_RetryClearDismissalError(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	f.engine.SetDismissals(&errClearRepo{
+		dismissalRecorder: newDismissalRecorder(),
+		err:               fmt.Errorf("db down"),
+	})
+
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node A failed")
+	})
+
+	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	retryErr := f.engine.Retry(id, nil)
+	assert.ErrorContains(t, retryErr, "failed to clear dismissals on retry")
 }

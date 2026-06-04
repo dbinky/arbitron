@@ -40,6 +40,19 @@ error paths.
 - [x] Added `TestDismissAll_ListError_500` (instances.List fails).
 - [x] `go test ./adapter/http/...` and `make test-all` green.
 
+## ~~5. Engine Retry ClearForInstance error-path coverage~~  ✅ DONE ⟶ GAP-005 (LOW)
+
+~~`engine.Retry` explicitly returns an error when `dismissals.ClearForInstance` fails,
+but no test exercised this path — the "error" category was absent for Retry-with-dismissals.~~
+**Closed:** added `errClearRepo` wrapper (embeds `*dismissalRecorder`, overrides `ClearForInstance`);
+added `TestEngine_RetryClearDismissalError` verifying that Retry propagates the error before
+launching the goroutine.
+
+- [x] Added `errClearRepo` (delegates Dismiss/Restore/DismissedIDs to embedded recorder; fails on `ClearForInstance`).
+- [x] Added `TestEngine_RetryClearDismissalError` — triggers instance to fail, calls Retry with an erroring
+      ClearForInstance, asserts error contains `"failed to clear dismissals on retry"`.
+- [x] `go test ./domain/engine/` and `make test-all` green.
+
 ## ~~4. Dismissal handler currentUser + DismissAll-loop error coverage~~  ✅ DONE ⟶ GAP-004 (LOW)
 
 ~~Four error paths in `Dismiss`, `Restore`, and `DismissAll` were untested: `currentUser.CurrentUser`
