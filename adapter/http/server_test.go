@@ -114,42 +114,42 @@ func (m *routerMockService) GetVariableHistory(ctx context.Context, id uuid.UUID
 	return nil, nil
 }
 
-func (m *routerMockService) Pause(id uuid.UUID) error {
+func (m *routerMockService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Resume(id uuid.UUID) error {
+func (m *routerMockService) Resume(_ context.Context, id uuid.UUID) error {
 	if m.resumeFn != nil {
 		return m.resumeFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Cancel(id uuid.UUID) error {
+func (m *routerMockService) Cancel(_ context.Context, id uuid.UUID) error {
 	if m.cancelFn != nil {
 		return m.cancelFn(id)
 	}
 	return nil
 }
 
-func (m *routerMockService) Retry(id uuid.UUID, variableEdits map[string]any) error {
+func (m *routerMockService) Retry(_ context.Context, id uuid.UUID, variableEdits map[string]any) error {
 	if m.retryFn != nil {
 		return m.retryFn(id, variableEdits)
 	}
 	return nil
 }
 
-func (m *routerMockService) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (m *routerMockService) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if m.rerunFn != nil {
 		return m.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (m *routerMockService) SetPriority(id uuid.UUID, priority string) error {
+func (m *routerMockService) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if m.setPriorityFn != nil {
 		return m.setPriorityFn(id, priority)
 	}

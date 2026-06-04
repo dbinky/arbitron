@@ -268,6 +268,25 @@ func (e *Engine) authorizeView(ctx context.Context, id uuid.UUID) (*instance.Ins
 	return e.GetInstance(ctx, id)
 }
 
+// authorizeIntervention loads the instance and confirms the caller may act on
+// it (owner or admin). It returns the loaded instance so the caller reuses it
+// (avoiding a second Get). A non-viewer gets ErrNotFound so a write probe cannot
+// distinguish "exists but forbidden" from "absent" (existence not leaked),
+// consistent with the read posture.
+func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	inst, err := e.instances.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instance: %w", err)
+	}
+	if inst == nil {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	if !canView(ctx, inst.OwnerID) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	return inst, nil
+}
+
 // GetTrace returns the ordered node executions for an instance the caller may
 // view, else ErrNotFound.
 func (e *Engine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
@@ -886,11 +905,10 @@ func (e *Engine) findNextNode(currentNodeID string, outputPort string, adj map[s
 // Pause sets a running or waiting instance to paused state. The graph walker will
 // detect this on its next iteration and stop. For waiting instances, the timer
 // keeps counting (do NOT cancel the scheduler entry).
-func (e *Engine) Pause(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Pause(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 
 	switch inst.State {
@@ -927,11 +945,10 @@ func (e *Engine) Pause(instanceID uuid.UUID) error {
 //   - Timer not expired: transition back to waiting
 //
 // If the instance was paused from running (WaitingUntil is nil), resume normally.
-func (e *Engine) Resume(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Resume(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StatePaused {
 		return fmt.Errorf("instance %s is not paused (state: %s): %w", instanceID, inst.State, instance.ErrNotPaused)
@@ -1039,11 +1056,10 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
 // cancels its context/timer as appropriate.
-func (e *Engine) Cancel(instanceID uuid.UUID) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 
 	switch inst.State {
@@ -1101,11 +1117,10 @@ func (e *Engine) publishCancelledEvent(instanceID uuid.UUID) {
 
 // Retry resumes a failed instance from the failed node, optionally
 // applying variable edits.
-func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Retry(ctx context.Context, instanceID uuid.UUID, variableEdits map[string]any) error {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StateFailed {
 		return fmt.Errorf("instance %s is not failed (state: %s): %w", instanceID, inst.State, instance.ErrNotFailed)
@@ -1150,11 +1165,10 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 // Rerun creates a new instance from a completed instance's original variables
 // and triggers it. Only terminal instances (completed, failed, cancelled) can
 // be rerun.
-func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, instanceID)
+func (e *Engine) Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, error) {
+	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to get instance: %w", err)
+		return uuid.Nil, err
 	}
 
 	switch inst.State {
@@ -1168,9 +1182,10 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
-	// Rerun currently carries no request identity (Phase 4 Task 5 threads the
-	// acting caller's ctx in); the background ctx makes triggerOwner fall back to
-	// the default user.
+	// Forward the request ctx into Trigger so the new instance is owned by the
+	// acting caller (Phase 3 Task 7's triggerOwner resolves the identity from ctx,
+	// falling back to the default user for system triggers). The new instance is
+	// independently scoped and owned by the actor, not the source's owner.
 	id, _, err := e.Trigger(ctx, inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
 	return id, err
 }
@@ -1182,11 +1197,10 @@ func (e *Engine) SetQueueManager(qm QueueManager) {
 }
 
 // SetPriority changes the priority of a queued or waiting instance.
-func (e *Engine) SetPriority(id uuid.UUID, priority string) error {
-	ctx := context.Background()
-	inst, err := e.instances.Get(ctx, id)
+func (e *Engine) SetPriority(ctx context.Context, id uuid.UUID, priority string) error {
+	inst, err := e.authorizeIntervention(ctx, id)
 	if err != nil {
-		return fmt.Errorf("failed to get instance: %w", err)
+		return err
 	}
 	if inst.State != instance.StateQueued && inst.State != instance.StateWaiting {
 		return fmt.Errorf("instance %s is not queued (state: %s): %w", id, inst.State, instance.ErrNotQueued)

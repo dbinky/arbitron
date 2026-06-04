@@ -412,7 +412,7 @@ func TestLoop_NoExitLoop_EngineDoesNotAutoKill(t *testing.T) {
 	const guard = 6
 	f.agent.mu.Lock()
 	f.agent.maxPasses = guard
-	f.agent.cancel = func() { _ = f.engine.Cancel(<-idCh) }
+	f.agent.cancel = func() { _ = f.engine.Cancel(bgAdmin(), <-idCh) }
 	f.agent.mu.Unlock()
 
 	id, _, err := f.engine.Trigger(context.Background(), "loop-wf", nil, "normal")

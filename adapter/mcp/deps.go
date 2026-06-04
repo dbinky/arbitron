@@ -26,12 +26,12 @@ type EngineService interface {
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
 	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	Pause(instanceID uuid.UUID) error
-	Resume(instanceID uuid.UUID) error
-	Cancel(instanceID uuid.UUID) error
-	Retry(instanceID uuid.UUID, variableEdits map[string]any) error
-	Rerun(instanceID uuid.UUID) (uuid.UUID, error)
-	SetPriority(id uuid.UUID, priority string) error
+	Pause(ctx context.Context, instanceID uuid.UUID) error
+	Resume(ctx context.Context, instanceID uuid.UUID) error
+	Cancel(ctx context.Context, instanceID uuid.UUID) error
+	Retry(ctx context.Context, instanceID uuid.UUID, variableEdits map[string]any) error
+	Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, error)
+	SetPriority(ctx context.Context, id uuid.UUID, priority string) error
 }
 
 // QueueManagerPort defines the subset of queue.Manager that the MCP adapter

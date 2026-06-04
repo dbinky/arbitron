@@ -1204,7 +1204,7 @@ func TestEngine_PauseRunning(t *testing.T) {
 	// Wait for B to start
 	<-bStarted
 
-	err = f.engine.Pause(id)
+	err = f.engine.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	// Release B so the run loop can check the pause
@@ -1260,14 +1260,14 @@ func TestEngine_ResumeFromPaused(t *testing.T) {
 
 	<-bStarted
 
-	err = f.engine.Pause(id)
+	err = f.engine.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	close(bDone)
 
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Now resume
-	err = f.engine.Resume(id)
+	err = f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -1301,7 +1301,7 @@ func TestEngine_CancelRunning(t *testing.T) {
 
 	<-bStarted
 
-	err = f.engine.Cancel(id)
+	err = f.engine.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCancelled)
@@ -1333,7 +1333,7 @@ func TestEngine_RetryFailed(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
 	// Retry the failed instance
-	err = f.engine.Retry(id, nil)
+	err = f.engine.Retry(bgAdmin(), id, nil)
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -1349,7 +1349,7 @@ func TestEngine_RerunCompleted(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, origID, 5*time.Second, instance.StateCompleted)
 
-	newID, err := f.engine.Rerun(origID)
+	newID, err := f.engine.Rerun(bgAdmin(), origID)
 	require.NoError(t, err)
 	assert.NotEqual(t, origID, newID)
 
@@ -1396,13 +1396,13 @@ func TestEngine_RerunNonTerminalFails(t *testing.T) {
 
 	// Wait for B to start, then pause.
 	<-bStarted
-	require.NoError(t, f.engine.Pause(id))
+	require.NoError(t, f.engine.Pause(bgAdmin(), id))
 	close(bDone)
 
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Rerun should fail because the instance is paused (non-terminal).
-	_, err = f.engine.Rerun(id)
+	_, err = f.engine.Rerun(bgAdmin(), id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be rerun")
 }
@@ -1724,7 +1724,7 @@ func TestEngine_PauseNonRunning(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	err = f.engine.Pause(id)
+	err = f.engine.Pause(bgAdmin(), id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not running")
 }
@@ -1737,7 +1737,7 @@ func TestEngine_ResumeNonPaused(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	err = f.engine.Resume(id)
+	err = f.engine.Resume(bgAdmin(), id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not paused")
 }
@@ -1750,7 +1750,7 @@ func TestEngine_CancelTerminalState(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	err = f.engine.Cancel(id)
+	err = f.engine.Cancel(bgAdmin(), id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be cancelled")
 }
@@ -1763,7 +1763,7 @@ func TestEngine_RetryNonFailed(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
 
-	err = f.engine.Retry(id, nil)
+	err = f.engine.Retry(bgAdmin(), id, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not failed")
 }
@@ -1856,7 +1856,7 @@ func TestEngine_RetryPreservesUneditedNodeOutputs(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
 	// Retry with only "name" changed.
-	err = f.engine.Retry(id, map[string]any{"name": "Bob"})
+	err = f.engine.Retry(bgAdmin(), id, map[string]any{"name": "Bob"})
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -2029,7 +2029,7 @@ func TestEngine_RetryWithVariableEdits(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
 
 	// Retry with corrected variable
-	err = f.engine.Retry(id, map[string]any{"name": "Alice"})
+	err = f.engine.Retry(bgAdmin(), id, map[string]any{"name": "Alice"})
 	require.NoError(t, err)
 
 	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -2099,7 +2099,7 @@ func TestEngine_RerunNilOriginalVariablesFails(t *testing.T) {
 	f.instanceRepo.instances[id].OriginalVariables = nil
 	f.instanceRepo.mu.Unlock()
 
-	_, err = f.engine.Rerun(id)
+	_, err = f.engine.Rerun(bgAdmin(), id)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no original variables recorded")
 }
@@ -2225,7 +2225,7 @@ func TestEngine_PauseWaiting_SetsStateToPaused(t *testing.T) {
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Pause(id)
+	err := f.engine.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2253,7 +2253,7 @@ func TestEngine_ResumeFromWaiting_TimerExpired_Enqueues(t *testing.T) {
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2278,7 +2278,7 @@ func TestEngine_ResumeFromWaiting_TimerNotExpired_RestoresWaiting(t *testing.T) 
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2303,7 +2303,7 @@ func TestEngine_ResumeFromWebhookWaiting_WebhookReceived_Enqueues(t *testing.T) 
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2327,7 +2327,7 @@ func TestEngine_ResumeFromWebhookWaiting_NotReceived_RestoresWaiting(t *testing.
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2361,7 +2361,7 @@ func TestEngine_ResumeFromWebhookWaiting_TimeoutExpiredWhilePaused_FailsInstance
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2395,7 +2395,7 @@ func TestEngine_ResumeFromWebhookWaiting_TimeoutNotExpired_RestoresWaiting(t *te
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Resume(id)
+	err := f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2422,7 +2422,7 @@ func TestEngine_CancelWaiting_DeactivatesWebhookCancelsTimer(t *testing.T) {
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Cancel(id)
+	err := f.engine.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2453,7 +2453,7 @@ func TestEngine_CancelQueued_TransitionsToCancelled(t *testing.T) {
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Cancel(id)
+	err := f.engine.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -2480,7 +2480,7 @@ func TestEngine_CancelPaused_WithWebhookToken_DeactivatesWebhookCancelsTimer(t *
 	}
 	f.instanceRepo.mu.Unlock()
 
-	err := f.engine.Cancel(id)
+	err := f.engine.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)

@@ -170,13 +170,13 @@ func instanceTriggerHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instancePauseHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		if err := srv.deps.Engine.Pause(id); err != nil {
+		if err := srv.deps.Engine.Pause(ctx, id); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to pause instance: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "paused", "id": id.String()})
@@ -184,13 +184,13 @@ func instancePauseHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceResumeHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		if err := srv.deps.Engine.Resume(id); err != nil {
+		if err := srv.deps.Engine.Resume(ctx, id); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to resume instance: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "resumed", "id": id.String()})
@@ -198,13 +198,13 @@ func instanceResumeHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceCancelHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		if err := srv.deps.Engine.Cancel(id); err != nil {
+		if err := srv.deps.Engine.Cancel(ctx, id); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to cancel instance: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "cancelled", "id": id.String()})
@@ -212,7 +212,7 @@ func instanceCancelHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceRetryHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
@@ -226,7 +226,7 @@ func instanceRetryHandler(srv *Server) server.ToolHandlerFunc {
 			}
 		}
 
-		if err := srv.deps.Engine.Retry(id, vars); err != nil {
+		if err := srv.deps.Engine.Retry(ctx, id, vars); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to retry instance: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "retrying", "id": id.String()})
@@ -234,13 +234,13 @@ func instanceRetryHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceRerunHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		newID, err := srv.deps.Engine.Rerun(id)
+		newID, err := srv.deps.Engine.Rerun(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to rerun instance: %s", err)), nil
 		}
@@ -249,7 +249,7 @@ func instanceRerunHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceSetPriorityHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
@@ -264,7 +264,7 @@ func instanceSetPriorityHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid priority %q: must be high, normal, or low", priority)), nil
 		}
 
-		if err := srv.deps.Engine.SetPriority(id, priority); err != nil {
+		if err := srv.deps.Engine.SetPriority(ctx, id, priority); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to set priority: %s", err)), nil
 		}
 		return MarshalResult(map[string]string{"status": "updated", "id": id.String(), "priority": priority})

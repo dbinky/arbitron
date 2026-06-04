@@ -328,42 +328,42 @@ func (m *mockInstanceService) GetVariableHistory(ctx context.Context, id uuid.UU
 	return nil, nil
 }
 
-func (m *mockInstanceService) Pause(id uuid.UUID) error {
+func (m *mockInstanceService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Resume(id uuid.UUID) error {
+func (m *mockInstanceService) Resume(_ context.Context, id uuid.UUID) error {
 	if m.resumeFn != nil {
 		return m.resumeFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Cancel(id uuid.UUID) error {
+func (m *mockInstanceService) Cancel(_ context.Context, id uuid.UUID) error {
 	if m.cancelFn != nil {
 		return m.cancelFn(id)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Retry(id uuid.UUID, variableEdits map[string]any) error {
+func (m *mockInstanceService) Retry(_ context.Context, id uuid.UUID, variableEdits map[string]any) error {
 	if m.retryFn != nil {
 		return m.retryFn(id, variableEdits)
 	}
 	return nil
 }
 
-func (m *mockInstanceService) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (m *mockInstanceService) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if m.rerunFn != nil {
 		return m.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (m *mockInstanceService) SetPriority(id uuid.UUID, priority string) error {
+func (m *mockInstanceService) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if m.setPriorityFn != nil {
 		return m.setPriorityFn(id, priority)
 	}
@@ -662,6 +662,26 @@ func TestInstanceHandler_Pause(t *testing.T) {
 		h.Pause(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the handler maps it to 404, identical to a missing instance.
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.pauseFn = func(gotID uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", gotID, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Pause(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
 	t.Run("returns 409 for wrong state", func(t *testing.T) {

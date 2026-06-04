@@ -25,12 +25,12 @@ type InstanceService interface {
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
 	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	Pause(id uuid.UUID) error
-	Resume(id uuid.UUID) error
-	Cancel(id uuid.UUID) error
-	Retry(id uuid.UUID, variableEdits map[string]any) error
-	Rerun(id uuid.UUID) (uuid.UUID, error)
-	SetPriority(id uuid.UUID, priority string) error
+	Pause(ctx context.Context, id uuid.UUID) error
+	Resume(ctx context.Context, id uuid.UUID) error
+	Cancel(ctx context.Context, id uuid.UUID) error
+	Retry(ctx context.Context, id uuid.UUID, variableEdits map[string]any) error
+	Rerun(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	SetPriority(ctx context.Context, id uuid.UUID, priority string) error
 }
 
 // InstanceHandler handles REST API requests for instance operations.
@@ -261,7 +261,7 @@ func (h *InstanceHandler) Pause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Pause(id); err != nil {
+	if err := h.service.Pause(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -278,7 +278,7 @@ func (h *InstanceHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Resume(id); err != nil {
+	if err := h.service.Resume(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -295,7 +295,7 @@ func (h *InstanceHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Cancel(id); err != nil {
+	if err := h.service.Cancel(r.Context(), id); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -321,7 +321,7 @@ func (h *InstanceHandler) Retry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.service.Retry(id, req.Variables); err != nil {
+	if err := h.service.Retry(r.Context(), id, req.Variables); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return
@@ -338,7 +338,7 @@ func (h *InstanceHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newID, err := h.service.Rerun(id)
+	newID, err := h.service.Rerun(r.Context(), id)
 	if err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
@@ -546,7 +546,7 @@ func (h *InstanceHandler) SetPriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.SetPriority(id, req.Priority); err != nil {
+	if err := h.service.SetPriority(r.Context(), id, req.Priority); err != nil {
 		status := mapEngineError(err)
 		WriteError(w, status, mapEngineErrorCode(err), err.Error())
 		return

@@ -87,6 +87,13 @@ func userCtx(u uuid.UUID) context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: u, Username: "user", Role: identity.RoleUser})
 }
 
+// bgAdmin returns a background context carrying an admin identity. Intervention
+// tests that pre-date per-user scoping use it so the owner-or-admin gate admits
+// the action regardless of the instance owner.
+func bgAdmin() context.Context {
+	return adminCtx(uuid.New())
+}
+
 // --- Happy path: admin -> no owner constraint, summaries pass through ---
 
 func TestListInstances_Admin_NoOwnerFilter(t *testing.T) {

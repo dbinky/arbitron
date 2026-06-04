@@ -599,7 +599,7 @@ func TestCancel_WaitingInstance_CancelsTimer(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -627,7 +627,7 @@ func TestCancel_WaitingInstance_NotifiesQueueManager(t *testing.T) {
 		<-f.queueManager.notifyCapacityFreedCh
 	}
 
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	select {
@@ -649,7 +649,7 @@ func TestPause_WaitingInstance_TransitionsToPaused(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -667,7 +667,7 @@ func TestPause_WaitingInstance_DoesNotCancelTimer(t *testing.T) {
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 
 	// Scheduler cancel should NOT have been called.
@@ -689,13 +689,13 @@ func TestResume_PausedFromWaiting_TimerExpired_GoesToQueued(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause it.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// waitingUntil was set to "now" (0 duration), so it's already expired.
 	// Resume should go to queued.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -714,12 +714,12 @@ func TestResume_PausedFromWaiting_TimerNotExpired_GoesToWaiting(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Pause it.
-	err = eng.Pause(id)
+	err = eng.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StatePaused)
 
 	// Resume — timer not expired, go back to waiting.
-	err = eng.Resume(id)
+	err = eng.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)
@@ -772,7 +772,7 @@ func TestResume_PausedFromRunning_StartsInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	<-bStarted
-	err = f.engine.Pause(id)
+	err = f.engine.Pause(bgAdmin(), id)
 	require.NoError(t, err)
 	close(bDone)
 
@@ -783,7 +783,7 @@ func TestResume_PausedFromRunning_StartsInstance(t *testing.T) {
 	assert.Nil(t, inst.WaitingUntil)
 
 	// Resume should restart from current node and eventually complete.
-	err = f.engine.Resume(id)
+	err = f.engine.Resume(bgAdmin(), id)
 	require.NoError(t, err)
 
 	finalInst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
@@ -898,7 +898,7 @@ func TestTimerDelay_WithCancel(t *testing.T) {
 	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateWaiting)
 
 	// Cancel the waiting instance.
-	err = eng.Cancel(id)
+	err = eng.Cancel(bgAdmin(), id)
 	require.NoError(t, err)
 
 	inst := f.instanceRepo.get(id)

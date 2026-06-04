@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -136,42 +137,42 @@ func (s *stubEngine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]in
 	return nil, nil
 }
 
-func (s *stubEngine) Pause(id uuid.UUID) error {
+func (s *stubEngine) Pause(_ context.Context, id uuid.UUID) error {
 	if s.pauseFn != nil {
 		return s.pauseFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Resume(id uuid.UUID) error {
+func (s *stubEngine) Resume(_ context.Context, id uuid.UUID) error {
 	if s.resumeFn != nil {
 		return s.resumeFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Cancel(id uuid.UUID) error {
+func (s *stubEngine) Cancel(_ context.Context, id uuid.UUID) error {
 	if s.cancelFn != nil {
 		return s.cancelFn(id)
 	}
 	return nil
 }
 
-func (s *stubEngine) Retry(id uuid.UUID, vars map[string]any) error {
+func (s *stubEngine) Retry(_ context.Context, id uuid.UUID, vars map[string]any) error {
 	if s.retryFn != nil {
 		return s.retryFn(id, vars)
 	}
 	return nil
 }
 
-func (s *stubEngine) Rerun(id uuid.UUID) (uuid.UUID, error) {
+func (s *stubEngine) Rerun(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	if s.rerunFn != nil {
 		return s.rerunFn(id)
 	}
 	return uuid.New(), nil
 }
 
-func (s *stubEngine) SetPriority(id uuid.UUID, priority string) error {
+func (s *stubEngine) SetPriority(_ context.Context, id uuid.UUID, priority string) error {
 	if s.setPriorityFn != nil {
 		return s.setPriorityFn(id, priority)
 	}
@@ -572,6 +573,21 @@ func TestInstanceCancel(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "already terminal")
+	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance.
+		eng := &stubEngine{
+			cancelFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
 	})
 
 	t.Run("invalid id returns error", func(t *testing.T) {
