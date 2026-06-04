@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	engine "github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
-	engine "github.com/arbitron/arbitron/domain/engine"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,6 +33,17 @@ func (d *dismissalRecorder) Dismiss(_ context.Context, u, i uuid.UUID) error {
 		d.dismissed[i] = map[uuid.UUID]bool{}
 	}
 	d.dismissed[i][u] = true
+	return nil
+}
+func (d *dismissalRecorder) DismissMany(_ context.Context, u uuid.UUID, ids []uuid.UUID) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, i := range ids {
+		if d.dismissed[i] == nil {
+			d.dismissed[i] = map[uuid.UUID]bool{}
+		}
+		d.dismissed[i][u] = true
+	}
 	return nil
 }
 func (d *dismissalRecorder) Restore(_ context.Context, u, i uuid.UUID) error {
@@ -256,4 +267,12 @@ func TestEngine_RetryClearDismissalError(t *testing.T) {
 
 	retryErr := f.engine.Retry(id, nil)
 	assert.ErrorContains(t, retryErr, "failed to clear dismissals on retry")
+
+	// Ordering invariant: ClearForInstance runs BEFORE the instance is flipped to
+	// running, so a clear failure must NOT leave the instance stuck in running
+	// with no run goroutine. It stays failed and remains retryable.
+	inst, err := f.instanceRepo.Get(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateFailed, inst.State,
+		"clear-failure must not strand the instance in running (stuck-running window)")
 }

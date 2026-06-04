@@ -19,24 +19,24 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
-	workflows       workflow.WorkflowRepository
-	instances       instance.InstanceRepository
-	nodeExecutions  instance.NodeExecutionRepository
-	snapshots       instance.VariableSnapshotRepository
-	users           instance.UserRepository
-	executors       map[workflow.NodeType]NodeExecutor
-	eventBus        EventBus
-	queueManager    QueueManager
-	queueRepo       instance.QueueRepository
-	scheduler       TimerScheduler
+	workflows        workflow.WorkflowRepository
+	instances        instance.InstanceRepository
+	nodeExecutions   instance.NodeExecutionRepository
+	snapshots        instance.VariableSnapshotRepository
+	users            instance.UserRepository
+	executors        map[workflow.NodeType]NodeExecutor
+	eventBus         EventBus
+	queueManager     QueueManager
+	queueRepo        instance.QueueRepository
+	scheduler        TimerScheduler
 	webhookRegistry  WebhookRegistrar
 	notifications    notification.Repository
 	dismissals       instance.DismissalRepository
 	externalNotifier notification.ExternalNotifier
 	workspaceManager WorkspaceManager
 	mu               sync.Mutex
-	contexts        map[uuid.UUID]context.CancelFunc
-	wg              sync.WaitGroup
+	contexts         map[uuid.UUID]context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -1023,19 +1023,22 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 		}
 	}
 
-	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
-		return fmt.Errorf("failed to update state: %w", err)
-	}
-
 	// Resurface on a new outcome: clear this instance's dismissals for every
 	// user so the now-running item reappears in Active and, when it reaches a
 	// fresh terminal state, in Completed/Failed. A new result is new information
-	// the user should see. The instance is already marked running above; abort
-	// the retry before launching the run goroutine if the clear fails.
+	// the user should see. This MUST run before flipping the instance to running:
+	// if the clear fails after the state flip, the instance would be stranded in
+	// running with no run goroutine (an unrecoverable stuck-running window). By
+	// clearing first, a clear failure aborts the retry while the instance is
+	// still failed and retryable.
 	if e.dismissals != nil {
 		if err := e.dismissals.ClearForInstance(ctx, instanceID); err != nil {
 			return fmt.Errorf("failed to clear dismissals on retry: %w", err)
 		}
+	}
+
+	if err := e.instances.UpdateState(ctx, instanceID, instance.StateRunning); err != nil {
+		return fmt.Errorf("failed to update state: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
