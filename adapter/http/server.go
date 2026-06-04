@@ -141,12 +141,20 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
-	// Wire the per-user dismissal repo + acting-user seam when both are present.
-	// Guarded like NotifHandler: without these, dismissal routes are skipped and
-	// the list endpoint stays non-dismissal-aware.
+	// One on/off decision for the whole feature. When enabled we wire the real
+	// per-user repo + acting-user resolver; when disabled we wire a named Null
+	// Object repo + resolver so the handler body never nil-checks the seam. The
+	// dismiss/restore/dismiss-all routes are still only registered when enabled
+	// (so the endpoints 404 rather than no-op-200 when the feature is off).
 	dismissalsEnabled := d.Dismissals != nil && d.Users != nil
 	if dismissalsEnabled {
 		instHandler.SetDismissals(d.Dismissals, NewCurrentUserResolver(d.Users))
+	} else {
+		var (
+			noopDismissals instance.DismissalRepository = nullDismissalRepository{}
+			noopResolver   CurrentUserResolver          = nullUserResolver{}
+		)
+		instHandler.SetDismissals(noopDismissals, noopResolver)
 	}
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler)
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus)
