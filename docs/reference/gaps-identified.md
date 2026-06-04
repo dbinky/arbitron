@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA8-P1-01: Provisioner Create failure had no test — session cookie could theoretically appear on partial state
+**Area**: Focus Area 8 — `/auth` handlers (Pass 1)
+**Fix**: Added `failingCreateUserRepo` (wraps `fakeUserRepo`, returns `errors.New("db write error")` from `Create`) and `TestAuthHandler_Callback_ProvisionError_500` in `adapter/http/auth_handler_test.go`. Seeds `fakeUserRepo` with no pre-existing user for subject `"new-sub"` so `GetBySubject` returns `ErrNotFound`, then `Create` fails. Asserts: 500 response, `sessions.byToken` empty, no `arbitron_session` cookie. Documents the "error" scenario category for JIT provisioning — a DB failure during `resolveOrProvision` must never produce a session or session cookie.
+
 ### GAP-FA7-P2-01: Browser-nav redirect did not have a test for URLs with query parameters
 **Area**: Focus Area 7 — Auth middleware (Pass 2)
 **Fix**: Added `t.Run("deep-link with query params fully encoded in next")` inside `TestAuthMiddleware_Org_BrowserNav_Redirects`. Sends an unauthenticated GET to `/instances/abc?tab=logs&page=2` with `Accept: text/html` and asserts the redirect Location is `/auth/login?next=%2Finstances%2Fabc%3Ftab%3Dlogs%26page%3D2`. Documents that `url.QueryEscape(r.URL.RequestURI())` correctly encodes both the path separator and the query string delimiters, so the user lands back at the exact deep-linked URL after login.

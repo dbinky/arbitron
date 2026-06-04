@@ -55,6 +55,14 @@ func (f failingSessionRepo) Create(context.Context, *identity.Session) error {
 	return errors.New("db down")
 }
 
+// failingCreateUserRepo wraps fakeUserRepo but returns an error from Create,
+// simulating a DB failure during JIT user provisioning.
+type failingCreateUserRepo struct{ *fakeUserRepo }
+
+func (r *failingCreateUserRepo) Create(_ context.Context, _ *instance.User) error {
+	return errors.New("db write error")
+}
+
 func newAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository) *AuthHandler {
 	return newAuthHandlerWithBootstrap(oidc, sessions, users)
 }
@@ -262,6 +270,21 @@ func TestAuthHandler_Callback_SessionCreateFails(t *testing.T) {
 
 	rec := doLoginThenCallback(t, h, "ok", "/")
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Nil(t, findCookie(rec.Result().Cookies(), "arbitron_session"))
+}
+
+func TestAuthHandler_Callback_ProvisionError_500(t *testing.T) {
+	// JIT provisioning (Create) fails for a subject not yet in the DB.
+	// The callback must return 500 and must not set a session cookie —
+	// no partial state should be created.
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "new-sub", Username: "u"}}
+	sessions := newFakeSessionRepo()
+	users := &failingCreateUserRepo{newFakeUserRepo()}
+	h := newAuthHandler(oidc, sessions, users)
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, "provision failure must return 500")
+	assert.Empty(t, sessions.byToken, "no session must be created when provisioning fails")
 	assert.Nil(t, findCookie(rec.Result().Cookies(), "arbitron_session"))
 }
 
