@@ -18,6 +18,7 @@ import (
 type fakeDeviceRepo struct {
 	byHash     map[string]*DeviceCode
 	byUserCode map[string]*DeviceCode
+	consumeErr error // if set, Consume returns this error regardless of state
 }
 
 func newFakeDeviceRepo() *fakeDeviceRepo {
@@ -67,6 +68,9 @@ func (r *fakeDeviceRepo) Deny(_ context.Context, uc string) error {
 }
 
 func (r *fakeDeviceRepo) Consume(_ context.Context, h string) error {
+	if r.consumeErr != nil {
+		return r.consumeErr
+	}
 	dc, ok := r.byHash[h]
 	if !ok || dc.Status != DeviceCodeApproved {
 		return ErrNotFound
@@ -279,6 +283,31 @@ func TestDeviceCodeService_Start_NewCodesFailure(t *testing.T) {
 	assert.Nil(t, resp)
 	// Nothing should have been persisted.
 	assert.Empty(t, repo.byHash, "no device-code row must be created on Start failure")
+}
+
+// Security/failure: if Consume returns an error (e.g. a concurrent Poll already
+// consumed the row and the DB rejects the second attempt), Mint must never be
+// called — the at-most-once guarantee is enforced by Consume-before-Mint ordering.
+func TestDeviceCodeService_Poll_ConsumeError_NoMint(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	tokRepo := &countingTokenRepo{}
+	svc := newDeviceSvc(repo, NewTokenService(tokRepo), nil)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	approveCtx := WithIdentity(ctx, Identity{UserID: uuid.New(), Role: RoleUser})
+	require.NoError(t, svc.Approve(approveCtx, start.UserCode))
+
+	// Simulate a concurrent caller winning the Consume race — our Consume fails.
+	repo.consumeErr = errors.New("conflict: concurrent consumer already consumed this row")
+
+	_, _, err = svc.Poll(ctx, start.DeviceCode)
+	assert.ErrorIs(t, err, ErrInvalidGrant,
+		"Consume failure must surface as ErrInvalidGrant, not leak internal error")
+	assert.Empty(t, tokRepo.created,
+		"Mint must never be called when Consume fails — at-most-once invariant")
 }
 
 // Boundary: double-consume mints exactly once.
