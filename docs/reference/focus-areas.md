@@ -16,7 +16,7 @@ result for that area.
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Auth config & mode (`domain/config` AuthConfig/OIDC/Session/BootstrapAdmins, `adapter/config/loader.go` — defaults, org-mode fail-fast validation, secret redaction) | [x] | [ ] | Pass 1 done |
+| 1 | Auth config & mode (`domain/config` AuthConfig/OIDC/Session/BootstrapAdmins, `adapter/config/loader.go` — defaults, org-mode fail-fast validation, secret redaction) | [x] | [x] | Done |
 | 2 | Identity package (`domain/identity` — `Identity`/`Role`/`Mode`, `WithIdentity`/`FromContext`/`MustFromContext`, no import of `domain/instance`) | [ ] | [ ] | Pending |
 | 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [ ] | [ ] | Pending |
 | 4 | Users schema & repo (migration 003 sessions+`users.subject`/`users.email`; `instance.User`; `UserRepository` GetByID/GetBySubject/Create/UpdateUsername/List/UpdateRole/CountAdmins; sqlc) | [ ] | [ ] | Pending |

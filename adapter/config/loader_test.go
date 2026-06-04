@@ -827,3 +827,84 @@ func TestLoad_AuthSession_EmptyCookieNameFallback(t *testing.T) {
 	assert.Equal(t, "arbitron_session", cfg.Auth.Session.CookieName,
 		"blank cookiename must fall back to the default to prevent silent session-auth breakage")
 }
+
+// ---- Phase 6 Focus Area 1 Pass 2: robustness & security ----
+
+// TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField verifies that a field set to
+// all-whitespace is rejected the same as an absent field. This locks the
+// TrimSpace pre-check in validateAuth so a YAML value of "   " cannot sneak
+// past org-mode validation and produce a runtime error on the first login.
+func TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string // expected substring in error
+	}{
+		{
+			"whitespace clientsecret rejected",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientid: \"c\"\n    clientsecret: \"   \"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.clientsecret",
+		},
+		{
+			"whitespace issuerurl rejected",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"   \"\n    clientid: \"c\"\n    clientsecret: \"s\"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.issuerurl",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.Error(t, err, "whitespace-only OIDC field must fail validation the same as absent")
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+// TestLoad_LocalMode_IgnoresOIDCConfig verifies that local mode stays
+// frictionless even when OIDC fields are populated (e.g. a shared config file
+// that switches modes via an env override). Local mode must never require OIDC.
+func TestLoad_LocalMode_IgnoresOIDCConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	// Local mode with fully populated (but bogus) OIDC fields — must succeed.
+	yamlContent := `
+auth:
+  mode: "local"
+  oidc:
+    issuerurl: "https://idp.example.com"
+    clientid: "some-client"
+    clientsecret: "some-secret"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err, "local mode must not validate or require OIDC config")
+	require.NotNil(t, cfg)
+	assert.Equal(t, "local", cfg.Auth.Mode)
+}
+
+// TestLoad_CreatedConfigFile_HasRestrictivePermissions verifies that the
+// default config file created by Load (when none exists) uses 0600 permissions
+// so only the process owner can read the OIDC client secret or session key if
+// they are later added to the file.
+func TestLoad_CreatedConfigFile_HasRestrictivePermissions(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	// File must not exist yet.
+	_, err := os.Stat(configPath)
+	require.True(t, os.IsNotExist(err))
+
+	_, err = adapterconfig.Load(configPath)
+	require.NoError(t, err)
+
+	info, err := os.Stat(configPath)
+	require.NoError(t, err)
+	// Mask to the permission bits only (ignore file-type bits).
+	perm := info.Mode().Perm()
+	assert.Equal(t, os.FileMode(0600), perm,
+		"default config file must be 0600 (owner-only r/w) to protect future secrets written into it")
+}
