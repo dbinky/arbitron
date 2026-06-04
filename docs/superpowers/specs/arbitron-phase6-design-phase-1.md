@@ -63,15 +63,16 @@ DeleteExpired(ctx, now time.Time) (int, error)
 
 `Session{ID, UserID, CreatedAt, ExpiresAt}`. `ID` is a high-entropy random token (the cookie value); only its hash is stored (see §6).
 
-**`UserRepository`** (expand the existing port in `domain/instance/ports.go`, or relocate to `domain/identity` and re-export — decided in the plan):
+**`UserRepository`** — to minimize ripple, **expand the existing port in `domain/instance/ports.go`** in place (the engine already imports it for `GetDefaultUser`); do not relocate it. Add:
 
 ```
 GetDefaultUser(ctx) (uuid.UUID, error)     // existing, unchanged
 GetByID(ctx, id uuid.UUID) (*User, error)
 GetBySubject(ctx, subject string) (*User, error)  // ErrNotFound if new — JIT path in Phase 2
+Create(ctx, *User) error                          // JIT path in Phase 2
 ```
 
-`User{ID, Subject, Username, Role}`. `Subject` is the IdP-stable identifier; nullable for the pre-existing default user.
+Define the domain `User{ID, Subject, Username, Role}` type in `domain/instance` alongside the port (`Subject` is the IdP-stable identifier, nullable for the pre-existing default user). The `domain/identity` package holds only the request-scoped `Identity` value, `Role`/`Mode`, context helpers, and the `SessionRepository`/`OIDCProvider` ports — it imports nothing from `domain/instance`, and the auth middleware maps a persisted `User` to an `Identity`.
 
 **`OIDCProvider`** (new port abstracting the IdP so the OIDC library stays in the adapter):
 
