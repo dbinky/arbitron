@@ -149,6 +149,35 @@ func TestIntervention_RerunByAdmin_NewInstanceOwnedByActor(t *testing.T) {
 	assert.Equal(t, instance.StateCompleted, src.State)
 }
 
+// --- Edge: no identity in context → fail-closed (identical to non-owner) ---
+
+func TestIntervention_NoIdentity_FailClosed(t *testing.T) {
+	f := newTestFixtures()
+	owner := uuid.New()
+
+	running := seedInstance(f, owner, instance.StateRunning)
+	queued := seedInstance(f, owner, instance.StateQueued)
+	failed := seedInstance(f, owner, instance.StateFailed)
+	terminal := seedInstance(f, owner, instance.StateCompleted)
+
+	// context.Background() carries no identity: canView() → false → ErrNotFound.
+	// This pins fail-closed for unauthenticated callers that somehow bypass the
+	// auth middleware — the response is byte-for-byte identical to a non-owner.
+	assert.ErrorIs(t, f.engine.Pause(context.Background(), running), instance.ErrNotFound)
+	assert.ErrorIs(t, f.engine.Resume(context.Background(), running), instance.ErrNotFound)
+	assert.ErrorIs(t, f.engine.Cancel(context.Background(), running), instance.ErrNotFound)
+	assert.ErrorIs(t, f.engine.SetPriority(context.Background(), queued, "high"), instance.ErrNotFound)
+	assert.ErrorIs(t, f.engine.Retry(context.Background(), failed, nil), instance.ErrNotFound)
+	_, err := f.engine.Rerun(context.Background(), terminal)
+	assert.ErrorIs(t, err, instance.ErrNotFound)
+
+	// No state changed for any of them.
+	assert.Equal(t, instance.StateRunning, currentState(t, f, running))
+	assert.Equal(t, instance.StateQueued, currentState(t, f, queued))
+	assert.Equal(t, instance.StateFailed, currentState(t, f, failed))
+	assert.Equal(t, instance.StateCompleted, currentState(t, f, terminal))
+}
+
 // --- Isolation/security: non-owner non-admin refused, no state change ---
 
 func TestIntervention_NonOwner_RefusedNoStateChange(t *testing.T) {

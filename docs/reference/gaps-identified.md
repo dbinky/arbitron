@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA24-P1-01: `authorizeIntervention` missing no-identity fail-closed test
+**Area**: Focus Area 24 — Intervention authz & attribution (Pass 1)
+**Fix**: Added `TestIntervention_NoIdentity_FailClosed` to `domain/engine/engine_intervention_authz_test.go`. The test calls all six intervention operations (Pause, Resume, Cancel, SetPriority, Retry, Rerun) with `context.Background()` (no identity in context) and asserts each returns `ErrNotFound` and leaves instance state unchanged. This pins the fail-closed invariant in `authorizeIntervention → canView`: `identity.FromContext` returning `!ok` causes `canView` to return `false`, which maps to `ErrNotFound` — byte-for-byte identical to a non-owner request (no existence or state leak). Mirrors the no-identity fail-closed tests added for the WS handler (FA-22 P1), the per-instance WS stream (FA-22 P2), and the conversationHandler (FA-23 P2).
+
 ### GAP-FA23-P2-01: `conversationHandler` missing no-identity fail-closed test
 **Area**: Focus Area 23 — Interactive participation gate (Pass 2)
 **Fix**: Added `TestConversationAuthz_NoIdentity_FailClosed` to `domain/engine/conversation_authz_test.go`. The test calls `HandleMessage` and `EndSession` with `context.Background()` (no identity in context) and asserts: (1) both return `ErrNotFound`, (2) neither returns `ErrNotInteractiveWait` (state not revealed), (3) the LLM stream was never invoked, (4) no interactive events were published, (5) instance state is untouched. This pins the fail-closed invariant in `canView`: `identity.FromContext` returning `!ok` → `canView` returns `false` → `loadAndValidate` wraps `ErrNotFound`. The behavior is identical to a non-owner (no existence leak), which is the expected defense-in-depth response to an unauthenticated caller that somehow bypasses the auth middleware. Mirrors the `TestStreamHandler_ConnectAuthorization` no-identity sub-test added in FA-22 P1 for the WS handler.
