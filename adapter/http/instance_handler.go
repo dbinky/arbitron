@@ -140,6 +140,44 @@ func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 	return workflow.IsInteractive(node.Type)
 }
 
+// summaryResponse is the list-item JSON: the existing InstanceSummary fields
+// plus a per-user "dismissed" flag. The flag is HTTP/view state and is
+// intentionally not part of the domain InstanceSummary.
+type summaryResponse struct {
+	ID            string  `json:"id"`
+	WorkflowName  string  `json:"workflowName"`
+	State         string  `json:"state"`
+	Priority      string  `json:"priority"`
+	CurrentNodeID *string `json:"currentNodeId,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
+	UpdatedAt     string  `json:"updatedAt"`
+	CompletedAt   *string `json:"completedAt,omitempty"`
+	QueuedAt      *string `json:"queuedAt,omitempty"`
+	Dismissed     bool    `json:"dismissed"`
+}
+
+func toSummaryResponse(s instance.InstanceSummary, dismissed bool) summaryResponse {
+	resp := summaryResponse{
+		ID:            s.ID.String(),
+		WorkflowName:  s.WorkflowName,
+		State:         string(s.State),
+		Priority:      string(s.Priority),
+		CurrentNodeID: s.CurrentNodeID,
+		CreatedAt:     s.CreatedAt.Format(APITimeFormat),
+		UpdatedAt:     s.UpdatedAt.Format(APITimeFormat),
+		Dismissed:     dismissed,
+	}
+	if s.CompletedAt != nil {
+		v := s.CompletedAt.Format(APITimeFormat)
+		resp.CompletedAt = &v
+	}
+	if s.QueuedAt != nil {
+		v := s.QueuedAt.Format(APITimeFormat)
+		resp.QueuedAt = &v
+	}
+	return resp
+}
+
 // retryRequest is the optional JSON body for retrying an instance.
 type retryRequest struct {
 	Variables map[string]any `json:"variables"`
@@ -225,10 +263,37 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return
 	}
-	if summaries == nil {
-		summaries = []instance.InstanceSummary{}
+
+	includeDismissed := false
+	if v := r.URL.Query().Get("includeDismissed"); v != "" {
+		if parsed, perr := strconv.ParseBool(v); perr == nil {
+			includeDismissed = parsed
+		}
 	}
-	WriteJSON(w, http.StatusOK, summaries)
+
+	var dismissedIDs map[uuid.UUID]bool
+	if h.dismissals != nil && h.currentUser != nil {
+		user, uerr := h.currentUser.CurrentUser(r)
+		if uerr != nil {
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+			return
+		}
+		dismissedIDs, err = h.dismissals.DismissedIDs(r.Context(), user)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load dismissals")
+			return
+		}
+	}
+
+	out := make([]summaryResponse, 0, len(summaries))
+	for _, s := range summaries {
+		isDismissed := dismissedIDs[s.ID]
+		if isDismissed && !includeDismissed {
+			continue // omit dismissed items by default
+		}
+		out = append(out, toSummaryResponse(s, isDismissed))
+	}
+	WriteJSON(w, http.StatusOK, out)
 }
 
 // Get handles GET /instances/{id} and returns the full instance.
