@@ -126,6 +126,50 @@ func TestEngine_RetryClearsDismissal(t *testing.T) {
 	assert.False(t, ids[id], "after retry the instance is no longer dismissed for the user")
 }
 
+// Success: Retry clears dismissals for ALL users who dismissed the instance —
+// ClearForInstance is a cross-user operation, not a per-user Restore. A bug that
+// called Restore(user, id) only for a known single user would pass the single-user
+// happy test above but fail here.
+func TestEngine_RetryClearsDismissalForAllUsers(t *testing.T) {
+	f := newTestFixtures()
+	wf := singleNodeWorkflow()
+	f.workflowRepo.add(wf)
+
+	dis := newDismissalRecorder()
+	f.engine.SetDismissals(dis)
+
+	firstRun := true
+	var mu sync.Mutex
+	f.executor.onNode("A", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		mu.Lock()
+		isFirst := firstRun
+		firstRun = false
+		mu.Unlock()
+		if isFirst {
+			return nil, fmt.Errorf("node A failed")
+		}
+		return &engine.NodeResult{Output: map[string]any{"result": "ok"}}, nil
+	})
+
+	id, _, err := f.engine.Trigger(wf.Name, nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	// Two distinct users dismiss the same failed instance.
+	userA := uuid.New()
+	userB := uuid.New()
+	require.NoError(t, dis.Dismiss(context.Background(), userA, id))
+	require.NoError(t, dis.Dismiss(context.Background(), userB, id))
+
+	require.NoError(t, f.engine.Retry(id, nil))
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	idsA, _ := dis.DismissedIDs(context.Background(), userA)
+	idsB, _ := dis.DismissedIDs(context.Background(), userB)
+	assert.False(t, idsA[id], "after retry user A's dismissal must be cleared")
+	assert.False(t, idsB[id], "after retry user B's dismissal must be cleared")
+}
+
 // Rerun produces a NEW instance id with no dismissal rows; the old instance's
 // dismissal (if any) is untouched.
 func TestEngine_RerunYieldsUndismissedNewInstance(t *testing.T) {

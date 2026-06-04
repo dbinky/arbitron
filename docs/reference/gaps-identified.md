@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### ENGINE-002: Multi-user dismissal clearing untested in engine
+**Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
+**Fixed**: Iteration 18
+**Detail**: The design doc says Retry clears dismissals "for everyone who had dismissed it." `TestEngine_RetryClearsDismissal` only tested with a single user. A bug where the engine called `Restore(user, id)` per-user (e.g. for the acting user only) rather than `ClearForInstance(id)` would pass the single-user test but violate the all-users contract. Added `TestEngine_RetryClearsDismissalForAllUsers`: two distinct users dismiss the same failed instance, retry is called, both users' dismissals are verified to be cleared.
+
 ### ENGINE-001: Unconditional-clear invariant for Retry untested
 **Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
 **Fixed**: Iteration 17
