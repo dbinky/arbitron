@@ -533,6 +533,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// admin actions on other users' instances are attributed.
 	interventionRepo := adaptsqlite.NewInterventionRepo(db)
 	eng.SetInterventions(interventionRepo)
+	// 12a-1b. Gate the engine trigger read path by workflow visibility. Local
+	// mode's fixed identity is admin, for which CanSeePublication returns true,
+	// so local-mode openness is preserved.
+	eng.SetPublisherLookup(publishedRepo)
 	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)

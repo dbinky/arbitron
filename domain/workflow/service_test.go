@@ -172,6 +172,16 @@ func ctxWith(id uuid.UUID, admin bool) context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: id, Username: "u", Role: role})
 }
 
+// ctxWithDepts builds a context identity carrying departments.
+func ctxWithDepts(user uuid.UUID, admin bool, depts ...string) context.Context {
+	role := identity.RoleUser
+	if admin {
+		role = identity.RoleAdmin
+	}
+	return identity.WithIdentity(context.Background(),
+		identity.Identity{UserID: user, Username: "u", Role: role, Departments: depts})
+}
+
 func wf(name string) *workflow.Workflow {
 	return &workflow.Workflow{Name: name, Description: "d", Author: "a"}
 }
@@ -844,4 +854,105 @@ func TestService_Publish_OverwriteUpsertFailure_DoesNotDelete(t *testing.T) {
 
 	exists, _ := repo.Exists(context.Background(), workflow.Shared(), "shared-name")
 	assert.True(t, exists, "overwrite-publish Upsert failure must NOT delete the previously-good shared copy")
+}
+
+// --- Phase 2: visibility gating (Task 3) ---
+
+func TestService_List_FiltersByVisibility(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000b1")
+	viewer := uuid.MustParse("00000000-0000-0000-0000-0000000000b2")
+
+	repo.bucket(workflow.Shared())["pub-wf"] = wf("pub-wf")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	repo.bucket(workflow.Shared())["sales-wf"] = wf("sales-wf")
+	_ = pubs.Upsert(context.Background(), "pub-wf", publisher, "src", workflow.VisibilityPublic, "")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	_ = pubs.Upsert(context.Background(), "sales-wf", publisher, "src", workflow.VisibilityDepartment, "sales")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	got, err := svc.List(ctxWithDepts(viewer, false, "engineering"))
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, s := range got {
+		names[s.Name] = true
+	}
+	assert.True(t, names["pub-wf"])
+	assert.True(t, names["eng-wf"])
+	assert.False(t, names["sales-wf"])
+}
+
+func TestService_List_CarriesVisibilityAndDepartment(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000b3")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	got, err := svc.List(ctxWithDepts(publisher, false, "engineering"))
+	require.NoError(t, err)
+
+	var eng *workflow.WorkflowSummary
+	for i := range got {
+		if got[i].Name == "eng-wf" {
+			eng = &got[i]
+		}
+	}
+	require.NotNil(t, eng)
+	assert.Equal(t, string(workflow.VisibilityDepartment), eng.Visibility)
+	assert.Equal(t, "engineering", eng.Department)
+}
+
+func TestService_Load_DeptWorkflow_HiddenFromOutsider_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000c1")
+	outsider := uuid.MustParse("00000000-0000-0000-0000-0000000000c2")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	_, err := svc.Load(ctxWithDepts(outsider, false, "sales"), "eng-wf")
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_Load_DeptWorkflow_VisibleToMember(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000c3")
+	member := uuid.MustParse("00000000-0000-0000-0000-0000000000c4")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	got, err := svc.Load(ctxWithDepts(member, false, "engineering"), "eng-wf")
+	require.NoError(t, err)
+	assert.Equal(t, "eng-wf", got.Name)
+}
+
+func TestService_Copy_UnseeableDept_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000c5")
+	outsider := uuid.MustParse("00000000-0000-0000-0000-0000000000c6")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Copy(ctxWithDepts(outsider, false, "sales"), "eng-wf", "my-copy")
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_Load_PrivateUnaffected(t *testing.T) {
+	repo := newFakeRepo()
+	owner := uuid.MustParse("00000000-0000-0000-0000-0000000000c7")
+	repo.bucket(workflow.Private(owner))["mine"] = wf("mine")
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+
+	got, err := svc.Load(ctxWithDepts(owner, false), "mine")
+	require.NoError(t, err)
+	assert.Equal(t, "mine", got.Name)
 }

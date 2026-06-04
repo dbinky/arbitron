@@ -1947,19 +1947,26 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 
 // fakePublishedStore is a workflow.PublishedStore for handler publish tests.
 type fakePublishedStore struct {
-	pub map[string]uuid.UUID
+	pub map[string]workflow.Publication
 }
 
 func newFakePublishedStore() *fakePublishedStore {
-	return &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	return &fakePublishedStore{pub: map[string]workflow.Publication{}}
 }
 
 func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
-	id, ok := p.pub[name]
-	return id, ok, nil
+	pub, ok := p.pub[name]
+	return pub.Publisher, ok, nil
 }
-func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
-	p.pub[name] = publisher
+func (p *fakePublishedStore) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	pub, ok := p.pub[name]
+	return pub, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
+	if p.pub == nil {
+		p.pub = map[string]workflow.Publication{}
+	}
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
 	return nil
 }
 func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
@@ -2011,7 +2018,7 @@ func TestWorkflowHandler_Publish_DifferentPublisher_Forbidden(t *testing.T) {
 	repo.workflows["src"] = testWorkflow()
 	repo.shared["pub"] = testWorkflow()
 	store := newFakePublishedStore()
-	store.pub["pub"] = uuid.New() // owned by someone else (not testUserID)
+	store.pub["pub"] = workflow.Publication{Publisher: uuid.New(), Visibility: workflow.VisibilityPublic} // owned by someone else (not testUserID)
 	h := publishHandler(repo, store)
 
 	body := `{"publishedName":"pub"}`

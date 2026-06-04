@@ -138,13 +138,24 @@ func (s *WorkflowService) DeleteFile(ctx context.Context, name, rel string) erro
 	return s.translateWrite(ctx, name, s.repo.DeleteFile(ctx, Private(id.UserID), name, rel))
 }
 
+// sharedFilter returns a SharedVisibilityFilter bound to id, or nil when no
+// publisher lookup is configured (local/read-only ⇒ all shared visible).
+func (s *WorkflowService) sharedFilter(id identity.Identity) SharedVisibilityFilter {
+	if s.publishers == nil {
+		return nil
+	}
+	return func(ctx context.Context, name string) (bool, error) {
+		return canSeeShared(ctx, s.publishers, id, name)
+	}
+}
+
 // Load returns a workflow visible to the caller (private first, then shared).
 func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	wf, _, err := LoadVisible(ctx, s.repo, id.UserID, name)
+	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.sharedFilter(id))
 	return wf, err
 }
 
@@ -167,7 +178,7 @@ func (s *WorkflowService) ListFiles(ctx context.Context, name string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	files, _, err := ListFilesVisible(ctx, s.repo, id.UserID, name)
+	files, _, err := ListFilesVisibleFiltered(ctx, s.repo, id.UserID, name, s.sharedFilter(id))
 	return files, err
 }
 
@@ -196,10 +207,24 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 	}
 	for _, sum := range shared {
 		sum.Scope = ScopeLabelShared
+		// Resolve the publication once; use it for both gating and tagging.
+		var pub Publication
+		published := false
 		if s.publishers != nil {
-			if pubID, ok, perr := s.publishers.PublisherOf(ctx, sum.Name); perr == nil && ok {
-				sum.Publisher = pubID.String()
+			if p, ok, perr := s.publishers.PublicationOf(ctx, sum.Name); perr == nil && ok {
+				pub, published = p, true
 			}
+		}
+		if published {
+			if !CanSeePublication(id, pub) {
+				continue // hide department workflows from non-members
+			}
+			sum.Publisher = pub.Publisher.String()
+			sum.Visibility = string(pub.Visibility)
+			sum.Department = pub.Department
+		} else {
+			// Unpublished shared folder (pre-model) or local mode: treat as public.
+			sum.Visibility = string(VisibilityPublic)
 		}
 		out = append(out, sum)
 	}
@@ -287,6 +312,16 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 		return err
 	} else if ok {
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, newPrivateName)
+	}
+	// A user may only copy a shared workflow they can see.
+	if s.publishers != nil {
+		canSee, err := canSeeShared(ctx, s.publishers, id, sharedName)
+		if err != nil {
+			return err
+		}
+		if !canSee {
+			return fmt.Errorf("%w: %s", ErrNotFound, sharedName)
+		}
 	}
 	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
 }

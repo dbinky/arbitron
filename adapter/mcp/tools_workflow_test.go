@@ -938,18 +938,22 @@ func TestWorkflowDeleteFile(t *testing.T) {
 
 // fakePublishedStore is a workflow.PublishedStore for MCP publish/copy tests.
 type fakePublishedStore struct {
-	pub map[string]uuid.UUID
+	pub map[string]workflow.Publication
 }
 
 func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
-	id, ok := p.pub[name]
-	return id, ok, nil
+	pub, ok := p.pub[name]
+	return pub.Publisher, ok, nil
 }
-func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+func (p *fakePublishedStore) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	pub, ok := p.pub[name]
+	return pub, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
 	if p.pub == nil {
-		p.pub = map[string]uuid.UUID{}
+		p.pub = map[string]workflow.Publication{}
 	}
-	p.pub[name] = publisher
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
 	return nil
 }
 func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
@@ -978,7 +982,7 @@ func sampleManifest(name string) *workflow.Workflow {
 }
 
 func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	// Seed the caller's private source under the test identity's user id.
@@ -993,7 +997,7 @@ func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowTool_Publish_NotFound(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
@@ -1002,7 +1006,7 @@ func TestWorkflowTool_Publish_NotFound(t *testing.T) {
 }
 
 func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "../escape"})
@@ -1014,7 +1018,7 @@ func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
 // name and publishedName at the MCP adapter layer, not silently passed through to
 // the filesystem where it would match the scope root and return an opaque error.
 func TestWorkflowTool_Publish_DotName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	t.Run("dot source name rejected", func(t *testing.T) {
@@ -1032,7 +1036,7 @@ func TestWorkflowTool_Publish_DotName(t *testing.T) {
 // TestWorkflowTool_Copy_DotName verifies that "." is rejected as both source
 // and destination name at the MCP adapter layer.
 func TestWorkflowTool_Copy_DotName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	t.Run("dot source name rejected", func(t *testing.T) {
@@ -1048,7 +1052,7 @@ func TestWorkflowTool_Copy_DotName(t *testing.T) {
 }
 
 func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
@@ -1062,7 +1066,7 @@ func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
@@ -1079,7 +1083,7 @@ func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
 func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 	otherUser := uuid.New()
 	// Pre-seed the store so "pub" is already owned by a different user.
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{"pub": otherUser}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{"pub": {Publisher: otherUser, Visibility: workflow.VisibilityPublic}}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
@@ -1092,7 +1096,7 @@ func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 // TestWorkflowTool_Copy_SharedMissing_NotFound verifies that copying a shared workflow
 // that does not exist returns a not-found tool error, not a server error.
 func TestWorkflowTool_Copy_SharedMissing_NotFound(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "ghost", "newName": "mine"})

@@ -36,6 +36,7 @@ type Engine struct {
 	externalNotifier notification.ExternalNotifier
 	interventions    instance.InterventionRepository
 	workspaceManager WorkspaceManager
+	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
 	wg               sync.WaitGroup
@@ -109,6 +110,13 @@ func (e *Engine) SetInterventions(repo instance.InterventionRepository) {
 	e.interventions = repo
 }
 
+// SetPublisherLookup wires the publication lookup used to gate the trigger read
+// path by workflow visibility. When unset (nil), all shared workflows are
+// triggerable (local/read-only mode), preserving today's behavior.
+func (e *Engine) SetPublisherLookup(p workflow.PublisherLookup) {
+	e.publishers = p
+}
+
 // recordIntervention writes an audit row and publishes instance.intervened when
 // the acting identity is NOT the instance owner. Owner self-actions (and
 // identity-less system actions) are skipped. Attribution is best-effort: a
@@ -179,7 +187,25 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 		return uuid.Nil, false, fmt.Errorf("failed to resolve triggering user")
 	}
 
-	wf, _, err := workflow.LoadVisible(ctx, e.workflows, owner, workflowName)
+	// Gate the shared read path by visibility. The owner above may be the default
+	// system user; gating keys on the CONTEXT identity (a REST/MCP caller). A
+	// system trigger (no context identity) skips gating — a scheduler/webhook
+	// trigger already passed authorization at registration time.
+	var filter workflow.SharedVisibilityFilter
+	if id, ok := identity.FromContext(ctx); ok && e.publishers != nil {
+		pubs := e.publishers
+		filter = func(ctx context.Context, name string) (bool, error) {
+			pub, found, err := pubs.PublicationOf(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			if !found {
+				return true, nil // unpublished shared folder ⇒ open
+			}
+			return workflow.CanSeePublication(id, pub), nil
+		}
+	}
+	wf, _, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
