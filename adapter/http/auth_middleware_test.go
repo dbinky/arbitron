@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -177,6 +178,14 @@ func (p *identityProbe) handler() http.HandlerFunc {
 	}
 }
 
+// errUserRepo wraps fakeUserRepo but returns an error from GetDefaultUser,
+// simulating a DB that is unavailable at startup in local mode.
+type errUserRepo struct{ *fakeUserRepo }
+
+func (r *errUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) {
+	return uuid.Nil, errors.New("db unavailable")
+}
+
 // ---- tests ----
 
 func TestAuthMiddleware_Local_InjectsAdmin(t *testing.T) {
@@ -350,6 +359,23 @@ func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, probe.called)
 	assert.Equal(t, identity.RoleAdmin, probe.id.Role, "local mode ignores cookies entirely")
+}
+
+// TestAuthMiddleware_Local_DefaultUserError_FailsClosed verifies that if
+// GetDefaultUser returns an error (e.g. DB unavailable at startup), local mode
+// fails closed: every request gets 401 rather than a panic or a 500.  The
+// sync.Once caches the error permanently, so subsequent requests also fail.
+func TestAuthMiddleware_Local_DefaultUserError_FailsClosed(t *testing.T) {
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, &errUserRepo{newFakeUserRepo()})
+	probe := &identityProbe{}
+
+	for i := range 3 {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "request %d must be rejected", i)
+		assert.False(t, probe.called, "handler must never run when GetDefaultUser fails")
+	}
 }
 
 // ---- bearer-token branch (Phase 2) ----

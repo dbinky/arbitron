@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA7-P1-01: Local-mode error path (GetDefaultUser failure) had no test
+**Area**: Focus Area 7 — Auth middleware (Pass 1)
+**Fix**: Added `errUserRepo` wrapper (returns `errors.New("db unavailable")` from `GetDefaultUser`) and `TestAuthMiddleware_Local_DefaultUserError_FailsClosed`. The test sends three requests and asserts all get 401 — documenting that the `sync.Once`-cached error is permanent (fail-closed) and the handler is never invoked. Covers the "error" scenario category for local mode that was previously missing.
+
 ### GAP-FA6-P2-02: No test for ID token without nonce claim — empty nonce must be rejected, not echoed
 **Area**: Focus Area 6 — OIDC adapter (Pass 2)
 **Fix**: Added `TestProvider_Exchange_EmptyNonce_Passthrough` in `adapter/oidc/provider_test.go`: deletes `nonce` from the ID token claims map, calls `Exchange`, and asserts `claims.Nonce == ""` — documenting that Exchange never injects a nonce and the empty value propagates to the caller. Added `omitNonce bool` field to `fakeOIDCProvider` and `TestAuthHandler_Callback_EmptyNonce_Rejected` in `adapter/http/auth_handler_test.go`: forces Exchange to return `Nonce:""` (as a real nonce-less IdP would) and asserts the callback returns 400 + no session cookie. An absent nonce is indistinguishable from a replay attempt and must be rejected.
