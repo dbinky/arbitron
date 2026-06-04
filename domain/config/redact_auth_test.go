@@ -35,3 +35,51 @@ func TestRedact_LocalMode_OIDCNotConfigured(t *testing.T) {
 	assert.Equal(t, AuthModeLocal, red.Auth.Mode)
 	assert.False(t, red.Auth.OIDCConfigured)
 }
+
+// Partial OIDC (clientid/issuerurl set but secret absent) reports
+// OIDCConfigured=false because without a secret the config is not operational.
+func TestRedact_PartialOIDC_NotConfigured(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Mode: AuthModeOrg,
+			OIDC: OIDCConfig{
+				IssuerURL: "https://idp.example.com",
+				ClientID:  "client-abc",
+				// ClientSecret intentionally absent
+			},
+		},
+	}
+	red := Redact(cfg, TeamsConfig{})
+	assert.Equal(t, AuthModeOrg, red.Auth.Mode)
+	assert.False(t, red.Auth.OIDCConfigured,
+		"OIDCConfigured must be false when ClientSecret is absent — a partial config is not operational")
+}
+
+// The redacted JSON must not contain any raw OIDC field values (clientid,
+// issuerurl, redirecturl). RedactedAuth uses a positive allow-list so none of
+// these fields are serializable, but this test guards against regression if the
+// struct grows a new field that accidentally echoes a sensitive value.
+func TestRedact_NeverLeaksAnyOIDCField(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Mode: AuthModeOrg,
+			OIDC: OIDCConfig{
+				IssuerURL:    "https://idp.example.com/SHOULDNOTAPPEAR",
+				ClientID:     "client-SHOULDNOTAPPEAR",
+				ClientSecret: "secret-SHOULDNOTAPPEAR",
+				RedirectURL:  "https://app.example.com/SHOULDNOTAPPEAR/auth/callback",
+			},
+		},
+	}
+	red := Redact(cfg, TeamsConfig{})
+	b, err := json.Marshal(red)
+	require.NoError(t, err)
+	body := string(b)
+
+	for _, sentinel := range []string{"SHOULDNOTAPPEAR"} {
+		assert.False(t, strings.Contains(body, sentinel),
+			"redacted config JSON must not contain any raw OIDC field value")
+	}
+	// The boolean flag is present; the raw values are not.
+	assert.True(t, red.Auth.OIDCConfigured)
+}

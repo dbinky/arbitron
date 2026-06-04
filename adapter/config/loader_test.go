@@ -736,3 +736,94 @@ func TestLoad_AuthOIDCScopes_FromEnv(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"openid", "groups"}, cfg.Auth.OIDC.Scopes)
 }
+
+// TestLoad_AuthOrgMode_MissingOIDC_AllFields verifies that each of the four
+// required OIDC fields is individually validated and that omitting all four at
+// once produces an error that names all four.
+func TestLoad_AuthOrgMode_MissingOIDC_AllFields(t *testing.T) {
+	// Each sub-test omits exactly one required field; the error must name it.
+	cases := []struct {
+		name        string
+		yaml        string
+		wantMissing string
+	}{
+		{
+			"missing clientid",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientsecret: \"s\"\n    redirecturl: \"https://r/cb\"\n",
+			"auth.oidc.clientid",
+		},
+		{
+			"missing redirecturl",
+			"auth:\n  mode: \"org\"\n  oidc:\n    issuerurl: \"https://i\"\n    clientid: \"c\"\n    clientsecret: \"s\"\n",
+			"auth.oidc.redirecturl",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), tc.wantMissing)
+		})
+	}
+
+	t.Run("all four missing names all in error", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath,
+			[]byte("auth:\n  mode: \"org\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.issuerurl")
+		assert.Contains(t, err.Error(), "auth.oidc.clientid")
+		assert.Contains(t, err.Error(), "auth.oidc.clientsecret")
+		assert.Contains(t, err.Error(), "auth.oidc.redirecturl")
+	})
+}
+
+// TestLoad_AuthMode_FromEnv verifies that ARBITRON_AUTH_MODE switches the mode
+// via the environment-variable overlay (the env provider maps _ to . so
+// ARBITRON_AUTH_MODE → auth.mode).
+func TestLoad_AuthMode_FromEnv(t *testing.T) {
+	t.Run("env switches to org with complete OIDC also from env", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "org")
+		t.Setenv("ARBITRON_AUTH_OIDC_ISSUERURL", "https://idp.example.com")
+		t.Setenv("ARBITRON_AUTH_OIDC_CLIENTID", "env-client")
+		t.Setenv("ARBITRON_AUTH_OIDC_CLIENTSECRET", "env-secret")
+		t.Setenv("ARBITRON_AUTH_OIDC_REDIRECTURL", "https://app.example.com/auth/callback")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+		assert.Equal(t, "https://idp.example.com", cfg.Auth.OIDC.IssuerURL)
+		assert.Equal(t, "env-client", cfg.Auth.OIDC.ClientID)
+	})
+
+	t.Run("env switches to org but missing OIDC still fails fast", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "org")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "org mode requires OIDC config")
+	})
+}
+
+// TestLoad_AuthSession_EmptyCookieNameFallback verifies that an explicitly
+// blank session.cookiename in YAML is replaced with the hardcoded default
+// during normalization — an empty cookie name would silently break all session
+// auth in org mode.
+func TestLoad_AuthSession_EmptyCookieNameFallback(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("auth:\n  session:\n    cookiename: \"\"\n"), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "arbitron_session", cfg.Auth.Session.CookieName,
+		"blank cookiename must fall back to the default to prevent silent session-auth breakage")
+}
