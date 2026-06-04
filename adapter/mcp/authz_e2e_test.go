@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -311,5 +312,48 @@ func TestMCPAuthzE2E_InstanceList(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, instA.ID.String())
 		assert.Contains(t, text, instB.ID.String())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// instance_subscribe — authorization check before creating the subscription
+// ---------------------------------------------------------------------------
+
+func TestMCPAuthzE2E_InstanceSubscribe(t *testing.T) {
+	// instance_subscribe must call Engine.GetInstance to authorize before accepting,
+	// mirroring what the HTTP WS handler does before websocket.Accept.
+	ownerA := uuid.New()
+	ownerB := uuid.New()
+	instA := newTestInstance(ownerA, "wf-a")
+
+	repo := newAuthzInstanceRepo(instA)
+	eng := newAuthzEngine(repo)
+	bus := eventbus.New()
+	deps := &adaptmcp.Deps{Engine: eng, Instances: repo, EventBus: bus}
+	srv := adaptmcp.NewServerWithDeps("test-authz-stream", "0.0.0", deps)
+	adaptmcp.RegisterInstanceTools(srv)
+	adaptmcp.RegisterStreamingTools(srv)
+
+	t.Run("owner can subscribe to their own instance", func(t *testing.T) {
+		result := callToolCtx(t, srv, nonAdminIdentityCtx(ownerA), "instance_subscribe", map[string]any{
+			"instanceId": instA.ID.String(),
+		})
+		assert.False(t, result.IsError, "owner must be able to subscribe to their own instance")
+	})
+
+	t.Run("non-owner gets tool error (existence not leaked)", func(t *testing.T) {
+		result := callToolCtx(t, srv, nonAdminIdentityCtx(ownerB), "instance_subscribe", map[string]any{
+			"instanceId": instA.ID.String(),
+		})
+		assert.True(t, result.IsError, "non-owner must be rejected before subscription is created")
+		text := extractText(t, result)
+		assert.Contains(t, text, "not found", "error must not reveal whether the instance exists")
+	})
+
+	t.Run("admin can subscribe to any instance", func(t *testing.T) {
+		result := callToolCtx(t, srv, adminIdentityCtx(uuid.New()), "instance_subscribe", map[string]any{
+			"instanceId": instA.ID.String(),
+		})
+		assert.False(t, result.IsError, "admin must be able to subscribe to any instance")
 	})
 }

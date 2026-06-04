@@ -6,6 +6,12 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA22-P2-01: `instance_subscribe` MCP tool had no authorization check
+**Area**: Focus Area 22 — WebSocket scoping (Pass 2)
+**Fix**: Changed `instanceSubscribeHandler` in `adapter/mcp/tools_streaming.go` to use `ctx context.Context` (was discarding `_`) and call `srv.deps.Engine.GetInstance(ctx, id)` before accepting the subscription. `ErrNotFound` → tool error `"instance not found"` (same text for both a genuinely absent instance and a non-owner's instance — no existence leak). Other errors → generic tool error. Added `TestMCPAuthzE2E_InstanceSubscribe` to `adapter/mcp/authz_e2e_test.go`: wires the real engine, asserts owner can subscribe, non-owner gets tool error containing "not found", and admin can subscribe to any instance. This mirrors the HTTP WS handler's `GetInstance` check before `websocket.Accept`. A nil guard (`srv.deps.Engine == nil`) preserves backward compatibility for existing streaming tests that omit the engine.
+
+Note: `system_subscribe` (MCP) currently delivers no events because `OnEvent` is never wired in production — this is a latent delivery gap, not a security gap, and is out of scope for the current review.
+
 ### GAP-FA22-P1-01: Per-instance WS missing no-identity fail-closed test
 **Area**: Focus Area 22 — WebSocket scoping (Pass 1)
 **Fix**: Added `"no identity in context: 404 before upgrade, same as non-owner (fail-closed, no existence leak)"` sub-test to `TestStreamHandler_ConnectAuthorization` in `adapter/http/stream_handler_test.go`. Wires a getter that returns `ErrNotFound` when `identity.FromContext` reports no identity (replicating the engine's `ownerConstraint` rule) and mounts the handler without the auth middleware. Asserts HTTP 404 before the WebSocket upgrade. This pins the fail-closed invariant: an unauthenticated caller that somehow bypasses the auth middleware is rejected at the service boundary — response is byte-for-byte identical to a non-owner (no existence leak). The system stream handler already had `TestSystemStreamHandler_NoIdentity_Unauthorized` (returns 401); the per-instance stream relies on the service, not a direct identity check, so only the 404 path needed pinning.

@@ -2,10 +2,13 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/arbitron/arbitron/domain/instance"
 )
 
 // RegisterStreamingTools registers the event streaming subscription tools
@@ -44,7 +47,7 @@ func RegisterStreamingTools(srv *Server) {
 }
 
 func instanceSubscribeHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		if srv.subs == nil {
 			return gomcp.NewToolResultError("event streaming not available"), nil
 		}
@@ -52,6 +55,18 @@ func instanceSubscribeHandler(srv *Server) server.ToolHandlerFunc {
 		id, err := ParseUUID(request, "instanceId")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
+		}
+
+		// Authorize before subscribing: Engine.GetInstance returns ErrNotFound for
+		// both a missing instance and one the caller may not view (no existence leak).
+		// This mirrors the HTTP WS handler's check before websocket.Accept.
+		if srv.deps != nil && srv.deps.Engine != nil {
+			if _, err := srv.deps.Engine.GetInstance(ctx, id); err != nil {
+				if errors.Is(err, instance.ErrNotFound) {
+					return gomcp.NewToolResultError("instance not found"), nil
+				}
+				return gomcp.NewToolResultError(fmt.Sprintf("failed to authorize subscription: %s", err)), nil
+			}
 		}
 
 		if err := srv.subs.SubscribeInstance(id); err != nil {
