@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LOOP-003: No three-level nesting test — depth=2 was unverified
+**Area**: Loop detection (`dashboard/src/graph/loops.ts`)
+**Fixed**: Iteration 2
+**Detail**: The deepest depth tested was 1 (Pass 1 added the shared-head case with l1.depth=1). A three-level arrangement (outer loop contains middle loop contains a self-loop) would produce depths 0/1/2, but no test exercised depth=2. Added a "three-level nesting" describe block that also checks backEdge reference identity for all three loops (ensuring labels are preserved through the detection pipeline).
+
 ### LOOP-002: Missing depth assertions in "multiple loops sharing a head" test + no sibling-loops coverage
 **Area**: Loop detection (`dashboard/src/graph/loops.ts`)
 **Fixed**: Iteration 1

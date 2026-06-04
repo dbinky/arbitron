@@ -139,6 +139,43 @@ describe('detectLoops — edge case: sibling loops with disjoint bodies', () => 
   })
 })
 
+describe('detectLoops — boundary: three-level nesting', () => {
+  it('assigns depths 0 / 1 / 2 for outer / middle / inner loops', () => {
+    // Topology: a→b→c→d→e→f with:
+    //   outer back-edge f→a  (head=a, body=[a,b,c,d,e,f], depth=0)
+    //   middle back-edge d→b (head=b, body=[b,c,d],       depth=1 — inside outer)
+    //   inner self-loop  c→c (head=c, body=[c],            depth=2 — inside both)
+    const outerBack: WorkflowEdge = { source: 'f', target: 'a', label: 'outer done' }
+    const middleBack: WorkflowEdge = { source: 'd', target: 'b', label: 'middle done' }
+    const innerBack: WorkflowEdge = { source: 'c', target: 'c', label: 'inner done' }
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'd' },
+      { source: 'd', target: 'e' },
+      { source: 'e', target: 'f' },
+      outerBack,
+      middleBack,
+      innerBack,
+    ]
+    const result = detectLoops(edges)
+    expect(result.loops).toHaveLength(3)
+    const inner = result.loops.find((l) => l.headId === 'c' && l.tailId === 'c')!
+    const middle = result.loops.find((l) => l.headId === 'b' && l.tailId === 'd')!
+    const outer = result.loops.find((l) => l.headId === 'a' && l.tailId === 'f')!
+    expect(body(inner)).toEqual(['c'])
+    expect(body(middle)).toEqual(['b', 'c', 'd'])
+    expect(body(outer)).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+    expect(inner.depth).toBe(2)
+    expect(middle.depth).toBe(1)
+    expect(outer.depth).toBe(0)
+    // Each loop carries its original back-edge reference, preserving labels.
+    expect(inner.backEdge).toBe(innerBack)
+    expect(middle.backEdge).toBe(middleBack)
+    expect(outer.backEdge).toBe(outerBack)
+  })
+})
+
 describe('detectLoops — interaction: diamond + loop', () => {
   it('includes both diamond branches in the loop body', () => {
     // a → b; b → c; b → d; c → e; d → e; e → b loops back. Diamond b..e.
