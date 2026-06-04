@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### ANCHOR-001: selectAnchorNodeId has no tests for paused or cancelled instance states
+**Area**: Domain viewport behavior (`dashboard/src/graph/selectAnchorNodeId.test.ts`)
+**Fixed**: Iteration 26
+**Detail**: The design doc specifies anchor selection for running/waiting, completed, failed, and static preview. `paused` and `cancelled` are real instance states that fall through to the general fallback (source node), but this behavior was entirely untested. A future "improvement" that made `paused` return `currentNodeId` (like running/waiting) would change centering behavior without failing any test. Added `selectAnchorNodeId — edge case: paused and cancelled (general fallback)` describe block with two tests: (1) paused instance returns the source node (not `currentNodeId`); (2) cancelled instance returns the source node. Both use a 3-node linear graph so the source node (a, no incoming edge) is unambiguous.
+
 ### VIEW-003: No integration test that loop containers are excluded from anchor selection
 **Area**: Domain viewport behavior (`dashboard/src/routes/GraphView.test.tsx`)
 **Fixed**: Iteration 25

@@ -198,3 +198,27 @@ describe('selectAnchorNodeId — empty / degenerate', () => {
     expect(selectAnchorNodeId(i, def([]), {}, [])).toBeNull()
   })
 })
+
+// The design doc only specifies anchor rules for running/waiting, completed, failed,
+// and static preview. paused and cancelled fall through to the general fallback
+// (source node). These tests pin that behavior explicitly so any future "improvement"
+// that adds a specific rule for these states is a deliberate, visible change.
+describe('selectAnchorNodeId — edge case: paused and cancelled (general fallback)', () => {
+  const d = def(
+    [N('a'), N('b'), N('c')],
+    [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }],
+  )
+
+  it('paused instance falls back to the source node, not currentNodeId', () => {
+    // Design doc lists running/waiting/completed/failed/preview — paused is not
+    // a named case, so currentNodeId is intentionally ignored and the source node
+    // ('a', the only node with no incoming edge) is returned.
+    const i = inst({ state: 'paused', currentNodeId: 'b' })
+    expect(selectAnchorNodeId(i, d, {}, [])).toBe('a')
+  })
+
+  it('cancelled instance falls back to the source node', () => {
+    const i = inst({ state: 'cancelled', currentNodeId: 'b' })
+    expect(selectAnchorNodeId(i, d, {}, [])).toBe('a')
+  })
+})
