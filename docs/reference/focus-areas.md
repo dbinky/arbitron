@@ -18,7 +18,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 3 | Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`, edgeTypes, GraphView wiring — side routing, distinct style) | [x] | [x] | Done |
 | 4 | Anchor selection + default zoom (`dashboard/src/graph/selectAnchorNodeId.ts`, `constants.ts`, `routes/ExecutionView.tsx` — anchor per state, mount centering at 0.9) | [x] | [x] | Done |
 | 5 | Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts` — follow on advance, pause on manual move, reduced-motion, re-engage) | [x] | [x] | Done |
-| 6 | Dismissal persistence (`adapter/sqlite/dismissal_repo.go`, `migrations/003_instance_dismissals.*`, `domain/instance` DismissalRepository — idempotency, scoping, cascade) | [x] | [ ] | |
+| 6 | Dismissal persistence (`adapter/sqlite/dismissal_repo.go`, `migrations/003_instance_dismissals.*`, `domain/instance` DismissalRepository — idempotency, scoping, cascade) | [x] | [x] | Done |
 | 7 | Dismissal HTTP handlers + routes + acting-user seam (`adapter/http/*`, `currentUser(r)` — dismiss/restore/dismiss-all, guards) | [ ] | [ ] | |
 | 8 | Instance list dismissed-marking (`adapter/http/instance_handler.go` — `dismissed` flag, `includeDismissed`, default omit, order preserved) | [ ] | [ ] | |
 | 9 | Engine retry resurface + wiring (`domain/engine/engine.go`, `cmd/arbitron/main.go` — Retry→ClearForInstance, SetDismissals, rerun new-instance) | [ ] | [ ] | |

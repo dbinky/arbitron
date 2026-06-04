@@ -215,6 +215,29 @@ func TestDismissalRepo_ClearForInstanceAcrossUsers(t *testing.T) {
 	assert.Empty(t, idsB, "clear must remove user B's dismissal")
 }
 
+// Boundary: ClearForInstance is scoped to the specified instance; other
+// dismissed instances for the same user must remain dismissed.
+// This guards against an overly-broad DELETE (e.g. WHERE user_id = ? instead
+// of WHERE instance_id = ?) that would wipe unrelated dismissals.
+func TestDismissalRepo_ClearForInstanceDoesNotAffectOtherInstances(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+	instA := seedInstance(t, db, user, "failed")
+	instB := seedInstance(t, db, user, "completed")
+
+	require.NoError(t, repo.Dismiss(ctx, user, instA))
+	require.NoError(t, repo.Dismiss(ctx, user, instB))
+
+	require.NoError(t, repo.ClearForInstance(ctx, instA))
+
+	ids, err := repo.DismissedIDs(ctx, user)
+	require.NoError(t, err)
+	assert.False(t, ids[instA], "cleared instance must not appear in DismissedIDs")
+	assert.True(t, ids[instB], "other dismissed instance must remain dismissed")
+	assert.Len(t, ids, 1)
+}
+
 // ---------------------------------------------------------------------------
 // Integration: cascade on instance delete
 // ---------------------------------------------------------------------------

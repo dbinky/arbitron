@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### REPO-002: ClearForInstance isolation untested
+**Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
+**Fixed**: Iteration 12
+**Detail**: `TestDismissalRepo_ClearForInstanceAcrossUsers` verified clearing one instance removes it across all users, but never checked that OTHER instances' dismissals survive the call. A bug where the DELETE used `WHERE user_id = ?` instead of `WHERE instance_id = ?` would wipe all dismissals for a user but still pass the existing test. Added `TestDismissalRepo_ClearForInstanceDoesNotAffectOtherInstances`: dismiss two instances, clear the first, assert the second is still dismissed.
+
 ### REPO-001: DismissedIDs multi-instance iteration untested
 **Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
 **Fixed**: Iteration 11
