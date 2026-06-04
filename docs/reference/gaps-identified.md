@@ -6,13 +6,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
-## Open Issues
-
-### UI-002: QueueView dismiss handlers have no error handling; error paths untested
-**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `QueueView.test.tsx`)
-**Detail**: `handleDismiss`, `handleRestore`, and `handleDismissAll` are plain `async` functions with no try/catch. If the API call fails, the rejection becomes an unhandled promise rejection — the item stays visible, no feedback is shown, and the error category is completely absent from their test coverage. The error path for `fetchAll` is handled (it sets the `error` state and renders a Retry prompt), but that error state rendering is also untested. Minimum fix: add try/catch to each handler (log and swallow, keeping the item visible) and add error-path tests to `QueueView.test.tsx`.
-
 ## Fixed Previously
+
+### UI-002: QueueView dismiss handlers had no error handling; error paths untested
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `QueueView.test.tsx`)
+**Fixed**: Iteration 21
+**Detail**: `handleDismiss`, `handleRestore`, and `handleDismissAll` were plain `async` functions with no try/catch. API failures caused unhandled promise rejections — the item stayed visible with no refetch but vitest reported three unhandled rejections. The fetchAll error state (renders "Failed to load instances" + Retry prompt) was also completely untested. Fixed by: (1) wrapping all three handlers in try/catch (best-effort — item stays visible on failure), (2) adding error-path tests for all three handlers verifying stable view + no spurious refetch after a rejected API call, and (3) adding a test that fetchAll failure renders the error state and that clicking Retry re-triggers the load.
+
+---
 
 ### UI-001: QueueView dismiss-handler API calls untested; wrong role-query selector
 **Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`)

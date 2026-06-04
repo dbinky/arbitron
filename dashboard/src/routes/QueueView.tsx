@@ -63,20 +63,32 @@ export default function QueueView() {
   }, [showDismissed])
 
   const handleDismiss = useCallback(async (id: string) => {
-    await api.instances.dismiss(id)
-    await fetchAll()
+    try {
+      await api.instances.dismiss(id)
+      await fetchAll()
+    } catch {
+      // best-effort: item stays visible if the API call fails
+    }
   }, [fetchAll])
 
   const handleRestore = useCallback(async (id: string) => {
-    await api.instances.restore(id)
-    await fetchAll()
+    try {
+      await api.instances.restore(id)
+      await fetchAll()
+    } catch {
+      // best-effort: item stays visible if the API call fails
+    }
   }, [fetchAll])
 
   const handleDismissAll = useCallback(async (state: 'failed' | 'completed') => {
-    // Scope to the same window the Failed/Completed sections show (daysAgo(5)),
-    // so [Dismiss All] dismisses exactly "every item currently listed".
-    await api.instances.dismissAll(state, daysAgo(HISTORY_DAYS))
-    await fetchAll()
+    try {
+      // Scope to the same window the Failed/Completed sections show (daysAgo(5)),
+      // so [Dismiss All] dismisses exactly "every item currently listed".
+      await api.instances.dismissAll(state, daysAgo(HISTORY_DAYS))
+      await fetchAll()
+    } catch {
+      // best-effort: items stay visible if the API call fails
+    }
   }, [fetchAll])
 
   useEffect(() => {

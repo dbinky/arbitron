@@ -22,7 +22,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 7 | Dismissal HTTP handlers + routes + acting-user seam (`adapter/http/*`, `currentUser(r)` — dismiss/restore/dismiss-all, guards) | [x] | [x] | Done |
 | 8 | Instance list dismissed-marking (`adapter/http/instance_handler.go` — `dismissed` flag, `includeDismissed`, default omit, order preserved) | [x] | [x] | Done |
 | 9 | Engine retry resurface + wiring (`domain/engine/engine.go`, `cmd/arbitron/main.go` — Retry→ClearForInstance, SetDismissals, rerun new-instance) | [x] | [x] | Done |
-| 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [ ] | [ ] | |
+| 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [x] | [ ] | |
 | 11 | Domain: loop semantics end-to-end (workflow def back-edge + label → detection → layout/container → on-screen) | [ ] | [ ] | |
 | 12 | Domain: viewport behavior (default zoom + follow + manual override) as a cross-cutting graph concern | [ ] | [ ] | |
 | 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [ ] | [ ] | |

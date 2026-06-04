@@ -47,6 +47,34 @@ describe('QueueView show/hide dismissed toggle', () => {
   })
 })
 
+describe('QueueView loading and error states', () => {
+  beforeEach(() => {
+    list.mockReset()
+  })
+
+  // Error: when fetchAll fails on initial load, the component renders an error
+  // message and a Retry button; clicking Retry re-triggers fetchAll.
+  it('shows error state when fetchAll rejects, and Retry re-runs it', async () => {
+    list.mockRejectedValue(new Error('network error'))
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+
+    // Error UI appears with a Retry button.
+    const retryBtn = await screen.findByRole('button', { name: /retry/i })
+    expect(screen.getByText(/failed to load instances/i)).toBeInTheDocument()
+
+    // After Retry, a successful fetch renders the normal queue view.
+    list.mockReset()
+    list.mockResolvedValue([])
+    fireEvent.click(retryBtn)
+    await screen.findByRole('button', { name: /show dismissed/i })
+  })
+})
+
 describe('QueueView dismiss handlers', () => {
   beforeEach(() => {
     list.mockReset()
@@ -127,6 +155,92 @@ describe('QueueView dismiss handlers', () => {
     await waitFor(() => {
       expect(list).toHaveBeenCalled()
     })
+  })
+
+  // Error: handleDismiss API failure — error is caught; view stays stable and does not refetch.
+  it('handleDismiss: API failure is caught; view stays stable and does not refetch', async () => {
+    const inst = {
+      id: 'f3',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    list.mockImplementation((params: { state?: string } = {}) =>
+      Promise.resolve(params.state === 'failed' ? [inst] : []),
+    )
+    dismiss.mockRejectedValue(new Error('server error'))
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    // After the failed API call the view must still render (no crash, no unhandled rejection).
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
+    })
+    // No refetch — the rejection is caught before fetchAll is reached.
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  // Error: handleRestore API failure — error is caught; view stays stable and does not refetch.
+  it('handleRestore: API failure is caught; view stays stable and does not refetch', async () => {
+    const inst = {
+      id: 'f4',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      dismissed: true,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    list.mockImplementation((params: { state?: string } = {}) =>
+      Promise.resolve(params.state === 'failed' ? [inst] : []),
+    )
+    restore.mockRejectedValue(new Error('server error'))
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
+    })
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  // Error: handleDismissAll API failure — error is caught; view stays stable and does not refetch.
+  it('handleDismissAll: API failure is caught; view stays stable and does not refetch', async () => {
+    dismissAll.mockRejectedValue(new Error('server error'))
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    const [dismissAllBtn] = screen.getAllByRole('button', { name: 'Dismiss All' })
+    fireEvent.click(dismissAllBtn)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show dismissed/i })).toBeInTheDocument()
+    })
+    expect(list).not.toHaveBeenCalled()
   })
 
   // Happy: dismissAll is called with the correct state and a since date matching the 5-day
