@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA9-P1-01: `TokenRepo.Delete` happy path (own-token revocation) was untested
+**Area**: Focus Area 9 — API tokens store & format (Pass 1)
+**Fix**: Added `TestTokenRepo_Delete_OwnToken` in `adapter/sqlite/token_repo_test.go`. Mints a token, deletes it with the correct owner ID, then asserts `GetByHash` returns `ErrNotFound` and `ListByUser` returns an empty slice. Documents that revocation = row delete and that the deleted token is immediately unresolvable by hash. Previously only error paths (non-existent ID, cross-user delete) were tested; the success path — the most common operational path — was absent.
+
 ### GAP-FA8-P2-01: State cookie security attributes had no test — HttpOnly/SameSite/MaxAge regression undetected
 **Area**: Focus Area 8 — `/auth` handlers (Pass 2)
 **Fix**: Added `TestAuthHandler_StateCookie_Attributes` in `adapter/http/auth_handler_test.go`. Calls `Login`, reads the `arbitron_oauth_state` cookie, and asserts `HttpOnly=true`, `SameSite=Lax`, `MaxAge=600`, `Secure=true`, `Path="/"`, and non-empty value. The state cookie carries the HMAC-signed OIDC state+nonce payload; if any of these attributes were accidentally removed, the CSRF protection for the login round-trip would be silently weakened. The `TestAuthHandler_SessionCookie_Attributes` test already covered the session cookie — now both cookies are pinned.

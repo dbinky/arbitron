@@ -79,6 +79,25 @@ func TestTokenRepo_GetByHash_Validation(t *testing.T) {
 	assert.ErrorIs(t, err, identity.ErrNotFound)
 }
 
+// Happy path: deleting your own token removes it from GetByHash and ListByUser.
+// Revocation = row delete; after delete the token must be unresolvable.
+func TestTokenRepo_Delete_OwnToken(t *testing.T) {
+	ctx := context.Background()
+	db := setupTestDB(t)
+	repo := NewTokenRepo(db.DB)
+	uid := seedUser(t, db, "alice")
+
+	plaintext, tok := mintToken(t, repo, uid, "laptop")
+	require.NoError(t, repo.Delete(ctx, tok.ID, uid), "owner may delete their own token")
+
+	_, err := repo.GetByHash(ctx, identity.HashToken(plaintext))
+	assert.ErrorIs(t, err, identity.ErrNotFound, "deleted token must not be resolvable by hash")
+
+	list, err := repo.ListByUser(ctx, uid)
+	require.NoError(t, err)
+	assert.Empty(t, list, "deleted token must not appear in the owner's list")
+}
+
 // Error/failure: deleting a missing id is ErrNotFound; TouchLastUsed sets the
 // timestamp; a duplicate token_hash insert surfaces an error.
 func TestTokenRepo_ErrorPaths(t *testing.T) {
