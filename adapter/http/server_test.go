@@ -728,6 +728,32 @@ func TestRouter_MCPEndpoint_Mounted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "POST /mcp should be handled by the mounted MCP handler")
 }
 
+func TestMeRoute_MountedUnderAPIV1(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	router.ServeHTTP(rec, req)
+
+	// Without auth wired (deps.Auth == nil) the handler resolves via FromContext
+	// and returns 401 — either way it is NOT a 404 (route exists).
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("/api/v1/me returned 404 — route not mounted")
+	}
+}
+
 func TestRouter_MCPEndpoint_RealHandler(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
 
