@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA20-P1-01: MCP `TestInstanceList` missing context-forwarding assertion — identity not verified on `ListInstances` path
+**Area**: Focus Area 20 — Instance list scoping (Pass 1)
+**Fix**: Added `capturedListCtx context.Context` field to `stubEngine` in `adapter/mcp/tools_instance_test.go`. Updated `ListInstances` to always capture `ctx` before delegating to `listFn`. Added `"caller identity context is forwarded to engine"` subtest to `TestInstanceList`: calls `instance_list` via `callTool` (which injects `mcpTestUserID`), then asserts `identity.FromContext(eng.capturedListCtx)` returns the expected test user ID. A regression where the handler passed `context.Background()` instead of the call context would immediately fail, breaking the `ownerConstraint` scoping in the domain engine.
+
 ### GAP-FA19-P2-01: HTTP and MCP Trigger stubs discarded context — identity forwarding not verified on adapter surfaces
 **Area**: Focus Area 19 — Flat-store migration & run-shared-directly (Pass 2)
 **Fix**: Added `capturedTriggerCtx context.Context` field to `mockWorkflowService` (HTTP) and `stubEngine` (MCP). Both stubs now capture the context passed to their `Trigger` method. Added `"caller identity context is forwarded to service"` subtest to `TestWorkflowHandler_Trigger` and `"caller identity context is forwarded to engine"` subtest to `TestInstanceTrigger`. Both assert that `identity.FromContext(capturedCtx)` returns the expected test user ID. A regression where the handler accidentally passed `context.Background()` instead of the request context would now be caught immediately on both surfaces.

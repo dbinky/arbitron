@@ -77,6 +77,7 @@ type stubEngine struct {
 	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
 	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	capturedListCtx    context.Context
 	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	traceFn            func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	nodeTraceFn        func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
@@ -100,6 +101,7 @@ func (s *stubEngine) Trigger(ctx context.Context, wfName string, vars map[string
 }
 
 func (s *stubEngine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	s.capturedListCtx = ctx
 	if s.listFn != nil {
 		return s.listFn(ctx, filters)
 	}
@@ -311,6 +313,23 @@ func TestInstanceList(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Equal(t, "[]", text)
+	})
+
+	t.Run("caller identity context is forwarded to engine", func(t *testing.T) {
+		// Verifies the MCP tool passes its call context (which carries the auth
+		// identity injected by callTool) through to Engine.ListInstances, so the
+		// engine's ownerConstraint resolves the authenticated caller rather than
+		// falling back to the default user.
+		eng := &stubEngine{}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+
+		result := callTool(t, srv, "instance_list", nil)
+		assert.False(t, result.IsError, extractText(t, result))
+
+		require.NotNil(t, eng.capturedListCtx, "engine ListInstances must receive the MCP call context")
+		id, ok := identity.FromContext(eng.capturedListCtx)
+		require.True(t, ok, "engine context must carry the caller identity")
+		assert.Equal(t, mcpTestUserID, id.UserID, "forwarded identity must be the authenticated caller")
 	})
 }
 
