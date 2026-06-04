@@ -58,3 +58,23 @@ func TestIdentityKey_NotForgeable(t *testing.T) {
 	_, ok := identity.FromContext(ctx)
 	assert.False(t, ok, "a value under a foreign key must not be returned by FromContext")
 }
+
+// TestWithIdentity_Override verifies that a child context's identity shadows
+// the parent's — the child sees its own identity, the parent still sees its own.
+func TestWithIdentity_Override(t *testing.T) {
+	uidA := uuid.New()
+	uidB := uuid.New()
+	idA := identity.Identity{UserID: uidA, Username: "alice", Role: identity.RoleAdmin}
+	idB := identity.Identity{UserID: uidB, Username: "bob", Role: identity.RoleUser}
+
+	parentCtx := identity.WithIdentity(context.Background(), idA)
+	childCtx := identity.WithIdentity(parentCtx, idB)
+
+	got, ok := identity.FromContext(childCtx)
+	require.True(t, ok)
+	assert.Equal(t, idB, got, "child context must return the overriding identity")
+
+	got, ok = identity.FromContext(parentCtx)
+	require.True(t, ok)
+	assert.Equal(t, idA, got, "parent context must be unaffected by child override")
+}

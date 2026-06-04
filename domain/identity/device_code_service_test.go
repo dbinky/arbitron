@@ -244,6 +244,70 @@ func TestDeviceCodeService_Security(t *testing.T) {
 	assert.NotContains(t, buf.String(), start.DeviceCode, "raw device code must never be logged")
 }
 
+// Failure: Deny with no identity returns ErrUnauthenticated.
+func TestDeviceCodeService_Deny_Unauthenticated(t *testing.T) {
+	ctx := context.Background() // no identity
+	repo := newFakeDeviceRepo()
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), nil)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	err = svc.Deny(ctx, start.UserCode)
+	assert.ErrorIs(t, err, ErrUnauthenticated)
+
+	// Row must not have been mutated.
+	dc, _ := repo.GetByUserCode(ctx, start.UserCode)
+	assert.Equal(t, DeviceCodePending, dc.Status, "Deny without auth must not mutate the row")
+}
+
+// Failure: Approve on an expired code returns ErrExpired before touching the repo.
+func TestDeviceCodeService_Approve_Expired(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	clock := &fakeClock{t: time.Now()}
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), clock.Now)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	clock.t = clock.t.Add(11 * time.Minute) // past the 10-min TTL
+	approveCtx := WithIdentity(ctx, Identity{UserID: uuid.New(), Role: RoleUser})
+	err = svc.Approve(approveCtx, start.UserCode)
+	assert.ErrorIs(t, err, ErrExpired)
+
+	// Row must still be Pending.
+	dc, _ := repo.GetByUserCode(ctx, start.UserCode)
+	assert.Equal(t, DeviceCodePending, dc.Status, "Approve on expired code must not change status")
+}
+
+// Boundary/edge: DeleteExpired delegates count to the repo and returns it.
+func TestDeviceCodeService_DeleteExpired(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), nil)
+
+	now := time.Now()
+	// Seed two rows — one that has already expired.
+	_ = repo.Create(ctx, &DeviceCode{
+		HashedCode: "hash-live", UserCode: "LIVE",
+		Status: DeviceCodePending, ExpiresAt: now.Add(time.Hour),
+	})
+	_ = repo.Create(ctx, &DeviceCode{
+		HashedCode: "hash-old", UserCode: "DEAD",
+		Status: DeviceCodePending, ExpiresAt: now.Add(-time.Second),
+	})
+
+	n, err := svc.DeleteExpired(ctx, now)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "exactly one expired row should be pruned")
+
+	// The live row must survive.
+	dc, lookupErr := repo.GetByHash(ctx, "hash-live")
+	require.NoError(t, lookupErr)
+	assert.NotNil(t, dc)
+}
+
 // fakeClock is a controllable clock for the service.
 type fakeClock struct{ t time.Time }
 

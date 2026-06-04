@@ -174,6 +174,36 @@ func TestTokenService_NoIdentity_Unauthenticated(t *testing.T) {
 	assert.Zero(t, repo.deleteCalls)
 }
 
+// Error/failure: List propagates a repo error to the caller.
+func TestTokenService_List_RepoError(t *testing.T) {
+	boom := errors.New("db down")
+	repo := &fakeTokenRepo{listResult: nil}
+	// Override ListByUser to return an error by capturing it in a wrapper struct.
+	// fakeTokenRepo returns nil,nil for an empty list; we need a distinct fake.
+	errRepo := &errListRepo{err: boom}
+	svc := NewTokenService(errRepo)
+	ctx := ctxWithUser(uuid.New())
+
+	list, err := svc.List(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+	assert.Nil(t, list)
+	_ = repo // suppress unused
+}
+
+// errListRepo wraps fakeTokenRepo but makes ListByUser return an error.
+type errListRepo struct {
+	err error
+}
+
+func (e *errListRepo) Create(_ context.Context, t *Token) error           { return nil }
+func (e *errListRepo) ListByUser(_ context.Context, _ uuid.UUID) ([]Token, error) {
+	return nil, e.err
+}
+func (e *errListRepo) GetByHash(_ context.Context, _ string) (*Token, error) { return nil, ErrNotFound }
+func (e *errListRepo) Delete(_ context.Context, _, _ uuid.UUID) error        { return nil }
+func (e *errListRepo) TouchLastUsed(_ context.Context, _ uuid.UUID) error    { return nil }
+
 // Security: the plaintext never appears in any log line emitted during Mint.
 func TestTokenService_Mint_PlaintextNeverLogged(t *testing.T) {
 	var buf bytes.Buffer
