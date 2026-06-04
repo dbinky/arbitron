@@ -152,6 +152,30 @@ func TestSecrecy_SessionToken_NeverStoredRaw(t *testing.T) {
 	assert.Equal(t, uid, got.UserID)
 }
 
+// SECURITY: SessionRepo.Get must NEVER re-populate Session.ID. The store only
+// ever holds sha256(token), so it is impossible to recover the raw cookie value
+// from storage. Callers that need the cookie value already hold it; returning it
+// from Get would mean a DB read leak could hand a valid session back to an
+// attacker.
+func TestSessionRepo_Get_DoesNotRepopulateID(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewSessionRepo(db.DB)
+	ctx := context.Background()
+	uid, _ := NewUserRepo(db.DB).GetDefaultUser(ctx)
+
+	const raw = "MUST-NOT-APPEAR-IN-SESSION-ID-FIELD"
+	require.NoError(t, repo.Create(ctx, &identity.Session{
+		ID: raw, UserID: uid, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}))
+
+	got, err := repo.Get(ctx, raw)
+	require.NoError(t, err)
+	assert.Empty(t, got.ID,
+		"Session.ID must be empty after Get — the raw token is never recovered from storage")
+	assert.NotContains(t, got.ID, "MUST-NOT-APPEAR",
+		"the raw sentinel must not appear in the returned Session.ID")
+}
+
 // sweepFakeRepo is a minimal identity.SessionRepository that counts
 // DeleteExpired calls and can inject a one-shot error.
 type sweepFakeRepo struct {

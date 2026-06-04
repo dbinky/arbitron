@@ -8,6 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
+### GAP-FA5-P2-01: No adapter-level test that `SessionRepo.Get` never repopulates `Session.ID`
+**Area**: Focus Area 5 — Session store (Pass 2)
+**Fix**: Added `TestSessionRepo_Get_DoesNotRepopulateID` in `adapter/sqlite/session_repo_test.go`. Stores a session with a known sentinel raw token, calls `Get`, and asserts `got.ID == ""` and that the sentinel string does not appear in the returned `Session.ID`. Guards against any future regression where someone adds `ID: row.IDHash` (which would expose the SHA-256 hash) or attempts to reconstruct the raw token.
+
 ### GAP-FA5-P1-01: `SweepExpiredSessions` had no test coverage
 **Area**: Focus Area 5 — Session store (Pass 1)
 **Fix**: Added `sweepFakeRepo` (in-memory `identity.SessionRepository` with per-call error injection), `TestSweepExpiredSessions_TicksAndStops` (verifies DeleteExpired is called on each tick and goroutine exits cleanly on context cancel — no goroutine leak), and `TestSweepExpiredSessions_ErrorIsLoggedNotFatal` (verifies a transient DeleteExpired error is logged but the loop continues). Tests use 5 ms ticks with `require.Eventually` to remain non-flaky.
