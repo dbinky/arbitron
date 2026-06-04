@@ -112,7 +112,7 @@ func TestUserHandler_DemotionFloors(t *testing.T) {
 	assert.Contains(t, w2.Body.String(), "bootstrap")
 }
 
-// Isolation/security: non-admin -> 403 on both; unauthenticated -> 401.
+// Isolation/security: non-admin -> 403 on both; unauthenticated -> 401 on both.
 func TestUserHandler_Security(t *testing.T) {
 	h, repo := newUserHandler()
 	target := uuid.New()
@@ -126,11 +126,16 @@ func TestUserHandler_Security(t *testing.T) {
 	h.List(wl, userHTTPReq(http.MethodGet, "/users", "", identity.RoleUser, ""))
 	assert.Equal(t, http.StatusForbidden, wl.Code)
 
-	// Unauthenticated (no identity in ctx).
+	// Unauthenticated (no identity in ctx) on both endpoints.
 	wu := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	h.List(wu, req)
+	h.List(wu, httptest.NewRequest(http.MethodGet, "/users", nil))
 	assert.Equal(t, http.StatusUnauthorized, wu.Code)
+
+	ws := httptest.NewRecorder()
+	unauthReq := httptest.NewRequest(http.MethodPut, "/users/"+target.String()+"/role", strings.NewReader(`{"role":"admin"}`))
+	unauthReq = withChiURLParamTok(unauthReq, "id", target.String())
+	h.SetRole(ws, unauthReq)
+	assert.Equal(t, http.StatusUnauthorized, ws.Code, "SetRole must return 401 when no identity in context")
 }
 
 func strptrH(s string) *string { return &s }

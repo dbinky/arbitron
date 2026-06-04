@@ -107,7 +107,7 @@ func TestUserTools_HappyPath(t *testing.T) {
 	assert.NotContains(t, listBody, "email", "user_list must not leak 'email' field name")
 }
 
-// Input validation: missing id/role, bad role.
+// Input validation: missing id/role, bad role, invalid UUID.
 func TestUserTools_Validation(t *testing.T) {
 	repo := newMemUserRepo()
 	srv := userToolServer(repo)
@@ -123,6 +123,11 @@ func TestUserTools_Validation(t *testing.T) {
 	res, _ = userSetRoleHandler(srv)(adminToolCtx(), callReq(map[string]any{"id": target.String(), "role": "superuser"}))
 	require.True(t, res.IsError)
 	assert.Contains(t, toolText(t, res), "role must be")
+
+	// Invalid UUID string — uuid.Parse fails before any repo access.
+	res, _ = userSetRoleHandler(srv)(adminToolCtx(), callReq(map[string]any{"id": "not-a-uuid", "role": "admin"}))
+	require.True(t, res.IsError)
+	assert.Contains(t, toolText(t, res), "invalid id")
 }
 
 // Error/failure: unknown id -> "user not found".
@@ -156,7 +161,8 @@ func TestUserTools_DemotionFloors(t *testing.T) {
 	assert.Contains(t, toolText(t, res2), "bootstrap admin")
 }
 
-// Isolation/security: non-admin -> forbidden; nil dep -> unavailable.
+// Isolation/security: non-admin -> forbidden; unauthenticated -> authentication
+// required; nil dep -> unavailable.
 func TestUserTools_Security(t *testing.T) {
 	repo := newMemUserRepo()
 	srv := userToolServer(repo)
@@ -170,6 +176,17 @@ func TestUserTools_Security(t *testing.T) {
 	listRes, _ := userListHandler(srv)(userToolCtx(), callReq(nil))
 	require.True(t, listRes.IsError)
 	assert.Contains(t, toolText(t, listRes), "forbidden: admin only")
+
+	// Unauthenticated (no identity in context) — admin gate must reject before
+	// any repo access, returning "authentication required" on both tools.
+	noIDCtx := context.Background()
+	unauthedSet, _ := userSetRoleHandler(srv)(noIDCtx, callReq(map[string]any{"id": target.String(), "role": "admin"}))
+	require.True(t, unauthedSet.IsError)
+	assert.Contains(t, toolText(t, unauthedSet), "authentication required", "user_set_role must reject unauthenticated callers")
+
+	unauthedList, _ := userListHandler(srv)(noIDCtx, callReq(nil))
+	require.True(t, unauthedList.IsError)
+	assert.Contains(t, toolText(t, unauthedList), "authentication required", "user_list must reject unauthenticated callers")
 
 	// nil dep.
 	nilSrv := NewServerWithDeps("test", "0.0.0", &Deps{})

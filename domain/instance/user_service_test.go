@@ -133,7 +133,8 @@ func TestUserService_Validation(t *testing.T) {
 	assert.Equal(t, 0, repo.updateCalls, "idempotent no-op writes nothing")
 }
 
-// Error/failure: GetByID/CountAdmins/UpdateRole errors propagate.
+// Error/failure: GetByID/CountAdmins/UpdateRole errors propagate for SetRole;
+// List repo error propagates when caller is an authenticated admin.
 func TestUserService_Errors(t *testing.T) {
 	boom := errors.New("db down")
 
@@ -157,6 +158,14 @@ func TestUserService_Errors(t *testing.T) {
 	svc3 := NewUserService(repo3, &stubBootstrap{admins: map[string]bool{}})
 	err = svc3.SetRole(adminCtx(), target, "admin")
 	assert.ErrorIs(t, err, boom)
+
+	// List repo error propagates when the caller is an authenticated admin.
+	repo4 := newFakeUserSvcRepo()
+	repo4.listErr = boom
+	svc4 := NewUserService(repo4, &stubBootstrap{})
+	_, err = svc4.List(adminCtx())
+	assert.ErrorIs(t, err, boom, "List must propagate repo errors to the caller")
+	assert.Equal(t, 1, repo4.listCalls, "List called once before error")
 }
 
 // Boundary: last admin cannot be demoted; self-demote allowed when another

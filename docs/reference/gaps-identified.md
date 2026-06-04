@@ -4,6 +4,16 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+## Fixed Previously
+
+### GAP-FA14-P1-02: MCP `user_set_role` invalid UUID path untested
+**Area**: Focus Area 14 — Role management (Pass 1)
+**Fix**: Added `"id": "not-a-uuid"` case to `TestUserTools_Validation` in `adapter/mcp/tools_user_test.go`. The `userSetRoleHandler` does `uuid.Parse(idStr)` and returns "invalid id" — this validation path was never exercised despite the other missing-id and bad-role cases being tested.
+
+### GAP-FA14-P1-01: `UserService.List` error scenario untested; `SetRole` unauthenticated path untested on REST; MCP unauthenticated untested
+**Area**: Focus Area 14 — Role management (Pass 1)
+**Fix**: Added `List` error propagation to `TestUserService_Errors` in `domain/instance/user_service_test.go` — the `listErr` field on `fakeUserSvcRepo` was never exercised. Added unauthenticated `SetRole` → 401 to `TestUserHandler_Security` in `adapter/http/user_handler_test.go` (only `List` unauthenticated was tested). Added `context.Background()` calls to `TestUserTools_Security` in `adapter/mcp/tools_user_test.go` for both `user_list` and `user_set_role` → "authentication required". All three gaps document that the admin gate fails closed with no identity in context.
+
 ### GAP-FA12-P2-01: `/auth/device/token` response had no `token_hash` non-leakage assertion; Start had no `hashed_code` pin
 **Area**: Focus Area 12 — Device-code login (Pass 2)
 **Fix**: Extended `TestDeviceHandler_HappyPath` in `adapter/http/device_handler_test.go`. Added `assert.NotContains(wt.Body.String(), "token_hash", ...)` to the Token endpoint response — the device token endpoint returns a newly minted arb_ access_token (highest-risk surface) and must never echo the internal token hash. Added `assert.NotContains(w.Body.String(), "hashed_code", ...)` and `assert.NotContains(w.Body.String(), "device_code_hash", ...)` to the Start response — the Start response returns the plaintext device_code (correct, once) but must never include the sha256 hash. Mirrors the FA-9 secrecy pin pattern applied to token_create and token_list.
