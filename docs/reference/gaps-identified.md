@@ -4,11 +4,6 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### NOTIF-001: Notification list is not scoped per user
-**Area**: Instance read scoping / notifications (`adapter/http/notification_handler.go` `List`, MCP `notification_list`, `adapter/sqlite/notification_repo.go`, migration)
-**Detail**: Phase 4 read scoping returns `ErrNotFound` for non-owners on instances/traces/variables, but the **notification list is not yet owner-scoped**. The `notifications` table has only an `instance_id` FK and **no owner/user_id column**, so the list cannot be filtered to the requesting identity without a schema change. This is a real isolation gap in org mode: a non-admin could currently list notifications that are not theirs.
-**Fix direction**: Add a migration introducing an owner column on `notifications` (or join through the owning instance's `OwnerID`), then add an identity-aware list service mirroring `Engine.ListInstances` and repoint **both** `notification_handler.List` and the MCP `notification_list` tool at it. Add isolation tests (non-admin sees only own; admin sees all) across REST and MCP. Note migrations 003–007 are taken; use the next free number.
-
 ### TEST-002: Thin adapter-level end-to-end authz coverage
 **Area**: `adapter/http` / `adapter/mcp` integration tests
 **Detail**: Per-user scoping is well unit-tested in `domain/engine` (`engine_list_test.go`, `engine_read_test.go`, `conversation_authz_test.go`, `engine_intervention_authz_test.go`, `engine_intervention_attr_test.go`) and proven cross-surface by the MCP/REST parity test, but several adapter tests delegate the scoped service to the underlying repos (admin-equivalent) so legacy behavior tests stay green. There is little coverage that drives the **real** engine through the HTTP router (and the MCP handler) with a **non-admin** identity in context end-to-end.
@@ -21,16 +16,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
-<!--
-Example of a fixed issue entry:
-
-### COMP-A-001: Input validation missing for empty strings
-**Area**: Component A (`path/to/component_a.py`)
-**Fixed**: Iteration 3
-**Detail**: ...
--->
-
-_(none yet — this is the seed state.)_
+### NOTIF-001: Notification list was not scoped per user
+**Area**: Instance read scoping / notifications (`adapter/http/notification_handler.go`, MCP `tools_system.go`, `adapter/sqlite/notification_repo.go`, `domain/notification/ports.go`)
+**Fixed**: Iteration 1
+**Detail**: Phase 4 read scoping returned `ErrNotFound` for non-owners on instances/traces/variables, but the notification surface was un-scoped. A non-admin could list, count unread, mark-read, and dismiss notifications from other users in org mode.
+**Resolution**: Added `OwnerID *uuid.UUID` to `notification.ListFilters` and updated `CountUnread`/`MarkAllRead`/`Dismiss` signatures to accept `ownerID *uuid.UUID` (nil = admin, non-nil = filter to owner). Scoping in the SQLite repo is done via JOIN with `instances.owner_id` — no schema migration required. Both the HTTP handler (`NotificationHandler`) and MCP handler extract the caller identity from context and pass the constraint, matching the pattern used by `domain/engine.ownerConstraint`. Cross-user `Dismiss` fails closed with `ErrNotFound`. Isolation verified by `TestNotificationRepo_IsolationByOwner` (SQLite level) and `TestNotificationHandler_OwnerScoping` (handler level, all four methods).
 
 ## Won't Fix (Beyond Current Scope)
 

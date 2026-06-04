@@ -660,12 +660,12 @@ func TestNotificationRepo_CountUnread(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), n))
 
-	count, err := repo.CountUnread(context.Background())
+	count, err := repo.CountUnread(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	require.NoError(t, repo.MarkAllRead(context.Background()))
-	count, err = repo.CountUnread(context.Background())
+	require.NoError(t, repo.MarkAllRead(context.Background(), nil))
+	count, err = repo.CountUnread(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -687,7 +687,7 @@ func TestNotificationRepo_Dismiss(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(context.Background(), n))
 
-	require.NoError(t, repo.Dismiss(context.Background(), n.ID))
+	require.NoError(t, repo.Dismiss(context.Background(), n.ID, nil))
 
 	dismissed := true
 	list, err := repo.List(context.Background(), notification.ListFilters{Dismissed: &dismissed, Limit: 10})
@@ -700,8 +700,89 @@ func TestNotificationRepo_Dismiss_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewNotificationRepo(db.DB)
 
-	err := repo.Dismiss(context.Background(), uuid.New())
+	err := repo.Dismiss(context.Background(), uuid.New(), nil)
 	assert.ErrorIs(t, err, notification.ErrNotFound)
+}
+
+func TestNotificationRepo_IsolationByOwner(t *testing.T) {
+	// Two users each have a notification. Verify every method returns only
+	// the caller's own records when ownerID is set (non-admin), and all
+	// records when ownerID is nil (admin).
+
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	instRepo := NewInstanceRepo(db.DB)
+	notifRepo := NewNotificationRepo(db.DB)
+
+	// Create two distinct users.
+	user1 := &instance.User{ID: uuid.New(), Username: "alice", Role: "user"}
+	user2 := &instance.User{ID: uuid.New(), Username: "bob", Role: "user"}
+	require.NoError(t, userRepo.Create(context.Background(), user1))
+	require.NoError(t, userRepo.Create(context.Background(), user2))
+
+	// Each user owns one instance.
+	inst1 := newTestInstance(t, user1.ID)
+	inst2 := newTestInstance(t, user2.ID)
+	require.NoError(t, instRepo.Create(context.Background(), inst1))
+	require.NoError(t, instRepo.Create(context.Background(), inst2))
+
+	// One notification per instance (per user).
+	n1 := &notification.Notification{ID: uuid.New(), InstanceID: inst1.ID, Type: notification.TypeCompleted}
+	n2 := &notification.Notification{ID: uuid.New(), InstanceID: inst2.ID, Type: notification.TypeFailed}
+	require.NoError(t, notifRepo.Create(context.Background(), n1))
+	require.NoError(t, notifRepo.Create(context.Background(), n2))
+
+	t.Run("List with ownerID returns only that user's notifications", func(t *testing.T) {
+		list, err := notifRepo.List(context.Background(), notification.ListFilters{OwnerID: &user1.ID, Limit: 10})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, n1.ID, list[0].ID)
+	})
+
+	t.Run("List with nil ownerID (admin) returns all notifications", func(t *testing.T) {
+		list, err := notifRepo.List(context.Background(), notification.ListFilters{Limit: 10})
+		require.NoError(t, err)
+		assert.Len(t, list, 2)
+	})
+
+	t.Run("CountUnread with ownerID counts only that user's unread", func(t *testing.T) {
+		count, err := notifRepo.CountUnread(context.Background(), &user1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+
+		count, err = notifRepo.CountUnread(context.Background(), &user2.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("CountUnread with nil ownerID counts all unread", func(t *testing.T) {
+		count, err := notifRepo.CountUnread(context.Background(), nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("MarkAllRead with ownerID marks only that user's notifications read", func(t *testing.T) {
+		require.NoError(t, notifRepo.MarkAllRead(context.Background(), &user1.ID))
+
+		count1, err := notifRepo.CountUnread(context.Background(), &user1.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, count1)
+
+		count2, err := notifRepo.CountUnread(context.Background(), &user2.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count2, "user2's notification must remain unread")
+	})
+
+	t.Run("Dismiss by another user's ownerID returns ErrNotFound", func(t *testing.T) {
+		// user2 trying to dismiss user1's notification must fail.
+		err := notifRepo.Dismiss(context.Background(), n1.ID, &user2.ID)
+		assert.ErrorIs(t, err, notification.ErrNotFound, "cross-user dismiss must fail closed")
+	})
+
+	t.Run("Dismiss with nil ownerID (admin) can dismiss any notification", func(t *testing.T) {
+		err := notifRepo.Dismiss(context.Background(), n2.ID, nil)
+		assert.NoError(t, err)
+	})
 }
 
 // ---------------------------------------------------------------------------

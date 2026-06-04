@@ -2565,11 +2565,13 @@ func (r *mockNotificationRepo) List(_ context.Context, _ notification.ListFilter
 	return nil, nil
 }
 
-func (r *mockNotificationRepo) CountUnread(_ context.Context) (int, error) { return 0, nil }
+func (r *mockNotificationRepo) CountUnread(_ context.Context, _ *uuid.UUID) (int, error) { return 0, nil }
 
-func (r *mockNotificationRepo) MarkAllRead(_ context.Context) error { return nil }
+func (r *mockNotificationRepo) MarkAllRead(_ context.Context, _ *uuid.UUID) error { return nil }
 
-func (r *mockNotificationRepo) Dismiss(_ context.Context, _ uuid.UUID) error { return nil }
+func (r *mockNotificationRepo) Dismiss(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
+	return nil
+}
 
 func (r *mockNotificationRepo) getCreated() []notification.Notification {
 	r.mu.Lock()

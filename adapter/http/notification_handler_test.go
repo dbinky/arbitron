@@ -15,6 +15,7 @@ import (
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/google/uuid"
 )
@@ -97,18 +98,18 @@ func (r *mockNotificationRepo) List(_ context.Context, filters notification.List
 	return result, nil
 }
 
-func (r *mockNotificationRepo) CountUnread(_ context.Context) (int, error) {
+func (r *mockNotificationRepo) CountUnread(_ context.Context, _ *uuid.UUID) (int, error) {
 	if r.countErr != nil {
 		return 0, r.countErr
 	}
 	return r.unreadCount, nil
 }
 
-func (r *mockNotificationRepo) MarkAllRead(_ context.Context) error {
+func (r *mockNotificationRepo) MarkAllRead(_ context.Context, _ *uuid.UUID) error {
 	return r.markReadErr
 }
 
-func (r *mockNotificationRepo) Dismiss(_ context.Context, id uuid.UUID) error {
+func (r *mockNotificationRepo) Dismiss(_ context.Context, id uuid.UUID, _ *uuid.UUID) error {
 	if r.dismissErr != nil {
 		return r.dismissErr
 	}
@@ -539,5 +540,151 @@ func TestNotificationHandler_Dismiss_PublishesEvent(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.Empty(t, bus.published())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Isolation: owner scoping propagated to repo
+// ---------------------------------------------------------------------------
+
+// captureNotificationRepo records the OwnerID filter each method receives.
+type captureNotificationRepo struct {
+	capturedListOwnerID      *uuid.UUID
+	capturedCountOwnerID     *uuid.UUID
+	capturedMarkReadOwnerID  *uuid.UUID
+	capturedDismissOwnerID   *uuid.UUID
+}
+
+func (r *captureNotificationRepo) Create(_ context.Context, _ *notification.Notification) error {
+	return nil
+}
+
+func (r *captureNotificationRepo) List(_ context.Context, f notification.ListFilters) ([]notification.Notification, error) {
+	r.capturedListOwnerID = f.OwnerID
+	return []notification.Notification{}, nil
+}
+
+func (r *captureNotificationRepo) CountUnread(_ context.Context, ownerID *uuid.UUID) (int, error) {
+	r.capturedCountOwnerID = ownerID
+	return 0, nil
+}
+
+func (r *captureNotificationRepo) MarkAllRead(_ context.Context, ownerID *uuid.UUID) error {
+	r.capturedMarkReadOwnerID = ownerID
+	return nil
+}
+
+func (r *captureNotificationRepo) Dismiss(_ context.Context, _ uuid.UUID, ownerID *uuid.UUID) error {
+	r.capturedDismissOwnerID = ownerID
+	return nil
+}
+
+func TestNotificationHandler_OwnerScoping(t *testing.T) {
+	userID := uuid.New()
+	nonAdminCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: userID,
+		Role:   identity.RoleUser,
+	})
+	adminCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: uuid.New(),
+		Role:   identity.RoleAdmin,
+	})
+
+	t.Run("non-admin List passes OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil).WithContext(nonAdminCtx)
+		h.List(httptest.NewRecorder(), req)
+
+		require.NotNil(t, repo.capturedListOwnerID)
+		assert.Equal(t, userID, *repo.capturedListOwnerID)
+	})
+
+	t.Run("admin List passes nil OwnerID to repo (sees all)", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil).WithContext(adminCtx)
+		h.List(httptest.NewRecorder(), req)
+
+		assert.Nil(t, repo.capturedListOwnerID)
+	})
+
+	t.Run("no identity in context yields nil OwnerID (local mode)", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil)
+		h.List(httptest.NewRecorder(), req)
+
+		assert.Nil(t, repo.capturedListOwnerID)
+	})
+
+	t.Run("non-admin UnreadCount passes OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/unread-count", nil).WithContext(nonAdminCtx)
+		h.UnreadCount(httptest.NewRecorder(), req)
+
+		require.NotNil(t, repo.capturedCountOwnerID)
+		assert.Equal(t, userID, *repo.capturedCountOwnerID)
+	})
+
+	t.Run("admin UnreadCount passes nil OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/unread-count", nil).WithContext(adminCtx)
+		h.UnreadCount(httptest.NewRecorder(), req)
+
+		assert.Nil(t, repo.capturedCountOwnerID)
+	})
+
+	t.Run("non-admin MarkRead passes OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/mark-read", nil).WithContext(nonAdminCtx)
+		h.MarkRead(httptest.NewRecorder(), req)
+
+		require.NotNil(t, repo.capturedMarkReadOwnerID)
+		assert.Equal(t, userID, *repo.capturedMarkReadOwnerID)
+	})
+
+	t.Run("admin MarkRead passes nil OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/mark-read", nil).WithContext(adminCtx)
+		h.MarkRead(httptest.NewRecorder(), req)
+
+		assert.Nil(t, repo.capturedMarkReadOwnerID)
+	})
+
+	t.Run("non-admin Dismiss passes OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		notifID := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/"+notifID.String()+"/dismiss", nil).WithContext(nonAdminCtx)
+		req = withChiURLParam(req, "id", notifID.String())
+		h.Dismiss(httptest.NewRecorder(), req)
+
+		require.NotNil(t, repo.capturedDismissOwnerID)
+		assert.Equal(t, userID, *repo.capturedDismissOwnerID)
+	})
+
+	t.Run("admin Dismiss passes nil OwnerID to repo", func(t *testing.T) {
+		repo := &captureNotificationRepo{}
+		h := adapthttp.NewNotificationHandler(repo)
+
+		notifID := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/notifications/"+notifID.String()+"/dismiss", nil).WithContext(adminCtx)
+		req = withChiURLParam(req, "id", notifID.String())
+		h.Dismiss(httptest.NewRecorder(), req)
+
+		assert.Nil(t, repo.capturedDismissOwnerID)
 	})
 }
