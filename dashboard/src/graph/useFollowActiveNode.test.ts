@@ -170,6 +170,36 @@ describe('useFollowActiveNode — edge case: null anchor (empty graph)', () => {
   })
 })
 
+describe('useFollowActiveNode — isRunning guard', () => {
+  // Regression: a completed (not-running) instance must NOT pan when a late
+  // anchor change arrives (e.g. a trailing trace/layout update after the run
+  // finished). The animate branch is gated on isRunning, so a stopped instance
+  // never auto-pans even though following is still true.
+  it('does NOT pan on a late anchor change when the instance is not running', () => {
+    const { rerender } = renderHook(
+      ({ a, running }: { a: { x: number; y: number }; running: boolean }) =>
+        useFollowActiveNode(a, running),
+      { initialProps: { a: { x: 10, y: 20 }, running: false } },
+    )
+    // First render records the anchor; no setCenter regardless.
+    expect(setCenter).not.toHaveBeenCalled()
+
+    // A late anchor change while not running must not animate.
+    rerender({ a: { x: 100, y: 200 }, running: false })
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+
+  it('pans on an anchor change once the instance is running', () => {
+    const { rerender } = renderHook(
+      ({ a, running }: { a: { x: number; y: number }; running: boolean }) =>
+        useFollowActiveNode(a, running),
+      { initialProps: { a: { x: 10, y: 20 }, running: true } },
+    )
+    rerender({ a: { x: 100, y: 200 }, running: true })
+    expect(setCenter).toHaveBeenCalledWith(100, 200, { zoom: 1.5, duration: 400 })
+  })
+})
+
 describe('useFollowActiveNode — reduced motion', () => {
   it('uses duration 0 when prefers-reduced-motion is set', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

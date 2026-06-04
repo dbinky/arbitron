@@ -22,7 +22,7 @@ function prefersReducedMotion(): boolean {
 
 export function useFollowActiveNode(
   anchor: AnchorPosition | null,
-  _isRunning: boolean,
+  isRunning: boolean,
 ): UseFollowActiveNodeResult {
   const { setCenter, getZoom } = useReactFlow()
   const [following, setFollowing] = useState(true)
@@ -33,7 +33,10 @@ export function useFollowActiveNode(
   const prevAnchorRef = useRef<AnchorPosition | null>(null)
 
   useEffect(() => {
-    if (!anchor) return
+    // Only auto-pan for a running instance with an anchor. A completed/stopped
+    // instance must not pan on a late anchor change (trailing trace/layout
+    // update); `following` stays user-controllable for the running case.
+    if (!anchor || !isRunning) return
     const prev = prevAnchorRef.current
     // First time we see any anchor: record it, do not animate.
     if (prev === null) {
@@ -48,7 +51,7 @@ export function useFollowActiveNode(
 
     const duration = prefersReducedMotion() ? 0 : FOLLOW_DURATION_MS
     setCenter(anchor.x, anchor.y, { zoom: getZoom(), duration })
-  }, [anchor, following, setCenter, getZoom])
+  }, [anchor, isRunning, following, setCenter, getZoom])
 
   const onMoveStart = useCallback((event: unknown) => {
     if (event != null) setFollowing(false)
