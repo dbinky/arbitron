@@ -127,3 +127,28 @@ describe('selectAnchorNodeId — running instance', () => {
     expect(selectAnchorNodeId(i, d, {}, [])).toBe('a')
   })
 })
+
+describe('selectAnchorNodeId — failed instance', () => {
+  it('returns failedNodeId when present and in the graph', () => {
+    const d = def([N('a'), N('b'), N('c')], [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ])
+    const states: Record<string, NodeExecutionState> = {
+      a: 'completed',
+      b: 'failed',
+      c: 'pending',
+    }
+    const i = inst({ state: 'failed', failedNodeId: 'b' })
+    expect(
+      selectAnchorNodeId(i, d, states, [exec('a', 'succeeded'), exec('b', 'failed')]),
+    ).toBe('b')
+  })
+
+  it('falls back to the node marked failed in executionStates when failedNodeId is missing', () => {
+    const d = def([N('a'), N('b')], [{ source: 'a', target: 'b' }])
+    const states: Record<string, NodeExecutionState> = { a: 'completed', b: 'failed' }
+    const i = inst({ state: 'failed' }) // no failedNodeId
+    expect(selectAnchorNodeId(i, d, states, [])).toBe('b')
+  })
+})

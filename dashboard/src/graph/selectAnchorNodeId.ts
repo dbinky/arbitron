@@ -21,7 +21,7 @@ function nodeIdSet(def: WorkflowDefinition): Set<string> {
 export function selectAnchorNodeId(
   instance: Instance | null,
   workflowDef: WorkflowDefinition | null,
-  _executionStates: Record<string, NodeExecutionState>,
+  executionStates: Record<string, NodeExecutionState>,
   _trace: NodeExecution[],
 ): string | null {
   if (!workflowDef || workflowDef.nodes.length === 0) return null
@@ -40,6 +40,17 @@ export function selectAnchorNodeId(
     if (instance.currentNodeId && ids.has(instance.currentNodeId)) {
       return instance.currentNodeId
     }
+  }
+
+  // Failed: the failed node.
+  if (instance.state === 'failed') {
+    if (instance.failedNodeId && ids.has(instance.failedNodeId)) {
+      return instance.failedNodeId
+    }
+    const markedFailed = workflowDef.nodes.find(
+      (n) => executionStates[n.id] === 'failed',
+    )
+    if (markedFailed) return markedFailed.id
   }
 
   // General fallback for any instance with no specific anchor.
