@@ -139,7 +139,7 @@ func instanceGetHandler(srv *Server) server.ToolHandlerFunc {
 }
 
 func instanceTriggerHandler(srv *Server) server.ToolHandlerFunc {
-	return func(_ context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		args := request.GetArguments()
 		wfName, _ := args["workflowName"].(string)
 		if wfName == "" {
@@ -158,7 +158,7 @@ func instanceTriggerHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid priority %q: must be high, normal, or low", priority)), nil
 		}
 
-		id, queued, err := srv.deps.Engine.Trigger(wfName, vars, priority)
+		id, queued, err := srv.deps.Engine.Trigger(ctx, wfName, vars, priority)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to trigger workflow: %s", err)), nil
 		}

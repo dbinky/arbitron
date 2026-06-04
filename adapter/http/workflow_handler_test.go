@@ -148,7 +148,7 @@ type mockWorkflowService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 }
 
-func (m *mockWorkflowService) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *mockWorkflowService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}

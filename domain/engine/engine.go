@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/variable"
@@ -98,20 +99,38 @@ type edgeTarget struct {
 	outputPort string
 }
 
+// triggerOwner returns the triggering user's id: the context identity when
+// present (REST/MCP triggers), otherwise the default user (scheduler/webhook
+// system triggers that carry no identity). The bool is false only when no
+// identity is present and the default user cannot be resolved.
+func triggerOwner(ctx context.Context, users instance.UserRepository) (uuid.UUID, bool) {
+	if id, ok := identity.FromContext(ctx); ok {
+		return id.UserID, true
+	}
+	def, err := users.GetDefaultUser(ctx)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return def, true
+}
+
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
 // and delegates to the queue manager for capacity-based scheduling.
 // The second return value indicates whether the instance started immediately (true)
 // or stayed in queued state (false).
-func (e *Engine) Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
-	ctx := context.Background()
+func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	// Resolve the triggering owner. Trigger has no context identity yet (Task 7
-	// threads ctx through and resolves the triggering user); the interim path
-	// uses the default user as the owner so the private-then-shared read still
-	// works for background/system triggers.
-	owner, err := e.users.GetDefaultUser(ctx)
-	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to get default user: %w", err)
+	// Resolve the triggering owner: the context identity for REST/MCP triggers,
+	// or the default user for system triggers (scheduler/webhook) that carry no
+	// identity. The workflow is resolved across the owner's visible scopes
+	// (private first, then shared) so a shared workflow runs directly with no
+	// private copy.
+	owner, ok := triggerOwner(ctx, e.users)
+	if !ok {
+		return uuid.Nil, false, fmt.Errorf("failed to resolve triggering user")
 	}
 
 	wf, _, err := workflow.LoadVisible(ctx, e.workflows, owner, workflowName)
@@ -161,9 +180,9 @@ func (e *Engine) Trigger(workflowName string, variables map[string]any, priority
 		return uuid.Nil, false, fmt.Errorf("failed to parse workflow snapshot: %w", err)
 	}
 
-	// OwnerID is the triggering user; for background/system triggers (no
-	// identity in context) this is the default user resolved above. Task 7
-	// replaces this with the triggering identity when present.
+	// OwnerID is the triggering user resolved above (the context identity, or the
+	// default user for system triggers). A shared workflow therefore runs in the
+	// triggering user's queue, independent of the publisher.
 	ownerID := owner
 
 	now := time.Now()
@@ -1068,7 +1087,10 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
-	id, _, err := e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
+	// Rerun currently carries no request identity (Phase 4 Task 5 threads the
+	// acting caller's ctx in); the background ctx makes triggerOwner fall back to
+	// the default user.
+	id, _, err := e.Trigger(ctx, inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
 	return id, err
 }
 

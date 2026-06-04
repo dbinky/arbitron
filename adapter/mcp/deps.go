@@ -19,7 +19,7 @@ import (
 // needs for workflow lifecycle operations. This interface keeps the adapter
 // decoupled from the concrete Engine implementation.
 type EngineService interface {
-	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 	Pause(instanceID uuid.UUID) error
 	Resume(instanceID uuid.UUID) error
 	Cancel(instanceID uuid.UUID) error

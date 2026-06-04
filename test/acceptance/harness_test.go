@@ -579,7 +579,7 @@ type runResult struct {
 // instance id without waiting.
 func (h *harness) trigger(t *testing.T, maxIterations float64) uuid.UUID {
 	t.Helper()
-	id, _, err := h.engine.Trigger(workedExample, map[string]any{
+	id, _, err := h.engine.Trigger(context.Background(), workedExample, map[string]any{
 		"mission":        "tidy the workspace tracking docs",
 		"max_iterations": maxIterations,
 	}, "normal")

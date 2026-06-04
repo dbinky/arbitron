@@ -60,8 +60,11 @@ func writeSharedReadOnlyOrNotFound(w http.ResponseWriter, name string, err error
 }
 
 // TriggerService defines the engine trigger method needed by workflow handlers.
+// The request context carries the triggering identity (injected by the auth
+// middleware) so the engine resolves the caller's visible scopes and stamps the
+// triggering user as the instance owner.
 type TriggerService interface {
-	Trigger(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 }
 
 // WorkflowService is an alias retained for the EngineService composition in
@@ -220,7 +223,7 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		req.Priority = "normal"
 	}
 
-	id, started, err := h.service.Trigger(name, req.Variables, req.Priority)
+	id, started, err := h.service.Trigger(r.Context(), name, req.Variables, req.Priority)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())

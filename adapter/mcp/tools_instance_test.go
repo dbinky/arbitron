@@ -81,7 +81,7 @@ type stubEngine struct {
 	setPriorityFn func(id uuid.UUID, priority string) error
 }
 
-func (s *stubEngine) Trigger(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+func (s *stubEngine) Trigger(_ context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
 	if s.triggerFn != nil {
 		return s.triggerFn(wfName, vars, priority)
 	}
