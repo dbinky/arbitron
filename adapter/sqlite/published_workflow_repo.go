@@ -21,6 +21,8 @@ type PublishedWorkflow struct {
 	PublisherID uuid.UUID
 	SourceName  string
 	PublishedAt time.Time
+	Visibility  string // "department" | "public"
+	Department  string // "" for public
 }
 
 // PublishedWorkflowRepo is the authority for the unique-name and
@@ -73,16 +75,33 @@ func (r *PublishedWorkflowRepo) Get(ctx context.Context, name string) (*Publishe
 		PublisherID: id,
 		SourceName:  row.SourceName,
 		PublishedAt: publishedAt,
+		Visibility:  row.Visibility,
+		Department:  row.Department.String, // "" when NULL
 	}, true, nil
 }
 
-// Upsert records (or re-records) a publication. The publisher-only-overwrite
-// rule is enforced by the caller (Task 5) before this is invoked.
-func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string) error {
+// GetPublication returns the full publication record for name, including its
+// visibility and department, or (nil, false, nil) when no publication exists.
+// It is the internal struct accessor the port-shaped PublicationOf bridges.
+func (r *PublishedWorkflowRepo) GetPublication(ctx context.Context, name string) (*PublishedWorkflow, bool, error) {
+	return r.Get(ctx, name)
+}
+
+// Upsert records (or re-records) a publication with its visibility level. A
+// department string is stored as SQL NULL when empty (public). The
+// publisher-only-overwrite and role-gating rules are enforced by the caller
+// before this is invoked.
+func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName, visibility, department string) error {
+	dept := sql.NullString{}
+	if department != "" {
+		dept = sql.NullString{String: department, Valid: true}
+	}
 	if err := r.queries.UpsertPublishedWorkflow(ctx, generated.UpsertPublishedWorkflowParams{
 		Name:        name,
 		PublisherID: publisher.String(),
 		SourceName:  sourceName,
+		Visibility:  visibility,
+		Department:  dept,
 	}); err != nil {
 		return fmt.Errorf("upsert published %q: %w", name, err)
 	}
@@ -110,6 +129,8 @@ func (r *PublishedWorkflowRepo) List(ctx context.Context) ([]PublishedWorkflow, 
 			PublisherID: id,
 			SourceName:  row.SourceName,
 			PublishedAt: publishedAt,
+			Visibility:  row.Visibility,
+			Department:  row.Department.String,
 		})
 	}
 	return out, nil

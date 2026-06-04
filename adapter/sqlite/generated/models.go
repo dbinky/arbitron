@@ -109,6 +109,8 @@ type PublishedWorkflow struct {
 	PublisherID string
 	SourceName  string
 	PublishedAt string
+	Visibility  string
+	Department  sql.NullString
 }
 
 type Session struct {

@@ -19,7 +19,7 @@ func TestPublishedWorkflowRepo_UpsertThenPublisherOf(t *testing.T) {
 	repo := NewPublishedWorkflowRepo(db.DB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Upsert(ctx, "shared-wf", defaultUserID, "my-private"))
+	require.NoError(t, repo.Upsert(ctx, "shared-wf", defaultUserID, "my-private", "public", ""))
 
 	pub, ok, err := repo.PublisherOf(ctx, "shared-wf")
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestPublishedWorkflowRepo_GetRoundTrip(t *testing.T) {
 	repo := NewPublishedWorkflowRepo(db.DB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Upsert(ctx, "shared-wf", defaultUserID, "src-name"))
+	require.NoError(t, repo.Upsert(ctx, "shared-wf", defaultUserID, "src-name", "public", ""))
 
 	row, ok, err := repo.Get(ctx, "shared-wf")
 	require.NoError(t, err)
@@ -48,8 +48,8 @@ func TestPublishedWorkflowRepo_ListSortedByName(t *testing.T) {
 	repo := NewPublishedWorkflowRepo(db.DB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Upsert(ctx, "zeta", defaultUserID, "z"))
-	require.NoError(t, repo.Upsert(ctx, "alpha", defaultUserID, "a"))
+	require.NoError(t, repo.Upsert(ctx, "zeta", defaultUserID, "z", "public", ""))
+	require.NoError(t, repo.Upsert(ctx, "alpha", defaultUserID, "a", "public", ""))
 
 	list, err := repo.List(ctx)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestPublishedWorkflowRepo_Upsert_UnknownPublisherFailsFK(t *testing.T) {
 	// Ensure FK enforcement is on for this connection.
 	_, _ = db.DB.Exec("PRAGMA foreign_keys = ON")
 
-	err := repo.Upsert(ctx, "wf", uuid.New(), "src")
+	err := repo.Upsert(ctx, "wf", uuid.New(), "src", "public", "")
 	require.Error(t, err, "publisher_id with no users row must violate the FK")
 }
 
@@ -109,7 +109,7 @@ func TestPublishedWorkflowRepo_Delete_RemovesRow(t *testing.T) {
 	repo := NewPublishedWorkflowRepo(db.DB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src"))
+	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src", "public", ""))
 	require.NoError(t, repo.Delete(ctx, "wf"))
 
 	_, ok, err := repo.PublisherOf(ctx, "wf")
@@ -126,8 +126,8 @@ func TestPublishedWorkflowRepo_ReUpsert_SameNameUpdatesAndStaysSingleRow(t *test
 
 	other := seedUser(t, db, "other")
 
-	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src1"))
-	require.NoError(t, repo.Upsert(ctx, "wf", other, "src2"))
+	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src1", "public", ""))
+	require.NoError(t, repo.Upsert(ctx, "wf", other, "src2", "public", ""))
 
 	pub, ok, err := repo.PublisherOf(ctx, "wf")
 	require.NoError(t, err)
@@ -154,9 +154,74 @@ func TestPublishedWorkflowRepo_MigrationIdempotent(t *testing.T) {
 
 	repo := NewPublishedWorkflowRepo(db.DB)
 	ctx := context.Background()
-	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src"))
+	require.NoError(t, repo.Upsert(ctx, "wf", defaultUserID, "src", "public", ""))
 
 	var count int
 	require.NoError(t, db.DB.QueryRow(`SELECT COUNT(*) FROM published_workflows`).Scan(&count))
 	assert.Equal(t, 1, count)
+}
+
+// --- Phase 2: visibility column migration ---
+
+func TestPublishedWorkflowRepo_PreExistingRowDefaultsToPublic(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	// Simulate a row that existed before migration 010 by inserting only the
+	// pre-010 columns; the column DEFAULT must fill visibility='public'.
+	_, err := db.DB.ExecContext(ctx,
+		`INSERT INTO published_workflows (name, publisher_id, source_name) VALUES (?, ?, ?)`,
+		"legacy-shared", defaultUserID.String(), "src")
+	require.NoError(t, err)
+
+	repo := NewPublishedWorkflowRepo(db.DB)
+	pub, ok, err := repo.GetPublication(ctx, "legacy-shared")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "public", pub.Visibility)
+	assert.Equal(t, "", pub.Department) // NULL department reads back as empty string
+}
+
+func TestPublishedWorkflowRepo_UpsertDepartment_RoundTrips(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Upsert(ctx, "triage", defaultUserID, "src", "department", "engineering"))
+
+	pub, ok, err := repo.GetPublication(ctx, "triage")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "department", pub.Visibility)
+	assert.Equal(t, "engineering", pub.Department)
+}
+
+func TestPublishedWorkflowRepo_UpsertPublic_StoresNullDepartment(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Upsert(ctx, "pub-wf", defaultUserID, "src", "public", ""))
+
+	// department column is SQL NULL, surfaced as "".
+	pub, ok, err := repo.GetPublication(ctx, "pub-wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "public", pub.Visibility)
+	assert.Equal(t, "", pub.Department)
+
+	var deptIsNull bool
+	require.NoError(t, db.DB.QueryRowContext(ctx,
+		`SELECT department IS NULL FROM published_workflows WHERE name = ?`, "pub-wf").Scan(&deptIsNull))
+	assert.True(t, deptIsNull)
+}
+
+func TestPublishedWorkflowRepo_UpsertRejectsBadVisibility(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	// CHECK constraint rejects an out-of-vocab visibility.
+	err := repo.Upsert(ctx, "bad", defaultUserID, "src", "private", "")
+	require.Error(t, err)
 }
