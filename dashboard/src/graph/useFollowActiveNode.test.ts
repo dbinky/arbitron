@@ -63,3 +63,38 @@ describe('useFollowActiveNode — follow on advance', () => {
     expect(setCenter).not.toHaveBeenCalled()
   })
 })
+
+describe('useFollowActiveNode — pause on user interaction', () => {
+  it('stops following when onMoveStart receives a real (non-null) event', () => {
+    const { result } = renderHook(() =>
+      useFollowActiveNode({ x: 10, y: 20 }, true),
+    )
+    act(() => {
+      result.current.onMoveStart({ type: 'pointerdown' }) // real user gesture
+    })
+    expect(result.current.following).toBe(false)
+  })
+
+  it('does NOT stop following when onMoveStart receives a null event (programmatic)', () => {
+    const { result } = renderHook(() =>
+      useFollowActiveNode({ x: 10, y: 20 }, true),
+    )
+    act(() => {
+      result.current.onMoveStart(null) // our own setCenter
+    })
+    expect(result.current.following).toBe(true)
+  })
+
+  it('does not animate to a new anchor after the user paused following', () => {
+    const { result, rerender } = renderHook(
+      ({ a }: { a: { x: number; y: number } }) => useFollowActiveNode(a, true),
+      { initialProps: { a: { x: 10, y: 20 } } },
+    )
+    act(() => {
+      result.current.onMoveStart({ type: 'wheel' }) // user zooms => pause
+    })
+    setCenter.mockClear()
+    rerender({ a: { x: 100, y: 200 } }) // execution advances
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+})
