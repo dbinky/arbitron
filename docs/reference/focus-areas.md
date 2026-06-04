@@ -40,7 +40,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 18 | Loop geometry + back-edge rendering (container box handed to the back-edge; routing avoids body nodes) | [x] | Done |
 | 19 | Anchor selection + Follow hook (shared anchor identity; container overlays excluded from candidates; GraphView wiring) | [x] | Done |
 | 20 | Dismissal repo + HTTP handlers (port contract: method names/signatures, error mapping, currentUser scoping) | [x] | Done |
-| 21 | List marking + Queue UI (`dismissed`/`includeDismissed` contract match; order preservation drives chronological reveal) | [ ] | |
+| 21 | List marking + Queue UI (`dismissed`/`includeDismissed` contract match; order preservation drives chronological reveal) | [x] | Done |
 | 22 | Dismiss slice + engine retry resurface (dismiss then retry clears; item reappears active→terminal) | [ ] | |
 | 23 | Cross-cutting: currentUser seam + all dismissal endpoints (per-user scoping consistent everywhere; local-mode correct) | [ ] | |
 | 24 | Cross-cutting: GraphView integration (Phase 1 edgeTypes + loop containers coexist with Phase 2 zoom/follow; no fitView regression) | [ ] | |

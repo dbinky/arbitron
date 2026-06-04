@@ -9,6 +9,14 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-21-001: No test that QueueSection interleaves dismissed and non-dismissed items in sort order
+**Area**: Paired review #21 — list marking + Queue UI (`dashboard/src/components/QueueSection.test.tsx`)
+**Fixed**: Iteration 39
+**Detail**: `sortInstances` does not segregate dismissed items, but no test pinned this. If someone inserted a `dismissed ? 1 : 0` secondary comparator (pushing dismissed to the bottom), all existing tests would still pass. Added `QueueSection — dismissed items interleaved in sort order`: creates a dismissed item with `updatedAt=2024-06-01` and a non-dismissed item with `updatedAt=2024-01-01`, switches sort to "Time" (most-recently-updated first), and asserts the Restore button (belonging to the newer dismissed item) appears before the Dismiss button (the older item). Pins the interleaving contract at the render level.
+
+
+## Fixed Previously
+
 ### PAIR-20-001: Dismiss handler scoping not verified to use acting user vs instance owner
 **Area**: Paired review #20 — dismissal repo + HTTP handlers seam (`adapter/http/dismissal_handler_test.go`)
 **Fixed**: Iteration 38

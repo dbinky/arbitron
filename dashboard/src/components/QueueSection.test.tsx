@@ -47,6 +47,34 @@ describe('QueueSection dismiss-all', () => {
   })
 })
 
+// Seam: verifies that sortInstances does NOT segregate dismissed items to the
+// bottom (or top) of the list. If someone inserted a dismissed-first/last key
+// into the sort comparator, a dismissed item with a more recent updatedAt
+// would no longer appear before the older non-dismissed item.
+describe('QueueSection — dismissed items interleaved in sort order', () => {
+  it('a dismissed item with a more recent updatedAt appears before an older non-dismissed item when sorted by time', () => {
+    const older = summary({ id: 'old', state: 'failed', dismissed: false, updatedAt: '2024-01-01T00:00:00Z' })
+    const newer = summary({ id: 'new', state: 'failed', dismissed: true,  updatedAt: '2024-06-01T00:00:00Z' })
+
+    renderSection({
+      instances: [older, newer],  // older first in input
+      timeMode: 'relative',
+      onDismiss: vi.fn(),
+      onRestore: vi.fn(),
+    })
+
+    // Change sort to "Time" (most-recently-updated first for relative mode).
+    fireEvent.click(screen.getByRole('button', { name: /^Time$/i }))
+
+    // Both rows render.
+    const rows = screen.getAllByRole('button', { name: /dismiss|restore/i })
+    // The Restore button belongs to the dismissed (newer) item; Dismiss to the older item.
+    // If sort is correct, Restore should appear first (newer item first) and Dismiss second.
+    expect(rows[0].getAttribute('aria-label')).toBe('Restore')
+    expect(rows[1].getAttribute('aria-label')).toBe('Dismiss')
+  })
+})
+
 describe('QueueSection — dismissed row rendering', () => {
   it('renders a restore control (not dismiss) for a dismissed terminal instance', () => {
     const onRestore = vi.fn()
