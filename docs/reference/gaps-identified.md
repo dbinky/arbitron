@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### UI-001: QueueView dismiss-handler API calls untested; wrong role-query selector
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 19
+**Detail**: The original mock only included `api.instances.list`. All three dismiss-side handlers (`handleDismiss`, `handleRestore`, `handleDismissAll`) called the real API in tests, making them impossible to verify. Extended the mock with `vi.hoisted()` to add `dismiss`, `restore`, and `dismissAll` vi.fn()s, then added `TestHandleDismissAll_CallsAPIAndRefetches`: verifies `dismissAll('failed', ISOdate)` is called and `list` is called again after. Root cause of the initial "0 calls" failure: the `getAllByRole('button', { name: /dismiss all/i })` regex matched the section's `div[role="button"]` header (its accessible name is the concatenation of all children, including the "Dismiss All" button text), so index 0 was the HEADER div, not the button — clicking it collapsed the section instead of invoking `onDismissAll`. Fixed by using the exact string `'Dismiss All'` for the role query, which matches only the `<button>` whose accessible name IS exactly "Dismiss All".
+
 ### ENGINE-002: Multi-user dismissal clearing untested in engine
 **Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
 **Fixed**: Iteration 18
