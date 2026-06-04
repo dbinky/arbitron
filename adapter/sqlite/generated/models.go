@@ -89,6 +89,13 @@ type Notification struct {
 	UpdatedAt  string
 }
 
+type PublishedWorkflow struct {
+	Name        string
+	PublisherID string
+	SourceName  string
+	PublishedAt string
+}
+
 type Session struct {
 	IDHash    string
 	UserID    string

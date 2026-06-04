@@ -122,6 +122,7 @@ type domainStack struct {
 	eng                 *engine.Engine
 	workflowRepo        workflow.WorkflowRepository
 	workflowSvc         *workflow.WorkflowService
+	publishedRepo       *adaptsqlite.PublishedWorkflowRepo
 	instanceRepo        instance.InstanceRepository
 	nodeExecRepo        instance.NodeExecutionRepository
 	snapshotRepo        instance.VariableSnapshotRepository
@@ -298,10 +299,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
+	// PublishedWorkflowRepo is the authority for the shared workspace's
+	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
+	// WorkflowService uses to tag shared list entries with their publisher.
+	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
 	// WorkflowService resolves storage scope/authorization from the request
-	// identity. PublisherLookup is nil until Task 5 wires the published_workflows
-	// repo (shared list entries then carry no publisher id).
-	workflowSvc := workflow.NewWorkflowService(workflowRepo, nil)
+	// identity.
+	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -603,6 +607,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		eng:                 eng,
 		workflowRepo:        workflowRepo,
 		workflowSvc:         workflowSvc,
+		publishedRepo:       publishedRepo,
 		instanceRepo:        instanceRepo,
 		nodeExecRepo:        nodeExecRepo,
 		snapshotRepo:        snapshotRepo,
