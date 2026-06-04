@@ -23,6 +23,12 @@ type Claims struct {
 	Subject  string
 	Username string
 	Email    string
+	// EmailVerified is the IdP's email_verified claim. It gates whether Email may
+	// drive bootstrap-admin matching: an unverified email is attacker-controllable
+	// (the user can self-assert any address at the IdP), so only a verified email
+	// is trusted for privilege bootstrap. Subject matching is unaffected — the
+	// subject is the verifier-checked, IdP-stable identifier.
+	EmailVerified bool
 }
 
 // Provisioner resolves verified Claims to a persisted User, creating one on
@@ -70,7 +76,15 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 		return u, nil
 	case errors.Is(err, ErrNotFound):
 		role := identity.RoleUser
-		if p.IsBootstrapAdmin(c.Subject, c.Email) {
+		// SECURITY: only a VERIFIED email may drive bootstrap-admin matching. An
+		// unverified email is attacker-controllable at the IdP, so passing it into
+		// the match would let an attacker self-provision as admin on first login.
+		// Subject matching is always trusted (IdP-stable, signature-verified).
+		matchEmail := ""
+		if c.EmailVerified {
+			matchEmail = c.Email
+		}
+		if p.IsBootstrapAdmin(c.Subject, matchEmail) {
 			role = identity.RoleAdmin
 		}
 		subj := c.Subject

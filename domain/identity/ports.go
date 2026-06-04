@@ -143,7 +143,11 @@ type Claims struct {
 	Subject  string
 	Username string
 	Email    string
-	Nonce    string // ID-token nonce; callback handler must verify == minted nonce
+	// EmailVerified is the IdP's email_verified claim. SECURITY: an unverified
+	// email is attacker-controllable at the IdP, so downstream bootstrap-admin
+	// matching must trust Email only when this is true. Absent/false => untrusted.
+	EmailVerified bool
+	Nonce         string // ID-token nonce; callback handler must verify == minted nonce
 }
 
 // OIDCProvider abstracts the IdP so the OIDC library stays in adapter/oidc.

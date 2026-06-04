@@ -138,6 +138,49 @@ func TestProvider_Exchange_Success(t *testing.T) {
 	assert.Equal(t, "nc", claims.Nonce, "nonce from the ID token must be surfaced for the callback handler to verify")
 }
 
+// SECURITY: email_verified must be decoded from the ID token and surfaced on
+// Claims so the provisioner only trusts a verified email for bootstrap-admin
+// matching. A true claim => EmailVerified true; absent/false => false.
+func TestProvider_Exchange_DecodesEmailVerified(t *testing.T) {
+	t.Run("email_verified true is surfaced", func(t *testing.T) {
+		h := newIDPHarness(t)
+		h.tokenFn = func(t *testing.T) (string, int) {
+			c := baseClaims(h.issuer)
+			c["email_verified"] = true
+			return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+		}
+		p := newProvider(t, h)
+		claims, err := p.Exchange(context.Background(), "code")
+		require.NoError(t, err)
+		assert.True(t, claims.EmailVerified, "email_verified=true must surface as Claims.EmailVerified=true")
+	})
+
+	t.Run("email_verified false is surfaced", func(t *testing.T) {
+		h := newIDPHarness(t)
+		h.tokenFn = func(t *testing.T) (string, int) {
+			c := baseClaims(h.issuer)
+			c["email_verified"] = false
+			return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+		}
+		p := newProvider(t, h)
+		claims, err := p.Exchange(context.Background(), "code")
+		require.NoError(t, err)
+		assert.False(t, claims.EmailVerified, "email_verified=false must surface as Claims.EmailVerified=false")
+	})
+
+	t.Run("absent email_verified defaults to false (untrusted)", func(t *testing.T) {
+		h := newIDPHarness(t)
+		h.tokenFn = func(t *testing.T) (string, int) {
+			// baseClaims has no email_verified key.
+			return h.tokenResponse(h.signIDToken(t, nil, baseClaims(h.issuer))), http.StatusOK
+		}
+		p := newProvider(t, h)
+		claims, err := p.Exchange(context.Background(), "code")
+		require.NoError(t, err)
+		assert.False(t, claims.EmailVerified, "absent email_verified must default to false (do not trust)")
+	})
+}
+
 func TestProvider_AuthCodeURL_BindsStateAndNonce(t *testing.T) {
 	h := newIDPHarness(t)
 	h.tokenFn = func(t *testing.T) (string, int) { return "{}", http.StatusOK }

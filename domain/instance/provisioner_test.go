@@ -177,12 +177,32 @@ func TestProvisioner_Bootstrap(t *testing.T) {
 		assert.Equal(t, identity.RoleAdmin, u.Role)
 	})
 
-	t.Run("bootstrap by email case-insensitive", func(t *testing.T) {
+	t.Run("bootstrap by VERIFIED email case-insensitive", func(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		p := NewProvisioner(repo, []string{"foo@bar.com"})
-		u, err := p.Resolve(context.Background(), Claims{Subject: "other-sub", Username: "a", Email: "Foo@Bar.com"})
+		u, err := p.Resolve(context.Background(), Claims{Subject: "other-sub", Username: "a", Email: "Foo@Bar.com", EmailVerified: true})
 		require.NoError(t, err)
 		assert.Equal(t, identity.RoleAdmin, u.Role)
+	})
+
+	t.Run("bootstrap by UNVERIFIED email is NOT an admin (privilege-escalation guard)", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		p := NewProvisioner(repo, []string{"foo@bar.com"})
+		// Attacker self-asserts a bootstrap email at the IdP without verifying it.
+		// The email must NOT drive bootstrap-admin matching; provision as RoleUser.
+		u, err := p.Resolve(context.Background(), Claims{Subject: "attacker-sub", Username: "a", Email: "foo@bar.com", EmailVerified: false})
+		require.NoError(t, err)
+		assert.Equal(t, identity.RoleUser, u.Role, "unverified bootstrap email must provision as RoleUser")
+	})
+
+	t.Run("bootstrap by subject is unaffected by email verification", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		p := NewProvisioner(repo, []string{"admin-sub"})
+		// Subject is the IdP-stable, verifier-checked identifier; an unverified
+		// email must not suppress a subject-list match.
+		u, err := p.Resolve(context.Background(), Claims{Subject: "admin-sub", Username: "a", Email: "spoof@bar.com", EmailVerified: false})
+		require.NoError(t, err)
+		assert.Equal(t, identity.RoleAdmin, u.Role, "subject-based bootstrap matching is unaffected by email_verified")
 	})
 
 	t.Run("substring of a listed email is not a match", func(t *testing.T) {

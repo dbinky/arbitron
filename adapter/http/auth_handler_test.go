@@ -202,7 +202,9 @@ func TestAuthHandler_Callback_ExistingUser_EmailNotOverwritten(t *testing.T) {
 }
 
 func TestAuthHandler_Callback_BootstrapAdmin(t *testing.T) {
-	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "boss-sub", Username: "boss", Email: "boss@corp.com"}}
+	// Bootstrap by VERIFIED email: email_verified is required for the email to
+	// drive bootstrap-admin matching (unverified-email escalation guard).
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "boss-sub", Username: "boss", Email: "boss@corp.com", EmailVerified: true}}
 	sessions := newFakeSessionRepo()
 	users := newFakeUserRepo()
 	// Bootstrap by email (case-insensitive).
@@ -219,6 +221,27 @@ func TestAuthHandler_Callback_BootstrapAdmin(t *testing.T) {
 	}
 	require.NotNil(t, found, "bootstrap subject must be JIT-created")
 	assert.Equal(t, identity.RoleAdmin, found.Role, "bootstrap identity is provisioned as admin")
+}
+
+// SECURITY: an attacker who self-asserts a bootstrap email at the IdP WITHOUT
+// verifying it must NOT be provisioned as admin — they get RoleUser.
+func TestAuthHandler_Callback_UnverifiedBootstrapEmail_NotAdmin(t *testing.T) {
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "attacker-sub", Username: "mallory", Email: "boss@corp.com", EmailVerified: false}}
+	sessions := newFakeSessionRepo()
+	users := newFakeUserRepo()
+	h := newAuthHandlerWithBootstrap(oidc, sessions, users, "BOSS@corp.com")
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	require.Equal(t, http.StatusFound, rec.Code)
+
+	var found *instance.User
+	for _, u := range users.byID {
+		if u.Subject != nil && *u.Subject == "attacker-sub" {
+			found = u
+		}
+	}
+	require.NotNil(t, found, "subject must be JIT-created")
+	assert.Equal(t, identity.RoleUser, found.Role, "unverified bootstrap email must NOT provision as admin")
 }
 
 func TestAuthHandler_Callback_StateMismatch(t *testing.T) {
