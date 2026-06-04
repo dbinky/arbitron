@@ -299,6 +299,22 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
+
+	// One-time, marker-guarded migration of any pre-existing flat workflow store
+	// into the default user's private workspace (users/<defaultUser>/). Runs
+	// after the DB migrations seed the default user and before serving begins.
+	flatMigrateUser, err := userRepo.GetDefaultUser(context.Background())
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("resolving default user for flat-store migration: %w", err)
+	}
+	if err := migrateFlatStore(cfg.Workspace.Path, flatMigrateUser); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("flat-store migration: %w", err)
+	}
+	logger.Info("flat-store migration complete", "defaultUser", flatMigrateUser)
 	// PublishedWorkflowRepo is the authority for the shared workspace's
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
 	// WorkflowService uses to tag shared list entries with their publisher.
