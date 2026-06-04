@@ -85,6 +85,52 @@ func (r *fakeSessionRepo) DeleteExpired(context.Context, time.Time) (int, error)
 	return 0, nil
 }
 
+// fakeTokenRepo is an in-memory identity.TokenRepository for middleware tests.
+// It records GetByHash call counts (to prove the ParsePrefix pre-filter) and
+// signals TouchLastUsed via a channel so the async best-effort path is testable.
+type fakeTokenRepo struct {
+	byHash     map[string]*identity.Token
+	getByHashN int
+	touchErr   error
+	touchedIDs chan uuid.UUID
+}
+
+func newFakeTokenRepo() *fakeTokenRepo {
+	return &fakeTokenRepo{byHash: map[string]*identity.Token{}, touchedIDs: make(chan uuid.UUID, 4)}
+}
+
+func (r *fakeTokenRepo) Create(_ context.Context, t *identity.Token) error {
+	r.byHash[t.TokenHash] = t
+	return nil
+}
+
+func (r *fakeTokenRepo) ListByUser(_ context.Context, _ uuid.UUID) ([]identity.Token, error) {
+	return nil, nil
+}
+
+func (r *fakeTokenRepo) GetByHash(_ context.Context, hash string) (*identity.Token, error) {
+	r.getByHashN++
+	if t, ok := r.byHash[hash]; ok {
+		return t, nil
+	}
+	return nil, identity.ErrNotFound
+}
+
+func (r *fakeTokenRepo) Delete(_ context.Context, id, _ uuid.UUID) error {
+	for h, t := range r.byHash {
+		if t.ID == id {
+			delete(r.byHash, h)
+			return nil
+		}
+	}
+	return identity.ErrNotFound
+}
+
+func (r *fakeTokenRepo) TouchLastUsed(_ context.Context, id uuid.UUID) error {
+	r.touchedIDs <- id
+	return r.touchErr
+}
+
 // identityProbe is a handler that records the identity it observed.
 type identityProbe struct {
 	called bool
@@ -103,7 +149,7 @@ func (p *identityProbe) handler() http.HandlerFunc {
 
 func TestAuthMiddleware_Local_InjectsAdmin(t *testing.T) {
 	users := newFakeUserRepo()
-	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, users)
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users)
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -123,7 +169,7 @@ func TestAuthMiddleware_Org_ValidSession(t *testing.T) {
 	sessions := newFakeSessionRepo()
 	sessions.byToken["good-token"] = &identity.Session{ID: "good-token", UserID: uid}
 
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -139,7 +185,7 @@ func TestAuthMiddleware_Org_ValidSession(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_NoCookie_401(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -151,7 +197,7 @@ func TestAuthMiddleware_Org_NoCookie_401(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_EmptyCookieValue_401(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -165,7 +211,7 @@ func TestAuthMiddleware_Org_EmptyCookieValue_401(t *testing.T) {
 
 func TestAuthMiddleware_Org_ExpiredSession_401(t *testing.T) {
 	// fake session repo returns ErrNotFound for unknown/expired tokens.
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -181,7 +227,7 @@ func TestAuthMiddleware_Org_UserGone_401(t *testing.T) {
 	users := newFakeUserRepo() // no users registered
 	sessions := newFakeSessionRepo()
 	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uuid.New()}
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -194,7 +240,7 @@ func TestAuthMiddleware_Org_UserGone_401(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
 	probe := &identityProbe{}
 	h := mw.Handler(probe.handler())
 
@@ -224,7 +270,7 @@ func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -238,7 +284,7 @@ func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
 
 func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	users := newFakeUserRepo()
-	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, users)
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users)
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -250,3 +296,224 @@ func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	require.True(t, probe.called)
 	assert.Equal(t, identity.RoleAdmin, probe.id.Role, "local mode ignores cookies entirely")
 }
+
+// ---- bearer-token branch (Phase 2) ----
+
+// seedBearer registers user U and a token owned by U, returning the plaintext.
+func seedBearer(t *testing.T, users *fakeUserRepo, tokens *fakeTokenRepo, role identity.Role) (uuid.UUID, string) {
+	t.Helper()
+	uid := uuid.New()
+	users.byID[uid] = &instance.User{ID: uid, Username: "carol", Role: role}
+	plaintext, prefix, hash, err := identity.GenerateToken()
+	require.NoError(t, err)
+	tokens.byHash[hash] = &identity.Token{ID: uuid.New(), UserID: uid, Label: "cli", Prefix: prefix, TokenHash: hash}
+	return uid, plaintext
+}
+
+// Happy path: a valid bearer token resolves to the owning user's identity.
+func TestAuthMiddleware_Bearer_HappyPath(t *testing.T) {
+	users := newFakeUserRepo()
+	tokens := newFakeTokenRepo()
+	uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, probe.called)
+	assert.Equal(t, uid, probe.id.UserID)
+	assert.Equal(t, "carol", probe.id.Username)
+	assert.Equal(t, identity.RoleUser, probe.id.Role)
+
+	// TouchLastUsed runs exactly once for the matched token.
+	select {
+	case <-tokens.touchedIDs:
+	case <-time.After(time.Second):
+		t.Fatal("TouchLastUsed was never invoked")
+	}
+}
+
+// Input validation: non-arb / non-Bearer / missing headers → 401 with NO DB hit
+// for the non-arb shapes (proves the ParsePrefix pre-filter).
+func TestAuthMiddleware_Bearer_Validation(t *testing.T) {
+	for _, hdr := range []string{"Bearer not-an-arb-token", "Basic abc123", ""} {
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		if hdr != "" {
+			req.Header.Set("Authorization", hdr)
+		}
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "header %q", hdr)
+		assert.False(t, probe.called)
+		assert.Equal(t, 0, tokens.getByHashN, "non-arb header %q must not hit GetByHash", hdr)
+	}
+}
+
+// Error/failure: a well-shaped arb token whose hash is absent → 401; a token
+// whose user is gone → 401. Never 500.
+func TestAuthMiddleware_Bearer_ErrorPaths(t *testing.T) {
+	t.Run("absent token hash", func(t *testing.T) {
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		plaintext, _, _, err := identity.GenerateToken()
+		require.NoError(t, err)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Equal(t, 1, tokens.getByHashN, "a well-shaped arb token must be looked up")
+		assert.False(t, probe.called)
+	})
+
+	t.Run("token user deleted", func(t *testing.T) {
+		users := newFakeUserRepo() // user intentionally NOT registered
+		tokens := newFakeTokenRepo()
+		plaintext, prefix, hash, err := identity.GenerateToken()
+		require.NoError(t, err)
+		tokens.byHash[hash] = &identity.Token{ID: uuid.New(), UserID: uuid.New(), Prefix: prefix, TokenHash: hash}
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.False(t, probe.called)
+	})
+}
+
+// Boundary: session wins when both present; bearer works with no cookie; a
+// TouchLastUsed error still yields 200.
+func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
+	t.Run("valid session + garbage bearer -> session wins", func(t *testing.T) {
+		users := newFakeUserRepo()
+		uid := uuid.New()
+		users.byID[uid] = &instance.User{ID: uid, Username: "bob", Role: identity.RoleUser}
+		sessions := newFakeSessionRepo()
+		sessions.byToken["good"] = &identity.Session{ID: "good", UserID: uid}
+		tokens := newFakeTokenRepo()
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "good"})
+		req.Header.Set("Authorization", "Bearer arb_dead_beef")
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, uid, probe.id.UserID)
+		assert.Equal(t, 0, tokens.getByHashN, "session matched first; bearer never consulted")
+	})
+
+	t.Run("touch error still 200", func(t *testing.T) {
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		tokens.touchErr = assertErr("touch boom")
+		_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.True(t, probe.called)
+		select {
+		case <-tokens.touchedIDs:
+		case <-time.After(time.Second):
+			t.Fatal("TouchLastUsed not invoked")
+		}
+	})
+}
+
+// Isolation/security: a revoked token (removed from the repo) → 401 immediately;
+// in local mode a bogus bearer header is ignored (default admin, no repo call);
+// REST/MCP/WS all behave identically under bearer.
+func TestAuthMiddleware_Bearer_Security(t *testing.T) {
+	t.Run("revoked token -> 401", func(t *testing.T) {
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+		// Revoke: clear the repo so GetByHash -> ErrNotFound.
+		tokens.byHash = map[string]*identity.Token{}
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.False(t, probe.called)
+	})
+
+	t.Run("local mode ignores bearer", func(t *testing.T) {
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.Header.Set("Authorization", "Bearer arb_whatever_bogus")
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, identity.RoleAdmin, probe.id.Role)
+		assert.Equal(t, 0, tokens.getByHashN, "local mode never consults the token repo")
+	})
+
+	t.Run("REST/MCP/WS identical under bearer", func(t *testing.T) {
+		for _, path := range []string{"/api/v1/instances", "/mcp", "/api/v1/instances/abc/ws"} {
+			// valid bearer passes.
+			users := newFakeUserRepo()
+			tokens := newFakeTokenRepo()
+			_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+			mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+			probe := &identityProbe{}
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer "+plaintext)
+			rec := httptest.NewRecorder()
+			mw.Handler(probe.handler()).ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusOK, rec.Code, "valid bearer on %s", path)
+
+			// revoked bearer → 401 on the same surface.
+			tokens2 := newFakeTokenRepo()
+			mw2 := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens2, newFakeUserRepo())
+			probe2 := &identityProbe{}
+			req2 := httptest.NewRequest(http.MethodGet, path, nil)
+			req2.Header.Set("Authorization", "Bearer "+plaintext)
+			rec2 := httptest.NewRecorder()
+			mw2.Handler(probe2.handler()).ServeHTTP(rec2, req2)
+			assert.Equal(t, http.StatusUnauthorized, rec2.Code, "revoked bearer on %s", path)
+			assert.False(t, probe2.called)
+		}
+	})
+}
+
+// assertErr is a tiny error helper for the touch-error case.
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }

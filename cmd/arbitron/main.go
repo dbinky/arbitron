@@ -242,7 +242,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		}
 		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, cfg.Auth.Session)
 	}
-	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, userRepo)
+	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo)
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
