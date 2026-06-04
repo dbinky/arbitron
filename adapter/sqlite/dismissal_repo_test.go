@@ -3,6 +3,7 @@ package sqlite
 import (
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,3 +20,7 @@ func TestInstanceDismissalsMigration_TableExists(t *testing.T) {
 	require.NoError(t, db.DB.QueryRow("SELECT COUNT(*) FROM instance_dismissals").Scan(&count))
 	assert.Equal(t, 0, count)
 }
+
+// dismissalRepoSatisfiesPort fails to compile if *DismissalRepo no longer
+// implements the domain port.
+var _ instance.DismissalRepository = (*DismissalRepo)(nil)
