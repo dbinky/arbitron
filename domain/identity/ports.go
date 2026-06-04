@@ -37,6 +37,33 @@ type SessionRepository interface {
 	DeleteExpired(ctx context.Context, now time.Time) (int, error)
 }
 
+// Token is the stored, non-secret view of a personal API token. The plaintext
+// arb_<prefix>_<secret> is NEVER held here; only the prefix (for display) and
+// metadata are. TokenHash is the sha256(full token) used for lookup and is
+// never echoed on any read surface.
+type Token struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Label      string
+	Prefix     string     // clear, non-secret, for display
+	TokenHash  string     // sha256 hex; internal only, never serialized to clients
+	CreatedAt  time.Time
+	LastUsedAt *time.Time // nil until first use
+}
+
+// TokenRepository persists personal API tokens. Implementations wrap domain
+// sentinels (ErrNotFound) via %w so errors.Is mapping works at call sites.
+//
+// SECURITY: the plaintext token is NEVER passed to or held by this port; only
+// the sha256 hash (for lookup) and the clear prefix (for display) are stored.
+type TokenRepository interface {
+	Create(ctx context.Context, t *Token) error
+	ListByUser(ctx context.Context, userID uuid.UUID) ([]Token, error)
+	GetByHash(ctx context.Context, tokenHash string) (*Token, error) // ErrNotFound if absent
+	Delete(ctx context.Context, id, userID uuid.UUID) error          // ErrNotFound if no owned row
+	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+}
+
 // Claims are the verified identity claims returned by the IdP after a successful
 // authorization-code exchange. Subject is the IdP-stable identifier used to
 // resolve/provision the local user.

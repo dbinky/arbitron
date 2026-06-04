@@ -109,6 +109,7 @@ type domainStack struct {
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler and sweepCancel are nil in local mode.
 	sessionRepo identity.SessionRepository
+	tokenRepo   identity.TokenRepository
 	authMW      *adapthttp.AuthMiddleware
 	authHandler *adapthttp.AuthHandler
 	sweepCancel context.CancelFunc
@@ -217,6 +218,9 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// mode an unreachable/invalid issuer is a fatal boot error (fail-fast,
 	// consistent with the other init gates).
 	sessionRepo := adaptsqlite.NewSessionRepo(db)
+	// Personal API token store (Phase 6, Phase 2). Constructed here as the single
+	// site; wired into HTTP/MCP/middleware by later Phase 2 tasks.
+	tokenRepo := adaptsqlite.NewTokenRepo(db)
 	authMode := identity.ModeFromString(cfg.Auth.Mode)
 	var authHandler *adapthttp.AuthHandler
 	if authMode == identity.ModeOrg {
@@ -554,6 +558,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		connStore:           connStore,
 		tracingShutdown:     tracingShutdown,
 		sessionRepo:         sessionRepo,
+		tokenRepo:           tokenRepo,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
