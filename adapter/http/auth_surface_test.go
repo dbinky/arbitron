@@ -190,6 +190,63 @@ func TestSurface_MCP_DestructiveTools_RequireAuth(t *testing.T) {
 	assert.False(t, mcp.reached, "destructive MCP tools are gated by auth")
 }
 
+// TestSurface_OrgMode_Bearer_E2E pins the bearer-token path through the full chi
+// router + auth middleware — the surface tests above use nil tokens (session-only
+// paths), so this is the only test that proves bearer reaches REST+MCP and that a
+// revoked token is immediately rejected at the router seam.
+func TestSurface_OrgMode_Bearer_E2E(t *testing.T) {
+	users := newFakeUserRepo()
+	sessions := newFakeSessionRepo()
+	tokens := newFakeTokenRepo()
+	mcp := &surfaceMCP{}
+
+	_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+
+	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
+	authHandler := NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, nil),
+		config.SessionConfig{TTLSeconds: 3600, CookieName: "arbitron_session"})
+	router := buildSurfaceRouter(auth, authHandler, mcp)
+
+	t.Run("valid bearer passes REST and MCP", func(t *testing.T) {
+		// REST: /api/v1/health is the lightest authenticated endpoint.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "valid bearer must pass REST through the router")
+
+		// MCP: handler must be reached (auth doesn't block).
+		mcp.reached = false
+		req2 := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+		req2.Header.Set("Authorization", "Bearer "+plaintext)
+		rec2 := httptest.NewRecorder()
+		router.ServeHTTP(rec2, req2)
+		assert.Equal(t, http.StatusOK, rec2.Code, "valid bearer must pass /mcp through the router")
+		assert.True(t, mcp.reached, "MCP tool handler must be reached with a valid bearer")
+	})
+
+	t.Run("revoked bearer fails closed on REST and MCP", func(t *testing.T) {
+		// Simulate revocation: clear the fake token store (same effect as
+		// TokenService.Revoke → TokenRepo.Delete → GetByHash returns ErrNotFound).
+		tokens.byHash = map[string]*identity.Token{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "revoked bearer must be 401 on REST")
+
+		mcp.reached = false
+		req2 := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+		req2.Header.Set("Authorization", "Bearer "+plaintext)
+		rec2 := httptest.NewRecorder()
+		router.ServeHTTP(rec2, req2)
+		assert.Equal(t, http.StatusUnauthorized, rec2.Code, "revoked bearer must be 401 on /mcp")
+		assert.False(t, mcp.reached, "MCP handler must not run after token revocation")
+	})
+}
+
 // Wiring smoke: ModeFromString + middleware construction match what main.go does.
 func TestSurface_ModeWiring(t *testing.T) {
 	users := newFakeUserRepo()

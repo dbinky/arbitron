@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA26-01: Surface-level bearer path never exercised through the full chi router
+**Area**: Focus Area 26 — Auth middleware + token service (paired)
+**Fix**: Added `TestSurface_OrgMode_Bearer_E2E` to `adapter/http/auth_surface_test.go`. The existing `orgSurface` helper passes `nil` for tokens, so all previous surface tests only exercised the session-cookie path through the chi router. The new test builds the surface with a real `fakeTokenRepo` (seeded via `seedBearer`) and asserts two invariants: (1) a valid bearer reaches REST (`/api/v1/health`) and MCP (`/mcp`) through the full router; (2) after the token is revoked (fake cleared, mirroring `TokenService.Revoke → TokenRepo.Delete`), the same bearer returns 401 on both surfaces and the MCP handler is never reached. This pins the "revoked token fails closed" guarantee at the surface level, complementing the middleware-unit-level `TestAuthMiddleware_Bearer_Security` "revoked token → 401" test.
+
 ### GAP-FA25-01: `fakeSessionRepo.Get` did not check `ExpiresAt` — expired-but-present session would authenticate
 **Area**: Focus Area 25 — Auth middleware + session store (paired)
 **Fix**: Updated `fakeSessionRepo.Get` in `adapter/http/auth_middleware_test.go` to mirror real `SessionRepo.Get` behavior: if `ExpiresAt` is set and not after `time.Now()`, return `identity.ErrNotFound`. All existing tests use zero-value `ExpiresAt` so no regressions. Added `TestAuthMiddleware_Org_ExpiredSessionPresent_401` which seeds a session with `ExpiresAt: time.Now().Add(-time.Hour)`, sends the cookie, and asserts 401 + handler never called. Previously `TestAuthMiddleware_Org_ExpiredSession_401` modeled expiry only by absence (token not seeded), so the fake would have incorrectly returned an expired-but-present session. This closes the integration-seam gap: the fake now faithfully models the real repo's `expires_at > now` SQL filter.
