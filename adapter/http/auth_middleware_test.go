@@ -612,10 +612,11 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 
 	t.Run("REST/MCP/WS identical under bearer", func(t *testing.T) {
 		for _, path := range []string{"/api/v1/instances", "/mcp", "/api/v1/instances/abc/ws"} {
-			// valid bearer passes.
+			// valid bearer passes and resolves to the token owner's identity on
+			// every surface — not just 200, but the correct UserID and Username.
 			users := newFakeUserRepo()
 			tokens := newFakeTokenRepo()
-			_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+			uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
 			mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
 			probe := &identityProbe{}
 			req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -623,6 +624,9 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mw.Handler(probe.handler()).ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusOK, rec.Code, "valid bearer on %s", path)
+			require.True(t, probe.called, "handler not reached on %s", path)
+			assert.Equal(t, uid, probe.id.UserID, "identity.UserID must be token owner on %s", path)
+			assert.Equal(t, "carol", probe.id.Username, "identity.Username must be token owner on %s", path)
 
 			// revoked bearer → 401 on the same surface.
 			tokens2 := newFakeTokenRepo()

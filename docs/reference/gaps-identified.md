@@ -4,6 +4,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+### GAP-FA11-P2-01: REST/MCP/WS surface-parity test checked status codes but not resolved identity
+**Area**: Focus Area 11 — Bearer-token auth path (Pass 2)
+**Fix**: Strengthened `TestAuthMiddleware_Bearer_Security` "REST/MCP/WS identical under bearer" in `adapter/http/auth_middleware_test.go`. The existing test loop used `_, plaintext := seedBearer(...)` (discarding the UID) and only asserted `rec.Code == 200`, proving access was granted but not that it was granted to the correct user. Changed to capture `uid` from `seedBearer`, added `assert.Equal(t, uid, probe.id.UserID, ...)` and `assert.Equal(t, "carol", probe.id.Username, ...)` for each surface. This pins the cross-surface identity parity guarantee: a bearer token authenticates as its exact owner on REST, /mcp, and /ws — any divergence in the identity derivation path would be caught immediately.
+
 ### GAP-FA11-P1-01: `TouchLastUsed` channel drain discarded the touched token ID — correct token not pinned
 **Area**: Focus Area 11 — Bearer-token auth path (Pass 1)
 **Fix**: Strengthened `TestAuthMiddleware_Bearer_HappyPath` in `adapter/http/auth_middleware_test.go`. The existing `select { case <-tokens.touchedIDs: }` verified the goroutine fired but discarded the ID, proving only that *some* touch happened, not that the *correct* token was named. Replaced with `case touchedID := <-tokens.touchedIDs: assert.Equal(t, tokens.byHash[hash].ID, touchedID, ...)`. Now pins the invariant that the async `go func(tid uuid.UUID)` closure captures `tok.ID` from the hash-lookup result, not an ambient variable or a different token. A future refactor that accidentally shadowed the captured ID would be caught immediately.
