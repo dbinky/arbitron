@@ -715,6 +715,29 @@ func TestInstanceHandler_Get(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+
+	t.Run("non-owner gets 404 identical to a missing instance (no existence leak)", func(t *testing.T) {
+		// The scoped engine returns ErrNotFound for a non-owner; the handler must
+		// surface a 404 whose body is identical to a genuinely missing instance so
+		// a probe cannot confirm the instance exists just because someone else owns it.
+		id := uuid.New()
+		notFoundSvc := &mockInstanceService{
+			getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), notFoundSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String(), nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Get(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
