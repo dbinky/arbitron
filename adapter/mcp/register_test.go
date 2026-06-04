@@ -65,6 +65,9 @@ var expectedTools = []string{
 	"token_create",
 	"token_list",
 	"token_revoke",
+	// User/role management (2)
+	"user_list",
+	"user_set_role",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {

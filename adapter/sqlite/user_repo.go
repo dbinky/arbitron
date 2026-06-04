@@ -109,3 +109,38 @@ func (r *UserRepo) UpdateUsername(ctx context.Context, id uuid.UUID, username st
 	}
 	return nil
 }
+
+func (r *UserRepo) List(ctx context.Context) ([]instance.User, error) {
+	rows, err := r.queries.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing users: %w", err)
+	}
+	out := make([]instance.User, 0, len(rows))
+	for _, row := range rows {
+		u, err := toDomainUser(row.ID, row.Subject, row.Email, row.Username, row.Role)
+		if err != nil {
+			return nil, fmt.Errorf("listing users: %w", err)
+		}
+		out = append(out, *u)
+	}
+	return out, nil
+}
+
+func (r *UserRepo) UpdateRole(ctx context.Context, id uuid.UUID, role string) error {
+	err := r.queries.UpdateUserRole(ctx, generated.UpdateUserRoleParams{
+		Role: role,
+		ID:   uuidToString(id),
+	})
+	if err != nil {
+		return fmt.Errorf("updating role for user %s: %w", id, err)
+	}
+	return nil
+}
+
+func (r *UserRepo) CountAdmins(ctx context.Context) (int, error) {
+	n, err := r.queries.CountAdmins(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting admins: %w", err)
+	}
+	return int(n), nil
+}

@@ -78,6 +78,9 @@ type Deps struct {
 	// user's identity (carried on the tool ctx by the auth middleware). Optional:
 	// when nil, the token tools report the service as unavailable.
 	Tokens *identity.TokenService
+	// Users powers the admin-only user_* tools. The admin gate + demotion floors
+	// live in the service. Optional: when nil, the user tools report unavailable.
+	Users *instance.UserService
 	// Logger is the structured logger used by tool handlers. SECURITY: the
 	// connection tools log the connection NAME only, never the api_key. Optional:
 	// a nil logger falls back to slog.Default().

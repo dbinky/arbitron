@@ -90,6 +90,9 @@ type RouterDeps struct {
 	// PublicBaseURL is the externally reachable base URL used to build the device
 	// verification_uri shown to the human approver.
 	PublicBaseURL string
+	// Users powers the admin-only role-management endpoints under /api/v1/users.
+	// The admin gate and demotion floors live in the service. Nil disables them.
+	Users *instance.UserService
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -267,6 +270,16 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		if deviceHandler != nil {
 			r.Post("/auth/device/approve", deviceHandler.Approve)
 			r.Post("/auth/device/deny", deviceHandler.Deny)
+		}
+
+		// Admin-only user/role management. The service enforces admin + the
+		// demotion floors; the routes sit inside the authenticated group.
+		if d.Users != nil {
+			uh := NewUserHandler(d.Users)
+			r.Route("/users", func(r chi.Router) {
+				r.Get("/", uh.List)
+				r.Put("/{id}/role", uh.SetRole)
+			})
 		}
 	})
 

@@ -12,3 +12,12 @@ INSERT INTO users (id, subject, email, username, role) VALUES (?, ?, ?, ?, ?);
 
 -- name: UpdateUsername :exec
 UPDATE users SET username = ? WHERE id = ?;
+
+-- name: ListUsers :many
+SELECT id, subject, email, username, role, created_at FROM users ORDER BY created_at;
+
+-- name: UpdateUserRole :exec
+UPDATE users SET role = ? WHERE id = ?;
+
+-- name: CountAdmins :one
+SELECT COUNT(*) FROM users WHERE role = 'admin';

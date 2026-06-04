@@ -146,6 +146,7 @@ type domainStack struct {
 	deviceSvc   *identity.DeviceCodeService
 	provisioner *instance.Provisioner
 	userRepo    instance.UserRepository
+	userSvc     *instance.UserService
 	authMW      *adapthttp.AuthMiddleware
 	authHandler *adapthttp.AuthHandler
 	sweepCancel context.CancelFunc
@@ -199,6 +200,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		ConnChecker:         ds.connChecker,
 		Connections:         ds.connStore,
 		Tokens:              ds.tokenSvc,
+		Users:               ds.userSvc,
 		Logger:              ds.logger,
 	}
 }
@@ -268,6 +270,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
 	// callback and Task 6's role-management demotion floor (one bootstrap rule).
 	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins)
+	// Admin-only role management (Phase 6, Phase 2). The demotion floor shares the
+	// provisioner's bootstrap rule so a bootstrap (incl. by-email) admin is
+	// protected using only the persisted User.
+	userSvc := instance.NewUserService(userRepo, provisioner)
 	authMode := identity.ModeFromString(cfg.Auth.Mode)
 	var authHandler *adapthttp.AuthHandler
 	if authMode == identity.ModeOrg {
@@ -613,6 +619,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		deviceSvc:           deviceSvc,
 		provisioner:         provisioner,
 		userRepo:            userRepo,
+		userSvc:             userSvc,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
@@ -663,6 +670,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Tokens:              ds.tokenSvc,
 		DeviceCodes:         ds.deviceSvc,
 		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
+		Users:               ds.userSvc,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

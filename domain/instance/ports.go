@@ -66,4 +66,11 @@ type UserRepository interface {
 	// UpdateUsername refreshes a user's display name (used when the IdP changes
 	// it on re-login). The IdP subject, not the username, is the identity.
 	UpdateUsername(ctx context.Context, id uuid.UUID, username string) error
+	// List returns all users (admin user-management surface).
+	List(ctx context.Context) ([]User, error)
+	// UpdateRole sets a user's role ('user' or 'admin').
+	UpdateRole(ctx context.Context, id uuid.UUID, role string) error
+	// CountAdmins returns the number of users with the admin role (the
+	// last-admin demotion floor reads it).
+	CountAdmins(ctx context.Context) (int, error)
 }

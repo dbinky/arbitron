@@ -426,6 +426,12 @@ func (r *mockUserRepo) UpdateUsername(_ context.Context, _ uuid.UUID, _ string) 
 	return nil
 }
 
+func (r *mockUserRepo) List(_ context.Context) ([]instance.User, error) { return nil, nil }
+
+func (r *mockUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+
+func (r *mockUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, nil }
+
 // mockQueueManager implements engine.QueueManager
 type mockQueueManager struct {
 	mu                    sync.Mutex

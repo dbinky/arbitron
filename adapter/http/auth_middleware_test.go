@@ -63,6 +63,31 @@ func (r *fakeUserRepo) UpdateUsername(_ context.Context, id uuid.UUID, username 
 	return nil
 }
 
+func (r *fakeUserRepo) List(_ context.Context) ([]instance.User, error) {
+	out := make([]instance.User, 0, len(r.byID))
+	for _, u := range r.byID {
+		out = append(out, *u)
+	}
+	return out, nil
+}
+
+func (r *fakeUserRepo) UpdateRole(_ context.Context, id uuid.UUID, role string) error {
+	if u, ok := r.byID[id]; ok {
+		u.Role = identity.Role(role)
+	}
+	return nil
+}
+
+func (r *fakeUserRepo) CountAdmins(_ context.Context) (int, error) {
+	n := 0
+	for _, u := range r.byID {
+		if u.Role == identity.RoleAdmin {
+			n++
+		}
+	}
+	return n, nil
+}
+
 type fakeSessionRepo struct {
 	byToken map[string]*identity.Session
 }
