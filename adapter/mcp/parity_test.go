@@ -129,6 +129,63 @@ func callListTool(t *testing.T, srv *adaptmcp.Server, ctx context.Context) []map
 	return summaries
 }
 
+// TestMCPRestParity_InstanceGetNonOwner pins the FA-33 read-scoping invariant:
+// when a non-owner, non-admin calls GetInstance, both the MCP tool (instance_get)
+// and the REST endpoint (GET /instances/{id}) must return the identical not-found
+// response — neither surface leaks that the instance exists.
+func TestMCPRestParity_InstanceGetNonOwner(t *testing.T) {
+	owner := uuid.New()
+	nonOwner := uuid.New()
+	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf-owner", State: instance.StateRunning}
+	repo := &parityInstanceRepo{instances: map[uuid.UUID]*instance.Instance{inst.ID: inst}}
+
+	// Real engine: GetInstance enforces canView(ctx, inst.OwnerID).
+	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil)
+
+	nonOwnerCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: nonOwner, Username: "b", Role: identity.RoleUser,
+	})
+
+	// --- MCP surface ---
+	deps := &adaptmcp.Deps{Engine: eng, Instances: repo}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterInstanceTools(srv)
+	req := gomcp.CallToolRequest{}
+	req.Params.Name = "instance_get"
+	req.Params.Arguments = map[string]any{"id": inst.ID.String()}
+	result := srv.MCPServer().HandleMessage(nonOwnerCtx, mustMarshal(t, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": req.Params,
+	}))
+	data, _ := json.Marshal(result)
+	var mcpResp struct {
+		Result gomcp.CallToolResult `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(data, &mcpResp))
+	assert.True(t, mcpResp.Result.IsError, "non-owner must get a tool error on instance_get")
+	assert.Contains(t, extractText(t, &mcpResp.Result), "not found",
+		"MCP non-owner error must be 'not found', not a different message that leaks existence")
+
+	// --- REST surface ---
+	h := adapthttp.NewInstanceHandler(repo, nil, nil, eng)
+	r := chi.NewRouter()
+	r.Get("/api/v1/instances/{id}", func(w http.ResponseWriter, req *http.Request) {
+		// Inject identity into the chi request context (preserves URL params).
+		ctx := identity.WithIdentity(req.Context(), identity.Identity{
+			UserID: nonOwner, Username: "b", Role: identity.RoleUser,
+		})
+		h.Get(w, req.WithContext(ctx))
+	})
+	restReq := httptest.NewRequest(http.MethodGet, "/api/v1/instances/"+inst.ID.String(), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, restReq)
+	assert.Equal(t, http.StatusNotFound, w.Code,
+		"REST non-owner must get 404, not 403 (existence must not be leaked)")
+	var restErrResp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&restErrResp))
+	assert.Equal(t, "NOT_FOUND", restErrResp.Code,
+		"REST non-owner error code must be NOT_FOUND, identical to a missing instance")
+}
+
 func callListREST(t *testing.T, eng *engine.Engine, repo instance.InstanceRepository, ctx context.Context) []map[string]any {
 	t.Helper()
 	h := adapthttp.NewInstanceHandler(repo, nil, nil, eng)

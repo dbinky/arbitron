@@ -55,7 +55,7 @@ result for that area.
 | 30 | Workflow scope/repo + workflow service authz (scope resolved from identity, not caller; edit-shared rejected; non-owner cannot reach another user's private path) | [x] | Done |
 | 31 | Publish/copy + published store (publisher-only-overwrite and unique-name authority in `published_workflows`; re-publish leaves running instances' snapshots untouched) | [x] | Done |
 | 32 | Trigger(ctx) + instance ownership + list/read scoping (run-shared-directly sets owner=triggering user; that owner is exactly what list/read scoping keys on) | [x] | Done |
-| 33 | Instance list/read scoping + MCP tools (REST and MCP return the identical scoped set for the same identity — the MCP/REST parity test, extended) | [ ] | Pending |
+| 33 | Instance list/read scoping + MCP tools (REST and MCP return the identical scoped set for the same identity — the MCP/REST parity test, extended) | [x] | Done |
 | 34 | Intervention authz + attribution (gate allows owner-or-admin; an attribution row is written iff actor≠owner; the row is visible to owner+admins only) | [ ] | Pending |
 
 ---
