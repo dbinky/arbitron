@@ -26,6 +26,20 @@ terminal→dismiss, and active→no control. 205 → 208 tests, all green.
 - [x] Added test: active (running) instance renders no dismiss or restore control.
 - [x] Ran `npx vitest run` — 208 tests pass; `tsc --noEmit` clean.
 
+## ~~3. Dismissal HTTP handler error-scenario coverage~~  ✅ DONE ⟶ GAP-003 (MEDIUM)
+
+~~The dismissal HTTP tests were missing three error-category paths: invalid (non-UUID)
+instance ID → 400; repo write failure → 500; DismissAll when List fails → 500.~~
+**Closed:** added `errDismissalRepo` mirror mock; widened `newDismissalTestServer`
+to accept the `DismissalRepository` interface; added five tests for the missing
+error paths.
+
+- [x] Added `errDismissalRepo` always-error mock (parallel to `errInstanceRepo`).
+- [x] Added `TestDismiss_InvalidID_400` and `TestRestore_InvalidID_400` (non-UUID URL).
+- [x] Added `TestDismiss_RepoError_500` and `TestRestore_RepoError_500` (repo write fails).
+- [x] Added `TestDismissAll_ListError_500` (instances.List fails).
+- [x] `go test ./adapter/http/...` and `make test-all` green.
+
 ## ~~2. GraphView integration coverage for failed/static-preview centering~~  ✅ DONE ⟶ GAP-002 (MEDIUM)
 
 ~~`GraphView.test.tsx` lacked integration coverage for failed-instance and

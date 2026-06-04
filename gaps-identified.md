@@ -11,6 +11,24 @@ completeness — **not** missing behavior.
 
 ## Open Issues
 
+### ~~GAP-003: Dismissal HTTP handlers missing error-scenario coverage~~  ✅ CLOSED (MEDIUM)
+**Area:** `adapter/http/dismissal_handler_test.go`
+**What was wrong:** The dismissal HTTP tests covered the happy path, business-rule
+failures (409), and ErrNotFound (404), but three error scenarios were not tested:
+- **Invalid instance ID** (non-UUID in the URL) → handler must return 400 BAD_REQUEST.
+  `TestDismiss_InvalidID_400` and `TestRestore_InvalidID_400` were missing; the
+  `parseInstanceID` error branch was exercised only by the test for `TestGet_NotFound`
+  in the main handler tests, not by the dismissal-specific tests.
+- **Repo write failure** → `Dismiss` and `Restore` return 500 when the repo fails.
+  `TestDismiss_RepoError_500` and `TestRestore_RepoError_500` were missing.
+- **List failure in DismissAll** → `DismissAll` returns 500 when `instances.List`
+  fails. `TestDismissAll_ListError_500` was missing.
+**Closed:** added `errDismissalRepo` (always-error dismissal mock, parallel to the
+existing `errInstanceRepo`); widened `newDismissalTestServer` to accept
+`instance.DismissalRepository` (interface) so error mocks compose without new
+helpers; added five tests covering the missing error paths. `go test ./adapter/http/...`
+and `make test-all` green.
+
 ### ~~GAP-002: GraphView integration coverage missing failed/static centering scenarios~~  ✅ CLOSED (MEDIUM)
 **Area:** `dashboard/src/routes/ExecutionView.tsx` (`GraphView`), `dashboard/src/routes/GraphView.test.tsx`
 **Focus area:** 2

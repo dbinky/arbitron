@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -68,9 +69,22 @@ func (m *mockDismissalRepo) ClearForInstance(_ context.Context, i uuid.UUID) err
 
 var _ instance.DismissalRepository = (*mockDismissalRepo)(nil)
 
+// errDismissalRepo always returns a generic error for every write operation.
+type errDismissalRepo struct{ err error }
+
+func (e *errDismissalRepo) Dismiss(_ context.Context, _, _ uuid.UUID) error         { return e.err }
+func (e *errDismissalRepo) Restore(_ context.Context, _, _ uuid.UUID) error         { return e.err }
+func (e *errDismissalRepo) DismissedIDs(_ context.Context, _ uuid.UUID) (map[uuid.UUID]bool, error) {
+	return nil, e.err
+}
+func (e *errDismissalRepo) ClearForInstance(_ context.Context, _ uuid.UUID) error { return e.err }
+
+var _ instance.DismissalRepository = (*errDismissalRepo)(nil)
+
 // newDismissalTestServer builds a router with the dismissal deps wired and
 // returns an httptest server. It reuses the http_test mock constructors.
-func newDismissalTestServer(t *testing.T, instRepo *mockInstanceRepo, dis *mockDismissalRepo, users *mockUserRepo) *httptest.Server {
+// dis accepts any DismissalRepository implementation (including error mocks).
+func newDismissalTestServer(t *testing.T, instRepo *mockInstanceRepo, dis instance.DismissalRepository, users *mockUserRepo) *httptest.Server {
 	t.Helper()
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:    &routerMockService{},
@@ -207,4 +221,66 @@ func TestDismissAll_EmptyCategory_OK(t *testing.T) {
 	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=completed")
 	defer resp.Body.Close()
 	assert.Equal(t, 200, resp.StatusCode) // no-op success on empty category
+}
+
+func TestDismiss_InvalidID_400(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+	resp := doPOST(t, srv.URL+"/api/v1/instances/not-a-uuid/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+func TestRestore_InvalidID_400(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+	resp := doPOST(t, srv.URL+"/api/v1/instances/not-a-uuid/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+func TestDismiss_RepoError_500(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	srv := newDismissalTestServer(t, instRepo, &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestRestore_RepoError_500(t *testing.T) {
+	srv := newDismissalTestServer(t, newMockInstanceRepo(), &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: uuid.New()})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+uuid.New().String()+"/restore")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+}
+
+func TestDismissAll_ListError_500(t *testing.T) {
+	// Use errInstanceRepo so List fails; wire a working dismissal repo.
+	// Construct the server manually since newDismissalTestServer uses mockInstanceRepo.
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:    &routerMockService{},
+		Workflows:  newMockWorkflowRepo(),
+		Instances:  &errInstanceRepo{err: fmt.Errorf("db down")},
+		NodeExecs:  newMockNodeExecRepo(),
+		Snapshots:  newMockSnapshotRepo(),
+		EventBus:   eventbus.NewNoOp(),
+		Config:     &config.Config{},
+		Dismissals: newMockDismissalRepo(),
+		Users:      &mockUserRepo{id: uuid.New()},
+	})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
 }
