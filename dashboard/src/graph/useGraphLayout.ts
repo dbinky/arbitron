@@ -128,6 +128,11 @@ export function useGraphLayout({
       loopByBackEdge.set(`${loop.tailId} ${loop.headId}`, loop)
     }
 
+    const boxByLoopId = new Map<string, ReturnType<typeof loopContainerBox>>()
+    for (const loop of detection.loops) {
+      boxByLoopId.set(loop.id, loopContainerBox(loop, positionMap))
+    }
+
     const rfEdges: Edge[] = edges.map((e, i) => {
       const key = `${e.source} ${e.target}`
       const loop = loopByBackEdge.get(key)
@@ -142,7 +147,7 @@ export function useGraphLayout({
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         style: { stroke: isBack ? '#7c8cf5' : '#444466' },
         labelStyle: { fill: '#888888', fontSize: 11 },
-        data: loop ? { loop } : undefined,
+        data: loop ? { loop, box: boxByLoopId.get(loop.id) ?? undefined } : undefined,
         zIndex: isBack ? 5 : undefined,
       }
     })

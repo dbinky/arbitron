@@ -102,3 +102,21 @@ describe('useGraphLayout — nested loops', () => {
     expect(result.current.rfNodes.filter((n) => n.type === 'loopContainer')).toHaveLength(2)
   })
 })
+
+describe('useGraphLayout — back-edge carries the container box', () => {
+  it('includes a box on the loopBackEdge data', () => {
+    const nodes: WorkflowNode[] = [
+      { ...node('b'), position: { x: 100, y: 0 } },
+      { ...node('c'), position: { x: 100, y: 200 } },
+    ]
+    const edges: WorkflowEdge[] = [
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'b', label: 'again' },
+    ]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const back = result.current.rfEdges.find((e) => e.source === 'c' && e.target === 'b')!
+    const box = (back.data as { box?: { width: number } }).box
+    expect(box).toBeDefined()
+    expect(box!.width).toBeGreaterThan(0)
+  })
+})
