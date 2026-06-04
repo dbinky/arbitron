@@ -102,26 +102,18 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// SECURITY / TRUST MODEL (per-instance authorization — pre-existing IDOR shape):
-	// This endpoint subscribes and streams to ANY caller who knows the instance
-	// UUID, with no per-user authorization check. That is intentional under the
-	// CURRENT trust model, not an oversight introduced here:
-	//   - There is no authentication middleware on any route (see NewRouterFromDeps:
-	//     only Recoverer/RequestID/RealIP/securityHeaders, no auth).
-	//   - There is no per-request user identity, session, or token anywhere; no
-	//     handler reads a caller identity from the request.
-	//   - instance.OwnerID is always the single fixed "local" user
-	//     (UserRepository.GetDefaultUser -> WHERE username = 'local'), so it
-	//     cannot be used to scope a request to its owner.
-	//   - The REST instance handlers (GET /instances/{id}, etc.) have the SAME
-	//     shape: they authorize on instance UUID alone. This WS endpoint is at
-	//     parity with them, not weaker.
-	// The codebase is effectively single-operator / network-isolated today.
-	// Adding a real per-user authz check here would require first introducing an
-	// authentication/identity mechanism for the whole API — a product decision,
-	// not a local fix. DO NOT bolt an ad-hoc auth scheme onto this one endpoint;
-	// that would diverge from the REST handlers and give a false sense of security.
-	// Tracked as a follow-up requiring a product decision on the auth model.
+	// SECURITY / TRUST MODEL (per-instance VISIBILITY scoping — distinct from auth):
+	// As of Phase 6, AUTHENTICATION now exists: this WS upgrade runs behind the
+	// auth middleware (mounted on the /api/v1 group), so in org mode an anonymous
+	// caller is rejected (401) before reaching here, and identity.FromContext is
+	// always populated. What is NOT yet enforced is per-USER visibility scoping:
+	// any AUTHENTICATED caller who knows the instance UUID can subscribe, with no
+	// owner check. That parity with the REST instance handlers (which also
+	// authorize on instance UUID alone) is intentional; per-user row visibility is
+	// a later Phase 6 milestone, not a local fix. DO NOT bolt an ad-hoc owner
+	// check onto this one endpoint; it must land uniformly across the REST + WS +
+	// MCP surfaces. instance.OwnerID is still the fixed "local" user until org
+	// provisioning assigns real owners.
 
 	// Verify instance exists before upgrading.
 	inst, err := h.instances.Get(r.Context(), id)

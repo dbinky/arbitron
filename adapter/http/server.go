@@ -69,6 +69,10 @@ type RouterDeps struct {
 	// existing connection during workflow validation. May be nil to skip the
 	// connection-reference validation pass.
 	ConnChecker workflow.ConnectionChecker
+	// Auth, when non-nil, is mounted at the top of /api/v1 and wraps the /mcp
+	// handler so REST, WS, and MCP all inherit one authz boundary. Nil disables
+	// auth (legacy/tests) -- production wiring always sets it (Task 8).
+	Auth *AuthMiddleware
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -124,11 +128,15 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(securityHeaders)
-	// TODO(phase-6): Add authentication middleware here when multi-user support
-	// lands. Currently all endpoints (REST and WebSocket) are unauthenticated.
-	// The interactive session endpoints (WebSocket messaging and POST .../interact/end)
-	// are especially sensitive — without auth, any client can send messages to or
-	// terminate any instance's interactive session.
+	// Authentication (Phase 6): d.Auth is mounted at the top of the /api/v1 group
+	// (covering REST + the WS upgrade GETs) and wraps the /mcp handler below, so
+	// all three surfaces share one authz boundary. In local mode it injects the
+	// default admin identity (frictionless); in org mode it requires a valid
+	// session. The /auth/* routes are registered OUTSIDE this guard. A nil Auth
+	// disables authentication (legacy/tests only).
+	//
+	// NOTE: this is AUTHENTICATION (who is calling), not per-user VISIBILITY
+	// scoping (which rows a caller may see) -- that is a later Phase 6 milestone.
 
 	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances, d.ProfileChecker)
 	if d.ConnChecker != nil {
@@ -149,6 +157,12 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		if d.Auth != nil {
+			// Covers every REST route AND the WS upgrade GETs in this group, since
+			// the session cookie is sent on the upgrade request.
+			r.Use(d.Auth.Handler)
+		}
+
 		// System-wide WebSocket stream
 		r.Get("/ws", sysStreamHandler.HandleWebSocket)
 
@@ -217,13 +231,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	// Mount the MCP Streamable HTTP endpoint so LLM clients can access tools
 	// over HTTP instead of (or in addition to) the stdio transport.
 	//
-	// WARNING: The /mcp endpoint currently has NO authentication. It exposes
-	// destructive tools (workflow_delete, workflow_write_file, instance_cancel,
-	// system_update_queue_config). This endpoint MUST NOT be exposed on untrusted
-	// networks. Authentication middleware should be added before any production
-	// or multi-user deployment.
+	// AUTH (Phase 6): /mcp is a sibling of the /api/v1 group, so it is wrapped
+	// explicitly with d.Auth. It exposes destructive tools (workflow_delete,
+	// instance_cancel, system_update_queue_config); in org mode an anonymous
+	// request is rejected at the middleware before reaching any tool. In local
+	// mode the default admin identity is injected. With auth disabled (nil) the
+	// endpoint is unauthenticated and MUST NOT be exposed on untrusted networks.
 	if d.MCPHandler != nil {
-		r.Mount("/mcp", d.MCPHandler)
+		mcp := d.MCPHandler
+		if d.Auth != nil {
+			mcp = d.Auth.Handler(mcp)
+		}
+		r.Mount("/mcp", mcp)
 	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
