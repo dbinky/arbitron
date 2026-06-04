@@ -32,10 +32,19 @@ func (m *mockConversationHandler) EndSession(_ context.Context, _ uuid.UUID) (ma
 // --- Helpers ---
 
 func newInteractiveServer(conv *mockConversationHandler, instRepo *stubInstanceRepo, nodeExecs *stubNodeExecRepo) *adaptmcp.Server {
+	// interactive_get_history now reads through the scoped Engine.GetInstance.
+	// Default it to the repo (unconstrained) so the existing history tests keep
+	// passing; scoping is unit-tested in the engine package.
+	eng := &stubEngine{
+		getFn: func(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+			return instRepo.Get(ctx, id)
+		},
+	}
 	deps := &adaptmcp.Deps{
 		ConversationHandler: conv,
 		Instances:           instRepo,
 		NodeExecs:           nodeExecs,
+		Engine:              eng,
 	}
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 	adaptmcp.RegisterInteractiveTools(srv)
@@ -56,6 +65,21 @@ func TestInteractiveSendMessage(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "sent")
+	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The ConversationHandler's ownership gate returns ErrNotFound for a
+		// non-owner; the MCP tool surfaces it as a not-found tool error, identical
+		// to a missing instance (no existence leak).
+		conv := &mockConversationHandler{handleErr: instance.ErrNotFound}
+		srv := newInteractiveServer(conv, &stubInstanceRepo{}, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_send_message", map[string]any{
+			"instanceId": uuid.New().String(),
+			"content":    "intrusion",
+		})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
 	})
 
 	t.Run("missing instanceId returns error", func(t *testing.T) {

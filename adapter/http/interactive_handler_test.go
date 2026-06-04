@@ -81,6 +81,33 @@ func TestInteractiveHandler_EndSession_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// TestInteractiveHandler_EndSession_NonOwner asserts that a non-owner's
+// EndSession (the ConversationHandler ownership gate returns ErrNotFound) yields
+// a 404 identical to a missing instance — existence is not leaked via REST.
+func TestInteractiveHandler_EndSession_NonOwner(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	nodeExecRepo := newMockNodeExecRepo()
+
+	convo := &mockConversationHandler{
+		endSessionFn: func(_ context.Context, instanceID uuid.UUID) (map[string]any, error) {
+			// The service gate refuses a non-owner with ErrNotFound.
+			return nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrNotFound)
+		},
+	}
+	h := adapthttp.NewInteractiveHandler(convo, instRepo, nodeExecRepo)
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/interact/end", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.EndSession(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "NOT_FOUND", resp.Code)
+}
+
 // ---------------------------------------------------------------------------
 // Tests: POST /instances/{id}/interact/end — 409 invalid state
 // ---------------------------------------------------------------------------

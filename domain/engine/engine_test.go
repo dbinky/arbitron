@@ -95,6 +95,7 @@ func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
 type mockInstanceRepo struct {
 	mu                  sync.Mutex
 	instances           map[uuid.UUID]*instance.Instance
+	getErr              error
 	setWaitingErr       error
 	setWebhookFieldsErr error
 	// onUpdateState, when set, is invoked from UpdateState AFTER the state
@@ -120,6 +121,9 @@ func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) er
 func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		return nil, fmt.Errorf("instance not found: %s", id)
