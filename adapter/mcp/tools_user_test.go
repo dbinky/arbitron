@@ -88,7 +88,7 @@ func (r *memUserRepo) ReplaceDepartments(_ context.Context, userID uuid.UUID, de
 }
 
 func userToolServer(repo *memUserRepo, bootstrap ...string) *Server {
-	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap))
+	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap, identity.GroupConfig{DefaultGroup: "default"}))
 	return NewServerWithDeps("test", "0.0.0", &Deps{Users: svc})
 }
 

@@ -109,7 +109,7 @@ func newAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionReposit
 // newAuthHandlerWithBootstrap builds the handler with a real Provisioner over
 // the given user repo and optional bootstrap-admin list.
 func newAuthHandlerWithBootstrap(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, bootstrap ...string) *AuthHandler {
-	return NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, bootstrap), config.SessionConfig{
+	return NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, bootstrap, identity.GroupConfig{DefaultGroup: "default"}), config.SessionConfig{
 		TTLSeconds:   3600,
 		CookieName:   "arbitron_session",
 		CookieSecure: true,
@@ -189,12 +189,14 @@ func TestAuthHandler_Callback_ExistingUser(t *testing.T) {
 	users.byID[existing.ID] = existing
 	// Make GetBySubject resolve it.
 	users.bySubject = map[string]*instance.User{"sub-existing": existing}
-	h := newAuthHandler(oidc, sessions, users)
+	// The subject remains on the bootstrap list, so live role re-evaluation at
+	// login keeps it admin (config is authoritative — RBAC Phase 1).
+	h := newAuthHandlerWithBootstrap(oidc, sessions, users, "sub-existing")
 
 	rec := doLoginThenCallback(t, h, "ok", "/")
 	assert.Equal(t, http.StatusFound, rec.Code)
 
-	// No new user created; existing role preserved.
+	// No new user created; still-listed admin preserved by live re-eval.
 	assert.Len(t, users.byID, 1)
 	assert.Equal(t, identity.RoleAdmin, existing.Role)
 }

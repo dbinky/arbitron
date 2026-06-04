@@ -19,7 +19,7 @@ import (
 // real Provisioner as the bootstrap checker.
 func newUserHandler(bootstrap ...string) (*UserHandler, *fakeUserRepo) {
 	repo := newFakeUserRepo()
-	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap))
+	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap, identity.GroupConfig{DefaultGroup: "default"}))
 	return NewUserHandler(svc), repo
 }
 

@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,6 +30,10 @@ type Claims struct {
 	// is trusted for privilege bootstrap. Subject matching is unaffected — the
 	// subject is the verifier-checked, IdP-stable identifier.
 	EmailVerified bool
+	// Groups is the raw (un-normalized) group-claim values from the verified ID
+	// token; the provisioner normalizes them via identity.ResolveDepartments and
+	// snapshots the result. Nil => the user falls back to the default group.
+	Groups []string
 }
 
 // Provisioner resolves verified Claims to a persisted User, creating one on
@@ -37,13 +42,15 @@ type Claims struct {
 type Provisioner struct {
 	users     UserRepository
 	bootstrap map[string]struct{} // lower-cased subjects AND emails
+	groups    identity.GroupConfig
 	now       func() time.Time
 	newID     func() uuid.UUID
 }
 
 // NewProvisioner builds a Provisioner, normalizing the bootstrap list to a
-// lower-cased set for O(1), case-insensitive membership.
-func NewProvisioner(users UserRepository, bootstrapAdmins []string) *Provisioner {
+// lower-cased set for O(1), case-insensitive membership. groups supplies the
+// default-group fallback used when snapshotting departments at login.
+func NewProvisioner(users UserRepository, bootstrapAdmins []string, groups identity.GroupConfig) *Provisioner {
 	set := make(map[string]struct{}, len(bootstrapAdmins))
 	for _, v := range bootstrapAdmins {
 		v = strings.ToLower(strings.TrimSpace(v))
@@ -51,42 +58,51 @@ func NewProvisioner(users UserRepository, bootstrapAdmins []string) *Provisioner
 			set[v] = struct{}{}
 		}
 	}
-	return &Provisioner{users: users, bootstrap: set, now: time.Now, newID: uuid.New}
+	return &Provisioner{users: users, bootstrap: set, groups: groups, now: time.Now, newID: uuid.New}
 }
 
 // Resolve returns the existing user for claims.Subject, or creates a new one.
-// On an existing user it refreshes the username if the IdP changed it; the role
-// is never modified here (promotion/demotion of an existing user is the role
-// service's job). New bootstrap identities are created as admin.
+// On EVERY login it (1) re-evaluates the admin role from the live bootstrap-admin
+// config (promote/demote so config is authoritative — spec §Roles), and
+// (2) snapshots the user's departments from the verified group claim. Username is
+// refreshed if the IdP changed it.
 func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 	if c.Subject == "" {
 		return nil, ErrInvalidClaims
 	}
+
+	// SECURITY: only a VERIFIED email may drive bootstrap-admin matching (an
+	// unverified email is attacker-controllable at the IdP). Subject is always
+	// trusted (signature-verified, IdP-stable).
+	matchEmail := ""
+	if c.EmailVerified {
+		matchEmail = c.Email
+	}
+	wantAdmin := p.IsBootstrapAdmin(c.Subject, matchEmail)
+	wantRole := identity.RoleUser
+	if wantAdmin {
+		wantRole = identity.RoleAdmin
+	}
+
 	u, err := p.users.GetBySubject(ctx, c.Subject)
 	switch {
 	case err == nil:
 		if c.Username != "" && c.Username != u.Username {
 			u.Username = c.Username
-			// Best-effort refresh: a username collision (another user owns it)
-			// must not fail login — the subject is the identity. Surface only by
-			// keeping the in-memory value; the persisted error is intentionally
-			// tolerated.
+			// Best-effort: a username collision must not fail login.
 			_ = p.users.UpdateUsername(ctx, u.ID, c.Username)
 		}
-		return u, nil
+		// Live admin re-evaluation: config is authoritative at login. This
+		// promotes a newly-listed user and DEMOTES one removed from the list,
+		// bypassing the role-API demotion floors (which guard the runtime API,
+		// not config-driven login).
+		if u.Role != wantRole {
+			if err := p.users.UpdateRole(ctx, u.ID, string(wantRole)); err != nil {
+				return nil, fmt.Errorf("re-evaluating role at login: %w", err)
+			}
+			u.Role = wantRole
+		}
 	case errors.Is(err, ErrNotFound):
-		role := identity.RoleUser
-		// SECURITY: only a VERIFIED email may drive bootstrap-admin matching. An
-		// unverified email is attacker-controllable at the IdP, so passing it into
-		// the match would let an attacker self-provision as admin on first login.
-		// Subject matching is always trusted (IdP-stable, signature-verified).
-		matchEmail := ""
-		if c.EmailVerified {
-			matchEmail = c.Email
-		}
-		if p.IsBootstrapAdmin(c.Subject, matchEmail) {
-			role = identity.RoleAdmin
-		}
 		subj := c.Subject
 		var emailPtr *string
 		if c.Email != "" {
@@ -98,15 +114,24 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 			Subject:  &subj,
 			Email:    emailPtr,
 			Username: pickUsername(c),
-			Role:     role,
+			Role:     wantRole,
 		}
 		if err := p.users.Create(ctx, nu); err != nil {
 			return nil, err
 		}
-		return nu, nil
+		u = nu
 	default:
 		return nil, err
 	}
+
+	// Department snapshot (RBAC Phase 1): replace the user's stored departments
+	// with the normalized, default-group-fallback set derived from this login's
+	// group claim. Non-interactive triggers later read this stored set.
+	depts := identity.ResolveDepartments(c.Groups, p.groups)
+	if err := p.users.ReplaceDepartments(ctx, u.ID, depts); err != nil {
+		return nil, fmt.Errorf("snapshotting departments at login: %w", err)
+	}
+	return u, nil
 }
 
 // IsBootstrapAdmin is the SINGLE canonical bootstrap-match predicate, exported

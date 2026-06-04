@@ -278,7 +278,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// JIT provisioner (Phase 6, Phase 2). Resolves verified OIDC claims to a
 	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
 	// callback and Task 6's role-management demotion floor (one bootstrap rule).
-	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins)
+	groupCfg := configadapter.ToGroupConfig(cfg.Auth.RBAC)
+	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins, groupCfg)
 	// Admin-only role management (Phase 6, Phase 2). The demotion floor shares the
 	// provisioner's bootstrap rule so a bootstrap (incl. by-email) admin is
 	// protected using only the persisted User.
@@ -292,6 +293,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 			ClientSecret: cfg.Auth.OIDC.ClientSecret,
 			RedirectURL:  cfg.Auth.OIDC.RedirectURL,
 			Scopes:       cfg.Auth.OIDC.Scopes,
+			GroupClaim:   cfg.Auth.RBAC.GroupClaim,
 		})
 		if oerr != nil {
 			db.Close()

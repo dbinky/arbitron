@@ -128,6 +128,7 @@ func (h *AuthHandler) resolveOrProvision(ctx context.Context, claims identity.Cl
 		// SECURITY: forward email_verified so the provisioner only trusts the
 		// email for bootstrap-admin matching when the IdP verified it.
 		EmailVerified: claims.EmailVerified,
+		Groups:        claims.Groups,
 	})
 }
 
