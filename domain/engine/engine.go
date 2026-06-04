@@ -31,6 +31,7 @@ type Engine struct {
 	scheduler       TimerScheduler
 	webhookRegistry  WebhookRegistrar
 	notifications    notification.Repository
+	dismissals       instance.DismissalRepository
 	externalNotifier notification.ExternalNotifier
 	workspaceManager WorkspaceManager
 	mu               sync.Mutex
@@ -77,6 +78,13 @@ func (e *Engine) SetWebhookRegistry(reg WebhookRegistrar) {
 // SetNotifications sets the notification repository on the engine.
 func (e *Engine) SetNotifications(repo notification.Repository) {
 	e.notifications = repo
+}
+
+// SetDismissals wires the per-user dismissal repository. When set, Retry clears
+// an instance's dismissals (for all users) so a retried item resurfaces. When
+// unset, retry behaves exactly as before.
+func (e *Engine) SetDismissals(repo instance.DismissalRepository) {
+	e.dismissals = repo
 }
 
 // SetExternalNotifier sets the external notifier on the engine. When set,
@@ -1019,6 +1027,17 @@ func (e *Engine) Retry(instanceID uuid.UUID, variableEdits map[string]any) error
 		return fmt.Errorf("failed to update state: %w", err)
 	}
 
+	// Resurface on a new outcome: clear this instance's dismissals for every
+	// user so the now-running item reappears in Active and, when it reaches a
+	// fresh terminal state, in Completed/Failed. A new result is new information
+	// the user should see. The instance is already marked running above; abort
+	// the retry before launching the run goroutine if the clear fails.
+	if e.dismissals != nil {
+		if err := e.dismissals.ClearForInstance(ctx, instanceID); err != nil {
+			return fmt.Errorf("failed to clear dismissals on retry: %w", err)
+		}
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
 	e.mu.Lock()
 	e.contexts[instanceID] = cancel
@@ -1055,6 +1074,10 @@ func (e *Engine) Rerun(instanceID uuid.UUID) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
+	// Rerun creates a brand-new instance id via Trigger; new instances have no
+	// dismissal rows, so the rerun is inherently un-dismissed for every user.
+	// The original instance's historical dismissal (if any) is intentionally
+	// left intact. No dismissal bookkeeping is needed here.
 	id, _, err := e.Trigger(inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
 	return id, err
 }
