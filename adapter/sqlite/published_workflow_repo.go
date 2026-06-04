@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Compile-time: satisfies the Task-3 publisher lookup port.
-var _ workflow.PublisherLookup = (*PublishedWorkflowRepo)(nil)
+// Compile-time: satisfies the read+write publication store port.
+var _ workflow.PublishedStore = (*PublishedWorkflowRepo)(nil)
 
 // PublishedWorkflow is the domain-facing publication record.
 type PublishedWorkflow struct {
@@ -87,11 +87,26 @@ func (r *PublishedWorkflowRepo) GetPublication(ctx context.Context, name string)
 	return r.Get(ctx, name)
 }
 
+// PublicationOf implements workflow.PublisherLookup. It maps the stored row to
+// the domain Publication value. (zero, false, nil) when the name is unpublished.
+func (r *PublishedWorkflowRepo) PublicationOf(ctx context.Context, name string) (workflow.Publication, bool, error) {
+	row, ok, err := r.GetPublication(ctx, name)
+	if err != nil || !ok {
+		return workflow.Publication{}, ok, err
+	}
+	return workflow.Publication{
+		Publisher:  row.PublisherID,
+		SourceName: row.SourceName,
+		Visibility: workflow.Visibility(row.Visibility),
+		Department: row.Department,
+	}, true, nil
+}
+
 // Upsert records (or re-records) a publication with its visibility level. A
 // department string is stored as SQL NULL when empty (public). The
 // publisher-only-overwrite and role-gating rules are enforced by the caller
 // before this is invoked.
-func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName, visibility, department string) error {
+func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
 	dept := sql.NullString{}
 	if department != "" {
 		dept = sql.NullString{String: department, Valid: true}
@@ -100,7 +115,7 @@ func (r *PublishedWorkflowRepo) Upsert(ctx context.Context, name string, publish
 		Name:        name,
 		PublisherID: publisher.String(),
 		SourceName:  sourceName,
-		Visibility:  visibility,
+		Visibility:  string(visibility),
 		Department:  dept,
 	}); err != nil {
 		return fmt.Errorf("upsert published %q: %w", name, err)

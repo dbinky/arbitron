@@ -9,19 +9,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// PublisherLookup resolves the publisher id for a shared workflow name. Backed
-// by the published_workflows repo (Task 4). A nil lookup yields empty publishers.
+// PublisherLookup resolves the publication record for a shared workflow name,
+// including its visibility level. Backed by the published_workflows repo. A nil
+// lookup yields no publications (local/read-only mode treats shared as public).
 type PublisherLookup interface {
+	// PublisherOf returns just the publisher id; retained for callers that only
+	// need attribution. (false, nil) when the name is not published.
 	PublisherOf(ctx context.Context, sharedName string) (uuid.UUID, bool, error)
+	// PublicationOf returns the full publication (publisher + visibility +
+	// department). (nil-value, false, nil) when the name is not published.
+	PublicationOf(ctx context.Context, sharedName string) (Publication, bool, error)
 }
 
 // PublishedStore is the read+write authority for the shared workspace's
-// publication records, used by Publish. The published_workflows repo satisfies
-// it. A WorkflowService constructed with only a PublisherLookup (no write side)
-// supports List/Load but rejects Publish.
+// publication records, used by Publish/SetVisibility. A WorkflowService
+// constructed with only a PublisherLookup (no write side) supports List/Load
+// but rejects Publish.
 type PublishedStore interface {
 	PublisherLookup
-	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string) error
+	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string, visibility Visibility, department string) error
 	Delete(ctx context.Context, name string) error
 }
 
@@ -250,7 +256,7 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		return err
 	}
 	// Record the publication after the folder is in place (copy-then-record).
-	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName); err != nil {
+	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName, VisibilityPublic, ""); err != nil {
 		if !overwrite {
 			// FRESH path: compensate by deleting the just-copied tree. The
 			// destination was empty before, so this restores the prior state. The

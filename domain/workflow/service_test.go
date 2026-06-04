@@ -131,26 +131,31 @@ func (r *fakeRepo) CopyTree(_ context.Context, src workflow.Scope, srcName strin
 
 // fakePublishers is a fake PublishedStore (lookup + write).
 type fakePublishers struct {
-	pub map[string]uuid.UUID
+	pub map[string]workflow.Publication
 	// upsertErr, when set, makes Upsert fail so the Publish compensation paths are
 	// observable.
 	upsertErr error
 }
 
 func newFakePublishers() *fakePublishers {
-	return &fakePublishers{pub: map[string]uuid.UUID{}}
+	return &fakePublishers{pub: map[string]workflow.Publication{}}
 }
 
 func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
-	id, ok := p.pub[name]
-	return id, ok, nil
+	pub, ok := p.pub[name]
+	return pub.Publisher, ok, nil
 }
 
-func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+func (p *fakePublishers) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	pub, ok := p.pub[name]
+	return pub, ok, nil
+}
+
+func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
 	if p.upsertErr != nil {
 		return p.upsertErr
 	}
-	p.pub[name] = publisher
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
 	return nil
 }
 
@@ -200,7 +205,7 @@ func TestService_Load_PrivateThenShared(t *testing.T) {
 func TestService_List_PrivatePlusShared(t *testing.T) {
 	repo := newFakeRepo()
 	pubID := uuid.New()
-	pubs := &fakePublishers{pub: map[string]uuid.UUID{"sh": pubID}}
+	pubs := &fakePublishers{pub: map[string]workflow.Publication{"sh": {Publisher: pubID, Visibility: workflow.VisibilityPublic}}}
 	svc := workflow.NewWorkflowService(repo, pubs)
 	owner := uuid.New()
 
@@ -380,7 +385,7 @@ func TestService_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 
 	// "pub" already published by a.
 	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
-	pubs.pub["pub"] = a
+	pubs.pub["pub"] = workflow.Publication{Publisher: a, Visibility: workflow.VisibilityPublic}
 
 	// b owns a private "src" and tries to publish over a's name.
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "src", wf("src")))
