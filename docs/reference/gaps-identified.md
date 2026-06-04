@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA10-P1-01: REST `Revoke` happy path (204, token removed, list empty) was untested
+**Area**: Focus Area 10 — Token service & surface (Pass 1)
+**Fix**: Added `TestTokenHandler_Revoke_HappyPath` in `adapter/http/token_handler_test.go`. Creates a token, revokes it with the correct owner identity, then asserts 204 response, empty `repo.toks`, and an empty subsequent list. The MCP surface (`TestTokenTools_HappyPath`) already covered the successful revoke path; the REST surface was missing this scenario. Previously only the failure paths (not-found → 404, cross-user → 404, bad UUID → 400) were tested.
+
 ### GAP-FA9-P2-01: Create response was not checked for `token_hash` absence on REST and MCP
 **Area**: Focus Area 9 — API tokens store & format (Pass 2)
 **Fix**: Added `assert.NotContains(t, w.Body.String(), "token_hash", ...)` to `TestTokenHandler_CreateThenList_HappyPath` in `adapter/http/token_handler_test.go`, and `assert.NotContains(t, body, "token_hash", ...)` to `TestTokenTools_HappyPath` in `adapter/mcp/tools_token_test.go`. The create endpoint is the highest-risk surface because it already carries the plaintext — accidentally including the hash here is maximally dangerous. The list response was already checked; now both create and list are pinned on both surfaces. The implementation is architecturally safe (`tokenView`/`tokenMeta` DTOs have no `TokenHash` field), but the test documents the security intent.

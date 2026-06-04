@@ -153,6 +153,32 @@ func TestTokenHandler_Validation(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// Happy path: owner revokes their own token → 204, token gone from repo and list.
+func TestTokenHandler_Revoke_HappyPath(t *testing.T) {
+	h, repo := newTokenHandler()
+	uid := uuid.New()
+
+	// Create a token to revoke.
+	wc := httptest.NewRecorder()
+	h.Create(wc, tokenReq(http.MethodPost, "/tokens", `{"label":"laptop"}`, uid, ""))
+	require.Equal(t, http.StatusCreated, wc.Code)
+	var created createTokenResponse
+	require.NoError(t, json.Unmarshal(wc.Body.Bytes(), &created))
+	tokID := created.Token.ID
+
+	// Revoke it — must return 204 and remove it from the repo.
+	wr := httptest.NewRecorder()
+	h.Revoke(wr, tokenReq(http.MethodDelete, "/tokens/"+tokID, "", uid, tokID))
+	assert.Equal(t, http.StatusNoContent, wr.Code)
+	assert.Empty(t, repo.toks, "revoked token must not remain in the repo")
+
+	// Subsequent list is empty.
+	wl := httptest.NewRecorder()
+	h.List(wl, tokenReq(http.MethodGet, "/tokens", "", uid, ""))
+	require.Equal(t, http.StatusOK, wl.Code)
+	assert.Equal(t, "[]", strings.TrimSpace(wl.Body.String()))
+}
+
 // Error/failure: revoking an absent token id returns 404.
 func TestTokenHandler_Revoke_NotFound(t *testing.T) {
 	h, _ := newTokenHandler()
