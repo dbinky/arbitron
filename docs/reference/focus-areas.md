@@ -30,7 +30,7 @@ result for that area.
 | 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [x] | [x] | Done |
 | 13 | JIT provisioning & bootstrap admin (`instance.Provisioner.Resolve` — GetBySubject-else-Create, default User, bootstrap promote email-ci-then-subject; wired in OIDC callback) | [x] | [x] | Done |
 | 14 | Role management (`instance.UserService.SetRole` admin-only; bootstrap-admin floor; last-admin guard; REST `/api/v1/users`+`/role`; MCP `user_list`/`user_set_role`) | [x] | [x] | Done |
-| 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [x] | [ ] | Pending |
+| 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [x] | [x] | Done |
 | 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [ ] | [ ] | Pending |
 | 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [ ] | [ ] | Pending |
 | 18 | Publish/copy & publisher store (migration 006 `published_workflows`; `PublishedWorkflowRepo`; `Publish` publisher-only-overwrite+unique name; `Copy` independent; atomic `CopyTree`; REST+MCP) | [ ] | [ ] | Pending |

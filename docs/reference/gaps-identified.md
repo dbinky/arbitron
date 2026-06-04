@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA15-P2-01: `WriteFile`/`DeleteFile` did not protect `workflow.json` from direct targeting
+**Area**: Focus Area 15 — Workflow scope & repo (Pass 2)
+**Fix**: Added a manifest-protection guard to both `WriteFile` and `DeleteFile` in `adapter/filesystem/workflow_repo.go`. After the traversal check resolves `targetPath`, both methods now compare it to `filepath.Join(wfDir, "workflow.json")` and return `ErrInvalidFilePath` if they match. The manifest is a structured domain object; allowing raw bytes through the file API would bypass schema validation and could leave the workflow directory in an unloadable state. Both HTTP (`PUT /workflows/{name}/files/*`) and MCP (`workflow_write_file`/`workflow_delete_file`) already handle `ErrInvalidFilePath` with a 400/tool-error response, so no adapter changes were needed. Added `TestWorkflowRepo_WriteFile_ManifestProtected` and `TestWorkflowRepo_DeleteFile_ManifestProtected` to pin the new guard.
+
 ### GAP-FA15-P1-01: `SaveNodePositions` had zero test coverage
 **Area**: Focus Area 15 — Workflow scope & repo (Pass 1)
 **Fix**: Added five tests to `adapter/filesystem/workflow_repo_test.go`: `TestWorkflowRepo_SaveNodePositions_HappyPath` (positions persisted atomically, no .tmp artifacts remain, node Position fields set on reload), `TestWorkflowRepo_SaveNodePositions_NotFound` (ErrNotFound for missing workflow), `TestWorkflowRepo_SaveNodePositions_PathTraversalRejected` (traversal name mapped to ErrNotFound, consistent with Load), `TestWorkflowRepo_SaveNodePositions_EmptyPositionsMap` (no-op, manifest intact), and `TestWorkflowRepo_SaveNodePositions_UnknownNodeIDsIgnored` (positions whose IDs don't match any node are silently skipped, manifest remains valid). Also added the `strings` import required by the atomic-write artifact assertion in the happy-path test.

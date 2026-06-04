@@ -882,6 +882,23 @@ func TestWorkflowRepo_WriteFile_OverwriteExisting(t *testing.T) {
 	assert.Equal(t, "v2", string(data))
 }
 
+func TestWorkflowRepo_WriteFile_ManifestProtected(t *testing.T) {
+	dir := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-guard", sampleWorkflow("wf-guard")))
+
+	err := repo.WriteFile(ctx, testScope(), "wf-guard", "workflow.json", []byte(`{"name":"evil"}`))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidFilePath, "WriteFile must not overwrite the manifest")
+
+	// Verify the manifest is unchanged.
+	loaded, loadErr := repo.Load(ctx, testScope(), "wf-guard")
+	require.NoError(t, loadErr)
+	assert.Equal(t, "wf-guard", loaded.Name, "manifest must be intact after rejected write")
+}
+
 // ---------------------------------------------------------------------------
 // Tests: DeleteFile
 // ---------------------------------------------------------------------------
@@ -957,6 +974,23 @@ func TestWorkflowRepo_DeleteFile_LeavesManifestIntact(t *testing.T) {
 
 	_, err := repo.Load(ctx, testScope(), "wf-del4")
 	require.NoError(t, err)
+}
+
+func TestWorkflowRepo_DeleteFile_ManifestProtected(t *testing.T) {
+	dir := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(dir)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, testScope(), "wf-del5", sampleWorkflow("wf-del5")))
+
+	err := repo.DeleteFile(ctx, testScope(), "wf-del5", "workflow.json")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidFilePath, "DeleteFile must not delete the manifest")
+
+	// Verify the workflow is still loadable.
+	loaded, loadErr := repo.Load(ctx, testScope(), "wf-del5")
+	require.NoError(t, loadErr)
+	assert.Equal(t, "wf-del5", loaded.Name, "manifest must be intact after rejected delete")
 }
 
 // ---------------------------------------------------------------------------

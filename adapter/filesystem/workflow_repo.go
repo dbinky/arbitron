@@ -371,6 +371,14 @@ func (r *WorkflowRepo) WriteFile(_ context.Context, scope workflow.Scope, name s
 		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
 	}
 
+	// Protect the manifest: workflow.json is only ever written through Create,
+	// Update, or SaveNodePositions, which use type-safe structs and atomic writes.
+	// Allowing raw bytes through WriteFile would bypass schema validation and could
+	// corrupt the workflow directory or leave it in an unloadable state.
+	if targetPath == filepath.Join(wfDir, "workflow.json") {
+		return fmt.Errorf("%w: workflow.json is reserved", workflow.ErrInvalidFilePath)
+	}
+
 	// Create intermediate directories.
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -411,6 +419,11 @@ func (r *WorkflowRepo) DeleteFile(_ context.Context, scope workflow.Scope, name 
 	targetPath := filepath.Join(wfDir, relativePath)
 	if !strings.HasPrefix(targetPath, wfRoot) {
 		return fmt.Errorf("%w: %s", workflow.ErrInvalidFilePath, relativePath)
+	}
+
+	// Protect the manifest from accidental deletion via the file API.
+	if targetPath == filepath.Join(wfDir, "workflow.json") {
+		return fmt.Errorf("%w: workflow.json is reserved", workflow.ErrInvalidFilePath)
 	}
 
 	if err := os.Remove(targetPath); err != nil {
