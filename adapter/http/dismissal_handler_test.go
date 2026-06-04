@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
-	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/adapter/eventbus"
+	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,85 @@ func TestCurrentUser_ResolvesDefaultUser(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// failClosedResolver is a fake CurrentUserResolver that always fails to resolve
+// a principal. It models the Phase-6 fail-closed contract: when no
+// authenticated user is on the request, the resolver returns an error rather
+// than silently falling back to a default user.
+type failClosedResolver struct{ err error }
+
+func (f *failClosedResolver) CurrentUser(_ *http.Request) (uuid.UUID, error) {
+	return uuid.UUID{}, f.err
+}
+
+var _ adapthttp.CurrentUserResolver = (*failClosedResolver)(nil)
+
+// recordingResolver is a fake CurrentUserResolver that returns a fixed acting
+// user, proving the handler resolves the acting user through the injected seam
+// and not through any concrete resolver.
+type recordingResolver struct{ id uuid.UUID }
+
+func (r *recordingResolver) CurrentUser(_ *http.Request) (uuid.UUID, error) { return r.id, nil }
+
+var _ adapthttp.CurrentUserResolver = (*recordingResolver)(nil)
+
+// Security (HIGH): the acting-user seam MUST fail closed. When the injected
+// CurrentUserResolver cannot resolve a principal (the Phase-6 unauthenticated
+// case), Dismiss must surface a 500 and MUST NOT record any dismissal — there
+// is no silent default-user fallback. This is the contract the entire per-user
+// authorization model rests on, pinned here via a fake resolver injected
+// through the CurrentUserResolver interface.
+func TestDismiss_ResolverFailsClosed_NoDefaultUserFallback(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: uuid.New(), WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	dis := newMockDismissalRepo()
+
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), &routerMockService{})
+	h.SetDismissals(dis, &failClosedResolver{err: fmt.Errorf("no principal on request")})
+
+	router := chi.NewRouter()
+	router.Post("/api/v1/instances/{id}/dismiss", h.Dismiss)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+
+	assert.Equal(t, 500, resp.StatusCode, "unresolved acting user must fail closed, not fall back")
+	for u := range dis.dismissed {
+		assert.Empty(t, dis.dismissed[u], "no dismissal may be recorded for any user when the resolver fails closed")
+	}
+}
+
+// Seam: the handler resolves the acting user through the injected
+// CurrentUserResolver interface (not a concrete resolver). A fake resolver
+// returning a fixed user must drive which per-user row the dismissal lands on.
+func TestDismiss_ResolvesActingUserThroughInjectedSeam(t *testing.T) {
+	actor := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: uuid.New(), WorkflowName: "wf", State: instance.StateFailed,
+	}))
+	dis := newMockDismissalRepo()
+
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), &routerMockService{})
+	h.SetDismissals(dis, &recordingResolver{id: actor})
+
+	router := chi.NewRouter()
+	router.Post("/api/v1/instances/{id}/dismiss", h.Dismiss)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[actor][id], "dismissal must land on the acting user from the injected seam")
+}
+
 // mockDismissalRepo implements instance.DismissalRepository in memory.
 type mockDismissalRepo struct {
 	// dismissed[userID][instanceID] = true
@@ -46,6 +126,15 @@ func (m *mockDismissalRepo) Dismiss(_ context.Context, u, i uuid.UUID) error {
 		m.dismissed[u] = map[uuid.UUID]bool{}
 	}
 	m.dismissed[u][i] = true
+	return nil
+}
+func (m *mockDismissalRepo) DismissMany(_ context.Context, u uuid.UUID, ids []uuid.UUID) error {
+	if m.dismissed[u] == nil {
+		m.dismissed[u] = map[uuid.UUID]bool{}
+	}
+	for _, i := range ids {
+		m.dismissed[u][i] = true
+	}
 	return nil
 }
 func (m *mockDismissalRepo) Restore(_ context.Context, u, i uuid.UUID) error {
@@ -73,8 +162,11 @@ var _ instance.DismissalRepository = (*mockDismissalRepo)(nil)
 // errDismissalRepo always returns a generic error for every write operation.
 type errDismissalRepo struct{ err error }
 
-func (e *errDismissalRepo) Dismiss(_ context.Context, _, _ uuid.UUID) error         { return e.err }
-func (e *errDismissalRepo) Restore(_ context.Context, _, _ uuid.UUID) error         { return e.err }
+func (e *errDismissalRepo) Dismiss(_ context.Context, _, _ uuid.UUID) error { return e.err }
+func (e *errDismissalRepo) DismissMany(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+	return e.err
+}
+func (e *errDismissalRepo) Restore(_ context.Context, _, _ uuid.UUID) error { return e.err }
 func (e *errDismissalRepo) DismissedIDs(_ context.Context, _ uuid.UUID) (map[uuid.UUID]bool, error) {
 	return nil, e.err
 }
@@ -143,8 +235,8 @@ func TestDismiss_TerminalInstance_OK(t *testing.T) {
 // instead of the resolved user would silently pass. Using distinct UUIDs
 // catches that regression.
 func TestDismiss_ScopedToActingUserNotOwner(t *testing.T) {
-	owner := uuid.New()  // instance owner
-	actor := uuid.New()  // the user who is acting (different from owner)
+	owner := uuid.New() // instance owner
+	actor := uuid.New() // the user who is acting (different from owner)
 	instRepo := newMockInstanceRepo()
 	id := uuid.New()
 	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
@@ -543,12 +635,52 @@ func TestDismissAll_DismissItemError_500(t *testing.T) {
 	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
 		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed,
 	}))
-	// errDismissalRepo fails on Dismiss — the per-item write inside the DismissAll loop.
-	// instances.List succeeds (mockInstanceRepo) so the loop body is reached.
+	// errDismissalRepo fails on the atomic DismissMany write that DismissAll uses.
+	// instances.List succeeds (mockInstanceRepo) so the write is reached.
 	srv := newDismissalTestServer(t, instRepo, &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: user})
 	defer srv.Close()
 
 	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
 	defer resp.Body.Close()
 	assert.Equal(t, 500, resp.StatusCode)
+}
+
+// atomicDismissalRepo fails DismissMany as a unit and records nothing, modeling
+// the all-or-nothing transaction in the sqlite repo. It panics if the handler
+// ever falls back to the per-item Dismiss path (which would mean a
+// partial-commit-then-500 could occur).
+type atomicDismissalRepo struct {
+	*mockDismissalRepo
+	failMany bool
+}
+
+func (a *atomicDismissalRepo) Dismiss(_ context.Context, _, _ uuid.UUID) error {
+	panic("DismissAll must use the atomic DismissMany path, not per-item Dismiss")
+}
+func (a *atomicDismissalRepo) DismissMany(ctx context.Context, u uuid.UUID, ids []uuid.UUID) error {
+	if a.failMany {
+		return fmt.Errorf("db down")
+	}
+	return a.mockDismissalRepo.DismissMany(ctx, u, ids)
+}
+
+// Atomicity: DismissAll routes through DismissMany (one atomic write), never the
+// per-item loop. On a batch failure nothing is recorded — no partial commit.
+func TestDismissAll_UsesAtomicDismissMany_NoPartialCommit(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	ctx := context.Background()
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: a, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: b, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+
+	dis := &atomicDismissalRepo{mockDismissalRepo: newMockDismissalRepo(), failMany: true}
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=failed")
+	defer resp.Body.Close()
+	assert.Equal(t, 500, resp.StatusCode)
+	assert.Empty(t, dis.dismissed[user], "a failed atomic batch must record nothing (no partial commit)")
 }

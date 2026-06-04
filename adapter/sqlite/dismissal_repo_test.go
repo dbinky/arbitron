@@ -85,6 +85,78 @@ func TestDismissalRepo_DismissThenListed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// DismissMany: atomic multi-row insert
+// ---------------------------------------------------------------------------
+
+// Happy: DismissMany records every supplied instance for the user in one call.
+func TestDismissalRepo_DismissManyRecordsAll(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+	a := seedInstance(t, db, user, "failed")
+	b := seedInstance(t, db, user, "failed")
+	c := seedInstance(t, db, user, "completed")
+
+	require.NoError(t, repo.DismissMany(ctx, user, []uuid.UUID{a, b, c}))
+
+	ids, err := repo.DismissedIDs(ctx, user)
+	require.NoError(t, err)
+	assert.True(t, ids[a])
+	assert.True(t, ids[b])
+	assert.True(t, ids[c])
+	assert.Len(t, ids, 3)
+}
+
+// Edge: DismissMany with an empty slice is a no-op success (no rows written).
+func TestDismissalRepo_DismissManyEmpty(t *testing.T) {
+	repo, _ := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+
+	require.NoError(t, repo.DismissMany(ctx, user, nil))
+
+	ids, err := repo.DismissedIDs(ctx, user)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+// Edge: DismissMany is idempotent per row — re-dismissing overlapping ids
+// succeeds and leaves one row each.
+func TestDismissalRepo_DismissManyIdempotent(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+	a := seedInstance(t, db, user, "failed")
+	b := seedInstance(t, db, user, "failed")
+
+	require.NoError(t, repo.Dismiss(ctx, user, a))
+	require.NoError(t, repo.DismissMany(ctx, user, []uuid.UUID{a, b}))
+
+	ids, err := repo.DismissedIDs(ctx, user)
+	require.NoError(t, err)
+	assert.Len(t, ids, 2, "overlapping dismiss must not create duplicate rows")
+}
+
+// Atomicity: when one id in the batch is invalid (violates the FK to instances
+// with FKs enforced), DismissMany must roll back the WHOLE batch — no
+// partial-commit. A valid id earlier in the slice must NOT be left dismissed.
+func TestDismissalRepo_DismissManyAtomicRollbackOnError(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+	good := seedInstance(t, db, user, "failed")
+	bogus := uuid.New() // no instances row -> FK violation under PRAGMA foreign_keys=ON
+
+	err := repo.DismissMany(ctx, user, []uuid.UUID{good, bogus})
+	require.Error(t, err, "a bad row must fail the whole batch")
+
+	ids, lerr := repo.DismissedIDs(ctx, user)
+	require.NoError(t, lerr)
+	assert.False(t, ids[good], "the good row must be rolled back, not partially committed")
+	assert.Empty(t, ids)
+}
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

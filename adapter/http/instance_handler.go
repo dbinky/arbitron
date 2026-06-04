@@ -33,7 +33,7 @@ type InstanceHandler struct {
 	snapshots   instance.VariableSnapshotRepository
 	service     InstanceService
 	dismissals  instance.DismissalRepository
-	currentUser *CurrentUserResolver
+	currentUser CurrentUserResolver
 }
 
 // NewInstanceHandler creates a new InstanceHandler with its dependencies.
@@ -48,14 +48,20 @@ func NewInstanceHandler(
 		nodeExecs: nodeExecs,
 		snapshots: snapshots,
 		service:   service,
+		// Default to Null Objects so the handler body never nil-checks the
+		// dismissal seam. When the feature is enabled, SetDismissals swaps in the
+		// real repo + resolver; route registration decides endpoint exposure.
+		dismissals:  nullDismissalRepository{},
+		currentUser: nullUserResolver{},
 	}
 }
 
 // SetDismissals wires the per-user dismissal repository and acting-user seam so
 // the Dismiss/Restore/DismissAll handlers and the per-user List can operate.
 // Kept as a setter (rather than constructor args) so existing NewInstanceHandler
-// call sites compile unchanged. When unset, dismissal routes are not registered.
-func (h *InstanceHandler) SetDismissals(dismissals instance.DismissalRepository, currentUser *CurrentUserResolver) {
+// call sites compile unchanged. When unset, the Null Object defaults apply and
+// dismissal routes are not registered.
+func (h *InstanceHandler) SetDismissals(dismissals instance.DismissalRepository, currentUser CurrentUserResolver) {
 	h.dismissals = dismissals
 	h.currentUser = currentUser
 }
@@ -140,10 +146,12 @@ func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 	return workflow.IsInteractive(node.Type)
 }
 
-// summaryResponse is the list-item JSON: the existing InstanceSummary fields
-// plus a per-user "dismissed" flag. The flag is HTTP/view state and is
-// intentionally not part of the domain InstanceSummary.
-type summaryResponse struct {
+// summaryDTO is the JSON projection of a domain InstanceSummary (the list-item
+// shape). It is deliberately the lean list shape — NOT the heavy single-instance
+// instanceResponse used by Get. toSummaryDTO owns the timestamp/nil-pointer
+// Format(APITimeFormat) mapping so there is a single place that maps a summary,
+// killing the silent-field-drop trap of two parallel mappers.
+type summaryDTO struct {
 	ID            string  `json:"id"`
 	WorkflowName  string  `json:"workflowName"`
 	State         string  `json:"state"`
@@ -153,11 +161,10 @@ type summaryResponse struct {
 	UpdatedAt     string  `json:"updatedAt"`
 	CompletedAt   *string `json:"completedAt,omitempty"`
 	QueuedAt      *string `json:"queuedAt,omitempty"`
-	Dismissed     bool    `json:"dismissed"`
 }
 
-func toSummaryResponse(s instance.InstanceSummary, dismissed bool) summaryResponse {
-	resp := summaryResponse{
+func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
+	dto := summaryDTO{
 		ID:            s.ID.String(),
 		WorkflowName:  s.WorkflowName,
 		State:         string(s.State),
@@ -165,17 +172,32 @@ func toSummaryResponse(s instance.InstanceSummary, dismissed bool) summaryRespon
 		CurrentNodeID: s.CurrentNodeID,
 		CreatedAt:     s.CreatedAt.Format(APITimeFormat),
 		UpdatedAt:     s.UpdatedAt.Format(APITimeFormat),
-		Dismissed:     dismissed,
 	}
 	if s.CompletedAt != nil {
 		v := s.CompletedAt.Format(APITimeFormat)
-		resp.CompletedAt = &v
+		dto.CompletedAt = &v
 	}
 	if s.QueuedAt != nil {
 		v := s.QueuedAt.Format(APITimeFormat)
-		resp.QueuedAt = &v
+		dto.QueuedAt = &v
 	}
-	return resp
+	return dto
+}
+
+// summaryResponse is the list-item JSON: the summary DTO plus a per-user
+// "dismissed" flag. The flag is HTTP/view state and is intentionally not part of
+// the domain InstanceSummary. The DTO is embedded so its fields flatten into the
+// same JSON object the dashboard already consumes.
+type summaryResponse struct {
+	summaryDTO
+	Dismissed bool `json:"dismissed"`
+}
+
+func toSummaryResponse(s instance.InstanceSummary, dismissed bool) summaryResponse {
+	return summaryResponse{
+		summaryDTO: toSummaryDTO(s),
+		Dismissed:  dismissed,
+	}
 }
 
 // retryRequest is the optional JSON body for retrying an instance.
@@ -220,21 +242,47 @@ func mapEngineErrorCode(err error) string {
 }
 
 const (
-	defaultListLimit   = 50
-	maxListLimit       = 500
-	maxRetryBodyBytes  = 1 << 20 // 1 MiB
+	// sharedWindowLimit is the single row cap for the category base window that
+	// BOTH List and DismissAll operate on. It lives in exactly one place so the
+	// two endpoints provably act on the same set: "Dismiss All dismisses exactly
+	// what is listed." A client may request a smaller limit on List, but the
+	// default window — and the set DismissAll dismisses — is this constant.
+	sharedWindowLimit = 500
+	maxListLimit      = sharedWindowLimit
+	maxRetryBodyBytes = 1 << 20 // 1 MiB
 )
+
+// baseWindowFilters builds the category base window shared by List and
+// DismissAll: a state filter, an optional since cutoff, and the one shared row
+// limit. Per-call-site concerns (includeDismissed filtering, paging offset, and
+// the per-user dismissed-set subtraction) are deliberately NOT part of the base
+// window and stay explicit at each call site.
+func baseWindowFilters(state *instance.State, since *time.Time) instance.ListFilters {
+	return instance.ListFilters{
+		State: state,
+		Since: since,
+		Limit: sharedWindowLimit,
+	}
+}
 
 // List handles GET /instances with optional query params for filtering.
 func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
-	filters := instance.ListFilters{
-		Limit: defaultListLimit,
+	var state *instance.State
+	if s := r.URL.Query().Get("state"); s != "" {
+		st := instance.State(s)
+		state = &st
+	}
+	var since *time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			since = &t
+		}
 	}
 
-	if s := r.URL.Query().Get("state"); s != "" {
-		state := instance.State(s)
-		filters.State = &state
-	}
+	// Start from the shared category base window so List and DismissAll agree on
+	// the limit/category; then layer List-only concerns (workflowName, paging,
+	// client limit override).
+	filters := baseWindowFilters(state, since)
 	if wn := r.URL.Query().Get("workflowName"); wn != "" {
 		filters.WorkflowName = &wn
 	}
@@ -251,12 +299,6 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 			filters.Offset = parsed
 		}
 	}
-	if s := r.URL.Query().Get("since"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err == nil {
-			filters.Since = &t
-		}
-	}
 
 	summaries, err := h.instances.List(r.Context(), filters)
 	if err != nil {
@@ -271,18 +313,18 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var dismissedIDs map[uuid.UUID]bool
-	if h.dismissals != nil && h.currentUser != nil {
-		user, uerr := h.currentUser.CurrentUser(r)
-		if uerr != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
-			return
-		}
-		dismissedIDs, err = h.dismissals.DismissedIDs(r.Context(), user)
-		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load dismissals")
-			return
-		}
+	// The dismissal seam is always non-nil (Null Object when disabled), so no
+	// nil-guard here: a disabled feature resolves the zero user and subtracts an
+	// empty dismissed set, leaving the list unchanged.
+	user, uerr := h.currentUser.CurrentUser(r)
+	if uerr != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to resolve user")
+		return
+	}
+	dismissedIDs, err := h.dismissals.DismissedIDs(r.Context(), user)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load dismissals")
+		return
 	}
 
 	out := make([]summaryResponse, 0, len(summaries))
@@ -489,22 +531,31 @@ func (h *InstanceHandler) DismissAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := instance.State(stateParam)
-	filters := instance.ListFilters{State: &state, Limit: maxListLimit}
+	var since *time.Time
 	if s := r.URL.Query().Get("since"); s != "" {
 		if t, perr := time.Parse(time.RFC3339, s); perr == nil {
-			filters.Since = &t
+			since = &t
 		}
 	}
-	summaries, err := h.instances.List(r.Context(), filters)
+	// Same base window as List, so DismissAll dismisses exactly the set the
+	// dashboard lists. DismissAll deliberately omits List's includeDismissed
+	// filtering and dismissed-set subtraction: it dismisses everything in the
+	// window regardless of current per-user dismissed state.
+	summaries, err := h.instances.List(r.Context(), baseWindowFilters(&state, since))
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return
 	}
+	// SECURITY: the id-set is derived 100% server-side from instances.List —
+	// never from client input — so DismissMany cannot be turned into a
+	// write-IDOR. One atomic multi-row write (no partial-commit-then-500 path).
+	ids := make([]uuid.UUID, 0, len(summaries))
 	for _, s := range summaries {
-		if err := h.dismissals.Dismiss(r.Context(), user, s.ID); err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss instances")
-			return
-		}
+		ids = append(ids, s.ID)
+	}
+	if err := h.dismissals.DismissMany(r.Context(), user, ids); err != nil {
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to dismiss instances")
+		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

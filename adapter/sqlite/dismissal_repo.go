@@ -32,6 +32,43 @@ ON CONFLICT(user_id, instance_id) DO NOTHING`
 	return nil
 }
 
+// DismissMany records all instanceIDs as dismissed by userID in one
+// transaction: either every row is written or none are, so there is no
+// partial-commit state. Each row is idempotent (ON CONFLICT DO NOTHING). An
+// empty slice is a no-op success.
+//
+// SECURITY: instanceIDs must be derived server-side by the caller (never from
+// client input), or this becomes a write-IDOR.
+func (r *DismissalRepo) DismissMany(ctx context.Context, userID uuid.UUID, instanceIDs []uuid.UUID) error {
+	if len(instanceIDs) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning dismiss-many transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO instance_dismissals (user_id, instance_id)
+VALUES (?, ?)
+ON CONFLICT(user_id, instance_id) DO NOTHING`)
+	if err != nil {
+		return fmt.Errorf("preparing dismiss-many statement: %w", err)
+	}
+	defer stmt.Close()
+
+	uid := uuidToString(userID)
+	for _, id := range instanceIDs {
+		if _, err := stmt.ExecContext(ctx, uid, uuidToString(id)); err != nil {
+			return fmt.Errorf("dismissing instance %s: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing dismiss-many transaction: %w", err)
+	}
+	return nil
+}
+
 // Restore removes the dismissal; deleting zero rows (not dismissed) is a no-op
 // success, matching the idempotent semantics in the design.
 func (r *DismissalRepo) Restore(ctx context.Context, userID, instanceID uuid.UUID) error {
