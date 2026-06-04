@@ -1,11 +1,14 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the **Vendor-Abstraction MVP** (`docs/specs/feature-pipeline-replacement-mvp.md`) for correctness, security, and robustness.
+This document tracks the systematic review of **Phase 6 — Multi-User & Auth**
+(`docs/specs/arbitron-phase6-spec.md`) for correctness, isolation, security, and
+robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
 
-A review pass is only checked when the checklist produces a passing result for that area.
+A review pass is only checked when the checklist (in `RALPH.md`) produces a passing
+result for that area.
 
 ---
 
@@ -13,23 +16,30 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Provider ports (`domain/engine/ports.go` — `ChatProvider`/`AgentProvider`, `Chat*`/`Agent*` types, `ChatProviderSelector`/`AgentProviderSelector`) | [x] | [x] | Done |
-| 2 | claude-cli adapters (`adapter/claudecli/` — `ChatAdapter` tool-suppression, `AgentAdapter` tools, `argsPolicy`/`buildArgs`, shared `CommandRunner`, stream-json parsing) | [x] | [x] | Done |
-| 3 | Profile registry & resolver (`domain/provider/provider.go`, `adapter/provider/static.go` — `Profile`, `ProfileKind`, `ProfileResolver`, `ResolvedBinding`, alias resolution) | [x] | [x] | Done |
-| 4 | LLM & agent executors (`domain/engine/executor_llm.go`, `executor_agent.go` — profile resolve, provider-agnostic structured output, workspace WorkDir) | [x] | [x] | Done |
-| 5 | Capability validation & loop lint (`domain/workflow/validation.go`, `lint.go` — kind-matching, connection-existence, `INTERACTIVE_IN_LOOP` advisory) | [x] | [x] | Done |
-| 6 | Crypto (`domain/provider/crypto.go`, `adapter/crypto/` — AES-256-GCM, nonce-per-seal, master-key bootstrap, fail-fast gate) | [x] | [x] | Done |
-| 7 | Connection store (`domain/provider/connection.go`, `adapter/sqlite/connection_repo.go`, `migrations/002_connections.*`, `queries/connections.sql` — CRUD, Reveal-only decrypt, Azure api-version rule) | [x] | [x] | Done |
-| 8 | OpenRouter chat adapter (`adapter/openrouter/` — chat/completions, Bearer auth, SSE streaming, structured output, usage) | [x] | [x] | Done |
-| 9 | Azure Foundry chat adapter (`adapter/azurefoundry/` — both topologies, deployment path + api-version, api-key header, serverless endpoint) | [x] | [x] | Done |
-| 10 | opencode agent backend (`adapter/opencode/` — single-shot `RunAgent`, `opencodeEnv` credential injection, `buildArgs` isolation) | [x] | [x] | Done |
-| 11 | Provider selection factory (`adapter/provider/factory.go`, `conn_checker.go` — provider→adapter mapping, empty→claude-cli) | [x] | [x] | Done |
-| 12 | Conditional & transform executors (`domain/engine/executor_conditional.go`, `executor_transform.go` — value template-resolution, numeric compare, counter increment) | [x] | [x] | Done |
-| 13 | Connection management surface (`adapter/mcp/tools_connection.go` — create/update/delete/get/list, key-in-never-out, name-only logging) | [x] | [x] | Done |
-| 14 | Composition root wiring (`cmd/arbitron/main.go` — adapters, resolver, selectors, checkers, fail-fast gate) | [x] | [x] | Done |
-| 15 | Config & profile loading (`domain/config/config.go`, `adapter/config/loader.go`, `profiles.go` — Profiles block, ConnectionRef/Params, precedence) | [x] | [x] | Done |
-| 16 | Native ralph loop example (`examples/workflows/native-ralph-loop/` — graph, templates, seed files, both bindings, termination on both exit branches) | [x] | [x] | Done |
-| 17 | Acceptance harness (`test/acceptance/` — #1–#7 scenarios, hermetic seams, config-diff & secrecy assertions) | [x] | [x] | Done |
+| 1 | Auth config & mode (`domain/config` AuthConfig/OIDC/Session/BootstrapAdmins, `adapter/config/loader.go` — defaults, org-mode fail-fast validation, secret redaction) | [ ] | [ ] | Pending |
+| 2 | Identity package (`domain/identity` — `Identity`/`Role`/`Mode`, `WithIdentity`/`FromContext`/`MustFromContext`, no import of `domain/instance`) | [ ] | [ ] | Pending |
+| 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [ ] | [ ] | Pending |
+| 4 | Users schema & repo (migration 003 sessions+`users.subject`/`users.email`; `instance.User`; `UserRepository` GetByID/GetBySubject/Create/UpdateUsername/List/UpdateRole/CountAdmins; sqlc) | [ ] | [ ] | Pending |
+| 5 | Session store (`adapter/sqlite` SessionRepo — SHA-256 hash-on-store, expiry filter, `DeleteExpired`, sweep; secrecy test) | [ ] | [ ] | Pending |
+| 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [ ] | [ ] | Pending |
+| 7 | Auth middleware (`adapter/http/auth_middleware.go` — local-mode admin injection; org-mode session→bearer resolve order; 401 vs login-redirect; covers REST/`/mcp`/WS) | [ ] | [ ] | Pending |
+| 8 | `/auth` handlers (`adapter/http` — login/callback/logout, signed state+nonce cookie, session cookie HttpOnly/SameSite/Secure, open-redirect-safe `next`) | [ ] | [ ] | Pending |
+| 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [ ] | [ ] | Pending |
+| 10 | Token service & surface (`TokenService` Mint/List/Revoke owner-scoped; REST `/api/v1/tokens`; MCP `token_create`/`token_list`/`token_revoke`; plaintext once, hash never echoed) | [ ] | [ ] | Pending |
+| 11 | Bearer-token auth path (`AuthMiddleware.resolve` bearer branch — prefix pre-filter, hashed `GetByHash`, async `TouchLastUsed`, revoked→401; REST/`/mcp`/WS) | [ ] | [ ] | Pending |
+| 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [ ] | [ ] | Pending |
+| 13 | JIT provisioning & bootstrap admin (`instance.Provisioner.Resolve` — GetBySubject-else-Create, default User, bootstrap promote email-ci-then-subject; wired in OIDC callback) | [ ] | [ ] | Pending |
+| 14 | Role management (`instance.UserService.SetRole` admin-only; bootstrap-admin floor; last-admin guard; REST `/api/v1/users`+`/role`; MCP `user_list`/`user_set_role`) | [ ] | [ ] | Pending |
+| 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [ ] | [ ] | Pending |
+| 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [ ] | [ ] | Pending |
+| 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [ ] | [ ] | Pending |
+| 18 | Publish/copy & publisher store (migration 006 `published_workflows`; `PublishedWorkflowRepo`; `Publish` publisher-only-overwrite+unique name; `Copy` independent; atomic `CopyTree`; REST+MCP) | [ ] | [ ] | Pending |
+| 19 | Flat-store migration & run-shared-directly (marker-guarded startup move into `users/<default-user>/`; `Trigger(ctx,...)` resolves visible scope, owner=triggering user) | [ ] | [ ] | Pending |
+| 20 | Instance list scoping (`instance.ListFilters.OwnerID`; `domain/engine/authz.go` `ownerConstraint`/`canView`; `Engine.ListInstances` service-set owner; `instances.sql` predicate; HTTP/MCP repointed) | [ ] | [ ] | Pending |
+| 21 | Instance read scoping (scoped `GetInstance`/`GetTrace`/`GetNodeTrace`/`GetVariables`/`GetVariableHistory` → `ErrNotFound` for non-viewers; HTTP+MCP reads) | [ ] | [ ] | Pending |
+| 22 | WebSocket scoping (per-instance connect authz before `Accept`; system stream `ScopedEvent` per-connection ownership filter, fail-closed; admins see all) | [ ] | [ ] | Pending |
+| 23 | Interactive participation gate (`conversationHandler.loadAndValidate` owner-or-admin chokepoint → WS/REST/MCP `HandleMessage`/`EndSession`; `interactive_get_history` scoped) | [ ] | [ ] | Pending |
+| 24 | Intervention authz & attribution (ctx-threaded Pause/Resume/Cancel/SetPriority/Retry/Rerun + `authorizeIntervention`; migration 007 `instance_interventions`; `recordIntervention` actor≠owner; `instance.intervened` event; REST `GET /interventions`+MCP `trace_interventions`) | [ ] | [ ] | Pending |
 
 ---
 
@@ -37,14 +47,16 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 18 | Provider ports + selection factory (port contract alignment; every provider string maps to an adapter; unknown→clear error) | [x] | Done |
-| 19 | Profile resolver + connection store (alias→profile→connection→binding; lazy `RevealKey` decrypts only at use; empty ConnectionRef→claude-cli no-key) | [x] | Done |
-| 20 | Capability validation + profile registry (kind-matching end-to-end; `agent_call`→chat fails before any run; unknown alias/connection errors) | [x] | Done |
-| 21 | Crypto + connection store (seal-on-write/Reveal-on-read; tampered/wrong-key → `ErrDecrypt`; no plaintext in any column) | [x] | Done |
-| 22 | opencode env-injection + connection resolution (credential delivered into the subprocess env; absent from logs and `workflow.json`) | [x] | Done |
-| 23 | Conditional executor + worked example (done-exit and `counter >= max` exit both genuinely reachable; loop terminates under the Claude binding) | [x] | Done |
-| 24 | Chat adapters (claudecli/openrouter/azurefoundry) + LLM executor (structured output parsed to a map uniformly regardless of backend; no double-parse) | [x] | Done |
-| 25 | Acceptance harness + all backends (scenarios exercise real selection/adapter/credential seams, not just unit happy paths) | [x] | Done |
+| 25 | Auth middleware + session store (cookie→hashed lookup→identity; expired/forged cookie never matches; sweep removes only past-due) | [ ] | Pending |
+| 26 | Auth middleware + token service (bearer→hashed `GetByHash`→identity; revoked token fails closed; one user cannot resolve another's token) | [ ] | Pending |
+| 27 | OIDC handlers + provisioner (callback exchange→JIT create→bootstrap-admin promotion; state/nonce binding; email persisted for later floor checks) | [ ] | Pending |
+| 28 | Device-code + token service (approval consumes the request exactly once and mints exactly one Arbitron token; never returns a raw IdP token) | [ ] | Pending |
+| 29 | Role management + bootstrap floor (`SetRole` and `Provisioner.IsBootstrapAdmin` share one rule; bootstrap admin cannot be demoted; last admin cannot be demoted) | [ ] | Pending |
+| 30 | Workflow scope/repo + workflow service authz (scope resolved from identity, not caller; edit-shared rejected; non-owner cannot reach another user's private path) | [ ] | Pending |
+| 31 | Publish/copy + published store (publisher-only-overwrite and unique-name authority in `published_workflows`; re-publish leaves running instances' snapshots untouched) | [ ] | Pending |
+| 32 | Trigger(ctx) + instance ownership + list/read scoping (run-shared-directly sets owner=triggering user; that owner is exactly what list/read scoping keys on) | [ ] | Pending |
+| 33 | Instance list/read scoping + MCP tools (REST and MCP return the identical scoped set for the same identity — the MCP/REST parity test, extended) | [ ] | Pending |
+| 34 | Intervention authz + attribution (gate allows owner-or-admin; an attribution row is written iff actor≠owner; the row is visible to owner+admins only) | [ ] | Pending |
 
 ---
 
@@ -53,21 +65,22 @@ A review pass is only checked when the checklist produces a passing result for t
 ### Single Area Reviews — What To Check
 
 **Pass 1 (Correctness & Coverage):**
-- All public functions have test coverage across the 5 categories (happy, success, failure, error, edge)
-- The code does what the design doc says, and satisfies the relevant acceptance criterion (#1–#7)
-- Error handling is thorough — no silent failures (especially the `agent_call`-narrates-but-doesn't-edit failure mode)
-- Module boundaries are clean (`domain/` imports no adapter; ports stay in `domain/`)
+- All public functions have test coverage across the 5 categories (happy, success, failure, error, edge).
+- The code does what the design doc says and satisfies the relevant spec success criterion (§8).
+- Error handling is thorough — no silent failures; auth/authz failures fail **closed**.
+- Module boundaries are clean (`domain/` imports no adapter; `domain/identity` imports no `domain/instance`).
 
-**Pass 2 (Robustness & Security):**
-- Code aligns to the spirit of the spec (intent vs. backend orthogonality), not surface conformance
-- Credential safety holds: keys never serialized to `workflow.json`, never logged, encrypted at rest
-- The component is ready to be extended (e.g. a future provider behind the same ports)
-- Edge cases handled (empty inputs, missing `{{workspace}}`, unresolved templates, malformed provider output)
+**Pass 2 (Robustness & Security / Isolation):**
+- Authorization lives in the domain service, so REST, WS, and MCP enforce the same rule — verify all three, not just REST.
+- Non-owner non-admin access returns `ErrNotFound` (existence never leaked), and a caller cannot widen scope by supplying another owner.
+- Secret hygiene: session/API tokens stored only as SHA-256 hashes, plaintext returned at most once, never echoed, never logged.
+- Local mode stays frictionless (default admin, no credential); org mode is the only mode that enforces credentials.
+- Edge cases: empty/expired/forged credentials, missing identity in context, traversal/cross-scope path escapes, re-publish during a running instance.
 
 ### Paired Area Reviews — What To Check
 
 Paired reviews verify two components integrate correctly:
-- Data flows cleanly across the boundary (binding fields, resolved credentials, parsed output)
-- Error propagation works end-to-end (resolve error → executor → instance failure)
-- No assumptions in one component the other doesn't satisfy (e.g. structured output shape)
-- Integration/acceptance tests cover the seams between the pair, not just unit happy paths
+- Data flows cleanly across the boundary (identity → scope → owner filter; claims → user → role).
+- Error propagation works end-to-end (auth failure → 401; authz failure → ErrNotFound/ErrForbidden; resolve error → instance failure).
+- No assumption in one component the other doesn't satisfy (e.g. the hashing scheme, the bootstrap-admin rule, the snapshot-at-trigger invariant).
+- Integration/parity tests cover the seam (especially REST↔MCP parity and the cross-surface isolation guarantee), not just unit happy paths.

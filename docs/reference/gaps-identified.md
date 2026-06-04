@@ -4,15 +4,22 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none)_
+### NOTIF-001: Notification list is not scoped per user
+**Area**: Instance read scoping / notifications (`adapter/http/notification_handler.go` `List`, MCP `notification_list`, `adapter/sqlite/notification_repo.go`, migration)
+**Detail**: Phase 4 read scoping returns `ErrNotFound` for non-owners on instances/traces/variables, but the **notification list is not yet owner-scoped**. The `notifications` table has only an `instance_id` FK and **no owner/user_id column**, so the list cannot be filtered to the requesting identity without a schema change. This is a real isolation gap in org mode: a non-admin could currently list notifications that are not theirs.
+**Fix direction**: Add a migration introducing an owner column on `notifications` (or join through the owning instance's `OwnerID`), then add an identity-aware list service mirroring `Engine.ListInstances` and repoint **both** `notification_handler.List` and the MCP `notification_list` tool at it. Add isolation tests (non-admin sees only own; admin sees all) across REST and MCP. Note migrations 003–007 are taken; use the next free number.
+
+### TEST-002: Thin adapter-level end-to-end authz coverage
+**Area**: `adapter/http` / `adapter/mcp` integration tests
+**Detail**: Per-user scoping is well unit-tested in `domain/engine` (`engine_list_test.go`, `engine_read_test.go`, `conversation_authz_test.go`, `engine_intervention_authz_test.go`, `engine_intervention_attr_test.go`) and proven cross-surface by the MCP/REST parity test, but several adapter tests delegate the scoped service to the underlying repos (admin-equivalent) so legacy behavior tests stay green. There is little coverage that drives the **real** engine through the HTTP router (and the MCP handler) with a **non-admin** identity in context end-to-end.
+**Fix direction**: Add a small set of end-to-end adapter tests that construct the real engine + router with a non-admin identity injected (as the auth middleware would) and assert: list returns only own; get/trace/variables on another user's instance → 404; WS per-instance connect rejected; interactive send/end rejected; intervention rejected. Mirror for the MCP handler to lock in parity.
+
+### ATTR-003 (optional): Interventions not folded inline into the trace payload
+**Area**: Instance trace surface (`adapter/http` trace handler, MCP `trace`)
+**Detail**: Admin interventions are exposed via a dedicated `GET /api/v1/instances/{id}/interventions` endpoint and the `trace_interventions` MCP tool rather than inline in the existing `GET /trace` array response. This was a deliberate choice to avoid breaking the trace contract the dashboard consumes. Functionally complete; this item is only about presentation.
+**Fix direction**: If the product wants interventions inline, introduce a versioned/object-shaped trace response and update the dashboard consumer accordingly. Otherwise the user may move this to Won't Fix.
 
 ## Fixed Previously
-
-### FACTORY-001: MaxResponseBytes not configurable via Deps / Factory
-**Area**: Provider selection factory (`adapter/provider/factory.go`)
-**Fixed**: FA#18
-**What was wrong**: `openrouter.Config` and `azurefoundry.Config` both accept a `MaxResponseBytes` field, but the `Deps` struct had no corresponding field — so the factory always constructed HTTP adapters with `MaxResponseBytes: 0` (no cap). A malicious or buggy backend could exhaust memory.
-**How it was fixed**: Added `MaxResponseBytes int64` to `Deps` and threaded it into both `openrouter.Config` and `azurefoundry.Config` in `ChatProviderFor`. Added `TestFactory_ChatProviderFor_ThreadsMaxResponseBytes` to prove the Deps field exists and construction succeeds for both adapter types.
 
 <!--
 Example of a fixed issue entry:
@@ -23,26 +30,28 @@ Example of a fixed issue entry:
 **Detail**: ...
 -->
 
+_(none yet — this is the seed state.)_
+
 ## Won't Fix (Beyond Current Scope)
 
-_(items logged here are accepted MVP limitations or out-of-scope enhancements — only the user can add to or move items in this section. The entries below are pre-seeded from the spec's documented non-goals/known risks (§9) and the opencode spike finding, so the loop does NOT spend iterations "fixing" them.)_
+_(items logged here are accepted limitations or out-of-scope enhancements — only the user can add to or move items in this section. Pre-seeded from the Phase 6 spec's out-of-scope boundary so the loop does NOT spend iterations building deferred work.)_
 
-### LOOP-W01: No engine-level runaway guard
-**Area**: Engine loop (`domain/engine/engine.go`), native ralph loop
-**Detail**: Loop termination depends solely on the author's `conditional` (spec §9, accepted MVP risk). A malformed loop can run indefinitely. Do NOT add a max-node-execution or wall-clock cap — that is explicitly deferred future work, not an MVP gap.
+### SCOPE-W01: Scheduled & webhook triggers
+**Area**: Triggers
+**Detail**: Scheduled (cron) and webhook triggers are **Phase 7**, explicitly out of scope for Phase 6 (spec "Overview"). Do not build trigger types here.
 
-### OPENCODE-W02: opencode multi-provider routing / session resume limited by installed binary
-**Area**: opencode agent backend (`adapter/opencode/`)
-**Detail**: The installed opencode (v0.0.55) has no `run --model <provider/model>`, no `--resume`/`serve`, and authenticates via `ANTHROPIC_API_KEY` only (see `docs/superpowers/specs/vendor-abstraction-opencode-spike-finding.md`). The adapter is intentionally single-shot mission-per-step with `buildArgs` isolated for a future build. Do NOT try to add `--model`/resume against this binary; re-verify only if a newer opencode build is targeted.
-
-### SCOPE-W03: Fan-out / fan-in parallelism and a first-class loop primitive
+### SCOPE-W02: Parallel fan-out / fan-in execution
 **Area**: Engine
-**Detail**: Parallel execution (Phase 8) and a dedicated loop/iteration construct are explicit non-goals (spec §9). The cyclic-edge idiom is the supported mechanism; do not build a new primitive.
+**Detail**: Fan-out/fan-in parallel branch execution is **Phase 8**, out of scope for Phase 6. Do not build it here.
 
-### SCOPE-W04: interactive node future Messages-API backend
-**Area**: Interactive executor (`domain/engine/executor_interactive.go`)
-**Detail**: The `interactive` node remains on its existing claude-cli streaming path; its rework to a Messages-API chat adapter that resumes via a conversation array is deferred (spec §4/§9). Out of scope for this MVP.
+### SCOPE-W03: Granular per-token permission scopes
+**Area**: Personal API tokens
+**Detail**: A personal API token carries the **full permissions of its owning user**; per-token granular scopes are explicitly deferred (spec §2). Tokens are made safe by being individually revocable. Do not add scope/permission fields to tokens in this phase.
 
-### SCOPE-W05: Coarse cost accounting for agent_call
-**Area**: Agent executors / harness backends
-**Detail**: Token/cost visibility for subprocess harnesses (claude-cli agent, opencode) is coarser than native chat calls. Accepted for MVP (spec §9).
+### SCOPE-W04: Resource-server / per-request IdP token validation
+**Area**: Auth model
+**Detail**: The credential model is deliberately Arbitron-native (sessions + tokens; IdP only at login). Validating IdP-issued JWTs on every request was considered and rejected. Do not introduce per-request IdP/JWKS validation.
+
+### SCOPE-W05: Admin approval gate for publishing
+**Area**: Publishing
+**Detail**: Publishing is **self-service** by design (any User may publish; spec §4 "Defaults"). Do not add an admin approval workflow.
