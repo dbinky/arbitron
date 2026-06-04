@@ -14,8 +14,8 @@ import (
 // using only the persisted User.
 type User struct {
 	ID       uuid.UUID
-	Subject  *string // nullable: the default user has none
-	Email    *string // nullable: IdP email claim; bootstrap-admin match authority
+	Subject  *string        `json:"-"` // nullable: IdP-stable sub; never serialized to client responses
+	Email    *string        `json:"-"` // nullable: IdP email; never serialized to client responses
 	Username string
 	Role     identity.Role
 }

@@ -8,6 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
+### GAP-FA4-P2-01: `User.Subject` and `User.Email` had no `json:"-"` tag; MCP had no IdP-field non-leakage assertions
+**Area**: Focus Area 4 — Users schema & repo (Pass 2)
+**Fix**: Added `json:"-"` to `User.Subject` and `User.Email` in `domain/instance/user.go`. Added `TestUser_JSONMarshal_IdPFieldsNeverLeak` in `domain/instance/user_test.go`. Strengthened `TestUserHandler_HappyPath` (HTTP) to seed Subject/Email values and assert both values and field names are absent from the list response. Strengthened `TestUserTools_HappyPath` (MCP) with the same assertions for `user_list`. Pattern mirrors the FA-3 `Token.TokenHash`/`DeviceCode.HashedCode` fix.
+
 ### GAP-FA4-P1-01: `UpdateUsername`, `List`, `UpdateRole`, `CountAdmins` had no test coverage
 **Area**: Focus Area 4 — Users schema & repo (Pass 1)
 **Fix**: Added 6 tests to `adapter/sqlite/user_repo_test.go`: `TestUserRepo_UpdateUsername_ChangesDisplayName`, `TestUserRepo_UpdateUsername_NonExistentUserNoError` (documents silent-no-op contract), `TestUserRepo_List_ReturnsAllUsers`, `TestUserRepo_UpdateRole_ChangesRole`, `TestUserRepo_UpdateRole_NonExistentUserNoError`, `TestUserRepo_CountAdmins_ReflectsCurrentAdmins` (covers initial state, add second admin, demote back to 1).

@@ -37,11 +37,11 @@ func userHTTPReq(method, target, body string, role identity.Role, idParam string
 	return r
 }
 
-// Happy path: admin promotes; GET /users returns userView without subject.
+// Happy path: admin promotes; GET /users returns userView without subject or email.
 func TestUserHandler_HappyPath(t *testing.T) {
 	h, repo := newUserHandler()
 	target := uuid.New()
-	repo.byID[target] = &instance.User{ID: target, Subject: strptrH("sub"), Username: "u", Role: identity.RoleUser}
+	repo.byID[target] = &instance.User{ID: target, Subject: strptrH("sub-secret"), Email: strptrH("u@example.com"), Username: "u", Role: identity.RoleUser}
 
 	w := httptest.NewRecorder()
 	h.SetRole(w, userHTTPReq(http.MethodPut, "/users/"+target.String()+"/role", `{"role":"admin"}`, identity.RoleAdmin, target.String()))
@@ -52,7 +52,10 @@ func TestUserHandler_HappyPath(t *testing.T) {
 	h.List(wl, userHTTPReq(http.MethodGet, "/users", "", identity.RoleAdmin, ""))
 	require.Equal(t, http.StatusOK, wl.Code)
 	body := wl.Body.String()
-	assert.NotContains(t, body, "subject", "admin list must not leak IdP subject")
+	assert.NotContains(t, body, "sub-secret", "admin list must not leak IdP subject value")
+	assert.NotContains(t, body, "u@example.com", "admin list must not leak IdP email value")
+	assert.NotContains(t, body, "subject", "admin list must not leak 'subject' field name")
+	assert.NotContains(t, body, "email", "admin list must not leak 'email' field name")
 	var views []userView
 	require.NoError(t, json.Unmarshal([]byte(body), &views))
 	assert.Len(t, views, 1)
