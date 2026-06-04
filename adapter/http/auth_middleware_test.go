@@ -331,6 +331,24 @@ func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		assert.Empty(t, rec.Header().Get("Location"), "POST must not redirect")
 	})
+
+	t.Run("deep-link with query params fully encoded in next", func(t *testing.T) {
+		// A user deep-linking to /instances/abc?tab=logs before auth must be
+		// redirected back to that exact URL after login. RequestURI() returns the
+		// path+query, and url.QueryEscape encodes both ? and & so the next
+		// parameter is a single valid query value. The auth handler's sanitizeNext
+		// decodes it and verifies it starts with /.
+		req := httptest.NewRequest(http.MethodGet, "/instances/abc?tab=logs&page=2", nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusFound, rec.Code)
+		assert.Equal(t,
+			"/auth/login?next=%2Finstances%2Fabc%3Ftab%3Dlogs%26page%3D2",
+			rec.Header().Get("Location"),
+			"query parameters in the original URL must be fully encoded into the next param",
+		)
+	})
 }
 
 func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {

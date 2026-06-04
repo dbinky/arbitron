@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA7-P2-01: Browser-nav redirect did not have a test for URLs with query parameters
+**Area**: Focus Area 7 — Auth middleware (Pass 2)
+**Fix**: Added `t.Run("deep-link with query params fully encoded in next")` inside `TestAuthMiddleware_Org_BrowserNav_Redirects`. Sends an unauthenticated GET to `/instances/abc?tab=logs&page=2` with `Accept: text/html` and asserts the redirect Location is `/auth/login?next=%2Finstances%2Fabc%3Ftab%3Dlogs%26page%3D2`. Documents that `url.QueryEscape(r.URL.RequestURI())` correctly encodes both the path separator and the query string delimiters, so the user lands back at the exact deep-linked URL after login.
+
 ### GAP-FA7-P1-01: Local-mode error path (GetDefaultUser failure) had no test
 **Area**: Focus Area 7 — Auth middleware (Pass 1)
 **Fix**: Added `errUserRepo` wrapper (returns `errors.New("db unavailable")` from `GetDefaultUser`) and `TestAuthMiddleware_Local_DefaultUserError_FailsClosed`. The test sends three requests and asserts all get 401 — documenting that the `sync.Once`-cached error is permanent (fail-closed) and the handler is never invoked. Covers the "error" scenario category for local mode that was previously missing.
