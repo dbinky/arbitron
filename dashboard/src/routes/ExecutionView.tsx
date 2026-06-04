@@ -8,6 +8,7 @@ import type { WorkflowDefinition, NodeExecutionState } from '../graph/types'
 import { api } from '../api/client'
 import { useGraphLayout, NODE_WIDTH, NODE_HEIGHT } from '../graph/useGraphLayout'
 import { selectAnchorNodeId } from '../graph/selectAnchorNodeId'
+import { DEFAULT_ZOOM } from '../graph/constants'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { edgeTypes } from '../graph/edges/edgeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
@@ -20,8 +21,6 @@ import ResizablePanel from '../components/ResizablePanel'
 import SidePanel from '../components/SidePanel'
 import InteractivePanel from '../components/InteractivePanel'
 import styles from './ExecutionView.module.css'
-
-const DEFAULT_ZOOM = 0.9
 
 /**
  * Map trace data + instance state onto per-node execution states for the graph.
