@@ -272,6 +272,32 @@ describe('GraphView — default-zoom centering on mount', () => {
     )
   })
 
+  it('falls back to centering on the source node when currentNodeId is not in the graph', () => {
+    // selectAnchorNodeId returns the source node when currentNodeId is missing from
+    // workflowDef (e.g. schema mismatch, deleted node mid-run). The integration chain
+    // must propagate this fallback all the way to setCenter without crashing.
+    const ghostInstance = {
+      currentNodeId: 'ghost-not-in-graph',
+      state: 'running',
+    } as unknown as Instance
+    render(
+      <GraphView
+        instance={ghostInstance}
+        workflowDef={workflowDef}
+        trace={trace}
+        onNodeClick={() => {}}
+        selectedNodeId={null}
+      />,
+    )
+    // 'a' has no incoming edge in workflowDef, so it is the source-node fallback.
+    const aNode = lastReactFlowProps!.nodes.find((n) => n.id === 'a')!
+    expect(setCenterSpy).toHaveBeenCalledWith(
+      aNode.position!.x + 100,
+      aNode.position!.y + 40,
+      expect.objectContaining({ zoom: 0.9 }),
+    )
+  })
+
   it('centers on the entry node for a static workflow preview (no instance)', () => {
     const previewDef: typeof workflowDef = {
       ...workflowDef,

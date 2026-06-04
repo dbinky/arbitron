@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### VIEW-002: Ghost-currentNodeId fallback untested at integration level
+**Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: Iteration 8
+**Detail**: `selectAnchorNodeId.test.ts` covers the case where `currentNodeId` is not in the graph (ghost ID, e.g. deleted node mid-run) returning the source node fallback. But `GraphView.test.tsx` had no integration test exercising this full chain: ghost ID → `selectAnchorNodeId` fallback → `anchorPos` resolved → `setCenter` called on source node. Added "falls back to centering on the source node when currentNodeId is not in the graph" to the `default-zoom centering on mount` describe block.
+
 ### VIEW-001: One-shot mount-centering guard untested
 **Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
 **Fixed**: Iteration 7
