@@ -813,6 +813,46 @@ func TestLoad_AuthMode_FromEnv(t *testing.T) {
 	})
 }
 
+// TestLoad_AuthBootstrapAdmins_FromYAML verifies that bootstrap admins load
+// correctly from a YAML list. The env path is already tested; this covers the
+// YAML-native list form which is the typical deployment pattern.
+// Bootstrap admins are promoted to Admin on first login, making the YAML path
+// security-critical: a silent regression would leave no admins after fresh setup.
+func TestLoad_AuthBootstrapAdmins_FromYAML(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  bootstrapadmins:
+    - "alice@example.com"
+    - "bob@example.com"
+    - "sub|abc123"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice@example.com", "bob@example.com", "sub|abc123"},
+		cfg.Auth.BootstrapAdmins,
+		"bootstrap admins must load from YAML list with preserved order and values")
+}
+
+// TestLoad_AuthSession_CookieSecure_Override verifies that CookieSecure can be
+// explicitly set to false via YAML, which is the supported path for local HTTP
+// dev (the config template comments say so). The default (true) is tested
+// elsewhere; this closes the coverage gap on the false override.
+func TestLoad_AuthSession_CookieSecure_Override(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := "auth:\n  session:\n    cookiesecure: false\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.False(t, cfg.Auth.Session.CookieSecure,
+		"CookieSecure must be overridable to false via YAML for local HTTP dev")
+}
+
 // TestLoad_AuthSession_EmptyCookieNameFallback verifies that an explicitly
 // blank session.cookiename in YAML is replaced with the hardcoded default
 // during normalization — an empty cookie name would silently break all session

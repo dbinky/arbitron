@@ -55,6 +55,29 @@ func TestRedact_PartialOIDC_NotConfigured(t *testing.T) {
 		"OIDCConfigured must be false when ClientSecret is absent — a partial config is not operational")
 }
 
+// A whitespace-only ClientSecret must produce OIDCConfigured=false because
+// validateAuth uses TrimSpace to decide whether the field is set; Redact must
+// use the same definition so both functions agree on "is OIDC operational."
+func TestRedact_WhitespaceClientSecret_NotConfigured(t *testing.T) {
+	cfg := &Config{
+		Auth: AuthConfig{
+			Mode: AuthModeLocal,
+			OIDC: OIDCConfig{
+				IssuerURL: "https://idp.example.com",
+				ClientID:  "client",
+				// ClientSecret is whitespace only — validateAuth would reject this
+				// in org mode; local mode never validates it, but Redact must still
+				// report it as not configured.
+				ClientSecret: "   ",
+				RedirectURL:  "https://app.example.com/auth/callback",
+			},
+		},
+	}
+	red := Redact(cfg, TeamsConfig{})
+	assert.False(t, red.Auth.OIDCConfigured,
+		"whitespace-only ClientSecret must report OIDCConfigured=false, consistent with validateAuth")
+}
+
 // The redacted JSON must not contain any raw OIDC field values (clientid,
 // issuerurl, redirecturl). RedactedAuth uses a positive allow-list so none of
 // these fields are serializable, but this test guards against regression if the

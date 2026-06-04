@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // RedactedConfig is the safe-to-echo projection of Config shared by every read
 // surface (HTTP GET /system/config and the MCP system_config tool).
 //
@@ -98,7 +100,7 @@ func Redact(cfg *Config, teams TeamsConfig) RedactedConfig {
 		},
 		Auth: RedactedAuth{
 			Mode:           cfg.Auth.Mode,
-			OIDCConfigured: cfg.Auth.OIDC.ClientSecret != "",
+			OIDCConfigured: strings.TrimSpace(cfg.Auth.OIDC.ClientSecret) != "",
 		},
 	}
 }

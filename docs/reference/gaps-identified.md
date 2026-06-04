@@ -8,7 +8,17 @@ _(none)_
 
 ## Fixed Previously
 
-_(none yet)_
+### GAP-FA1-01: `OIDCConfigured` in `Redact` ignored whitespace-only secret
+**Area**: Focus Area 1 — Auth config & mode
+**Fix**: Changed `cfg.Auth.OIDC.ClientSecret != ""` to `strings.TrimSpace(cfg.Auth.OIDC.ClientSecret) != ""` in `domain/config/redact.go`, aligning `Redact` with `validateAuth`'s definition of "configured." Added `TestRedact_WhitespaceClientSecret_NotConfigured`.
+
+### GAP-FA1-02: BootstrapAdmins from YAML had no test
+**Area**: Focus Area 1 — Auth config & mode
+**Fix**: Added `TestLoad_AuthBootstrapAdmins_FromYAML` in `adapter/config/loader_test.go` verifying YAML native-list loading for the security-critical bootstrap admins field.
+
+### GAP-FA1-03: Session CookieSecure=false via YAML had no test
+**Area**: Focus Area 1 — Auth config & mode
+**Fix**: Added `TestLoad_AuthSession_CookieSecure_Override` in `adapter/config/loader_test.go` verifying CookieSecure can be set to false via YAML for local HTTP dev.
 
 ## Won't Fix (Beyond Current Scope)
 
