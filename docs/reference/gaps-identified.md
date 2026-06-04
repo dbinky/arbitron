@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### REPO-001: DismissedIDs multi-instance iteration untested
+**Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
+**Fixed**: Iteration 11
+**Detail**: Every existing test for `DismissedIDs` used 0 or 1 dismissed entries. The `rows.Next()` loop was never exercised with multiple entries, so a bug in that loop (early exit, missed rows) would not have been caught. Added `TestDismissalRepo_DismissedIDsMultipleInstances` which dismisses 3 instances for one user and asserts all 3 appear in the returned map.
+
 ### FOLLOW-002: Recenter-after-advance-while-paused behavior untested
 **Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
 **Fixed**: Iteration 10

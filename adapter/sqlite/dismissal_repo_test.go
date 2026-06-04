@@ -132,6 +132,28 @@ func TestDismissalRepo_DismissedIDsEmpty(t *testing.T) {
 // Success
 // ---------------------------------------------------------------------------
 
+// Success: DismissedIDs returns all dismissed instances, exercising the rows
+// iteration loop with more than one entry.
+func TestDismissalRepo_DismissedIDsMultipleInstances(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	user := localUserID(t)
+	inst1 := seedInstance(t, db, user, "completed")
+	inst2 := seedInstance(t, db, user, "failed")
+	inst3 := seedInstance(t, db, user, "completed")
+
+	require.NoError(t, repo.Dismiss(ctx, user, inst1))
+	require.NoError(t, repo.Dismiss(ctx, user, inst2))
+	require.NoError(t, repo.Dismiss(ctx, user, inst3))
+
+	ids, err := repo.DismissedIDs(ctx, user)
+	require.NoError(t, err)
+	assert.Len(t, ids, 3)
+	assert.True(t, ids[inst1])
+	assert.True(t, ids[inst2])
+	assert.True(t, ids[inst3])
+}
+
 // Success: Dismiss then Restore removes the dismissal.
 func TestDismissalRepo_DismissThenRestore(t *testing.T) {
 	repo, db := newDismissalRepo(t)
