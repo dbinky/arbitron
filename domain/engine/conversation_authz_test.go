@@ -79,6 +79,34 @@ func TestConversationAuthz_OwnerWrongState_StateError(t *testing.T) {
 	assert.NotErrorIs(t, err, instance.ErrNotFound)
 }
 
+// --- Edge: no identity in context → fail-closed (identical response to non-owner) ---
+
+func TestConversationAuthz_NoIdentity_FailClosed(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	// context.Background() carries no identity. canView() returns false → loadAndValidate
+	// returns ErrNotFound before any state is revealed. This pins the fail-closed invariant:
+	// an unauthenticated request (e.g. auth middleware misconfiguration) behaves identically
+	// to a non-owner request — existence and state are both withheld.
+	err := handler.HandleMessage(context.Background(), instanceID, "intrusion")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound, "no-identity → ErrNotFound (fail-closed)")
+	assert.NotErrorIs(t, err, instance.ErrNotInteractiveWait, "state must not be revealed to unauthenticated caller")
+
+	_, err = handler.EndSession(context.Background(), instanceID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound, "EndSession is also fail-closed for no-identity context")
+	assert.NotErrorIs(t, err, instance.ErrNotInteractiveWait)
+
+	// No mutation: LLM was never invoked; no interactive events were published.
+	assert.Empty(t, llmProvider.getCapturedReqs(), "LLM must not run for unauthenticated caller")
+	assert.Empty(t, eventBus.eventsOfType(instanceID, "interactive.message"), "no interactive event published")
+	assert.Empty(t, eventBus.eventsOfType(instanceID, "interactive.ended"), "no interactive event published")
+	inst, _ := instRepo.Get(context.Background(), instanceID)
+	assert.Equal(t, instance.StateWaiting, inst.State, "instance state is untouched")
+}
+
 // --- Isolation/security: non-owner non-admin is refused with ErrNotFound, no mutation ---
 
 func TestConversationAuthz_NonOwner_RefusedNoMutation(t *testing.T) {

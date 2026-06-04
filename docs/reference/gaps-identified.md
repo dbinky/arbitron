@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA23-P2-01: `conversationHandler` missing no-identity fail-closed test
+**Area**: Focus Area 23 — Interactive participation gate (Pass 2)
+**Fix**: Added `TestConversationAuthz_NoIdentity_FailClosed` to `domain/engine/conversation_authz_test.go`. The test calls `HandleMessage` and `EndSession` with `context.Background()` (no identity in context) and asserts: (1) both return `ErrNotFound`, (2) neither returns `ErrNotInteractiveWait` (state not revealed), (3) the LLM stream was never invoked, (4) no interactive events were published, (5) instance state is untouched. This pins the fail-closed invariant in `canView`: `identity.FromContext` returning `!ok` → `canView` returns `false` → `loadAndValidate` wraps `ErrNotFound`. The behavior is identical to a non-owner (no existence leak), which is the expected defense-in-depth response to an unauthenticated caller that somehow bypasses the auth middleware. Mirrors the `TestStreamHandler_ConnectAuthorization` no-identity sub-test added in FA-22 P1 for the WS handler.
+
 ### GAP-FA23-P1-01: `interactive_end_session` MCP tool missing non-owner test
 **Area**: Focus Area 23 — Interactive participation gate (Pass 1)
 **Fix**: Added `"non-owner gets the not-found tool error (gate enforced in the service)"` sub-test to `TestInteractiveEndSession` in `adapter/mcp/tools_interactive_test.go`. The test injects `instance.ErrNotFound` from the mock `ConversationHandler.EndSession` (the error the ownership gate in `loadAndValidate` returns for a non-owner) and asserts the tool result is an error containing "not found" — byte-for-byte identical to a missing instance, no existence leak. This mirrors the equivalent test already present in `TestInteractiveSendMessage`, closing the asymmetric coverage gap. The domain-level gate (`conversation_authz_test.go`) and the HTTP adapter (`TestInteractiveHandler_EndSession_NonOwner`) both already had non-owner tests; the MCP `end_session` surface was the only one that did not.

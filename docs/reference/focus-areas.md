@@ -38,7 +38,7 @@ result for that area.
 | 20 | Instance list scoping (`instance.ListFilters.OwnerID`; `domain/engine/authz.go` `ownerConstraint`/`canView`; `Engine.ListInstances` service-set owner; `instances.sql` predicate; HTTP/MCP repointed) | [x] | [x] | Done |
 | 21 | Instance read scoping (scoped `GetInstance`/`GetTrace`/`GetNodeTrace`/`GetVariables`/`GetVariableHistory` → `ErrNotFound` for non-viewers; HTTP+MCP reads) | [x] | [x] | Done |
 | 22 | WebSocket scoping (per-instance connect authz before `Accept`; system stream `ScopedEvent` per-connection ownership filter, fail-closed; admins see all) | [x] | [x] | Done |
-| 23 | Interactive participation gate (`conversationHandler.loadAndValidate` owner-or-admin chokepoint → WS/REST/MCP `HandleMessage`/`EndSession`; `interactive_get_history` scoped) | [x] | [ ] | Pending |
+| 23 | Interactive participation gate (`conversationHandler.loadAndValidate` owner-or-admin chokepoint → WS/REST/MCP `HandleMessage`/`EndSession`; `interactive_get_history` scoped) | [x] | [x] | Done |
 | 24 | Intervention authz & attribution (ctx-threaded Pause/Resume/Cancel/SetPriority/Retry/Rerun + `authorizeIntervention`; migration 007 `instance_interventions`; `recordIntervention` actor≠owner; `instance.intervened` event; REST `GET /interventions`+MCP `trace_interventions`) | [ ] | [ ] | Pending |
 
 ---
