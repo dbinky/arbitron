@@ -122,6 +122,33 @@ func TestUserHandler_DemotionFloors(t *testing.T) {
 	assert.Contains(t, w2.Body.String(), "bootstrap")
 }
 
+// Boundary/security: bootstrap floor uses case-insensitive email normalization —
+// the same rule as the provisioner — so a user provisioned with "Boss@Example.com"
+// cannot be demoted even when the bootstrap list stores "boss@example.com".
+func TestUserHandler_BootstrapFloor_CaseInsensitiveEmail(t *testing.T) {
+	// Bootstrap list stores the lowercase canonical form.
+	h, repo := newUserHandler("boss@example.com")
+	boss := uuid.New()
+	other := uuid.New()
+	// Seed the user with the MIXED-CASE email as it arrived from the IdP.
+	repo.byID[boss] = &instance.User{
+		ID:      boss,
+		Subject: strptrH("boss-sub"),
+		Email:   strptrH("Boss@Example.com"), // mixed case; bootstrap list has "boss@example.com"
+		Role:    identity.RoleAdmin,
+	}
+	repo.byID[other] = &instance.User{ID: other, Subject: strptrH("other"), Role: identity.RoleAdmin}
+
+	w := httptest.NewRecorder()
+	h.SetRole(w, userHTTPReq(http.MethodPut, "/users/"+boss.String()+"/role", `{"role":"user"}`, identity.RoleAdmin, boss.String()))
+	assert.Equal(t, http.StatusConflict, w.Code,
+		"bootstrap floor must fire even when persisted email case differs from bootstrap list entry")
+	assert.Contains(t, w.Body.String(), "bootstrap",
+		"response must name the bootstrap floor, not the last-admin floor")
+	// The user's role must be unchanged.
+	assert.Equal(t, identity.RoleAdmin, repo.byID[boss].Role)
+}
+
 // Isolation/security: non-admin -> 403 on both; unauthenticated -> 401 on both.
 func TestUserHandler_Security(t *testing.T) {
 	h, repo := newUserHandler()

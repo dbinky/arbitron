@@ -51,7 +51,7 @@ result for that area.
 | 26 | Auth middleware + token service (bearer→hashed `GetByHash`→identity; revoked token fails closed; one user cannot resolve another's token) | [x] | Done |
 | 27 | OIDC handlers + provisioner (callback exchange→JIT create→bootstrap-admin promotion; state/nonce binding; email persisted for later floor checks) | [x] | Done |
 | 28 | Device-code + token service (approval consumes the request exactly once and mints exactly one Arbitron token; never returns a raw IdP token) | [x] | Done |
-| 29 | Role management + bootstrap floor (`SetRole` and `Provisioner.IsBootstrapAdmin` share one rule; bootstrap admin cannot be demoted; last admin cannot be demoted) | [ ] | Pending |
+| 29 | Role management + bootstrap floor (`SetRole` and `Provisioner.IsBootstrapAdmin` share one rule; bootstrap admin cannot be demoted; last admin cannot be demoted) | [x] | Done |
 | 30 | Workflow scope/repo + workflow service authz (scope resolved from identity, not caller; edit-shared rejected; non-owner cannot reach another user's private path) | [ ] | Pending |
 | 31 | Publish/copy + published store (publisher-only-overwrite and unique-name authority in `published_workflows`; re-publish leaves running instances' snapshots untouched) | [ ] | Pending |
 | 32 | Trigger(ctx) + instance ownership + list/read scoping (run-shared-directly sets owner=triggering user; that owner is exactly what list/read scoping keys on) | [ ] | Pending |
