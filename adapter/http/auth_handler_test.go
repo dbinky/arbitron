@@ -63,6 +63,45 @@ func (r *failingCreateUserRepo) Create(_ context.Context, _ *instance.User) erro
 	return errors.New("db write error")
 }
 
+// fakeProvisioner is a one-method provisioner double proving the handler depends
+// on the userProvisioner interface (consumer-side), not the concrete
+// *instance.Provisioner. It records the Claims it was called with.
+type fakeProvisioner struct {
+	resolved  *instance.User
+	err       error
+	gotClaims instance.Claims
+	calls     int
+}
+
+func (f *fakeProvisioner) Resolve(_ context.Context, c instance.Claims) (*instance.User, error) {
+	f.calls++
+	f.gotClaims = c
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.resolved, nil
+}
+
+// The handler must accept any userProvisioner, so a fake (not the concrete
+// *instance.Provisioner) can be injected for unit tests.
+func TestAuthHandler_UsesProvisionerInterface(t *testing.T) {
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "sub-x", Username: "x", Email: "x@y.com", EmailVerified: true}}
+	sessions := newFakeSessionRepo()
+	users := newFakeUserRepo()
+	uid := uuid.New()
+	prov := &fakeProvisioner{resolved: &instance.User{ID: uid, Username: "x", Role: identity.RoleUser}}
+
+	h := NewAuthHandler(oidc, sessions, users, prov, config.SessionConfig{
+		TTLSeconds: 3600, CookieName: "arbitron_session", CookieSecure: true,
+	})
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	require.Equal(t, http.StatusFound, rec.Code)
+	assert.Equal(t, 1, prov.calls, "handler must delegate to the injected provisioner")
+	assert.Equal(t, "sub-x", prov.gotClaims.Subject)
+	assert.True(t, prov.gotClaims.EmailVerified, "email_verified must be forwarded to the provisioner")
+}
+
 func newAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository) *AuthHandler {
 	return newAuthHandlerWithBootstrap(oidc, sessions, users)
 }

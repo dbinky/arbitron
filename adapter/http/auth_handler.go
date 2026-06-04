@@ -16,6 +16,14 @@ import (
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
+// userProvisioner is the consumer-side seam the handler needs: resolve verified
+// claims to a persisted user (JIT-creating on first sight). Defined HERE (the
+// consumer) rather than depending on the concrete *instance.Provisioner, so the
+// handler is unit-testable with a fake. *instance.Provisioner satisfies it.
+type userProvisioner interface {
+	Resolve(ctx context.Context, c instance.Claims) (*instance.User, error)
+}
+
 // AuthHandler serves the browser OIDC login flow. It lives OUTSIDE the auth
 // middleware: these routes establish the session that the middleware later
 // validates.
@@ -23,7 +31,7 @@ type AuthHandler struct {
 	oidc        identity.OIDCProvider
 	sessions    identity.SessionRepository
 	users       instance.UserRepository
-	provisioner *instance.Provisioner
+	provisioner userProvisioner
 	cfg         config.SessionConfig
 	hmacKey     []byte // signs the short-lived state/nonce cookie
 }
@@ -32,7 +40,7 @@ type AuthHandler struct {
 // process, which is acceptable for the short-lived login round-trip. The
 // provisioner resolves verified claims to a persisted User (JIT-creating one on
 // first login, as admin for bootstrap identities).
-func NewAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, provisioner *instance.Provisioner, cfg config.SessionConfig) *AuthHandler {
+func NewAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, provisioner userProvisioner, cfg config.SessionConfig) *AuthHandler {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
 	return &AuthHandler{oidc: oidc, sessions: sessions, users: users, provisioner: provisioner, cfg: cfg, hmacKey: key}
@@ -131,6 +139,9 @@ func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, raw string, exp ti
 		Expires:  exp,
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
+		// SameSite=Lax is DELIBERATE: SameSite=Strict would drop the cookie on the
+		// cross-site redirect back from the IdP (/auth/callback), breaking the OIDC
+		// login round-trip. Do not naively flip to Strict in a hardening pass.
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -157,6 +168,9 @@ func (h *AuthHandler) setStateCookie(w http.ResponseWriter, state, nonce, next s
 		MaxAge:   600, // 10 minutes
 		HttpOnly: true,
 		Secure:   h.cfg.CookieSecure,
+		// SameSite=Lax is DELIBERATE: Strict would drop this state/nonce cookie on
+		// the cross-site redirect back from the IdP, breaking CSRF-state validation
+		// in /auth/callback. Do not naively flip to Strict in a hardening pass.
 		SameSite: http.SameSiteLaxMode,
 	})
 }
