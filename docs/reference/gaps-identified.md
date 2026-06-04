@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### VIEW-001: One-shot mount-centering guard untested
+**Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: Iteration 7
+**Detail**: The `didInitialCenter` ref prevents `setCenter` from firing a second time when the component re-renders (e.g. on each live WebSocket event). The existing mount-centering tests verified `setCenter` was called once on mount but never asserted it stayed at exactly 1 after a parent re-render. Added `GraphView — mount centering one-shot guard` describe block with a Harness that triggers an unrelated re-render and verifies `setCenterSpy` is still called only once total.
+
 ### EDGE-002: chooseSide never tested with asymmetric sourceX/targetX
 **Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
 **Fixed**: Iteration 6

@@ -363,3 +363,33 @@ describe('GraphView — Recenter / Follow control', () => {
     )
   })
 })
+
+describe('GraphView — mount centering one-shot guard', () => {
+  it('calls setCenter exactly once even after an unrelated parent re-render', async () => {
+    // The didInitialCenter ref in GraphView must prevent a second setCenter call
+    // when a parent re-renders (e.g. a live WebSocket event arriving on the page).
+    function Harness() {
+      const [tick, setTick] = useState(0)
+      return (
+        <>
+          <button onClick={() => setTick(tick + 1)}>tick</button>
+          <GraphView
+            instance={instance}
+            workflowDef={workflowDef}
+            trace={trace}
+            onNodeClick={() => {}}
+            selectedNodeId={null}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    expect(setCenterSpy).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByRole('button', { name: /tick/i }))
+
+    // Must remain at 1 — the ref guard blocks the re-fire.
+    expect(setCenterSpy).toHaveBeenCalledTimes(1)
+  })
+})
