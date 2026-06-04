@@ -183,3 +183,18 @@ describe('selectAnchorNodeId — completed instance', () => {
     expect(selectAnchorNodeId(i, d, {}, [])).toBe('c')
   })
 })
+
+describe('selectAnchorNodeId — empty / degenerate', () => {
+  it('returns null when workflowDef is null', () => {
+    expect(selectAnchorNodeId(null, null, {}, [])).toBeNull()
+  })
+
+  it('returns null when the graph has no nodes', () => {
+    expect(selectAnchorNodeId(null, def([]), {}, [])).toBeNull()
+  })
+
+  it('returns null for a running instance on an empty graph', () => {
+    const i = inst({ state: 'running', currentNodeId: 'a' })
+    expect(selectAnchorNodeId(i, def([]), {}, [])).toBeNull()
+  })
+})
