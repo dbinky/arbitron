@@ -114,14 +114,43 @@ func (r *fakeRepo) Exists(_ context.Context, s workflow.Scope, name string) (boo
 	return ok, nil
 }
 
-// fakePublishers is a fake PublisherLookup.
+func (r *fakeRepo) CopyTree(_ context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool) error {
+	wf, ok := r.bucket(src)[srcName]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, exists := r.bucket(dst)[dstName]; exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	// Deep-ish copy so the destination is independent of the source.
+	cp := *wf
+	cp.Name = dstName
+	r.bucket(dst)[dstName] = &cp
+	return nil
+}
+
+// fakePublishers is a fake PublishedStore (lookup + write).
 type fakePublishers struct {
 	pub map[string]uuid.UUID
+}
+
+func newFakePublishers() *fakePublishers {
+	return &fakePublishers{pub: map[string]uuid.UUID{}}
 }
 
 func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
 	id, ok := p.pub[name]
 	return id, ok, nil
+}
+
+func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+	p.pub[name] = publisher
+	return nil
+}
+
+func (p *fakePublishers) Delete(_ context.Context, name string) error {
+	delete(p.pub, name)
+	return nil
 }
 
 func ctxWith(id uuid.UUID, admin bool) context.Context {
@@ -305,4 +334,111 @@ func TestService_Load_DoesNotLeakOtherUsersPrivate(t *testing.T) {
 	_, err := svc.Load(ctxWith(b, false), "a-secret")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, workflow.ErrNotFound))
+}
+
+// --- Publish / Copy ---
+
+func TestService_Publish_HappyPath(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
+
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+
+	_, ok := repo.bucket(workflow.Shared())["pub"]
+	assert.True(t, ok, "published into shared")
+	pubID, recorded, err := pubs.PublisherOf(context.Background(), "pub")
+	require.NoError(t, err)
+	require.True(t, recorded)
+	assert.Equal(t, owner, pubID)
+}
+
+func TestService_Publish_SourceMissing_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, newFakePublishers())
+	owner := uuid.New()
+
+	err := svc.Publish(ctxWith(owner, false), "ghost", "pub")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	a := uuid.New()
+	b := uuid.New()
+
+	// "pub" already published by a.
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+	pubs.pub["pub"] = a
+
+	// b owns a private "src" and tries to publish over a's name.
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "src", wf("src")))
+	err := svc.Publish(ctxWith(b, false), "src", "pub")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
+
+	// Record unchanged.
+	pubID, _, _ := pubs.PublisherOf(context.Background(), "pub")
+	assert.Equal(t, a, pubID)
+}
+
+func TestService_Publish_SamePublisher_Overwrites(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+	// Re-publish by the same owner succeeds (overwrite).
+	require.NoError(t, svc.Publish(ctxWith(owner, false), "src", "pub"))
+}
+
+func TestService_Publish_NoStore_Errors(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil) // no published store
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "src", wf("src")))
+
+	err := svc.Publish(ctxWith(owner, false), "src", "pub")
+	require.Error(t, err)
+}
+
+func TestService_Copy_HappyPath(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "orig", wf("orig")))
+
+	require.NoError(t, svc.Copy(ctxWith(owner, false), "orig", "mine"))
+
+	_, ok := repo.bucket(workflow.Private(owner))["mine"]
+	assert.True(t, ok, "copied into caller's private scope")
+}
+
+func TestService_Copy_SharedMissing_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+
+	err := svc.Copy(ctxWith(owner, false), "ghost", "mine")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_Copy_DuplicatePrivateName_AlreadyExists(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "orig", wf("orig")))
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	err := svc.Copy(ctxWith(owner, false), "orig", "mine")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrAlreadyExists)
 }

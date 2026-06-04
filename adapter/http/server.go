@@ -217,6 +217,8 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{name}/validate", wfHandler.Validate)
 			r.Post("/{name}/trigger", wfHandler.Trigger)
+			r.Post("/{name}/publish", wfHandler.Publish)
+			r.Post("/{name}/copy", wfHandler.Copy)
 			r.Put("/{name}/layout", wfHandler.SaveLayout)
 			r.Get("/{name}/stats", wfHandler.Stats)
 			r.Get("/{name}/files", wfHandler.ListFiles)

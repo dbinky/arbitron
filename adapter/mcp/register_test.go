@@ -11,7 +11,7 @@ import (
 // expectedTools is the complete API surface per the Phase 5 design doc.
 // Any rename, addition, or removal must update both this list and the code.
 var expectedTools = []string{
-	// Workflow management (10)
+	// Workflow management (12)
 	"workflow_list",
 	"workflow_get",
 	"workflow_create",
@@ -22,6 +22,8 @@ var expectedTools = []string{
 	"workflow_read_file",
 	"workflow_write_file",
 	"workflow_delete_file",
+	"workflow_publish",
+	"workflow_copy",
 	// Instance operations (9)
 	"instance_list",
 	"instance_get",

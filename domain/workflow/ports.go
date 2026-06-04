@@ -24,4 +24,10 @@ type WorkflowRepository interface {
 
 	// Exists reports whether a workflow with the given name exists in scope.
 	Exists(ctx context.Context, scope Scope, name string) (bool, error)
+
+	// CopyTree atomically copies an entire workflow folder from src scope/name to
+	// dst scope/name (temp dir + rename). It fails with ErrAlreadyExists if dst
+	// already exists unless overwrite is true, in which case it replaces dst
+	// atomically. It fails with ErrNotFound if the source does not exist.
+	CopyTree(ctx context.Context, src Scope, srcName string, dst Scope, dstName string, overwrite bool) error
 }

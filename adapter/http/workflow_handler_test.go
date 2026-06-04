@@ -96,6 +96,19 @@ func (r *mockWorkflowRepo) Exists(_ context.Context, s workflow.Scope, name stri
 	_, ok := r.bucket(s)[name]
 	return ok, nil
 }
+func (r *mockWorkflowRepo) CopyTree(_ context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool) error {
+	wf, ok := r.bucket(src)[srcName]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, exists := r.bucket(dst)[dstName]; exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	cp := *wf
+	cp.Name = dstName
+	r.bucket(dst)[dstName] = &cp
+	return nil
+}
 
 type errWorkflowRepo struct{ err error }
 
@@ -126,6 +139,9 @@ func (r *errWorkflowRepo) ListFiles(_ context.Context, _ workflow.Scope, _ strin
 }
 func (r *errWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
 	return false, r.err
+}
+func (r *errWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string, _ workflow.Scope, _ string, _ bool) error {
+	return r.err
 }
 
 type mockWorkflowService struct {
@@ -1773,4 +1789,144 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: Publish / Copy
+// ---------------------------------------------------------------------------
+
+// fakePublishedStore is a workflow.PublishedStore for handler publish tests.
+type fakePublishedStore struct {
+	pub map[string]uuid.UUID
+}
+
+func newFakePublishedStore() *fakePublishedStore {
+	return &fakePublishedStore{pub: map[string]uuid.UUID{}}
+}
+
+func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	id, ok := p.pub[name]
+	return id, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+	p.pub[name] = publisher
+	return nil
+}
+func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
+	delete(p.pub, name)
+	return nil
+}
+
+// publishHandler builds a WorkflowHandler whose service is backed by the given
+// repo and publisher store.
+func publishHandler(repo *mockWorkflowRepo, store *fakePublishedStore) *adapthttp.WorkflowHandler {
+	h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+	h.SetWorkflowService(workflow.NewWorkflowService(repo, store))
+	return h
+}
+
+func TestWorkflowHandler_Publish_HappyPath(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.workflows["src"] = testWorkflow() // caller's private
+	store := newFakePublishedStore()
+	h := publishHandler(repo, store)
+
+	body := `{"publishedName":"pub"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "src")
+	w := httptest.NewRecorder()
+	h.Publish(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	_, ok := repo.shared["pub"]
+	assert.True(t, ok, "workflow copied into shared")
+}
+
+func TestWorkflowHandler_Publish_NotFound(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	store := newFakePublishedStore()
+	h := publishHandler(repo, store)
+
+	body := `{"publishedName":"pub"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/ghost/publish", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "ghost")
+	w := httptest.NewRecorder()
+	h.Publish(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestWorkflowHandler_Publish_DifferentPublisher_Forbidden(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.workflows["src"] = testWorkflow()
+	repo.shared["pub"] = testWorkflow()
+	store := newFakePublishedStore()
+	store.pub["pub"] = uuid.New() // owned by someone else (not testUserID)
+	h := publishHandler(repo, store)
+
+	body := `{"publishedName":"pub"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "src")
+	w := httptest.NewRecorder()
+	h.Publish(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestWorkflowHandler_Publish_InvalidPublishedName(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.workflows["src"] = testWorkflow()
+	h := publishHandler(repo, newFakePublishedStore())
+
+	body := `{"publishedName":"../escape"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "src")
+	w := httptest.NewRecorder()
+	h.Publish(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWorkflowHandler_Copy_HappyPath(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.shared["orig"] = testWorkflow()
+	h := publishHandler(repo, newFakePublishedStore())
+
+	body := `{"newName":"mine"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/orig/copy", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "orig")
+	w := httptest.NewRecorder()
+	h.Copy(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	_, ok := repo.workflows["mine"]
+	assert.True(t, ok, "shared workflow copied into caller's private")
+}
+
+func TestWorkflowHandler_Copy_DuplicatePrivateName_Conflict(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.shared["orig"] = testWorkflow()
+	repo.workflows["mine"] = testWorkflow() // already exists privately
+	h := publishHandler(repo, newFakePublishedStore())
+
+	body := `{"newName":"mine"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/orig/copy", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "orig")
+	w := httptest.NewRecorder()
+	h.Copy(w, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestWorkflowHandler_Copy_SharedMissing_NotFound(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	h := publishHandler(repo, newFakePublishedStore())
+
+	body := `{"newName":"mine"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/ghost/copy", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "ghost")
+	w := httptest.NewRecorder()
+	h.Copy(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

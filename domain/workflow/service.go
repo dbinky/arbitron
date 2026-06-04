@@ -15,6 +15,16 @@ type PublisherLookup interface {
 	PublisherOf(ctx context.Context, sharedName string) (uuid.UUID, bool, error)
 }
 
+// PublishedStore is the read+write authority for the shared workspace's
+// publication records, used by Publish. The published_workflows repo satisfies
+// it. A WorkflowService constructed with only a PublisherLookup (no write side)
+// supports List/Load but rejects Publish.
+type PublishedStore interface {
+	PublisherLookup
+	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string) error
+	Delete(ctx context.Context, name string) error
+}
+
 // WorkflowService resolves storage scope and authorization from the context
 // identity, per the Phase 1 decision that authz lives in domain services.
 // Create/Update/Delete always target the caller's private scope; reads try the
@@ -23,13 +33,20 @@ type PublisherLookup interface {
 type WorkflowService struct {
 	repo       WorkflowRepository
 	publishers PublisherLookup // may be nil
+	// published is the write side, set when the supplied lookup also implements
+	// PublishedStore; nil disables Publish.
+	published PublishedStore
 }
 
 // NewWorkflowService builds a WorkflowService over the given repository and an
 // optional publisher lookup (nil is allowed — shared list entries then carry no
-// publisher).
+// publisher). When the lookup also satisfies PublishedStore, Publish is enabled.
 func NewWorkflowService(repo WorkflowRepository, publishers PublisherLookup) *WorkflowService {
-	return &WorkflowService{repo: repo, publishers: publishers}
+	s := &WorkflowService{repo: repo, publishers: publishers}
+	if store, ok := publishers.(PublishedStore); ok {
+		s.published = store
+	}
+	return s
 }
 
 // caller extracts the authenticated identity from ctx, or an ErrInvalidName-
@@ -181,4 +198,58 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 	}
 
 	return out, nil
+}
+
+// Publish copies the caller's private workflow into the shared scope under
+// publishedName and records the caller as publisher. Only the original
+// publisher may overwrite an existing published name.
+func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string) error {
+	id, err := caller(ctx)
+	if err != nil {
+		return err
+	}
+	if s.published == nil {
+		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+
+	// Source must exist privately.
+	if ok, err := s.repo.Exists(ctx, Private(id.UserID), privateName); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: %s", ErrNotFound, privateName)
+	}
+
+	// Publisher-only-overwrite check.
+	pubID, published, err := s.published.PublisherOf(ctx, publishedName)
+	if err != nil {
+		return err
+	}
+	overwrite := false
+	if published {
+		if pubID != id.UserID {
+			return fmt.Errorf("%w: published name %q owned by another user", ErrUnauthorized, publishedName)
+		}
+		overwrite = true // re-publish by the same publisher
+	}
+
+	if err := s.repo.CopyTree(ctx, Private(id.UserID), privateName, Shared(), publishedName, overwrite); err != nil {
+		return err
+	}
+	// Record the publication after the folder is in place.
+	return s.published.Upsert(ctx, publishedName, id.UserID, privateName)
+}
+
+// Copy duplicates a shared workflow into the caller's private scope. The copy
+// is fully independent — no back-link to the shared original.
+func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName string) error {
+	id, err := caller(ctx)
+	if err != nil {
+		return err
+	}
+	if ok, err := s.repo.Exists(ctx, Private(id.UserID), newPrivateName); err != nil {
+		return err
+	} else if ok {
+		return fmt.Errorf("%w: %s", ErrAlreadyExists, newPrivateName)
+	}
+	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
 }

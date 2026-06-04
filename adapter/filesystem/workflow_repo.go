@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -474,4 +475,127 @@ func (r *WorkflowRepo) ListFiles(_ context.Context, scope workflow.Scope, name s
 	}
 
 	return files, nil
+}
+
+// pathExists reports whether a path exists on disk.
+func pathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// copyDirRecursive copies the directory tree at src into dst, creating
+// directories 0o755 and files 0o644 and skipping .tmp crash artifacts.
+func copyDirRecursive(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		sPath := filepath.Join(src, e.Name())
+		dPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirRecursive(sPath, dPath); err != nil {
+				return err
+			}
+			continue
+		}
+		// Skip interrupted-atomic-write artifacts so a copy never carries them.
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			continue
+		}
+		if err := copyFile(sPath, dPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copyFile copies a single file's bytes from src to dst with mode 0o644.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// CopyTree atomically copies an entire workflow folder from src scope/name to
+// dst scope/name. It stages the copy in a temp dir under the destination scope
+// root and renames it into place, so a destination folder never appears
+// half-written. Both endpoints are resolved through resolveWorkflowDir, which
+// pins each side to its scope root (no cross-partition escape).
+func (r *WorkflowRepo) CopyTree(_ context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool) error {
+	srcDir, err := r.resolveWorkflowDir(src, srcName)
+	if err != nil {
+		return err
+	}
+	if ok, _ := pathExists(filepath.Join(srcDir, "workflow.json")); !ok {
+		return fmt.Errorf("%w: %s", workflow.ErrNotFound, srcName)
+	}
+
+	if _, err := r.ensureScopeRoot(dst); err != nil {
+		return err
+	}
+	dstDir, err := r.resolveWorkflowDir(dst, dstName)
+	if err != nil {
+		return err
+	}
+	if ok, _ := pathExists(dstDir); ok && !overwrite {
+		return fmt.Errorf("%w: %s", workflow.ErrAlreadyExists, dstName)
+	}
+
+	// Stage into a temp dir under the same scope root, then rename into place.
+	staging := dstDir + ".tmp-" + uuid.NewString()
+	if err := copyDirRecursive(srcDir, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return fmt.Errorf("staging copy of %q: %w", srcName, err)
+	}
+
+	if overwrite {
+		// Atomic-ish replace: rename old aside, move new in, drop old.
+		backup := dstDir + ".old-" + uuid.NewString()
+		hadOld := false
+		if ok, _ := pathExists(dstDir); ok {
+			if err := os.Rename(dstDir, backup); err != nil {
+				_ = os.RemoveAll(staging)
+				return fmt.Errorf("swap aside %q: %w", dstName, err)
+			}
+			hadOld = true
+		}
+		if err := os.Rename(staging, dstDir); err != nil {
+			if hadOld {
+				_ = os.Rename(backup, dstDir) // best-effort restore
+			}
+			_ = os.RemoveAll(staging)
+			return fmt.Errorf("commit %q: %w", dstName, err)
+		}
+		if hadOld {
+			_ = os.RemoveAll(backup)
+		}
+		return nil
+	}
+
+	if err := os.Rename(staging, dstDir); err != nil {
+		_ = os.RemoveAll(staging)
+		return fmt.Errorf("commit %q: %w", dstName, err)
+	}
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/filesystem"
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -100,6 +101,10 @@ func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope
 
 func (s *stubWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
 	return false, nil
+}
+
+func (s *stubWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string, _ workflow.Scope, _ string, _ bool) error {
+	return nil
 }
 
 type stubFileReader struct {
@@ -870,4 +875,110 @@ func TestWorkflowDeleteFile(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "not found")
 	})
+}
+
+// --- Publish / Copy ---
+
+// fakePublishedStore is a workflow.PublishedStore for MCP publish/copy tests.
+type fakePublishedStore struct {
+	pub map[string]uuid.UUID
+}
+
+func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	id, ok := p.pub[name]
+	return id, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+	if p.pub == nil {
+		p.pub = map[string]uuid.UUID{}
+	}
+	p.pub[name] = publisher
+	return nil
+}
+func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
+	delete(p.pub, name)
+	return nil
+}
+
+// newPublishServer builds an MCP server whose WorkflowSvc is backed by a real
+// filesystem repo (temp dir) and the given publisher store, so the publish/copy
+// tools exercise the real service path.
+func newPublishServer(t *testing.T, store *fakePublishedStore) (*adaptmcp.Server, *filesystem.WorkflowRepo) {
+	t.Helper()
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: workflow.NewWorkflowService(repo, store),
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+	return srv, repo
+}
+
+func sampleManifest(name string) *workflow.Workflow {
+	return &workflow.Workflow{Name: name, Description: "d", Author: "a"}
+}
+
+func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	// Seed the caller's private source under the test identity's user id.
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Shared(), "pub")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestWorkflowTool_Publish_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "../escape"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid published name")
+}
+
+func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "mine"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "mine")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	srv, repo := newPublishServer(t, store)
+
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
+	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "mine", sampleManifest("mine")))
+
+	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "orig", "newName": "mine"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "already exists")
+}
+
+func ctxWithMCPIdentity() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: mcpTestUserID, Username: "tester", Role: identity.RoleUser})
 }

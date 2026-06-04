@@ -360,6 +360,118 @@ func TestWorkflowRepo_Scope_CrossScopeEscapeRejected(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// CopyTree
+// ---------------------------------------------------------------------------
+
+func TestWorkflowRepo_CopyTree_PrivateToShared(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(ctx, workflow.Private(owner), "src", sampleWorkflow("src")))
+	require.NoError(t, repo.WriteFile(ctx, workflow.Private(owner), "src", "extra.txt", []byte("hello")))
+
+	require.NoError(t, repo.CopyTree(ctx, workflow.Private(owner), "src", workflow.Shared(), "pub", false))
+
+	mf, err := os.ReadFile(filepath.Join(base, "shared", "pub", "workflow.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(mf), "\"name\"")
+	extra, err := os.ReadFile(filepath.Join(base, "shared", "pub", "extra.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(extra))
+}
+
+func TestWorkflowRepo_CopyTree_SourceNotFound(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	owner := uuid.New()
+
+	err := repo.CopyTree(ctx, workflow.Private(owner), "ghost", workflow.Shared(), "pub", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestWorkflowRepo_CopyTree_DestExistsNoOverwrite(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(ctx, workflow.Private(owner), "src", sampleWorkflow("src")))
+	require.NoError(t, repo.Create(ctx, workflow.Shared(), "pub", sampleWorkflow("pub")))
+
+	err := repo.CopyTree(ctx, workflow.Private(owner), "src", workflow.Shared(), "pub", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrAlreadyExists)
+}
+
+func TestWorkflowRepo_CopyTree_OverwriteReplaces(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(ctx, workflow.Private(owner), "src", sampleWorkflow("src-v2")))
+	require.NoError(t, repo.WriteFile(ctx, workflow.Private(owner), "src", "f.txt", []byte("v2")))
+
+	require.NoError(t, repo.Create(ctx, workflow.Shared(), "pub", sampleWorkflow("pub-old")))
+	require.NoError(t, repo.WriteFile(ctx, workflow.Shared(), "pub", "stale.txt", []byte("old")))
+
+	require.NoError(t, repo.CopyTree(ctx, workflow.Private(owner), "src", workflow.Shared(), "pub", true))
+
+	f, err := os.ReadFile(filepath.Join(base, "shared", "pub", "f.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(f))
+	_, err = os.Stat(filepath.Join(base, "shared", "pub", "stale.txt"))
+	assert.True(t, os.IsNotExist(err), "overwrite must not retain old folder's files")
+
+	entries, err := os.ReadDir(filepath.Join(base, "shared"))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".tmp-")
+		assert.NotContains(t, e.Name(), ".old-")
+	}
+}
+
+func TestWorkflowRepo_CopyTree_IndependentCopy(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(ctx, workflow.Shared(), "orig", sampleWorkflow("orig")))
+	require.NoError(t, repo.WriteFile(ctx, workflow.Shared(), "orig", "f.txt", []byte("shared-content")))
+
+	require.NoError(t, repo.CopyTree(ctx, workflow.Shared(), "orig", workflow.Private(owner), "mine", false))
+
+	require.NoError(t, repo.WriteFile(ctx, workflow.Private(owner), "mine", "f.txt", []byte("edited")))
+
+	shared, err := os.ReadFile(filepath.Join(base, "shared", "orig", "f.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "shared-content", string(shared), "editing the copy must not touch the shared original")
+}
+
+func TestWorkflowRepo_CopyTree_CrossPartitionEscapeRejected(t *testing.T) {
+	base := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(base)
+	ctx := context.Background()
+	a := uuid.New()
+	other := uuid.New()
+
+	require.NoError(t, repo.Create(ctx, workflow.Private(a), "src", sampleWorkflow("src")))
+
+	err := repo.CopyTree(ctx, workflow.Private(a), "src", workflow.Private(a), "../"+other.String()+"/stolen", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+
+	err = repo.CopyTree(ctx, workflow.Private(a), "../"+other.String()+"/secret", workflow.Shared(), "pub", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+// ---------------------------------------------------------------------------
 // Helper: sample workflow
 // ---------------------------------------------------------------------------
 

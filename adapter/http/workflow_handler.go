@@ -247,6 +247,86 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// publishRequest is the JSON body for publishing a private workflow.
+type publishRequest struct {
+	PublishedName string `json:"publishedName"`
+}
+
+// copyRequest is the JSON body for copying a shared workflow.
+type copyRequest struct {
+	NewName string `json:"newName"`
+}
+
+// Publish handles POST /workflows/{name}/publish and copies the caller's
+// private workflow into the shared workspace under publishedName.
+func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req publishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if !safeWorkflowName(req.PublishedName) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid published name: "+req.PublishedName)
+		return
+	}
+
+	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrUnauthorized):
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		case errors.Is(err, workflow.ErrAlreadyExists):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to publish workflow")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "published", "name": req.PublishedName})
+}
+
+// Copy handles POST /workflows/{name}/copy and copies a shared workflow into
+// the caller's private workspace under newName.
+func (h *WorkflowHandler) Copy(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req copyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if !safeWorkflowName(req.NewName) {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid new name: "+req.NewName)
+		return
+	}
+
+	if err := h.wfSvc.Copy(r.Context(), name, req.NewName); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrAlreadyExists):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to copy workflow")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "copied", "name": req.NewName})
+}
+
 // saveLayoutRequest is the JSON body for saving node positions.
 type saveLayoutRequest struct {
 	Positions map[string]workflow.NodePosition `json:"positions"`

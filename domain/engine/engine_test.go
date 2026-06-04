@@ -81,6 +81,9 @@ func (r *mockWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, name stri
 	_, ok := r.workflows[name]
 	return ok, nil
 }
+func (r *mockWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string, _ workflow.Scope, _ string, _ bool) error {
+	return nil
+}
 
 func (r *mockWorkflowRepo) add(wf *workflow.Workflow) {
 	r.mu.Lock()
