@@ -49,6 +49,18 @@ func defaults() map[string]interface{} {
 		"queue.globalcap":       20,
 		"queue.perusercap":      5,
 		"script.envpassthrough": []string{},
+		// Auth (Phase 6): local mode by default (single auto-admin, no login).
+		// Org-mode OIDC fields are validated fail-fast in validateAuth.
+		"auth.mode":                 "local",
+		"auth.bootstrapadmins":      []string{},
+		"auth.oidc.issuerurl":       "",
+		"auth.oidc.clientid":        "",
+		"auth.oidc.clientsecret":    "",
+		"auth.oidc.redirecturl":     "",
+		"auth.oidc.scopes":          []string{"openid", "profile", "email"},
+		"auth.session.ttlseconds":   43200, // 12h
+		"auth.session.cookiename":   "arbitron_session",
+		"auth.session.cookiesecure": true,
 		// Profile registry: alias -> capability kind + model-id. A fresh
 		// install ships a chat/agent pair so a basic workflow validates; empty
 		// model means "use the claude-cli default model" (cfg.LLM.Model).
@@ -187,6 +199,20 @@ notifications:
 tracing:
   enabled: false
   exportdir: "./traces"
+# auth:
+#   mode: "local"            # "local" (default, single auto-admin) or "org"
+#   bootstrapadmins: []      # subjects/emails provisioned as admin on first login (Phase 2)
+#                            #   Override via ARBITRON_AUTH_BOOTSTRAPADMINS=a@x.com,b@x.com
+#   oidc:
+#     issuerurl: ""          # OIDC discovery root; REQUIRED in org mode
+#     clientid: ""           # REQUIRED in org mode
+#     clientsecret: ""       # REQUIRED in org mode; SECURITY: sensitive, never echoed
+#     redirecturl: ""        # REQUIRED in org mode; = publicbaseurl + "/auth/callback"
+#     scopes: ["openid", "profile", "email"]   # ARBITRON_AUTH_OIDC_SCOPES=openid,groups
+#   session:
+#     ttlseconds: 43200      # 12h; floored to the default if non-positive
+#     cookiename: "arbitron_session"
+#     cookiesecure: true     # set false ONLY for local http dev
 `
 }
 
@@ -251,6 +277,24 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		}
 	}
 
+	// ARBITRON_AUTH_BOOTSTRAPADMINS / ARBITRON_AUTH_OIDC_SCOPES arrive as comma
+	// strings via the env provider; overlay them as real slices so they
+	// unmarshal into []string (mirrors the script.envpassthrough overlay).
+	if raw := os.Getenv("ARBITRON_AUTH_BOOTSTRAPADMINS"); raw != "" {
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.bootstrapadmins": splitCSV(raw),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.bootstrapadmins: %w", err)
+		}
+	}
+	if raw := os.Getenv("ARBITRON_AUTH_OIDC_SCOPES"); raw != "" {
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.oidc.scopes": splitCSV(raw),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.oidc.scopes: %w", err)
+		}
+	}
+
 	// Unmarshal into the domain config struct.
 	var cfg domainconfig.Config
 	if err := k.Unmarshal("", &cfg); err != nil {
@@ -258,6 +302,13 @@ func Load(configPath string) (*domainconfig.Config, error) {
 	}
 
 	normalize(&cfg)
+
+	// validateAuth is the first non-clamping validation in Load: an org-mode
+	// deployment missing OIDC config cannot perform a single login, so fail
+	// fast at load rather than 500 on the first /auth/login.
+	if err := validateAuth(&cfg); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
 }
@@ -270,6 +321,12 @@ func Load(configPath string) (*domainconfig.Config, error) {
 // Flooring it keeps the whole timeout story from being disabled by misconfig.
 const DefaultTimeoutSeconds = 1800
 
+// DefaultSessionTTLSeconds is the floor applied to a non-positive
+// auth.session.ttlseconds. A zero/negative TTL would mint never-expiring or
+// instantly-expired sessions, so it is clamped to the sane 12h default
+// (mirroring the timeout floor).
+const DefaultSessionTTLSeconds = 43200
+
 // normalize applies safety floors and value normalization to a loaded config in
 // place. It clamps a non-positive llm.timeoutseconds up to DefaultTimeoutSeconds
 // so a misconfigured 0 cannot disable every deadline, and trims trailing
@@ -280,6 +337,48 @@ func normalize(cfg *domainconfig.Config) {
 		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
 	}
 	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
+	cfg.Auth.Mode = strings.ToLower(strings.TrimSpace(cfg.Auth.Mode))
+	if cfg.Auth.Mode == "" {
+		cfg.Auth.Mode = domainconfig.AuthModeLocal
+	}
+	if cfg.Auth.Session.TTLSeconds <= 0 {
+		cfg.Auth.Session.TTLSeconds = DefaultSessionTTLSeconds
+	}
+	if cfg.Auth.Session.CookieName == "" {
+		cfg.Auth.Session.CookieName = "arbitron_session"
+	}
+}
+
+// validateAuth enforces the org-mode contract: a deployment that turns on org
+// mode without a complete OIDC config cannot perform a single login, so we fail
+// fast at load rather than 500 on the first /auth/login. Mirrors the
+// timeout-floor fail-fast precedent. Local mode requires nothing; an unknown
+// mode (which normalize cannot produce, but a hand-set value could) is rejected.
+func validateAuth(cfg *domainconfig.Config) error {
+	switch cfg.Auth.Mode {
+	case domainconfig.AuthModeLocal:
+		return nil
+	case domainconfig.AuthModeOrg:
+		var missing []string
+		if strings.TrimSpace(cfg.Auth.OIDC.IssuerURL) == "" {
+			missing = append(missing, "auth.oidc.issuerurl")
+		}
+		if strings.TrimSpace(cfg.Auth.OIDC.ClientID) == "" {
+			missing = append(missing, "auth.oidc.clientid")
+		}
+		if strings.TrimSpace(cfg.Auth.OIDC.ClientSecret) == "" {
+			missing = append(missing, "auth.oidc.clientsecret")
+		}
+		if strings.TrimSpace(cfg.Auth.OIDC.RedirectURL) == "" {
+			missing = append(missing, "auth.oidc.redirecturl")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("org mode requires OIDC config; missing: %s", strings.Join(missing, ", "))
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid auth.mode %q (want %q or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg)
+	}
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.

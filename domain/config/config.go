@@ -13,7 +13,47 @@ type Config struct {
 	Script        ScriptConfig
 	Notifications NotificationsConfig
 	Profiles      []ProfileConfig
+	Auth          AuthConfig
 }
+
+// AuthConfig selects the operating mode and holds the org-mode auth settings.
+// Local mode (the default) requires none of the sub-configs.
+type AuthConfig struct {
+	// Mode is "local" (default) or "org". It drives every downstream auth branch:
+	// local mode injects a fixed admin identity; org mode validates a session.
+	Mode string
+	// BootstrapAdmins lists identity subjects/emails provisioned as admins on
+	// first login. Declared here so the config shape is complete; CONSUMED in
+	// Phase 2 (JIT provisioning). Phase 1 reads but does not enforce it.
+	BootstrapAdmins []string
+	OIDC            OIDCConfig
+	Session         SessionConfig
+}
+
+// OIDCConfig configures the self-hosted OIDC authorization-code login flow.
+// All fields are required when Mode == "org".
+type OIDCConfig struct {
+	IssuerURL    string   // e.g. "https://login.example.com" (OIDC discovery root)
+	ClientID     string   //
+	ClientSecret string   // SECURITY: sensitive; never echoed on a read surface
+	RedirectURL  string   // must equal PublicBaseURL + "/auth/callback"
+	Scopes       []string // default openid,profile,email
+}
+
+// SessionConfig configures server-side cookie sessions (the session is the
+// Arbitron credential; OIDC is only the login mechanism).
+type SessionConfig struct {
+	TTLSeconds   int    // session lifetime; default 43200 (12h)
+	CookieName   string // default "arbitron_session"
+	CookieSecure bool   // default true; Secure attribute on the session cookie
+}
+
+// Mode constants kept as strings here to avoid a domain/identity import cycle
+// (domain/identity defines the typed Mode and converts from this string).
+const (
+	AuthModeLocal = "local"
+	AuthModeOrg   = "org"
+)
 
 // ProfileConfig is the config-file shape of one profile-registry entry. It
 // mirrors domain/provider.Profile but stays in the config package to keep

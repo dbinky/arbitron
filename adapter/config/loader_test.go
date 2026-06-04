@@ -570,3 +570,169 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 	// Chat-kind assessor stays tool-suppressed: no per-profile allowlist.
 	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
 }
+
+// ---- Phase 6 Task 1: AuthConfig loading & validation ----
+
+func TestLoad_AuthDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, "local", cfg.Auth.Mode)
+	assert.Equal(t, "arbitron_session", cfg.Auth.Session.CookieName)
+	assert.Equal(t, 43200, cfg.Auth.Session.TTLSeconds)
+	assert.True(t, cfg.Auth.Session.CookieSecure)
+	assert.Equal(t, []string{"openid", "profile", "email"}, cfg.Auth.OIDC.Scopes)
+	assert.Empty(t, cfg.Auth.BootstrapAdmins)
+}
+
+func TestLoad_AuthOrgMode_Valid(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    issuerurl: "https://login.example.com"
+    clientid: "client-abc"
+    clientsecret: "shhh"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "org", cfg.Auth.Mode)
+	assert.Equal(t, "https://login.example.com", cfg.Auth.OIDC.IssuerURL)
+	assert.Equal(t, "client-abc", cfg.Auth.OIDC.ClientID)
+	assert.Equal(t, "shhh", cfg.Auth.OIDC.ClientSecret)
+	assert.Equal(t, "https://app.example.com/auth/callback", cfg.Auth.OIDC.RedirectURL)
+}
+
+func TestLoad_AuthMode_Normalized(t *testing.T) {
+	t.Run("uppercase normalizes to org", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "ORG"
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+	})
+
+	t.Run("padded normalizes to org", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: " org "
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		assert.Equal(t, "org", cfg.Auth.Mode)
+	})
+
+	t.Run("unknown mode is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"cloud\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "invalid auth.mode")
+	})
+}
+
+func TestLoad_AuthOrgMode_MissingOIDC(t *testing.T) {
+	t.Run("missing clientsecret", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    issuerurl: "https://i"
+    clientid: "c"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.clientsecret")
+	})
+
+	t.Run("missing issuerurl", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "org"
+  oidc:
+    clientid: "c"
+    clientsecret: "s"
+    redirecturl: "https://r/auth/callback"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.oidc.issuerurl")
+	})
+}
+
+func TestLoad_AuthSessionTTLFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantTTL int
+	}{
+		{"zero floors to default", "auth:\n  session:\n    ttlseconds: 0\n", adapterconfig.DefaultSessionTTLSeconds},
+		{"negative floors to default", "auth:\n  session:\n    ttlseconds: -1\n", adapterconfig.DefaultSessionTTLSeconds},
+		{"positive preserved", "auth:\n  session:\n    ttlseconds: 1\n", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.yaml")
+			t.Setenv("ANTHROPIC_API_KEY", "")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.yaml), 0o600))
+			cfg, err := adapterconfig.Load(configPath)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantTTL, cfg.Auth.Session.TTLSeconds)
+		})
+	}
+}
+
+func TestLoad_AuthBootstrapAdmins_FromEnv(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_BOOTSTRAPADMINS", "a@x.com, b@x.com,, ")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a@x.com", "b@x.com"}, cfg.Auth.BootstrapAdmins)
+}
+
+func TestLoad_AuthOIDCScopes_FromEnv(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_OIDC_SCOPES", "openid, groups")
+	dir := t.TempDir()
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openid", "groups"}, cfg.Auth.OIDC.Scopes)
+}
