@@ -8,6 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
+### GAP-FA3-P2-01: `Token.TokenHash` and `DeviceCode.HashedCode` had no `json:"-"` tag
+**Area**: Focus Area 3 — Identity ports (Pass 2)
+**Fix**: Added `json:"-"` to `Token.TokenHash` and `DeviceCode.HashedCode` in `domain/identity/ports.go`. Added `TestToken_JSONMarshal_HashNeverLeaks` and `TestDeviceCode_JSONMarshal_HashedCodeNeverLeaks` in `ports_test.go` — each marshals the struct directly and asserts neither the field value nor field name (`"TokenHash"`, `"token_hash"`, `"HashedCode"`, `"hashed_code"`) appears in the output. The tag makes the secrecy guarantee self-enforcing at the type level rather than relying solely on DTOs and documentation.
+
 ### GAP-FA1-01: `OIDCConfigured` in `Redact` ignored whitespace-only secret
 **Area**: Focus Area 1 — Auth config & mode
 **Fix**: Changed `cfg.Auth.OIDC.ClientSecret != ""` to `strings.TrimSpace(cfg.Auth.OIDC.ClientSecret) != ""` in `domain/config/redact.go`, aligning `Redact` with `validateAuth`'s definition of "configured." Added `TestRedact_WhitespaceClientSecret_NotConfigured`.

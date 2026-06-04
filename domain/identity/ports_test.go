@@ -2,6 +2,7 @@ package identity_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -211,3 +212,41 @@ func (r *rawSessionRepo) DeleteExpired(_ context.Context, now time.Time) (int, e
 }
 
 var _ identity.SessionRepository = (*rawSessionRepo)(nil)
+
+// TestToken_JSONMarshal_HashNeverLeaks verifies that json.Marshal of a Token
+// struct never includes the TokenHash field, regardless of its value. This is
+// enforced by the json:"-" tag and guards against accidental direct serialization
+// of Token instead of the DTO.
+func TestToken_JSONMarshal_HashNeverLeaks(t *testing.T) {
+	tok := identity.Token{
+		ID:        uuid.New(),
+		UserID:    uuid.New(),
+		Label:     "ci",
+		Prefix:    "arb_abc",
+		TokenHash: "SECRET-SHA256-MUST-NOT-APPEAR",
+	}
+	b, err := json.Marshal(tok)
+	require.NoError(t, err)
+	body := string(b)
+	assert.NotContains(t, body, "SECRET-SHA256-MUST-NOT-APPEAR", "TokenHash value must not appear in JSON output")
+	assert.NotContains(t, body, "TokenHash", "TokenHash field name must not appear in JSON output")
+	assert.NotContains(t, body, "token_hash", "snake_case variant must not appear in JSON output")
+}
+
+// TestDeviceCode_JSONMarshal_HashedCodeNeverLeaks verifies that json.Marshal of a
+// DeviceCode struct never includes the HashedCode field, enforced by json:"-".
+func TestDeviceCode_JSONMarshal_HashedCodeNeverLeaks(t *testing.T) {
+	dc := identity.DeviceCode{
+		HashedCode: "SECRET-DEVICE-HASH-MUST-NOT-APPEAR",
+		UserCode:   "AB12-CD34",
+		Status:     identity.DeviceCodePending,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	b, err := json.Marshal(dc)
+	require.NoError(t, err)
+	body := string(b)
+	assert.NotContains(t, body, "SECRET-DEVICE-HASH-MUST-NOT-APPEAR", "HashedCode value must not appear in JSON output")
+	assert.NotContains(t, body, "HashedCode", "HashedCode field name must not appear in JSON output")
+	assert.NotContains(t, body, "hashed_code", "snake_case variant must not appear in JSON output")
+}

@@ -70,7 +70,7 @@ type Token struct {
 	UserID     uuid.UUID
 	Label      string
 	Prefix     string     // clear, non-secret, for display
-	TokenHash  string     // sha256 hex; internal only, never serialized to clients
+	TokenHash  string     `json:"-"` // sha256 hex; internal only, never serialized to clients
 	CreatedAt  time.Time
 	LastUsedAt *time.Time // nil until first use
 }
@@ -102,7 +102,7 @@ const (
 // (the raw device_code) is NEVER held here — only its sha256 (HashedCode). The
 // short UserCode is low-entropy and shown to the human approver, so it is clear.
 type DeviceCode struct {
-	HashedCode string // sha256 of the polling secret; never the raw code
+	HashedCode string `json:"-"` // sha256 of the polling secret; never the raw code
 	UserCode   string // short, human, shown to the approver
 	Status     DeviceCodeStatus
 	UserID     *uuid.UUID // nil until approved
