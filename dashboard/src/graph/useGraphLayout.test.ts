@@ -96,6 +96,42 @@ describe('useGraphLayout — stored positions branch', () => {
   })
 })
 
+describe('useGraphLayout — container zIndex', () => {
+  // zIndex = -10 + depth. A sign flip would put inner containers BELOW outer ones,
+  // reversing the layering so outer containers visually obscure inner containers.
+  it('single loop container has zIndex = -10 (depth 0)', () => {
+    const nodes = [node('a'), node('b'), node('c')]
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'b' },
+    ]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const container = result.current.rfNodes.find((n) => n.type === 'loopContainer')!
+    expect(container.zIndex).toBe(-10)
+  })
+
+  it('inner container (depth 1) has a higher zIndex than outer (depth 0)', () => {
+    const nodes = [node('a'), node('b'), node('c'), node('d'), node('e')]
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'd' },
+      { source: 'd', target: 'e' },
+      { source: 'e', target: 'b', label: 'outer' },
+      { source: 'd', target: 'c', label: 'inner' },
+    ]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    type ZNode = { type?: string; zIndex?: number; data?: { label?: string } }
+    const containers = result.current.rfNodes.filter((n) => n.type === 'loopContainer') as ZNode[]
+    const outer = containers.find((c) => c.data?.label === 'Loop until outer')!
+    const inner = containers.find((c) => c.data?.label === 'Loop until inner')!
+    expect(outer.zIndex).toBe(-10) // depth 0
+    expect(inner.zIndex).toBe(-9)  // depth 1: inner is above outer
+    expect(inner.zIndex!).toBeGreaterThan(outer.zIndex!)
+  })
+})
+
 describe('useGraphLayout — nested loops', () => {
   it('emits one container per loop', () => {
     const nodes = [node('a'), node('b'), node('c'), node('d'), node('e')]

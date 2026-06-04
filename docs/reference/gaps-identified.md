@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### LOOP-006: Loop container zIndex formula untested — depth drives z-ordering for nested containers
+**Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 33
+**Detail**: `useGraphLayout` sets `zIndex: -10 + loop.depth` on each loop container. A sign flip (`-10 - loop.depth`) would put the inner container (depth=1) BELOW the outer (depth=0), reversing the layering. No test pinned the zIndex values. Added `useGraphLayout — container zIndex` describe block with two tests: (1) single loop container has `zIndex === -10`; (2) nested loops — inner container has `zIndex === -9`, outer `zIndex === -10`, and inner's zIndex is greater (asserting the directionality).
+
+---
+
 ### SLICE-004: No end-to-end test for dismissed item appearing with Restore button after Show Dismissed toggle
 **Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
 **Fixed**: Iteration 32
