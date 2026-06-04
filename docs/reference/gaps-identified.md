@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA10-P2-01: MCP cross-user revoke was untested — no existence-oracle check on MCP surface
+**Area**: Focus Area 10 — Token service & surface (Pass 2)
+**Fix**: Extended `TestTokenTools_Isolation` in `adapter/mcp/tools_token_test.go`. After asserting B's list is empty, added: B calls `token_revoke` with A's token ID → `revokeRes.IsError == true`, body contains "token not found", `repo.toks` still has 1 entry. This pins the isolation guarantee on the MCP surface: the error message is the same as "not found" (not "not yours"), so neither the existence of the token nor A's userID is revealed. The REST surface had this covered in `TestTokenHandler_Isolation`; now both surfaces are symmetric.
+
 ### GAP-FA10-P1-01: REST `Revoke` happy path (204, token removed, list empty) was untested
 **Area**: Focus Area 10 — Token service & surface (Pass 1)
 **Fix**: Added `TestTokenHandler_Revoke_HappyPath` in `adapter/http/token_handler_test.go`. Creates a token, revokes it with the correct owner identity, then asserts 204 response, empty `repo.toks`, and an empty subsequent list. The MCP surface (`TestTokenTools_HappyPath`) already covered the successful revoke path; the REST surface was missing this scenario. Previously only the failure paths (not-found → 404, cross-user → 404, bad UUID → 400) were tested.

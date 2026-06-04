@@ -184,4 +184,15 @@ func TestTokenTools_Isolation(t *testing.T) {
 	bBody := toolText(t, bList)
 	assert.Equal(t, "[]", strings.TrimSpace(bBody))
 	assert.NotContains(t, bBody, "token_hash")
+
+	// B cannot revoke A's token — error is "token not found" so the MCP surface
+	// does not reveal whether the ID exists (no existence oracle).
+	var aID uuid.UUID
+	for k := range repo.toks {
+		aID = k
+	}
+	revokeRes, _ := tokenRevokeHandler(srv)(userCtx(bUID), callReq(map[string]any{"id": aID.String()}))
+	assert.True(t, revokeRes.IsError, "cross-user revoke must return a tool error")
+	assert.Contains(t, toolText(t, revokeRes), "token not found", "error must not hint the token exists")
+	assert.Len(t, repo.toks, 1, "A's token must survive B's revoke attempt")
 }
