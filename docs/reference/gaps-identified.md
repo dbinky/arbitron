@@ -6,6 +6,12 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
+## Open Issues
+
+### UI-002: QueueView dismiss handlers have no error handling; error paths untested
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `QueueView.test.tsx`)
+**Detail**: `handleDismiss`, `handleRestore`, and `handleDismissAll` are plain `async` functions with no try/catch. If the API call fails, the rejection becomes an unhandled promise rejection — the item stays visible, no feedback is shown, and the error category is completely absent from their test coverage. The error path for `fetchAll` is handled (it sets the `error` state and renders a Retry prompt), but that error state rendering is also untested. Minimum fix: add try/catch to each handler (log and swallow, keeping the item visible) and add error-path tests to `QueueView.test.tsx`.
+
 ## Fixed Previously
 
 ### UI-001: QueueView dismiss-handler API calls untested; wrong role-query selector

@@ -59,6 +59,76 @@ describe('QueueView dismiss handlers', () => {
     dismissAll.mockResolvedValue({ status: 'ok' })
   })
 
+  // Happy: dismiss handler calls api.instances.dismiss with the instance id, then refetches.
+  // The Failed section is expanded by default so the row is visible without extra interaction.
+  it('handleDismiss calls api.instances.dismiss with the instance id, then refetches', async () => {
+    const inst = {
+      id: 'f1',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    list.mockImplementation((params: { state?: string } = {}) =>
+      Promise.resolve(params.state === 'failed' ? [inst] : []),
+    )
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    // Dismiss button has aria-label="Dismiss" — exact match avoids header div[role="button"].
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    await waitFor(() => {
+      expect(dismiss).toHaveBeenCalledWith('f1')
+    })
+    await waitFor(() => {
+      expect(list).toHaveBeenCalled()
+    })
+  })
+
+  // Happy: restore handler calls api.instances.restore with the instance id, then refetches.
+  // A dismissed instance (dismissed=true) causes QueueSection to render it with dimmed=true,
+  // which makes InstanceRow show the Restore button instead of Dismiss.
+  it('handleRestore calls api.instances.restore with the instance id, then refetches', async () => {
+    const inst = {
+      id: 'f2',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      dismissed: true,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    list.mockImplementation((params: { state?: string } = {}) =>
+      Promise.resolve(params.state === 'failed' ? [inst] : []),
+    )
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    list.mockClear()
+
+    // Restore button has aria-label="Restore".
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+
+    await waitFor(() => {
+      expect(restore).toHaveBeenCalledWith('f2')
+    })
+    await waitFor(() => {
+      expect(list).toHaveBeenCalled()
+    })
+  })
+
   // Happy: dismissAll is called with the correct state and a since date matching the 5-day
   // window the section shows, then refetches (list is called again).
   it('handleDismissAll calls api.instances.dismissAll with state and since, then refetches', async () => {
