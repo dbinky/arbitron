@@ -49,12 +49,13 @@ func NewWorkflowService(repo WorkflowRepository, publishers PublisherLookup) *Wo
 	return s
 }
 
-// caller extracts the authenticated identity from ctx, or an ErrInvalidName-
-// wrapped error when none is present.
+// caller extracts the authenticated identity from ctx, or the canonical
+// identity.ErrUnauthenticated when none is present, so a missing identity maps to
+// 401 (not 400) at the adapter seam.
 func caller(ctx context.Context) (identity.Identity, error) {
 	id, ok := identity.FromContext(ctx)
 	if !ok {
-		return identity.Identity{}, fmt.Errorf("%w: no identity in context", ErrInvalidName)
+		return identity.Identity{}, fmt.Errorf("%w: no identity in context", identity.ErrUnauthenticated)
 	}
 	return id, nil
 }

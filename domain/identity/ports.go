@@ -15,7 +15,18 @@ var ErrNotFound = errors.New("identity: not found")
 // ErrUnauthenticated is returned by domain services when the request carries no
 // identity in context. The auth middleware should already reject such requests
 // in org mode; the service check is defense-in-depth.
+//
+// ErrUnauthenticated and ErrForbidden are the SINGLE canonical authz sentinels
+// for the whole codebase: every domain service (identity, instance, ...) returns
+// THESE values so an errors.Is at the adapter seam maps 401/403 uniformly,
+// regardless of which service surfaced the failure. Do not redeclare a distinct
+// per-package copy.
 var ErrUnauthenticated = errors.New("identity: unauthenticated")
+
+// ErrForbidden is returned by domain services when the caller is authenticated
+// but lacks the required role/authorization (e.g. a non-admin hitting an
+// admin-only surface). It maps to HTTP 403 at the adapter seam.
+var ErrForbidden = errors.New("identity: forbidden")
 
 // ErrInvalidLabel is returned by TokenService.Mint when the token label is empty
 // or whitespace-only.

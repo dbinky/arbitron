@@ -8,14 +8,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// Role-management sentinels. ErrUnauthenticated/ErrNotFound are reused from the
-// package; these add the authz-specific failures the surfaces map to HTTP/tool
-// errors.
+// Role-management sentinels. The authz sentinels are the canonical ones from
+// domain/identity (aliased here, not redeclared) so an errors.Is across package
+// boundaries matches and the adapters map 401/403 uniformly; these vars add the
+// authz-specific failures the surfaces map to HTTP/tool errors.
 var (
-	// ErrUnauthenticated: the request carries no identity in context.
-	ErrUnauthenticated = errors.New("instance: unauthenticated")
-	// ErrForbidden: the caller is authenticated but not an admin.
-	ErrForbidden = errors.New("instance: forbidden (admin only)")
+	// ErrUnauthenticated: the request carries no identity in context. Aliased to
+	// the canonical identity.ErrUnauthenticated (consolidation fix).
+	ErrUnauthenticated = identity.ErrUnauthenticated
+	// ErrForbidden: the caller is authenticated but not an admin. Aliased to the
+	// canonical identity.ErrForbidden (consolidation fix).
+	ErrForbidden = identity.ErrForbidden
 	// ErrInvalidRole: the requested role is neither 'user' nor 'admin'.
 	ErrInvalidRole = errors.New("instance: invalid role")
 	// ErrBootstrapAdminProtected: a config-listed bootstrap admin cannot be

@@ -223,11 +223,11 @@ func TestService_NoIdentity_Rejected(t *testing.T) {
 
 	err := svc.Create(context.Background(), "w", wf("w"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 
 	_, err = svc.Load(context.Background(), "w")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 func TestService_List_NameCollisionYieldsTwoEntries(t *testing.T) {
@@ -510,7 +510,7 @@ func TestService_Delete_NoIdentity_Rejected(t *testing.T) {
 
 	err := svc.Delete(context.Background(), "w")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 // Failure: deleting a workflow that exists in neither scope returns ErrNotFound.
@@ -573,7 +573,7 @@ func TestService_WriteFile_NoIdentity_Rejected(t *testing.T) {
 
 	err := svc.WriteFile(context.Background(), "wf", "a.sh", []byte("x"))
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 // Failure: workflow exists in neither scope returns ErrNotFound.
@@ -631,7 +631,7 @@ func TestService_DeleteFile_NoIdentity_Rejected(t *testing.T) {
 
 	err := svc.DeleteFile(context.Background(), "wf", "a.sh")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 // Failure: workflow in neither scope returns ErrNotFound.
@@ -688,7 +688,7 @@ func TestService_SaveNodePositions_NoIdentity_Rejected(t *testing.T) {
 
 	err := svc.SaveNodePositions(context.Background(), "wf", map[string]workflow.NodePosition{})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 // Failure: workflow in neither scope returns ErrNotFound.
@@ -755,7 +755,7 @@ func TestService_ListFiles_NoIdentity_Rejected(t *testing.T) {
 
 	_, err := svc.ListFiles(context.Background(), "wf")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
 }
 
 // Edge: ListFiles does not expose another user's private files — it reads only
