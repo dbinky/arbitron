@@ -27,11 +27,13 @@ import (
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
 	"github.com/arbitron/arbitron/adapter/observability"
+	adaptoidc "github.com/arbitron/arbitron/adapter/oidc"
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -104,6 +106,12 @@ type domainStack struct {
 	connChecker         workflow.ConnectionChecker
 	connStore           provider.ConnectionStore
 	tracingShutdown     func(ctx context.Context) error
+	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
+	// authHandler and sweepCancel are nil in local mode.
+	sessionRepo identity.SessionRepository
+	authMW      *adapthttp.AuthMiddleware
+	authHandler *adapthttp.AuthHandler
+	sweepCancel context.CancelFunc
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -121,6 +129,10 @@ func (ds *domainStack) Close(ctx context.Context) {
 		if err := ds.tracingShutdown(ctx); err != nil {
 			ds.logger.Error("tracing shutdown error", "error", err)
 		}
+	}
+	// Stop the org-mode session sweep before closing the DB it writes to.
+	if ds.sweepCancel != nil {
+		ds.sweepCancel()
 	}
 	if ds.db != nil {
 		ds.db.Close()
@@ -199,6 +211,30 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	nodeExecRepo := adaptsqlite.NewNodeExecutionRepo(db)
 	snapshotRepo := adaptsqlite.NewVariableSnapshotRepo(db)
 	userRepo := adaptsqlite.NewUserRepo(db)
+
+	// 5a. Auth (Phase 6). The session store is always constructed (migration 003
+	// created its table); the middleware and OIDC provider differ by mode. In org
+	// mode an unreachable/invalid issuer is a fatal boot error (fail-fast,
+	// consistent with the other init gates).
+	sessionRepo := adaptsqlite.NewSessionRepo(db)
+	authMode := identity.ModeFromString(cfg.Auth.Mode)
+	var authHandler *adapthttp.AuthHandler
+	if authMode == identity.ModeOrg {
+		oidcProvider, oerr := adaptoidc.New(context.Background(), adaptoidc.Config{
+			IssuerURL:    cfg.Auth.OIDC.IssuerURL,
+			ClientID:     cfg.Auth.OIDC.ClientID,
+			ClientSecret: cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:  cfg.Auth.OIDC.RedirectURL,
+			Scopes:       cfg.Auth.OIDC.Scopes,
+		})
+		if oerr != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("initialising OIDC provider: %w", oerr)
+		}
+		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, cfg.Auth.Session)
+	}
+	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, userRepo)
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
@@ -484,6 +520,15 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering webhooks: %w", err)
 	}
 
+	// 14b. Start the org-mode session-expiry sweep (no-op in local mode).
+	var sweepCancel context.CancelFunc
+	if authMode == identity.ModeOrg {
+		var sweepCtx context.Context
+		sweepCtx, sweepCancel = context.WithCancel(context.Background())
+		go adaptsqlite.SweepExpiredSessions(sweepCtx, sessionRepo,
+			time.Duration(cfg.Auth.Session.TTLSeconds)*time.Second, logger)
+	}
+
 	return &domainStack{
 		cfg:                 cfg,
 		settings:            settings,
@@ -508,6 +553,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		connChecker:         connChecker,
 		connStore:           connStore,
 		tracingShutdown:     tracingShutdown,
+		sessionRepo:         sessionRepo,
+		authMW:              authMW,
+		authHandler:         authHandler,
+		sweepCancel:         sweepCancel,
 	}, nil
 }
 
@@ -550,6 +599,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		MCPHandler:          mcpSrv.HTTPHandler(),
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
+		Auth:                ds.authMW,
+		AuthHandler:         ds.authHandler,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).
@@ -557,10 +608,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	addr := fmt.Sprintf("%s:%d", ds.cfg.Server.Host, ds.cfg.Server.Port)
 
-	// Warn if binding to a non-loopback address. The API has no authentication,
-	// so exposing it on the network is a security risk.
-	if ds.cfg.Server.Host != "127.0.0.1" && ds.cfg.Server.Host != "localhost" && ds.cfg.Server.Host != "::1" {
-		ds.logger.Warn("server is binding to a non-loopback address -- the API has no authentication and should not be exposed on the network",
+	// Warn if binding to a non-loopback address in LOCAL mode. Local mode has no
+	// authentication (a fixed auto-admin), so exposing it on the network is a
+	// security risk. In ORG mode the API IS authenticated, so binding non-loopback
+	// is the intended deployment and the warning is suppressed.
+	if ds.cfg.Auth.Mode == config.AuthModeLocal &&
+		ds.cfg.Server.Host != "127.0.0.1" && ds.cfg.Server.Host != "localhost" && ds.cfg.Server.Host != "::1" {
+		ds.logger.Warn("local mode is binding to a non-loopback address -- local mode has no authentication and should not be exposed on the network",
 			"host", ds.cfg.Server.Host)
 	}
 
@@ -641,6 +695,10 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	mcpSrv := adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())
 	adaptmcp.RegisterAllTools(mcpSrv)
 
+	// NOTE (Phase 6 scope): the stdio MCP transport is NOT behind the HTTP auth
+	// middleware. Phase 1 auth covers the HTTP surfaces (REST, /mcp HTTP, WS);
+	// the stdio transport is operator-local (a process the operator launched),
+	// so stdio-MCP identity is deferred.
 	ds.logger.Info("MCP stdio server starting")
 	return mcpSrv.ServeStdio(ctx)
 }

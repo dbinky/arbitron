@@ -260,8 +260,18 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	}
 
 	// Serve the embedded dashboard SPA for any route not matched by the API.
+	//
+	// AUTH (Phase 6): the SPA is the browser-navigation surface, so it is wrapped
+	// with d.Auth too. In org mode an anonymous navigation (GET, Accept text/html)
+	// is redirected to /auth/login by the middleware's reject(); after login the
+	// session cookie is present and assets load. In local mode the default admin
+	// identity is injected. /auth/* is registered above, OUTSIDE this guard.
 	if d.DashboardHandler != nil {
-		r.NotFound(d.DashboardHandler.ServeHTTP)
+		dash := d.DashboardHandler
+		if d.Auth != nil {
+			dash = d.Auth.Handler(dash)
+		}
+		r.NotFound(dash.ServeHTTP)
 	}
 
 	return r
