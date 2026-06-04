@@ -1,6 +1,12 @@
 import type { Instance, NodeExecution } from '../api/types'
 import type { WorkflowDefinition, NodeExecutionState } from './types'
 
+function sourceNodeId(def: WorkflowDefinition): string | null {
+  const hasIncoming = new Set(def.edges.map((e) => e.target))
+  const source = def.nodes.find((n) => !hasIncoming.has(n.id))
+  return source ? source.id : null
+}
+
 /**
  * Pick the id of the real step node the viewport should center on.
  *
@@ -20,6 +26,7 @@ export function selectAnchorNodeId(
   if (!instance) {
     const entry = workflowDef.nodes.find((n) => n.entrypoint === true)
     if (entry) return entry.id
+    return sourceNodeId(workflowDef) ?? workflowDef.nodes[0].id
   }
 
   return null

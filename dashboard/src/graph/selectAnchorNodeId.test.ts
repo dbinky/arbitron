@@ -69,4 +69,28 @@ describe('selectAnchorNodeId — static preview (no instance)', () => {
     )
     expect(selectAnchorNodeId(null, d, noStates, [])).toBe('b')
   })
+
+  it('falls back to the source node (no incoming edge) when no entrypoint flag', () => {
+    const d = def(
+      [N('a'), N('b'), N('c')],
+      [
+        { source: 'a', target: 'b' },
+        { source: 'b', target: 'c' },
+      ],
+    )
+    // 'a' has no incoming edge => it is the source.
+    expect(selectAnchorNodeId(null, d, noStates, [])).toBe('a')
+  })
+
+  it('falls back to the first node when there is no clear source', () => {
+    // A 2-cycle: every node has an incoming edge, so there is no source.
+    const d = def(
+      [N('x'), N('y')],
+      [
+        { source: 'x', target: 'y' },
+        { source: 'y', target: 'x' },
+      ],
+    )
+    expect(selectAnchorNodeId(null, d, noStates, [])).toBe('x')
+  })
 })
