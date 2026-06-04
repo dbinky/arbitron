@@ -546,6 +546,21 @@ func TestInstancePause(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "id is required")
 	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance (existence not leaked).
+		eng := &stubEngine{
+			pauseFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_pause", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+	})
 }
 
 func TestInstanceResume(t *testing.T) {
@@ -591,6 +606,21 @@ func TestInstanceResume(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "id is required")
+	})
+
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The engine's authorizeIntervention returns ErrNotFound for a non-owner;
+		// the MCP tool surfaces it identically to a missing instance (existence not leaked).
+		eng := &stubEngine{
+			resumeFn: func(id uuid.UUID) error {
+				return fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_resume", map[string]any{"id": uuid.New().String()})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
 	})
 }
 
