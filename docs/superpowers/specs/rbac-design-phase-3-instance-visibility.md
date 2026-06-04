@@ -37,8 +37,11 @@ CREATE INDEX idx_instances_dept_vis ON instances(department, visibility, state, 
 Existing rows default to `private` with NULL department, matching today's
 owner-only behavior (spec §Migration).
 
-`instance.Instance` gains `Department string` and `Visibility workflow.Visibility`
-(snapshot fields, peers of `WorkflowSnapshot`). `instance.ListFilters` gains
+`instance.Instance` gains `Department string` and `Visibility string` (a
+self-owned type in domain/instance whose values mirror the workflow visibility
+strings `private|department|public`; redeclared locally rather than importing
+`domain/workflow`, matching the existing pattern where `instance.Claims`
+redeclares `identity.Claims` to keep domain edges one-directional). `instance.ListFilters` gains
 `Departments []string` and `Visibilities []string` (service-set, never from
 request input — same security posture as the existing service-set `OwnerID`).
 
