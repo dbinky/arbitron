@@ -8,6 +8,13 @@ _(none)_
 
 ## Fixed Previously
 
+### LOOP-005: Nested-loop depth propagation not verified at GraphView integration level
+**Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 24
+**Detail**: The design spec says "Nested loops are shown as nested containers." The `depth` field drives visual inset and z-index. `useGraphLayout.test.ts` verified two containers for nested loops, but no test checked that inner/outer have the correct `depth` values. A bug hardcoding `depth: 0` on all containers would produce visually flat boxes without failing any test. Added `nestedLoopWorkflow` fixture (outer loop e→b, inner d→c), then two tests: (1) two containers are emitted; (2) the inner container (`data.label === 'Loop until inner done'`) has `depth === 1` and the outer has `depth === 0`. Also cleaned up a duplicate `unlabeledLoopWorkflow` fixture that appeared due to a failed partial edit.
+
+---
+
 ### LOOP-004: GraphView integration test verifies node type but not container label
 **Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
 **Fixed**: Iteration 23
