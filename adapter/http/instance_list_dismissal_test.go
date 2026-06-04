@@ -133,6 +133,36 @@ func TestList_UserResolutionError_500(t *testing.T) {
 	assert.Equal(t, 500, resp.StatusCode)
 }
 
+// Seam: engine.Retry calls dismissalRepo.ClearForInstance, which clears the
+// dismissal for every user. The HTTP List handler then calls DismissedIDs on
+// the same repo and must return the item as undismissed. This test pins the
+// "clear → resurface" seam: after ClearForInstance the item must reappear in
+// the default list (not filtered out as dismissed).
+func TestList_ResurfacesAfterClearForInstance(t *testing.T) {
+	user := uuid.New()
+	ctx := context.Background()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	dis := newMockDismissalRepo()
+	require.NoError(t, dis.Dismiss(ctx, user, id))
+
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	// Step 1: item is dismissed → omitted by default.
+	items := getList(t, srv.URL+"/api/v1/instances?state=failed")
+	assert.Empty(t, items, "dismissed item must be omitted before clear")
+
+	// Step 2: engine.Retry calls ClearForInstance on the same repo.
+	require.NoError(t, dis.ClearForInstance(ctx, id))
+
+	// Step 3: item resurfaces — dismissed flag is gone.
+	items = getList(t, srv.URL+"/api/v1/instances?state=failed")
+	require.Len(t, items, 1, "item must resurface after ClearForInstance")
+	assert.False(t, items[0].Dismissed, "resurfaced item must not be marked dismissed")
+}
+
 func TestList_DismissalScopedToActingUser(t *testing.T) {
 	userA := uuid.New()
 	userB := uuid.New()

@@ -9,6 +9,14 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-22-001: No HTTP-level test that ClearForInstance (called by engine.Retry) resurfaces item in List
+**Area**: Paired review #22 — dismiss slice + engine retry resurface (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 40
+**Detail**: The engine tests verify Retry calls ClearForInstance. The List tests verify a dismissed item is omitted. But no test verified the seam: after ClearForInstance is called on the SAME dismissal repo the HTTP server uses, a subsequent List call returns the item as undismissed. Added `TestList_ResurfacesAfterClearForInstance`: (1) dismiss an item — list returns empty; (2) call `dis.ClearForInstance(ctx, id)` simulating what engine.Retry does; (3) re-list — item appears with `dismissed=false`. This pins the "clear → resurface" path through the HTTP adapter, catching any regression where the engine and HTTP adapter used different repo instances or the List handler cached DismissedIDs.
+
+
+## Fixed Previously
+
 ### PAIR-21-001: No test that QueueSection interleaves dismissed and non-dismissed items in sort order
 **Area**: Paired review #21 — list marking + Queue UI (`dashboard/src/components/QueueSection.test.tsx`)
 **Fixed**: Iteration 39
