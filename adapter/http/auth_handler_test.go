@@ -308,6 +308,26 @@ func TestAuthHandler_Login_SanitizesNext(t *testing.T) {
 	}
 }
 
+func TestAuthHandler_StateCookie_Attributes(t *testing.T) {
+	// The state cookie carries state|nonce|next signed with HMAC. Its security
+	// properties are what make the OIDC round-trip CSRF-safe: HttpOnly prevents JS
+	// theft, SameSite=Lax ensures only browser-initiated navigations include it,
+	// and MaxAge=600 keeps the login window tight.
+	h := newAuthHandler(&fakeOIDCProvider{}, newFakeSessionRepo(), newFakeUserRepo())
+	loginRec := httptest.NewRecorder()
+	h.Login(loginRec, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	require.Equal(t, http.StatusFound, loginRec.Code)
+
+	sc := findCookie(loginRec.Result().Cookies(), stateCookieName)
+	require.NotNil(t, sc, "Login must set the state cookie")
+	assert.True(t, sc.HttpOnly, "state cookie must be HttpOnly — JS must not read or replay it")
+	assert.Equal(t, http.SameSiteLaxMode, sc.SameSite, "state cookie must be SameSite=Lax")
+	assert.Equal(t, "/", sc.Path)
+	assert.Equal(t, 600, sc.MaxAge, "state cookie must expire in 600 s (10 min login window)")
+	assert.True(t, sc.Secure, "state cookie must be Secure when CookieSecure=true")
+	assert.NotEmpty(t, sc.Value, "state cookie must carry the signed state+nonce payload")
+}
+
 func TestAuthHandler_SessionCookie_Attributes(t *testing.T) {
 	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
 	sessions := newFakeSessionRepo()
