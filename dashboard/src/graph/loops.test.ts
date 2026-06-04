@@ -87,6 +87,7 @@ describe('detectLoops — boundary: nested loops', () => {
 describe('detectLoops — interaction: multiple loops sharing a head', () => {
   it('emits one loop per back-edge when two tails return to the same head', () => {
     // a → b → c → d; both c→b and d→b loop back to b.
+    // l1 body=[b,c], l2 body=[b,c,d]; l1 ⊂ l2 so l1.depth=1, l2.depth=0.
     const back1: WorkflowEdge = { source: 'c', target: 'b' }
     const back2: WorkflowEdge = { source: 'd', target: 'b' }
     const edges: WorkflowEdge[] = [
@@ -104,6 +105,37 @@ describe('detectLoops — interaction: multiple loops sharing a head', () => {
     expect(l2.headId).toBe('b')
     expect(body(l1)).toEqual(['b', 'c'])
     expect(body(l2)).toEqual(['b', 'c', 'd'])
+    // Depth: l1 is strictly contained in l2 → l1.depth=1; l2 is not contained in anything → l2.depth=0.
+    expect(l1.depth).toBe(1)
+    expect(l2.depth).toBe(0)
+  })
+})
+
+describe('detectLoops — edge case: sibling loops with disjoint bodies', () => {
+  it('assigns depth 0 to both loops when their bodies do not overlap', () => {
+    // a → b → c → b (loop 1: head=b, body=[b,c])
+    // a → d → e → d (loop 2: head=d, body=[d,e])
+    // The two loops are siblings in sequence; neither contains the other.
+    const back1: WorkflowEdge = { source: 'c', target: 'b', label: 'retry' }
+    const back2: WorkflowEdge = { source: 'e', target: 'd', label: 'refine' }
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      back1,
+      { source: 'c', target: 'd' },
+      { source: 'd', target: 'e' },
+      back2,
+    ]
+    const result = detectLoops(edges)
+    expect(result.loops).toHaveLength(2)
+    const lb = result.loops.find((l) => l.headId === 'b')!
+    const ld = result.loops.find((l) => l.headId === 'd')!
+    expect(body(lb)).toEqual(['b', 'c'])
+    expect(body(ld)).toEqual(['d', 'e'])
+    expect(lb.depth).toBe(0)
+    expect(ld.depth).toBe(0)
+    expect(result.backEdgeKeys.has(backEdgeKey('c', 'b'))).toBe(true)
+    expect(result.backEdgeKeys.has(backEdgeKey('e', 'd'))).toBe(true)
   })
 })
 

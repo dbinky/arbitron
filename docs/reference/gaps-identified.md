@@ -8,7 +8,10 @@ _(none)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### LOOP-002: Missing depth assertions in "multiple loops sharing a head" test + no sibling-loops coverage
+**Area**: Loop detection (`dashboard/src/graph/loops.ts`)
+**Fixed**: Iteration 1
+**Detail**: The "multiple loops sharing a head" test verified that `body(l1) ⊂ body(l2)` but never asserted `depth`. Since depth drives container nesting in the renderer, an incorrect depth value would cause visual mis-rendering without any failing tests. Added `expect(l1.depth).toBe(1)` and `expect(l2.depth).toBe(0)` to that test. Also added a new `describe` block for genuinely disjoint sibling loops (two sequential non-overlapping loops) to verify both get `depth === 0` — this topology was entirely untested._
 
 <!--
 Example of a fixed issue entry:
