@@ -80,8 +80,14 @@ func (r *DeviceCodeRepo) Approve(ctx context.Context, userCode string, userID uu
 }
 
 func (r *DeviceCodeRepo) Deny(ctx context.Context, userCode string) error {
-	if _, err := r.queries.DenyDeviceCode(ctx, userCode); err != nil {
+	n, err := r.queries.DenyDeviceCode(ctx, userCode)
+	if err != nil {
 		return fmt.Errorf("denying device code: %w", err)
+	}
+	if n == 0 {
+		// Nothing pending to deny (unknown, already approved/denied/consumed):
+		// surface the status guard instead of silently succeeding.
+		return fmt.Errorf("device code: %w", identity.ErrNotFound)
 	}
 	return nil
 }

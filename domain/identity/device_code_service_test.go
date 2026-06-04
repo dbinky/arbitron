@@ -396,6 +396,48 @@ func TestDeviceCodeService_Approve_Expired(t *testing.T) {
 	assert.Equal(t, DeviceCodePending, dc.Status, "Approve on expired code must not change status")
 }
 
+// Failure: Approve on an already-denied (terminal) code must surface the
+// rows-affected status guard (ErrNotFound), never silently succeed.
+func TestDeviceCodeService_Approve_AlreadyDenied(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	clock := &fakeClock{t: time.Now()}
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), clock.Now)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	// Approver denies the (unexpired) code first -> terminal.
+	approveCtx := WithIdentity(ctx, Identity{UserID: uuid.New(), Role: RoleUser})
+	require.NoError(t, svc.Deny(approveCtx, start.UserCode))
+
+	// A subsequent Approve must hit the status guard (0 rows) and fail.
+	err = svc.Approve(approveCtx, start.UserCode)
+	assert.ErrorIs(t, err, ErrNotFound, "approving an already-denied code must not silently succeed")
+
+	dc, _ := repo.GetByUserCode(ctx, start.UserCode)
+	assert.Equal(t, DeviceCodeDenied, dc.Status, "row must remain denied")
+}
+
+// Failure: Deny on an already-terminal code must surface the rows-affected
+// status guard (ErrNotFound), never silently succeed.
+func TestDeviceCodeService_Deny_AlreadyTerminal(t *testing.T) {
+	ctx := context.Background()
+	repo := newFakeDeviceRepo()
+	clock := &fakeClock{t: time.Now()}
+	svc := newDeviceSvc(repo, NewTokenService(&countingTokenRepo{}), clock.Now)
+
+	start, err := svc.Start(ctx, "uri")
+	require.NoError(t, err)
+
+	approveCtx := WithIdentity(ctx, Identity{UserID: uuid.New(), Role: RoleUser})
+	require.NoError(t, svc.Deny(approveCtx, start.UserCode))
+
+	// Second Deny: nothing pending to deny -> ErrNotFound.
+	err = svc.Deny(approveCtx, start.UserCode)
+	assert.ErrorIs(t, err, ErrNotFound, "denying an already-terminal code must not silently succeed")
+}
+
 // Boundary/edge: DeleteExpired delegates count to the repo and returns it.
 func TestDeviceCodeService_DeleteExpired(t *testing.T) {
 	ctx := context.Background()

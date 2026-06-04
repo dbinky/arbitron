@@ -87,6 +87,11 @@ func TestDeviceCodeRepo_StatusGuards(t *testing.T) {
 	require.NoError(t, repo.Deny(ctx, "AAAA-1111"))
 	err = repo.Approve(ctx, "AAAA-1111", uid)
 	assert.ErrorIs(t, err, identity.ErrNotFound)
+
+	// Deny of an already-terminal (denied) row hits the status guard (0 rows)
+	// and must surface ErrNotFound, not silently succeed.
+	err = repo.Deny(ctx, "AAAA-1111")
+	assert.ErrorIs(t, err, identity.ErrNotFound, "Deny of a non-pending row must surface the rows-affected guard")
 }
 
 // Boundary: DeleteExpired removes only rows strictly before now; equal stays.
