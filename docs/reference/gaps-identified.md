@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### PAIR-17-001: useGraphLayout stored-positions branch didn't verify container position/size
+**Area**: Paired review #17 — loop detection + geometry seam (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 35
+**Detail**: The stored-positions test only verified a container existed, not its box. The seam was: `detectLoops(edges).loops[*].bodyNodeIds` → positionMap lookup → `loopContainerBox` → container position+size. Added `container position and size reflect the bounding box of body node positions`: nodes b=(100,0), c=(100,200), back-edge c→b. Expected container: x=76, y=-24, width=248, height=328 (derived from `CONTAINER_PAD=24`, `NODE_WIDTH=200`, `NODE_HEIGHT=80`). Pins the full seam so a wrong bodyNodeIds set would produce the wrong box.
+
+---
+
 ### LOOP-007: Step nodes never assigned a parentId — design constraint not pinned in tests
 **Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
 **Fixed**: Iteration 34

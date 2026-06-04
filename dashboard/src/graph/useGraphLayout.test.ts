@@ -105,6 +105,30 @@ describe('useGraphLayout — stored positions branch', () => {
     expect(b.position).toEqual({ x: 100, y: 0 })
     expect(result.current.rfNodes.some((n) => n.type === 'loopContainer')).toBe(true)
   })
+
+  // Seam test (detection→geometry): verifies that detectLoops produces bodyNodeIds that
+  // loopContainerBox uses to compute the correct box from the known node positions.
+  // b=(100,0), c=(100,200). NODE_WIDTH=200, NODE_HEIGHT=80, CONTAINER_PAD=24.
+  // Expected: minX=100, minY=0, maxX=300, maxY=280 → box (76, -24, 224, 328).
+  it('container position and size reflect the bounding box of body node positions', () => {
+    const nodes: WorkflowNode[] = [
+      { ...node('b'), position: { x: 100, y: 0 } },
+      { ...node('c'), position: { x: 100, y: 200 } },
+    ]
+    const edges: WorkflowEdge[] = [{ source: 'b', target: 'c' }, { source: 'c', target: 'b' }]
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    type BoxNode = { type?: string; position?: { x: number; y: number }; width?: number; height?: number }
+    const container = result.current.rfNodes.find((n) => n.type === 'loopContainer') as BoxNode | undefined
+    expect(container).toBeDefined()
+    // x = minX - PAD = 100 - 24 = 76
+    expect(container!.position!.x).toBe(76)
+    // y = minY - PAD = 0 - 24 = -24
+    expect(container!.position!.y).toBe(-24)
+    // width = (maxX - minX) + 2*PAD = (300-100) + 48 = 248
+    expect(container!.width).toBe(248)
+    // height = (maxY - minY) + 2*PAD = (280-0) + 48 = 328
+    expect(container!.height).toBe(328)
+  })
 })
 
 describe('useGraphLayout — container zIndex', () => {
