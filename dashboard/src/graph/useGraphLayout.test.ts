@@ -66,6 +66,17 @@ describe('useGraphLayout — single loop (dagre branch, no stored positions)', (
     expect(c.focusable).toBe(false)
   })
 
+  // Design constraint: loop containers are derived overlays, NOT React Flow parent nodes.
+  // Step nodes must never have a parentId pointing to a container. Using parentId would
+  // make ReactFlow treat the container as a parent scope and break the overlay approach.
+  it('step nodes in the loop body have no parentId', () => {
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const stepNodes = result.current.rfNodes.filter((n) => n.type === 'arbitronNode')
+    for (const n of stepNodes) {
+      expect((n as { parentId?: string }).parentId).toBeUndefined()
+    }
+  })
+
   it('types the back-edge as loopBackEdge and keeps forward edges smoothstep', () => {
     const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
     const back = result.current.rfEdges.find((e) => e.source === 'c' && e.target === 'b')!

@@ -28,7 +28,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 13 | Domain: per-user dismissal state model (per-user scoping, terminal-only, resurface-on-retry) across backend + frontend | [x] | [x] | Done |
 | 14 | Vertical slice: dismiss action ([x] → POST /instances/{id}/dismiss → repo → list omits → UI updates) | [x] | [x] | Done |
 | 15 | Vertical slice: show/hide dismissed (toggle → list `includeDismissed=true` → marked → dimmed render + ↺ restore) | [x] | [x] | Done |
-| 16 | Vertical slice: loop render (workflow definition → detection → layout/container → graph) | [x] | [ ] | |
+| 16 | Vertical slice: loop render (workflow definition → detection → layout/container → graph) | [x] | [x] | Done |
 
 ---
 

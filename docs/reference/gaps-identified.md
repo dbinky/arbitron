@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### LOOP-007: Step nodes never assigned a parentId — design constraint not pinned in tests
+**Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 34
+**Detail**: The design doc explicitly states "Never use React Flow `parentId` for loop containers." Step nodes must never have `parentId` pointing to a container; using it would make ReactFlow treat the container as a parent scope and break the overlay approach. No test pinned this constraint. Added `step nodes in the loop body have no parentId` to the `single loop (dagre branch)` describe block: iterates all `arbitronNode` step nodes and asserts `.parentId` is undefined.
+
+---
+
 ### LOOP-006: Loop container zIndex formula untested — depth drives z-ordering for nested containers
 **Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
 **Fixed**: Iteration 33
