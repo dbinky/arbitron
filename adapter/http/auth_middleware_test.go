@@ -310,6 +310,18 @@ func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		assert.Empty(t, rec.Header().Get("Location"), "/mcp must not redirect")
 	})
+
+	t.Run("POST with html accept returns 401 not redirect", func(t *testing.T) {
+		// isBrowserNavigation returns false for any non-GET, so form POSTs to
+		// browser paths must never receive a redirect — they would lose the
+		// request body and confuse the client.
+		req := httptest.NewRequest(http.MethodPost, "/workflows", nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Empty(t, rec.Header().Get("Location"), "POST must not redirect")
+	})
 }
 
 func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
@@ -444,8 +456,32 @@ func TestAuthMiddleware_Bearer_ErrorPaths(t *testing.T) {
 }
 
 // Boundary: session wins when both present; bearer works with no cookie; a
-// TouchLastUsed error still yields 200.
+// TouchLastUsed error still yields 200; a stale/forged session cookie does not
+// block a valid bearer (falls through as the code comment promises).
 func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
+	t.Run("stale cookie + valid bearer -> bearer wins", func(t *testing.T) {
+		// This is the "stale cookie must not block a valid Authorization header"
+		// path from the middleware comment. The session repo has no matching
+		// entry, so the cookie branch falls through to bearer resolution.
+		users := newFakeUserRepo()
+		tokens := newFakeTokenRepo()
+		uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
+		sessions := newFakeSessionRepo() // empty — cookie lookup will fail
+
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+		probe := &identityProbe{}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+		req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "stale-or-forged"})
+		req.Header.Set("Authorization", "Bearer "+plaintext)
+		rec := httptest.NewRecorder()
+		mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.True(t, probe.called)
+		assert.Equal(t, uid, probe.id.UserID, "bearer identity must be used when cookie lookup fails")
+	})
+
 	t.Run("valid session + garbage bearer -> session wins", func(t *testing.T) {
 		users := newFakeUserRepo()
 		uid := uuid.New()
