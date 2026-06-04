@@ -19,7 +19,7 @@
 - UUID/time helpers live in `adapter/sqlite/convert.go`: `uuidToString(uuid.UUID) string`, `parseUUID(string) (uuid.UUID, error)`, `timeToString(time.Time) string`, `parseTime(string) (time.Time, error)`.
 - Test style: `adapter/sqlite/connection_repo_test.go` + `integration_test.go`. Tests use `setupTestDB(t)` (returns `testDB{DB *sql.DB}`, in-memory DB with migrations applied, auto-closed via `t.Cleanup`), `testify/require` + `testify/assert`, and section-comment banners (Happy / Success / Failure / Error / Edge). The seeded default user is `00000000-0000-0000-0000-000000000001` (username `local`, role `admin`).
 - `instances.owner_id` is `TEXT NOT NULL REFERENCES users(id)`; `instances.id` is `TEXT PRIMARY KEY`. SQLite stores UUIDs as their `.String()` form.
-- **SQLite foreign keys are OFF by default.** For `ON DELETE CASCADE` to fire, the connection must have `PRAGMA foreign_keys = ON`. Verify whether `adapter/sqlite/Open` already sets this (grep for `foreign_keys` / `_pragma` / `_foreign_keys` in `adapter/sqlite`). If it does not, the cascade test below documents the gap and asserts the actually-observed behavior; do **not** silently change global PRAGMAs without confirming with the existing `Open` configuration.
+- **SQLite foreign keys: this repo enables them.** `adapter/sqlite/db.go` `Open()` runs `PRAGMA foreign_keys=ON` (line ~39) and `db.SetMaxOpenConns(1)`, so the single pooled connection keeps FK enforcement ON. `setupTestDB(t)` builds its DB via `Open(":memory:")` + `RunMigrations`, so **FK enforcement is ACTIVE in tests**. Therefore `ON DELETE CASCADE` WILL fire and the cascade test below must **assert** the dismissal row is removed (not skip). The defensive `PRAGMA foreign_keys` read in the test stays as a guard, but under this repo's `Open()` the `fk == 1` branch is the one exercised. Do **not** add or change global PRAGMAs in this task — they are already correct.
 
 **Files:**
 - `adapter/sqlite/migrations/003_instance_dismissals.up.sql` (new)
@@ -415,10 +415,11 @@ func TestDismissalRepo_ClearForInstanceAcrossUsers(t *testing.T) {
 // Integration: cascade on instance delete
 // ---------------------------------------------------------------------------
 
-// Integration: deleting the instance removes the dismissal row IF the SQLite
-// connection has foreign keys enabled. This documents the cascade contract.
-// If Open() does not enable PRAGMA foreign_keys, assert the observed behavior
-// (row remains) and the cascade is exercised only when FKs are on.
+// Integration: deleting the instance removes the dismissal row via ON DELETE
+// CASCADE. This repo's Open() enables PRAGMA foreign_keys=ON with a single
+// pooled connection, so setupTestDB has FK enforcement active and the cascade
+// MUST fire. The PRAGMA read below is a defensive guard; under this repo's
+// Open() the fk==1 branch is exercised and the row must be gone.
 func TestDismissalRepo_CascadeOnInstanceDelete(t *testing.T) {
 	repo, db := newDismissalRepo(t)
 	ctx := context.Background()
@@ -435,18 +436,13 @@ func TestDismissalRepo_CascadeOnInstanceDelete(t *testing.T) {
 
 	ids, err := repo.DismissedIDs(ctx, user)
 	require.NoError(t, err)
-	if fk == 1 {
-		assert.Empty(t, ids, "ON DELETE CASCADE must remove the dismissal when FKs are enabled")
-	} else {
-		t.Skip("foreign_keys pragma is OFF on this connection; cascade not exercised")
-	}
+	require.Equal(t, 1, fk, "this repo's Open() enables PRAGMA foreign_keys=ON; setupTestDB must have FKs active")
+	assert.Empty(t, ids, "ON DELETE CASCADE must remove the dismissal when the instance is deleted")
 }
 ```
 
 - [ ] Run: `go test ./adapter/sqlite/ -run TestDismissalRepo`
-- [ ] Expected: **PASS** for all (the impl from Step 1.5 already satisfies them). If the cascade test reports FKs OFF, leave the `t.Skip` branch — do not change global PRAGMA settings as part of this task; record the gap in the task report instead.
-
-> Note: if `Open()` enables `_foreign_keys=on` (check the DSN/connector in `adapter/sqlite`), the cascade assertion runs and must pass.
+- [ ] Expected: **PASS** for all (the impl from Step 1.5 already satisfies them). The cascade test asserts the row is removed: this repo's `Open()` enables `PRAGMA foreign_keys=ON` (db.go ~line 39) with `SetMaxOpenConns(1)`, so FK enforcement is active in `setupTestDB` and the cascade fires. Do not change any global PRAGMA settings as part of this task.
 
 - [ ] Run the full backend gate: `make test` (equivalent to `go test ./...`).
 - [ ] Expected: **PASS** — no existing test regressed (the new port is additive; no existing interface changed).
@@ -463,4 +459,4 @@ If hand-written SQL is rejected in review, mirror `instances.sql`:
 - [ ] Rewrite `dismissal_repo.go` to hold `queries *generated.Queries` (see `instance_repo.go` constructor) and call the generated methods; `DismissedIDs` still builds the `map[uuid.UUID]bool` from the returned `[]string`.
 - [ ] Re-run the same Step 1.6 tests; they are implementation-agnostic and must still pass.
 
-**Definition of done for Task 1:** migration 003 up/down committed; `domain/instance.DismissalRepository` port committed; `adapter/sqlite/dismissal_repo.go` implements it; repo tests cover happy/edge/success/boundary/integration (dismiss idempotent, restore no-op, scoping per user, clear across users, cascade contract); `make test` green.
+**Definition of done for Task 1:** migration 003 up/down committed; `domain/instance.DismissalRepository` port committed; `adapter/sqlite/dismissal_repo.go` implements it; repo tests cover happy/edge/success/boundary/integration (dismiss idempotent, restore no-op, scoping per user, clear across users, cascade-on-delete asserted with FKs ON); `make test` green.

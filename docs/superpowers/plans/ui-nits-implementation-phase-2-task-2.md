@@ -471,6 +471,7 @@ describe('GraphView — Recenter / Follow control', () => {
         nodes={nodesWithSelection}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
         onMoveStart={(event) => onMoveStart(event)}
         minZoom={0.3}
@@ -491,7 +492,7 @@ describe('GraphView — Recenter / Follow control', () => {
       </ReactFlow>
 ```
 
-> Preserve any Phase 1 props on `<ReactFlow>` (e.g. `edgeTypes`) — add `onMoveStart` alongside them, do not replace them.
+> Preserve Phase 1's `edgeTypes={edgeTypes}` prop and its import — the block above includes it. Add `onMoveStart` alongside it; do not replace or drop `edgeTypes`. (If Phase 1 has not landed, omit the `edgeTypes` line — but the Phase 4 ordering requires Phase 1 first, so it should be present.)
 
 - [ ] Run: `npm test -- src/routes/GraphView.test.tsx`
 - [ ] **Expected PASS:** the control renders, toggles to paused on the simulated user move, and returns to following on Recenter; existing centering + no-remount tests still pass.

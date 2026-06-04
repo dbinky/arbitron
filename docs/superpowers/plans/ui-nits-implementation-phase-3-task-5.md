@@ -12,6 +12,7 @@
 
 **Context for the implementer (read before starting):**
 
+- **Prerequisite — install dashboard deps FIRST (one-time per worktree):** `node_modules` is NOT installed in this worktree's `dashboard/`. Before running ANY `npm`/`npx`/`vitest`/`make ui`/`make test-ui` command in this task, run once: `cd dashboard && npm install` (or `make ui` once, which also rebuilds the embedded dist). Verify with `ls dashboard/node_modules >/dev/null 2>&1 && echo present`. Skip if a Phase 1/2 frontend task already installed it. The Step 5.1 `npx vitest` call and every later frontend command depend on this.
 - API client: `dashboard/src/api/client.ts`. `api.instances` already has `list(params)`, `retry`, `rerun`, etc. `request<T>` / `post<T>` helpers handle fetch + error. `ListInstancesParams` (lines 16-23) holds the list query options. `post` returns parsed JSON; for endpoints returning `{ "status": "ok" }` declare the return as `Promise<{ status: string }>` (matches `pause`/`resume`).
 - Types: `dashboard/src/api/types.ts` → `InstanceSummary`. Task 3 may have already added `dismissed?: boolean`; if not, add it here.
 - `QueueView.tsx` fetches six lists in parallel (running/waiting/queued/paused/failed/completed), with `failed`/`completed` windowed by `since = daysAgo(5)`. It refetches (debounced) on WebSocket state-change events and on reconnect. The Show/Hide toggle adds a `showDismissed` boolean: when true, the failed/completed fetches pass `includeDismissed: true`; when false, the default fetch (server omits dismissed) is used. The toggle lives at the bottom of the returned view.
@@ -75,6 +76,13 @@ describe('api.instances dismissal', () => {
     )
   })
 
+  it('POSTs dismissAll with a since window when provided', async () => {
+    await api.instances.dismissAll('completed', '2026-01-01T00:00:00.000Z')
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(url).toContain('state=completed')
+    expect(url).toContain('since=')
+  })
+
   it('list includes includeDismissed=true when requested', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
     await api.instances.list({ state: 'failed', includeDismissed: true })
@@ -129,9 +137,17 @@ export interface ListInstancesParams {
       return post(`/api/v1/instances/${id}/restore`)
     },
 
-    /** Dismiss every currently listed instance in a terminal category. */
-    dismissAll(state: 'failed' | 'completed'): Promise<{ status: string }> {
-      return post(`/api/v1/instances/dismiss-all?state=${state}`)
+    /**
+     * Dismiss every currently listed instance in a terminal category. Pass the
+     * same `since` window the view uses (Failed/Completed are windowed to
+     * `daysAgo(5)`) so the backend dismisses exactly what the user sees, matching
+     * the spec's "every item currently listed in that category." Omitting `since`
+     * dismisses the full server-side window for that state (up to the list limit).
+     */
+    dismissAll(state: 'failed' | 'completed', since?: string): Promise<{ status: string }> {
+      const q = new URLSearchParams({ state })
+      if (since) q.set('since', since)
+      return post(`/api/v1/instances/dismiss-all?${q.toString()}`)
     },
 ```
 
@@ -465,7 +481,9 @@ describe('QueueView show/hide dismissed toggle', () => {
   }, [fetchAll])
 
   const handleDismissAll = useCallback(async (state: 'failed' | 'completed') => {
-    await api.instances.dismissAll(state)
+    // Scope to the same window the Failed/Completed sections show (daysAgo(5)),
+    // so [Dismiss All] dismisses exactly "every item currently listed".
+    await api.instances.dismissAll(state, daysAgo(HISTORY_DAYS))
     await fetchAll()
   }, [fetchAll])
 ```

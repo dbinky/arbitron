@@ -400,6 +400,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 #### Part C — Register `edgeTypes` and wire into `GraphView`
 
+> **Cross-phase note:** Phase 1 KEEPS `fitView`/`fitViewOptions` on `<ReactFlow>` (zoom behavior is out of scope here). Phase 2 task-1 later REMOVES `fitView`/`fitViewOptions` and builds default-zoom centering ON TOP of the `edgeTypes={edgeTypes}` prop you add below — so the `edgeTypes` import + prop must remain. Do not remove them. Phase 2 also extends the `useReactFlow` mock in `GraphView.loops.test.tsx` to add `setCenter`/`getZoom`; that update belongs to Phase 2, not here.
+
 - [ ] **Write** `dashboard/src/graph/edges/edgeTypes.ts` (stable module-level object, mirroring `nodeTypes.ts`):
 
 ```ts

@@ -12,6 +12,7 @@
 
 ## Conventions for this plan
 
+- **Prerequisite — install dashboard deps FIRST (one-time per worktree):** `node_modules` is NOT installed in this worktree's `dashboard/`. Before running ANY `npm`/`npx`/`vitest` command below, run once: `cd dashboard && npm install` (or `make ui` once). Verify with `ls dashboard/node_modules >/dev/null 2>&1 && echo present`. Skip if Phase 1 already installed it. Every step below assumes this is done.
 - Test runner: from `dashboard/`, run `npm test` (this is `vitest run`, single pass). To scope to one file, run `npm test -- src/graph/selectAnchorNodeId.test.ts`.
 - All paths below are relative to `dashboard/` unless absolute.
 - STRICT TDD: for every behavioral unit write a failing test first, run it and confirm the expected failure, write the minimal implementation, run again and confirm pass, then commit.
@@ -634,13 +635,14 @@ const DEFAULT_ZOOM = 0.9
   }, [anchorPos, reactFlow])
 ```
 
-- [ ] Update the `<ReactFlow>` element (lines 102–115): remove the `fitView` and `fitViewOptions` props (lines 107–108). Keep `minZoom={0.3}` and `maxZoom={2}`. Preserve any Phase 1 props (`edgeTypes`, etc.) if present. Result:
+- [ ] Update the `<ReactFlow>` element (lines 102–115): remove the `fitView` and `fitViewOptions` props (lines 107–108). Keep `minZoom={0.3}` and `maxZoom={2}`. **CRITICAL — preserve Phase 1's `edgeTypes={edgeTypes}` prop and its import** (Phase 1 task-3 added `import { edgeTypes } from '../graph/edges/edgeTypes'` and the `edgeTypes={edgeTypes}` prop right after `nodeTypes={nodeTypes}`). Do NOT drop it. The only props you remove are `fitView` and `fitViewOptions`. Result (assuming Phase 1 has landed, which the dependency ordering requires):
 
 ```tsx
       <ReactFlow
         nodes={nodesWithSelection}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
         minZoom={0.3}
         maxZoom={2}
@@ -650,6 +652,8 @@ const DEFAULT_ZOOM = 0.9
         <Controls showInteractive={false} />
       </ReactFlow>
 ```
+
+> If Phase 1 has not yet landed when you implement (not recommended — see ordering), the `edgeTypes` prop and its import will not be present; in that case do not add them here, just remove `fitView`/`fitViewOptions`. The dependency ordering in Phase 4 requires Phase 1 to merge before Phase 2, so the `edgeTypes`-present case is the expected one.
 
 - [ ] Run: `npm test -- src/routes/GraphView.test.tsx`
 - [ ] **Expected PASS:** both new centering tests pass; the existing no-remount tests still pass.
@@ -711,8 +715,18 @@ const DEFAULT_ZOOM = 0.9
 
 #### Step 2.5 — Full suite + typecheck
 
+- [ ] **Update Phase 1's loop integration-test mock for the new `setCenter`/`getZoom` calls.** Phase 1 task-3 created `src/routes/GraphView.loops.test.tsx` whose `@xyflow/react` mock returns `useReactFlow: () => ({ flowToScreenPosition: (p) => p })` — with no `setCenter`. Now that `GraphView` calls `useReactFlow().setCenter` on mount (and, after task-2, `getZoom`), that mock will throw `setCenter is not a function`. Extend that mock's `useReactFlow` to include `setCenter: () => {}` and `getZoom: () => 1` so the Phase 1 loops integration test stays green:
+
+```ts
+  useReactFlow: () => ({
+    flowToScreenPosition: (p: unknown) => p,
+    setCenter: () => {},
+    getZoom: () => 1,
+  }),
+```
+
 - [ ] Run: `npm test`
-- [ ] **Expected PASS:** all dashboard tests green.
+- [ ] **Expected PASS:** all dashboard tests green (including the Phase 1 `GraphView.loops.test.tsx` after the mock update above).
 - [ ] Run: `npm run build` (runs `tsc && vite build`) — confirms no TypeScript errors from the new imports/exports.
 - [ ] **Expected:** build succeeds. If `tsc` errors on an unused Phase-1 prop or missing type, resolve before continuing.
 - [ ] Commit any build-fix follow-ups separately if needed.
