@@ -8,6 +8,13 @@ _(none)_
 
 ## Fixed Previously
 
+### LOOP-004: GraphView integration test verifies node type but not container label
+**Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 23
+**Detail**: `GraphView.loops.test.tsx` checked that a loop workflow emits a `loopContainer` node and a `loopBackEdge` edge, but never checked the container node's `data.label` content. A bug in the label-propagation chain (e.g., `loopContainerLabel` not called in `useGraphLayout`) would pass all integration tests. Added two tests: (1) `container label reflects the back-edge label from the workflow definition` — verifies `data.label === 'Loop until tests pass'` for a workflow with `label: 'tests pass'` on the back-edge; (2) `container falls back to "Loop" when the back-edge carries no label` — verifies `data.label === 'Loop'` for an unlabeled back-edge. Also added `unlabeledLoopWorkflow` fixture (same topology, back-edge without a label) to the test file.
+
+---
+
 ### UI-003: Edge-case coverage missing for dismissal UI — completed dismissAll + cancelled guard
 **Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`, `dashboard/src/components/InstanceRow.test.tsx`)
 **Fixed**: Iteration 22

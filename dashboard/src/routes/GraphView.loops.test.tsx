@@ -41,6 +41,15 @@ const loopWorkflow: WorkflowDefinition = {
   ],
 }
 
+const unlabeledLoopWorkflow: WorkflowDefinition = {
+  ...loopWorkflow,
+  edges: [
+    { source: 'a', target: 'b' },
+    { source: 'b', target: 'c' },
+    { source: 'c', target: 'b' },  // no label — container should fall back to "Loop"
+  ],
+}
+
 const loopless: WorkflowDefinition = {
   ...loopWorkflow,
   edges: [
@@ -71,5 +80,24 @@ describe('GraphView — loop rendering integration', () => {
     renderView(loopless)
     expect(captured.nodes!.some((n) => n.type === 'loopContainer')).toBe(false)
     expect(captured.edges!.every((e) => e.type === 'smoothstep')).toBe(true)
+  })
+
+  // Domain end-to-end: the back-edge label in the WorkflowDefinition must flow
+  // through detection → loopContainerLabel → useGraphLayout → ReactFlow node data.
+  // Verifying the label content here pins the full propagation chain.
+  it('container label reflects the back-edge label from the workflow definition', () => {
+    renderView(loopWorkflow)
+    const container = captured.nodes!.find((n) => n.type === 'loopContainer') as
+      | { data?: { label?: string } }
+      | undefined
+    expect(container?.data?.label).toBe('Loop until tests pass')
+  })
+
+  it('container falls back to "Loop" when the back-edge carries no label', () => {
+    renderView(unlabeledLoopWorkflow)
+    const container = captured.nodes!.find((n) => n.type === 'loopContainer') as
+      | { data?: { label?: string } }
+      | undefined
+    expect(container?.data?.label).toBe('Loop')
   })
 })
