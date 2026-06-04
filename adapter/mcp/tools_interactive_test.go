@@ -169,6 +169,20 @@ func TestInteractiveEndSession(t *testing.T) {
 		assert.Contains(t, text, "42")
 	})
 
+	t.Run("non-owner gets the not-found tool error (gate enforced in the service)", func(t *testing.T) {
+		// The ConversationHandler's ownership gate returns ErrNotFound for a
+		// non-owner; the MCP tool surfaces it as a not-found tool error, identical
+		// to a missing instance (no existence leak).
+		conv := &mockConversationHandler{endErr: instance.ErrNotFound}
+		srv := newInteractiveServer(conv, &stubInstanceRepo{}, &stubNodeExecRepo{})
+		result := callTool(t, srv, "interactive_end_session", map[string]any{
+			"instanceId": uuid.New().String(),
+		})
+
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+	})
+
 	t.Run("missing instanceId returns error", func(t *testing.T) {
 		conv := &mockConversationHandler{}
 		srv := newInteractiveServer(conv, &stubInstanceRepo{}, &stubNodeExecRepo{})

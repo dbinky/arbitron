@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA23-P1-01: `interactive_end_session` MCP tool missing non-owner test
+**Area**: Focus Area 23 — Interactive participation gate (Pass 1)
+**Fix**: Added `"non-owner gets the not-found tool error (gate enforced in the service)"` sub-test to `TestInteractiveEndSession` in `adapter/mcp/tools_interactive_test.go`. The test injects `instance.ErrNotFound` from the mock `ConversationHandler.EndSession` (the error the ownership gate in `loadAndValidate` returns for a non-owner) and asserts the tool result is an error containing "not found" — byte-for-byte identical to a missing instance, no existence leak. This mirrors the equivalent test already present in `TestInteractiveSendMessage`, closing the asymmetric coverage gap. The domain-level gate (`conversation_authz_test.go`) and the HTTP adapter (`TestInteractiveHandler_EndSession_NonOwner`) both already had non-owner tests; the MCP `end_session` surface was the only one that did not.
+
 ### GAP-FA22-P2-01: `instance_subscribe` MCP tool had no authorization check
 **Area**: Focus Area 22 — WebSocket scoping (Pass 2)
 **Fix**: Changed `instanceSubscribeHandler` in `adapter/mcp/tools_streaming.go` to use `ctx context.Context` (was discarding `_`) and call `srv.deps.Engine.GetInstance(ctx, id)` before accepting the subscription. `ErrNotFound` → tool error `"instance not found"` (same text for both a genuinely absent instance and a non-owner's instance — no existence leak). Other errors → generic tool error. Added `TestMCPAuthzE2E_InstanceSubscribe` to `adapter/mcp/authz_e2e_test.go`: wires the real engine, asserts owner can subscribe, non-owner gets tool error containing "not found", and admin can subscribe to any instance. This mirrors the HTTP WS handler's `GetInstance` check before `websocket.Accept`. A nil guard (`srv.deps.Engine == nil`) preserves backward compatibility for existing streaming tests that omit the engine.
