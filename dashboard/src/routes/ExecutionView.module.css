@@ -63,6 +63,31 @@
 .graphContainer {
   flex: 1;
   overflow: hidden;
+  position: relative;
+}
+
+.recenterButton {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 5;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #ccccdd;
+  background: #1a1a2e;
+  border: 1px solid #444466;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.recenterButton:hover {
+  border-color: #6666aa;
+}
+
+.recenterButtonActive {
+  color: #ffffff;
+  border-color: #6666aa;
+  background: #2a2a4a;
 }
 
 .loading {

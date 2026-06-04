@@ -14,6 +14,9 @@ interface QueueSectionProps {
   subtitle?: string
   timeMode: 'elapsed' | 'relative'
   defaultCollapsed?: boolean
+  onDismissAll?: () => void
+  onDismiss?: (id: string) => void
+  onRestore?: (id: string) => void
 }
 
 const priorityOrder: Record<string, number> = {
@@ -66,6 +69,9 @@ export default function QueueSection({
   subtitle,
   timeMode,
   defaultCollapsed = false,
+  onDismissAll,
+  onDismiss,
+  onRestore,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [sortField, setSortField] = useState<SortField>('priority')
@@ -104,6 +110,18 @@ export default function QueueSection({
           {instances.length}
         </span>
         {subtitle && <span className={styles.subtitle}>{subtitle}</span>}
+        {onDismissAll && (
+          <button
+            type="button"
+            className={styles.dismissAll}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDismissAll()
+            }}
+          >
+            Dismiss All
+          </button>
+        )}
       </div>
 
       {!collapsed && (
@@ -128,6 +146,9 @@ export default function QueueSection({
                   key={inst.id}
                   instance={inst}
                   timeMode={timeMode}
+                  dimmed={inst.dismissed === true}
+                  onDismiss={onDismiss}
+                  onRestore={onRestore}
                 />
               ))
             )}

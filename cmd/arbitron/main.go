@@ -99,6 +99,8 @@ type domainStack struct {
 	schedulerCancel     context.CancelFunc
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
+	dismissalRepo       instance.DismissalRepository
+	userRepo            instance.UserRepository
 	conversationHandler engine.ConversationHandler
 	profileChecker      workflow.ProfileChecker
 	connChecker         workflow.ConnectionChecker
@@ -402,6 +404,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
+	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
+	// Retry resurfaces dismissed items on their new outcome.
+	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
+	eng.SetDismissals(dismissalRepo)
+
 	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
 	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
 	// Teams notifier so all three route reads/writes through one mutex.
@@ -503,6 +510,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		schedulerCancel:     schedulerCancel,
 		webhookRegistry:     webhookRegistry,
 		notifRepo:           notifRepo,
+		dismissalRepo:       dismissalRepo,
+		userRepo:            userRepo,
 		conversationHandler: conversationHandler,
 		profileChecker:      profileChecker,
 		connChecker:         connChecker,
@@ -537,6 +546,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
+		Dismissals:          ds.dismissalRepo,
+		Users:               ds.userRepo,
 		FileReader:          ds.fileReader,
 		EventBus:            ds.bus,
 		Config:              ds.cfg,

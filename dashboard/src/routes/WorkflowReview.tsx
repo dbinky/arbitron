@@ -14,7 +14,6 @@ import type { WorkflowDefinition, WorkflowNode } from '../graph/types'
 import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
-import type { ArbitronNodeData } from '../graph/nodes/ArbitronNode'
 import ResizablePanel from '../components/ResizablePanel'
 import UsageStats from '../components/UsageStats'
 import TriggerModal from '../components/TriggerModal'
@@ -22,7 +21,7 @@ import styles from './WorkflowReview.module.css'
 
 /** Collect all current node positions from React Flow nodes. */
 function collectPositions(
-  nodes: Node<ArbitronNodeData>[],
+  nodes: Node[],
 ): Record<string, { x: number; y: number }> {
   const positions: Record<string, { x: number; y: number }> = {}
   for (const n of nodes) {
@@ -66,7 +65,7 @@ function ReviewGraph({
     }
   }, [needsAutoSave, rfNodes, workflowName])
 
-  const onNodeDragStop: OnNodeDrag<Node<ArbitronNodeData>> = useCallback(
+  const onNodeDragStop: OnNodeDrag<Node> = useCallback(
     (_event, node) => {
       // Update local state with new position.
       setNodes((prev) =>

@@ -6,43 +6,283 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
+
 ## Fixed Previously
 
-### FACTORY-001: MaxResponseBytes not configurable via Deps / Factory
-**Area**: Provider selection factory (`adapter/provider/factory.go`)
-**Fixed**: FA#18
-**What was wrong**: `openrouter.Config` and `azurefoundry.Config` both accept a `MaxResponseBytes` field, but the `Deps` struct had no corresponding field — so the factory always constructed HTTP adapters with `MaxResponseBytes: 0` (no cap). A malicious or buggy backend could exhaust memory.
-**How it was fixed**: Added `MaxResponseBytes int64` to `Deps` and threaded it into both `openrouter.Config` and `azurefoundry.Config` in `ChatProviderFor`. Added `TestFactory_ChatProviderFor_ThreadsMaxResponseBytes` to prove the Deps field exists and construction succeeds for both adapter types.
+### PAIR-24-001: No test verifies edgeTypes/nodeTypes props are passed to ReactFlow in a loop workflow
+**Area**: Paired review #24 — GraphView integration, Phase 1 + Phase 2 coexistence (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 42
+**Detail**: `GraphView.loops.test.tsx` captured only `nodes` and `edges` from the ReactFlow mock — not `edgeTypes`, `nodeTypes`, or `fitView`. If someone dropped `edgeTypes={edgeTypes}` from the `<ReactFlow>` call in ExecutionView.tsx, loop back-edges would fall back to default smoothstep rendering without any test failing. Updated the mock to also capture `edgeTypes`, `nodeTypes`, and `fitView`. Added `GraphView — Phase 1 + Phase 2 coexistence` describe block with three tests: (1) `edgeTypes` contains `loopBackEdge` — pinning that Phase 1's custom edge renderer is wired; (2) `nodeTypes` contains `loopContainer` — pinning that Phase 1's container node renderer is wired; (3) `fitView` is falsy — pinning the Phase 2 requirement that viewport is managed via manual `setCenter(…, { zoom: DEFAULT_ZOOM })` rather than ReactFlow's automatic fit, which would override the fixed 0.9 zoom and follow behavior.
+
+
+## Fixed Previously
+
+### PAIR-23-001: Restore endpoint has no per-user scoping test
+**Area**: Paired review #23 — currentUser seam + all dismissal endpoints (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 41
+**Detail**: Dismiss, DismissAll, and List each had a test using distinct UUIDs for acting user vs another user, pinning that the per-user operation scopes only to the acting user. Restore had no such test. A bug that called `ClearForInstance` (cross-user) instead of per-user `Restore`, or passed the wrong user ID, would un-dismiss the instance for all users — but all existing Restore tests used a single user so they would still pass. Added `TestRestore_ScopedToActingUserNotOtherUsers`: two users each dismiss the same instance, acting user A restores via the endpoint — asserts `dis.dismissed[userA][id]` is false (A's dismissal removed) and `dis.dismissed[userB][id]` is true (B's dismissal unaffected). This completes the per-user scoping coverage across all four dismissal endpoints.
+
+
+## Fixed Previously
+
+### PAIR-22-001: No HTTP-level test that ClearForInstance (called by engine.Retry) resurfaces item in List
+**Area**: Paired review #22 — dismiss slice + engine retry resurface (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 40
+**Detail**: The engine tests verify Retry calls ClearForInstance. The List tests verify a dismissed item is omitted. But no test verified the seam: after ClearForInstance is called on the SAME dismissal repo the HTTP server uses, a subsequent List call returns the item as undismissed. Added `TestList_ResurfacesAfterClearForInstance`: (1) dismiss an item — list returns empty; (2) call `dis.ClearForInstance(ctx, id)` simulating what engine.Retry does; (3) re-list — item appears with `dismissed=false`. This pins the "clear → resurface" path through the HTTP adapter, catching any regression where the engine and HTTP adapter used different repo instances or the List handler cached DismissedIDs.
+
+
+## Fixed Previously
+
+### PAIR-21-001: No test that QueueSection interleaves dismissed and non-dismissed items in sort order
+**Area**: Paired review #21 — list marking + Queue UI (`dashboard/src/components/QueueSection.test.tsx`)
+**Fixed**: Iteration 39
+**Detail**: `sortInstances` does not segregate dismissed items, but no test pinned this. If someone inserted a `dismissed ? 1 : 0` secondary comparator (pushing dismissed to the bottom), all existing tests would still pass. Added `QueueSection — dismissed items interleaved in sort order`: creates a dismissed item with `updatedAt=2024-06-01` and a non-dismissed item with `updatedAt=2024-01-01`, switches sort to "Time" (most-recently-updated first), and asserts the Restore button (belonging to the newer dismissed item) appears before the Dismiss button (the older item). Pins the interleaving contract at the render level.
+
+
+## Fixed Previously
+
+### PAIR-20-001: Dismiss handler scoping not verified to use acting user vs instance owner
+**Area**: Paired review #20 — dismissal repo + HTTP handlers seam (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 38
+**Detail**: Every existing `TestDismiss_*` test set the acting user (from `CurrentUserResolver`) and the instance `OwnerID` to the same UUID. A regression that changed `h.dismissals.Dismiss(ctx, user, id)` to `h.dismissals.Dismiss(ctx, inst.OwnerID, id)` would have passed all tests. Added `TestDismiss_ScopedToActingUserNotOwner`: owner and actor are distinct UUIDs, actor dismisses the owner's instance — verifies `dismissed[actor][id]=true` and `dismissed[owner][id]=false`. Added `TestDismissAll_ScopedToActingUserNotOwner`: same pattern for `dismiss-all`. Both tests pin the currentUser seam at the handler level so the acting-user → repo argument order is locked.
+
+
+## Fixed Previously
+
+### PAIR-19-001: No GraphView integration test for follow animation when execution advances
+**Area**: Paired review #19 — anchor + follow seam (`dashboard/src/routes/GraphView.test.tsx`)
+**Fixed**: Iteration 37
+**Detail**: `selectAnchorNodeId → anchorId → anchorPos → useFollowActiveNode` is a reactive chain. When `instance.currentNodeId` advances, `anchorPos` changes and `useFollowActiveNode` should call `setCenter` with the new node's position (the follow animation). The hook is unit-tested for this, but there was no integration test at the `GraphView` level verifying that a changed `instance` prop produces the follow-animation setCenter call with the new node's position. Added `GraphView — follow animation on instance advance` describe block: renders a Harness that holds instance state, verifies mount centering fires once on 'a', clears the spy, advances to 'b', then waits for setCenter to be called with b's position (+ NODE_WIDTH/2, + NODE_HEIGHT/2) and a duration. Also added `waitFor` to the @testing-library/react import.
+
+---
+
+### PAIR-18-001: Back-edge data.box not verified to match the container node's position+size
+**Area**: Paired review #18 — geometry + back-edge rendering seam (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 36
+**Detail**: `useGraphLayout` calls `loopContainerBox(loop, positionMap)` twice — once for the container node position/size and once for `data.box` on the back-edge. The existing test only checked `box.width > 0`. Added `back-edge data.box matches the container node position and size`: asserts `box.x === container.position.x`, `box.y === container.position.y`, `box.width === container.width`, `box.height === container.height`. If either call site diverged, the back-edge would route around the wrong area.
+
+---
+
+### PAIR-17-001: useGraphLayout stored-positions branch didn't verify container position/size
+**Area**: Paired review #17 — loop detection + geometry seam (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 35
+**Detail**: The stored-positions test only verified a container existed, not its box. The seam was: `detectLoops(edges).loops[*].bodyNodeIds` → positionMap lookup → `loopContainerBox` → container position+size. Added `container position and size reflect the bounding box of body node positions`: nodes b=(100,0), c=(100,200), back-edge c→b. Expected container: x=76, y=-24, width=248, height=328 (derived from `CONTAINER_PAD=24`, `NODE_WIDTH=200`, `NODE_HEIGHT=80`). Pins the full seam so a wrong bodyNodeIds set would produce the wrong box.
+
+---
+
+### LOOP-007: Step nodes never assigned a parentId — design constraint not pinned in tests
+**Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 34
+**Detail**: The design doc explicitly states "Never use React Flow `parentId` for loop containers." Step nodes must never have `parentId` pointing to a container; using it would make ReactFlow treat the container as a parent scope and break the overlay approach. No test pinned this constraint. Added `step nodes in the loop body have no parentId` to the `single loop (dagre branch)` describe block: iterates all `arbitronNode` step nodes and asserts `.parentId` is undefined.
+
+---
+
+### LOOP-006: Loop container zIndex formula untested — depth drives z-ordering for nested containers
+**Area**: Vertical slice: loop render (`dashboard/src/graph/useGraphLayout.test.ts`)
+**Fixed**: Iteration 33
+**Detail**: `useGraphLayout` sets `zIndex: -10 + loop.depth` on each loop container. A sign flip (`-10 - loop.depth`) would put the inner container (depth=1) BELOW the outer (depth=0), reversing the layering. No test pinned the zIndex values. Added `useGraphLayout — container zIndex` describe block with two tests: (1) single loop container has `zIndex === -10`; (2) nested loops — inner container has `zIndex === -9`, outer `zIndex === -10`, and inner's zIndex is greater (asserting the directionality).
+
+---
+
+### SLICE-004: No end-to-end test for dismissed item appearing with Restore button after Show Dismissed toggle
+**Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 32
+**Detail**: The `handleRestore` test set up dismissed items in the initial list (always returned regardless of toggle), so it tested restore without going through the toggle flow. No test verified: (1) start with no dismissed items visible; (2) enable Show Dismissed; (3) refetch returns `dismissed: true` item; (4) item appears with Restore button (not Dismiss). Added `shows a Restore button (not Dismiss) for dismissed items after Show Dismissed is enabled` to QueueView end-to-end test suite.
+
+---
+
+### SLICE-003: Show/hide dismissed toggle — hide direction not tested
+**Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 31
+**Detail**: The toggle test verified Show→Hide flip and that enabling sends `includeDismissed=true`. But there was no test for the hide direction: toggling back omits `includeDismissed` from the subsequent refetch. A regression leaving `includeDismissed=true` permanently would make dismissed items always visible. Added `omits includeDismissed after toggling back to Hide Dismissed`: show → hide → verify no terminal list call after the hide toggle includes `includeDismissed=true`.
+
+---
+
+### SLICE-002: fetchAll never verified to pass since-date to terminal list calls
+**Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 30
+**Detail**: `fetchAll` passes `since = daysAgo(HISTORY_DAYS)` to the `failed` and `completed` list calls, matching the same window `handleDismissAll` uses. No test verified this contract. A regression dropping `since` from the list calls would cause QueueView to show ALL historical terminal instances, and "Dismiss All" scope would no longer match the displayed window. Added two tests: (1) `passes a since date to the failed and completed list calls on mount` — checks all terminal list call params include a valid ISO since date; (2) `does NOT pass a since date to the active list calls` — asserts `since` is absent for running/waiting/queued/paused calls, which should have no time window.
+
+---
+
+### SLICE-001: Dismiss vertical slice missing observable UI outcome test
+**Area**: Vertical slice: dismiss action (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 29
+**Detail**: The `handleDismiss` test verified that `api.instances.dismiss` and subsequent `list` refetch were called, but NOT the observable UI outcome: item disappears after the refetch returns an empty list. A regression where the component discarded the refetch result (e.g. `setInstances` call removed) would not fail any existing test. Added `dismissed item disappears from UI after successful dismiss and refetch`: initial list returns `[inst]`, dismiss is clicked, list mock is switched to return `[]`, then asserts the Dismiss button is gone.
+
+---
+
+### DISMISS-002: DismissAll since-filter not tested at handler level
+**Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 28
+**Detail**: `DismissAll` parses a `since` query parameter and passes it as `filters.Since` to `List`, limiting the scope to the 5-day window the dashboard shows. No existing test exercised this path — all DismissAll tests omit `since`, meaning a regression that dropped `filters.Since` from the handler would silently dismiss items outside the window without failing any test. Added `TestDismissAll_SinceFilterLimitsScope`: creates an "old" instance (before cutoff) and a "recent" instance (after cutoff), calls `?state=failed&since=<cutoff>`, and asserts only the recent item is dismissed.
+
+---
+
+### DISMISS-001: waiting and paused states not tested against dismiss guard at handler and UI layer
+**Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`, `dashboard/src/components/InstanceRow.test.tsx`)
+**Fixed**: Iteration 27
+**Detail**: The spec explicitly states "Active, waiting (interactive), and cancelled items cannot be dismissed." The handler tests covered `running` (409) and `cancelled` (409), but `waiting` — the spec's other named non-dismissible active state — was untested. `paused` was also non-dismissible but untested. Added `TestDismiss_WaitingInstance_409` and `TestDismiss_PausedInstance_409` to the handler tests. Added `waiting` and `paused` test cases to InstanceRow.test.tsx to pin the `isTerminal = failed || completed` boundary from the frontend side too.
+
+---
+
+### ANCHOR-001: selectAnchorNodeId has no tests for paused or cancelled instance states
+**Area**: Domain viewport behavior (`dashboard/src/graph/selectAnchorNodeId.test.ts`)
+**Fixed**: Iteration 26
+**Detail**: The design doc specifies anchor selection for running/waiting, completed, failed, and static preview. `paused` and `cancelled` are real instance states that fall through to the general fallback (source node), but this behavior was entirely untested. A future "improvement" that made `paused` return `currentNodeId` (like running/waiting) would change centering behavior without failing any test. Added `selectAnchorNodeId — edge case: paused and cancelled (general fallback)` describe block with two tests: (1) paused instance returns the source node (not `currentNodeId`); (2) cancelled instance returns the source node. Both use a 3-node linear graph so the source node (a, no incoming edge) is unambiguous.
+
+### VIEW-003: No integration test that loop containers are excluded from anchor selection
+**Area**: Domain viewport behavior (`dashboard/src/routes/GraphView.test.tsx`)
+**Fixed**: Iteration 25
+**Detail**: The design doc says "loop-container overlay nodes are excluded from anchor candidates — only real step nodes." The exclusion is structural (selectAnchorNodeId searches workflowDef.nodes, containers are never there), but no test verified the end result. Added `loopWorkflowDef` fixture (a→b→c with c→b back-edge) and `centers on the active step node, not the loop container, for a running workflow with a loop`: renders GraphView with `currentNodeId='b'` (a node inside the loop body), verifies the loop container IS present in rfNodes, then asserts setCenter is called with 'b's position at zoom 0.9.
+
+---
+
+### LOOP-005: Nested-loop depth propagation not verified at GraphView integration level
+**Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 24
+**Detail**: The design spec says "Nested loops are shown as nested containers." The `depth` field drives visual inset and z-index. `useGraphLayout.test.ts` verified two containers for nested loops, but no test checked that inner/outer have the correct `depth` values. A bug hardcoding `depth: 0` on all containers would produce visually flat boxes without failing any test. Added `nestedLoopWorkflow` fixture (outer loop e→b, inner d→c), then two tests: (1) two containers are emitted; (2) the inner container (`data.label === 'Loop until inner done'`) has `depth === 1` and the outer has `depth === 0`. Also cleaned up a duplicate `unlabeledLoopWorkflow` fixture that appeared due to a failed partial edit.
+
+---
+
+### LOOP-004: GraphView integration test verifies node type but not container label
+**Area**: Domain loop semantics end-to-end (`dashboard/src/routes/GraphView.loops.test.tsx`)
+**Fixed**: Iteration 23
+**Detail**: `GraphView.loops.test.tsx` checked that a loop workflow emits a `loopContainer` node and a `loopBackEdge` edge, but never checked the container node's `data.label` content. A bug in the label-propagation chain (e.g., `loopContainerLabel` not called in `useGraphLayout`) would pass all integration tests. Added two tests: (1) `container label reflects the back-edge label from the workflow definition` — verifies `data.label === 'Loop until tests pass'` for a workflow with `label: 'tests pass'` on the back-edge; (2) `container falls back to "Loop" when the back-edge carries no label` — verifies `data.label === 'Loop'` for an unlabeled back-edge. Also added `unlabeledLoopWorkflow` fixture (same topology, back-edge without a label) to the test file.
+
+---
+
+### UI-003: Edge-case coverage missing for dismissal UI — completed dismissAll + cancelled guard
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`, `dashboard/src/components/InstanceRow.test.tsx`)
+**Fixed**: Iteration 22
+**Detail**: Two edge cases were untested. (1) `handleDismissAll` in QueueView was only tested for `state='failed'` (Failed section button, index 0). The Completed section's button (index 1) calls `handleDismissAll('completed')` — a distinct code path. Added `handleDismissAll calls dismissAll with state=completed for the Completed section` which clicks `dismissAllBtns[1]` and asserts `dismissAll` is called with `'completed'`. (2) `InstanceRow` tests covered `running` (non-terminal) but not `cancelled`. The `isTerminal` check is `state === 'failed' || state === 'completed'` — deliberately narrower than the engine's `isTerminalState` (which includes `cancelled`). Added `shows no dismiss/restore control on cancelled rows` to pin this design boundary at the UI layer.
+
+---
+
+### UI-002: QueueView dismiss handlers had no error handling; error paths untested
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `QueueView.test.tsx`)
+**Fixed**: Iteration 21
+**Detail**: `handleDismiss`, `handleRestore`, and `handleDismissAll` were plain `async` functions with no try/catch. API failures caused unhandled promise rejections — the item stayed visible with no refetch but vitest reported three unhandled rejections. The fetchAll error state (renders "Failed to load instances" + Retry prompt) was also completely untested. Fixed by: (1) wrapping all three handlers in try/catch (best-effort — item stays visible on failure), (2) adding error-path tests for all three handlers verifying stable view + no spurious refetch after a rejected API call, and (3) adding a test that fetchAll failure renders the error state and that clicking Retry re-triggers the load.
+
+---
+
+### UI-001: QueueView dismiss-handler API calls untested; wrong role-query selector
+**Area**: Queue dismissal UI (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 19
+**Detail**: The original mock only included `api.instances.list`. All three dismiss-side handlers (`handleDismiss`, `handleRestore`, `handleDismissAll`) called the real API in tests, making them impossible to verify. Extended the mock with `vi.hoisted()` to add `dismiss`, `restore`, and `dismissAll` vi.fn()s, then added `TestHandleDismissAll_CallsAPIAndRefetches`: verifies `dismissAll('failed', ISOdate)` is called and `list` is called again after. Root cause of the initial "0 calls" failure: the `getAllByRole('button', { name: /dismiss all/i })` regex matched the section's `div[role="button"]` header (its accessible name is the concatenation of all children, including the "Dismiss All" button text), so index 0 was the HEADER div, not the button — clicking it collapsed the section instead of invoking `onDismissAll`. Fixed by using the exact string `'Dismiss All'` for the role query, which matches only the `<button>` whose accessible name IS exactly "Dismiss All".
+
+### ENGINE-002: Multi-user dismissal clearing untested in engine
+**Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
+**Fixed**: Iteration 18
+**Detail**: The design doc says Retry clears dismissals "for everyone who had dismissed it." `TestEngine_RetryClearsDismissal` only tested with a single user. A bug where the engine called `Restore(user, id)` per-user (e.g. for the acting user only) rather than `ClearForInstance(id)` would pass the single-user test but violate the all-users contract. Added `TestEngine_RetryClearsDismissalForAllUsers`: two distinct users dismiss the same failed instance, retry is called, both users' dismissals are verified to be cleared.
+
+### ENGINE-001: Unconditional-clear invariant for Retry untested
+**Area**: Engine retry resurface (`domain/engine/engine_dismissal_test.go`)
+**Fixed**: Iteration 17
+**Detail**: `TestEngine_RetryClearsDismissal` only tested the case where the instance WAS dismissed before retry. The `ClearForInstance` call is unconditional (idempotent no-op when no rows exist), but no test verified this. A future "optimization" that adds `if isDismissed { ClearForInstance() }` would violate the always-clear contract without failing any test. Added `TestEngine_RetryCallsClearEvenIfNotDismissed`: trigger → fail → retry WITHOUT dismissing first → assert clearedCount >= 1.
+
+### LIST-002: All-dismissed edge case: empty-array vs null response untested
+**Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 16
+**Detail**: When all items in the window are dismissed and `includeDismissed=false`, the handler skips every item in its loop and returns the `make([]summaryResponse, 0, ...)` slice (non-nil). JSON serialization of a non-nil empty slice is `[]`, not `null`. Frontend code doing `.map()` or `.length` on the response must not receive `null`. `TestList_AllDismissed_ReturnsEmptyArray` verifies the response is 200 with a non-nil empty JSON array.
+
+### LIST-001: Error-path coverage missing for List dismissed-marking
+**Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 15
+**Detail**: The List handler has two error returns in its dismissal section: `currentUser.CurrentUser(r)` fails → 500, and `dismissals.DismissedIDs(...)` fails → 500. Neither was tested; the error category was entirely absent for the list endpoint. Added `TestList_DismissalRepoError_500` (errDismissalRepo returns an error) and `TestList_UserResolutionError_500` (errUserRepo returns an error) to cover both paths.
+
+### HAND-003: DismissAll state=completed path untested
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 14
+**Detail**: `TestDismissAll_DismissesEveryListedInCategory` only called `?state=failed`. `TestDismissAll_EmptyCategory_OK` used `state=completed` but with an empty repo. The `state=completed` path through the List+dismiss loop was never exercised with real data. Added `TestDismissAll_CompletedCategory_DismissesAll`: creates two completed instances and one failed, calls `state=completed`, asserts completed ones are dismissed and the failed one is not.
+
+### HAND-002: isDismissibleState StateCompleted arm untested in Dismiss
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 14
+**Detail**: `isDismissibleState` returns true for both `StateCompleted` and `StateFailed`, but `TestDismiss_TerminalInstance_OK` only used `StateFailed`. A regression narrowing the function to only accept `StateFailed` would pass all prior tests. Added `TestDismiss_CompletedInstance_OK` to verify the `StateCompleted` arm of the guard returns 200 and records the dismissal.
+
+### HAND-001: Cancelled-instance dismiss guard untested
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 13
+**Detail**: `isDismissibleState` has an explicit comment: "narrower than stream_handler's isTerminalState, which also includes cancelled; only completed/failed items can be dismissed." The existing 409 test (`TestDismiss_NonTerminal_409`) only used `StateRunning`, so a change that widened the guard to also allow `StateCancelled` (which IS terminal in the streaming handler's sense) would pass all tests. Added `TestDismiss_CancelledInstance_409` using `StateCancelled` to pin this intentional design boundary.
+
+### REPO-002: ClearForInstance isolation untested
+**Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
+**Fixed**: Iteration 12
+**Detail**: `TestDismissalRepo_ClearForInstanceAcrossUsers` verified clearing one instance removes it across all users, but never checked that OTHER instances' dismissals survive the call. A bug where the DELETE used `WHERE user_id = ?` instead of `WHERE instance_id = ?` would wipe all dismissals for a user but still pass the existing test. Added `TestDismissalRepo_ClearForInstanceDoesNotAffectOtherInstances`: dismiss two instances, clear the first, assert the second is still dismissed.
+
+### REPO-001: DismissedIDs multi-instance iteration untested
+**Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
+**Fixed**: Iteration 11
+**Detail**: Every existing test for `DismissedIDs` used 0 or 1 dismissed entries. The `rows.Next()` loop was never exercised with multiple entries, so a bug in that loop (early exit, missed rows) would not have been caught. Added `TestDismissalRepo_DismissedIDsMultipleInstances` which dismisses 3 instances for one user and asserts all 3 appear in the returned map.
+
+### FOLLOW-002: Recenter-after-advance-while-paused behavior untested
+**Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
+**Fixed**: Iteration 10
+**Detail**: The implementation always updates `prevAnchorRef` even when `following=false`, so clicking Recenter after execution advances while paused jumps to the *current* anchor (where the node is now) rather than the stale pause-time position. The existing recenter test only covered the static case (single anchor, no intermediate advance). Added `useFollowActiveNode — recenter after advance-while-paused` to verify: animate to (100,200) → pause → advance to (300,400) while paused (no animation) → recenter calls setCenter with (300,400), not (100,200).
+
+### FOLLOW-001: Null-anchor edge case untested
+**Area**: Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts`)
+**Fixed**: Iteration 9
+**Detail**: The design doc lists "Empty graph / no anchor: skip centering (no-op); nothing throws" as an explicit edge case. The implementation guards with `if (!anchor) return` in the effect and `if (prevAnchorRef.current)` in recenter, but no test verified this behavior. Added `useFollowActiveNode — edge case: null anchor (empty graph)` with two tests: (1) null anchor from the start → no setCenter called; (2) recenter when anchor was never recorded → following re-engages but setCenter is not called.
+
+### VIEW-002: Ghost-currentNodeId fallback untested at integration level
+**Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: Iteration 8
+**Detail**: `selectAnchorNodeId.test.ts` covers the case where `currentNodeId` is not in the graph (ghost ID, e.g. deleted node mid-run) returning the source node fallback. But `GraphView.test.tsx` had no integration test exercising this full chain: ghost ID → `selectAnchorNodeId` fallback → `anchorPos` resolved → `setCenter` called on source node. Added "falls back to centering on the source node when currentNodeId is not in the graph" to the `default-zoom centering on mount` describe block.
+
+### VIEW-001: One-shot mount-centering guard untested
+**Area**: Anchor selection + default zoom (`dashboard/src/routes/ExecutionView.tsx`)
+**Fixed**: Iteration 7
+**Detail**: The `didInitialCenter` ref prevents `setCenter` from firing a second time when the component re-renders (e.g. on each live WebSocket event). The existing mount-centering tests verified `setCenter` was called once on mount but never asserted it stayed at exactly 1 after a parent re-render. Added `GraphView — mount centering one-shot guard` describe block with a Harness that triggers an unrelated re-render and verifies `setCenterSpy` is still called only once total.
+
+### EDGE-002: chooseSide never tested with asymmetric sourceX/targetX
+**Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
+**Fixed**: Iteration 6
+**Detail**: All three existing `chooseSide` tests used `sourceX === targetX`, meaning the midpoint averaging formula `(sourceX + targetX) / 2` was never exercised with unequal x values. Diamond loops in production can have tail and head nodes at different horizontal positions. Added a test covering: tie-at-center with asymmetric inputs (routes right), midpoint-right-of-center (routes left), midpoint-left-of-center (routes right).
+
+### EDGE-001: LoopBackEdge fallback-box path untested
+**Area**: Loop back-edge rendering (`dashboard/src/graph/edges/LoopBackEdge.tsx`)
+**Fixed**: Iteration 5
+**Detail**: The component has a fallback box derived from edge endpoints when `data` is absent or `data.box` is undefined. This path executes in production when `loopContainerBox` returns null (all body nodes unpositioned). Both cases were untested — the "error/failure" scenario category was missing. Added a `LoopBackEdge — fallback: endpoint-derived box when box is absent` describe block with two tests.
+
+### LAYOUT-002: useGraphLayout self-loop integration untested
+**Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
+**Fixed**: Iteration 4
+**Detail**: The design doc explicitly lists "self-loop (node edges to itself): treated as a single-node loop; container wraps that node" as an edge case, and `loopContainerBox` had a standalone self-loop unit test, but the integration path through `useGraphLayout` (self-edge → loopBackEdge type, single-node container emitted, correct label) was entirely untested. Added a `useGraphLayout — edge case: self-loop` describe block covering this path. Marks focus-area #2 Pass 2 complete.
+
+### LAYOUT-001: useGraphLayout empty-nodes early-return path untested
+**Area**: Loop geometry + container overlays (`dashboard/src/graph/useGraphLayout.ts`)
+**Fixed**: Iteration 3
+**Detail**: The hook early-returns `{ rfNodes: [], rfEdges: [], needsAutoSave: false }` when `nodes.length === 0` but no test exercised that path — the "error/invalid input" category was absent for the hook. Added a `useGraphLayout — error/invalid: empty nodes list` describe block covering this branch.
+
+### LOOP-003: No three-level nesting test — depth=2 was unverified
+**Area**: Loop detection (`dashboard/src/graph/loops.ts`)
+**Fixed**: Iteration 2
+**Detail**: The deepest depth tested was 1 (Pass 1 added the shared-head case with l1.depth=1). A three-level arrangement (outer loop contains middle loop contains a self-loop) would produce depths 0/1/2, but no test exercised depth=2. Added a "three-level nesting" describe block that also checks backEdge reference identity for all three loops (ensuring labels are preserved through the detection pipeline).
+
+### LOOP-002: Missing depth assertions in "multiple loops sharing a head" test + no sibling-loops coverage
+**Area**: Loop detection (`dashboard/src/graph/loops.ts`)
+**Fixed**: Iteration 1
+**Detail**: The "multiple loops sharing a head" test verified that `body(l1) ⊂ body(l2)` but never asserted `depth`. Since depth drives container nesting in the renderer, an incorrect depth value would cause visual mis-rendering without any failing tests. Added `expect(l1.depth).toBe(1)` and `expect(l2.depth).toBe(0)` to that test. Also added a new `describe` block for genuinely disjoint sibling loops (two sequential non-overlapping loops) to verify both get `depth === 0` — this topology was entirely untested._
 
 <!--
 Example of a fixed issue entry:
 
-### COMP-A-001: Input validation missing for empty strings
-**Area**: Component A (`path/to/component_a.py`)
+### LOOP-001: Nested loop body leaked across sibling loops
+**Area**: Loop detection (`dashboard/src/graph/loops.ts`)
 **Fixed**: Iteration 3
-**Detail**: ...
+**Detail**: Body reachability traversed back-edges, so a nested loop's body absorbed nodes from a sibling loop via the cycle-closing edge. Stripped detected back-edges before building body adjacency. Added 2 tests: nested loops, two loops sharing a head.
 -->
 
 ## Won't Fix (Beyond Current Scope)
 
-_(items logged here are accepted MVP limitations or out-of-scope enhancements — only the user can add to or move items in this section. The entries below are pre-seeded from the spec's documented non-goals/known risks (§9) and the opencode spike finding, so the loop does NOT spend iterations "fixing" them.)_
+_(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
 
-### LOOP-W01: No engine-level runaway guard
-**Area**: Engine loop (`domain/engine/engine.go`), native ralph loop
-**Detail**: Loop termination depends solely on the author's `conditional` (spec §9, accepted MVP risk). A malformed loop can run indefinitely. Do NOT add a max-node-execution or wall-clock cap — that is explicitly deferred future work, not an MVP gap.
+<!--
+Example of a won't-fix entry:
 
-### OPENCODE-W02: opencode multi-provider routing / session resume limited by installed binary
-**Area**: opencode agent backend (`adapter/opencode/`)
-**Detail**: The installed opencode (v0.0.55) has no `run --model <provider/model>`, no `--resume`/`serve`, and authenticates via `ANTHROPIC_API_KEY` only (see `docs/superpowers/specs/vendor-abstraction-opencode-spike-finding.md`). The adapter is intentionally single-shot mission-per-step with `buildArgs` isolated for a future build. Do NOT try to add `--model`/resume against this binary; re-verify only if a newer opencode build is targeted.
-
-### SCOPE-W03: Fan-out / fan-in parallelism and a first-class loop primitive
-**Area**: Engine
-**Detail**: Parallel execution (Phase 8) and a dedicated loop/iteration construct are explicit non-goals (spec §9). The cyclic-edge idiom is the supported mechanism; do not build a new primitive.
-
-### SCOPE-W04: interactive node future Messages-API backend
-**Area**: Interactive executor (`domain/engine/executor_interactive.go`)
-**Detail**: The `interactive` node remains on its existing claude-cli streaming path; its rework to a Messages-API chat adapter that resumes via a conversation array is deferred (spec §4/§9). Out of scope for this MVP.
-
-### SCOPE-W05: Coarse cost accounting for agent_call
-**Area**: Agent executors / harness backends
-**Detail**: Token/cost visibility for subprocess harnesses (claude-cli agent, opencode) is coarser than native chat calls. Accepted for MVP (spec §9).
+### FOLDER-W01: Enterprise workflow-folder system with group permissions
+**Area**: Spec out-of-scope section
+**Detail**: Folders that organize workflows and restrict run/view by security group depend on the merged Phase 6 identity model and a group concept Phase 6 does not introduce. Deferred to a post–Phase-6 spec; do not implement here.
+-->
