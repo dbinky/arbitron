@@ -44,7 +44,13 @@ func (f failingSessionRepo) Create(context.Context, *identity.Session) error {
 }
 
 func newAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository) *AuthHandler {
-	return NewAuthHandler(oidc, sessions, users, config.SessionConfig{
+	return newAuthHandlerWithBootstrap(oidc, sessions, users)
+}
+
+// newAuthHandlerWithBootstrap builds the handler with a real Provisioner over
+// the given user repo and optional bootstrap-admin list.
+func newAuthHandlerWithBootstrap(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, bootstrap ...string) *AuthHandler {
+	return NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, bootstrap), config.SessionConfig{
 		TTLSeconds:   3600,
 		CookieName:   "arbitron_session",
 		CookieSecure: true,
@@ -132,6 +138,26 @@ func TestAuthHandler_Callback_ExistingUser(t *testing.T) {
 	// No new user created; existing role preserved.
 	assert.Len(t, users.byID, 1)
 	assert.Equal(t, identity.RoleAdmin, existing.Role)
+}
+
+func TestAuthHandler_Callback_BootstrapAdmin(t *testing.T) {
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "boss-sub", Username: "boss", Email: "boss@corp.com"}}
+	sessions := newFakeSessionRepo()
+	users := newFakeUserRepo()
+	// Bootstrap by email (case-insensitive).
+	h := newAuthHandlerWithBootstrap(oidc, sessions, users, "BOSS@corp.com")
+
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	require.Equal(t, http.StatusFound, rec.Code)
+
+	var found *instance.User
+	for _, u := range users.byID {
+		if u.Subject != nil && *u.Subject == "boss-sub" {
+			found = u
+		}
+	}
+	require.NotNil(t, found, "bootstrap subject must be JIT-created")
+	assert.Equal(t, identity.RoleAdmin, found.Role, "bootstrap identity is provisioned as admin")
 }
 
 func TestAuthHandler_Callback_StateMismatch(t *testing.T) {

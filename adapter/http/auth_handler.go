@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -15,26 +14,28 @@ import (
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
-	"github.com/google/uuid"
 )
 
 // AuthHandler serves the browser OIDC login flow. It lives OUTSIDE the auth
 // middleware: these routes establish the session that the middleware later
 // validates.
 type AuthHandler struct {
-	oidc     identity.OIDCProvider
-	sessions identity.SessionRepository
-	users    instance.UserRepository
-	cfg      config.SessionConfig
-	hmacKey  []byte // signs the short-lived state/nonce cookie
+	oidc        identity.OIDCProvider
+	sessions    identity.SessionRepository
+	users       instance.UserRepository
+	provisioner *instance.Provisioner
+	cfg         config.SessionConfig
+	hmacKey     []byte // signs the short-lived state/nonce cookie
 }
 
 // NewAuthHandler builds the handler. The state-cookie signing key is random per
-// process, which is acceptable for the short-lived login round-trip.
-func NewAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, cfg config.SessionConfig) *AuthHandler {
+// process, which is acceptable for the short-lived login round-trip. The
+// provisioner resolves verified claims to a persisted User (JIT-creating one on
+// first login, as admin for bootstrap identities).
+func NewAuthHandler(oidc identity.OIDCProvider, sessions identity.SessionRepository, users instance.UserRepository, provisioner *instance.Provisioner, cfg config.SessionConfig) *AuthHandler {
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
-	return &AuthHandler{oidc: oidc, sessions: sessions, users: users, cfg: cfg, hmacKey: key}
+	return &AuthHandler{oidc: oidc, sessions: sessions, users: users, provisioner: provisioner, cfg: cfg, hmacKey: key}
 }
 
 const stateCookieName = "arbitron_oauth_state"
@@ -109,28 +110,15 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
+// resolveOrProvision maps the verified identity.Claims to the instance.Claims
+// the Provisioner consumes and delegates the JIT-create + bootstrap-admin rule
+// to the single domain provisioner (Phase 2), replacing the Phase 1 placeholder.
 func (h *AuthHandler) resolveOrProvision(ctx context.Context, claims identity.Claims) (*instance.User, error) {
-	user, err := h.users.GetBySubject(ctx, claims.Subject)
-	if err == nil {
-		return user, nil
-	}
-	if !errors.Is(err, instance.ErrNotFound) {
-		return nil, err
-	}
-	// Phase-1 JIT: provision a plain user (role user). Bootstrap-admin promotion
-	// is Phase 2. Persist the email claim (nullable) so the Phase 2 demotion floor
-	// can match a bootstrap-by-email admin from the persisted User alone.
-	subj := claims.Subject
-	var emailPtr *string
-	if claims.Email != "" {
-		e := claims.Email
-		emailPtr = &e
-	}
-	u := &instance.User{ID: uuid.New(), Subject: &subj, Email: emailPtr, Username: claims.Username, Role: identity.RoleUser}
-	if err := h.users.Create(ctx, u); err != nil {
-		return nil, err
-	}
-	return u, nil
+	return h.provisioner.Resolve(ctx, instance.Claims{
+		Subject:  claims.Subject,
+		Username: claims.Username,
+		Email:    claims.Email,
+	})
 }
 
 func (h *AuthHandler) setSessionCookie(w http.ResponseWriter, raw string, exp time.Time) {

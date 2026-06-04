@@ -144,6 +144,8 @@ type domainStack struct {
 	tokenSvc    *identity.TokenService
 	deviceRepo  identity.DeviceCodeRepository
 	deviceSvc   *identity.DeviceCodeService
+	provisioner *instance.Provisioner
+	userRepo    instance.UserRepository
 	authMW      *adapthttp.AuthMiddleware
 	authHandler *adapthttp.AuthHandler
 	sweepCancel context.CancelFunc
@@ -262,6 +264,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// via /auth/device/* and receive a minted arb_ token. 10m TTL, 5s poll.
 	deviceRepo := adaptsqlite.NewDeviceCodeRepo(db)
 	deviceSvc := identity.NewDeviceCodeService(deviceRepo, tokenSvc, deviceCodeTTL, deviceCodePollInterval)
+	// JIT provisioner (Phase 6, Phase 2). Resolves verified OIDC claims to a
+	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
+	// callback and Task 6's role-management demotion floor (one bootstrap rule).
+	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins)
 	authMode := identity.ModeFromString(cfg.Auth.Mode)
 	var authHandler *adapthttp.AuthHandler
 	if authMode == identity.ModeOrg {
@@ -277,7 +283,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 			logCloser.Close()
 			return nil, fmt.Errorf("initialising OIDC provider: %w", oerr)
 		}
-		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, cfg.Auth.Session)
+		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
 	}
 	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo)
 
@@ -605,6 +611,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		tokenSvc:            tokenSvc,
 		deviceRepo:          deviceRepo,
 		deviceSvc:           deviceSvc,
+		provisioner:         provisioner,
+		userRepo:            userRepo,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,

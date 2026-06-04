@@ -60,7 +60,7 @@ func orgSurface(t *testing.T) (http.Handler, *fakeSessionRepo, *fakeUserRepo, *s
 	mcp := &surfaceMCP{}
 	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
 	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
-	authHandler := NewAuthHandler(oidc, sessions, users, config.SessionConfig{TTLSeconds: 3600, CookieName: "arbitron_session"})
+	authHandler := NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, nil), config.SessionConfig{TTLSeconds: 3600, CookieName: "arbitron_session"})
 	return buildSurfaceRouter(auth, authHandler, mcp), sessions, users, mcp
 }
 

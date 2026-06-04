@@ -98,3 +98,14 @@ func (r *UserRepo) Create(ctx context.Context, u *instance.User) error {
 	}
 	return nil
 }
+
+func (r *UserRepo) UpdateUsername(ctx context.Context, id uuid.UUID, username string) error {
+	err := r.queries.UpdateUsername(ctx, generated.UpdateUsernameParams{
+		Username: username,
+		ID:       uuidToString(id),
+	})
+	if err != nil {
+		return fmt.Errorf("updating username for user %s: %w", id, err)
+	}
+	return nil
+}

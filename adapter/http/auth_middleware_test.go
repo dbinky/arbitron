@@ -56,6 +56,13 @@ func (r *fakeUserRepo) Create(_ context.Context, u *instance.User) error {
 	return nil
 }
 
+func (r *fakeUserRepo) UpdateUsername(_ context.Context, id uuid.UUID, username string) error {
+	if u, ok := r.byID[id]; ok {
+		u.Username = username
+	}
+	return nil
+}
+
 type fakeSessionRepo struct {
 	byToken map[string]*identity.Session
 }

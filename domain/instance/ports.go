@@ -63,4 +63,7 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*User, error)          // ErrNotFound if absent
 	GetBySubject(ctx context.Context, subject string) (*User, error)   // ErrNotFound if new (JIT in Phase 2)
 	Create(ctx context.Context, u *User) error
+	// UpdateUsername refreshes a user's display name (used when the IdP changes
+	// it on re-login). The IdP subject, not the username, is the identity.
+	UpdateUsername(ctx context.Context, id uuid.UUID, username string) error
 }

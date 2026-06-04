@@ -422,6 +422,10 @@ func (r *mockUserRepo) Create(_ context.Context, _ *instance.User) error {
 	return nil
 }
 
+func (r *mockUserRepo) UpdateUsername(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
 // mockQueueManager implements engine.QueueManager
 type mockQueueManager struct {
 	mu                    sync.Mutex

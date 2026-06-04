@@ -9,3 +9,6 @@ SELECT id, subject, email, username, role, created_at FROM users WHERE subject =
 
 -- name: CreateUser :exec
 INSERT INTO users (id, subject, email, username, role) VALUES (?, ?, ?, ?, ?);
+
+-- name: UpdateUsername :exec
+UPDATE users SET username = ? WHERE id = ?;
