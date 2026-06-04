@@ -20,9 +20,13 @@ func callerOwner(ctx context.Context) uuid.UUID {
 	return identity.MustFromContext(ctx).UserID
 }
 
-// callerPrivate returns the caller's private storage scope.
-func callerPrivate(ctx context.Context) workflow.Scope {
-	return workflow.Private(callerOwner(ctx))
+// workflowSvc returns the WorkflowService for the workflow_* tools, building a
+// default one over the repository when Deps.WorkflowSvc is unset.
+func workflowSvc(srv *Server) *workflow.WorkflowService {
+	if srv.deps.WorkflowSvc != nil {
+		return srv.deps.WorkflowSvc
+	}
+	return workflow.NewWorkflowService(srv.deps.Workflows, nil)
 }
 
 // ownerBoundChecker adapts a scope-aware engine.FileReader to the owner-blind
@@ -127,9 +131,7 @@ func RegisterWorkflowTools(srv *Server) {
 
 func workflowListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		// TODO(task-3): merge shared workflows into the listing, tagged with
-		// scope and publisher. For now list the caller's private workspace only.
-		summaries, err := srv.deps.Workflows.List(ctx, callerPrivate(ctx))
+		summaries, err := workflowSvc(srv).List(ctx)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list workflows: %s", err)), nil
 		}
@@ -152,7 +154,7 @@ func workflowGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		wf, _, err := workflow.LoadVisible(ctx, srv.deps.Workflows, callerOwner(ctx), name)
+		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -183,7 +185,7 @@ func workflowCreateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", wf.Name)), nil
 		}
 
-		if err := srv.deps.Workflows.Create(ctx, callerPrivate(ctx), wf.Name, &wf); err != nil {
+		if err := workflowSvc(srv).Create(ctx, wf.Name, &wf); err != nil {
 			if errors.Is(err, workflow.ErrAlreadyExists) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow already exists: %s", wf.Name)), nil
 			}
@@ -218,7 +220,10 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		// contained so workflow.json stays consistent with its directory name.
 		wf.Name = name
 
-		if err := srv.deps.Workflows.Update(ctx, callerPrivate(ctx), name, &wf); err != nil {
+		if err := workflowSvc(srv).Update(ctx, name, &wf); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -240,7 +245,10 @@ func workflowDeleteHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		if err := srv.deps.Workflows.Delete(ctx, callerPrivate(ctx), name); err != nil {
+		if err := workflowSvc(srv).Delete(ctx, name); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -262,7 +270,7 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		wf, _, err := workflow.LoadVisible(ctx, srv.deps.Workflows, callerOwner(ctx), name)
+		wf, err := workflowSvc(srv).Load(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -298,7 +306,7 @@ func workflowListFilesHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
 		}
 
-		files, _, err := workflow.ListFilesVisible(ctx, srv.deps.Workflows, callerOwner(ctx), name)
+		files, err := workflowSvc(srv).ListFiles(ctx, name)
 		if err != nil {
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
@@ -367,7 +375,10 @@ func workflowWriteFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("content too large: %d bytes exceeds %d byte limit", len(content), maxWriteFileContentBytes)), nil
 		}
 
-		if err := srv.deps.Workflows.WriteFile(ctx, callerPrivate(ctx), name, path, []byte(content)); err != nil {
+		if err := workflowSvc(srv).WriteFile(ctx, name, path, []byte(content)); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
 			}
@@ -397,7 +408,10 @@ func workflowDeleteFileHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("path is required"), nil
 		}
 
-		if err := srv.deps.Workflows.DeleteFile(ctx, callerPrivate(ctx), name, path); err != nil {
+		if err := workflowSvc(srv).DeleteFile(ctx, name, path); err != nil {
+			if errors.Is(err, workflow.ErrSharedReadOnly) {
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
+			}
 			if errors.Is(err, workflow.ErrNotFound) || errors.Is(err, workflow.ErrFileNotFound) {
 				return gomcp.NewToolResultError(fmt.Sprintf("not found: %s", err)), nil
 			}

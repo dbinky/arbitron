@@ -33,7 +33,12 @@ type stubWorkflowRepo struct {
 	listFilesFn  func(ctx context.Context, name string) ([]string, error)
 }
 
-func (s *stubWorkflowRepo) List(ctx context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
+func (s *stubWorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	// The canned listing represents the caller's PRIVATE workspace; the shared
+	// scope is empty so the service's private+shared merge doesn't double it.
+	if scope.Kind == workflow.ScopeShared {
+		return nil, nil
+	}
 	if s.listFn != nil {
 		return s.listFn(ctx)
 	}

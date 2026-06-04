@@ -46,6 +46,10 @@ type QueueManagerPort interface {
 type RouterDeps struct {
 	Service             EngineService
 	Workflows           workflow.WorkflowRepository
+	// WorkflowSvc resolves storage scope/authorization from the request identity
+	// for the workflow CRUD/list/load handlers. Optional: when nil, a default
+	// service over Workflows (no publisher lookup) is constructed by the handler.
+	WorkflowSvc         *workflow.WorkflowService
 	Instances           instance.InstanceRepository
 	NodeExecs           instance.NodeExecutionRepository
 	Snapshots           instance.VariableSnapshotRepository
@@ -162,6 +166,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	// scoping (which rows a caller may see) -- that is a later Phase 6 milestone.
 
 	wfHandler := NewWorkflowHandler(d.Workflows, d.Service, d.FileReader, d.Instances, d.ProfileChecker)
+	wfHandler.SetWorkflowService(d.WorkflowSvc)
 	if d.ConnChecker != nil {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}

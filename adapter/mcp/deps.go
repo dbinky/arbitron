@@ -46,6 +46,10 @@ type QueueManagerPort interface {
 type Deps struct {
 	Engine              EngineService
 	Workflows           workflow.WorkflowRepository
+	// WorkflowSvc resolves storage scope/authorization from the calling user's
+	// identity for the workflow_* tools. Optional: when nil, a default service
+	// over Workflows (no publisher lookup) is constructed lazily.
+	WorkflowSvc         *workflow.WorkflowService
 	Instances           instance.InstanceRepository
 	NodeExecs           instance.NodeExecutionRepository
 	Snapshots           instance.VariableSnapshotRepository

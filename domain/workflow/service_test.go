@@ -1,0 +1,308 @@
+package workflow_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// fakeRepo is an in-memory WorkflowRepository keyed by (scopeKey, name) so the
+// service's scope routing is observable.
+type fakeRepo struct {
+	// store[scopeKey][name] = *Workflow
+	store map[string]map[string]*workflow.Workflow
+}
+
+func newFakeRepo() *fakeRepo {
+	return &fakeRepo{store: map[string]map[string]*workflow.Workflow{}}
+}
+
+func scopeKey(s workflow.Scope) string {
+	if s.Kind == workflow.ScopeShared {
+		return "shared"
+	}
+	return "private:" + s.OwnerID.String()
+}
+
+func (r *fakeRepo) bucket(s workflow.Scope) map[string]*workflow.Workflow {
+	k := scopeKey(s)
+	if r.store[k] == nil {
+		r.store[k] = map[string]*workflow.Workflow{}
+	}
+	return r.store[k]
+}
+
+func (r *fakeRepo) Load(_ context.Context, s workflow.Scope, name string) (*workflow.Workflow, error) {
+	wf, ok := r.bucket(s)[name]
+	if !ok {
+		return nil, workflow.ErrNotFound
+	}
+	return wf, nil
+}
+
+func (r *fakeRepo) List(_ context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	var out []workflow.WorkflowSummary
+	for _, wf := range r.bucket(s) {
+		out = append(out, workflow.WorkflowSummary{Name: wf.Name, Description: wf.Description, Author: wf.Author, NodeCount: len(wf.Nodes)})
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) SaveNodePositions(_ context.Context, s workflow.Scope, name string, _ map[string]workflow.NodePosition) error {
+	if _, ok := r.bucket(s)[name]; !ok {
+		return workflow.ErrNotFound
+	}
+	return nil
+}
+
+func (r *fakeRepo) Create(_ context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
+	b := r.bucket(s)
+	if _, ok := b[name]; ok {
+		return workflow.ErrAlreadyExists
+	}
+	b[name] = wf
+	return nil
+}
+
+func (r *fakeRepo) Update(_ context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
+	b := r.bucket(s)
+	if _, ok := b[name]; !ok {
+		return workflow.ErrNotFound
+	}
+	b[name] = wf
+	return nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, s workflow.Scope, name string) error {
+	b := r.bucket(s)
+	if _, ok := b[name]; !ok {
+		return workflow.ErrNotFound
+	}
+	delete(b, name)
+	return nil
+}
+
+func (r *fakeRepo) WriteFile(_ context.Context, s workflow.Scope, name, _ string, _ []byte) error {
+	if _, ok := r.bucket(s)[name]; !ok {
+		return workflow.ErrNotFound
+	}
+	return nil
+}
+
+func (r *fakeRepo) DeleteFile(_ context.Context, s workflow.Scope, name, _ string) error {
+	if _, ok := r.bucket(s)[name]; !ok {
+		return workflow.ErrNotFound
+	}
+	return nil
+}
+
+func (r *fakeRepo) ListFiles(_ context.Context, s workflow.Scope, name string) ([]string, error) {
+	if _, ok := r.bucket(s)[name]; !ok {
+		return nil, workflow.ErrNotFound
+	}
+	return []string{}, nil
+}
+
+func (r *fakeRepo) Exists(_ context.Context, s workflow.Scope, name string) (bool, error) {
+	_, ok := r.bucket(s)[name]
+	return ok, nil
+}
+
+// fakePublishers is a fake PublisherLookup.
+type fakePublishers struct {
+	pub map[string]uuid.UUID
+}
+
+func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	id, ok := p.pub[name]
+	return id, ok, nil
+}
+
+func ctxWith(id uuid.UUID, admin bool) context.Context {
+	role := identity.RoleUser
+	if admin {
+		role = identity.RoleAdmin
+	}
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: id, Username: "u", Role: role})
+}
+
+func wf(name string) *workflow.Workflow {
+	return &workflow.Workflow{Name: name, Description: "d", Author: "a"}
+}
+
+// --- Happy path ---
+
+func TestService_Create_TargetsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+
+	require.NoError(t, svc.Create(ctxWith(owner, false), "w", wf("w")))
+
+	_, ok := repo.bucket(workflow.Private(owner))["w"]
+	assert.True(t, ok, "created in caller's private scope")
+	_, sharedOK := repo.bucket(workflow.Shared())["w"]
+	assert.False(t, sharedOK, "never written to shared")
+}
+
+func TestService_Load_PrivateThenShared(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "p", wf("p")))
+
+	got, err := svc.Load(ctxWith(owner, false), "p")
+	require.NoError(t, err)
+	assert.Equal(t, "p", got.Name)
+}
+
+func TestService_List_PrivatePlusShared(t *testing.T) {
+	repo := newFakeRepo()
+	pubID := uuid.New()
+	pubs := &fakePublishers{pub: map[string]uuid.UUID{"sh": pubID}}
+	svc := workflow.NewWorkflowService(repo, pubs)
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "sh", wf("sh")))
+
+	list, err := svc.List(ctxWith(owner, false))
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+
+	byName := map[string]workflow.WorkflowSummary{}
+	for _, s := range list {
+		byName[s.Name] = s
+	}
+	assert.Equal(t, workflow.ScopeLabelPrivate, byName["mine"].Scope)
+	assert.Empty(t, byName["mine"].Publisher)
+	assert.Equal(t, workflow.ScopeLabelShared, byName["sh"].Scope)
+	assert.Equal(t, pubID.String(), byName["sh"].Publisher)
+}
+
+// --- Validation ---
+
+func TestService_NoIdentity_Rejected(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+
+	err := svc.Create(context.Background(), "w", wf("w"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+
+	_, err = svc.Load(context.Background(), "w")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrInvalidName)
+}
+
+func TestService_List_NameCollisionYieldsTwoEntries(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "dup", wf("dup")))
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "dup", wf("dup")))
+
+	list, err := svc.List(ctxWith(owner, false))
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+
+	scopes := []string{list[0].Scope, list[1].Scope}
+	assert.Contains(t, scopes, workflow.ScopeLabelPrivate)
+	assert.Contains(t, scopes, workflow.ScopeLabelShared)
+}
+
+// --- Error/failure ---
+
+func TestService_Update_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
+
+	err := svc.Update(ctxWith(owner, false), "pub", wf("pub"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+	assert.NotErrorIs(t, err, workflow.ErrNotFound)
+}
+
+func TestService_Update_Nowhere_ReturnsNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+
+	err := svc.Update(ctxWith(owner, false), "ghost", wf("ghost"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// --- Boundary ---
+
+func TestService_List_EmptyPrivate_ReturnsSharedOnly(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "sh", wf("sh")))
+
+	list, err := svc.List(ctxWith(owner, false))
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, "sh", list[0].Name)
+	assert.Equal(t, workflow.ScopeLabelShared, list[0].Scope)
+	assert.Empty(t, list[0].Publisher, "nil publisher lookup leaves Publisher empty")
+}
+
+// --- Isolation/security ---
+
+func TestService_LoadAs_NonAdminOtherOwner_Unauthorized(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	caller := uuid.New()
+	other := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(other), "secret", wf("secret")))
+
+	_, err := svc.LoadAs(ctxWith(caller, false), other, "secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
+}
+
+func TestService_LoadAs_AdminOtherOwner_Loads(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	admin := uuid.New()
+	other := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(other), "secret", wf("secret")))
+
+	got, err := svc.LoadAs(ctxWith(admin, true), other, "secret")
+	require.NoError(t, err)
+	assert.Equal(t, "secret", got.Name)
+}
+
+func TestService_LoadAs_SelfOwner_LoadsPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	owner := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
+
+	got, err := svc.LoadAs(ctxWith(owner, false), owner, "mine")
+	require.NoError(t, err)
+	assert.Equal(t, "mine", got.Name)
+}
+
+func TestService_Load_DoesNotLeakOtherUsersPrivate(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil)
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, repo.Create(context.Background(), workflow.Private(a), "a-secret", wf("a-secret")))
+
+	_, err := svc.Load(ctxWith(b, false), "a-secret")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, workflow.ErrNotFound))
+}

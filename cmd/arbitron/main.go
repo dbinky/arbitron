@@ -121,6 +121,7 @@ type domainStack struct {
 	db                  *sql.DB
 	eng                 *engine.Engine
 	workflowRepo        workflow.WorkflowRepository
+	workflowSvc         *workflow.WorkflowService
 	instanceRepo        instance.InstanceRepository
 	nodeExecRepo        instance.NodeExecutionRepository
 	snapshotRepo        instance.VariableSnapshotRepository
@@ -185,6 +186,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 	return &adaptmcp.Deps{
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
@@ -296,6 +298,10 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
+	// WorkflowService resolves storage scope/authorization from the request
+	// identity. PublisherLookup is nil until Task 5 wires the published_workflows
+	// repo (shared list entries then carry no publisher id).
+	workflowSvc := workflow.NewWorkflowService(workflowRepo, nil)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -596,6 +602,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		db:                  db,
 		eng:                 eng,
 		workflowRepo:        workflowRepo,
+		workflowSvc:         workflowSvc,
 		instanceRepo:        instanceRepo,
 		nodeExecRepo:        nodeExecRepo,
 		snapshotRepo:        snapshotRepo,
@@ -649,6 +656,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:             ds.eng,
 		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,

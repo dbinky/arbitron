@@ -29,25 +29,39 @@ var _ workflow.WorkflowRepository = (*errWorkflowRepo)(nil)
 // Mocks for WorkflowHandler
 // ---------------------------------------------------------------------------
 
+// mockWorkflowRepo is scope-aware: the flat `workflows` map is the caller's
+// PRIVATE store (existing tests populate it directly); `shared` is the shared
+// store. Tests that want a shared workflow populate `shared`.
 type mockWorkflowRepo struct {
 	workflows map[string]*workflow.Workflow
+	shared    map[string]*workflow.Workflow
 }
 
 func newMockWorkflowRepo() *mockWorkflowRepo {
-	return &mockWorkflowRepo{workflows: make(map[string]*workflow.Workflow)}
+	return &mockWorkflowRepo{
+		workflows: make(map[string]*workflow.Workflow),
+		shared:    make(map[string]*workflow.Workflow),
+	}
 }
 
-func (r *mockWorkflowRepo) Load(_ context.Context, _ workflow.Scope, name string) (*workflow.Workflow, error) {
-	wf, ok := r.workflows[name]
+func (r *mockWorkflowRepo) bucket(s workflow.Scope) map[string]*workflow.Workflow {
+	if s.Kind == workflow.ScopeShared {
+		return r.shared
+	}
+	return r.workflows
+}
+
+func (r *mockWorkflowRepo) Load(_ context.Context, s workflow.Scope, name string) (*workflow.Workflow, error) {
+	wf, ok := r.bucket(s)[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", workflow.ErrNotFound, name)
 	}
 	return wf, nil
 }
 
-func (r *mockWorkflowRepo) List(_ context.Context, _ workflow.Scope) ([]workflow.WorkflowSummary, error) {
+func (r *mockWorkflowRepo) List(_ context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
 	var summaries []workflow.WorkflowSummary
-	for _, wf := range r.workflows {
+	for _, wf := range r.bucket(s) {
 		summaries = append(summaries, workflow.WorkflowSummary{
 			Name:        wf.Name,
 			Description: wf.Description,
@@ -78,8 +92,8 @@ func (r *mockWorkflowRepo) DeleteFile(_ context.Context, _ workflow.Scope, _ str
 func (r *mockWorkflowRepo) ListFiles(_ context.Context, _ workflow.Scope, _ string) ([]string, error) {
 	return nil, nil
 }
-func (r *mockWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, name string) (bool, error) {
-	_, ok := r.workflows[name]
+func (r *mockWorkflowRepo) Exists(_ context.Context, s workflow.Scope, name string) (bool, error) {
+	_, ok := r.bucket(s)[name]
 	return ok, nil
 }
 

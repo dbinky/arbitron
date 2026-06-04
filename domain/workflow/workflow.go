@@ -117,10 +117,20 @@ type ErrorBehavior struct {
 	ErrorNodeID       string `json:"errorNodeId,omitempty"`
 }
 
+// Scope labels distinguish where a listed workflow lives.
+const (
+	ScopeLabelPrivate = "private"
+	ScopeLabelShared  = "shared"
+)
+
 // WorkflowSummary is a lightweight representation for listing workflows.
 type WorkflowSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Author      string `json:"author"`
 	NodeCount   int    `json:"nodeCount"`
+	// Scope is "private" or "shared"; lets the dashboard/MCP distinguish.
+	Scope string `json:"scope,omitempty"`
+	// Publisher is the publishing user's id for shared entries; empty for private.
+	Publisher string `json:"publisher,omitempty"`
 }
