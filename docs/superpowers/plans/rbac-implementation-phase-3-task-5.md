@@ -9,7 +9,7 @@
 **Tech Stack:** Go 1.23+, testify.
 
 **Cross-phase dependencies (consumed contract — DO NOT build here):**
-- **Phase 2 audit:** `domain/audit` provides a `Service` whose method is `Record(ctx context.Context, action, target, detail string) error` and reads the actor from context. Events `workflow.publish`, `workflow.visibility_change`, `admin.override` are introduced in Phase 2. Phase 3 ADDS the `instance.lead_intervention` action and reuses `admin.override`.
+- **Phase 2 audit:** `domain/audit` provides a `Service` whose method is `Record(ctx context.Context, action, target, detail string)` (VOID, best-effort, nil-safe — a store failure is logged and swallowed inside the service, never returned) and reads the actor from context. The engine's `AuditRecorder` port below MUST match this void signature so `*audit.Service` satisfies it directly with no adapter. Events `workflow.publish`, `workflow.visibility_change`, `admin.override` are introduced in Phase 2. Phase 3 ADDS the `instance.lead_intervention` action and reuses `admin.override`.
 - This task is written against an engine-local `AuditRecorder` port so the exact `audit.Service` shape is isolated to the wiring file. If Phase 2's method signature differs, only the adapter at the wiring seam changes.
 
 **Cross-task dependency:** Requires Task 4 (`canIntervene` and the identity predicates for actor classification).
@@ -105,10 +105,12 @@ const (
 
 // AuditRecorder is the minimal write surface the engine needs from the Phase-2
 // audit service. Record reads the actor from ctx and persists an event. It is
-// best-effort: a returned error is logged by the caller, never propagated to
-// fail the underlying intervention.
+// best-effort and VOID: a store failure is logged and swallowed inside the audit
+// service, never propagated, so auditing can never fail the underlying
+// intervention. This matches *audit.Service.Record exactly (Phase 2), so the
+// service satisfies this port with no adapter.
 type AuditRecorder interface {
-	Record(ctx context.Context, action, target, detail string) error
+	Record(ctx context.Context, action, target, detail string)
 }
 
 // auditActionFor classifies a non-owner intervention into an audit action, or
@@ -179,14 +181,15 @@ type fakeAuditRecorder struct {
 	failErr error
 }
 
-func (a *fakeAuditRecorder) Record(_ context.Context, action, target, detail string) error {
+func (a *fakeAuditRecorder) Record(_ context.Context, action, target, detail string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.failErr != nil {
-		return a.failErr
+		// Simulate the audit service swallowing a store failure internally: it
+		// records nothing and returns nothing. The intervention must still stand.
+		return
 	}
 	a.events = append(a.events, recordedAudit{action, target, detail})
-	return nil
 }
 
 func (a *fakeAuditRecorder) all() []recordedAudit {
@@ -297,15 +300,14 @@ In `domain/engine/engine.go`, in `recordIntervention`, after the existing identi
 	if e.auditRecorder != nil {
 		if auditAction := auditActionFor(id, inst); auditAction != "" {
 			detail := fmt.Sprintf(`{"action":%q}`, action)
-			if err := e.auditRecorder.Record(ctx, auditAction, inst.ID.String(), detail); err != nil {
-				slog.Error("failed to record intervention audit event",
-					"instanceID", inst.ID, "auditAction", auditAction, "error", err)
-			}
+			// Void best-effort: the audit service logs+swallows any store failure
+			// internally, so there is nothing to handle here.
+			e.auditRecorder.Record(ctx, auditAction, inst.ID.String(), detail)
 		}
 	}
 ```
 
-Place this block inside `recordIntervention` after the `e.interventions` write block and before (or after) the `e.eventBus.Publish(...)` call. Confirm `fmt` and `slog` are already imported in engine.go (they are).
+Place this block inside `recordIntervention` after the `e.interventions` write block and before (or after) the `e.eventBus.Publish(...)` call. Confirm `fmt` is already imported in engine.go (it is); no `slog` is needed here since the void recorder handles failures internally.
 
 - [ ] **Step 5: Run the emission tests to verify they pass**
 
@@ -330,7 +332,6 @@ git commit -m "feat(rbac): emit best-effort lead_intervention/admin.override aud
 
 **Files:**
 - Modify: the server composition root that constructs the engine (e.g. `cmd/arbitron/serve.go` or `internal/server/*.go` — locate with `grep -rn "engine.NewEngine\|SetInterventions" --include=*.go cmd internal adapter`)
-- Modify: a thin adapter mapping `audit.Service.Record` to `engine.AuditRecorder` if the signatures differ (see Step 2)
 - Test: covered by the existing composition smoke test, plus `go build`
 
 - [ ] **Step 1: Locate the composition root**
@@ -340,24 +341,14 @@ Expected: the single place the engine is built and its `Set*` seams are wired (t
 
 - [ ] **Step 2: Wire `SetAuditRecorder` next to `SetInterventions`**
 
-At that composition site, after the engine is constructed and the Phase-2 audit service is available, add:
+At that composition site, after the engine is constructed and the Phase-2 audit
+service is available, pass it directly — `*audit.Service.Record` has exactly the
+void `Record(ctx, action, target, detail string)` signature of `engine.AuditRecorder`:
 
 ```go
-	// Phase 2 provides auditService (domain/audit). If its Record signature is
-	// exactly Record(ctx, action, target, detail string) error, pass it directly:
+	// Phase 2 provides auditService (*audit.Service); its void Record satisfies
+	// engine.AuditRecorder directly, no adapter needed.
 	eng.SetAuditRecorder(auditService)
-	// Otherwise wrap it in a tiny adapter implementing engine.AuditRecorder:
-	//   eng.SetAuditRecorder(auditRecorderAdapter{auditService})
-```
-
-If a wrapping adapter is needed, add it next to the composition code:
-
-```go
-type auditRecorderAdapter struct{ svc *audit.Service }
-
-func (a auditRecorderAdapter) Record(ctx context.Context, action, target, detail string) error {
-	return a.svc.Record(ctx, action, target, detail)
-}
 ```
 
 - [ ] **Step 3: Build the server**

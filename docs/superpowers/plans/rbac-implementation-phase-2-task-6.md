@@ -23,8 +23,8 @@
 
 - Modify: `domain/workflow/service.go` (add `audit *audit.Service` field + `SetAudit` setter; emit in `Publish`/`SetVisibility`)
 - Modify: `domain/workflow/gating.go` (add `adminOverrode` helper)
-- Modify: `domain/workflow/service.go` `List`/`Load`/`Copy` + `domain/engine/engine.go` Trigger gate (emit `admin.override` when admin is sole reason)
-- Modify: `cmd/arbitron/main.go` (construct `audit.Service` over `NewAuditRepo`, wire via `SetAudit` on the workflow service and the engine)
+- Modify: `domain/workflow/service.go` `List`/`Load`/`Copy` (emit `admin.override` when admin is sole reason). NOTE: the engine Trigger path does NOT get an audit seam here — Phase 3 (task 5) introduces the single `engine.AuditRecorder` seam (`SetAuditRecorder`). To avoid two competing audit fields on the Engine, all engine-side audit emission (including any admin-override-on-trigger parity) is owned by Phase 3. See deferred Step 15 below.
+- Modify: `cmd/arbitron/main.go` (construct `audit.Service` over `NewAuditRepo`, wire via `SetAudit` on the workflow service ONLY; the engine is wired to the same `audit.Service` in Phase 3 via `SetAuditRecorder`)
 - Test: `domain/workflow/audit_emit_test.go` (new)
 
 ---
@@ -344,11 +344,16 @@ KEEP `sharedFilter` (non-auditing) for `ListFiles`, OR switch `ListFiles` to `au
 Run: `go test ./domain/workflow/ -run TestService_Load_ -v`
 Expected: PASS (override fires only when admin is the sole reason; member-in-dept and public cases emit nothing).
 
-- [ ] **Step 15: Emit `admin.override` on the engine Trigger gate (optional parity)**
+- [ ] **Step 15: (DEFERRED to Phase 3) engine Trigger admin-override parity**
 
-In `domain/engine/engine.go`, the Trigger filter (Task 3) can also emit the override. Give the engine an optional `audit *audit.Service` via `SetAudit(a *audit.Service)` and, inside the trigger filter where `CanSeePublication` is checked, call `if e.audit != nil && admin-sole-reason { e.audit.Record(ctx, audit.ActionAdminOverride, name, ...) }` using the same `adminOverrode` logic (export `adminOverrode` from `domain/workflow` as `AdminOverrode` if the engine needs it, OR keep the override emission only in the workflow service and skip it for triggers). DECISION: export `workflow.AdminOverrode` and emit in the engine for parity, since a Phase-3 admin triggering a department workflow is a consequential override. Add one engine test mirroring `TestEngine_Trigger_DepartmentWorkflow_AllowedForMember` but with an admin-in-no-dept identity, asserting an override event landed in a recording store wired via `eng.SetAudit`.
-
-(If exporting, rename `adminOverrode`→`AdminOverrode` in `gating.go` and update the service call sites.)
+DECISION (plan-alignment): do NOT add an audit seam to the Engine in this task.
+Phase 3 (task 5) introduces the single `engine.AuditRecorder` seam
+(`SetAuditRecorder`, void best-effort) and owns all engine-side audit emission, to
+avoid two competing audit fields on the `Engine` struct. Admin-override auditing in
+THIS phase is therefore emitted only from the workflow service read/list/copy paths
+(Steps 12–14). Auditing an admin who *triggers* a department workflow is a future
+parity item Phase 3 may add on its own seam; it is intentionally out of scope here.
+Keep `adminOverrode` unexported in `gating.go` (no engine consumer).
 
 - [ ] **Step 16: Wire the audit service in `cmd/arbitron/main.go`**
 
@@ -359,8 +364,8 @@ Near `publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)` / `workflowSvc 
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
 	workflowSvc.SetAudit(auditSvc)
-	// ... and after the engine is built:
-	eng.SetAudit(auditSvc) // only if Step 15's engine emission was implemented
+	// NOTE: the engine is wired to this same auditSvc in Phase 3 (task 5) via
+	// eng.SetAuditRecorder(auditSvc) — not here, to keep a single engine seam.
 ```
 
 Add the `domain/audit` import. Ensure the HTTP `WorkflowHandler` and MCP path use this same `workflowSvc` (the HTTP handler already receives it via `SetWorkflowService` in `server.go`; for MCP, ensure `workflowSvc(srv)` — updated in Task 4 — also calls `SetAudit`, or have `srv.deps` carry the configured `*audit.Service` and apply it).
@@ -374,7 +379,7 @@ Expected: PASS.
 
 ```bash
 git add domain/workflow/service.go domain/workflow/gating.go domain/workflow/audit_emit_test.go \
-        domain/engine/engine.go cmd/arbitron/main.go adapter/mcp/tools_workflow.go
+        cmd/arbitron/main.go adapter/mcp/tools_workflow.go
 git commit -m "feat(rbac): emit publish/visibility_change/admin.override audit events
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
