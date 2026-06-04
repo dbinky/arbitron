@@ -116,3 +116,24 @@ describe('useFollowActiveNode — recenter', () => {
     expect(setCenter).toHaveBeenCalledWith(10, 20, { zoom: 0.9 })
   })
 })
+
+describe('useFollowActiveNode — reduced motion', () => {
+  it('uses duration 0 when prefers-reduced-motion is set', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).matchMedia = vi.fn().mockImplementation((q: string) => ({
+      matches: q.includes('reduce'),
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    const { rerender } = renderHook(
+      ({ a }: { a: { x: number; y: number } }) => useFollowActiveNode(a, true),
+      { initialProps: { a: { x: 10, y: 20 } } },
+    )
+    rerender({ a: { x: 100, y: 200 } })
+    expect(setCenter).toHaveBeenCalledWith(100, 200, {
+      zoom: 1.5,
+      duration: 0,
+    })
+  })
+})
