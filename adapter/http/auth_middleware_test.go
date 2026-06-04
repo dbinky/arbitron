@@ -299,6 +299,17 @@ func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
+
+	t.Run("/mcp with html accept returns 401 not redirect", func(t *testing.T) {
+		// The MCP path must never redirect to login — MCP clients do not follow
+		// redirects and would silently send credentials to the wrong endpoint.
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.Header.Set("Accept", "text/html")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Empty(t, rec.Header().Get("Location"), "/mcp must not redirect")
+	})
 }
 
 func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
