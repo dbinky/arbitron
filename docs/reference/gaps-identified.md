@@ -9,6 +9,13 @@ _(none)_
 
 ## Fixed Previously
 
+### SLICE-004: No end-to-end test for dismissed item appearing with Restore button after Show Dismissed toggle
+**Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
+**Fixed**: Iteration 32
+**Detail**: The `handleRestore` test set up dismissed items in the initial list (always returned regardless of toggle), so it tested restore without going through the toggle flow. No test verified: (1) start with no dismissed items visible; (2) enable Show Dismissed; (3) refetch returns `dismissed: true` item; (4) item appears with Restore button (not Dismiss). Added `shows a Restore button (not Dismiss) for dismissed items after Show Dismissed is enabled` to QueueView end-to-end test suite.
+
+---
+
 ### SLICE-003: Show/hide dismissed toggle — hide direction not tested
 **Area**: Vertical slice: show/hide dismissed (`dashboard/src/routes/QueueView.test.tsx`)
 **Fixed**: Iteration 31

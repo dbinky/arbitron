@@ -131,6 +131,50 @@ describe('QueueView show/hide dismissed toggle', () => {
   })
 })
 
+describe('QueueView show-dismissed end-to-end render', () => {
+  beforeEach(() => {
+    list.mockReset()
+    restore.mockReset()
+    restore.mockResolvedValue({ status: 'ok' })
+  })
+
+  // Slice: enabling Show Dismissed causes dismissed items to appear with Restore,
+  // not Dismiss. This tests the full toggle→refetch→render chain at the QueueView level.
+  // QueueSection covers the dimming at the component level; this covers the orchestration.
+  it('shows a Restore button (not Dismiss) for dismissed items after Show Dismissed is enabled', async () => {
+    const dismissed = {
+      id: 'd1',
+      workflowName: 'wf',
+      state: 'failed' as const,
+      priority: 'normal' as const,
+      dismissed: true,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+    }
+    // Initial load: no dismissed items visible (includeDismissed=false).
+    list.mockImplementation((params: { state?: string; includeDismissed?: boolean } = {}) => {
+      if (params.state === 'failed' && params.includeDismissed) return Promise.resolve([dismissed])
+      return Promise.resolve([])
+    })
+
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('button', { name: /show dismissed/i })
+    // No Restore button yet — dismissed item not in view.
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull()
+
+    // Enable Show Dismissed.
+    fireEvent.click(screen.getByRole('button', { name: /show dismissed/i }))
+
+    // After refetch includes dismissed item, Restore button appears.
+    await screen.findByRole('button', { name: 'Restore' })
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+  })
+})
+
 describe('QueueView loading and error states', () => {
   beforeEach(() => {
     list.mockReset()
