@@ -33,10 +33,42 @@ type Identity struct {
 	UserID   uuid.UUID
 	Username string
 	Role     Role
+	// Departments is the caller's effective membership: persisted (claim-derived)
+	// departments unioned with config-derived led departments, all normalized.
+	// In local mode this is the single default group. Later phases authorize
+	// department-scoped reads/writes against this set.
+	Departments []string
+	// LedDepartments is the subset of departments the caller leads (config-derived,
+	// not persisted). Empty in local mode. A lead may intervene on any instance in
+	// these departments and publish their workflows to public.
+	LedDepartments []string
 }
 
 // IsAdmin reports whether the identity has the admin role.
 func (i Identity) IsAdmin() bool { return i.Role == RoleAdmin }
+
+// InDepartment reports whether the caller is a member of dept. dept must be a
+// normalized (trimmed, lower-cased) department name; the membership set is
+// already normalized.
+func (i Identity) InDepartment(dept string) bool {
+	for _, d := range i.Departments {
+		if d == dept {
+			return true
+		}
+	}
+	return false
+}
+
+// LeadsDepartment reports whether the caller is a configured lead of dept. dept
+// must be a normalized department name.
+func (i Identity) LeadsDepartment(dept string) bool {
+	for _, d := range i.LedDepartments {
+		if d == dept {
+			return true
+		}
+	}
+	return false
+}
 
 // identityKey is an unexported context key type so no other package can collide
 // with or read the identity value by guessing the key.

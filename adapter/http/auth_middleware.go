@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,7 @@ type AuthMiddleware struct {
 	sessions identity.SessionRepository // nil in local mode
 	tokens   identity.TokenRepository   // personal API tokens (org-mode bearer auth)
 	users    instance.UserRepository
+	groups   identity.GroupConfig // RBAC: default group + leads mapping
 
 	// toucher coalesces per-request last-used bookkeeping into a single owned,
 	// cancellable flusher goroutine (org-mode bearer path only). Nil disables it.
@@ -43,8 +45,8 @@ type AuthMiddleware struct {
 // NewAuthMiddleware builds the middleware. In local mode sessions/tokens may be
 // nil (the bearer branch is org-mode only). tokens powers the
 // "Authorization: Bearer arb_..." branch for browserless clients.
-func NewAuthMiddleware(mode identity.Mode, cookieName string, sessions identity.SessionRepository, tokens identity.TokenRepository, users instance.UserRepository) *AuthMiddleware {
-	m := &AuthMiddleware{mode: mode, cookie: cookieName, sessions: sessions, tokens: tokens, users: users}
+func NewAuthMiddleware(mode identity.Mode, cookieName string, sessions identity.SessionRepository, tokens identity.TokenRepository, users instance.UserRepository, groups identity.GroupConfig) *AuthMiddleware {
+	m := &AuthMiddleware{mode: mode, cookie: cookieName, sessions: sessions, tokens: tokens, users: users, groups: groups}
 	// The bearer last-used flusher is only relevant in org mode with a token repo.
 	if mode == identity.ModeOrg && tokens != nil {
 		m.toucher = newTouchFlusher(tokens, time.NewTicker(touchFlushInterval).C)
@@ -94,7 +96,14 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 				slog.Error("auth: could not resolve local default user", "error", err)
 				return
 			}
-			m.localID = identity.Identity{UserID: uid, Username: "local", Role: identity.RoleAdmin}
+			// Local mode: the single user is admin in the default group, so all
+			// RBAC predicates pass trivially and today's behavior is preserved.
+			m.localID = identity.Identity{
+				UserID:      uid,
+				Username:    "local",
+				Role:        identity.RoleAdmin,
+				Departments: []string{m.groups.DefaultGroupOr()},
+			}
 		})
 		if m.localErr != nil {
 			// Server-state failure, NOT a missing-credential 401.
@@ -111,7 +120,7 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 	if c, err := r.Cookie(m.cookie); err == nil && c.Value != "" {
 		if sess, serr := m.sessions.Get(r.Context(), c.Value); serr == nil {
 			if user, uerr := m.users.GetByID(r.Context(), sess.UserID); uerr == nil {
-				return identity.Identity{UserID: user.ID, Username: user.Username, Role: user.Role}, nil
+				return m.enrich(r.Context(), user), nil
 			}
 		}
 		// A present-but-invalid cookie falls through to the bearer attempt below;
@@ -134,7 +143,7 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 					if m.toucher != nil {
 						m.toucher.touch(tok.ID)
 					}
-					return identity.Identity{UserID: user.ID, Username: user.Username, Role: user.Role}, nil
+					return m.enrich(r.Context(), user), nil
 				}
 			}
 		}
@@ -154,6 +163,65 @@ func (m *AuthMiddleware) reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+}
+
+// enrich builds the request identity for an org-mode user: it loads the user's
+// persisted departments, unions them with the config-derived led departments,
+// and stamps the (already live-evaluated) role. Subject/email drive lead
+// matching only — they are never placed on the Identity. A ListDepartments
+// failure is non-fatal: the caller still authenticates with their led
+// departments (plus, defensively, the default group), so a transient read error
+// does not lock a user out — but it is logged.
+func (m *AuthMiddleware) enrich(ctx context.Context, u *instance.User) identity.Identity {
+	subject := ""
+	if u.Subject != nil {
+		subject = *u.Subject
+	}
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	stored, err := m.users.ListDepartments(ctx, u.ID)
+	if err != nil {
+		slog.Error("auth: could not load user departments", "user", u.ID, "error", err)
+		stored = nil
+	}
+	led := identity.LedDepartments(subject, email, m.groups)
+	departments := unionDepts(stored, led)
+	if len(departments) == 0 {
+		// Defensive: a user with no stored departments and no led departments
+		// still belongs to the default group (matches the provisioner snapshot).
+		departments = []string{m.groups.DefaultGroupOr()}
+	}
+	return identity.Identity{
+		UserID:         u.ID,
+		Username:       u.Username,
+		Role:           u.Role,
+		Departments:    departments,
+		LedDepartments: led,
+	}
+}
+
+// unionDepts returns stored ∪ led, preserving stored order then appending any
+// led departments not already present.
+func unionDepts(stored, led []string) []string {
+	seen := make(map[string]struct{}, len(stored)+len(led))
+	out := make([]string, 0, len(stored)+len(led))
+	for _, d := range stored {
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	for _, d := range led {
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
 }
 
 func isBrowserNavigation(r *http.Request) bool {

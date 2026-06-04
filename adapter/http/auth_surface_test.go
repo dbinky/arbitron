@@ -49,7 +49,7 @@ func localSurface(t *testing.T) (http.Handler, *surfaceMCP) {
 	t.Helper()
 	users := newFakeUserRepo()
 	mcp := &surfaceMCP{}
-	auth := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users)
+	auth := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	return buildSurfaceRouter(auth, nil, mcp), mcp
 }
 
@@ -58,7 +58,7 @@ func orgSurface(t *testing.T) (http.Handler, *fakeSessionRepo, *fakeUserRepo, *s
 	users := newFakeUserRepo()
 	sessions := newFakeSessionRepo()
 	mcp := &surfaceMCP{}
-	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
+	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
 	authHandler := NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, nil, identity.GroupConfig{DefaultGroup: "default"}), config.SessionConfig{TTLSeconds: 3600, CookieName: "arbitron_session"})
 	return buildSurfaceRouter(auth, authHandler, mcp), sessions, users, mcp
@@ -243,7 +243,7 @@ func TestSurface_OrgMode_Bearer_E2E(t *testing.T) {
 
 	_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
 
-	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+	auth := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "s", Username: "u"}}
 	authHandler := NewAuthHandler(oidc, sessions, users, instance.NewProvisioner(users, nil, identity.GroupConfig{DefaultGroup: "default"}),
 		config.SessionConfig{TTLSeconds: 3600, CookieName: "arbitron_session"})
@@ -295,7 +295,7 @@ func TestSurface_ModeWiring(t *testing.T) {
 	assert.Equal(t, identity.ModeOrg, identity.ModeFromString("org"))
 
 	// A local middleware injects an admin without any session repo.
-	mw := NewAuthMiddleware(identity.ModeFromString("local"), "arbitron_session", nil, nil, users)
+	mw := NewAuthMiddleware(identity.ModeFromString("local"), "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()

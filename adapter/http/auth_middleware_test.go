@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -209,7 +210,7 @@ func (r *errUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) {
 
 func TestAuthMiddleware_Local_InjectsAdmin(t *testing.T) {
 	users := newFakeUserRepo()
-	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users)
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -229,7 +230,7 @@ func TestAuthMiddleware_Org_ValidSession(t *testing.T) {
 	sessions := newFakeSessionRepo()
 	sessions.byToken["good-token"] = &identity.Session{ID: "good-token", UserID: uid}
 
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -245,7 +246,7 @@ func TestAuthMiddleware_Org_ValidSession(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_NoCookie_401(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -257,7 +258,7 @@ func TestAuthMiddleware_Org_NoCookie_401(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_EmptyCookieValue_401(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -271,7 +272,7 @@ func TestAuthMiddleware_Org_EmptyCookieValue_401(t *testing.T) {
 
 func TestAuthMiddleware_Org_ExpiredSession_401(t *testing.T) {
 	// fake session repo returns ErrNotFound for unknown/expired tokens.
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -287,7 +288,7 @@ func TestAuthMiddleware_Org_UserGone_401(t *testing.T) {
 	users := newFakeUserRepo() // no users registered
 	sessions := newFakeSessionRepo()
 	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uuid.New()}
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -300,7 +301,7 @@ func TestAuthMiddleware_Org_UserGone_401(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 	h := mw.Handler(probe.handler())
 
@@ -371,7 +372,7 @@ func TestAuthMiddleware_Org_BrowserNav_Redirects(t *testing.T) {
 }
 
 func TestAuthMiddleware_Org_ForgedCookie_NeverAuthenticates(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo())
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -397,7 +398,7 @@ func TestAuthMiddleware_Org_ExpiredSessionPresent_401(t *testing.T) {
 		UserID:    uid,
 		ExpiresAt: time.Now().Add(-time.Hour),
 	}
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -411,7 +412,7 @@ func TestAuthMiddleware_Org_ExpiredSessionPresent_401(t *testing.T) {
 
 func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	users := newFakeUserRepo()
-	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users)
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -430,7 +431,7 @@ func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 // the default identity), distinct from a 401 (caller presented no credential).
 // The sync.Once caches the error permanently, so subsequent requests also fail.
 func TestAuthMiddleware_Local_DefaultUserError_ServerError(t *testing.T) {
-	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, &errUserRepo{newFakeUserRepo()})
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, &errUserRepo{newFakeUserRepo()}, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	for i := range 3 {
@@ -461,7 +462,7 @@ func TestAuthMiddleware_Bearer_HappyPath(t *testing.T) {
 	tokens := newFakeTokenRepo()
 	uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
 
-	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 	probe := &identityProbe{}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -494,7 +495,7 @@ func TestAuthMiddleware_Bearer_Validation(t *testing.T) {
 	for _, hdr := range []string{"Bearer not-an-arb-token", "Basic abc123", ""} {
 		users := newFakeUserRepo()
 		tokens := newFakeTokenRepo()
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -518,7 +519,7 @@ func TestAuthMiddleware_Bearer_ErrorPaths(t *testing.T) {
 		tokens := newFakeTokenRepo()
 		plaintext, _, _, err := identity.GenerateToken()
 		require.NoError(t, err)
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -537,7 +538,7 @@ func TestAuthMiddleware_Bearer_ErrorPaths(t *testing.T) {
 		plaintext, prefix, hash, err := identity.GenerateToken()
 		require.NoError(t, err)
 		tokens.byHash[hash] = &identity.Token{ID: uuid.New(), UserID: uuid.New(), Prefix: prefix, TokenHash: hash}
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -563,7 +564,7 @@ func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
 		uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
 		sessions := newFakeSessionRepo() // empty — cookie lookup will fail
 
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -584,7 +585,7 @@ func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
 		sessions := newFakeSessionRepo()
 		sessions.byToken["good"] = &identity.Session{ID: "good", UserID: uid}
 		tokens := newFakeTokenRepo()
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -603,7 +604,7 @@ func TestAuthMiddleware_Bearer_Boundary(t *testing.T) {
 		tokens := newFakeTokenRepo()
 		tokens.touchErr = assertErr("touch boom")
 		_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -635,7 +636,7 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 		_, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
 		// Revoke: clear the repo so GetByHash -> ErrNotFound.
 		tokens.byHash = map[string]*identity.Token{}
-		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+		mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -650,7 +651,7 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 	t.Run("local mode ignores bearer", func(t *testing.T) {
 		users := newFakeUserRepo()
 		tokens := newFakeTokenRepo()
-		mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, tokens, users)
+		mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 		probe := &identityProbe{}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
@@ -670,7 +671,7 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 			users := newFakeUserRepo()
 			tokens := newFakeTokenRepo()
 			uid, plaintext := seedBearer(t, users, tokens, identity.RoleUser)
-			mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users)
+			mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens, users, identity.GroupConfig{DefaultGroup: "default"})
 			probe := &identityProbe{}
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			req.Header.Set("Authorization", "Bearer "+plaintext)
@@ -683,7 +684,7 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 
 			// revoked bearer → 401 on the same surface.
 			tokens2 := newFakeTokenRepo()
-			mw2 := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens2, newFakeUserRepo())
+			mw2 := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), tokens2, newFakeUserRepo(), identity.GroupConfig{DefaultGroup: "default"})
 			probe2 := &identityProbe{}
 			req2 := httptest.NewRequest(http.MethodGet, path, nil)
 			req2.Header.Set("Authorization", "Bearer "+plaintext)
@@ -699,3 +700,78 @@ func TestAuthMiddleware_Bearer_Security(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+func TestAuthMiddleware_OrgMode_PopulatesDepartmentsAndLed(t *testing.T) {
+	// A session resolves to a user with stored departments [engineering]; config
+	// makes this user a lead of [platform]. Effective Departments = union; Led = [platform].
+	uid := uuid.New()
+	subj := "alice-subject"
+	email := "alice@corp.example"
+	users := newFakeUserRepo()
+	users.byID[uid] = &instance.User{ID: uid, Subject: &subj, Email: &email, Username: "alice", Role: identity.RoleUser}
+	users.depts[uid] = []string{"engineering"}
+
+	sessions := newFakeSessionRepo()
+	sessions.byToken["cookie-token"] = &identity.Session{ID: "cookie-token", UserID: uid, ExpiresAt: time.Now().Add(time.Hour)}
+
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"alice@corp.example"}},
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "cookie-token"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !reflect.DeepEqual(got.Departments, []string{"engineering", "platform"}) {
+		t.Errorf("Departments = %v, want [engineering platform]", got.Departments)
+	}
+	if !reflect.DeepEqual(got.LedDepartments, []string{"platform"}) {
+		t.Errorf("LedDepartments = %v, want [platform]", got.LedDepartments)
+	}
+}
+
+func TestAuthMiddleware_LocalMode_DefaultGroupAdmin(t *testing.T) {
+	users := newFakeUserRepo() // GetDefaultUser returns users.defaultID
+
+	groups := identity.GroupConfig{DefaultGroup: "default"}
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got.Role != identity.RoleAdmin {
+		t.Errorf("Role = %q, want admin", got.Role)
+	}
+	if !reflect.DeepEqual(got.Departments, []string{"default"}) {
+		t.Errorf("Departments = %v, want [default]", got.Departments)
+	}
+	if len(got.LedDepartments) != 0 {
+		t.Errorf("LedDepartments = %v, want empty in local mode", got.LedDepartments)
+	}
+}
+
+func TestAuthMiddleware_OrgMode_NoCredentialStill401(t *testing.T) {
+	users := newFakeUserRepo()
+	groups := identity.GroupConfig{DefaultGroup: "default"}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", newFakeSessionRepo(), nil, users, groups)
+
+	h := mw.Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("handler should not run without a credential")
+	}))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
