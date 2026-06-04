@@ -2,7 +2,9 @@
 
 ## Goal
 
-Establish the persisted user model that auth resolves identities against: add migration `003` (the `sessions` table plus a `users.subject` column, and confirm the default user's `role='admin'`), define the domain `User{ID, Subject, Username, Role}` type in `domain/instance`, expand the existing `UserRepository` port in place with `GetByID`/`GetBySubject`/`Create`, add the sqlc queries, regenerate, and implement the new methods on the sqlite `UserRepo`. The `sessions` table DDL also lands here (one migration), but its repository is Task 4.
+Establish the persisted user model that auth resolves identities against: add migration `003` (the `sessions` table plus `users.subject` and `users.email` columns, and confirm the default user's `role='admin'`), define the domain `User{ID, Subject, Email, Username, Role}` type in `domain/instance`, expand the existing `UserRepository` port in place with `GetByID`/`GetBySubject`/`Create`, add the sqlc queries, regenerate, and implement the new methods on the sqlite `UserRepo`. The `sessions` table DDL also lands here (one migration), but its repository is Task 4.
+
+**Cross-phase seam (bootstrap-admin matching):** the nullable `email` column added here is the persisted authority for the bootstrap-admin rule used by Phase 2. Both Phase 2 provisioning (Task 5) and the Phase 2 demotion floor (Task 6) match `AuthConfig.BootstrapAdmins` against the user's **email (case-insensitive), falling back to subject**. Because the floor in Task 6 runs with only the persisted `User` available (no live Claims), `email` MUST be persisted here so the post-provision floor can match a bootstrap-by-email admin.
 
 Source of truth: `docs/superpowers/specs/arbitron-phase6-design-phase-1.md` §3, §6, §7.
 
@@ -25,11 +27,16 @@ Source of truth: `docs/superpowers/specs/arbitron-phase6-design-phase-1.md` §3,
 ### Create: `adapter/sqlite/migrations/003_auth.up.sql`
 
 ```sql
--- Phase 6 (Identity Core): add the IdP-stable subject to users and create the
--- server-side sessions table. The default 'local' user keeps role='admin' from
--- migration 001; org-provisioned users carry a non-null subject.
+-- Phase 6 (Identity Core): add the IdP-stable subject and email to users and
+-- create the server-side sessions table. The default 'local' user keeps
+-- role='admin' from migration 001; org-provisioned users carry a non-null subject.
 
 ALTER TABLE users ADD COLUMN subject TEXT;
+-- email is nullable (the pre-existing 'local' user has none). It is the persisted
+-- authority for the bootstrap-admin rule consumed by Phase 2 (provisioning AND the
+-- demotion floor), which matches AuthConfig.BootstrapAdmins on email (case-insensitive),
+-- falling back to subject. Stored as provided by the IdP claim; comparisons lower-case.
+ALTER TABLE users ADD COLUMN email TEXT;
 -- Unique only among non-null subjects: the pre-existing 'local' user has a NULL
 -- subject and must not collide with itself or block other NULLs.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_subject
@@ -56,23 +63,23 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 
 ```sql
 -- name: GetDefaultUser :one
-SELECT id, subject, username, role, created_at FROM users WHERE username = 'local' LIMIT 1;
+SELECT id, subject, email, username, role, created_at FROM users WHERE username = 'local' LIMIT 1;
 
 -- name: GetUserByID :one
-SELECT id, subject, username, role, created_at FROM users WHERE id = ? LIMIT 1;
+SELECT id, subject, email, username, role, created_at FROM users WHERE id = ? LIMIT 1;
 
 -- name: GetUserBySubject :one
-SELECT id, subject, username, role, created_at FROM users WHERE subject = ? LIMIT 1;
+SELECT id, subject, email, username, role, created_at FROM users WHERE subject = ? LIMIT 1;
 
 -- name: CreateUser :exec
-INSERT INTO users (id, subject, username, role) VALUES (?, ?, ?, ?);
+INSERT INTO users (id, subject, email, username, role) VALUES (?, ?, ?, ?, ?);
 ```
 
-`subject` is nullable, so the generated `User.Subject` becomes `sql.NullString` and `GetUserBySubject` takes a `sql.NullString` / the param-struct equivalent.
+`subject` and `email` are nullable, so the generated `User.Subject`/`User.Email` become `sql.NullString` and `GetUserBySubject` takes a `sql.NullString` / the param-struct equivalent.
 
 ### Regenerate: `adapter/sqlite/generated/` (sqlc)
 
-Run `sqlc generate` from `adapter/sqlite/` (config `sqlc.yaml`). Expected: `generated/models.go` `User` gains `Subject sql.NullString`; `generated/users.sql.go` gains `GetUserByID`, `GetUserBySubject`, `CreateUser`, and `GetDefaultUser` now scans `Subject`. Commit the regenerated files (do not hand-edit generated code).
+Run `sqlc generate` from `adapter/sqlite/` (config `sqlc.yaml`). Expected: `generated/models.go` `User` gains `Subject sql.NullString` and `Email sql.NullString`; `generated/users.sql.go` gains `GetUserByID`, `GetUserBySubject`, `CreateUser`, and `GetDefaultUser` now scans `Subject`/`Email`. Commit the regenerated files (do not hand-edit generated code).
 
 ### Modify: `domain/instance/ports.go` (and a new `user.go`)
 
@@ -89,10 +96,15 @@ import (
 
 // User is the persisted account auth resolves identities against. Subject is the
 // IdP-stable identifier; it is nil for the pre-existing default 'local' user and
-// for any user created outside the OIDC path.
+// for any user created outside the OIDC path. Email is the IdP email claim
+// (nullable); it is the persisted authority for the bootstrap-admin rule
+// (Phase 2: AuthConfig.BootstrapAdmins matches email case-insensitively, falling
+// back to subject), so the demotion floor can match a bootstrap-by-email admin
+// using only the persisted User.
 type User struct {
 	ID       uuid.UUID
 	Subject  *string // nullable: the default user has none
+	Email    *string // nullable: IdP email claim; bootstrap-admin match authority
 	Username string
 	Role     identity.Role
 }
@@ -135,6 +147,7 @@ func toDomainUser(row generated.User) (*instance.User, error) {
 	return &instance.User{
 		ID:       id,
 		Subject:  nullStringToPtr(row.Subject),
+		Email:    nullStringToPtr(row.Email),
 		Username: row.Username,
 		Role:     identity.Role(row.Role),
 	}, nil
@@ -166,6 +179,7 @@ func (r *UserRepo) Create(ctx context.Context, u *instance.User) error {
 	err := r.queries.CreateUser(ctx, generated.CreateUserParams{
 		ID:       uuidToString(u.ID),
 		Subject:  ptrToNullString(u.Subject),
+		Email:    ptrToNullString(u.Email),
 		Username: u.Username,
 		Role:     string(u.Role),
 	})
@@ -187,13 +201,13 @@ Add to `adapter/sqlite/integration_test.go` (uses `setupTestDB`) plus a `domain/
 - **Happy path** — `TestUserRepo_Create_GetByID_RoundTrip`: create a `User{ID: uuid.New(), Subject: ptr("sub-123"), Username: "alice", Role: identity.RoleUser}`; `GetByID` returns the same fields; `GetBySubject("sub-123")` returns the same user.
 - **Input validation** — `TestUserRepo_Create_DuplicateSubject`: creating two users with the same non-nil subject returns an error (unique index violation); two users with NULL subject are allowed (the partial unique index excludes NULLs) — covers the default-user-coexistence invariant.
 - **Error/failure** — `TestUserRepo_GetByID_NotFound` / `TestUserRepo_GetBySubject_NotFound`: a random UUID / unknown subject returns an error satisfying `errors.Is(err, instance.ErrNotFound)`.
-- **Boundary** — `TestUserRepo_GetByID_DefaultUser`: `GetByID` of the seeded default-user UUID returns `Username=="local"`, `Role==identity.RoleAdmin`, `Subject==nil`; and `TestRunMigrations_003_SessionsTableExists`: after migrations, `sessions` and the `users.subject` column exist (`PRAGMA table_info(users)` shows `subject`).
+- **Boundary** — `TestUserRepo_GetByID_DefaultUser`: `GetByID` of the seeded default-user UUID returns `Username=="local"`, `Role==identity.RoleAdmin`, `Subject==nil`, `Email==nil`; and `TestRunMigrations_003_SessionsTableExists`: after migrations, `sessions` and the `users.subject`/`users.email` columns exist (`PRAGMA table_info(users)` shows `subject` and `email`).
 - **Isolation/security** — `TestRunMigrations_DefaultAdminSeeded` (extend existing): default user is `role='admin'` after 003; and `TestUserRepo_GetBySubject_NullSubjectNotMatched`: `GetBySubject("")` does NOT return the default user (a NULL subject must never match an empty-string lookup — guards against an empty-subject OIDC claim hijacking the admin account).
 
 ## Acceptance Criteria
 
-- Migration 003 adds `users.subject` (nullable, partial-unique) and the `sessions` table; default user remains `role='admin'`.
-- `domain/instance.User{ID, Subject, Username, Role identity.Role}` defined; `domain/instance` imports `domain/identity` with no cycle.
+- Migration 003 adds `users.subject` (nullable, partial-unique), `users.email` (nullable), and the `sessions` table; default user remains `role='admin'`.
+- `domain/instance.User{ID, Subject, Email, Username, Role identity.Role}` defined; `domain/instance` imports `domain/identity` with no cycle.
 - `UserRepository` has `GetByID`/`GetBySubject`/`Create`; `GetDefaultUser` unchanged; sqlite `UserRepo` satisfies the port (compile-time `var _` assertion).
 - sqlc files regenerated (not hand-edited); `go generate`/`sqlc generate` reproduces them.
 - `go build ./...` and `go test ./adapter/sqlite/... ./domain/instance/...` pass.

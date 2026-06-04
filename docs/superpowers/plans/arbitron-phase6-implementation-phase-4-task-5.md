@@ -10,14 +10,15 @@ Because these are write operations, a non-viewer is refused: returning `instance
 
 - Task 2 (`canView` in `domain/engine/authz.go`).
 - Phase 1 identity in context.
-- **Signature change**: the engine intervention methods currently take **no `context.Context`** and call `context.Background()` internally (`engine.go` `Pause` line 776, `Resume` 817, `Cancel` 929, `Retry` 991, `Rerun` 1040, `SetPriority` 1069). They must accept a `ctx` so the request identity reaches them. This ripples to the `InstanceService` interfaces in both `adapter/http/instance_handler.go` and `adapter/mcp/deps.go`, and to the MCP/HTTP call sites. This is the load-bearing refactor of this task — do it first, keep it green, then add the gate.
+- **Cross-phase dependency — Phase 3, Task 7 OWNS the `Trigger(ctx, …)` change.** Phase 3 Task 7 is the single authoritative owner of adding `context.Context` to `Engine.Trigger` and of resolving the new instance's `OwnerID` from the context identity (caller's `UserID`, falling back to `GetDefaultUser` for system/scheduler triggers). **This task does NOT re-define, re-signature, or re-implement `Trigger`'s ctx/owner threading.** It only *consumes* the already-ctx-threaded `Trigger` from `Rerun` (passing the request `ctx` through). If Phase 4 lands before Phase 3 in a given build order, treat `Trigger(ctx, …)` as a prerequisite delivered by Phase 3 Task 7; do not introduce a conflicting `Trigger` signature here.
+- **Signature change (THIS task's scope):** the engine *intervention* methods currently take **no `context.Context`** and call `context.Background()` internally (`engine.go` `Pause` line 776, `Resume` 817, `Cancel` 929, `Retry` 991, `Rerun` 1040, `SetPriority` 1069). This task adds `ctx context.Context` to exactly those six methods plus the `authorizeIntervention` gate. `Trigger`'s own ctx is out of scope here (owned by Phase 3 Task 7). The intervention-method change ripples to the `InstanceService` interfaces in both `adapter/http/instance_handler.go` and `adapter/mcp/deps.go`, and to the MCP/HTTP call sites. This is the load-bearing refactor of this task — do it first, keep it green, then add the gate.
 
 ## Background (current state)
 
 - `domain/engine/engine.go` intervention methods all begin with `ctx := context.Background()` then `inst, err := e.instances.Get(ctx, id)` and a state-machine switch. None consult identity.
 - HTTP `InstanceService` (`instance_handler.go:20`): `Pause(id)`, `Resume(id)`, `Cancel(id)`, `Retry(id, edits)`, `Rerun(id)`, `SetPriority(id, priority)` — no `ctx`. Handlers call e.g. `h.service.Pause(id)` with the request context discarded.
 - MCP `EngineService` (`deps.go:20`): same no-`ctx` shape; handlers call `srv.deps.Engine.Pause(id)`.
-- `Trigger` already creates instances with `OwnerID = GetDefaultUser`; with Phase 1, trigger should stamp the **caller's** identity as owner (note below).
+- `Trigger`'s ctx threading and identity-derived `OwnerID` are delivered by **Phase 3, Task 7** (the authoritative owner of that change); this task only consumes the resulting `Trigger(ctx, …)` from `Rerun`.
 - Existing error mapping already covers `ErrNotFound` → 404 (HTTP `mapEngineError`) and tool errors (MCP), so refusal slots in cleanly.
 
 ## Files to Create/Modify
@@ -57,21 +58,17 @@ func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*inst
 
 Then in each method replace the opening `inst, err := e.instances.Get(ctx, id)` with `inst, err := e.authorizeIntervention(ctx, id)`. The subsequent state-machine logic is unchanged and reuses `inst`.
 
-3. `Rerun` is special: it authorizes the **source** instance (the one being rerun) via `authorizeIntervention`, then calls `e.Trigger(...)` for the new instance. `Trigger` must stamp the caller's identity as the new owner (see below) so the rerun belongs to the actor, and the new instance is independently scoped.
+3. `Rerun` is special: it authorizes the **source** instance (the one being rerun) via `authorizeIntervention`, then calls the already-ctx-threaded `e.Trigger(ctx, …)` for the new instance, **passing the same request `ctx`** so Phase 3 Task 7's owner-resolution stamps the acting caller as the new instance's owner. This task adds NO new `Trigger` logic — it relies entirely on Phase 3 Task 7 for `Trigger`'s `ctx` parameter and identity-derived `OwnerID`. The new instance is independently scoped and owned by the actor.
 
-### Modify: `domain/engine/engine.go` — `Trigger` owner from identity
+### `Trigger` owner from identity — OWNED BY PHASE 3, TASK 7 (not this task)
 
-`Trigger` currently sets `OwnerID, _ = e.users.GetDefaultUser(ctx)`. With identities, the owner should be the triggering caller. Resolve owner from `identity.FromContext`; fall back to `GetDefaultUser` only when no identity is present (defence-in-depth for internal/system triggers). `Trigger`'s signature already takes no `ctx` (it builds `context.Background()` at line 106) — give it a `ctx` parameter for symmetry, or read identity from a passed-in context. **Minimal**: add `ctx` to `Trigger` and read the owner from it:
+Resolving `Trigger`'s new-instance `OwnerID` from the context identity (caller's `UserID`, else `GetDefaultUser` fallback for system/scheduler triggers) and adding the `ctx context.Context` first parameter to `Trigger(ctx, workflowName, variables, priority)` is implemented **exclusively in Phase 3, Task 7** ("Run Shared Directly — Trigger Scope Resolution"). The final signature both phases agree on is:
 
 ```go
-func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
-	// ...
-	ownerID := e.resolveOwner(ctx) // identity.UserID if present, else GetDefaultUser
-	// ...
-}
+func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 ```
 
-This keeps a freshly-triggered instance owned by its creator so list/read scoping (Tasks 1–2) work end-to-end. Update the MCP `instanceTriggerHandler` and the workflow-trigger HTTP handler to pass their request context.
+Do **not** add `resolveOwner`, change `Trigger`'s signature, or alter its owner logic in this task — that would conflict with Phase 3 Task 7. `Rerun` here simply forwards its request `ctx` into `Trigger`. (The MCP `instanceTriggerHandler` and the workflow-trigger HTTP handler are repointed to pass their request context by Phase 3 Task 7 as well.)
 
 ### Modify: `adapter/http/instance_handler.go`
 
@@ -107,5 +104,5 @@ New unit `domain/engine/engine_intervention_authz_test.go` with a fake `Instance
 - **Happy path:** owner A → each of `Pause/Resume/Cancel/SetPriority/Retry/Rerun` succeeds and performs its state transition (assert `UpdateState`/`Trigger` invoked).
 - **Validation:** admin (non-owner) → each operation succeeds (admin control over everyone's instances).
 - **Error/failure:** instance load returns an infra error → propagated; for a viewer in a non-actionable state the existing state sentinel (`ErrNotRunning`, `ErrNotFailed`, `ErrCannotRerun`, …) is returned unchanged (the gate passes, the state check fires).
-- **Boundary:** `Rerun` by an admin on user A's terminal instance → the **new** instance is owned by the admin (`Trigger` stamps the actor), and the source instance is untouched; assert the new owner.
+- **Boundary:** `Rerun` by an admin on user A's terminal instance → the **new** instance is owned by the admin (because `Rerun` forwards the request `ctx` into `Trigger`, and Phase 3 Task 7's `Trigger` stamps the actor from `identity.FromContext`), and the source instance is untouched; assert the new owner. (This test depends on Phase 3 Task 7's `Trigger(ctx, …)` being in place.)
 - **Isolation/security:** non-owner non-admin (user B) → every intervention returns `ErrNotFound` and **no state change occurs** (assert `UpdateState`/`UpdatePriority`/`Trigger`/context-cancel are never called, and no event published). Add HTTP tests (`POST /instances/{id}/pause` etc. for a non-owner → 404) and MCP tests (`instance_cancel` for a non-owner → not-found tool error) to prove the gate holds across surfaces.

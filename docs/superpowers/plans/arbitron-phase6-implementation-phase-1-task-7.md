@@ -135,9 +135,15 @@ func (h *AuthHandler) resolveOrProvision(ctx context.Context, claims identity.Cl
 		return nil, err
 	}
 	// Phase-1 JIT: provision a plain user (role user). Bootstrap-admin promotion
-	// is Phase 2.
+	// is Phase 2. Persist the email claim (nullable) so the Phase 2 demotion floor
+	// can match a bootstrap-by-email admin from the persisted User alone.
 	subj := claims.Subject
-	u := &instance.User{ID: uuid.New(), Subject: &subj, Username: claims.Username, Role: identity.RoleUser}
+	var emailPtr *string
+	if claims.Email != "" {
+		e := claims.Email
+		emailPtr = &e
+	}
+	u := &instance.User{ID: uuid.New(), Subject: &subj, Email: emailPtr, Username: claims.Username, Role: identity.RoleUser}
 	if err := h.users.Create(ctx, u); err != nil {
 		return nil, err
 	}

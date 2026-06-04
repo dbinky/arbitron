@@ -150,9 +150,9 @@ The conversation handler needs the `InterventionRepository` injected (constructo
 - Register the route in `server.go` inside the `/instances` group: `r.Get("/{id}/interventions", instHandler.GetInterventions)`.
 - Fold into trace: extend `GetTrace`'s response (or add the interventions array alongside the node-execution array) so the trace view shows interventions inline. Minimal: include an `interventions` field in the trace response payload; the engine `GetTrace` already authorizes, so reuse it to also load interventions.
 
-### Modify: MCP — `instance_interventions` read tool
+### Modify: MCP — `trace_interventions` read tool
 
-Add a `trace_interventions` (or `instance_interventions`) read tool in `adapter/mcp/tools_trace.go` calling `srv.deps.Engine.GetInterventions(ctx, id)` — scoped identically (owner + admins). Add `GetInterventions` to the MCP `EngineService` interface in `deps.go`.
+Add the `trace_interventions` read tool (this is the FINAL name — it lives in `adapter/mcp/tools_trace.go` alongside `trace_get`/`trace_get_node`, consistent with the design folding interventions into the trace surface; do NOT name it `instance_interventions`) calling `srv.deps.Engine.GetInterventions(ctx, id)` — scoped identically (owner + admins). Add `GetInterventions` to the MCP `EngineService` interface in `deps.go`. (No collision with existing tools: current tools are `trace_get`/`trace_get_node`; `trace_interventions` is new.)
 
 ## Testing (strict TDD — five scenario categories)
 

@@ -11,6 +11,16 @@ Source of truth: design §6 (Run Shared Directly).
 - **Task 1** (`Scope`), **Task 2** (`LoadVisible`, identity-aware Trigger interim, `OwnerID` set from triggering user), **Phase 1** (`identity.FromContext`).
 - Builds on the interim Trigger change from Task 2; this task makes the semantics deliberate and fully tested.
 
+## Cross-phase dependency (this task is the AUTHORITATIVE owner of the `Trigger(ctx, …)` change)
+
+This task is the single owner of adding `context.Context` to `Engine.Trigger` and of resolving the new instance's `OwnerID` from the context identity. The final signature, agreed across phases, is:
+
+```go
+func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+```
+
+**Phase 4, Task 5 (Intervention Authorization) DEPENDS ON this task** for `Trigger`'s `ctx` and identity-derived owner: its `Rerun` forwards the request `ctx` into `Trigger` and relies on this task's owner-resolution to stamp the acting caller as the rerun's owner. Phase 4 Task 5 does NOT re-define `Trigger`; it only adds `ctx` to the six intervention methods (`Pause/Resume/Cancel/SetPriority/Retry/Rerun`) and the `authorizeIntervention` gate. If build order places Phase 4 before Phase 3, this task's `Trigger` change is a prerequisite that must land first.
+
 ## Background (current state)
 
 - `domain/engine/engine.go` `Trigger(workflowName, variables, priority)` (line 105):

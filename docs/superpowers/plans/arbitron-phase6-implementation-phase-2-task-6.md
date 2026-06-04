@@ -8,8 +8,9 @@ Source of truth: `docs/superpowers/specs/arbitron-phase6-design-phase-2.md` §5 
 
 ## Dependencies
 
+- **Phase 1, Task 3** — the `instance.User{ID, Subject, Email, Username, Role}` type (with the **`Email *string`** field persisted via migration 003) and `GetByID`. The demotion floor reads `target.Email` (and `target.Subject`), so this task hard-depends on Phase 1 Task 3 having added the `email` column + field.
 - **Phase 1** — `identity.FromContext` + `Identity.IsAdmin()` (the admin gate); the auth middleware injects the caller's identity on REST and MCP.
-- **Phase 2, Task 5** — `instance.Provisioner.IsBootstrapAdmin(subject, email)` (the demotion-floor check) and the `instance.User{ID, Subject, Username, Role}` type with `GetByID`/`GetBySubject`. The floor must consult the **same** normalized bootstrap set the provisioner used, so inject the `Provisioner` (or its `IsBootstrapAdmin`) into `UserService`.
+- **Phase 2, Task 5** — `instance.Provisioner.IsBootstrapAdmin(subject, email)` (the demotion-floor check, matching email-case-insensitive-then-subject). The floor must consult the **same** normalized bootstrap set and rule the provisioner used, so inject the `Provisioner` (or its `IsBootstrapAdmin`) into `UserService`.
 - **Phase 2, Task 2** — establishes the REST/MCP wiring patterns this task mirrors (`RouterDeps` field + `/api/v1` sub-route; `RegisterXTools` + `Deps` field).
 
 ## Background (current state)
@@ -64,8 +65,11 @@ func (s *UserService) SetRole(ctx context.Context, targetID uuid.UUID, role stri
 
     // Guards apply only to DEMOTIONS (admin -> user).
     if target.Role == RoleAdmin && role == RoleUser {
-        // Floor 1: a bootstrap admin can never be demoted.
-        if s.bootstrap.IsBootstrapAdmin(target.Subject, "" /* + email if available */) {
+        // Floor 1: a bootstrap admin can never be demoted. Match on the PERSISTED
+        // user's email (case-insensitive) falling back to subject — the same rule
+        // and same normalized set the provisioner used (Task 5). target.Subject and
+        // target.Email are *string (Phase 1 Task 3); deref to "" when nil.
+        if s.bootstrap.IsBootstrapAdmin(derefStr(target.Subject), derefStr(target.Email)) {
             return ErrBootstrapAdminProtected
         }
         // Floor 2: never demote the last remaining admin.
@@ -79,9 +83,9 @@ func (s *UserService) SetRole(ctx context.Context, targetID uuid.UUID, role stri
 
 `identityFrom` is the seam to `identity.FromContext` — but `domain/instance` must not import `domain/identity`? Per Phase 1 §3, `domain/identity` imports nothing from `domain/instance` (one-directional). The reverse edge (`instance` → `identity`) is allowed: `identity` is the leaf domain holding only the `Identity` value/role/context helpers. So `UserService` may import `domain/identity` and call `identity.FromContext` directly; drop the `identityFrom` indirection unless a cycle appears. Confirm no import cycle at build time.
 
-New sentinels (in `domain/instance/errors.go` or alongside): `ErrForbidden`, `ErrInvalidRole`, `ErrBootstrapAdminProtected`, `ErrLastAdmin`, and reuse `ErrUnauthenticated`/`ErrNotFound`.
+New sentinels (in `domain/instance/errors.go` or alongside): `ErrForbidden`, `ErrInvalidRole`, `ErrBootstrapAdminProtected`, `ErrLastAdmin`, and reuse `ErrUnauthenticated`/`ErrNotFound`. Also a tiny `derefStr(*string) string` helper (returns `""` for nil) used for the bootstrap match.
 
-NOTE on the bootstrap-email arg: `IsBootstrapAdmin(subject, email)` ideally checks both. `User` carries `Subject` but not `Email` (claims-only). Either (a) match on `Subject` only at this layer (sufficient if bootstrap lists use subjects), or (b) add a nullable `email` column + `User.Email` so the floor can match a bootstrap-by-email admin. Pick (a) for minimal scope and document that bootstrap-by-email admins are floored at provisioning time (they were created admin) but the demotion floor matches by subject; if the design's "bootstrap email" floor must hold post-provision, do (b). Decide by checking whether `AuthConfig.BootstrapAdmins` entries are emails or subjects in the design — if emails are expected, implement (b).
+RESOLVED — bootstrap-by-email floor holds post-provision (option (b)): `User` carries both `Subject *string` and `Email *string` (Phase 1 Task 3 added the `email` column + field). The demotion floor calls `IsBootstrapAdmin(derefStr(target.Subject), derefStr(target.Email))`, matching `AuthConfig.BootstrapAdmins` on **email (case-insensitive), falling back to subject** — the exact rule the provisioner (Task 5) used at creation, consulting the SAME normalized set via the injected `Provisioner`/`bootstrapChecker`. This guarantees a bootstrap-by-email admin cannot be demoted even though only the persisted `User` (no live Claims) is available at demotion time. No "match by subject only" fallback and no "floored only at provisioning" hedge — the persisted email closes that gap.
 
 ### Create: `adapter/http/user_handler.go`
 
@@ -143,12 +147,14 @@ Build `userSvc := instance.NewUserService(userRepo, provisioner)`; store on `dom
 
 ```sql
 -- name: ListUsers :many
-SELECT id, subject, username, role, created_at FROM users ORDER BY created_at;
+SELECT id, subject, email, username, role, created_at FROM users ORDER BY created_at;
 -- name: UpdateUserRole :exec
 UPDATE users SET role = ? WHERE id = ?;
 -- name: CountAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin';
 ```
+
+(`List` maps each row to `instance.User` including `Email` via the same `nullStringToPtr` mapping Phase 1 Task 3 defined; do not redefine the `toDomainUser` mapper.)
 
 ## Testing (strict TDD — five scenario categories)
 
@@ -159,7 +165,7 @@ Tests first: `domain/instance/user_service_test.go` (fake `UserRepository` + a s
 - **Input validation:** `SetRole` with role `"superuser"` → `ErrInvalidRole`, no repo write; `SetRole` to the role the target already has → no-op success, no `UpdateRole` call.
 - **Error/failure:** `GetByID → ErrNotFound` propagates; `CountAdmins`/`UpdateRole` repo errors propagate.
 - **Boundary:** demoting the **last** admin (`CountAdmins → 1`) → `ErrLastAdmin`, no write; self-demotion allowed when another admin remains (caller==target, `CountAdmins → 2` → success) but blocked when last (`→ ErrLastAdmin`); promotion is never blocked by the admin-count or bootstrap floors.
-- **Isolation/security:** a **non-admin** caller → `ErrForbidden` for both `SetRole` and `List`, with **zero** repo writes (assert `UpdateRole`/`List` never called); no identity in ctx → `ErrUnauthenticated`; demoting a **bootstrap** admin → `ErrBootstrapAdminProtected` even when several other admins exist (the floor consults the injected `bootstrapChecker`, asserted to be called with the target's subject).
+- **Isolation/security:** a **non-admin** caller → `ErrForbidden` for both `SetRole` and `List`, with **zero** repo writes (assert `UpdateRole`/`List` never called); no identity in ctx → `ErrUnauthenticated`; demoting a **bootstrap** admin → `ErrBootstrapAdminProtected` even when several other admins exist (the floor consults the injected `bootstrapChecker`, asserted to be called with the target's `derefStr(Subject)` AND `derefStr(Email)`); a **bootstrap-by-email** admin (Subject not listed, Email listed) is also protected — proving the persisted-email floor holds with no live Claims.
 
 **`user_handler_test.go` (httptest, identity via `identity.WithIdentity`):**
 - **Happy path:** admin `PUT /users/{id}/role {"role":"admin"}` → 200; `GET /users` → 200 list of `userView` (no extra fields like subject leaking — assert body has no `"subject"`).

@@ -8,12 +8,13 @@ Source of truth: `docs/superpowers/specs/arbitron-phase6-design-phase-2.md` §3 
 
 ## Dependencies
 
-- **Phase 1** — `instance.UserRepository.GetBySubject(ctx, subject) (*User, error)` (returns `ErrNotFound` for a new subject) and `Create(ctx, *User) error`; the `instance.User{ID, Subject, Username, Role}` type; the `OIDCProvider.Exchange(ctx, code) (Claims, error)` with `Claims{Subject, Username, Email}`; the OIDC callback handler (`adapter/http/auth_handler.go` or equivalent) that currently provisions an unknown subject as a plain user (the placeholder this task replaces); `AuthConfig.BootstrapAdmins []string` declared on `config.Config`.
+- **Phase 1, Task 3** — `instance.UserRepository.GetBySubject(ctx, subject) (*User, error)` (returns `ErrNotFound` for a new subject) and `Create(ctx, *User) error`; the `instance.User{ID, Subject *string, Email *string, Username, Role}` type (the **`Email`** field + nullable `email` column are added by migration 003 — this task persists email on create so the demotion floor in Task 6 can match a bootstrap-by-email admin).
+- **Phase 1** — the `OIDCProvider.Exchange(ctx, code) (Claims, error)` with `Claims{Subject, Username, Email}`; the OIDC callback handler (`adapter/http/auth_handler.go` or equivalent) that currently provisions an unknown subject as a plain user (the placeholder this task replaces); `AuthConfig.BootstrapAdmins []string` declared on `config.Config`.
 - **Phase 2, Task 4** — the device-code approval path (`DeviceCodeService.Approve`). NOTE: device approval is performed by an **already-authenticated** browser user (Task 4), so provisioning has *already* happened for the approver at their own OIDC login. The Provisioner is therefore invoked in the **OIDC callback** (both the browser login and any future device-by-OIDC path); device approval reuses the approver's existing `User`. This task ensures the single provisioning rule lives in one service that the OIDC callback calls.
 
 ## Background (current state)
 
-- `domain/instance/ports.go` currently has only `UserRepository.GetDefaultUser`; Phase 1 expands it with `GetByID`/`GetBySubject`/`Create` and defines `User`. The default `local` admin row is seeded in `001_initial_schema.up.sql` and must remain untouched — provisioning only ever **creates new** rows for real subjects.
+- `domain/instance/ports.go` currently has only `UserRepository.GetDefaultUser`; Phase 1 Task 3 expands it with `GetByID`/`GetBySubject`/`Create` and defines `User{ID, Subject *string, Email *string, Username, Role}` (with the `subject`/`email` columns added by migration 003). The default `local` admin row is seeded in `001_initial_schema.up.sql` and must remain untouched — provisioning only ever **creates new** rows for real subjects.
 - `AuthConfig` and `AuthConfig.BootstrapAdmins` are declared in Phase 1 (`domain/config/config.go` — added there; today `config.go` has no `Auth` field, so this depends on Phase 1 having added it). The loader (`adapter/config/loader.go`) populates it from koanf.
 - The Provisioner is a pure domain service (no infra import): it takes the `UserRepository` port and the bootstrap list (a `[]string` or a small `BootstrapAdmins` value object) and returns a `*instance.User`. Per Phase 1 §3, `domain/identity` imports nothing from `domain/instance`; the Provisioner therefore lives in **`domain/instance`** (alongside `User`/`UserRepository`) — or in a small `domain/provisioning` package that imports `domain/instance`. Choose `domain/instance` to avoid a new package and because it operates directly on `User`.
 
@@ -61,7 +62,12 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
     case errors.Is(err, ErrNotFound):
         role := RoleUser
         if p.isBootstrap(c) { role = RoleAdmin }
-        nu := &User{ID: p.newID(), Subject: c.Subject, Username: pickUsername(c), Role: role}
+        // Persist Subject and Email (both *string per Phase 1 Task 3's User type).
+        // Email is the bootstrap-match authority the demotion floor (Task 6) reads.
+        subj := c.Subject
+        var emailPtr *string
+        if c.Email != "" { e := c.Email; emailPtr = &e }
+        nu := &User{ID: p.newID(), Subject: &subj, Email: emailPtr, Username: pickUsername(c), Role: role}
         if err := p.users.Create(ctx, nu); err != nil { return nil, err }
         return nu, nil
     default:
@@ -69,11 +75,20 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
     }
 }
 
-// isBootstrap matches on lower-cased subject OR email.
-func (p *Provisioner) isBootstrap(c Claims) bool
+// isBootstrap matches on the canonical rule: the user's EMAIL (case-insensitive)
+// against the normalized bootstrap set, FALLING BACK to subject when no email is
+// present or it doesn't match. Implemented as IsBootstrapAdmin(c.Subject, c.Email).
+func (p *Provisioner) isBootstrap(c Claims) bool {
+    return p.IsBootstrapAdmin(c.Subject, c.Email)
+}
 
-// IsBootstrapAdmin is exported for Task 6's demotion-floor guard so the floor
-// and the provisioning rule consult the SAME normalized set.
+// IsBootstrapAdmin is the SINGLE canonical bootstrap-match predicate, exported for
+// Task 6's demotion-floor guard so the floor and the provisioning rule consult the
+// SAME normalized set with the SAME rule. Rule: match email case-insensitively
+// first; if email is empty or unmatched, fall back to subject (also lower-cased
+// for case-insensitive comparison). Task 6 calls this with the PERSISTED user's
+// subject+email (dereferenced from *string, "" when nil), so a bootstrap-by-email
+// admin is correctly floored post-provisioning using only the stored User.
 func (p *Provisioner) IsBootstrapAdmin(subject, email string) bool
 ```
 
@@ -84,20 +99,14 @@ Notes:
 
 ### Modify: `adapter/sqlite/user_repo.go` + `adapter/sqlite/queries/users.sql`
 
-Add the queries/methods Phase 1 may not have covered that this task needs: `GetBySubject`, `Create`, `UpdateUsername` (and `GetByID` if Phase 1 didn't add it). Mirror existing repo conventions (UUID as TEXT, `sql.ErrNoRows` → `instance.ErrNotFound` wrapped via `%w`, unique-violation mapping for `username`/`subject`). Example queries:
+Phase 1 Task 3 already added `GetByID`, `GetBySubject`, and `Create` (with the `subject`/`email` columns). This task adds only the **`UpdateUsername`** query/method (used by the username-refresh path). Reuse Phase 1's `GetBySubject`/`Create` as-is; do NOT redefine them. Mirror existing repo conventions (UUID as TEXT, `sql.ErrNoRows` → `instance.ErrNotFound` wrapped via `%w`). The query to add:
 
 ```sql
--- name: GetUserBySubject :one
-SELECT id, subject, username, role, created_at FROM users WHERE subject = ? LIMIT 1;
-
--- name: CreateUser :exec
-INSERT INTO users (id, subject, username, role) VALUES (?, ?, ?, ?);
-
 -- name: UpdateUsername :exec
 UPDATE users SET username = ? WHERE id = ?;
 ```
 
-NOTE: `001_initial_schema.up.sql`'s `users` table has **no `subject` column** today. Phase 1's `003_auth` (or a Phase-1 users migration) is expected to add `subject TEXT UNIQUE` (nullable for the pre-existing default row). If Phase 1 did **not** add it, this task must add a migration `006_users_subject.up.sql` doing `ALTER TABLE users ADD COLUMN subject TEXT; CREATE UNIQUE INDEX idx_users_subject ON users(subject) WHERE subject IS NOT NULL;`. Verify Phase 1's migrations before writing code; do not duplicate the column.
+NOTE on migrations (no new migration here): the `users.subject` and `users.email` columns are added by **Phase 1 migration `003_auth`** (Task 3) — partial-unique on non-null `subject`, nullable `email`. This task adds NO migration. Do **not** create a `006_*` migration: migration `006` is owned by Phase 3 (`006_published_workflows`). The numbering is fixed across phases: 003 (Phase 1 sessions + users.subject/email), 004 (Phase 2 api_tokens), 005 (Phase 2 device_codes), 006 (Phase 3 published_workflows), 007 (Phase 4 interventions).
 
 ### Modify: OIDC callback handler (`adapter/http/auth_handler.go`, Phase 1)
 
