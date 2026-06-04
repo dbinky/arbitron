@@ -160,6 +160,47 @@ func TestAuthHandler_Callback_ExistingUser(t *testing.T) {
 	assert.Equal(t, identity.RoleAdmin, existing.Role)
 }
 
+// TestAuthHandler_Callback_ExistingUser_EmailNotOverwritten pins the "email
+// persisted for later floor checks" invariant from the paired FA-27 review.
+// The provisioner's Resolve intentionally does NOT update a stored email when the
+// IdP presents a different email on re-login: the persisted email is the
+// authoritative value that IsBootstrapAdmin uses for the demotion floor. Silently
+// overwriting it could remove or fabricate bootstrap-admin status across logins.
+func TestAuthHandler_Callback_ExistingUser_EmailNotOverwritten(t *testing.T) {
+	const origEmail = "original@bootstrap.com"
+	const sub = "sub-stable"
+
+	// IdP now claims a DIFFERENT email for the same subject.
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: sub, Username: "u", Email: "changed@different.com"}}
+	sessions := newFakeSessionRepo()
+	users := newFakeUserRepo()
+	existingID := uuid.New()
+	existing := &instance.User{
+		ID:       existingID,
+		Subject:  strptr(sub),
+		Email:    strptr(origEmail),
+		Username: "stable-user",
+		Role:     identity.RoleUser,
+	}
+	users.byID[existingID] = existing
+	users.bySubject = map[string]*instance.User{sub: existing}
+
+	h := newAuthHandler(oidc, sessions, users)
+	rec := doLoginThenCallback(t, h, "ok", "/")
+	require.Equal(t, http.StatusFound, rec.Code)
+
+	// Email must be the original persisted value, not the IdP claim.
+	u := users.byID[existingID]
+	require.NotNil(t, u.Email)
+	assert.Equal(t, origEmail, *u.Email, "existing user email must not be overwritten by new IdP claim")
+
+	// No new user was created (only one user in the repo).
+	assert.Len(t, users.byID, 1, "no new user must be created for a known subject")
+
+	// Role is unchanged (Provisioner.Resolve never touches role for existing users).
+	assert.Equal(t, identity.RoleUser, u.Role)
+}
+
 func TestAuthHandler_Callback_BootstrapAdmin(t *testing.T) {
 	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "boss-sub", Username: "boss", Email: "boss@corp.com"}}
 	sessions := newFakeSessionRepo()

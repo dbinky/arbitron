@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA27-01: Existing user's email not tested for immutability on re-login
+**Area**: Focus Area 27 — OIDC handlers + provisioner (paired)
+**Fix**: Added `TestAuthHandler_Callback_ExistingUser_EmailNotOverwritten` to `adapter/http/auth_handler_test.go`. Seeds an existing user with email "original@bootstrap.com"; the IdP then claims "changed@different.com" on re-login. Asserts: (1) the persisted email in `users.byID` remains "original@bootstrap.com"; (2) no new user is created; (3) the role is unchanged. This pins the design invariant that `Provisioner.Resolve` only refreshes `Username` for existing users — the stored email is the authoritative value for `IsBootstrapAdmin`'s demotion floor (a silently overwritten email could revoke or fabricate bootstrap-admin status across logins). The FA-27 paired area explicitly calls out "email persisted for later floor checks" as a seam concern.
+
 ### GAP-FA26-01: Surface-level bearer path never exercised through the full chi router
 **Area**: Focus Area 26 — Auth middleware + token service (paired)
 **Fix**: Added `TestSurface_OrgMode_Bearer_E2E` to `adapter/http/auth_surface_test.go`. The existing `orgSurface` helper passes `nil` for tokens, so all previous surface tests only exercised the session-cookie path through the chi router. The new test builds the surface with a real `fakeTokenRepo` (seeded via `seedBearer`) and asserts two invariants: (1) a valid bearer reaches REST (`/api/v1/health`) and MCP (`/mcp`) through the full router; (2) after the token is revoked (fake cleared, mirroring `TokenService.Revoke → TokenRepo.Delete`), the same bearer returns 401 on both surfaces and the MCP handler is never reached. This pins the "revoked token fails closed" guarantee at the surface level, complementing the middleware-unit-level `TestAuthMiddleware_Bearer_Security` "revoked token → 401" test.
