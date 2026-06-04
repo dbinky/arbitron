@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
@@ -73,23 +74,25 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 }
 
 type stubEngine struct {
-	triggerFn     func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
-	listFn        func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
-	getFn         func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
-	traceFn       func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
-	nodeTraceFn   func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
-	variablesFn     func(ctx context.Context, id uuid.UUID) (map[string]any, error)
-	varHistFn       func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	interventionsFn func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
-	pauseFn         func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, vars map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
+	capturedTriggerCtx context.Context
+	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn            func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn        func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn        func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	varHistFn          func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn    func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn            func(id uuid.UUID) error
+	resumeFn           func(id uuid.UUID) error
+	cancelFn           func(id uuid.UUID) error
+	retryFn            func(id uuid.UUID, vars map[string]any) error
+	rerunFn            func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn      func(id uuid.UUID, priority string) error
 }
 
-func (s *stubEngine) Trigger(_ context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+func (s *stubEngine) Trigger(ctx context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+	s.capturedTriggerCtx = ctx
 	if s.triggerFn != nil {
 		return s.triggerFn(wfName, vars, priority)
 	}
@@ -457,6 +460,22 @@ func TestInstanceTrigger(t *testing.T) {
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
 		assert.Contains(t, text, "invalid priority")
+	})
+
+	t.Run("caller identity context is forwarded to engine", func(t *testing.T) {
+		// Verifies the MCP tool passes its call context (which carries the auth
+		// identity injected by callTool) through to the engine, so triggerOwner
+		// resolves the authenticated user rather than falling back to the default user.
+		eng := &stubEngine{}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+
+		result := callTool(t, srv, "instance_trigger", map[string]any{"workflowName": "wf"})
+		assert.False(t, result.IsError, extractText(t, result))
+
+		require.NotNil(t, eng.capturedTriggerCtx, "engine Trigger must receive the MCP call context")
+		id, ok := identity.FromContext(eng.capturedTriggerCtx)
+		require.True(t, ok, "engine context must carry the caller identity")
+		assert.Equal(t, mcpTestUserID, id.UserID, "forwarded identity must be the authenticated caller")
 	})
 }
 

@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA19-P2-01: HTTP and MCP Trigger stubs discarded context — identity forwarding not verified on adapter surfaces
+**Area**: Focus Area 19 — Flat-store migration & run-shared-directly (Pass 2)
+**Fix**: Added `capturedTriggerCtx context.Context` field to `mockWorkflowService` (HTTP) and `stubEngine` (MCP). Both stubs now capture the context passed to their `Trigger` method. Added `"caller identity context is forwarded to service"` subtest to `TestWorkflowHandler_Trigger` and `"caller identity context is forwarded to engine"` subtest to `TestInstanceTrigger`. Both assert that `identity.FromContext(capturedCtx)` returns the expected test user ID. A regression where the handler accidentally passed `context.Background()` instead of the request context would now be caught immediately on both surfaces.
+
 ### GAP-FA19-P1-01: `Trigger` missing error-category test — no-identity + default-user unavailable
 **Area**: Focus Area 19 — Flat-store migration & run-shared-directly (Pass 1)
 **Fix**: Added `defaultUserErr error` field to `mockUserRepo` in `domain/engine/engine_test.go`. Added `TestTrigger_DefaultUserUnavailable_FailsClosed` in `domain/engine/engine_trigger_scope_test.go`: seeds `defaultUserErr` to simulate a DB failure, calls `Trigger` with no identity in context, asserts error containing "failed to resolve triggering user" and confirms no instance was created. Documents the fail-closed invariant: a system trigger with an unavailable default user must not create an instance with a nil OwnerID, which would break all visibility scoping.

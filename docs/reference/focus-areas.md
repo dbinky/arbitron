@@ -34,7 +34,7 @@ result for that area.
 | 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [x] | [x] | Done |
 | 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [x] | [x] | Done |
 | 18 | Publish/copy & publisher store (migration 006 `published_workflows`; `PublishedWorkflowRepo`; `Publish` publisher-only-overwrite+unique name; `Copy` independent; atomic `CopyTree`; REST+MCP) | [x] | [x] | Done |
-| 19 | Flat-store migration & run-shared-directly (marker-guarded startup move into `users/<default-user>/`; `Trigger(ctx,...)` resolves visible scope, owner=triggering user) | [x] | [ ] | Pending |
+| 19 | Flat-store migration & run-shared-directly (marker-guarded startup move into `users/<default-user>/`; `Trigger(ctx,...)` resolves visible scope, owner=triggering user) | [x] | [x] | Done |
 | 20 | Instance list scoping (`instance.ListFilters.OwnerID`; `domain/engine/authz.go` `ownerConstraint`/`canView`; `Engine.ListInstances` service-set owner; `instances.sql` predicate; HTTP/MCP repointed) | [ ] | [ ] | Pending |
 | 21 | Instance read scoping (scoped `GetInstance`/`GetTrace`/`GetNodeTrace`/`GetVariables`/`GetVariableHistory` → `ErrNotFound` for non-viewers; HTTP+MCP reads) | [ ] | [ ] | Pending |
 | 22 | WebSocket scoping (per-instance connect authz before `Accept`; system stream `ScopedEvent` per-connection ownership filter, fail-closed; admins see all) | [ ] | [ ] | Pending |

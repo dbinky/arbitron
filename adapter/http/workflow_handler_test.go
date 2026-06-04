@@ -145,10 +145,12 @@ func (r *errWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string
 }
 
 type mockWorkflowService struct {
-	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	triggerFn          func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	capturedTriggerCtx context.Context
 }
 
-func (m *mockWorkflowService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *mockWorkflowService) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+	m.capturedTriggerCtx = ctx
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
@@ -710,6 +712,23 @@ func TestWorkflowHandler_Trigger(t *testing.T) {
 		var resp adapthttp.ErrorResponse
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 		assert.Equal(t, "INTERNAL_ERROR", resp.Code)
+	})
+
+	t.Run("caller identity context is forwarded to service", func(t *testing.T) {
+		// Verifies that h.service.Trigger receives r.Context() — not context.Background() —
+		// so the auth middleware's identity is present when the engine resolves the owner.
+		svc := &mockWorkflowService{}
+		h := adapthttp.NewWorkflowHandler(newMockWorkflowRepo(), svc, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/workflows/wf/trigger", nil)
+		req = withChiURLParam(req, "name", "wf") // also injects testIdentity via withTestIdentity
+		w := httptest.NewRecorder()
+		h.Trigger(w, req)
+
+		require.NotNil(t, svc.capturedTriggerCtx, "context must be forwarded to service")
+		id, ok := identity.FromContext(svc.capturedTriggerCtx)
+		require.True(t, ok, "service context must carry the caller identity")
+		assert.Equal(t, testUserID, id.UserID, "forwarded identity must be the authenticated caller")
 	})
 }
 
