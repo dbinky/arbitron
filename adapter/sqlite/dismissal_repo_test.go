@@ -337,3 +337,28 @@ func TestDismissalRepo_CascadeOnInstanceDelete(t *testing.T) {
 	require.Equal(t, 1, fk, "this repo's Open() enables PRAGMA foreign_keys=ON; setupTestDB must have FKs active")
 	assert.Empty(t, ids, "ON DELETE CASCADE must remove the dismissal when the instance is deleted")
 }
+
+// Integration: deleting the USER removes their dismissal rows via the symmetric
+// ON DELETE CASCADE on user_id — so a Phase-6 account-deletion/erasure does not
+// hard-fail on the FK. The instance and other users' views are untouched.
+func TestDismissalRepo_CascadeOnUserDelete(t *testing.T) {
+	repo, db := newDismissalRepo(t)
+	ctx := context.Background()
+	owner := localUserID(t)           // owns the instance
+	other := seedUser(t, db, "carol") // dismisses but owns nothing
+	inst := seedInstance(t, db, owner, "completed")
+	require.NoError(t, repo.Dismiss(ctx, owner, inst))
+	require.NoError(t, repo.Dismiss(ctx, other, inst))
+
+	// Deleting 'other' must cascade away only their dismissal row.
+	_, err := db.DB.Exec("DELETE FROM users WHERE id = ?", uuidToString(other))
+	require.NoError(t, err, "user deletion must not hard-fail on the dismissal FK")
+
+	idsOther, err := repo.DismissedIDs(ctx, other)
+	require.NoError(t, err)
+	assert.Empty(t, idsOther, "ON DELETE CASCADE must remove the deleted user's dismissals")
+
+	idsOwner, err := repo.DismissedIDs(ctx, owner)
+	require.NoError(t, err)
+	assert.True(t, idsOwner[inst], "the surviving user's dismissal must remain intact")
+}
