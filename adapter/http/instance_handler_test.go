@@ -278,6 +278,7 @@ type mockInstanceService struct {
 	nodeTraceFn      func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	variablesFn      func(ctx context.Context, id uuid.UUID) (map[string]any, error)
 	variableHistFn   func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn  func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
 	pauseFn          func(id uuid.UUID) error
 	resumeFn         func(id uuid.UUID) error
 	cancelFn         func(id uuid.UUID) error
@@ -328,6 +329,13 @@ func (m *mockInstanceService) GetVariableHistory(ctx context.Context, id uuid.UU
 	return nil, nil
 }
 
+func (m *mockInstanceService) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	if m.interventionsFn != nil {
+		return m.interventionsFn(ctx, id)
+	}
+	return nil, nil
+}
+
 func (m *mockInstanceService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)
@@ -368,6 +376,50 @@ func (m *mockInstanceService) SetPriority(_ context.Context, id uuid.UUID, prior
 		return m.setPriorityFn(id, priority)
 	}
 	return nil
+}
+
+// TestInstanceHandler_GetInterventions covers the audit-trail endpoint: a viewer
+// (owner/admin) gets 200 with the rows; a non-viewer gets 404 (the service
+// returns ErrNotFound), identical to a missing instance.
+func TestInstanceHandler_GetInterventions(t *testing.T) {
+	t.Run("viewer gets 200 with rows", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		detail := "high"
+		svc.interventionsFn = func(_ context.Context, gotID uuid.UUID) ([]instance.Intervention, error) {
+			assert.Equal(t, id, gotID)
+			return []instance.Intervention{
+				{ID: uuid.New(), InstanceID: id, ActorUserID: uuid.New(), Action: instance.ActionSetPriority, Detail: &detail, CreatedAt: time.Now()},
+			}, nil
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/interventions", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetInterventions(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp []map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.Len(t, resp, 1)
+		assert.Equal(t, "set_priority", resp[0]["action"])
+		assert.Equal(t, "high", resp[0]["detail"])
+	})
+
+	t.Run("non-viewer gets 404", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.interventionsFn = func(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+			return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/interventions", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetInterventions(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------

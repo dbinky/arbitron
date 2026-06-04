@@ -34,11 +34,12 @@ var expectedTools = []string{
 	"instance_retry",
 	"instance_rerun",
 	"instance_set_priority",
-	// Execution trace & variables (4)
+	// Execution trace & variables (5)
 	"trace_get",
 	"trace_get_node",
 	"variables_get",
 	"variables_history",
+	"trace_interventions",
 	// System, queue & notifications (8)
 	"system_config",
 	"system_update_queue_config",

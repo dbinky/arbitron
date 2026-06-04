@@ -26,6 +26,7 @@ type EngineService interface {
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
 	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
 	Pause(ctx context.Context, instanceID uuid.UUID) error
 	Resume(ctx context.Context, instanceID uuid.UUID) error
 	Cancel(ctx context.Context, instanceID uuid.UUID) error

@@ -44,6 +44,34 @@ func RegisterTraceTools(srv *Server) {
 		),
 		variablesHistoryHandler(srv),
 	)
+
+	srv.AddTool(
+		gomcp.NewTool("trace_interventions",
+			gomcp.WithDescription("Get the intervention audit trail (admin actions) for a workflow instance"),
+			gomcp.WithString("id", gomcp.Required(), gomcp.Description("Instance UUID")),
+		),
+		traceInterventionsHandler(srv),
+	)
+}
+
+func traceInterventionsHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		id, err := ParseUUID(request, "id")
+		if err != nil {
+			return gomcp.NewToolResultError(err.Error()), nil
+		}
+
+		// Scoped read: GetInterventions returns ErrNotFound for a non-owner
+		// non-admin (existence not leaked). Visible to owner + admins.
+		ivs, err := srv.deps.Engine.GetInterventions(ctx, id)
+		if err != nil {
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to get interventions: %s", err)), nil
+		}
+		if ivs == nil {
+			ivs = []instance.Intervention{}
+		}
+		return MarshalResult(ivs)
+	}
 }
 
 func traceGetHandler(srv *Server) server.ToolHandlerFunc {

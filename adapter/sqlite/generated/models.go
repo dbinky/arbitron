@@ -59,6 +59,15 @@ type Instance struct {
 	WebhookReceivedAt sql.NullString
 }
 
+type InstanceIntervention struct {
+	ID          string
+	InstanceID  string
+	ActorUserID string
+	Action      string
+	Detail      sql.NullString
+	CreatedAt   string
+}
+
 type NodeExecution struct {
 	ID              string
 	InstanceID      string

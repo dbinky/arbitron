@@ -521,6 +521,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
 	eng.SetNotifications(notifRepo)
 
+	// 12a-bis. Create the intervention audit repo and wire it to the engine so
+	// admin actions on other users' instances are attributed.
+	interventionRepo := adaptsqlite.NewInterventionRepo(db)
+	eng.SetInterventions(interventionRepo)
+
 	// 12b. Create the synchronized SettingsStore that owns the runtime-mutable
 	// Teams settings, shared across the HTTP adapter, the MCP adapter, and the
 	// Teams notifier so all three route reads/writes through one mutex.
@@ -552,6 +557,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	conversationHandler := engine.NewConversationHandler(
 		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, bus, queueMgr,
 	)
+	// Wire the intervention repo so admin participation in another user's
+	// interactive session is attributed. The setter lives on the concrete type.
+	if s, ok := conversationHandler.(interface {
+		SetInterventions(instance.InterventionRepository)
+	}); ok {
+		s.SetInterventions(interventionRepo)
+	}
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.

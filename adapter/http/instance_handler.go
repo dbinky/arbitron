@@ -25,6 +25,7 @@ type InstanceService interface {
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
 	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
 	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
 	Pause(ctx context.Context, id uuid.UUID) error
 	Resume(ctx context.Context, id uuid.UUID) error
 	Cancel(ctx context.Context, id uuid.UUID) error
@@ -509,6 +510,54 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 	resp := make([]variableSnapshotResponse, len(snaps))
 	for i, snap := range snaps {
 		resp[i] = toVariableSnapshotResponse(&snap)
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// interventionResponse is a JSON-friendly representation of an intervention.
+type interventionResponse struct {
+	ID          string  `json:"id"`
+	InstanceID  string  `json:"instanceId"`
+	ActorUserID string  `json:"actorUserId"`
+	Action      string  `json:"action"`
+	Detail      *string `json:"detail,omitempty"`
+	CreatedAt   string  `json:"createdAt"`
+}
+
+func toInterventionResponse(iv *instance.Intervention) interventionResponse {
+	return interventionResponse{
+		ID:          iv.ID.String(),
+		InstanceID:  iv.InstanceID.String(),
+		ActorUserID: iv.ActorUserID.String(),
+		Action:      iv.Action,
+		Detail:      iv.Detail,
+		CreatedAt:   iv.CreatedAt.Format(APITimeFormat),
+	}
+}
+
+// GetInterventions handles GET /instances/{id}/interventions and returns the
+// intervention audit trail. Visible to the instance owner and admins; a
+// non-viewer gets 404 (existence not leaked).
+func (h *InstanceHandler) GetInterventions(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID")
+		return
+	}
+
+	ivs, err := h.service.GetInterventions(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list interventions")
+		return
+	}
+
+	resp := make([]interventionResponse, len(ivs))
+	for i := range ivs {
+		resp[i] = toInterventionResponse(&ivs[i])
 	}
 	WriteJSON(w, http.StatusOK, resp)
 }

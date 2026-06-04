@@ -78,9 +78,10 @@ type stubEngine struct {
 	getFn         func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	traceFn       func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	nodeTraceFn   func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
-	variablesFn   func(ctx context.Context, id uuid.UUID) (map[string]any, error)
-	varHistFn     func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	pauseFn       func(id uuid.UUID) error
+	variablesFn     func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	varHistFn       func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn         func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
 	retryFn       func(id uuid.UUID, vars map[string]any) error
@@ -133,6 +134,13 @@ func (s *stubEngine) GetVariables(ctx context.Context, id uuid.UUID) (map[string
 func (s *stubEngine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
 	if s.varHistFn != nil {
 		return s.varHistFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetInterventions(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	if s.interventionsFn != nil {
+		return s.interventionsFn(ctx, id)
 	}
 	return nil, nil
 }

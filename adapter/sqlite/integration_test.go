@@ -319,6 +319,82 @@ func summaryIDs(s []instance.InstanceSummary) []uuid.UUID {
 	return ids
 }
 
+// ---------------------------------------------------------------------------
+// InterventionRepo + migration 007 tests
+// ---------------------------------------------------------------------------
+
+func TestMigration007_InterventionsTableExists(t *testing.T) {
+	db := setupTestDB(t)
+	var name string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='instance_interventions'").Scan(&name))
+	assert.Equal(t, "instance_interventions", name)
+
+	var idx string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_instance_interventions_instance'").Scan(&idx))
+	assert.Equal(t, "idx_instance_interventions_instance", idx)
+}
+
+func TestInterventionRepo_CreateAndList(t *testing.T) {
+	db := setupTestDB(t)
+	userRepo := NewUserRepo(db.DB)
+	instRepo := NewInstanceRepo(db.DB)
+	ivRepo := NewInterventionRepo(db.DB)
+	ctx := context.Background()
+
+	owner, err := userRepo.GetDefaultUser(ctx)
+	require.NoError(t, err)
+	inst := newTestInstance(t, owner)
+	require.NoError(t, instRepo.Create(ctx, inst))
+
+	actor := uuid.New()
+	detail := "high"
+	require.NoError(t, ivRepo.Create(ctx, &instance.Intervention{
+		ID:          uuid.New(),
+		InstanceID:  inst.ID,
+		ActorUserID: actor,
+		Action:      instance.ActionSetPriority,
+		Detail:      &detail,
+	}))
+	// A second row with a nil detail.
+	require.NoError(t, ivRepo.Create(ctx, &instance.Intervention{
+		ID:          uuid.New(),
+		InstanceID:  inst.ID,
+		ActorUserID: actor,
+		Action:      instance.ActionPause,
+		Detail:      nil,
+	}))
+
+	rows, err := ivRepo.ListByInstance(ctx, inst.ID)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	// Ordered by created_at ASC; both share the actor and instance.
+	assert.Equal(t, actor, rows[0].ActorUserID)
+	assert.Equal(t, inst.ID, rows[0].InstanceID)
+
+	var sawSetPriority, sawPause bool
+	for _, r := range rows {
+		switch r.Action {
+		case instance.ActionSetPriority:
+			sawSetPriority = true
+			require.NotNil(t, r.Detail)
+			assert.Equal(t, "high", *r.Detail)
+		case instance.ActionPause:
+			sawPause = true
+			assert.Nil(t, r.Detail, "nullable detail is preserved as nil")
+		}
+	}
+	assert.True(t, sawSetPriority)
+	assert.True(t, sawPause)
+
+	// A different instance has none.
+	none, err := ivRepo.ListByInstance(ctx, uuid.New())
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
 func TestInstanceRepo_ListRunning(t *testing.T) {
 	db := setupTestDB(t)
 	userRepo := NewUserRepo(db.DB)

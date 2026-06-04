@@ -114,6 +114,10 @@ func (m *routerMockService) GetVariableHistory(ctx context.Context, id uuid.UUID
 	return nil, nil
 }
 
+func (m *routerMockService) GetInterventions(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+	return nil, nil
+}
+
 func (m *routerMockService) Pause(_ context.Context, id uuid.UUID) error {
 	if m.pauseFn != nil {
 		return m.pauseFn(id)

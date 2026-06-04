@@ -256,6 +256,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Get("/{id}/trace/{nodeId}", instHandler.GetNodeTrace)
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
+			r.Get("/{id}/interventions", instHandler.GetInterventions)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 			if interactiveHandler != nil {
 				r.Post("/{id}/interact/end", interactiveHandler.EndSession)

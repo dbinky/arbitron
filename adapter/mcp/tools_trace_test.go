@@ -172,6 +172,57 @@ func TestTraceGet(t *testing.T) {
 	})
 }
 
+func TestTraceInterventions(t *testing.T) {
+	t.Run("returns the audit trail for a viewer", func(t *testing.T) {
+		instID := uuid.New()
+		detail := "high"
+		eng := &stubEngine{
+			interventionsFn: func(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+				return []instance.Intervention{
+					{ID: uuid.New(), InstanceID: instID, ActorUserID: uuid.New(), Action: instance.ActionSetPriority, Detail: &detail},
+				}, nil
+			},
+		}
+		deps := &adaptmcp.Deps{Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "trace_interventions", map[string]any{"id": instID.String()})
+		assert.False(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "set_priority")
+	})
+
+	t.Run("non-viewer gets the not-found tool error", func(t *testing.T) {
+		eng := &stubEngine{
+			interventionsFn: func(_ context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		deps := &adaptmcp.Deps{Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "trace_interventions", map[string]any{"id": uuid.New().String()})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+	})
+
+	t.Run("empty result is a JSON array not null", func(t *testing.T) {
+		eng := &stubEngine{
+			interventionsFn: func(_ context.Context, _ uuid.UUID) ([]instance.Intervention, error) {
+				return nil, nil
+			},
+		}
+		deps := &adaptmcp.Deps{Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "trace_interventions", map[string]any{"id": uuid.New().String()})
+		assert.False(t, result.IsError)
+		assert.Equal(t, "[]", extractText(t, result))
+	})
+}
+
 func TestTraceGetNode(t *testing.T) {
 	t.Run("domain error returned as tool error", func(t *testing.T) {
 		repo := &stubNodeExecRepo{
