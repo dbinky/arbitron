@@ -36,3 +36,30 @@ describe('useFollowActiveNode — initial state', () => {
     expect(setCenter).not.toHaveBeenCalled()
   })
 })
+
+describe('useFollowActiveNode — follow on advance', () => {
+  it('animates to the new anchor when it changes while following', () => {
+    const { rerender } = renderHook(
+      ({ a }: { a: { x: number; y: number } }) => useFollowActiveNode(a, true),
+      { initialProps: { a: { x: 10, y: 20 } } },
+    )
+    // First render recorded the anchor; no setCenter yet.
+    expect(setCenter).not.toHaveBeenCalled()
+
+    rerender({ a: { x: 100, y: 200 } })
+    expect(setCenter).toHaveBeenCalledTimes(1)
+    expect(setCenter).toHaveBeenCalledWith(100, 200, {
+      zoom: 1.5, // from mocked getZoom()
+      duration: 400,
+    })
+  })
+
+  it('does not animate when the anchor value is unchanged', () => {
+    const { rerender } = renderHook(
+      ({ a }: { a: { x: number; y: number } }) => useFollowActiveNode(a, true),
+      { initialProps: { a: { x: 10, y: 20 } } },
+    )
+    rerender({ a: { x: 10, y: 20 } }) // same value, new object identity
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+})
