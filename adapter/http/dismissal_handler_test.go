@@ -151,6 +151,24 @@ func TestDismiss_NonTerminal_409(t *testing.T) {
 	assert.Equal(t, 409, resp.StatusCode)
 }
 
+// Edge: a cancelled instance is terminal in the stream handler's sense but
+// isDismissibleState is narrower — only completed/failed can be dismissed.
+// A widening of that guard (to include cancelled) must not silently pass.
+func TestDismiss_CancelledInstance_409(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateCancelled,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
 func TestDismiss_NotFound_404(t *testing.T) {
 	srv := newDismissalTestServer(t, newMockInstanceRepo(), newMockDismissalRepo(), &mockUserRepo{id: uuid.New()})
 	defer srv.Close()

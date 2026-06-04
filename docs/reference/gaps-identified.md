@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### HAND-001: Cancelled-instance dismiss guard untested
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 13
+**Detail**: `isDismissibleState` has an explicit comment: "narrower than stream_handler's isTerminalState, which also includes cancelled; only completed/failed items can be dismissed." The existing 409 test (`TestDismiss_NonTerminal_409`) only used `StateRunning`, so a change that widened the guard to also allow `StateCancelled` (which IS terminal in the streaming handler's sense) would pass all tests. Added `TestDismiss_CancelledInstance_409` using `StateCancelled` to pin this intentional design boundary.
+
 ### REPO-002: ClearForInstance isolation untested
 **Area**: Dismissal persistence (`adapter/sqlite/dismissal_repo.go`)
 **Fixed**: Iteration 12
