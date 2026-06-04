@@ -105,6 +105,10 @@ func TestDeviceHandler_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, start.UserCode)
 	assert.Equal(t, "https://app.example.com/auth/device", start.VerificationURI)
 	assert.Equal(t, 5, start.Interval)
+	// The Start response returns the plaintext device_code (correct, once) but
+	// must never include the sha256 hash of that code.
+	assert.NotContains(t, w.Body.String(), "hashed_code", "start response must not include hashed_code")
+	assert.NotContains(t, w.Body.String(), "device_code_hash", "start response must not include device_code_hash")
 
 	// Approve as a logged-in user.
 	approver := uuid.New()
@@ -126,8 +130,11 @@ func TestDeviceHandler_HappyPath(t *testing.T) {
 	for _, tk := range tokRepo.toks {
 		assert.Equal(t, approver, tk.UserID)
 	}
-	// The raw device code never appears in the token response.
-	assert.NotContains(t, wt.Body.String(), start.DeviceCode)
+	// The Token response carries the plaintext access_token exactly once and
+	// must never echo the raw device_code or the internal token hash. Mirrors
+	// the FA-9 secrecy pin on the token_create surface.
+	assert.NotContains(t, wt.Body.String(), start.DeviceCode, "token response must not include raw device_code")
+	assert.NotContains(t, wt.Body.String(), "token_hash", "token response must not include token_hash")
 }
 
 // Input validation: bad/no body on token; missing user_code on approve.

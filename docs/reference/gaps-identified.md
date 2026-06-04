@@ -4,6 +4,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
+### GAP-FA12-P2-01: `/auth/device/token` response had no `token_hash` non-leakage assertion; Start had no `hashed_code` pin
+**Area**: Focus Area 12 — Device-code login (Pass 2)
+**Fix**: Extended `TestDeviceHandler_HappyPath` in `adapter/http/device_handler_test.go`. Added `assert.NotContains(wt.Body.String(), "token_hash", ...)` to the Token endpoint response — the device token endpoint returns a newly minted arb_ access_token (highest-risk surface) and must never echo the internal token hash. Added `assert.NotContains(w.Body.String(), "hashed_code", ...)` and `assert.NotContains(w.Body.String(), "device_code_hash", ...)` to the Start response — the Start response returns the plaintext device_code (correct, once) but must never include the sha256 hash. Mirrors the FA-9 secrecy pin pattern applied to token_create and token_list.
+
 ### GAP-FA12-P1-01: `Deny` HTTP handler completely untested; `expired_token` RFC path uncovered at handler level
 **Area**: Focus Area 12 — Device-code login (Pass 1)
 **Fix**: Added three tests for the `Deny` handler in `adapter/http/device_handler_test.go`: `TestDeviceHandler_Deny_HappyPath` (happy path → 200 `{"status":"denied"}`, repo row status confirmed Denied), `TestDeviceHandler_Deny_RequiresIdentity` (no identity → 401, row stays Pending), `TestDeviceHandler_Deny_NotFound` (unknown user_code → 404). Also expanded `TestDeviceHandler_PollStates` into subtests and added a third: "expired → expired_token" — backdates the stored row's ExpiresAt via the memDeviceRepo and asserts the handler returns 400 with body `"expired_token"`. Previously `writeDeviceGrantError`'s `ErrExpired` branch was dead from a test perspective at the HTTP layer.
