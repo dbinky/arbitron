@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA21-P1-01: `trace_get_node` and `variables_history` had no non-owner isolation test on MCP surface
+**Area**: Focus Area 21 — Instance read scoping (Pass 1)
+**Fix**: Added `"non-owner gets the same not-found error as a missing instance (no existence leak)"` to `TestTraceGetNode` and `TestVariablesHistory` in `adapter/mcp/tools_trace_test.go`. Each test wires a stub engine whose relevant read method returns `ErrNotFound` (the signal the engine sends for non-owner access), then asserts: (1) the tool result is an error, (2) the error text contains "not found", and (3) the underlying repo (node-exec / snapshot) was **never queried** — proving the authz gate fires before sub-resource access. `TestTraceGet` already had an equivalent test; now all three node-level MCP reads are consistently covered. The `authz_e2e_test.go` covers `instance_get`, `trace_get`, and `variables_get` with a real engine; `trace_get_node` and `variables_history` are now also pinned at the handler level.
+
 ### GAP-FA20-P2-01: HTTP `List` no-identity defence-in-depth path had no test
 **Area**: Focus Area 20 — Instance list scoping (Pass 2)
 **Fix**: Added `"no-identity defence-in-depth: ErrNotFound from service returns 200 empty array"` subtest to `TestInstanceHandler_List` in `adapter/http/instance_handler_test.go`. Seeds a mock service that returns `instance.ErrNotFound` from `ListInstances` (the signal the engine sends when no identity is present in context), calls `h.List`, and asserts HTTP 200 with an empty JSON array. This pins the unusual-but-intentional behavior: the handler does NOT return 404 or 500 when the engine refuses to list due to a missing identity — it returns an empty list so a probe cannot distinguish "no instances" from "access denied". The auth middleware in org mode would have already rejected such a request before reaching the handler; this test documents the defense-in-depth fallback.

@@ -302,6 +302,36 @@ func TestTraceGetNode(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "not found")
 	})
+
+	t.Run("non-owner gets the same not-found error as a missing instance (no existence leak)", func(t *testing.T) {
+		// The engine's authorizeView gate fires before any node-exec repo access.
+		// A non-owner must see an identical error to "instance not found", and the
+		// node-exec repo must never be queried (existence of the instance must not
+		// be leaked via a timing or error difference).
+		queried := false
+		nodeRepo := &stubNodeExecRepo{
+			getByInstanceAndNode: func(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+				queried = true
+				return nil, nil
+			},
+		}
+		eng := &stubEngine{
+			nodeTraceFn: func(_ context.Context, id uuid.UUID, _ string) (*instance.NodeExecution, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		deps := &adaptmcp.Deps{NodeExecs: nodeRepo, Snapshots: &stubSnapshotRepo{}, Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "trace_get_node", map[string]any{
+			"instanceId": uuid.New().String(),
+			"nodeId":     "step1",
+		})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+		assert.False(t, queried, "node-exec repo must not be read for a non-owner")
+	})
 }
 
 func TestVariablesGet(t *testing.T) {
@@ -419,5 +449,31 @@ func TestVariablesHistory(t *testing.T) {
 		result := callTool(t, srv, "variables_history", map[string]any{"id": uuid.New().String()})
 
 		assert.True(t, result.IsError)
+	})
+
+	t.Run("non-owner gets the same not-found error as a missing instance (no existence leak)", func(t *testing.T) {
+		// The engine's authorizeView gate fires before the snapshot repo is read.
+		// A non-owner must receive a tool error identical to a missing instance,
+		// and the snapshot repo must never be queried.
+		queried := false
+		snapRepo := &stubSnapshotRepo{
+			listByInstanceFn: func(_ context.Context, _ uuid.UUID) ([]instance.VariableSnapshot, error) {
+				queried = true
+				return nil, nil
+			},
+		}
+		eng := &stubEngine{
+			varHistFn: func(_ context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		deps := &adaptmcp.Deps{NodeExecs: &stubNodeExecRepo{}, Snapshots: snapRepo, Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "variables_history", map[string]any{"id": uuid.New().String()})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+		assert.False(t, queried, "snapshot repo must not be read for a non-owner")
 	})
 }
