@@ -136,6 +136,26 @@ func TestDismiss_TerminalInstance_OK(t *testing.T) {
 	assert.True(t, dis.dismissed[user][id], "dismiss must record the per-user row")
 }
 
+// Success: dismissing a completed instance also returns 200 — isDismissibleState
+// accepts both failed and completed, but only the failed arm was tested.
+func TestDismiss_CompletedInstance_OK(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted,
+	}))
+	dis := newMockDismissalRepo()
+
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[user][id], "completed instance must be recorded as dismissed")
+}
+
 func TestDismiss_NonTerminal_409(t *testing.T) {
 	user := uuid.New()
 	instRepo := newMockInstanceRepo()
@@ -231,6 +251,31 @@ func TestDismissAll_DismissesEveryListedInCategory(t *testing.T) {
 	assert.True(t, dis.dismissed[user][a])
 	assert.True(t, dis.dismissed[user][b])
 	assert.False(t, dis.dismissed[user][other], "completed item must not be dismissed by state=failed")
+}
+
+// Success: DismissAll with state=completed dismisses completed instances and
+// leaves failed instances untouched — mirrors DismissesEveryListedInCategory
+// for the other valid state value.
+func TestDismissAll_CompletedCategory_DismissesAll(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	ctx := context.Background()
+	a := uuid.New()
+	b := uuid.New()
+	other := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: a, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: b, OwnerID: user, WorkflowName: "wf", State: instance.StateCompleted}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: other, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	dis := newMockDismissalRepo()
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/dismiss-all?state=completed")
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.True(t, dis.dismissed[user][a])
+	assert.True(t, dis.dismissed[user][b])
+	assert.False(t, dis.dismissed[user][other], "failed item must not be dismissed by state=completed")
 }
 
 func TestDismissAll_BadState_400(t *testing.T) {

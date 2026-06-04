@@ -8,6 +8,16 @@ _(none)_
 
 ## Fixed Previously
 
+### HAND-003: DismissAll state=completed path untested
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 14
+**Detail**: `TestDismissAll_DismissesEveryListedInCategory` only called `?state=failed`. `TestDismissAll_EmptyCategory_OK` used `state=completed` but with an empty repo. The `state=completed` path through the List+dismiss loop was never exercised with real data. Added `TestDismissAll_CompletedCategory_DismissesAll`: creates two completed instances and one failed, calls `state=completed`, asserts completed ones are dismissed and the failed one is not.
+
+### HAND-002: isDismissibleState StateCompleted arm untested in Dismiss
+**Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
+**Fixed**: Iteration 14
+**Detail**: `isDismissibleState` returns true for both `StateCompleted` and `StateFailed`, but `TestDismiss_TerminalInstance_OK` only used `StateFailed`. A regression narrowing the function to only accept `StateFailed` would pass all prior tests. Added `TestDismiss_CompletedInstance_OK` to verify the `StateCompleted` arm of the guard returns 200 and records the dismissal.
+
 ### HAND-001: Cancelled-instance dismiss guard untested
 **Area**: Dismissal HTTP handlers (`adapter/http/dismissal_handler_test.go`)
 **Fixed**: Iteration 13
