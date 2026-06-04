@@ -7,8 +7,8 @@ import type { ArbitronNodeData } from './nodes/ArbitronNode'
 import { detectLoops, type Loop } from './loops'
 import { loopContainerBox, loopContainerLabel } from './loopLayout'
 
-const NODE_WIDTH = 200
-const NODE_HEIGHT = 80
+export const NODE_WIDTH = 200
+export const NODE_HEIGHT = 80
 
 interface UseGraphLayoutInput {
   nodes: WorkflowNode[]
