@@ -93,3 +93,20 @@
   color: var(--text-dim);
   font-size: 13px;
 }
+
+.dismissAll {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.dismissAll:hover {
+  color: var(--text-primary);
+}

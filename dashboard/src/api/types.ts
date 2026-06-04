@@ -22,6 +22,8 @@ export interface InstanceSummary {
   updatedAt: string
   completedAt?: string
   queuedAt?: string
+  /** Whether the acting user has dismissed this instance from their view. */
+  dismissed?: boolean
 }
 
 /** Full instance representation returned by the get endpoint. */

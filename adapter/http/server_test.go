@@ -50,19 +50,24 @@ func authedRouter(next http.Handler) http.Handler {
 
 // routerMockService implements both WorkflowService and InstanceService.
 type routerMockService struct {
-	triggerFn      func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
-	listFn         func() ([]instance.InstanceSummary, error)
-	getFn          func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
-	traceFn        func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
-	nodeTraceFn    func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
-	variablesFn    func(ctx context.Context, id uuid.UUID) (map[string]any, error)
-	variableHistFn func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	pauseFn        func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	listFn    func() ([]instance.InstanceSummary, error)
+	// listWithFiltersFn, when set, takes precedence over listFn and receives the
+	// request context and filters — used by tests that delegate to a repo mock so
+	// the state/workflow/paging filters are actually applied (e.g. the per-user
+	// dismissal list tests).
+	listWithFiltersFn func(context.Context, instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn             func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn           func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn       func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn       func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn    func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	pauseFn           func(id uuid.UUID) error
+	resumeFn          func(id uuid.UUID) error
+	cancelFn          func(id uuid.UUID) error
+	retryFn           func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn           func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn     func(id uuid.UUID, priority string) error
 }
 
 func (m *routerMockService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
@@ -72,7 +77,10 @@ func (m *routerMockService) Trigger(_ context.Context, workflowName string, vari
 	return uuid.New(), true, nil
 }
 
-func (m *routerMockService) ListInstances(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+func (m *routerMockService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
+	if m.listWithFiltersFn != nil {
+		return m.listWithFiltersFn(ctx, filters)
+	}
 	if m.listFn != nil {
 		return m.listFn()
 	}
@@ -163,20 +171,30 @@ func (m *routerMockService) SetPriority(_ context.Context, id uuid.UUID, priorit
 // mockQueueManagerForRouter implements adapthttp.QueueManagerPort
 type mockQueueManagerForRouter struct{}
 
-func (m *mockQueueManagerForRouter) UpdateConfig(_, _ int)                    {}
-func (m *mockQueueManagerForRouter) Evaluate(_ context.Context) error         { return nil }
+func (m *mockQueueManagerForRouter) UpdateConfig(_, _ int)            {}
+func (m *mockQueueManagerForRouter) Evaluate(_ context.Context) error { return nil }
 
 // mockQueueRepoForRouter implements instance.QueueRepository
 type mockQueueRepoForRouter struct{}
 
-func (r *mockQueueRepoForRouter) CountRunning(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockQueueRepoForRouter) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)         { return 0, nil }
-func (r *mockQueueRepoForRouter) CountQueued(_ context.Context) (int, error)                               { return 0, nil }
-func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) { return nil, nil }
-func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error              { return nil }
-func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error)     { return nil, nil }
-func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error)   { return nil, nil }
+func (r *mockQueueRepoForRouter) CountRunning(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepoForRouter) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (r *mockQueueRepoForRouter) CountQueued(_ context.Context) (int, error)  { return 0, nil }
+func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error) { return 0, nil }
+func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return nil
+}
+func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config, adapthttp.QueueManagerPort, instance.QueueRepository) {
 	wfRepo := newMockWorkflowRepo()
@@ -549,12 +567,12 @@ func TestRouter_UpdateQueueConfig_InvalidBody_400(t *testing.T) {
 func TestRouter_InstanceRoutes_SetPriority(t *testing.T) {
 	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
 	inst := &instance.Instance{
-		ID:           uuid.New(),
-		State:        instance.StateQueued,
-		Priority:     instance.PriorityNormal,
-		Variables:    map[string]any{},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:        uuid.New(),
+		State:     instance.StateQueued,
+		Priority:  instance.PriorityNormal,
+		Variables: map[string]any{},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	instRepo.instances[inst.ID] = inst
 	router := adapthttp.NewRouter(svc, wfRepo, instRepo, nodeExecRepo, snapRepo, fileReader, bus, cfg, qm, qr, nil, nil, nil, nil)
@@ -582,9 +600,9 @@ type mockCountingQueueRepo struct {
 	waiting int
 }
 
-func (r *mockCountingQueueRepo) CountRunning(_ context.Context) (int, error)  { return r.running, nil }
-func (r *mockCountingQueueRepo) CountQueued(_ context.Context) (int, error)   { return r.queued, nil }
-func (r *mockCountingQueueRepo) CountWaiting(_ context.Context) (int, error)  { return r.waiting, nil }
+func (r *mockCountingQueueRepo) CountRunning(_ context.Context) (int, error) { return r.running, nil }
+func (r *mockCountingQueueRepo) CountQueued(_ context.Context) (int, error)  { return r.queued, nil }
+func (r *mockCountingQueueRepo) CountWaiting(_ context.Context) (int, error) { return r.waiting, nil }
 
 type mockCapturingQueueManager struct {
 	mu             sync.Mutex

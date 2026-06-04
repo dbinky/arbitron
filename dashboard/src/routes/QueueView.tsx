@@ -34,19 +34,24 @@ export default function QueueView() {
   const [completed, setCompleted] = useState<InstanceSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showDismissed, setShowDismissed] = useState(false)
 
   const fetchAll = useCallback(async () => {
     try {
       const since = daysAgo(HISTORY_DAYS)
 
+      // Seam: `showDismissed` drives the FETCH (includeDismissed), per-row
+      // `inst.dismissed` from the server drives the RENDER (Restore vs Dismiss,
+      // dimming). The server reconciles the two — do NOT re-thread showDismissed
+      // down into the rows or it reintroduces the toggle/refetch flicker.
       const [running, waiting, queued, paused, failedRes, completedRes] =
         await Promise.all([
           api.instances.list({ state: 'running' }),
           api.instances.list({ state: 'waiting' }),
           api.instances.list({ state: 'queued' }),
           api.instances.list({ state: 'paused' }),
-          api.instances.list({ state: 'failed', since }),
-          api.instances.list({ state: 'completed', since }),
+          api.instances.list({ state: 'failed', since, includeDismissed: showDismissed }),
+          api.instances.list({ state: 'completed', since, includeDismissed: showDismissed }),
         ])
 
       setActive([...running, ...waiting, ...queued, ...paused])
@@ -59,7 +64,38 @@ export default function QueueView() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [showDismissed])
+
+  const handleDismiss = useCallback(async (id: string) => {
+    try {
+      await api.instances.dismiss(id)
+      await fetchAll()
+    } catch (err) {
+      // Route failures through the shared error surface so the unhappy path
+      // isn't silent (a swallowed catch reads as "broken" to the user).
+      setError(err instanceof Error ? err.message : 'Failed to dismiss instance')
+    }
+  }, [fetchAll])
+
+  const handleRestore = useCallback(async (id: string) => {
+    try {
+      await api.instances.restore(id)
+      await fetchAll()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore instance')
+    }
+  }, [fetchAll])
+
+  const handleDismissAll = useCallback(async (state: 'failed' | 'completed') => {
+    try {
+      // Scope to the same window the Failed/Completed sections show (daysAgo(5)),
+      // so [Dismiss All] dismisses exactly "every item currently listed".
+      await api.instances.dismissAll(state, daysAgo(HISTORY_DAYS))
+      await fetchAll()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to dismiss instances')
+    }
+  }, [fetchAll])
 
   useEffect(() => {
     void fetchAll()
@@ -141,6 +177,9 @@ export default function QueueView() {
         countColor="var(--state-failed)"
         subtitle={`Last ${HISTORY_DAYS} days`}
         timeMode="relative"
+        onDismissAll={() => handleDismissAll('failed')}
+        onDismiss={handleDismiss}
+        onRestore={handleRestore}
       />
       <QueueSection
         title="Completed"
@@ -151,7 +190,27 @@ export default function QueueView() {
         subtitle={`Last ${HISTORY_DAYS} days`}
         timeMode="relative"
         defaultCollapsed
+        onDismissAll={() => handleDismissAll('completed')}
+        onDismiss={handleDismiss}
+        onRestore={handleRestore}
       />
+
+      <div style={{ textAlign: 'center', padding: '16px 0' }}>
+        <button
+          type="button"
+          onClick={() => setShowDismissed((s) => !s)}
+          style={{
+            padding: '6px 16px',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+          }}
+        >
+          {showDismissed ? 'Hide Dismissed' : 'Show Dismissed'}
+        </button>
+      </div>
     </div>
   )
 }

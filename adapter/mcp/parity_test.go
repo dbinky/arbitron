@@ -55,8 +55,10 @@ func (r *parityInstanceRepo) UpdateVariables(context.Context, uuid.UUID, map[str
 }
 func (r *parityInstanceRepo) UpdateCurrentNode(context.Context, uuid.UUID, string) error { return nil }
 func (r *parityInstanceRepo) SetFailed(context.Context, uuid.UUID, string) error         { return nil }
-func (r *parityInstanceRepo) SetCompleted(context.Context, uuid.UUID) error               { return nil }
-func (r *parityInstanceRepo) ListRunning(context.Context) ([]instance.Instance, error)    { return nil, nil }
+func (r *parityInstanceRepo) SetCompleted(context.Context, uuid.UUID) error              { return nil }
+func (r *parityInstanceRepo) ListRunning(context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 func (r *parityInstanceRepo) UpdatePriority(context.Context, uuid.UUID, instance.Priority) error {
 	return nil
 }
@@ -104,6 +106,14 @@ func TestMCPRestParity_InstanceList(t *testing.T) {
 	require.Len(t, restSummaries, 1)
 	assert.Equal(t, instA.ID.String(), mcpSummaries[0]["id"])
 	assert.Equal(t, instA.ID.String(), restSummaries[0]["id"])
+
+	// The REST list carries a "dismissed" flag — per-user HTTP view state added by
+	// the dismissal feature that is intentionally NOT part of the domain summary
+	// (and therefore absent from the MCP surface). Parity is about the domain-scoped
+	// set, not this view-only field, so drop it before the cross-surface comparison.
+	for _, s := range restSummaries {
+		delete(s, "dismissed")
+	}
 	assert.Equal(t, mcpSummaries, restSummaries, "MCP and REST return the identical scoped set for the same identity")
 }
 

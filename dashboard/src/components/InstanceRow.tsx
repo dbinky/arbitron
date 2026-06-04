@@ -7,6 +7,9 @@ import styles from './InstanceRow.module.css'
 interface InstanceRowProps {
   instance: InstanceSummary
   timeMode: 'elapsed' | 'relative'
+  dimmed?: boolean
+  onDismiss?: (id: string) => void
+  onRestore?: (id: string) => void
 }
 
 const borderClass: Record<string, string> = {
@@ -25,8 +28,9 @@ const priorityClass: Record<string, string> = {
   low: styles.priorityLow,
 }
 
-export default function InstanceRow({ instance, timeMode }: InstanceRowProps) {
+export default function InstanceRow({ instance, timeMode, dimmed, onDismiss, onRestore }: InstanceRowProps) {
   const navigate = useNavigate()
+  const isTerminal = instance.state === 'failed' || instance.state === 'completed'
 
   const timeStr =
     timeMode === 'elapsed'
@@ -35,7 +39,7 @@ export default function InstanceRow({ instance, timeMode }: InstanceRowProps) {
 
   return (
     <div
-      className={`${styles.row} ${borderClass[instance.state] ?? ''}`}
+      className={`${styles.row} ${borderClass[instance.state] ?? ''} ${dimmed ? styles.dimmed : ''}`}
       onClick={() => navigate(`/instances/${instance.id}`)}
       role="button"
       tabIndex={0}
@@ -64,6 +68,36 @@ export default function InstanceRow({ instance, timeMode }: InstanceRowProps) {
           'local'
         )}
       </span>
+      {isTerminal &&
+        (dimmed ? (
+          <button
+            type="button"
+            className={styles.control}
+            aria-label="Restore"
+            title="Restore"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRestore?.(instance.id)
+            }}
+          >
+            {'↺'}
+          </button>
+        ) : (
+          onDismiss && (
+            <button
+              type="button"
+              className={styles.control}
+              aria-label="Dismiss"
+              title="Dismiss"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDismiss(instance.id)
+              }}
+            >
+              {'×'}
+            </button>
+          )
+        ))}
     </div>
   )
 }
