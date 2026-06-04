@@ -21,6 +21,11 @@ import (
 type EngineService interface {
 	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
 	Pause(instanceID uuid.UUID) error
 	Resume(instanceID uuid.UUID) error
 	Cancel(instanceID uuid.UUID) error

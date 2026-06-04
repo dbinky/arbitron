@@ -127,7 +127,7 @@ func instanceGetHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 
-		inst, err := srv.deps.Instances.Get(ctx, id)
+		inst, err := srv.deps.Engine.GetInstance(ctx, id)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to get instance: %s", err)), nil
 		}

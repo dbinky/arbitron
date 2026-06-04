@@ -20,6 +20,11 @@ import (
 // InstanceService defines the engine methods needed by instance handlers.
 type InstanceService interface {
 	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
 	Pause(id uuid.UUID) error
 	Resume(id uuid.UUID) error
 	Cancel(id uuid.UUID) error
@@ -235,7 +240,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(r.Context(), id)
+	inst, err := h.service.GetInstance(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -401,17 +406,12 @@ func (h *InstanceHandler) GetTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
+	execs, err := h.service.GetTrace(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
-	execs, err := h.nodeExecs.ListByInstance(r.Context(), id)
-	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list trace records")
 		return
 	}
@@ -431,19 +431,12 @@ func (h *InstanceHandler) GetNodeTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
-		if errors.Is(err, instance.ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
 	nodeID := chi.URLParam(r, "nodeId")
-	exec, err := h.nodeExecs.GetByInstanceAndNode(r.Context(), id, nodeID)
+	exec, err := h.service.GetNodeTrace(r.Context(), id, nodeID)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
+			// Covers both an unauthorized/absent instance and a missing node
+			// execution; the message stays node-oriented to match prior behavior.
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "node execution not found: "+nodeID)
 			return
 		}
@@ -481,7 +474,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, err := h.instances.Get(r.Context(), id)
+	vars, err := h.service.GetVariables(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
@@ -491,7 +484,7 @@ func (h *InstanceHandler) GetVariables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, inst.Variables)
+	WriteJSON(w, http.StatusOK, vars)
 }
 
 // GetVariableHistory handles GET /instances/{id}/variables/history and returns
@@ -503,17 +496,12 @@ func (h *InstanceHandler) GetVariableHistory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := h.instances.Get(r.Context(), id); err != nil {
+	snaps, err := h.service.GetVariableHistory(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
-		return
-	}
-
-	snaps, err := h.snapshots.ListByInstance(r.Context(), id)
-	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list variable history")
 		return
 	}

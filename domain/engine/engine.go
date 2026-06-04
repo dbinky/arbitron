@@ -239,6 +239,72 @@ func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters
 	return e.instances.List(ctx, filters)
 }
 
+// GetInstance loads an instance the caller may view, else ErrNotFound. Both an
+// absent instance and a not-owned instance collapse to ErrNotFound so existence
+// is never leaked to a non-owner non-admin.
+func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	inst, err := e.instances.Get(ctx, id)
+	if err != nil {
+		return nil, err // already ErrNotFound-wrapped on absence; infra errors pass through
+	}
+	if inst == nil {
+		// Defensive: a repo that returns (nil, nil) is treated as absence so the
+		// caller never dereferences a nil instance and existence is not leaked.
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	if !canView(ctx, inst.OwnerID) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	return inst, nil
+}
+
+// authorizeView is the shared guard for the sub-resource reads (trace,
+// variables, history): it loads the owning instance and returns ErrNotFound if
+// the caller may not view it. It returns the loaded instance for callers that
+// need its fields (e.g. GetVariables). Sub-resource repos are only touched after
+// this guard passes, so a non-viewer never causes a node-execution or snapshot
+// read.
+func (e *Engine) authorizeView(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	return e.GetInstance(ctx, id)
+}
+
+// GetTrace returns the ordered node executions for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.nodeExecutions.ListByInstance(ctx, id)
+}
+
+// GetNodeTrace returns a single node execution for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.nodeExecutions.GetByInstanceAndNode(ctx, id, nodeID)
+}
+
+// GetVariables returns the current variables for an instance the caller may
+// view, else ErrNotFound.
+func (e *Engine) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	inst, err := e.authorizeView(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return inst.Variables, nil
+}
+
+// GetVariableHistory returns the variable snapshot history for an instance the
+// caller may view, else ErrNotFound.
+func (e *Engine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if _, err := e.authorizeView(ctx, id); err != nil {
+		return nil, err
+	}
+	return e.snapshots.ListByInstance(ctx, id)
+}
+
 // StartInstance transitions a queued instance to running and launches the
 // graph walker goroutine. It implements queue.InstanceStarter.
 func (e *Engine) StartInstance(ctx context.Context, id uuid.UUID) error {

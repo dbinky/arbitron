@@ -50,9 +50,14 @@ func authedRouter(next http.Handler) http.Handler {
 
 // routerMockService implements both WorkflowService and InstanceService.
 type routerMockService struct {
-	triggerFn     func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
-	listFn        func() ([]instance.InstanceSummary, error)
-	pauseFn       func(id uuid.UUID) error
+	triggerFn      func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	listFn         func() ([]instance.InstanceSummary, error)
+	getFn          func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn        func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn    func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn    func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	pauseFn        func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
 	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
@@ -70,6 +75,41 @@ func (m *routerMockService) Trigger(_ context.Context, workflowName string, vari
 func (m *routerMockService) ListInstances(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if m.listFn != nil {
 		return m.listFn()
+	}
+	return nil, nil
+}
+
+func (m *routerMockService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if m.traceFn != nil {
+		return m.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *routerMockService) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if m.nodeTraceFn != nil {
+		return m.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if m.variablesFn != nil {
+		return m.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *routerMockService) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if m.variableHistFn != nil {
+		return m.variableHistFn(ctx, id)
 	}
 	return nil, nil
 }
@@ -140,6 +180,35 @@ func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRep
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &routerMockService{}
+	// Default the scoped read services to the repos (unconstrained scope) so
+	// router-level route tests that seed the repos keep asserting 200 OK on the
+	// read endpoints; scoping is unit-tested in the engine.
+	svc.getFn = instRepo.Get
+	svc.traceFn = func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.ListByInstance(ctx, id)
+	}
+	svc.nodeTraceFn = func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+	}
+	svc.variablesFn = func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+		inst, err := instRepo.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Variables, nil
+	}
+	svc.variableHistFn = func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return snapRepo.ListByInstance(ctx, id)
+	}
 	fileReader := newMockFileReader()
 	bus := eventbus.NewNoOp()
 	cfg := &config.Config{

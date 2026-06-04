@@ -74,6 +74,11 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 type stubEngine struct {
 	triggerFn     func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
 	listFn        func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn         func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn       func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn   func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn   func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	varHistFn     func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
 	pauseFn       func(id uuid.UUID) error
 	resumeFn      func(id uuid.UUID) error
 	cancelFn      func(id uuid.UUID) error
@@ -92,6 +97,41 @@ func (s *stubEngine) Trigger(_ context.Context, wfName string, vars map[string]a
 func (s *stubEngine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if s.listFn != nil {
 		return s.listFn(ctx, filters)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if s.traceFn != nil {
+		return s.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (s *stubEngine) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if s.nodeTraceFn != nil {
+		return s.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if s.variablesFn != nil {
+		return s.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (s *stubEngine) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if s.varHistFn != nil {
+		return s.varHistFn(ctx, id)
 	}
 	return nil, nil
 }
@@ -148,6 +188,11 @@ func newInstanceServer(instRepo *stubInstanceRepo, eng *stubEngine) *adaptmcp.Se
 	if eng.listFn == nil && instRepo != nil {
 		eng.listFn = func(ctx context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
 			return instRepo.List(ctx, f)
+		}
+	}
+	if eng.getFn == nil && instRepo != nil {
+		eng.getFn = func(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+			return instRepo.Get(ctx, id)
 		}
 	}
 	deps := &adaptmcp.Deps{

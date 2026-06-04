@@ -272,18 +272,58 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
-	listFn        func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
-	pauseFn       func(id uuid.UUID) error
-	resumeFn      func(id uuid.UUID) error
-	cancelFn      func(id uuid.UUID) error
-	retryFn       func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn       func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn func(id uuid.UUID, priority string) error
+	listFn           func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn            func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn          func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn      func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn      func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn   func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	pauseFn          func(id uuid.UUID) error
+	resumeFn         func(id uuid.UUID) error
+	cancelFn         func(id uuid.UUID) error
+	retryFn          func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn          func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn    func(id uuid.UUID, priority string) error
 }
 
 func (m *mockInstanceService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if m.listFn != nil {
 		return m.listFn(ctx, filters)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
+	if m.getFn != nil {
+		return m.getFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+	if m.traceFn != nil {
+		return m.traceFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockInstanceService) GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+	if m.nodeTraceFn != nil {
+		return m.nodeTraceFn(ctx, id, nodeID)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetVariables(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+	if m.variablesFn != nil {
+		return m.variablesFn(ctx, id)
+	}
+	return nil, instance.ErrNotFound
+}
+
+func (m *mockInstanceService) GetVariableHistory(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+	if m.variableHistFn != nil {
+		return m.variableHistFn(ctx, id)
 	}
 	return nil, nil
 }
@@ -354,13 +394,74 @@ func newInstanceHandler() (*adapthttp.InstanceHandler, *mockInstanceRepo, *mockN
 	nodeExecRepo := newMockNodeExecRepo()
 	snapRepo := newMockSnapshotRepo()
 	svc := &mockInstanceService{}
-	// By default the scoped list service delegates to the repo (admin-equivalent,
-	// unconstrained scope) so List filter tests that seed instRepo keep passing.
-	// Scoping itself is unit-tested in the engine; these tests cover the handler
-	// wiring (delegation to the service) and query-param parsing.
+	// By default the scoped read/list services delegate to the repos
+	// (admin-equivalent, unconstrained scope) so existing handler tests that seed
+	// the repos keep passing. Scoping itself is unit-tested in the engine; these
+	// tests cover the handler wiring (delegation to the service) and parsing.
 	svc.listFn = instRepo.List
+	svc.getFn = instRepo.Get
+	svc.traceFn = func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.ListByInstance(ctx, id)
+	}
+	svc.nodeTraceFn = func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+	}
+	svc.variablesFn = func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+		inst, err := instRepo.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return inst.Variables, nil
+	}
+	svc.variableHistFn = func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+		if _, err := instRepo.Get(ctx, id); err != nil {
+			return nil, err
+		}
+		return snapRepo.ListByInstance(ctx, id)
+	}
 	h := adapthttp.NewInstanceHandler(instRepo, nodeExecRepo, snapRepo, svc)
 	return h, instRepo, nodeExecRepo, snapRepo, svc
+}
+
+// serviceOverRepos builds a mockInstanceService whose read methods delegate to
+// the given repos (unconstrained scope), so the pre-existing internal-error
+// path tests — which seed error repos and expect the handler to surface 500 —
+// keep exercising the same repo error through the service seam.
+func serviceOverRepos(instRepo instance.InstanceRepository, nodeExecRepo instance.NodeExecutionRepository, snapRepo instance.VariableSnapshotRepository) *mockInstanceService {
+	return &mockInstanceService{
+		getFn: instRepo.Get,
+		traceFn: func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return nodeExecRepo.ListByInstance(ctx, id)
+		},
+		nodeTraceFn: func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return nodeExecRepo.GetByInstanceAndNode(ctx, id, nodeID)
+		},
+		variablesFn: func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+			inst, err := instRepo.Get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return inst.Variables, nil
+		},
+		variableHistFn: func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+			if _, err := instRepo.Get(ctx, id); err != nil {
+				return nil, err
+			}
+			return snapRepo.ListByInstance(ctx, id)
+		},
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -927,6 +1028,28 @@ func TestInstanceHandler_GetTrace(t *testing.T) {
 		assert.Len(t, resp, 2)
 	})
 
+	t.Run("non-owner gets 404 identical to a missing instance (no existence leak)", func(t *testing.T) {
+		// The scoped service returns ErrNotFound for a non-owner; the handler must
+		// surface a 404 whose body is identical to a genuinely missing instance.
+		id := uuid.New()
+		notFoundSvc := &mockInstanceService{
+			traceFn: func(_ context.Context, _ uuid.UUID) ([]instance.NodeExecution, error) {
+				return nil, instance.ErrNotFound
+			},
+		}
+		h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), notFoundSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.GetTrace(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "NOT_FOUND", resp.Code)
+	})
+
 	t.Run("returns 400 for bad UUID", func(t *testing.T) {
 		h, _, _, _, _ := newInstanceHandler()
 
@@ -1126,7 +1249,9 @@ func TestInstanceHandler_GetVariableHistory(t *testing.T) {
 		instRepo := newMockInstanceRepo()
 		inst := testInstance(instance.StateCompleted)
 		instRepo.instances[inst.ID] = inst
-		h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), &errSnapshotRepo{err: fmt.Errorf("db down")}, &mockInstanceService{})
+		nodeRepo := newMockNodeExecRepo()
+		snapRepo := &errSnapshotRepo{err: fmt.Errorf("db down")}
+		h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, snapRepo, serviceOverRepos(instRepo, nodeRepo, snapRepo))
 
 		req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/variables/history", nil)
 		req = withChiURLParam(req, "id", inst.ID.String())
@@ -1158,7 +1283,8 @@ func TestInstanceHandler_List_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_Get_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String(), nil)
@@ -1240,7 +1366,8 @@ func TestInstanceHandler_GetTrace_NodeExecsError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	inst := testInstance(instance.StateCompleted)
 	instRepo.instances[inst.ID] = inst
-	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+	nodeRepo := &errNodeExecRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, newMockSnapshotRepo(), serviceOverRepos(instRepo, nodeRepo, newMockSnapshotRepo()))
 
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace", nil)
 	req = withChiURLParam(req, "id", inst.ID.String())
@@ -1254,7 +1381,8 @@ func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	inst := testInstance(instance.StateRunning)
 	instRepo.instances[inst.ID] = inst
-	h := adapthttp.NewInstanceHandler(instRepo, &errNodeExecRepo{err: fmt.Errorf("db down")}, newMockSnapshotRepo(), &mockInstanceService{})
+	nodeRepo := &errNodeExecRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, nodeRepo, newMockSnapshotRepo(), serviceOverRepos(instRepo, nodeRepo, newMockSnapshotRepo()))
 
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String()+"/trace/A", nil)
 	req = withChiURLParam(req, "id", inst.ID.String())
@@ -1266,7 +1394,8 @@ func TestInstanceHandler_GetNodeTrace_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetNodeTrace_InstanceNotFound(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := newMockInstanceRepo()
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
@@ -1279,7 +1408,8 @@ func TestInstanceHandler_GetNodeTrace_InstanceNotFound(t *testing.T) {
 }
 
 func TestInstanceHandler_GetNodeTrace_InstanceRepoError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/trace/A", nil)
@@ -1292,7 +1422,8 @@ func TestInstanceHandler_GetNodeTrace_InstanceRepoError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetVariables_InternalError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables", nil)
@@ -1304,7 +1435,8 @@ func TestInstanceHandler_GetVariables_InternalError(t *testing.T) {
 }
 
 func TestInstanceHandler_GetVariableHistory_InstanceError(t *testing.T) {
-	h := adapthttp.NewInstanceHandler(&errInstanceRepo{err: fmt.Errorf("db down")}, newMockNodeExecRepo(), newMockSnapshotRepo(), &mockInstanceService{})
+	instRepo := &errInstanceRepo{err: fmt.Errorf("db down")}
+	h := adapthttp.NewInstanceHandler(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo(), serviceOverRepos(instRepo, newMockNodeExecRepo(), newMockSnapshotRepo()))
 
 	id := uuid.New()
 	req := httptest.NewRequest(http.MethodGet, "/instances/"+id.String()+"/variables/history", nil)

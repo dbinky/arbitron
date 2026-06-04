@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -53,10 +54,39 @@ func (s *stubSnapshotRepo) ListByInstance(ctx context.Context, id uuid.UUID) ([]
 // --- Helpers ---
 
 func newTraceServer(nodeExecs *stubNodeExecRepo, snapshots *stubSnapshotRepo, instRepo *stubInstanceRepo) *adaptmcp.Server {
+	// Trace tools now flow through the scoped Engine read services. Build an
+	// engine stub that delegates to the repos (unconstrained scope) so the
+	// existing trace tests keep exercising the same repo behavior; scoping is
+	// unit-tested in the engine package.
+	eng := &stubEngine{
+		traceFn: func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+			return nodeExecs.ListByInstance(ctx, id)
+		},
+		nodeTraceFn: func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error) {
+			return nodeExecs.GetByInstanceAndNode(ctx, id, nodeID)
+		},
+		varHistFn: func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error) {
+			return snapshots.ListByInstance(ctx, id)
+		},
+	}
+	if instRepo != nil {
+		eng.variablesFn = func(ctx context.Context, id uuid.UUID) (map[string]any, error) {
+			inst, err := instRepo.Get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if inst == nil {
+				// Mirror engine.GetInstance: (nil, nil) from a repo is absence.
+				return nil, instance.ErrNotFound
+			}
+			return inst.Variables, nil
+		}
+	}
 	deps := &adaptmcp.Deps{
 		NodeExecs: nodeExecs,
 		Snapshots: snapshots,
 		Instances: instRepo,
+		Engine:    eng,
 	}
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 	adaptmcp.RegisterTraceTools(srv)
@@ -113,6 +143,32 @@ func TestTraceGet(t *testing.T) {
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
 		assert.Equal(t, "[]", text)
+	})
+
+	t.Run("non-owner gets the same not-found tool error as a missing instance", func(t *testing.T) {
+		// The scoped engine returns ErrNotFound for a non-owner; the node-exec repo
+		// must never be queried, and the surfaced tool error must be identical to a
+		// genuinely missing instance (no existence leak).
+		queried := false
+		nodeRepo := &stubNodeExecRepo{
+			listByInstanceFn: func(_ context.Context, _ uuid.UUID) ([]instance.NodeExecution, error) {
+				queried = true
+				return nil, nil
+			},
+		}
+		eng := &stubEngine{
+			traceFn: func(_ context.Context, id uuid.UUID) ([]instance.NodeExecution, error) {
+				return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+			},
+		}
+		deps := &adaptmcp.Deps{NodeExecs: nodeRepo, Snapshots: &stubSnapshotRepo{}, Engine: eng}
+		srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+		adaptmcp.RegisterTraceTools(srv)
+
+		result := callTool(t, srv, "trace_get", map[string]any{"id": uuid.New().String()})
+		assert.True(t, result.IsError)
+		assert.Contains(t, extractText(t, result), "not found")
+		assert.False(t, queried, "trace must not be read for a non-owner")
 	})
 }
 
