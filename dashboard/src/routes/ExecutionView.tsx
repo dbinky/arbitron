@@ -8,6 +8,7 @@ import type { WorkflowDefinition, NodeExecutionState } from '../graph/types'
 import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
+import { edgeTypes } from '../graph/edges/edgeTypes'
 import { useInstanceWebSocket } from '../hooks/useInstanceWebSocket'
 import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
 import { useInteractiveSession } from '../hooks/useInteractiveSession'
@@ -103,6 +104,7 @@ export function GraphView({
         nodes={nodesWithSelection}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
         fitView
         fitViewOptions={{ padding: 0.2 }}
