@@ -98,3 +98,21 @@ describe('useFollowActiveNode — pause on user interaction', () => {
     expect(setCenter).not.toHaveBeenCalled()
   })
 })
+
+describe('useFollowActiveNode — recenter', () => {
+  it('re-engages following and centers on the current anchor at DEFAULT_ZOOM', () => {
+    const { result } = renderHook(() =>
+      useFollowActiveNode({ x: 10, y: 20 }, true),
+    )
+    // Pause first.
+    act(() => result.current.onMoveStart({ type: 'pointerdown' }))
+    expect(result.current.following).toBe(false)
+    setCenter.mockClear()
+
+    act(() => result.current.recenter())
+
+    expect(result.current.following).toBe(true)
+    expect(setCenter).toHaveBeenCalledTimes(1)
+    expect(setCenter).toHaveBeenCalledWith(10, 20, { zoom: 0.9 })
+  })
+})
