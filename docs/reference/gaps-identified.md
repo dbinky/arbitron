@@ -6,6 +6,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Fixed Previously
 
+### GAP-FA15-P1-01: `SaveNodePositions` had zero test coverage
+**Area**: Focus Area 15 — Workflow scope & repo (Pass 1)
+**Fix**: Added five tests to `adapter/filesystem/workflow_repo_test.go`: `TestWorkflowRepo_SaveNodePositions_HappyPath` (positions persisted atomically, no .tmp artifacts remain, node Position fields set on reload), `TestWorkflowRepo_SaveNodePositions_NotFound` (ErrNotFound for missing workflow), `TestWorkflowRepo_SaveNodePositions_PathTraversalRejected` (traversal name mapped to ErrNotFound, consistent with Load), `TestWorkflowRepo_SaveNodePositions_EmptyPositionsMap` (no-op, manifest intact), and `TestWorkflowRepo_SaveNodePositions_UnknownNodeIDsIgnored` (positions whose IDs don't match any node are silently skipped, manifest remains valid). Also added the `strings` import required by the atomic-write artifact assertion in the happy-path test.
+
 ### GAP-FA14-P2-01: Successful demotion (admin → user) never tested on REST or MCP surfaces
 **Area**: Focus Area 14 — Role management (Pass 2)
 **Fix**: Extended `TestUserHandler_HappyPath` in `adapter/http/user_handler_test.go` and `TestUserTools_HappyPath` in `adapter/mcp/tools_user_test.go` to include a successful demotion after promotion. Both tests seed a second admin to satisfy the last-admin floor, then demote the original target and assert 200/non-error + role is now `user`. This proves the full promote→demote round-trip works end-to-end on both surfaces and that the domain's authorization is wired correctly.
