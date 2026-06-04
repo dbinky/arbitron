@@ -8,6 +8,13 @@ _(none)_
 
 ## Fixed Previously
 
+### DISMISS-001: waiting and paused states not tested against dismiss guard at handler and UI layer
+**Area**: Per-user dismissal state model (`adapter/http/dismissal_handler_test.go`, `dashboard/src/components/InstanceRow.test.tsx`)
+**Fixed**: Iteration 27
+**Detail**: The spec explicitly states "Active, waiting (interactive), and cancelled items cannot be dismissed." The handler tests covered `running` (409) and `cancelled` (409), but `waiting` — the spec's other named non-dismissible active state — was untested. `paused` was also non-dismissible but untested. Added `TestDismiss_WaitingInstance_409` and `TestDismiss_PausedInstance_409` to the handler tests. Added `waiting` and `paused` test cases to InstanceRow.test.tsx to pin the `isTerminal = failed || completed` boundary from the frontend side too.
+
+---
+
 ### ANCHOR-001: selectAnchorNodeId has no tests for paused or cancelled instance states
 **Area**: Domain viewport behavior (`dashboard/src/graph/selectAnchorNodeId.test.ts`)
 **Fixed**: Iteration 26

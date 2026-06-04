@@ -171,6 +171,40 @@ func TestDismiss_NonTerminal_409(t *testing.T) {
 	assert.Equal(t, 409, resp.StatusCode)
 }
 
+// Edge: a waiting (interactive) instance cannot be dismissed.
+// The spec explicitly names "waiting (interactive)" alongside "active" and "cancelled"
+// as non-dismissible states. isDismissibleState is completed||failed only.
+func TestDismiss_WaitingInstance_409(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StateWaiting,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
+// Edge: a paused instance cannot be dismissed — same guard as waiting and running.
+func TestDismiss_PausedInstance_409(t *testing.T) {
+	user := uuid.New()
+	instRepo := newMockInstanceRepo()
+	id := uuid.New()
+	require.NoError(t, instRepo.Create(context.Background(), &instance.Instance{
+		ID: id, OwnerID: user, WorkflowName: "wf", State: instance.StatePaused,
+	}))
+	srv := newDismissalTestServer(t, instRepo, newMockDismissalRepo(), &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp := doPOST(t, srv.URL+"/api/v1/instances/"+id.String()+"/dismiss")
+	defer resp.Body.Close()
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
 // Edge: a cancelled instance is terminal in the stream handler's sense but
 // isDismissibleState is narrower — only completed/failed can be dismissed.
 // A widening of that guard (to include cancelled) must not silently pass.

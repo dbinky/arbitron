@@ -56,4 +56,18 @@ describe('InstanceRow dismissal controls', () => {
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
   })
+
+  // Edge: spec explicitly names "waiting (interactive)" as non-dismissible alongside
+  // "active" and "cancelled". Pin this so widening isTerminal to include waiting is visible.
+  it('shows no dismiss/restore control on waiting rows', () => {
+    renderRow({ instance: summary({ state: 'waiting' }), onDismiss: vi.fn(), onRestore: vi.fn() })
+    expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
+  })
+
+  it('shows no dismiss/restore control on paused rows', () => {
+    renderRow({ instance: summary({ state: 'paused' }), onDismiss: vi.fn(), onRestore: vi.fn() })
+    expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
+  })
 })
