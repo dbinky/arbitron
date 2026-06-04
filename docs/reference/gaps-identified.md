@@ -8,6 +8,11 @@ _(none)_
 
 ## Fixed Previously
 
+### LIST-002: All-dismissed edge case: empty-array vs null response untested
+**Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
+**Fixed**: Iteration 16
+**Detail**: When all items in the window are dismissed and `includeDismissed=false`, the handler skips every item in its loop and returns the `make([]summaryResponse, 0, ...)` slice (non-nil). JSON serialization of a non-nil empty slice is `[]`, not `null`. Frontend code doing `.map()` or `.length` on the response must not receive `null`. `TestList_AllDismissed_ReturnsEmptyArray` verifies the response is 200 with a non-nil empty JSON array.
+
 ### LIST-001: Error-path coverage missing for List dismissed-marking
 **Area**: Instance list dismissed-marking (`adapter/http/instance_list_dismissal_test.go`)
 **Fixed**: Iteration 15

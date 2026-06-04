@@ -81,6 +81,36 @@ func TestList_IncludeDismissed_MarksAndKeepsOrder(t *testing.T) {
 	assert.False(t, flags[b.String()], "non-dismissed item marked dismissed=false")
 }
 
+// Edge: when every item in the window is dismissed, the response is [] (not null).
+// The handler uses make([]summaryResponse, 0, …) which encodes as [] even after
+// an all-skip loop. Frontend code doing .map() or .length on the result must not
+// receive null.
+func TestList_AllDismissed_ReturnsEmptyArray(t *testing.T) {
+	user := uuid.New()
+	ctx := context.Background()
+	instRepo := newMockInstanceRepo()
+	a := uuid.New()
+	b := uuid.New()
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: a, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	require.NoError(t, instRepo.Create(ctx, &instance.Instance{ID: b, OwnerID: user, WorkflowName: "wf", State: instance.StateFailed}))
+	dis := newMockDismissalRepo()
+	require.NoError(t, dis.Dismiss(ctx, user, a))
+	require.NoError(t, dis.Dismiss(ctx, user, b))
+
+	srv := newDismissalTestServer(t, instRepo, dis, &mockUserRepo{id: user})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/instances?state=failed")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	var items []listItem
+	require.NoError(t, json.Unmarshal(body, &items))
+	assert.NotNil(t, items, "all-dismissed list must serialize as [] not null")
+	assert.Empty(t, items, "all dismissed items must be omitted by default")
+}
+
 // Error: DismissedIDs repo error causes List to return 500.
 func TestList_DismissalRepoError_500(t *testing.T) {
 	srv := newDismissalTestServer(t, newMockInstanceRepo(), &errDismissalRepo{err: fmt.Errorf("db down")}, &mockUserRepo{id: uuid.New()})

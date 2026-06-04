@@ -20,7 +20,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 5 | Follow-active-node + Recenter control (`dashboard/src/graph/useFollowActiveNode.ts` — follow on advance, pause on manual move, reduced-motion, re-engage) | [x] | [x] | Done |
 | 6 | Dismissal persistence (`adapter/sqlite/dismissal_repo.go`, `migrations/003_instance_dismissals.*`, `domain/instance` DismissalRepository — idempotency, scoping, cascade) | [x] | [x] | Done |
 | 7 | Dismissal HTTP handlers + routes + acting-user seam (`adapter/http/*`, `currentUser(r)` — dismiss/restore/dismiss-all, guards) | [x] | [x] | Done |
-| 8 | Instance list dismissed-marking (`adapter/http/instance_handler.go` — `dismissed` flag, `includeDismissed`, default omit, order preserved) | [x] | [ ] | |
+| 8 | Instance list dismissed-marking (`adapter/http/instance_handler.go` — `dismissed` flag, `includeDismissed`, default omit, order preserved) | [x] | [x] | Done |
 | 9 | Engine retry resurface + wiring (`domain/engine/engine.go`, `cmd/arbitron/main.go` — Retry→ClearForInstance, SetDismissals, rerun new-instance) | [ ] | [ ] | |
 | 10 | Queue dismissal UI (`dashboard/src/routes/QueueView.tsx`, `components/QueueSection.tsx`, `components/InstanceRow.tsx`, `api/client.ts`, `api/types.ts` — [x], [Dismiss All], Show/Hide toggle, dimming, ↺ restore) | [ ] | [ ] | |
 | 11 | Domain: loop semantics end-to-end (workflow def back-edge + label → detection → layout/container → on-screen) | [ ] | [ ] | |
