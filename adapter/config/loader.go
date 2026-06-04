@@ -61,6 +61,13 @@ func defaults() map[string]interface{} {
 		"auth.session.ttlseconds":   43200, // 12h
 		"auth.session.cookiename":   "arbitron_session",
 		"auth.session.cookiesecure": true,
+		// RBAC (auth mode only). With an empty groupclaim and no leads, every
+		// authenticated user is a member of the single default group.
+		"auth.rbac.groupclaim":   "",
+		"auth.rbac.defaultgroup": "default",
+		// auth.rbac.leads is a map[string][]string; it has no flat default (an
+		// absent key unmarshals to a nil map). Configured via YAML or the
+		// ARBITRON_AUTH_RBAC_LEADS_<DEPT> env overlay below.
 		// Profile registry: alias -> capability kind + model-id. A fresh
 		// install ships a chat/agent pair so a basic workflow validates; empty
 		// model means "use the claude-cli default model" (cfg.LLM.Model).
@@ -213,6 +220,14 @@ tracing:
 #     ttlseconds: 43200      # 12h; floored to the default if non-positive
 #     cookiename: "arbitron_session"
 #     cookiesecure: true     # set false ONLY for local http dev
+#   rbac:
+#     groupclaim: ""           # token claim carrying group membership; "" => default group only
+#                              #   Override via ARBITRON_AUTH_RBAC_GROUPCLAIM=groups
+#     defaultgroup: "default"  # sentinel department for claimless users
+#                              #   Override via ARBITRON_AUTH_RBAC_DEFAULTGROUP=default
+#     leads:                   # department -> list of lead subjects/emails (case-insensitive)
+#       engineering: ["alice@corp.example", "bob-subject-id"]
+#                              #   Per-dept env overlay: ARBITRON_AUTH_RBAC_LEADS_ENGINEERING=alice@corp.example,bob-subject-id
 `
 }
 
@@ -292,6 +307,32 @@ func Load(configPath string) (*domainconfig.Config, error) {
 			"auth.oidc.scopes": splitCSV(raw),
 		}, "."), nil); err != nil {
 			return nil, fmt.Errorf("loading auth.oidc.scopes: %w", err)
+		}
+	}
+
+	// ARBITRON_AUTH_RBAC_LEADS_<DEPT>=id1,id2 overlays one department's lead list
+	// as a real slice (the env provider would otherwise leave it a comma string).
+	// Department names with non-alphanumeric characters are not expressible via
+	// env and must use the YAML file. Example:
+	//   ARBITRON_AUTH_RBAC_LEADS_ENGINEERING=alice@corp.example,bob-subject
+	const leadsEnvPrefix = "ARBITRON_AUTH_RBAC_LEADS_"
+	for _, kv := range os.Environ() {
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			continue
+		}
+		name, val := kv[:eq], kv[eq+1:]
+		if !strings.HasPrefix(name, leadsEnvPrefix) || val == "" {
+			continue
+		}
+		dept := strings.ToLower(strings.TrimPrefix(name, leadsEnvPrefix))
+		if dept == "" {
+			continue
+		}
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.rbac.leads." + dept: splitCSV(val),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.rbac.leads.%s: %w", dept, err)
 		}
 	}
 

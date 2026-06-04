@@ -26,8 +26,33 @@ type AuthConfig struct {
 	// first login. Declared here so the config shape is complete; CONSUMED in
 	// Phase 2 (JIT provisioning). Phase 1 reads but does not enforce it.
 	BootstrapAdmins []string
-	OIDC            OIDCConfig
-	Session         SessionConfig
+	// RBAC holds the role-based-access-control settings (auth mode only). With
+	// an empty GroupClaim and no Leads, every authenticated user is a member of
+	// the single DefaultGroup — the deployment behaves as one shared workspace
+	// with administrators. CONSUMED by the group-resolution helper and the
+	// provisioner/middleware (RBAC Phase 1).
+	RBAC    RBACConfig
+	OIDC    OIDCConfig
+	Session SessionConfig
+}
+
+// RBACConfig configures department-based RBAC (auth mode only). It is the
+// load-time shape; adapter/config maps it into the resolution-time
+// identity.GroupConfig (kept separate so domain/config imports nothing from
+// domain/identity).
+type RBACConfig struct {
+	// GroupClaim is the token claim name carrying a user's group membership.
+	// Empty ("") means no claim is read and every user falls back to the default
+	// group only.
+	GroupClaim string
+	// DefaultGroup is the sentinel department for claimless users. Defaults to
+	// "default".
+	DefaultGroup string
+	// Leads maps a department name to the identifiers (subjects and/or emails) of
+	// its lead users. Department keys and identifiers are normalized to lower-case
+	// at load. A lead of a department always sees and can publish-to-public that
+	// department even if their token omits it.
+	Leads map[string][]string
 }
 
 // OIDCConfig configures the self-hosted OIDC authorization-code login flow.
