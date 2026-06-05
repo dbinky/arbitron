@@ -40,12 +40,14 @@ const visibilityFilter = "visibility IN ('department','public')"
 //     a department IN (…) clause alone would drop them entirely.
 func scopeFilter(p dashboard.AggregateParams) (string, []any) {
 	if p.AllDepartments {
-		return visibilityFilter, nil
+		// Admin whole-org view: no department restriction (the visibilityFilter
+		// each query appends still excludes private runs).
+		return "1=1", nil
 	}
 	if len(p.Departments) == 0 {
 		// No visible departments, but PUBLIC runs are visible to everyone — they
 		// are the cross-department lane (since PR #21 public runs carry no
-		// department). So a zero-department caller still sees the public lane.
+		// department). So a zero-department caller still sees only the public lane.
 		return "visibility = 'public'", nil
 	}
 	marks := make([]string, len(p.Departments))
@@ -54,8 +56,9 @@ func scopeFilter(p dashboard.AggregateParams) (string, []any) {
 		marks[i] = "?"
 		args[i] = d
 	}
-	// (department IN (…) OR visibility='public') AND <department|public only>
-	clause := "(department IN (" + strings.Join(marks, ",") + ") OR visibility = 'public') AND " + visibilityFilter
+	// Department lane (the requested departments) plus the always-visible public
+	// (cross-department) lane. visibilityFilter is appended by each query.
+	clause := "(department IN (" + strings.Join(marks, ",") + ") OR visibility = 'public')"
 	return clause, args
 }
 
@@ -186,46 +189,51 @@ WHERE ` + deptClause + ` AND ` + visibilityFilter + `
 }
 
 // p95Duration computes the 95th-percentile completed-run duration over the
-// window using a row-count offset (portable, no PERCENTILE_CONT in SQLite).
+// window. The percentile is pushed DOWN into SQL — a single sorted row is
+// returned via LIMIT 1 OFFSET <nearest-rank index> — instead of materializing
+// every completed-run duration in Go and indexing in memory (PR #21). The
+// nearest-rank index (ceil(0.95*N)-1, 0-based, clamped to [0,N-1]) is computed in
+// a correlated count subquery so the whole computation runs in the database.
+//
+// Nearest-rank is preserved exactly: index = CAST(0.95*N + 0.999999 AS INTEGER) -
+// 1, matching the prior in-Go formula. The same filter args are bound twice (the
+// inner count and the outer ordered scan).
 func (r *DashboardRepo) p95Duration(ctx context.Context, deptClause string, deptArgs []any, windowStart string) (float64, error) {
-	durs := `
+	const where = ` AND ` + visibilityFilter + `
+  AND created_at >= ?
+  AND state = 'completed' AND completed_at IS NOT NULL`
+
+	query := `
 SELECT (julianday(completed_at) - julianday(created_at)) * 86400.0 AS secs
 FROM instances
-WHERE ` + deptClause + ` AND ` + visibilityFilter + `
-  AND created_at >= ?
-  AND state = 'completed' AND completed_at IS NOT NULL
-ORDER BY secs ASC`
+WHERE ` + deptClause + where + `
+ORDER BY secs ASC
+LIMIT 1 OFFSET (
+  SELECT MAX(0, MIN(
+    CAST(0.95 * COUNT(*) + 0.999999 AS INTEGER) - 1,
+    COUNT(*) - 1
+  ))
+  FROM instances
+  WHERE ` + deptClause + where + `
+)`
 
-	args := append(append([]any{}, deptArgs...), windowStart)
-	rows, err := r.db.QueryContext(ctx, durs, args...)
+	// Args order matches placeholder order: outer scan filter, then the inner
+	// count subquery filter (deptArgs + windowStart each, twice).
+	args := make([]any, 0, 2*(len(deptArgs)+1))
+	args = append(args, deptArgs...)
+	args = append(args, windowStart)
+	args = append(args, deptArgs...)
+	args = append(args, windowStart)
+
+	var secs float64
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(&secs)
+	if err == sql.ErrNoRows {
+		return 0, nil // no completed runs in the window
+	}
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-
-	var all []float64
-	for rows.Next() {
-		var s float64
-		if err := rows.Scan(&s); err != nil {
-			return 0, err
-		}
-		all = append(all, s)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(all) == 0 {
-		return 0, nil
-	}
-	// Nearest-rank: index of ceil(0.95*N)-1, already sorted ascending.
-	idx := int(0.95*float64(len(all)) + 0.999999) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(all) {
-		idx = len(all) - 1
-	}
-	return all[idx], nil
+	return secs, nil
 }
 
 // perWorkflow returns per-workflow runs/failure-rate/avg-duration, ranked by

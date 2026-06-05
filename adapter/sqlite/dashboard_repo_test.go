@@ -283,3 +283,46 @@ func TestDashboardAggregate_P95Duration(t *testing.T) {
 		"P95DurationSeconds must be positive when completed runs exist")
 	assert.Equal(t, 10, out.Outcomes.TotalRuns)
 }
+
+// PR #21 (p95 SQL push-down): the SQL nearest-rank percentile must equal the
+// prior in-Go formula exactly. Each run i has duration i seconds, so durations
+// are [1,2,…,10]; the nearest-rank index ceil(0.95*10)-1 = 9 selects the 10th
+// value = 10s.
+func TestDashboardAggregate_P95Duration_ExactNearestRank(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	base := now.Add(-2 * time.Hour)
+
+	// 10 completed runs with durations 1s, 2s, ... 10s.
+	for i := 1; i <= 10; i++ {
+		created := base.Add(time.Duration(i) * time.Second).Format("2006-01-02T15:04:05Z")
+		completed := base.Add(time.Duration(i)*time.Second + time.Duration(i)*time.Second).Format("2006-01-02T15:04:05Z")
+		seedDashInstance(t, db, "wf", "engineering", "public", "completed", created, dptr(completed))
+	}
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 6 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.InDelta(t, 10.0, out.Outcomes.P95DurationSeconds, 0.01,
+		"nearest-rank p95 of [1..10] is the 10th value = 10s (SQL push-down matches the in-Go formula)")
+}
+
+// A single completed run: nearest-rank index ceil(0.95*1)-1 = 0, so p95 is that
+// one run's duration (the offset never goes negative).
+func TestDashboardAggregate_P95Duration_SingleRun(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	created := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+	completed := now.Add(-1*time.Hour + 5*time.Second).Format("2006-01-02T15:04:05Z")
+	seedDashInstance(t, db, "wf", "engineering", "public", "completed", created, dptr(completed))
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 6 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.InDelta(t, 5.0, out.Outcomes.P95DurationSeconds, 0.05,
+		"a single completed run is its own p95 (offset clamped to 0)")
+}

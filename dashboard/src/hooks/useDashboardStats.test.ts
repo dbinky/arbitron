@@ -90,6 +90,24 @@ describe('useDashboardStats', () => {
     expect(result.current).toBeTruthy()
   })
 
+  it('throttles a sustained event stream to fire at the max-wait ceiling', async () => {
+    vi.useFakeTimers()
+    meMock.mockResolvedValue(me())
+    statsMock.mockResolvedValue(stats())
+
+    renderHook(() => useDashboardStats(null))
+    await vi.waitFor(() => expect(statsMock).toHaveBeenCalledTimes(1))
+
+    // Fire an event every 200ms (< the 300ms debounce) so the plain debounce
+    // would keep resetting and never fire. Over 2000ms (the max-wait), the
+    // trailing-edge throttle must still fire exactly once.
+    for (let elapsed = 0; elapsed < 2000; elapsed += 200) {
+      act(() => { wsHandler?.({ type: 'instance.completed', timestamp: '', data: {} }) })
+      await act(async () => { vi.advanceTimersByTime(200) })
+    }
+    await vi.waitFor(() => expect(statsMock).toHaveBeenCalledTimes(2))
+  })
+
   it('ignores websocket events that are not state changes', async () => {
     vi.useFakeTimers()
     meMock.mockResolvedValue(me())

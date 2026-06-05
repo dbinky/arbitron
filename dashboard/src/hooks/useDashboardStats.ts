@@ -6,6 +6,13 @@ import { useSystemWebSocket } from './useSystemWebSocket'
 /** Fixed observation window for v1 (design default). */
 const WINDOW = '24h'
 const DEBOUNCE_MS = 300
+/**
+ * Trailing-edge throttle ceiling: under a continuous event stream the plain
+ * debounce would keep resetting and never fire, so the dashboard would either
+ * never refresh or (without this) refetch on every event. MAX_WAIT_MS guarantees
+ * at most one refetch per this interval while events keep arriving (PR #21).
+ */
+const MAX_WAIT_MS = 2000
 
 /** Instance lifecycle events that warrant a stats refetch. */
 const STATE_CHANGE_EVENTS = new Set([
@@ -75,19 +82,37 @@ export function useDashboardStats(selection: string[] | null): UseDashboardStats
     void fetchStats()
   }, [me, fetchStats])
 
-  // Debounced live refresh on relevant websocket events.
+  // Live refresh on relevant websocket events: a trailing-edge throttle. A burst
+  // of events coalesces into one refetch after DEBOUNCE_MS of quiet, but under a
+  // sustained stream the throttle still fires at most once per MAX_WAIT_MS so the
+  // dashboard stays current without refetching on every event.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const maxWaitRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearTimers = useCallback(() => {
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null }
+    if (maxWaitRef.current) { clearTimeout(maxWaitRef.current); maxWaitRef.current = null }
+  }, [])
+  const runFetch = useCallback(() => {
+    clearTimers()
+    void fetchStats()
+  }, [clearTimers, fetchStats])
+
   useSystemWebSocket(
     useCallback(
       (event: WebSocketEvent) => {
         if (!STATE_CHANGE_EVENTS.has(event.type)) return
+        // Trailing debounce: restart the quiet-period timer on each event.
         if (debounceRef.current) clearTimeout(debounceRef.current)
-        debounceRef.current = setTimeout(() => { void fetchStats() }, DEBOUNCE_MS)
+        debounceRef.current = setTimeout(runFetch, DEBOUNCE_MS)
+        // Max-wait ceiling: ensure a refetch fires even if events never stop.
+        if (!maxWaitRef.current) {
+          maxWaitRef.current = setTimeout(runFetch, MAX_WAIT_MS)
+        }
       },
-      [fetchStats],
+      [runFetch],
     ),
   )
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
+  useEffect(() => clearTimers, [clearTimers])
 
   return { me, stats, loading, error }
 }
