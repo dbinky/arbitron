@@ -224,3 +224,56 @@ func TestReadGating_DeptWorkflow_ListConsistency(t *testing.T) {
 	assert.False(t, containsID(saleList, instID),
 		"sales member must not see an engineering dept-visible instance — both workflow and instance gates must deny consistently")
 }
+
+// ---------------------------------------------------------------------------
+// FA #32: trigger override + list authz — audience verification
+// ---------------------------------------------------------------------------
+
+// TestTrigger_Override_ListAudienceConsistency verifies the end-to-end chain:
+// 1. Caller with [engineering, platform] triggers with override "platform"
+// 2. Instance is stamped Visibility=department, Department="platform"
+// 3. A platform member can list the instance
+// 4. An engineering member (wrong dept) cannot list it
+// 5. An engineering-only member cannot override to platform (no widening)
+func TestTrigger_Override_ListAudienceConsistency(t *testing.T) {
+	h := newTriggerHarness()
+	caller := uuid.New()
+
+	// A public-org workflow with a department publication for "engineering".
+	h.repo.put(workflow.Shared(), sharedWf("wf"))
+	setPublication(h, "wf", workflow.VisibilityDepartment, "engineering")
+
+	// Trigger with override to "platform" (caller is in both engineering and platform).
+	instID, _, err := h.engine.TriggerWithDepartment(
+		ctxDepts(caller, "engineering", "platform"),
+		"wf", nil, "normal", "platform")
+	require.NoError(t, err)
+
+	inst, err := h.instances.Get(context.Background(), instID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.VisibilityDepartment, inst.Visibility)
+	assert.Equal(t, "platform", inst.Department, "override must stamp platform, not engineering")
+
+	// Platform member can list the instance (same dept).
+	platformList, err := h.engine.ListInstances(
+		ctxDepts(uuid.New(), "platform"),
+		instance.ListFilters{})
+	require.NoError(t, err)
+	assert.True(t, containsID(platformList, instID),
+		"platform member must see the platform-overridden instance in their list")
+
+	// Engineering member cannot list it (wrong dept after override).
+	engList, err := h.engine.ListInstances(
+		ctxDepts(uuid.New(), "engineering"),
+		instance.ListFilters{})
+	require.NoError(t, err)
+	assert.False(t, containsID(engList, instID),
+		"engineering member must NOT see the instance — the override moved it to platform")
+
+	// Scope-widening guard: engineering-only caller cannot override to platform.
+	_, _, wErr := h.engine.TriggerWithDepartment(
+		ctxDepts(uuid.New(), "engineering"),
+		"wf", nil, "normal", "platform")
+	assert.ErrorIs(t, wErr, engine.ErrInvalidDepartmentOverride,
+		"override to a dept outside the caller's set must be rejected")
+}

@@ -51,7 +51,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 29 | Read gating + List authz consistency (workflow canSeePublication and instance listConstraint enforce the SAME department/public/admin rule across surfaces) | [x] | Done |
 | 30 | canView/canIntervene + Adapter mapping (the 404-vs-403 distinction is preserved through HTTP and MCP, not collapsed at the adapter) | [x] | Done |
 | 31 | Audit infrastructure + emission sites (workflow + intervention) (every consequential mutation is recorded once, with the right actor and action, and never fails the operation) | [x] | Done |
-| 32 | Trigger override + List authz (an instance stamped via per-trigger override is visible to exactly the right department audience; override cannot widen scope) | [ ] | |
+| 32 | Trigger override + List authz (an instance stamped via per-trigger override is visible to exactly the right department audience; override cannot widen scope) | [x] | Done |
 | 33 | Dashboard service clamp + aggregates + /me (the department set from /me drives the clamp, which drives the query; a non-member cannot pull another department's stats) | [ ] | |
 | 34 | Local-mode inertness across all areas (departments, visibility gating, list authz, intervention split, dashboard selector all no-op as a single default-group admin) | [ ] | |
 | 35 | Migration correctness (009–012) (existing shared→public, existing instances private/default-group; up/down pairs; no data loss; CHECK constraints) | [ ] | |
