@@ -936,6 +936,61 @@ func TestAuthMiddleware_Enrich_SubjectLead_Match(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// FA #27: custom defaultgroup propagates through provisioner + middleware
+// ---------------------------------------------------------------------------
+
+// TestCustomDefaultGroup_ProvisionsAndPropagates verifies that a non-"default"
+// defaultgroup value in identity.GroupConfig drives both the provisioner
+// (snapshot) and the middleware (context identity). A claimless user must end
+// up in the CONFIGURED group — not the hardcoded sentinel "default". If either
+// layer ignores GroupConfig.DefaultGroup, every custom-defaultgroup deployment
+// silently misplaces claimless users.
+func TestCustomDefaultGroup_ProvisionsAndPropagates(t *testing.T) {
+	uid := uuid.New()
+	subj := "carol-subject"
+
+	users := newFakeUserRepo()
+	users.bySubject = map[string]*instance.User{}
+	users.byID[uid] = &instance.User{ID: uid, Subject: &subj, Username: "carol", Role: identity.RoleUser}
+	users.bySubject[subj] = users.byID[uid]
+
+	// Custom default group — not the literal "default".
+	groups := identity.GroupConfig{DefaultGroup: "everyone"}
+
+	// Provisioner: no groups claim → must snapshot ["everyone"].
+	prov := instance.NewProvisioner(users, nil, groups)
+	_, err := prov.Resolve(context.Background(), instance.Claims{
+		Subject: subj, Username: "carol", Groups: nil,
+	})
+	require.NoError(t, err)
+
+	stored, err := users.ListDepartments(context.Background(), uid)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"everyone"}, stored,
+		"provisioner must snapshot the configured DefaultGroup, not the hardcoded 'default'")
+
+	// Middleware: reads the stored snapshot → context identity must carry "everyone".
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{
+		ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.True(t, got.InDepartment("everyone"),
+		"middleware must surface the custom default group 'everyone' from the stored snapshot")
+	assert.False(t, got.InDepartment("default"),
+		"hardcoded sentinel 'default' must NOT appear when DefaultGroup is configured differently")
+}
+
+// ---------------------------------------------------------------------------
 // FA #26: claim → normalize → snapshot → context identity seam test
 // ---------------------------------------------------------------------------
 
