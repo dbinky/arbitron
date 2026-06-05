@@ -1,7 +1,9 @@
 import type {
+  DashboardStats,
   Instance,
   InstanceSummary,
   InstanceState,
+  Me,
   NodeExecution,
   NotificationListResponse,
   Priority,
@@ -57,6 +59,25 @@ function put<T>(url: string, body: unknown): Promise<T> {
 
 /** Typed REST API client for the Arbitron backend. */
 export const api = {
+  /** Get the authenticated caller's identity projection. */
+  me(): Promise<Me> {
+    return request('/api/v1/me')
+  },
+
+  dashboard: {
+    /**
+     * Get department-scoped operational stats. Pass `departments` = null to use
+     * the caller's union default (the backend clamps to the caller's allowed
+     * set regardless). `window` is a Go duration string, e.g. "24h" or "6h".
+     */
+    stats(departments: string[] | null, window: string): Promise<DashboardStats> {
+      const q = new URLSearchParams()
+      if (departments && departments.length > 0) q.set('departments', departments.join(','))
+      q.set('window', window)
+      return request(`/api/v1/dashboard/stats?${q.toString()}`)
+    },
+  },
+
   instances: {
     /** List instances with optional filters. */
     list(params?: ListInstancesParams): Promise<InstanceSummary[]> {
