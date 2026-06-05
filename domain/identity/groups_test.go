@@ -198,4 +198,33 @@ func TestEffectiveMembership(t *testing.T) {
 			t.Errorf("got %v, want [default]", got)
 		}
 	})
+
+	t.Run("local-mode zero config always yields single default sentinel", func(t *testing.T) {
+		// In local mode GroupConfig is effectively zero: no GroupClaim (ignored),
+		// no Leads, no DefaultGroup. The default sentinel "default" must still be
+		// returned so the caller is never in zero departments.
+		got := EffectiveMembership(nil, "any-subject", "any@email.com", GroupConfig{})
+		if !reflect.DeepEqual(got, []string{"default"}) {
+			t.Errorf("got %v, want [default] (local-mode zero config)", got)
+		}
+	})
+
+	t.Run("claimless multi-dept lead gets default then sorted led depts", func(t *testing.T) {
+		// Verifies EffectiveMembership's sort guarantee end-to-end:
+		// claim departments first (here: only the default sentinel),
+		// then led-only departments in sorted order.
+		multiCfg := GroupConfig{
+			DefaultGroup: "default",
+			Leads: map[string][]string{
+				"sales":       {"dana@corp.example"},
+				"engineering": {"dana@corp.example"},
+				"platform":    {"dana@corp.example"},
+			},
+		}
+		got := EffectiveMembership(nil, "dana-subj", "dana@corp.example", multiCfg)
+		want := []string{"default", "engineering", "platform", "sales"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
 }
