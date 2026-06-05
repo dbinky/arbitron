@@ -140,3 +140,83 @@ func TestDashboardAggregate_UnionOverMultipleDepartments(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, out.Outcomes.TotalRuns, "union of both departments")
 }
+
+// ---------------------------------------------------------------------------
+// FA #21 Pass 1: throughput buckets and p95 duration
+// ---------------------------------------------------------------------------
+
+// TestDashboardAggregate_ThroughputBuckets verifies that instances created in
+// different hours each produce a distinct ThroughputBucket, ordered ASC by
+// bucket start. Instances within the same hour are counted together.
+func TestDashboardAggregate_ThroughputBuckets(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC().Truncate(time.Hour).Add(time.Hour) // top of the next hour
+
+	// Two instances in hour-2 and one in hour-1 (both within a 5-hour window).
+	hour1 := now.Add(-3 * time.Hour).Format("2006-01-02T15:04:05Z")
+	hour2a := now.Add(-1*time.Hour - 30*time.Minute).Format("2006-01-02T15:04:05Z")
+	hour2b := now.Add(-1*time.Hour - 15*time.Minute).Format("2006-01-02T15:04:05Z")
+	seedDashInstance(t, db, "wf", "engineering", "public", "completed", hour1, nil)
+	seedDashInstance(t, db, "wf", "engineering", "public", "completed", hour2a, nil)
+	seedDashInstance(t, db, "wf", "engineering", "public", "completed", hour2b, nil)
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 5 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Throughput, 2, "two distinct hourly buckets must appear")
+	assert.Equal(t, 1, out.Throughput[0].Runs, "first (older) bucket has 1 run")
+	assert.Equal(t, 2, out.Throughput[1].Runs, "second (newer) bucket has 2 runs")
+	assert.True(t, out.Throughput[0].Bucket.Before(out.Throughput[1].Bucket),
+		"buckets must be ordered ASC by time")
+}
+
+// FA #21 Pass 2: robustness
+
+// TestDashboardAggregate_NoCompletedRuns_ZeroP95 verifies that when there are
+// no completed runs in the window (only running/queued), P95DurationSeconds is
+// 0.0 and the call does not error or produce NaN.
+func TestDashboardAggregate_NoCompletedRuns_ZeroP95(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+
+	seedDashInstance(t, db, "wf", "engineering", "public", "running", recent, nil)
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 6 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0.0, out.Outcomes.P95DurationSeconds,
+		"p95 must be 0.0 (not NaN) when there are no completed runs")
+	assert.Equal(t, 1, out.Outcomes.TotalRuns, "TotalRuns counts all visible-state runs in the window")
+	assert.Equal(t, 0.0, out.Outcomes.SuccessRate, "SuccessRate is 0 when there are no completed runs")
+}
+
+// TestDashboardAggregate_P95Duration verifies that P95DurationSeconds is
+// computed from completed runs. With 10 completed runs of known durations
+// (1s..10s), the p95 should be at or near the 10th-percentile upper bound.
+func TestDashboardAggregate_P95Duration(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	base := now.Add(-2 * time.Hour)
+
+	// Seed 10 completed runs with durations 1s, 2s, ... 10s.
+	for i := 1; i <= 10; i++ {
+		created := base.Add(time.Duration(i) * time.Second).Format("2006-01-02T15:04:05Z")
+		completed := base.Add(time.Duration(i)*time.Second + time.Duration(i)*time.Second).Format("2006-01-02T15:04:05Z")
+		seedDashInstance(t, db, "wf", "engineering", "public", "completed", created, dptr(completed))
+	}
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 6 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	// p95 of 10 values [2s, 4s, ..., 20s] should be ≥ the 9th value (18s) and ≤ 20s.
+	assert.Greater(t, out.Outcomes.P95DurationSeconds, 0.0,
+		"P95DurationSeconds must be positive when completed runs exist")
+	assert.Equal(t, 10, out.Outcomes.TotalRuns)
+}

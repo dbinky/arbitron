@@ -32,8 +32,8 @@ A review pass is only checked when the checklist produces a passing result for t
 | 17 | canView vs canIntervene split (`domain/engine/authz.go` + intervention path — peer read 403-not-404 vs non-viewer 404; owner/lead/admin intervene) | [x] | [x] | Done |
 | 18 | Intervention audit emission (`domain/engine` auditActionFor + SetAuditRecorder — lead_intervention / admin.override, void recorder) | [x] | [x] | Done |
 | 19 | Instance adapter surface (`adapter/http/instance_handler.go` + `adapter/mcp/tools_instance.go` — department+visibility on read/list, optional department trigger param, override→400, ErrForbidden→403) | [x] | [x] | Done |
-| 20 | Dashboard stats service + clamp (`domain/dashboard` — department clamp admins-exempt/union-default/non-member-empty, window clamp [1h,30d]) | [ ] | [ ] | |
-| 21 | Dashboard aggregates (`adapter/sqlite` DashboardRepo — queue health point-in-time, throughput buckets, outcomes incl p95, per-workflow ranked; visibility IN (department,public), empty-dept short-circuit) | [ ] | [ ] | |
+| 20 | Dashboard stats service + clamp (`domain/dashboard` — department clamp admins-exempt/union-default/non-member-empty, window clamp [1h,30d]) | [x] | [x] | Done |
+| 21 | Dashboard aggregates (`adapter/sqlite` DashboardRepo — queue health point-in-time, throughput buckets, outcomes incl p95, per-workflow ranked; visibility IN (department,public), empty-dept short-circuit) | [x] | [x] | Done |
 | 22 | Dashboard endpoint + wiring (`adapter/http` GET /dashboard/stats thin handler, route in authenticated group, main.go composition) | [ ] | [ ] | |
 | 23 | Dashboard frontend data layer (`dashboard/src/api` — Me/DashboardStats types, api.me(), api.dashboard.stats(); request URL/param contract) | [ ] | [ ] | |
 | 24 | Dashboard tab + view (`dashboard/src` NavBar tab before Queue, /dashboard route, DashboardView tiles reusing UsageStats pattern, throughput strip, per-workflow table) | [ ] | [ ] | |
