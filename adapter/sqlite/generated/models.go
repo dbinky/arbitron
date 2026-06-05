@@ -18,6 +18,15 @@ type ApiToken struct {
 	LastUsedAt sql.NullString
 }
 
+type AuditEvent struct {
+	ID         string
+	OccurredAt string
+	ActorID    string
+	Action     string
+	Target     string
+	Detail     string
+}
+
 type Connection struct {
 	Name         string
 	Provider     string
@@ -57,6 +66,8 @@ type Instance struct {
 	WebhookToken      sql.NullString
 	WebhookSecretHash sql.NullString
 	WebhookReceivedAt sql.NullString
+	Department        sql.NullString
+	Visibility        string
 }
 
 type InstanceDismissal struct {

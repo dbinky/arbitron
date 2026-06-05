@@ -40,6 +40,14 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		return fmt.Errorf("marshalling original variables: %w", err)
 	}
 
+	// Default an unset visibility to private (owner-only), matching the column
+	// default and the pre-Phase-3 behavior of instances created without an
+	// explicit audience.
+	visibility := inst.Visibility
+	if visibility == "" {
+		visibility = instance.VisibilityPrivate
+	}
+
 	row, err := r.queries.CreateInstance(ctx, generated.CreateInstanceParams{
 		ID:                uuidToString(inst.ID),
 		OwnerID:           uuidToString(inst.OwnerID),
@@ -50,6 +58,8 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		Variables:         varsJSON,
 		OriginalVariables: origVarsJSON,
 		QueuedAt:          timeToNullString(inst.QueuedAt),
+		Department:        deptToNullString(inst.Department),
+		Visibility:        string(visibility),
 	})
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -363,6 +373,8 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 		OwnerID:           ownerID,
 		WorkflowName:      row.WorkflowName,
 		WorkflowSnapshot:  snapshot,
+		Department:        nullStringToString(row.Department),
+		Visibility:        instance.Visibility(row.Visibility),
 		State:             instance.State(row.State),
 		Priority:          instance.Priority(row.Priority),
 		Variables:         vars,

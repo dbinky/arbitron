@@ -70,6 +70,24 @@ func nullStringToPtr(ns sql.NullString) *string {
 	return &s
 }
 
+// nullStringToString returns the string value of ns, or "" when NULL.
+func nullStringToString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
+// deptToNullString maps an instance department to a nullable SQL string: an
+// empty department (private/default group) becomes SQL NULL, a non-empty one a
+// valid string. The round-trip reads NULL back as "" via nullStringToString.
+func deptToNullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
 func intPtrToNullInt64(i *int) sql.NullInt64 {
 	if i == nil {
 		return sql.NullInt64{}

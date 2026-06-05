@@ -27,9 +27,9 @@ func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilPa
 }
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility
 `
 
 type CreateInstanceParams struct {
@@ -42,6 +42,8 @@ type CreateInstanceParams struct {
 	Variables         string
 	OriginalVariables string
 	QueuedAt          sql.NullString
+	Department        sql.NullString
+	Visibility        string
 }
 
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
@@ -55,6 +57,8 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.Variables,
 		arg.OriginalVariables,
 		arg.QueuedAt,
+		arg.Department,
+		arg.Visibility,
 	)
 	var i Instance
 	err := row.Scan(
@@ -76,12 +80,14 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.WebhookToken,
 		&i.WebhookSecretHash,
 		&i.WebhookReceivedAt,
+		&i.Department,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE id = ?
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE id = ?
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) {
@@ -106,6 +112,8 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 		&i.WebhookToken,
 		&i.WebhookSecretHash,
 		&i.WebhookReceivedAt,
+		&i.Department,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -183,7 +191,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -214,6 +222,8 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.WebhookToken,
 			&i.WebhookSecretHash,
 			&i.WebhookReceivedAt,
+			&i.Department,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
