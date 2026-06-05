@@ -926,6 +926,68 @@ auth:
 	assert.Equal(t, "local", cfg.Auth.Mode)
 }
 
+// writeConfigFile writes YAML to a temp config path and returns it.
+func writeConfigFile(t *testing.T, yaml string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(yaml), 0600))
+	return p
+}
+
+func TestLoad_TLSValidation(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "disabled is ok",
+			yaml: "server:\n  tls:\n    enabled: false\n",
+		},
+		{
+			name: "cert and key ok",
+			yaml: "server:\n  tls:\n    enabled: true\n    certfile: /etc/a/cert.pem\n    keyfile: /etc/a/key.pem\n",
+		},
+		{
+			name:    "only certfile is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n    certfile: /etc/a/cert.pem\n",
+			wantErr: "certfile and keyfile",
+		},
+		{
+			name: "autocert with cache dir ok",
+			yaml: "server:\n  tls:\n    enabled: true\n    autocertdomain: a.example\n    autocertcachedir: /var/lib/arbitron/acme\n",
+		},
+		{
+			name:    "autocert without cache dir is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n    autocertdomain: a.example\n",
+			wantErr: "autocertcachedir",
+		},
+		{
+			name:    "cert and autocert together is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n    autocertdomain: a.example\n    autocertcachedir: /cache\n",
+			wantErr: "either",
+		},
+		{
+			name:    "enabled with nothing is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n",
+			wantErr: "requires",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adapterconfig.Load(writeConfigFile(t, tc.yaml))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 // TestLoad_CreatedConfigFile_HasRestrictivePermissions verifies that the
 // default config file created by Load (when none exists) uses 0600 permissions
 // so only the process owner can read the OIDC client secret or session key if

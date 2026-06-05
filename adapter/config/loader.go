@@ -49,6 +49,11 @@ func defaults() map[string]interface{} {
 		"queue.globalcap":       20,
 		"queue.perusercap":      5,
 		"script.envpassthrough": []string{},
+		"server.tls.enabled":          false,
+		"server.tls.certfile":         "",
+		"server.tls.keyfile":          "",
+		"server.tls.autocertdomain":   "",
+		"server.tls.autocertcachedir": "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
 		"auth.mode":                 "local",
@@ -114,6 +119,16 @@ func defaultYAMLContent() string {
   #   "http://localhost:8080"). Used to build deep links in outbound
   #   notifications (Teams). Trailing slashes are trimmed automatically.
   #   Override via ARBITRON_SERVER_PUBLICBASEURL.
+  # tls:
+  #   enabled: false
+  #     Serve HTTPS directly. Leave false when behind a TLS-terminating
+  #     tunnel/proxy (e.g. cloudflared); set true to serve HTTPS from arbitron.
+  #   certfile: ""   # PEM cert path (BYO / internal CA). Requires keyfile.
+  #   keyfile:  ""   # PEM key path.
+  #   autocertdomain: ""    # automatic Let's Encrypt for this host (mutually
+  #                         # exclusive with certfile/keyfile). Needs public DNS
+  #                         # and reachable :80/:443.
+  #   autocertcachedir: ""  # directory to cache autocert certificates.
 database:
   path: "./arbitron.db"
 workspace:
@@ -351,6 +366,10 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		return nil, err
 	}
 
+	if err := validateTLS(&cfg); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
 }
 
@@ -420,6 +439,32 @@ func validateAuth(cfg *domainconfig.Config) error {
 	default:
 		return fmt.Errorf("invalid auth.mode %q (want %q or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg)
 	}
+}
+
+// validateTLS enforces the direct-HTTPS contract fail-fast at load: when TLS is
+// enabled, exactly one of {certfile+keyfile} or {autocertdomain} must be set,
+// and autocert requires a cache directory. Mirrors the validateAuth precedent.
+func validateTLS(cfg *domainconfig.Config) error {
+	t := cfg.Server.TLS
+	if !t.Enabled {
+		return nil
+	}
+	hasCert := t.CertFile != ""
+	hasKey := t.KeyFile != ""
+	hasAutocert := t.AutocertDomain != ""
+	if hasCert != hasKey {
+		return fmt.Errorf("server.tls.enabled requires both certfile and keyfile")
+	}
+	if hasCert && hasAutocert {
+		return fmt.Errorf("server.tls: set either cert/key or autocertdomain, not both")
+	}
+	if !hasCert && !hasAutocert {
+		return fmt.Errorf("server.tls.enabled requires cert/key or autocertdomain")
+	}
+	if hasAutocert && t.AutocertCacheDir == "" {
+		return fmt.Errorf("server.tls autocertdomain requires autocertcachedir")
+	}
+	return nil
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.

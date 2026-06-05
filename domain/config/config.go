@@ -124,6 +124,23 @@ type ServerConfig struct {
 	// Any trailing "/" is trimmed by the loader so callers can concatenate
 	// "/instances/<id>" deterministically.
 	PublicBaseURL string
+	// TLS configures direct HTTPS serving. When Enabled, exactly one of
+	// {CertFile+KeyFile} or {AutocertDomain} must be set. Disabled (default) =
+	// plain HTTP, intended for deployments behind a TLS-terminating tunnel/proxy.
+	TLS TLSConfig
+}
+
+// TLSConfig configures direct HTTPS serving by the arbitron HTTP server.
+type TLSConfig struct {
+	// Enabled turns on HTTPS. When false, the server listens on plain HTTP.
+	Enabled bool
+	// CertFile / KeyFile are paths to a PEM cert/key pair (BYO or internal CA).
+	CertFile string
+	KeyFile  string
+	// AutocertDomain enables automatic Let's Encrypt for this hostname; mutually
+	// exclusive with CertFile/KeyFile. Requires AutocertCacheDir for cert storage.
+	AutocertDomain   string
+	AutocertCacheDir string
 }
 
 // TeamsConfig holds the single global Microsoft Teams webhook settings.
