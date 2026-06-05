@@ -33,6 +33,7 @@ import (
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
 	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/config"
+	domaindashboard "github.com/arbitron/arbitron/domain/dashboard"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -143,17 +144,18 @@ type domainStack struct {
 	tracingShutdown     func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler and sweepCancel are nil in local mode.
-	sessionRepo identity.SessionRepository
-	tokenRepo   identity.TokenRepository
-	tokenSvc    *identity.TokenService
-	deviceRepo  identity.DeviceCodeRepository
-	deviceSvc   *identity.DeviceCodeService
-	provisioner *instance.Provisioner
-	userRepo    instance.UserRepository
-	userSvc     *instance.UserService
-	authMW      *adapthttp.AuthMiddleware
-	authHandler *adapthttp.AuthHandler
-	sweepCancel context.CancelFunc
+	sessionRepo  identity.SessionRepository
+	tokenRepo    identity.TokenRepository
+	tokenSvc     *identity.TokenService
+	deviceRepo   identity.DeviceCodeRepository
+	deviceSvc    *identity.DeviceCodeService
+	provisioner  *instance.Provisioner
+	userRepo     instance.UserRepository
+	userSvc      *instance.UserService
+	dashboardSvc *domaindashboard.Service
+	authMW       *adapthttp.AuthMiddleware
+	authHandler  *adapthttp.AuthHandler
+	sweepCancel  context.CancelFunc
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -258,6 +260,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 
 	// 5. Initialize adapters.
 	instanceRepo := adaptsqlite.NewInstanceRepo(db)
+	dashboardRepo := adaptsqlite.NewDashboardRepo(db)
+	dashboardSvc := domaindashboard.NewService(dashboardRepo)
 	nodeExecRepo := adaptsqlite.NewNodeExecutionRepo(db)
 	snapshotRepo := adaptsqlite.NewVariableSnapshotRepo(db)
 	userRepo := adaptsqlite.NewUserRepo(db)
@@ -690,6 +694,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		provisioner:         provisioner,
 		userRepo:            userRepo,
 		userSvc:             userSvc,
+		dashboardSvc:        dashboardSvc,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
@@ -744,6 +749,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		DeviceCodes:         ds.deviceSvc,
 		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
 		Users:               ds.userSvc,
+		DashboardStats:      ds.dashboardSvc,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).
