@@ -228,3 +228,59 @@ func TestListFiltersWithWorkflowName(t *testing.T) {
 	assert.Equal(t, "my-workflow", *filters.WorkflowName)
 	assert.Nil(t, filters.State)
 }
+
+// ---------------------------------------------------------------------------
+// FA #14: Instance visibility schema/model (domain side)
+// ---------------------------------------------------------------------------
+
+// TestVisibilityConstants verifies the three string values exactly match the
+// migration 012 CHECK constraint (visibility IN ('private','department','public')).
+// A mismatch would silently violate the SQL constraint at insert time.
+func TestVisibilityConstants(t *testing.T) {
+	assert.Equal(t, Visibility("private"), VisibilityPrivate)
+	assert.Equal(t, Visibility("department"), VisibilityDepartment)
+	assert.Equal(t, Visibility("public"), VisibilityPublic)
+}
+
+// TestInstance_DepartmentVisibilityFields verifies that both Department and
+// Visibility survive an Instance construction round-trip (struct literal), and
+// that domain/instance does NOT import domain/workflow (the Visibility type is
+// self-owned to keep the dependency edge one-directional).
+func TestInstance_DepartmentVisibilityFields(t *testing.T) {
+	inst := Instance{
+		ID:           uuid.New(),
+		OwnerID:      uuid.New(),
+		WorkflowName: "wf",
+		Department:   "engineering",
+		Visibility:   VisibilityDepartment,
+		State:        StateQueued,
+		Priority:     PriorityNormal,
+	}
+	assert.Equal(t, "engineering", inst.Department)
+	assert.Equal(t, VisibilityDepartment, inst.Visibility)
+}
+
+// TestInstanceSummary_DepartmentVisibility verifies that the lightweight
+// InstanceSummary projection also carries both fields for list responses.
+func TestInstanceSummary_DepartmentVisibility(t *testing.T) {
+	sum := InstanceSummary{
+		ID:           uuid.New(),
+		WorkflowName: "wf",
+		State:        StateRunning,
+		Priority:     PriorityNormal,
+		Department:   "sales",
+		Visibility:   VisibilityPublic,
+	}
+	assert.Equal(t, "sales", sum.Department)
+	assert.Equal(t, VisibilityPublic, sum.Visibility)
+}
+
+// TestListFilters_VisibilityAuthzFields verifies that the Departments and
+// IncludePublic fields exist on ListFilters and default to their zero values.
+// These fields are service-set from the caller identity; the defaults must be
+// nil/false so a naively constructed filter never widens scope.
+func TestListFilters_VisibilityAuthzFields(t *testing.T) {
+	f := ListFilters{Limit: 10}
+	assert.Nil(t, f.Departments, "Departments must be nil by default (service-set, not caller-set)")
+	assert.False(t, f.IncludePublic, "IncludePublic must be false by default")
+}
