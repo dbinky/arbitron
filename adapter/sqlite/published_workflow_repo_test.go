@@ -226,3 +226,53 @@ func TestPublishedWorkflowRepo_UpsertRejectsBadVisibility(t *testing.T) {
 	err := repo.Upsert(ctx, "bad", defaultUserID, "src", workflow.Visibility("private"), "")
 	require.Error(t, err)
 }
+
+// TestPublishedWorkflowRepo_PublicationOf_DeptVisibility tests PublicationOf
+// directly for a department-visibility publication. This verifies the domain
+// type mapping: string "department" → workflow.VisibilityDepartment, Publisher
+// UUID round-trips correctly, and Department is preserved.
+func TestPublishedWorkflowRepo_PublicationOf_DeptVisibility(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Upsert(ctx, "sre-runbook", defaultUserID, "private-src", workflow.VisibilityDepartment, "engineering"))
+
+	pub, ok, err := repo.PublicationOf(ctx, "sre-runbook")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, defaultUserID, pub.Publisher)
+	assert.Equal(t, "private-src", pub.SourceName)
+	assert.Equal(t, workflow.VisibilityDepartment, pub.Visibility)
+	assert.Equal(t, "engineering", pub.Department)
+}
+
+// TestPublishedWorkflowRepo_PublicationOf_PublicVisibility verifies that a
+// public publication maps to workflow.VisibilityPublic and has an empty
+// Department string (SQL NULL read back as "").
+func TestPublishedWorkflowRepo_PublicationOf_PublicVisibility(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Upsert(ctx, "public-wf", defaultUserID, "src", workflow.VisibilityPublic, ""))
+
+	pub, ok, err := repo.PublicationOf(ctx, "public-wf")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, workflow.VisibilityPublic, pub.Visibility)
+	assert.Equal(t, "", pub.Department)
+}
+
+// TestPublishedWorkflowRepo_PublicationOf_Unknown verifies that PublicationOf
+// returns (zero, false, nil) for an unknown name — not an error.
+func TestPublishedWorkflowRepo_PublicationOf_Unknown(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewPublishedWorkflowRepo(db.DB)
+	ctx := context.Background()
+
+	pub, ok, err := repo.PublicationOf(ctx, "does-not-exist")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, workflow.Publication{}, pub)
+}
