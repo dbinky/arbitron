@@ -28,7 +28,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 13 | Workflow audit emission (`domain/workflow/service.go` — publish / visibility_change / admin.override only when admin is sole reason) | [x] | [x] | Done |
 | 14 | Instance visibility schema/model (`adapter/sqlite` migration 012 + index idx_instances_dept_vis; `domain/instance` self-owned Visibility + Department fields, repo round-trip) | [x] | [x] | Done |
 | 15 | Trigger stamping + override (`domain/engine` resolveStamp / TriggerWithDepartment — public/department/private stamping, validated per-trigger override, webhook/token persisted-dept) | [x] | [x] | Done |
-| 16 | Instance list authorization (`domain/engine/authz.go` listConstraint + `adapter/sqlite` disjunctive query — owner OR public OR department-in-set, service-set filters) | [ ] | [ ] | |
+| 16 | Instance list authorization (`domain/engine/authz.go` listConstraint + `adapter/sqlite` disjunctive query — owner OR public OR department-in-set, service-set filters) | [x] | [x] | Done |
 | 17 | canView vs canIntervene split (`domain/engine/authz.go` + intervention path — peer read 403-not-404 vs non-viewer 404; owner/lead/admin intervene) | [ ] | [ ] | |
 | 18 | Intervention audit emission (`domain/engine` auditActionFor + SetAuditRecorder — lead_intervention / admin.override, void recorder) | [ ] | [ ] | |
 | 19 | Instance adapter surface (`adapter/http/instance_handler.go` + `adapter/mcp/tools_instance.go` — department+visibility on read/list, optional department trigger param, override→400, ErrForbidden→403) | [ ] | [ ] | |
