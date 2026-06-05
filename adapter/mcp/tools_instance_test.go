@@ -888,3 +888,48 @@ func TestInstanceSetPriority(t *testing.T) {
 		assert.Contains(t, text, "invalid priority")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// FA #19: Instance adapter surface — MCP department trigger field
+// ---------------------------------------------------------------------------
+
+// Success: the optional department field on instance_trigger is forwarded to
+// TriggerWithDepartment — the stubEngine captures it and the test asserts it.
+func TestInstanceTrigger_DepartmentForwarded(t *testing.T) {
+	eng := &stubEngine{}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_trigger", map[string]any{
+		"workflowName": "wf",
+		"department":   "engineering",
+	})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "engineering", eng.capturedDepartment,
+		"department field must be threaded through to TriggerWithDepartment")
+}
+
+// Success: instance_get response includes department and visibility when the
+// instance carries those fields. This ensures the MCP layer surfaces both
+// columns added in migration 012.
+func TestInstanceGet_DepartmentAndVisibilityInResponse(t *testing.T) {
+	id := uuid.New()
+	repo := &stubInstanceRepo{
+		getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+			return &instance.Instance{
+				ID:           id,
+				WorkflowName: "wf",
+				Department:   "engineering",
+				Visibility:   instance.VisibilityDepartment,
+			}, nil
+		},
+	}
+	srv := newInstanceServer(repo, &stubEngine{})
+	result := callTool(t, srv, "instance_get", map[string]any{"id": id.String()})
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.Contains(t, text, "engineering",
+		"department must appear in the instance_get response")
+	assert.Contains(t, text, "department",
+		"visibility value 'department' must appear in the instance_get response")
+}
