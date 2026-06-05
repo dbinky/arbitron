@@ -1,77 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import type { DashboardStats, Me, WebSocketEvent } from '../api/types'
-import { api } from '../api/client'
-import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
+import { useState } from 'react'
+import { useDashboardStats } from '../hooks/useDashboardStats'
 import DepartmentSelector from '../components/DepartmentSelector'
 import { formatPercent, formatDuration, throughputTotal } from './dashboardFormat'
 import styles from './DashboardView.module.css'
 
-/** Fixed observation window for v1 (design default). */
-const WINDOW = '24h'
-const DEBOUNCE_MS = 300
-
-/** Instance lifecycle events that warrant a stats refetch. */
-const STATE_CHANGE_EVENTS = new Set([
-  'instance.created',
-  'instance.started',
-  'instance.completed',
-  'instance.failed',
-  'instance.cancelled',
-  'instance.paused',
-  'instance.resumed',
-  'instance.retrying',
-  'instance.recovered',
-])
-
 export default function DashboardView() {
-  const [me, setMe] = useState<Me | null>(null)
-  // null ⇒ "all my departments" union default; [dept] ⇒ focused.
+  // null ⇒ "all my departments" union default; [dept] ⇒ focused. The selection
+  // is the only state the view owns; the data orchestration (me + stats fetch,
+  // websocket-debounce, loading/error) lives in the useDashboardStats hook.
   const [selection, setSelection] = useState<string[] | null>(null)
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  // Load /me once on mount for the department list + role.
-  useEffect(() => {
-    let cancelled = false
-    api
-      .me()
-      .then((m) => { if (!cancelled) setMe(m) })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load identity') })
-    return () => { cancelled = true }
-  }, [])
-
-  const fetchStats = useCallback(async () => {
-    try {
-      const data = await api.dashboard.stats(selection, WINDOW)
-      setStats(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard stats')
-    } finally {
-      setLoading(false)
-    }
-  }, [selection])
-
-  // Fetch stats once /me is known and whenever the selection changes.
-  useEffect(() => {
-    if (!me) return
-    void fetchStats()
-  }, [me, fetchStats])
-
-  // Debounced live refresh on relevant websocket events.
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useSystemWebSocket(
-    useCallback(
-      (event: WebSocketEvent) => {
-        if (!STATE_CHANGE_EVENTS.has(event.type)) return
-        if (debounceRef.current) clearTimeout(debounceRef.current)
-        debounceRef.current = setTimeout(() => { void fetchStats() }, DEBOUNCE_MS)
-      },
-      [fetchStats],
-    ),
-  )
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
+  const { me, stats, loading, error } = useDashboardStats(selection)
 
   if (error) {
     return <div className={styles.container}><div className={styles.error}>{error}</div></div>
