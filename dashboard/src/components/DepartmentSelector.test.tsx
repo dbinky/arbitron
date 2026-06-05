@@ -58,4 +58,26 @@ describe('DepartmentSelector', () => {
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'engineering' } })
     expect(onChange).toHaveBeenCalledWith(['engineering'])
   })
+
+  // FA #25 Pass 1: edge case — empty departments array
+  it('renders nothing when departments is an empty array', () => {
+    const { container } = render(
+      <DepartmentSelector departments={[]} selection={null} onChange={vi.fn()} />,
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  // FA #25 Pass 2: robustness — multi-element selection falls back to union
+  it('shows union default ("All my departments") when selection has more than one element', () => {
+    render(
+      <DepartmentSelector
+        departments={['engineering', 'sales', 'platform']}
+        selection={['engineering', 'sales']}
+        onChange={vi.fn()}
+      />,
+    )
+    // A 2-element selection is not a valid focused state; the component
+    // falls back to __all__ (the union sentinel) since selection.length !== 1.
+    expect(screen.getByRole('combobox')).toHaveValue('__all__')
+  })
 })

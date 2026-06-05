@@ -37,7 +37,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 22 | Dashboard endpoint + wiring (`adapter/http` GET /dashboard/stats thin handler, route in authenticated group, main.go composition) | [x] | [x] | Done |
 | 23 | Dashboard frontend data layer (`dashboard/src/api` — Me/DashboardStats types, api.me(), api.dashboard.stats(); request URL/param contract) | [x] | [x] | Done |
 | 24 | Dashboard tab + view (`dashboard/src` NavBar tab before Queue, /dashboard route, DashboardView tiles reusing UsageStats pattern, throughput strip, per-workflow table) | [x] | [x] | Done |
-| 25 | Department selector + live refresh (`dashboard/src` DepartmentSelector single-vs-multi behavior, union default; debounced useSystemWebSocket refresh) | [ ] | [ ] | |
+| 25 | Department selector + live refresh (`dashboard/src` DepartmentSelector single-vs-multi behavior, union default; debounced useSystemWebSocket refresh) | [x] | [x] | Done |
 
 ---
 
