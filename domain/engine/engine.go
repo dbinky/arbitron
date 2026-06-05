@@ -35,6 +35,7 @@ type Engine struct {
 	dismissals       instance.DismissalRepository
 	externalNotifier notification.ExternalNotifier
 	interventions    instance.InterventionRepository
+	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager WorkspaceManager
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	mu               sync.Mutex
@@ -110,6 +111,13 @@ func (e *Engine) SetInterventions(repo instance.InterventionRepository) {
 	e.interventions = repo
 }
 
+// SetAuditRecorder wires the Phase-2 audit service for non-owner interventions
+// (lead_intervention / admin.override). When unset, no domain audit events are
+// written (the legacy intervention attribution row + event are unaffected).
+func (e *Engine) SetAuditRecorder(r AuditRecorder) {
+	e.auditRecorder = r
+}
+
 // SetPublisherLookup wires the publication lookup used to gate the trigger read
 // path by workflow visibility. When unset (nil), all shared workflows are
 // triggerable (local/read-only mode), preserving today's behavior.
@@ -138,6 +146,16 @@ func (e *Engine) recordIntervention(ctx context.Context, inst *instance.Instance
 		}
 		if err := e.interventions.Create(ctx, iv); err != nil {
 			slog.Error("failed to record intervention", "instanceID", inst.ID, "error", err)
+		}
+	}
+	// Phase 3: emit a domain audit event for the non-owner intervention
+	// (lead_intervention or admin.override). Best-effort: a write failure is
+	// logged and swallowed inside the void audit service, never returned, so the
+	// already-succeeded intervention stands.
+	if e.auditRecorder != nil {
+		if auditAction := auditActionFor(id, inst); auditAction != "" {
+			detail := fmt.Sprintf(`{"action":%q}`, action)
+			e.auditRecorder.Record(ctx, auditAction, inst.ID.String(), detail)
 		}
 	}
 	e.eventBus.Publish(inst.ID, Event{
