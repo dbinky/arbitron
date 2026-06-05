@@ -183,3 +183,44 @@ func TestWorkflowAndInstanceVisibilityConstants_AreEqual(t *testing.T) {
 	assert.Equal(t, string(workflow.VisibilityPublic), string(instance.VisibilityPublic),
 		"workflow.VisibilityPublic must equal instance.VisibilityPublic")
 }
+
+// ---------------------------------------------------------------------------
+// FA #29: read-gating + list-authz cross-surface consistency
+// ---------------------------------------------------------------------------
+
+// TestReadGating_DeptWorkflow_ListConsistency verifies that the workflow
+// canSeePublication gate (implicit in Trigger → LoadVisible) and the instance
+// listConstraint gate (ListInstances) enforce the SAME department rule.
+// An engineering member who can trigger a dept-visible engineering workflow
+// must also see the resulting instance in their list. A sales member who
+// cannot access the engineering workflow must also be unable to see the instance.
+func TestReadGating_DeptWorkflow_ListConsistency(t *testing.T) {
+	h := newTriggerHarness()
+
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	setPublication(h, "eng-wf", workflow.VisibilityDepartment, "engineering")
+
+	engUID := uuid.New()
+	engCtx := ctxDepts(engUID, "engineering")
+
+	// Engineering member triggers the dept-visible workflow. Trigger calls
+	// LoadVisible → canSeePublication — if this succeeds, the workflow gate passed.
+	instID, _, err := h.engine.Trigger(engCtx, "eng-wf", nil, "normal")
+	require.NoError(t, err, "engineering member must be able to trigger a dept-visible engineering workflow")
+
+	// List as engineering member: instance must appear (listConstraint passes).
+	list, err := h.engine.ListInstances(engCtx, instance.ListFilters{})
+	require.NoError(t, err)
+	assert.True(t, containsID(list, instID),
+		"engineering member who triggered a dept-visible workflow must also see the instance in ListInstances")
+
+	// List as sales member: instance must NOT appear (listConstraint denies).
+	salesCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: uuid.New(), Username: "s", Role: identity.RoleUser,
+		Departments: []string{"sales"},
+	})
+	saleList, err := h.engine.ListInstances(salesCtx, instance.ListFilters{})
+	require.NoError(t, err)
+	assert.False(t, containsID(saleList, instID),
+		"sales member must not see an engineering dept-visible instance — both workflow and instance gates must deny consistently")
+}
