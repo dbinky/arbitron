@@ -371,14 +371,19 @@ func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uu
 		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: load instance: %w", err)
 	}
 
-	// Authorization: participating in (writing to) an interactive session is
-	// allowed only for the instance owner or an admin. A non-viewer gets
-	// ErrNotFound so the interactive surface does not leak existence. This gate
-	// runs before the state check so a non-viewer never learns the session's
-	// state. Because both HandleMessage and EndSession funnel through here, the
-	// WS, REST, and MCP interactive surfaces all inherit it.
-	if !canView(ctx, inst.OwnerID) {
+	// Authorization: participating in (writing to) an interactive session is a
+	// mutate action, allowed only for the instance owner, a lead of the run's
+	// department, or an admin (canIntervene). A caller who cannot even view gets
+	// ErrNotFound so the interactive surface does not leak existence; a viewing
+	// peer who cannot intervene gets ErrForbidden. This gate runs before the
+	// state check so a non-viewer never learns the session's state. Because both
+	// HandleMessage and EndSession funnel through here, the WS, REST, and MCP
+	// interactive surfaces all inherit it.
+	if !canView(ctx, inst) {
 		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrNotFound)
+	}
+	if !canIntervene(ctx, inst) {
+		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrForbidden)
 	}
 
 	if inst.State != instance.StateWaiting {

@@ -383,7 +383,7 @@ func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Insta
 		// caller never dereferences a nil instance and existence is not leaked.
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
-	if !canView(ctx, inst.OwnerID) {
+	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	return inst, nil
@@ -412,7 +412,7 @@ func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*inst
 	if inst == nil {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
-	if !canView(ctx, inst.OwnerID) {
+	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	return inst, nil
