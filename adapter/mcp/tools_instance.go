@@ -3,11 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
@@ -41,6 +43,7 @@ func RegisterInstanceTools(srv *Server) {
 			gomcp.WithString("workflowName", gomcp.Required(), gomcp.Description("Name of the workflow to trigger")),
 			gomcp.WithString("variables", gomcp.Description("JSON-encoded variables map")),
 			gomcp.WithString("priority", gomcp.Description("Priority: high, normal, or low")),
+			gomcp.WithString("department", gomcp.Description("Optional: stamp the run under one of your departments (must be one you belong to)")),
 		),
 		instanceTriggerHandler(srv),
 	)
@@ -158,8 +161,13 @@ func instanceTriggerHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid priority %q: must be high, normal, or low", priority)), nil
 		}
 
-		id, queued, err := srv.deps.Engine.Trigger(ctx, wfName, vars, priority)
+		department, _ := args["department"].(string)
+
+		id, queued, err := srv.deps.Engine.TriggerWithDepartment(ctx, wfName, vars, priority, department)
 		if err != nil {
+			if errors.Is(err, engine.ErrInvalidDepartmentOverride) {
+				return gomcp.NewToolResultError(fmt.Sprintf("invalid department: %s", err)), nil
+			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to trigger workflow: %s", err)), nil
 		}
 		return MarshalResult(map[string]any{

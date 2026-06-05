@@ -76,6 +76,7 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 type stubEngine struct {
 	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
+	capturedDepartment string
 	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	capturedListCtx    context.Context
 	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
@@ -92,8 +93,9 @@ type stubEngine struct {
 	setPriorityFn      func(id uuid.UUID, priority string) error
 }
 
-func (s *stubEngine) Trigger(ctx context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+func (s *stubEngine) TriggerWithDepartment(ctx context.Context, wfName string, vars map[string]any, priority string, department string) (uuid.UUID, bool, error) {
 	s.capturedTriggerCtx = ctx
+	s.capturedDepartment = department
 	if s.triggerFn != nil {
 		return s.triggerFn(wfName, vars, priority)
 	}
