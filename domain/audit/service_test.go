@@ -66,3 +66,13 @@ func TestService_Record_NilStore_IsNoop(t *testing.T) {
 		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
 	})
 }
+
+// Edge: NewService(nil) returns a non-nil Service with a nil store. Record must
+// be a no-op without panicking — the s.store == nil guard must fire before any
+// store interaction.
+func TestService_Record_NewServiceWithNilStore_IsNoop(t *testing.T) {
+	svc := audit.NewService(nil)
+	assert.NotPanics(t, func() {
+		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
+	})
+}
