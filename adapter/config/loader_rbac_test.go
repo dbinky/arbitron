@@ -94,6 +94,51 @@ func TestLoad_RBAC_DefaultGroup_EnvOverride(t *testing.T) {
 	}
 }
 
+// Env overlay wins over YAML for the same dept's lead list.
+// This pins the precedence order that production operators rely on when fixing
+// a misconfigured YAML lead list via environment without editing the file.
+func TestLoad_RBAC_EnvOverlay_WinsOverYAML(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_LEADS_ENGINEERING", "env-alice@corp.example")
+	body := `auth:
+  mode: "local"
+  rbac:
+    leads:
+      engineering: ["yaml-bob@corp.example"]
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	leads := cfg.Auth.RBAC.Leads["engineering"]
+	if len(leads) != 1 || leads[0] != "env-alice@corp.example" {
+		t.Errorf("Leads[engineering] = %v, want [env-alice@corp.example] (env must win over YAML)", leads)
+	}
+}
+
+// An empty-value ARBITRON_AUTH_RBAC_LEADS_<DEPT>= env var clobbers YAML leads
+// at the raw RBACConfig level (generic env provider wins: the koanf key is set
+// to "" which unmarshals as [""]). The critical invariant is downstream:
+// ToGroupConfig drops blank lead IDs, so GroupConfig.Leads["engineering"] is
+// absent even when RBACConfig.Leads["engineering"] contains only blank strings.
+func TestLoad_RBAC_EmptyValueEnvOverlay_DropsInToGroupConfig(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_LEADS_ENGINEERING", "")
+	body := `auth:
+  mode: "local"
+  rbac:
+    leads:
+      engineering: ["yaml-alice@corp.example"]
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// After normalization, ToGroupConfig must produce no valid leads for engineering.
+	gc := ToGroupConfig(cfg.Auth.RBAC)
+	if _, ok := gc.Leads["engineering"]; ok {
+		t.Errorf("ToGroupConfig produced Leads[engineering] = %v, want dept absent (all-blank from empty env)", gc.Leads["engineering"])
+	}
+}
+
 // Multiple per-dept env overlays can coexist; each adds one department's leads.
 func TestLoad_RBAC_MultipleLeadsEnvOverlays(t *testing.T) {
 	t.Setenv("ARBITRON_AUTH_RBAC_LEADS_ENGINEERING", "alice@corp.example")
