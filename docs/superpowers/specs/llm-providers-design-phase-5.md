@@ -51,13 +51,24 @@ reachability only.
 
 ## CLI surface
 
-Add an operator subcommand under the existing connection command group:
+There is **no `connection` cobra command group yet** — the root command
+(`cmd/arbitron/main.go`) registers only `serve` and `mcp`, and connection CRUD is
+currently MCP-only (`adapter/mcp/tools_connection.go`). This phase therefore:
+
+- Adds a `newConnectionCmd()` parent command, registered via `rootCmd.AddCommand(...)`
+  alongside `newServeCmd()`/`newMCPCmd()`, following that exact pattern.
+- Adds a single subcommand under it:
 
 ```
 arbitron connection validate <name>
 ```
 
-- Resolves `<name>` → connection → `ResolvedBinding` (reusing the existing resolver /
+Connection CRUD via CLI is **out of scope** — creation/update/delete stay on the MCP
+tools. The parent command exists only to host `validate`. The command builds the same
+domain stack the server uses (load config + master key → SQLite `ConnectionRepo` →
+`StaticProfileResolver`), so it shares one resolution/decryption path.
+
+- Resolves `<name>` → connection → `ResolvedBinding` (reusing the resolver /
   ConnectionStore), invokes `ProbeSelector` → `Probe`, and prints a clear result:
   - success + model list (when supported), or
   - success + "model listing not supported for this provider" (reachability only), or

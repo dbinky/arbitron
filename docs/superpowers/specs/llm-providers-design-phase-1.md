@@ -43,23 +43,37 @@ presence/absence of a key — not by separate provider strings (one `ollama` fam
 ### 2. Local-endpoint (localhost) allowance for Ollama
 
 Local Ollama is `http://localhost:11434` — an internal host that the connection
-write-path SSRF policy (https-only, no internal hosts) would otherwise reject. Add a
-**narrow, explicit allowance**: a connection whose provider is `ollama` AND whose
-BaseURL host is a loopback address (`localhost`, `127.0.0.1`, `::1`) may use `http` and
-a private host. The allowance is scoped to the `ollama` provider only — it does not
-widen the policy for any other provider. Implemented at the connection write-path policy
-(where `StrictURLPolicy` lives), with the openrouter adapter's existing `checkScheme`
-(http|https) unchanged.
+write-path SSRF policy would otherwise reject. The policy lives in
+`domain/provider/url_policy.go`: `StrictURLPolicy` (the production default applied by
+`ConnectionRepo.Create`/`Update` via `provider.ValidateConnectionURL`) enforces
+https-only and rejects loopback (`localhost`, `127.0.0.1`, `::1`), link-local, the
+`169.254.169.254` metadata endpoint, and RFC1918 ranges.
 
-### 3. Connection & config plumbing
+Add a **narrow, explicit allowance** in `url_policy.go`: a connection whose provider is
+`ollama` AND whose BaseURL host is a loopback address (`localhost`, `127.0.0.1`, `::1`)
+may use `http` and that loopback host. `ValidateConnectionURL` already receives the full
+`Connection` (including `Provider`), so the carve-out is provider-aware. The allowance is
+scoped to the `ollama` provider AND loopback hosts only — it does NOT permit `ollama`
+pointed at link-local/metadata/RFC1918 hosts, and does NOT widen the policy for any other
+provider. The openrouter adapter's existing `checkScheme` (http|https) is unchanged.
+
+### 3. Connection & profile plumbing
+
+Connections are NOT declared in YAML — they are created at runtime (the existing
+`connection_create` MCP tool, sealed in SQLite) and only *profiles* live in config.
+Therefore this phase adds **no config schema** for `openai`/`ollama`:
 
 - `ValidateConnection` (`domain/provider/connection.go`): no new required extras for
   `openai`/`ollama`. (Bedrock/Azure-style required-extras handling is in their phases.)
-- Config loader / `ProfilesFromConfig`: confirm a profile referencing an `openai` or
-  `ollama` connection resolves to a chat-kind `ResolvedBinding` with the right
-  `Provider`/`BaseURL`/`Model`. The keyless local-Ollama path resolves with a nil-safe
-  `RevealKey` (empty key → no Authorization header, already handled in
-  `openrouter.newRequest`).
+- An operator creates an `openai`/`ollama` connection via `connection_create` (provider
+  string + base_url + optional key). A `chat`-kind profile in `~/.arbitron/config.yaml`
+  references it via `connectionRef`; `ProfilesFromConfig` + `StaticProfileResolver`
+  already map that to a chat-kind `ResolvedBinding` with the connection's
+  `Provider`/`BaseURL`/`Model` and a lazy `RevealKey`.
+- The keyless local-Ollama path resolves with a nil-safe `RevealKey` (empty key → no
+  Authorization header, already handled in `openrouter.newRequest`).
+- No new connection-CRUD surface is added here; provider routing (§1) + the url_policy
+  allowance (§2) are the only code changes beyond tests.
 
 ## Data flow
 
