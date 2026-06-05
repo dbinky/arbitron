@@ -224,6 +224,9 @@ func mapEngineError(err error) int {
 	if errors.Is(err, instance.ErrNotFound) {
 		return http.StatusNotFound
 	}
+	if errors.Is(err, instance.ErrForbidden) {
+		return http.StatusForbidden
+	}
 	if errors.Is(err, instance.ErrNotRunning) ||
 		errors.Is(err, instance.ErrNotPaused) ||
 		errors.Is(err, instance.ErrNotFailed) ||
@@ -242,6 +245,8 @@ func mapEngineErrorCode(err error) string {
 	switch status {
 	case http.StatusNotFound:
 		return "NOT_FOUND"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
 	case http.StatusConflict:
 		return "CONFLICT"
 	default:
