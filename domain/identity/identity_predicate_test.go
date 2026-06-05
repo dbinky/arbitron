@@ -25,3 +25,18 @@ func TestLeadsDepartment(t *testing.T) {
 		t.Error("LeadsDepartment(engineering) = true, want false")
 	}
 }
+
+// edge: nil/empty membership slices must not panic and must return false
+func TestInDepartment_NilMembership(t *testing.T) {
+	var id Identity // zero value — Departments nil
+	if id.InDepartment("engineering") {
+		t.Error("InDepartment on nil Departments returned true, want false")
+	}
+}
+
+func TestLeadsDepartment_NilMembership(t *testing.T) {
+	var id Identity // zero value — LedDepartments nil
+	if id.LeadsDepartment("platform") {
+		t.Error("LeadsDepartment on nil LedDepartments returned true, want false")
+	}
+}

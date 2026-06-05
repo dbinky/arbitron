@@ -19,10 +19,11 @@ import (
 // ---- fakes ----
 
 type fakeUserRepo struct {
-	defaultID uuid.UUID
-	byID      map[uuid.UUID]*instance.User
-	bySubject map[string]*instance.User
-	depts     map[uuid.UUID][]string
+	defaultID   uuid.UUID
+	byID        map[uuid.UUID]*instance.User
+	bySubject   map[string]*instance.User
+	depts       map[uuid.UUID][]string
+	listDeptErr error // when non-nil, ListDepartments returns this error
 }
 
 func newFakeUserRepo() *fakeUserRepo {
@@ -92,6 +93,9 @@ func (r *fakeUserRepo) CountAdmins(_ context.Context) (int, error) {
 }
 
 func (r *fakeUserRepo) ListDepartments(_ context.Context, userID uuid.UUID) ([]string, error) {
+	if r.listDeptErr != nil {
+		return nil, r.listDeptErr
+	}
 	return append([]string(nil), r.depts[userID]...), nil
 }
 
@@ -773,5 +777,84 @@ func TestAuthMiddleware_OrgMode_NoCredentialStill401(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestAuthMiddleware_Enrich_ListDepartmentsFailure_StillAuthenticates verifies
+// the non-fatal guarantee documented in enrich: a transient ListDepartments read
+// error must never lock an authenticated user out. The request must still succeed
+// (200), and the identity must include at least the led departments (or the
+// default-group fallback when there are none). A failing department read is never
+// escalated to a 500 — only auth failures are escalated.
+func TestAuthMiddleware_Enrich_ListDepartmentsFailure_StillAuthenticates(t *testing.T) {
+	uid := uuid.New()
+	subj := "alice-subject"
+	email := "alice@corp.example"
+	users := newFakeUserRepo()
+	users.byID[uid] = &instance.User{ID: uid, Subject: &subj, Email: &email, Username: "alice", Role: identity.RoleUser}
+	users.listDeptErr = errors.New("transient DB read error")
+
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour)}
+
+	// The user leads "platform" in config, so even with ListDepartments failing
+	// the identity still contains the led department.
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"alice@corp.example"}},
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (ListDepartments failure must not lock user out)", rec.Code)
+	}
+	if got.UserID != uid {
+		t.Errorf("UserID = %v, want %v", got.UserID, uid)
+	}
+	// Even with the DB error, the led department from config is still present.
+	if !got.InDepartment("platform") {
+		t.Errorf("Departments = %v, want platform (from led, despite DB error)", got.Departments)
+	}
+}
+
+// TestAuthMiddleware_Enrich_OrgMode_NoStoredDepts_DefaultGroupFallback verifies
+// the defensive fallback in enrich: an org-mode user with no stored departments
+// and no led departments is placed in the default group rather than left with an
+// empty Departments slice. This mirrors what the provisioner snapshots at login
+// when the group claim is absent (ResolveDepartments → DefaultGroupOr).
+func TestAuthMiddleware_Enrich_OrgMode_NoStoredDepts_DefaultGroupFallback(t *testing.T) {
+	uid := uuid.New()
+	users := newFakeUserRepo()
+	users.byID[uid] = &instance.User{ID: uid, Username: "new-user", Role: identity.RoleUser}
+	// No depts stored; not a configured lead.
+
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour)}
+
+	groups := identity.GroupConfig{DefaultGroup: "default"}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !reflect.DeepEqual(got.Departments, []string{"default"}) {
+		t.Errorf("Departments = %v, want [default] (defensive default-group fallback)", got.Departments)
+	}
+	if len(got.LedDepartments) != 0 {
+		t.Errorf("LedDepartments = %v, want empty (user leads no departments)", got.LedDepartments)
 	}
 }
