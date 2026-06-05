@@ -796,6 +796,12 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	tlsConf, acMgr, err := buildTLSConfig(ds.cfg.Server.TLS)
+	if err != nil {
+		return fmt.Errorf("configuring TLS: %w", err)
+	}
+	srv.TLSConfig = tlsConf
+
 	// 17. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
@@ -817,9 +823,26 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		ds.logger.Info("server starting", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("server error: %w", err)
+		if acMgr != nil {
+			// ACME HTTP-01 challenges must be reachable on :80.
+			go func() {
+				challengeSrv := &http.Server{Addr: ":80", Handler: acMgr.HTTPHandler(nil)}
+				if cerr := challengeSrv.ListenAndServe(); cerr != nil && !errors.Is(cerr, http.ErrServerClosed) {
+					ds.logger.Error("ACME challenge server error", "error", cerr)
+				}
+			}()
+		}
+		ds.logger.Info("server starting", "addr", addr, "tls", tlsConf != nil)
+		var serveErr error
+		if tlsConf != nil {
+			// Cert/key (or autocert) come from srv.TLSConfig, so the file
+			// arguments are empty.
+			serveErr = srv.ListenAndServeTLS("", "")
+		} else {
+			serveErr = srv.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("server error: %w", serveErr)
 		}
 		close(errCh)
 	}()
