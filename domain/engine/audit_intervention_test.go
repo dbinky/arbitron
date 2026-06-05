@@ -3,11 +3,20 @@ package engine
 import (
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
+
+// PR #21: the engine's audit action names must be the SAME single-source values
+// declared in domain/audit, not independent string literals — otherwise a rename
+// in one place silently partitions the persisted audit log.
+func TestAuditActionConstants_SingleSourceFromAuditPackage(t *testing.T) {
+	assert.Equal(t, audit.ActionAdminOverride, AuditActionAdminOverride)
+	assert.Equal(t, audit.ActionLeadIntervention, AuditActionLeadIntervention)
+}
 
 func mkInst2(owner uuid.UUID, dept string) *instance.Instance {
 	return &instance.Instance{ID: uuid.New(), OwnerID: owner, Visibility: instance.VisibilityDepartment, Department: dept}

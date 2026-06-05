@@ -177,7 +177,7 @@ func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityF
 		if !CanSeePublication(id, pub) {
 			return false, nil
 		}
-		if adminOverrode(id, pub) {
+		if AdminOverrode(id, pub) {
 			s.audit.Record(ctx, audit.ActionAdminOverride, name, auditDetail(map[string]string{
 				"visibility": string(pub.Visibility),
 				"department": pub.Department,
@@ -257,7 +257,7 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 			if !CanSeePublication(id, pub) {
 				continue // hide department workflows from non-members
 			}
-			if adminOverrode(id, pub) {
+			if AdminOverrode(id, pub) {
 				s.audit.Record(ctx, audit.ActionAdminOverride, sum.Name, auditDetail(map[string]string{
 					"visibility": string(pub.Visibility),
 					"department": pub.Department,
@@ -377,7 +377,7 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 			if !CanSeePublication(id, pub) {
 				return fmt.Errorf("%w: %s", ErrNotFound, sharedName)
 			}
-			if adminOverrode(id, pub) {
+			if AdminOverrode(id, pub) {
 				s.audit.Record(ctx, audit.ActionAdminOverride, sharedName, auditDetail(map[string]string{
 					"visibility": string(pub.Visibility),
 					"department": pub.Department,

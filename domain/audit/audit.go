@@ -16,6 +16,11 @@ const (
 	ActionWorkflowPublish          = "workflow.publish"
 	ActionWorkflowVisibilityChange = "workflow.visibility_change"
 	ActionAdminOverride            = "admin.override"
+	// ActionLeadIntervention is emitted when a department lead (not an admin)
+	// intervenes on a run they do not own. Declared here, the single home for the
+	// audit vocabulary, so the engine that emits it and any forensic query that
+	// filters on it reference one value.
+	ActionLeadIntervention = "instance.lead_intervention"
 )
 
 // Event is one audit record. Detail is opaque JSON describing the change

@@ -597,6 +597,16 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	}); ok {
 		s.SetInterventions(interventionRepo)
 	}
+	// Wire the Phase-2 audit service so a lead/admin steering an interactive
+	// session they do not own emits a domain audit event
+	// (instance.lead_intervention / admin.override) — the same accountability
+	// trail the engine mutation paths produce. Without this, the highest-trust
+	// surface in the product left ZERO audit trail (PR #21 Must Fix).
+	if s, ok := conversationHandler.(interface {
+		SetAuditRecorder(engine.AuditRecorder)
+	}); ok {
+		s.SetAuditRecorder(auditSvc)
+	}
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.

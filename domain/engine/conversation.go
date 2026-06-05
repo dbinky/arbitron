@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -46,6 +45,7 @@ type conversationHandler struct {
 	eventBus      EventBus
 	queueMgr      QueueManager
 	interventions instance.InterventionRepository // optional; nil-safe attribution
+	audit         AuditRecorder                   // optional; nil-safe domain audit event
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -73,6 +73,15 @@ func NewConversationHandler(
 // no attribution row is written (the actor tag is still added to events).
 func (h *conversationHandler) SetInterventions(repo instance.InterventionRepository) {
 	h.interventions = repo
+}
+
+// SetAuditRecorder wires the Phase-2 audit service so a lead/admin steering an
+// interactive session they do not own emits a domain audit event
+// (instance.lead_intervention / admin.override) — the accountability trail the
+// engine's mutation paths already produce. Nil-safe: when unset, no audit event
+// is written. *audit.Service.Record satisfies AuditRecorder with no adapter.
+func (h *conversationHandler) SetAuditRecorder(r AuditRecorder) {
+	h.audit = r
 }
 
 // publishInteractiveMessage publishes a single interactive.message event for a
@@ -107,23 +116,16 @@ func (h *conversationHandler) nonOwnerActor(ctx context.Context, inst *instance.
 	return id.UserID, true
 }
 
-// recordInteractiveIntervention writes a best-effort attribution row for admin
-// interactive participation. Nil-safe and non-fatal: a write failure is logged.
-func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context, inst *instance.Instance, actor uuid.UUID, action string, detail *string) {
-	if h.interventions == nil {
-		return
-	}
-	iv := &instance.Intervention{
-		ID:          uuid.New(),
-		InstanceID:  inst.ID,
-		ActorUserID: actor,
-		Action:      action,
-		Detail:      detail,
-		CreatedAt:   time.Now(),
-	}
-	if err := h.interventions.Create(ctx, iv); err != nil {
-		slog.Error("failed to record interactive intervention", "instanceID", inst.ID, "error", err)
-	}
+// recordInteractiveIntervention attributes a non-owner's interactive
+// participation: it writes the best-effort attribution row AND emits the domain
+// audit event (instance.lead_intervention / admin.override), via the shared
+// interventionRecorder the engine mutation paths also use. Routing both paths
+// through one collaborator is what guarantees the interactive surface — the
+// highest-trust action in the product — can never again lose its audit trail
+// (PR #21). Nil-safe and non-fatal on both sinks.
+func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context, inst *instance.Instance, action string, detail *string) {
+	rec := interventionRecorder{interventions: h.interventions, audit: h.audit}
+	rec.record(ctx, inst, action, detail)
 }
 
 // HandleMessage processes a user message in an active interactive session.
@@ -164,7 +166,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 				"actorUserId": actor.String(),
 			},
 		})
-		h.recordInteractiveIntervention(ctx, inst, actor, instance.ActionInteractiveMsg, nil)
+		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveMsg, nil)
 	} else {
 		publishInteractiveMessage(h.eventBus, instanceID, "user", content)
 	}
@@ -311,7 +313,7 @@ func (h *conversationHandler) completeSession(
 	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
 		endedData["actorUserId"] = actor.String()
 		r := reason
-		h.recordInteractiveIntervention(ctx, inst, actor, instance.ActionInteractiveEnded, &r)
+		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveEnded, &r)
 	}
 	h.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInteractiveEnded,

@@ -21,11 +21,16 @@ func CanSeePublication(id identity.Identity, p Publication) bool {
 		(p.Visibility == VisibilityDepartment && id.InDepartment(p.Department))
 }
 
-// adminOverrode reports whether admin status was the SOLE reason id can see p:
+// AdminOverrode reports whether admin status was the SOLE reason id can see p:
 // access is granted, but a copy of the identity with admin cleared would be
 // denied. This is the precise condition for an admin.override audit event
 // (design doc §Audit Log).
-func adminOverrode(id identity.Identity, p Publication) bool {
+//
+// It is the ONE canonical sole-reason predicate, consulted by every path that
+// can emit admin.override — the workflow read paths AND the engine trigger path —
+// so the override condition (which deliberately keeps the publisher branch via
+// CanSeePublication) cannot drift between them (PR #21).
+func AdminOverrode(id identity.Identity, p Publication) bool {
 	if !id.IsAdmin() {
 		return false
 	}

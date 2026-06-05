@@ -163,6 +163,36 @@ func TestAudit_Trigger_Admin_InDept_NoOverride(t *testing.T) {
 	assert.Empty(t, audit.all(), "admin who is a dept member must not emit admin.override")
 }
 
+// PR #21 (spurious admin.override): an admin who is ALSO the PUBLISHER triggering
+// their own department workflow from OUTSIDE that department must NOT emit
+// admin.override — they can see it because they published it (a non-admin reason),
+// not solely because they are an admin. The inline engine check dropped this
+// publisher branch that the canonical adminOverrode predicate keeps.
+func TestAudit_Trigger_AdminPublisherFromOutside_NoOverride(t *testing.T) {
+	h := newTriggerHarness()
+	audit := &fakeAuditRecorder{}
+	h.engine.SetAuditRecorder(audit)
+
+	// The admin is the PUBLISHER of the engineering workflow.
+	adminPublisher := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: adminPublisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	// Same admin triggers it from OUTSIDE engineering. Access is via the publisher
+	// branch, not admin-sole-reason, so no admin.override.
+	adminCtxLocal := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: adminPublisher, Username: "admin-publisher", Role: identity.RoleAdmin,
+		Departments: []string{"default"}, // not in engineering
+	})
+
+	_, _, err := h.engine.Trigger(adminCtxLocal, "eng-wf", nil, "normal")
+	require.NoError(t, err)
+	assert.Empty(t, audit.all(),
+		"an admin who is the publisher must not emit admin.override (publisher is the access reason)")
+}
+
 // No recorder wired on the trigger path => no panic (nil-safe).
 func TestAudit_Trigger_NoRecorder_NilSafe(t *testing.T) {
 	h := newTriggerHarness()

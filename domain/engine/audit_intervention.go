@@ -3,16 +3,18 @@ package engine
 import (
 	"context"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
-// Audit action strings emitted by the engine for non-owner interventions. They
-// match the Phase-2 audit vocabulary (admin.override) and extend it
-// (instance.lead_intervention).
+// Audit action strings emitted by the engine for non-owner interventions. The
+// persisted wire values live ONCE in domain/audit (the audit vocabulary's home);
+// these are references, not new string literals, so a rename in domain/audit
+// propagates here and the forensic query can never split-brain (PR #21).
 const (
-	AuditActionLeadIntervention = "instance.lead_intervention"
-	AuditActionAdminOverride    = "admin.override"
+	AuditActionLeadIntervention = audit.ActionLeadIntervention
+	AuditActionAdminOverride    = audit.ActionAdminOverride
 )
 
 // AuditRecorder is the minimal write surface the engine needs from the Phase-2

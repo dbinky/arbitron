@@ -131,37 +131,19 @@ func (e *Engine) SetPublisherLookup(p workflow.PublisherLookup) {
 // repo write failure is logged, never returned, so the operation that already
 // succeeded is not undone.
 func (e *Engine) recordIntervention(ctx context.Context, inst *instance.Instance, action string, detail *string) {
-	id, ok := identity.FromContext(ctx)
-	if !ok || id.UserID == inst.OwnerID {
-		return // owner self-action (or no identity): not logged
-	}
-	if e.interventions != nil {
-		iv := &instance.Intervention{
-			ID:          uuid.New(),
-			InstanceID:  inst.ID,
-			ActorUserID: id.UserID,
-			Action:      action,
-			Detail:      detail,
-			CreatedAt:   time.Now(),
-		}
-		if err := e.interventions.Create(ctx, iv); err != nil {
-			slog.Error("failed to record intervention", "instanceID", inst.ID, "error", err)
-		}
-	}
-	// Phase 3: emit a domain audit event for the non-owner intervention
-	// (lead_intervention or admin.override). Best-effort: a write failure is
-	// logged and swallowed inside the void audit service, never returned, so the
-	// already-succeeded intervention stands.
-	if e.auditRecorder != nil {
-		if auditAction := auditActionFor(id, inst); auditAction != "" {
-			detail := fmt.Sprintf(`{"action":%q}`, action)
-			e.auditRecorder.Record(ctx, auditAction, inst.ID.String(), detail)
-		}
+	// Attribution row + domain audit event are owned by the shared
+	// interventionRecorder so the engine and interactive paths cannot diverge
+	// (PR #21). It resolves the actor, writes the best-effort row, and emits the
+	// lead_intervention/admin.override audit event — all nil-safe.
+	rec := interventionRecorder{interventions: e.interventions, audit: e.auditRecorder}
+	actor, isNonOwner := rec.record(ctx, inst, action, detail)
+	if !isNonOwner {
+		return // owner self-action (or no identity): no event
 	}
 	e.eventBus.Publish(inst.ID, Event{
 		Type:      "instance.intervened",
 		Timestamp: time.Now(),
-		Data:      map[string]any{"actorUserId": id.UserID.String(), "action": action},
+		Data:      map[string]any{"actorUserId": actor.String(), "action": action},
 	})
 }
 
@@ -217,6 +199,23 @@ func (e *Engine) resolvePublication(ctx context.Context, scope workflow.Scope, w
 	default:
 		return instance.VisibilityPrivate, ""
 	}
+}
+
+// triggerAdminOverrode reports whether admin status was the SOLE reason callerID
+// could access workflowName at trigger time, via the canonical
+// workflow.AdminOverrode predicate. It returns false for non-shared scopes, an
+// unconfigured lookup, an unpublished workflow, or a lookup error (best-effort —
+// a transient lookup failure must not block the trigger). Routing through the
+// shared predicate keeps the publisher branch the inline engine check dropped.
+func (e *Engine) triggerAdminOverrode(ctx context.Context, scope workflow.Scope, workflowName string, callerID identity.Identity) bool {
+	if scope.Kind != workflow.ScopeShared || e.publishers == nil {
+		return false
+	}
+	pub, found, err := e.publishers.PublicationOf(ctx, workflowName)
+	if err != nil || !found {
+		return false
+	}
+	return workflow.AdminOverrode(callerID, pub)
 }
 
 // TriggerWithDepartment loads a workflow, validates inputs, stamps the run's
@@ -275,12 +274,13 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		return uuid.Nil, false, stErr
 	}
 
-	// Emit admin.override when an admin triggers a department-visible workflow
-	// they are not a member of. Admin status is the SOLE reason for access
-	// (same logic as the workflow read-path in domain/workflow/service.go).
+	// Emit admin.override when admin status was the SOLE reason the caller could
+	// access the workflow. This consults the ONE canonical sole-reason predicate
+	// (workflow.AdminOverrode) the read paths also use, so the override condition —
+	// which keeps the publisher branch (an admin who PUBLISHED the workflow sees it
+	// for a non-admin reason) — cannot drift from the read path (PR #21).
 	// Best-effort and nil-safe: identical contract to all other audit paths.
-	if e.auditRecorder != nil && vis == instance.VisibilityDepartment &&
-		callerID.IsAdmin() && !callerID.InDepartment(pubDept) {
+	if e.auditRecorder != nil && e.triggerAdminOverrode(ctx, scope, workflowName, callerID) {
 		e.auditRecorder.Record(ctx, AuditActionAdminOverride, workflowName, `{"action":"trigger"}`)
 	}
 
