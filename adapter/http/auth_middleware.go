@@ -187,7 +187,12 @@ func (m *AuthMiddleware) enrich(ctx context.Context, u *instance.User) identity.
 		stored = nil
 	}
 	led := identity.LedDepartments(subject, email, m.groups)
-	departments := unionDepts(stored, led)
+	// stored ∪ led, order-preserving (stored first), via the shared RBAC dedup
+	// primitive (PR #21). A fresh slice is built so neither input is mutated.
+	union := make([]string, 0, len(stored)+len(led))
+	union = append(union, stored...)
+	union = append(union, led...)
+	departments := identity.DedupeDepts(union)
 	if len(departments) == 0 {
 		// Defensive: a user with no stored departments and no led departments
 		// still belongs to the default group (matches the provisioner snapshot).
@@ -200,28 +205,6 @@ func (m *AuthMiddleware) enrich(ctx context.Context, u *instance.User) identity.
 		Departments:    departments,
 		LedDepartments: led,
 	}
-}
-
-// unionDepts returns stored ∪ led, preserving stored order then appending any
-// led departments not already present.
-func unionDepts(stored, led []string) []string {
-	seen := make(map[string]struct{}, len(stored)+len(led))
-	out := make([]string, 0, len(stored)+len(led))
-	for _, d := range stored {
-		if _, ok := seen[d]; ok {
-			continue
-		}
-		seen[d] = struct{}{}
-		out = append(out, d)
-	}
-	for _, d := range led {
-		if _, ok := seen[d]; ok {
-			continue
-		}
-		seen[d] = struct{}{}
-		out = append(out, d)
-	}
-	return out
 }
 
 func isBrowserNavigation(r *http.Request) bool {

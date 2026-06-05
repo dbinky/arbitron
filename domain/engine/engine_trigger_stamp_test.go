@@ -44,9 +44,10 @@ func TestTrigger_StampsDepartmentFromPublication(t *testing.T) {
 	assert.Equal(t, "engineering", inst.Department)
 }
 
-// A public workflow stamps visibility=public with the triggerer's department
-// for attribution.
-func TestTrigger_StampsPublicWithTriggererDept(t *testing.T) {
+// A public workflow stamps visibility=public with an EMPTY department — a public
+// run's audience is everyone, so it attributes to no department (PR #21). The
+// triggerer's departments are not used for attribution.
+func TestTrigger_StampsPublicWithEmptyDept(t *testing.T) {
 	h := newTriggerHarness()
 	caller := uuid.New()
 	h.repo.put(workflow.Shared(), sharedWf("pub-wf"))
@@ -58,7 +59,7 @@ func TestTrigger_StampsPublicWithTriggererDept(t *testing.T) {
 	inst, err := h.instances.Get(context.Background(), id)
 	require.NoError(t, err)
 	assert.Equal(t, instance.VisibilityPublic, inst.Visibility)
-	assert.Equal(t, "platform", inst.Department)
+	assert.Equal(t, "", inst.Department, "a public run carries no attribution department")
 }
 
 // A private workflow (no publication) stamps private with empty department —
@@ -126,7 +127,7 @@ func TestTrigger_BackwardCompatEntrypoint(t *testing.T) {
 
 // A system trigger (scheduler/webhook — no context identity) on a public
 // workflow stamps visibility=public with an empty attribution department.
-// firstDepartment of a zero identity is ""; this must persist to the instance.
+// Public runs always carry an empty department (PR #21); this must persist.
 func TestTrigger_SystemTrigger_PublicWorkflow_EmptyAttributionDept(t *testing.T) {
 	h := newTriggerHarness()
 	h.repo.put(workflow.Shared(), sharedWf("pub-wf"))

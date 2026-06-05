@@ -39,24 +39,43 @@ func (cfg GroupConfig) DefaultGroupOr() string {
 	return defaultGroupSentinel
 }
 
-// ResolveDepartments normalizes the raw claim values, drops blanks, and
-// de-duplicates while preserving first-seen order. If the result is empty (no
-// claim configured, claim absent, or all values blank), it returns the single
-// default-group sentinel so a caller is never in zero departments.
-func ResolveDepartments(claimValues []string, cfg GroupConfig) []string {
-	seen := make(map[string]struct{}, len(claimValues))
-	out := make([]string, 0, len(claimValues))
-	for _, v := range claimValues {
-		d := NormalizeDept(v)
-		if d == "" {
-			continue
-		}
+// DedupeDepts is the one shared order-preserving department dedup primitive: it
+// removes duplicate values while preserving first-seen order, and is nil-safe (a
+// nil/empty input yields nil). It is the canonical RBAC dedup reused by the
+// dashboard service and the auth middleware so the operation lives in exactly one
+// place (PR #21). It deliberately does NOT normalize, drop blanks, or apply the
+// default-group sentinel — those are each caller's own policy (see
+// ResolveDepartments / EffectiveMembership, which layer their policy on top).
+func DedupeDepts(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, d := range in {
 		if _, dup := seen[d]; dup {
 			continue
 		}
 		seen[d] = struct{}{}
 		out = append(out, d)
 	}
+	return out
+}
+
+// ResolveDepartments normalizes the raw claim values, drops blanks, and
+// de-duplicates while preserving first-seen order. If the result is empty (no
+// claim configured, claim absent, or all values blank), it returns the single
+// default-group sentinel so a caller is never in zero departments.
+func ResolveDepartments(claimValues []string, cfg GroupConfig) []string {
+	// Normalize + drop blanks (this function's own policy), then dedupe via the
+	// shared primitive (the operation both this and EffectiveMembership share).
+	normalized := make([]string, 0, len(claimValues))
+	for _, v := range claimValues {
+		if d := NormalizeDept(v); d != "" {
+			normalized = append(normalized, d)
+		}
+	}
+	out := DedupeDepts(normalized)
 	if len(out) == 0 {
 		return []string{cfg.DefaultGroupOr()}
 	}
@@ -112,17 +131,10 @@ func sortStrings(s []string) {
 // department even if their token omits it. Order: claim/default departments
 // first (first-seen), then any newly-added led departments (sorted).
 func EffectiveMembership(claimValues []string, subject, email string, cfg GroupConfig) []string {
-	out := ResolveDepartments(claimValues, cfg)
-	seen := make(map[string]struct{}, len(out))
-	for _, d := range out {
-		seen[d] = struct{}{}
-	}
-	for _, d := range LedDepartments(subject, email, cfg) {
-		if _, ok := seen[d]; ok {
-			continue
-		}
-		seen[d] = struct{}{}
-		out = append(out, d)
-	}
-	return out
+	// Union = claim/default departments first, then led departments, de-duplicated
+	// order-preserving via the shared primitive. ResolveDepartments and
+	// LedDepartments each own their own normalization policy; the union itself is
+	// just an order-preserving dedup.
+	claim := ResolveDepartments(claimValues, cfg)
+	return DedupeDepts(append(claim, LedDepartments(subject, email, cfg)...))
 }

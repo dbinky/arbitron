@@ -14,18 +14,20 @@ func idWithDepts(depts ...string) identity.Identity {
 	return identity.Identity{UserID: uuid.New(), Username: "u", Role: identity.RoleUser, Departments: depts}
 }
 
-// A public workflow: no override -> visibility public, department = the
-// triggerer's stamping department (first effective dept) for dashboard
-// attribution.
-func TestResolveStamp_Public_NoOverride_UsesTriggererDept(t *testing.T) {
-	id := idWithDepts("engineering")
+// PR #21 (public-run attribution drift): a public workflow ALWAYS stamps an
+// EMPTY department, regardless of the triggerer's departments. The old behavior
+// read Departments[0] (JWT-claim-first-seen order), which drifted across logins
+// and silently corrupted persisted attribution; a public run's audience is
+// everyone, so it belongs to no single department.
+func TestResolveStamp_Public_NoOverride_EmptyDepartment(t *testing.T) {
+	id := idWithDepts("engineering", "platform")
 	got, err := resolveStamp(id, instance.VisibilityPublic, "", "")
 	require.NoError(t, err)
 	assert.Equal(t, instance.VisibilityPublic, got.Visibility)
-	assert.Equal(t, "engineering", got.Department, "public run stamped with triggerer's dept for attribution")
+	assert.Equal(t, "", got.Department, "a public run attributes to no department (cross-department audience)")
 }
 
-// A public workflow with no triggerer departments stamps an empty department.
+// A public workflow with no triggerer departments also stamps an empty department.
 func TestResolveStamp_Public_NoDepts_EmptyDepartment(t *testing.T) {
 	id := identity.Identity{UserID: uuid.New(), Role: identity.RoleUser}
 	got, err := resolveStamp(id, instance.VisibilityPublic, "", "")
@@ -71,14 +73,17 @@ func TestResolveStamp_Override_OutsideDepartments_Rejected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidDepartmentOverride)
 }
 
-// Override is normalized/compared case-insensitively the same way membership is
-// (Phase 1 normalizes to lowercase); an exact-case member match is accepted.
-func TestResolveStamp_Override_Public_Accepted(t *testing.T) {
+// A valid override on a public workflow is still ACCEPTED (the scope-widening
+// guard passes for a member's own department) but, per PR #21, it does NOT
+// attribute the public run to that department — a public run carries no
+// department. This pins that the override cannot smuggle a public run back into a
+// single department's dashboard bucket.
+func TestResolveStamp_Override_Public_AcceptedButNoAttribution(t *testing.T) {
 	id := idWithDepts("engineering")
 	got, err := resolveStamp(id, instance.VisibilityPublic, "", "engineering")
-	require.NoError(t, err)
+	require.NoError(t, err, "a valid override on a public workflow still succeeds")
 	assert.Equal(t, instance.VisibilityPublic, got.Visibility)
-	assert.Equal(t, "engineering", got.Department, "override sets the stamped attribution department for a public run")
+	assert.Equal(t, "", got.Department, "a public run carries no department even with a valid override")
 }
 
 // ---------------------------------------------------------------------------

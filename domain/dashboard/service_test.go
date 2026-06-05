@@ -68,6 +68,60 @@ func TestGetStats_UnionDefaultWhenNoDepartmentsRequested(t *testing.T) {
 		"omitted departments ⇒ caller's full effective set")
 }
 
+// PR #21 Must Fix (admin zero-state): an admin who specifies NO departments
+// (first load) must get the WHOLE-ORG aggregate — signaled by AllDepartments —
+// not an all-zeros dashboard. The "all" and "none" cases are distinct signals.
+func TestGetStats_AdminEmptyRequest_SignalsAllDepartments(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := dashboard.NewService(repo)
+
+	_, err := svc.GetStats(ctxWith(admin()), dashboard.Request{})
+	require.NoError(t, err)
+	assert.True(t, repo.gotParams.AllDepartments,
+		"an admin with an empty request must signal all departments (whole-org aggregate)")
+	assert.Empty(t, repo.gotParams.Departments,
+		"the department list is unused when AllDepartments is set")
+}
+
+// An admin with ≤1 of their own departments still gets data on first load,
+// because the empty request signals AllDepartments (the selector-less zero-state
+// can no longer trap the flagship admin).
+func TestGetStats_AdminWithOneDept_EmptyRequest_StillAllDepartments(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := dashboard.NewService(repo)
+
+	adminOneDept := identity.Identity{
+		UserID: uuid.New(), Username: "a", Role: identity.RoleAdmin,
+		Departments: []string{"engineering"},
+	}
+	_, err := svc.GetStats(ctxWith(adminOneDept), dashboard.Request{})
+	require.NoError(t, err)
+	assert.True(t, repo.gotParams.AllDepartments,
+		"admin first-load is whole-org regardless of how many departments they belong to")
+}
+
+// A non-admin NEVER gets the all-departments signal.
+func TestGetStats_NonAdminEmptyRequest_NotAllDepartments(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := dashboard.NewService(repo)
+
+	_, err := svc.GetStats(ctxWith(member("engineering")), dashboard.Request{})
+	require.NoError(t, err)
+	assert.False(t, repo.gotParams.AllDepartments, "a non-admin must never get the whole-org signal")
+}
+
+// An admin who DID request specific departments is scoped to those (no all signal).
+func TestGetStats_AdminExplicitRequest_NotAllDepartments(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := dashboard.NewService(repo)
+
+	_, err := svc.GetStats(ctxWith(admin()), dashboard.Request{Departments: []string{"finance"}})
+	require.NoError(t, err)
+	assert.False(t, repo.gotParams.AllDepartments,
+		"an admin who named departments is scoped to them, not the whole org")
+	assert.Equal(t, []string{"finance"}, repo.gotParams.Departments)
+}
+
 func TestGetStats_AdminMayRequestAnyDepartment(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := dashboard.NewService(repo)

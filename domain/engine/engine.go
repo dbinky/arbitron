@@ -191,14 +191,14 @@ func (e *Engine) resolvePublication(ctx context.Context, scope workflow.Scope, w
 	if err != nil || !found {
 		return instance.VisibilityPrivate, ""
 	}
-	switch pub.Visibility {
-	case workflow.VisibilityPublic:
-		return instance.VisibilityPublic, ""
-	case workflow.VisibilityDepartment:
-		return instance.VisibilityDepartment, pub.Department
-	default:
-		return instance.VisibilityPrivate, ""
+	// One named, tested conversion (instance.VisibilityFromWorkflow) replaces the
+	// inline default-to-private switch (PR #21). Department travels with the
+	// department level only; public/private carry no attribution department here.
+	vis := instance.VisibilityFromWorkflow(string(pub.Visibility))
+	if vis == instance.VisibilityDepartment {
+		return vis, pub.Department
 	}
+	return vis, ""
 }
 
 // triggerAdminOverrode reports whether admin status was the SOLE reason callerID

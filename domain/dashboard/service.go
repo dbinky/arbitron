@@ -16,12 +16,21 @@ const (
 )
 
 // AggregateParams is the fully-resolved, security-clamped query the repository
-// runs. Departments is ALWAYS the caller-allowed set (never raw request input);
-// an empty slice means "no visible departments" and the repo must return zeroes.
+// runs. Departments is ALWAYS the caller-allowed set (never raw request input).
+//
+// The "all" and "none" cases are DISTINCT signals, never the same empty slice
+// (PR #21): when AllDepartments is true the repo aggregates EVERY department
+// (admin, no filter); when AllDepartments is false an empty Departments slice
+// means "no visible departments" and the repo returns zeroes (apart from the
+// always-visible public lane). Conflating the two previously gave the admin an
+// all-zeros first-load dashboard.
 type AggregateParams struct {
-	Departments []string
-	Window      time.Duration
-	Now         time.Time
+	// AllDepartments, when true, removes the department filter entirely (admin
+	// viewing the whole org). Departments is ignored in this case.
+	AllDepartments bool
+	Departments    []string
+	Window         time.Duration
+	Now            time.Time
 }
 
 // StatsRepository is the port the dashboard service depends on. A single method
@@ -53,13 +62,14 @@ func NewService(repo StatsRepository) *Service {
 func (s *Service) GetStats(ctx context.Context, req Request) (Stats, error) {
 	id := identity.MustFromContext(ctx)
 
-	depts := s.clampDepartments(id, req.Departments)
+	depts, allDepartments := s.clampDepartments(id, req.Departments)
 	window := clampWindow(req.Window)
 
 	out, err := s.repo.Aggregate(ctx, AggregateParams{
-		Departments: depts,
-		Window:      window,
-		Now:         s.now(),
+		AllDepartments: allDepartments,
+		Departments:    depts,
+		Window:         window,
+		Now:            s.now(),
 	})
 	if err != nil {
 		return Stats{}, err
@@ -70,25 +80,33 @@ func (s *Service) GetStats(ctx context.Context, req Request) (Stats, error) {
 }
 
 // clampDepartments returns the requested set intersected with the caller's
-// effective departments. Admins may request any department; an admin with an
-// empty request gets an empty slice (meaning "all" is the repo's job to handle
-// — but for the union-default the handler passes the caller's full set, so an
-// empty admin request here is intentional and means "no department filter").
-func (s *Service) clampDepartments(id identity.Identity, requested []string) []string {
+// effective departments, plus an allDepartments signal that is true ONLY for an
+// admin who specified no departments (first-load "show me everything").
+//
+// The "all" and "none" cases are kept DISTINCT (PR #21): an admin's empty
+// request returns (nil, true) so the repo drops the department filter and the
+// flagship admin sees the full aggregate on first load — previously this
+// collapsed to an empty slice and produced an all-zeros dashboard. A non-admin
+// (or an admin who DID request specific departments) never gets the all signal.
+func (s *Service) clampDepartments(id identity.Identity, requested []string) (depts []string, allDepartments bool) {
 	if id.IsAdmin() {
-		return dedupe(requested)
+		if len(requested) == 0 {
+			// Admin, no filter ⇒ the whole org (distinct from "no departments").
+			return nil, true
+		}
+		return identity.DedupeDepts(requested), false
 	}
 	if len(requested) == 0 {
 		// Union default: the caller's full effective set.
-		return dedupe(id.Departments)
+		return identity.DedupeDepts(id.Departments), false
 	}
 	allowed := make([]string, 0, len(requested))
-	for _, d := range dedupe(requested) {
+	for _, d := range identity.DedupeDepts(requested) {
 		if id.InDepartment(d) {
 			allowed = append(allowed, d)
 		}
 	}
-	return allowed
+	return allowed, false
 }
 
 func clampWindow(w time.Duration) time.Duration {
@@ -102,21 +120,4 @@ func clampWindow(w time.Duration) time.Duration {
 		return MaxWindow
 	}
 	return w
-}
-
-// dedupe returns the input with duplicates removed, order preserved, nil-safe.
-func dedupe(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
 }

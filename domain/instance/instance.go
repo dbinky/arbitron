@@ -56,6 +56,33 @@ const (
 	VisibilityPublic     Visibility = "public"
 )
 
+// Valid reports whether v is one of the three defined visibility levels.
+func (v Visibility) Valid() bool {
+	return v == VisibilityPrivate || v == VisibilityDepartment || v == VisibilityPublic
+}
+
+// VisibilityFromWorkflow maps a workflow visibility VALUE (passed as a string so
+// domain/instance never imports domain/workflow — the same one-directional edge
+// instance.Claims preserves) to the corresponding instance.Visibility. It is the
+// ONE place the workflow→instance conversion lives, replacing the inline switches
+// the engine hand-coded (PR #21).
+//
+// An unrecognized value maps to VisibilityPrivate (fail-closed to owner-only). A
+// totality test over workflow.Visibility's values guards against a fourth level
+// being added to workflow without extending this mapping — stronger protection
+// than a defaulting switch buried in the engine, which would silently downgrade
+// the new level with no failure.
+func VisibilityFromWorkflow(workflowVisibility string) Visibility {
+	switch workflowVisibility {
+	case string(VisibilityPublic):
+		return VisibilityPublic
+	case string(VisibilityDepartment):
+		return VisibilityDepartment
+	default: // "private" or unrecognized ⇒ owner-only (fail closed)
+		return VisibilityPrivate
+	}
+}
+
 // Instance is a single execution of a workflow definition.
 type Instance struct {
 	ID                uuid.UUID

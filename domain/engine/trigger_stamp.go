@@ -29,8 +29,15 @@ type stamp struct {
 //     departments, else ErrInvalidDepartmentOverride.
 //
 // Stamping rules (spec §Instance Visibility, design §Trigger Stamping):
-//   - public:     Visibility=public; Department = override, else the triggerer's
-//                 first effective department (dashboard attribution), else "".
+//   - public:     Visibility=public; Department = "" ALWAYS. A public run's
+//                 audience is everyone, so attributing it to any one department
+//                 is a category error. The previous firstDepartment(id) fallback
+//                 read JWT-claim-first-seen order — unstable across logins — so
+//                 the SAME user/same public workflow drifted between departments
+//                 across runs (PR #21 Must Fix). Public runs are surfaced via the
+//                 dashboard's explicit cross-department (public) lane, not a
+//                 department bucket. The override is still validated above (the
+//                 scope-widening guard) but never attributes a public run.
 //   - department: Visibility=department; Department = override, else the
 //                 publication's department.
 //   - private:    Visibility=private; Department = "" (override ignored for the
@@ -44,11 +51,8 @@ func resolveStamp(id identity.Identity, pubVisibility instance.Visibility, pubDe
 
 	switch pubVisibility {
 	case instance.VisibilityPublic:
-		dept := override
-		if dept == "" {
-			dept = firstDepartment(id)
-		}
-		return stamp{Visibility: instance.VisibilityPublic, Department: dept}, nil
+		// Public runs attribute to NO department (cross-department audience).
+		return stamp{Visibility: instance.VisibilityPublic, Department: ""}, nil
 	case instance.VisibilityDepartment:
 		dept := override
 		if dept == "" {
@@ -58,14 +62,4 @@ func resolveStamp(id identity.Identity, pubVisibility instance.Visibility, pubDe
 	default: // private (or unknown -> fail closed to private/owner-only)
 		return stamp{Visibility: instance.VisibilityPrivate, Department: ""}, nil
 	}
-}
-
-// firstDepartment returns the caller's first effective department, or "" when
-// they belong to none (claimless callers -> default group is supplied by Phase 1,
-// so this is "" only for an identity with no Departments slice).
-func firstDepartment(id identity.Identity) string {
-	if len(id.Departments) == 0 {
-		return ""
-	}
-	return id.Departments[0]
 }

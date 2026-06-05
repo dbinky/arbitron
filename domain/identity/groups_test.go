@@ -21,6 +21,49 @@ func TestNormalizeDept(t *testing.T) {
 	}
 }
 
+// DedupeDepts is the one shared order-preserving dedup primitive (PR #21),
+// reused by the dashboard service and the auth middleware. It removes duplicates,
+// preserves first-seen order, and is nil-safe. Unlike ResolveDepartments it does
+// NOT normalize, drop blanks, or apply the default-group sentinel — those remain
+// each caller's own policy.
+func TestDedupeDepts(t *testing.T) {
+	t.Run("removes duplicates preserving first-seen order", func(t *testing.T) {
+		got := DedupeDepts([]string{"engineering", "sales", "engineering", "platform", "sales"})
+		want := []string{"engineering", "sales", "platform"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("nil input yields nil", func(t *testing.T) {
+		if got := DedupeDepts(nil); got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+
+	t.Run("empty input yields nil", func(t *testing.T) {
+		if got := DedupeDepts([]string{}); got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
+
+	t.Run("no duplicates returns the same sequence", func(t *testing.T) {
+		got := DedupeDepts([]string{"a", "b", "c"})
+		if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+			t.Errorf("got %v, want [a b c]", got)
+		}
+	})
+
+	t.Run("does NOT normalize or drop blanks (caller policy)", func(t *testing.T) {
+		// distinct-by-exact-value: "Eng" and "eng" are different here.
+		got := DedupeDepts([]string{"Eng", "eng", "", ""})
+		want := []string{"Eng", "eng", ""}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v (dedupe is value-exact, no normalization)", got, want)
+		}
+	})
+}
+
 func TestResolveDepartments(t *testing.T) {
 	cfg := GroupConfig{DefaultGroup: "default"}
 

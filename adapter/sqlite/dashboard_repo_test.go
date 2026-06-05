@@ -33,7 +33,7 @@ VALUES (?, ?, ?, '{}', ?, 'normal', '{}', '{}', ?, ?, ?, ?, ?)`,
 
 func dptr(s string) *string { return &s }
 
-func TestDashboardAggregate_EmptyDepartmentsReturnsZeroEnvelope(t *testing.T) {
+func TestDashboardAggregate_EmptyDepartmentsNoRowsReturnsZeroEnvelope(t *testing.T) {
 	db := setupTestDB(t).DB
 	repo := NewDashboardRepo(db)
 
@@ -43,7 +43,70 @@ func TestDashboardAggregate_EmptyDepartmentsReturnsZeroEnvelope(t *testing.T) {
 		Now:         time.Now().UTC(),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, dashboard.Stats{}, out, "no visible departments ⇒ all-zero stats, no DB hit needed")
+	assert.Equal(t, dashboard.Stats{}, out, "no visible departments and no public runs ⇒ all-zero stats")
+}
+
+// PR #21 (public lane): a caller with NO visible departments still sees PUBLIC
+// runs — public is the cross-department lane visible to everyone. Since public
+// runs now carry no department (empty), they are matched by visibility, not a
+// department clause.
+func TestDashboardAggregate_EmptyDepartments_StillSeesPublicLane(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+
+	// A public run carrying NO department (the post-PR-#21 stamp).
+	seedDashInstance(t, db, "pub-wf", "", "public", "completed", recent, nil)
+	// A department run the caller cannot see (no departments requested).
+	seedDashInstance(t, db, "dep-wf", "engineering", "department", "completed", recent, nil)
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: nil, Window: 24 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, out.Outcomes.TotalRuns, "only the public run is visible to a zero-department caller")
+}
+
+// PR #21 (public lane): a department-scoped caller sees BOTH their department's
+// runs AND public (no-department) runs.
+func TestDashboardAggregate_ScopedCaller_SeesDepartmentAndPublicLanes(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+
+	seedDashInstance(t, db, "eng-wf", "engineering", "department", "completed", recent, nil)
+	seedDashInstance(t, db, "pub-wf", "", "public", "completed", recent, nil) // public, no dept
+	seedDashInstance(t, db, "sales-wf", "sales", "department", "completed", recent, nil)
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		Departments: []string{"engineering"}, Window: 24 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, out.Outcomes.TotalRuns, "engineering department lane + cross-department public lane")
+}
+
+// PR #21 (admin zero-state): AllDepartments aggregates EVERY department-visible
+// and public run, with no department filter — the admin first-load whole-org view.
+func TestDashboardAggregate_AllDepartments_AggregatesWholeOrg(t *testing.T) {
+	db := setupTestDB(t).DB
+	repo := NewDashboardRepo(db)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+
+	seedDashInstance(t, db, "eng-wf", "engineering", "department", "completed", recent, nil)
+	seedDashInstance(t, db, "sales-wf", "sales", "department", "completed", recent, nil)
+	seedDashInstance(t, db, "pub-wf", "", "public", "completed", recent, nil)
+	// Private runs are still excluded even for the whole-org admin view.
+	seedDashInstance(t, db, "priv-wf", "engineering", "private", "completed", recent, nil)
+
+	out, err := repo.Aggregate(context.Background(), dashboard.AggregateParams{
+		AllDepartments: true, Window: 24 * time.Hour, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, out.Outcomes.TotalRuns,
+		"all department-visible + public runs across the org, private excluded")
 }
 
 func TestDashboardAggregate_ExcludesPrivateAndForeignDepartments(t *testing.T) {

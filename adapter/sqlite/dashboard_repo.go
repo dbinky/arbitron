@@ -29,25 +29,43 @@ var _ dashboard.StatsRepository = (*DashboardRepo)(nil)
 // runs are aggregated (members' private experiments are excluded, per spec).
 const visibilityFilter = "visibility IN ('department','public')"
 
-// deptPlaceholders builds "department IN (?,?,…)" and the matching args slice.
-func deptPlaceholders(depts []string) (string, []any) {
-	marks := make([]string, len(depts))
-	args := make([]any, len(depts))
-	for i, d := range depts {
+// scopeFilter builds the row-scope WHERE fragment (visibility + department) and
+// its args for one aggregate query.
+//
+//   - AllDepartments (admin, no filter): every department-visible or public row,
+//     no department clause.
+//   - scoped: rows in one of the requested departments OR any public run. The
+//     public lane (visibility='public') is ALWAYS included because a public run's
+//     audience is everyone and, since PR #21, public runs carry no department, so
+//     a department IN (…) clause alone would drop them entirely.
+func scopeFilter(p dashboard.AggregateParams) (string, []any) {
+	if p.AllDepartments {
+		return visibilityFilter, nil
+	}
+	if len(p.Departments) == 0 {
+		// No visible departments, but PUBLIC runs are visible to everyone — they
+		// are the cross-department lane (since PR #21 public runs carry no
+		// department). So a zero-department caller still sees the public lane.
+		return "visibility = 'public'", nil
+	}
+	marks := make([]string, len(p.Departments))
+	args := make([]any, len(p.Departments))
+	for i, d := range p.Departments {
 		marks[i] = "?"
 		args[i] = d
 	}
-	return "department IN (" + strings.Join(marks, ",") + ")", args
+	// (department IN (…) OR visibility='public') AND <department|public only>
+	clause := "(department IN (" + strings.Join(marks, ",") + ") OR visibility = 'public') AND " + visibilityFilter
+	return clause, args
 }
 
-// Aggregate runs all four aggregates and assembles the envelope. An empty
-// department set means the caller can see nothing ⇒ zero envelope, no queries.
+// Aggregate runs all four aggregates and assembles the envelope. There is no
+// zero-envelope short-circuit: PUBLIC runs are the cross-department lane visible
+// to everyone (PR #21), so even a caller with no visible departments sees public
+// runs. scopeFilter keeps an admin's whole-org view distinct from a scoped or
+// public-only view.
 func (r *DashboardRepo) Aggregate(ctx context.Context, p dashboard.AggregateParams) (dashboard.Stats, error) {
-	if len(p.Departments) == 0 {
-		return dashboard.Stats{}, nil
-	}
-
-	deptClause, deptArgs := deptPlaceholders(p.Departments)
+	deptClause, deptArgs := scopeFilter(p)
 	windowStart := timeToString(p.Now.Add(-p.Window))
 
 	queue, err := r.queueHealth(ctx, deptClause, deptArgs)
