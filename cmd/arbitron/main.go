@@ -332,8 +332,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
 	// Best-effort audit emitter for publish/visibility/admin-override events. The
-	// engine is wired to this same auditSvc in Phase 3 (task 5) via
-	// eng.SetAuditRecorder(auditSvc) — not here, to keep a single engine seam.
+	// engine is wired to this same auditSvc below (Phase 3 task 5) via
+	// eng.SetAuditRecorder(auditSvc), once eng exists — a single engine seam.
 	auditRepo := adaptsqlite.NewAuditRepo(db)
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
@@ -541,6 +541,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// admin actions on other users' instances are attributed.
 	interventionRepo := adaptsqlite.NewInterventionRepo(db)
 	eng.SetInterventions(interventionRepo)
+	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
+	// run they do not own emits a domain audit event (instance.lead_intervention /
+	// admin.override). *audit.Service.Record has exactly the void
+	// engine.AuditRecorder signature, so it satisfies the port with no adapter.
+	eng.SetAuditRecorder(auditSvc)
 	// 12a-1b. Gate the engine trigger read path by workflow visibility. Local
 	// mode's fixed identity is admin, for which CanSeePublication returns true,
 	// so local-mode openness is preserved.
