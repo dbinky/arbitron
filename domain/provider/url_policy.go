@@ -103,6 +103,46 @@ func isInternalHost(host string) bool {
 	return false
 }
 
+// providerOllama is the connection provider string that earns the narrow
+// loopback carve-out below. Kept here (not imported from adapter/provider) so
+// the domain policy has no adapter dependency.
+const providerOllama = "ollama"
+
+// ollamaLoopbackAllowed reports whether c earns the narrow local-Ollama
+// carve-out: provider == "ollama" (case/whitespace-insensitive) AND the
+// BaseURL host is a loopback literal (localhost, 127.0.0.0/8, or ::1), over
+// http or https. It is deliberately NARROW: it does NOT accept the
+// 169.254.169.254 metadata endpoint, link-local, unspecified, or RFC1918
+// hosts, and it applies to NO other provider. Anything it does not accept
+// falls through to the unchanged StrictURLPolicy.
+func ollamaLoopbackAllowed(c Connection) bool {
+	if strings.ToLower(strings.TrimSpace(c.Provider)) != providerOllama {
+		return false
+	}
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(strings.Trim(u.Hostname(), "[]"))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	// Loopback ONLY. Explicitly exclude the metadata endpoint and any
+	// non-loopback internal class even though IsLoopback already excludes
+	// them — the explicit guard documents the security boundary.
+	if ip.Equal(net.IPv4(169, 254, 169, 254)) {
+		return false
+	}
+	return ip.IsLoopback()
+}
+
 // ValidateConnectionURL applies the given URLPolicy to a connection's BaseURL.
 // It is the reusable, single-source write-time guard mirroring ValidateConnection
 // (the Azure api-version rule): the connection store calls it on create/update
@@ -110,6 +150,12 @@ func isInternalHost(host string) bool {
 func ValidateConnectionURL(c Connection, policy URLPolicy) error {
 	if policy == nil {
 		policy = StrictURLPolicy
+	}
+	// Narrow, provider-aware carve-out: local Ollama (loopback host) may use
+	// http + loopback, which StrictURLPolicy would otherwise reject. Scoped to
+	// provider=="ollama" AND loopback ONLY; everything else is unchanged.
+	if ollamaLoopbackAllowed(c) {
+		return nil
 	}
 	if err := policy.ValidateURL(c.BaseURL); err != nil {
 		return fmt.Errorf("connection %q: %w", c.Name, err)
