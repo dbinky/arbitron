@@ -171,8 +171,42 @@ func triggerOwner(ctx context.Context, users instance.UserRepository) (uuid.UUID
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
 // and delegates to the queue manager for capacity-based scheduling.
 // The second return value indicates whether the instance started immediately (true)
-// or stayed in queued state (false).
+// or stayed in queued state (false). It delegates to TriggerWithDepartment with
+// no per-trigger department override, preserving the existing entrypoint.
 func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+	return e.TriggerWithDepartment(ctx, workflowName, variables, priority, "")
+}
+
+// resolvePublication returns the resolved workflow's audience (visibility +
+// department) for instance stamping. A workflow resolved from the shared scope
+// MAY carry a publication record (department/public); a shared workflow with no
+// record, or any private-scope resolution, is private (owner-only). It mirrors
+// workflow.Visibility into the instance.Visibility self-owned type so the engine
+// does not leak the workflow type onto the instance.
+func (e *Engine) resolvePublication(ctx context.Context, scope workflow.Scope, workflowName string) (instance.Visibility, string) {
+	if scope.Kind != workflow.ScopeShared || e.publishers == nil {
+		return instance.VisibilityPrivate, ""
+	}
+	pub, found, err := e.publishers.PublicationOf(ctx, workflowName)
+	if err != nil || !found {
+		return instance.VisibilityPrivate, ""
+	}
+	switch pub.Visibility {
+	case workflow.VisibilityPublic:
+		return instance.VisibilityPublic, ""
+	case workflow.VisibilityDepartment:
+		return instance.VisibilityDepartment, pub.Department
+	default:
+		return instance.VisibilityPrivate, ""
+	}
+}
+
+// TriggerWithDepartment loads a workflow, validates inputs, stamps the run's
+// visibility+department (applying the optional validated per-trigger department
+// override), creates the instance, and enqueues it. departmentOverride is "" for
+// the default Trigger entrypoint; when non-empty it must be one of the caller's
+// effective departments (else ErrInvalidDepartmentOverride and no instance).
+func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, departmentOverride string) (uuid.UUID, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -205,9 +239,22 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 			return workflow.CanSeePublication(id, pub), nil
 		}
 	}
-	wf, _, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
+	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
+	}
+
+	// Stamp the run's audience from the resolved publication (private when the
+	// workflow has no publication record), applying the validated per-trigger
+	// department override. A system trigger (no context identity) yields a
+	// zero-value identity whose Departments is nil, so a public/department run is
+	// stamped with an empty attribution department. An invalid override fails the
+	// trigger before any instance is created.
+	vis, pubDept := e.resolvePublication(ctx, scope, workflowName)
+	callerID, _ := identity.FromContext(ctx)
+	st, stErr := resolveStamp(callerID, vis, pubDept, departmentOverride)
+	if stErr != nil {
+		return uuid.Nil, false, stErr
 	}
 
 	// Validate inputs.
@@ -269,6 +316,8 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 		OwnerID:           ownerID,
 		WorkflowName:      workflowName,
 		WorkflowSnapshot:  wfSnapshot,
+		Department:        st.Department,
+		Visibility:        st.Visibility,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
