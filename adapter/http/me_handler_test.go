@@ -108,6 +108,67 @@ func TestMeHandler_NoIdentityReturns401(t *testing.T) {
 	}
 }
 
+// TestMeHandler_NoPersonalIdentifiersInJSON checks the raw JSON response for
+// PII key patterns. The struct-decode check in TestMeHandler_ReturnsProjection
+// catches known field names, but this test verifies the actual serialized JSON
+// does not carry any unexpected identifier-style key. It catches a future
+// developer adding an emailFwd or sub field to meView without updating tests.
+func TestMeHandler_NoPersonalIdentifiersInJSON(t *testing.T) {
+	id := identity.Identity{
+		UserID:      uuid.New(),
+		Username:    "alice",
+		Role:        identity.RoleUser,
+		Departments: []string{"engineering"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), id))
+	NewMeHandler().Me(rec, req)
+
+	body := rec.Body.String()
+	piiKeys := []string{`"subject"`, `"email"`, `"sub"`, `"emailVerified"`, `"emailAddress"`}
+	for _, key := range piiKeys {
+		if meContains(body, key) {
+			t.Errorf("JSON response contains PII key %s: %s", key, body)
+		}
+	}
+}
+
+// TestMeHandler_AllowedKeysOnly verifies that the JSON response contains
+// exactly the expected set of top-level keys and no extras. A new field
+// silently added to meView (e.g. for debugging) would be caught here.
+func TestMeHandler_AllowedKeysOnly(t *testing.T) {
+	id := identity.Identity{UserID: uuid.New(), Username: "bob", Role: identity.RoleAdmin, Departments: []string{"eng"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), id))
+	NewMeHandler().Me(rec, req)
+
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &rawMap); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	allowed := map[string]bool{
+		"userId":         true,
+		"username":       true,
+		"role":           true,
+		"departments":    true,
+		"ledDepartments": true,
+		"isAdmin":        true,
+	}
+	for key := range rawMap {
+		if !allowed[key] {
+			t.Errorf("unexpected key %q in /me response — ensure no PII or internal fields are leaked", key)
+		}
+	}
+	// All allowed keys must be present (no fields silently dropped).
+	for key := range allowed {
+		if _, ok := rawMap[key]; !ok {
+			t.Errorf("expected key %q missing from /me response", key)
+		}
+	}
+}
+
 // meContains is a tiny local helper (avoid importing strings just for this).
 func meContains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
