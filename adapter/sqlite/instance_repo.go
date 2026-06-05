@@ -166,6 +166,8 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 			WorkflowName:  row.WorkflowName,
 			State:         instance.State(row.State),
 			Priority:      instance.Priority(row.Priority),
+			Department:    nullStringToString(row.Department),
+			Visibility:    instance.Visibility(row.Visibility),
 			CurrentNodeID: nullStringToPtr(row.CurrentNodeID),
 			CreatedAt:     createdAt,
 			UpdatedAt:     updatedAt,

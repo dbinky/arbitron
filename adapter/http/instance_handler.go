@@ -81,6 +81,8 @@ type instanceResponse struct {
 	WorkflowName      string         `json:"workflowName"`
 	State             string         `json:"state"`
 	Priority          string         `json:"priority"`
+	Department        string         `json:"department,omitempty"`
+	Visibility        string         `json:"visibility,omitempty"`
 	Variables         map[string]any `json:"variables"`
 	OriginalVariables map[string]any `json:"originalVariables"`
 	CurrentNodeID     *string        `json:"currentNodeId,omitempty"`
@@ -110,6 +112,8 @@ func toInstanceResponse(inst *instance.Instance) instanceResponse {
 		FailedNodeID:      inst.FailedNodeID,
 		CreatedAt:         inst.CreatedAt.Format(APITimeFormat),
 		UpdatedAt:         inst.UpdatedAt.Format(APITimeFormat),
+		Department:        inst.Department,
+		Visibility:        string(inst.Visibility),
 	}
 	resp.WorkflowSnapshot = inst.WorkflowSnapshot
 	if inst.CompletedAt != nil {
@@ -164,6 +168,8 @@ type summaryDTO struct {
 	WorkflowName  string  `json:"workflowName"`
 	State         string  `json:"state"`
 	Priority      string  `json:"priority"`
+	Department    string  `json:"department,omitempty"`
+	Visibility    string  `json:"visibility,omitempty"`
 	CurrentNodeID *string `json:"currentNodeId,omitempty"`
 	CreatedAt     string  `json:"createdAt"`
 	UpdatedAt     string  `json:"updatedAt"`
@@ -180,6 +186,8 @@ func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
 		CurrentNodeID: s.CurrentNodeID,
 		CreatedAt:     s.CreatedAt.Format(APITimeFormat),
 		UpdatedAt:     s.UpdatedAt.Format(APITimeFormat),
+		Department:    s.Department,
+		Visibility:    string(s.Visibility),
 	}
 	if s.CompletedAt != nil {
 		v := s.CompletedAt.Format(APITimeFormat)

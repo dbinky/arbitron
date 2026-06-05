@@ -119,7 +119,7 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 }
 
 const listInstances = `-- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility
 FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
@@ -158,6 +158,8 @@ type ListInstancesRow struct {
 	UpdatedAt     string
 	CompletedAt   sql.NullString
 	QueuedAt      sql.NullString
+	Department    sql.NullString
+	Visibility    string
 }
 
 // Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
@@ -198,6 +200,8 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 			&i.UpdatedAt,
 			&i.CompletedAt,
 			&i.QueuedAt,
+			&i.Department,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}

@@ -63,6 +63,25 @@ func TestInstanceRepoList_DisjunctiveVisibility(t *testing.T) {
 	assert.False(t, got[finDept], "a finance department run hidden from an engineering member")
 }
 
+func TestInstanceRepoList_SurfacesDepartmentVisibility(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	id := mkInst(t, repo, owner, instance.VisibilityDepartment, "engineering")
+
+	got, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	require.NoError(t, err)
+	var found bool
+	for _, s := range got {
+		if s.ID == id {
+			found = true
+			assert.Equal(t, "engineering", s.Department)
+			assert.Equal(t, instance.VisibilityDepartment, s.Visibility)
+		}
+	}
+	require.True(t, found)
+}
+
 // Admin (no narrowing) sees everything.
 func TestInstanceRepoList_AdminUnconstrained(t *testing.T) {
 	db := setupTestDB(t)

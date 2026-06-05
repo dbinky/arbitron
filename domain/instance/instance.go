@@ -89,6 +89,8 @@ type InstanceSummary struct {
 	WorkflowName  string     `json:"workflowName"`
 	State         State      `json:"state"`
 	Priority      Priority   `json:"priority"`
+	Department    string     `json:"department,omitempty"`
+	Visibility    Visibility `json:"visibility,omitempty"`
 	CurrentNodeID *string    `json:"currentNodeId,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
