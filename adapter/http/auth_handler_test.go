@@ -152,7 +152,9 @@ func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
 }
 
 func TestAuthHandler_LoginThenCallback_NewUser(t *testing.T) {
-	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "sub-new", Username: "newuser", Email: "new@x.com"}}
+	// EmailVerified: the email is persisted only when verified (PR #21 security fix);
+	// this test asserts the email round-trips, so the claim must be verified.
+	oidc := &fakeOIDCProvider{claims: identity.Claims{Subject: "sub-new", Username: "newuser", Email: "new@x.com", EmailVerified: true}}
 	sessions := newFakeSessionRepo()
 	users := newFakeUserRepo()
 	h := newAuthHandler(oidc, sessions, users)
