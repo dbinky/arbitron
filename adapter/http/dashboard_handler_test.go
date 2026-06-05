@@ -9,11 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	"github.com/arbitron/arbitron/domain/dashboard"
+	"github.com/arbitron/arbitron/domain/identity"
 )
 
 // fakeStatsService captures the parsed Request and returns canned Stats.
@@ -191,4 +193,49 @@ func TestDashboardHandler_SpacesAroundDepartmentNames_Trimmed(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"engineering", "sales"}, svc.got.Departments,
 		"spaces around department names must be trimmed before forwarding to service")
+}
+
+// ---------------------------------------------------------------------------
+// FA #33: /me identity → service clamp → repo query integration
+// ---------------------------------------------------------------------------
+
+// capturingDashRepo implements dashboard.StatsRepository and records params.
+type capturingDashRepo struct {
+	gotParams dashboard.AggregateParams
+}
+
+func (r *capturingDashRepo) Aggregate(_ context.Context, p dashboard.AggregateParams) (dashboard.Stats, error) {
+	r.gotParams = p
+	return dashboard.Stats{}, nil
+}
+
+// TestDashboardHandler_IdentityFromContext_DrivesClamp verifies the /me →
+// clamp → repo chain in one test: an engineering-only caller requesting "sales"
+// stats gets clamped to empty — the repo must never see the out-of-scope dept.
+// This is the missing integration proof that the identity inserted by the auth
+// middleware (at request time) actually reaches the service's clamp logic.
+func TestDashboardHandler_IdentityFromContext_DrivesClamp(t *testing.T) {
+	repo := &capturingDashRepo{}
+	svc := dashboard.NewService(repo)
+	h := adapthttp.NewDashboardHandler(svc)
+
+	// Inject an engineering-member identity into the request context — this
+	// is what the auth middleware does before the handler is reached.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/stats?departments=sales", nil)
+	ctx := identity.WithIdentity(req.Context(), identity.Identity{
+		UserID:      uuid.New(),
+		Username:    "eng-user",
+		Role:        identity.RoleUser,
+		Departments: []string{"engineering"},
+	})
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	h.Stats(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	// The service's clamp intersects {"sales"} with {"engineering"} → empty.
+	// An empty slice means no departments are visible, producing zero stats.
+	assert.Empty(t, repo.gotParams.Departments,
+		"engineering member requesting 'sales' must be clamped to empty — cross-dept isolation")
 }
