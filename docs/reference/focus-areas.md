@@ -21,7 +21,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 6 | Identity enrichment + middleware (`domain/identity/identity.go` Departments/LedDepartments/InDepartment/LeadsDepartment; `adapter/http/auth_middleware.go` population, local-mode default-group admin) | [x] | [x] | Done |
 | 7 | Whoami endpoint (`adapter/http/me_handler.go` — projection shape, []-not-null, no subject/email leak, 401 on no identity) | [x] | [x] | Done |
 | 8 | Published-workflow visibility schema/repo (`adapter/sqlite` migration 010 + PublicationOf/Upsert — visibility+department columns, shared→public default migration) | [x] | [x] | Done |
-| 9 | Visibility type + ports (`domain/workflow` Visibility, Publication, widened PublisherLookup/PublishedStore) | [ ] | [ ] | |
+| 9 | Visibility type + ports (`domain/workflow` Visibility, Publication, widened PublisherLookup/PublishedStore) | [x] | [ ] | |
 | 10 | Workflow read-path gating (`domain/workflow/service.go` canSeePublication on List/Load/LoadVisible/Copy/ListFiles + engine Trigger — ErrNotFound, no existence leak, nil-lookup local openness) | [ ] | [ ] | |
 | 11 | Publish/SetVisibility role gating (`domain/workflow/service.go` + HTTP `PUT /workflows/{name}/visibility` + MCP `workflow_set_visibility` — member→dept, lead/admin→public, copy-then-record invariant) | [ ] | [ ] | |
 | 12 | Audit infrastructure (`domain/audit` + `adapter/sqlite` migration 011 EventRepo — void best-effort Service.Record, nil-safe, actor-from-context) | [ ] | [ ] | |
