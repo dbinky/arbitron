@@ -390,6 +390,31 @@ func TestProvider_Exchange_NoGroupClaim_GroupsNil(t *testing.T) {
 	assert.Nil(t, claims.Groups, "Groups must be nil when GroupClaim is not configured")
 }
 
+// TestProvider_Exchange_GroupClaimConfiguredButAbsent_GroupsNil verifies the
+// robustness path: GroupClaim is configured but the ID token simply doesn't carry
+// that claim key. Real IdPs may omit the group claim for users with no memberships.
+// Exchange must return nil Groups without an error — a missing claim is not a failure.
+func TestProvider_Exchange_GroupClaimConfiguredButAbsent_GroupsNil(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		// baseClaims does not include a "groups" key.
+		return h.tokenResponse(h.signIDToken(t, nil, baseClaims(h.issuer))), http.StatusOK
+	}
+	p, err := adaptoidc.New(context.Background(), adaptoidc.Config{
+		IssuerURL:    h.issuer,
+		ClientID:     testClientID,
+		ClientSecret: "secret",
+		RedirectURL:  "https://app.example.com/auth/callback",
+		Scopes:       []string{"profile", "email"},
+		GroupClaim:   "groups", // configured, but the token won't carry it
+	})
+	require.NoError(t, err)
+
+	claims, err := p.Exchange(context.Background(), "any-code")
+	require.NoError(t, err, "missing group claim must not fail the exchange")
+	assert.Nil(t, claims.Groups, "Groups must be nil when the claim is absent from the token")
+}
+
 // Structural: Claims carries no IdP access/refresh token field, reinforcing that
 // the IdP is never on the request hot path.
 func TestProvider_Claims_DiscardsIdPTokens(t *testing.T) {

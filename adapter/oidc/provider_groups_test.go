@@ -83,3 +83,16 @@ func TestExtractGroups_CustomClaimName(t *testing.T) {
 		t.Errorf("got %v, want [admin ops]", got)
 	}
 }
+
+// Robustness: whitespace-only single string passes through extractGroups
+// unmodified — the extraction layer is intentionally raw. Trimming and empty
+// detection are the domain layer's responsibility (ResolveDepartments →
+// NormalizeDept). This pins the extraction/normalization contract boundary so
+// future callers know not to add normalization here.
+func TestExtractGroups_WhitespaceOnlySingleString_PassesThrough(t *testing.T) {
+	raw := json.RawMessage(`"   "`)
+	got := extractGroups(map[string]json.RawMessage{"groups": raw}, "groups")
+	if !reflect.DeepEqual(got, []string{"   "}) {
+		t.Errorf("got %v, want [\"   \"] (whitespace passes through; normalization is domain's job)", got)
+	}
+}
