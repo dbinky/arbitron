@@ -277,3 +277,62 @@ func TestTrigger_Override_ListAudienceConsistency(t *testing.T) {
 	assert.ErrorIs(t, wErr, engine.ErrInvalidDepartmentOverride,
 		"override to a dept outside the caller's set must be rejected")
 }
+
+// ---------------------------------------------------------------------------
+// FA #34: Local-mode inertness — all three RBAC gates pass as default-group admin
+// ---------------------------------------------------------------------------
+
+// TestLocalMode_AllGatesInert verifies that the identity produced by the auth
+// middleware in local mode (admin + "default" group) passes through all three
+// RBAC gates without restriction:
+//   - Workflow visibility: nil publisher lookup → all shared workflows open
+//   - Instance read: admin → canView=true for any instance (GetInstance)
+//   - Intervention: admin → canIntervene=true, cancel succeeds on any queued instance
+//
+// This is the seam test that pins the local-mode contract: a single operator
+// deployment behaves exactly like today — one admin who can see and act on
+// everything, with no department, visibility, or role check blocking them.
+// If any gate stops being transparent for an admin, this test fails first.
+func TestLocalMode_AllGatesInert(t *testing.T) {
+	h := newTriggerHarness()
+	// newTriggerHarness does NOT call SetPublisherLookup, so publishers is nil.
+	// This is the local-mode state: no org-mode publication registry wired.
+
+	// The local-mode identity: single admin in the "default" group — identical to
+	// what adapter/http/auth_middleware.go produces for every request in local mode.
+	localUser := uuid.New()
+	localCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:      localUser,
+		Username:    "local",
+		Role:        identity.RoleAdmin,
+		Departments: []string{"default"},
+	})
+
+	// -- Gate 1: Workflow visibility (nil publishers → shared scope always open) --
+	h.repo.put(workflow.Shared(), sharedWf("any-wf"))
+	instID, _, err := h.engine.Trigger(localCtx, "any-wf", nil, "normal")
+	require.NoError(t, err,
+		"local-mode admin (nil publisher lookup) must be able to trigger any shared workflow")
+
+	// -- Gate 2: Instance read (canView: admin always true) --
+	got, err := h.engine.GetInstance(localCtx, instID)
+	require.NoError(t, err,
+		"local-mode admin must be able to read any instance via GetInstance (canView=admin)")
+	assert.Equal(t, instID, got.ID)
+
+	// -- Gate 3: Intervention (canIntervene: admin always true) --
+	// Trigger a second instance as a different user, then cancel it as the local
+	// admin. The stranger owns it; in local mode the admin must not be blocked.
+	strangerUser := uuid.New()
+	strangerCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: strangerUser, Username: "s", Role: identity.RoleUser, Departments: []string{"default"},
+	})
+	h.repo.put(workflow.Shared(), sharedWf("other-wf"))
+	strangerInstID, _, err := h.engine.Trigger(strangerCtx, "other-wf", nil, "normal")
+	require.NoError(t, err)
+
+	// Cancel a queued instance not owned by the admin — must succeed (no ErrForbidden).
+	err = h.engine.Cancel(localCtx, strangerInstID)
+	assert.NoError(t, err,
+		"local-mode admin must be able to cancel any queued instance — canIntervene is always true for admin (inert RBAC)")
+}
