@@ -43,4 +43,26 @@ func TestCanSeePublication(t *testing.T) {
 	t.Run("department hidden from a deptless outsider", func(t *testing.T) {
 		assert.False(t, workflow.CanSeePublication(idWith(viewer, false), pubDeptEng))
 	})
+
+	// Robustness: admin who is ALSO the publisher must see the workflow (both
+	// admin and publisher paths fire). This case is NOT an admin override because
+	// the demoted identity (publisher without admin role) would also see it.
+	t.Run("admin who is also publisher sees own dept workflow", func(t *testing.T) {
+		assert.True(t, workflow.CanSeePublication(idWith(publisher, true), pubDeptEng))
+	})
+}
+
+// TestCanSeePublication_ZeroPublication verifies that the zero value of
+// Publication (no publisher, empty visibility) does not accidentally grant
+// access to non-admin users. If PublicationOf returns (zero, false, nil) and a
+// caller mistakenly uses the zero value, access must be denied.
+func TestCanSeePublication_ZeroPublication(t *testing.T) {
+	user := uuid.MustParse("00000000-0000-0000-0000-0000000000a3")
+	zeroPub := workflow.Publication{} // zero value: no publisher, no visibility
+
+	assert.False(t, workflow.CanSeePublication(idWith(user, false), zeroPub),
+		"zero Publication must not grant access to a non-admin, non-publisher user")
+	// An admin always sees it (admin overrides everything).
+	assert.True(t, workflow.CanSeePublication(idWith(user, true), zeroPub),
+		"admin always sees a publication regardless of visibility")
 }
