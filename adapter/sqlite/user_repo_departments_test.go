@@ -173,3 +173,45 @@ func TestReplaceDepartments_NonExistentUser_ReturnsError(t *testing.T) {
 		t.Error("expected error for non-existent user, got nil")
 	}
 }
+
+// ReplaceDepartments for user A must not affect user B's department set.
+// This pins the WHERE clause isolation in DeleteUserDepartments: a bug that
+// deleted ALL rows (missing WHERE) would silently clear every user's departments.
+func TestReplaceDepartments_UserIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+
+	uidA := newUserForDepts(t, repo)
+	uidB := newUserForDepts(t, repo)
+	ctx := context.Background()
+
+	if err := repo.ReplaceDepartments(ctx, uidA, []string{"engineering"}); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	if err := repo.ReplaceDepartments(ctx, uidB, []string{"sales"}); err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+
+	// Replace A's departments.
+	if err := repo.ReplaceDepartments(ctx, uidA, []string{"platform"}); err != nil {
+		t.Fatalf("replace A: %v", err)
+	}
+
+	// B's departments must be unchanged.
+	gotB, err := repo.ListDepartments(ctx, uidB)
+	if err != nil {
+		t.Fatalf("list B: %v", err)
+	}
+	if !reflect.DeepEqual(gotB, []string{"sales"}) {
+		t.Errorf("user B departments = %v, want [sales] (must not be affected by user A replace)", gotB)
+	}
+
+	// A's departments reflect the replacement.
+	gotA, err := repo.ListDepartments(ctx, uidA)
+	if err != nil {
+		t.Fatalf("list A: %v", err)
+	}
+	if !reflect.DeepEqual(gotA, []string{"platform"}) {
+		t.Errorf("user A departments = %v, want [platform]", gotA)
+	}
+}
