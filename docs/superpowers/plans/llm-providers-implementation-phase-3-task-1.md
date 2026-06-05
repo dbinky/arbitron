@@ -1,76 +1,124 @@
-# LLM Providers — Phase 3, Task 1: Bedrock SigV4 Signer + Credential-Composite Parsing Implementation Plan
+# LLM Providers — Phase 3, Task 1: Shared `adapter/awssig` SigV4 Signer + Sealed-Credential Parser
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a self-contained, hand-rolled AWS SigV4 (v4) request signer for the `bedrock` service plus a credential-payload parser, both fully test-driven with a golden-signature test, as the foundation the Phase-3 Bedrock chat adapter signs requests with.
+## Shared contracts / alignment (READ FIRST — cross-phase ownership)
 
-**Architecture:** A new `adapter/bedrock` package gains `sigv4.go` (canonical request → string-to-sign → signing-key derivation → `Authorization`/`X-Amz-Date`/optional `X-Amz-Security-Token` headers, with an **injectable clock** for deterministic signatures) and `credentials.go` (parse the sealed `RevealKey` payload, tolerating both the bare secret-access-key string and the JSON composite `{"secret":"...","session_token":"..."}`). No AWS SDK is pulled — the signer is hand-rolled against the documented SigV4 algorithm, a deliberate, signature-tested trade-off that keeps the dependency/supply-chain surface small.
+This task **CREATES the single shared leaf package `adapter/awssig`** that owns the AWS
+SigV4 signer (with an injectable clock) and the sealed-credential parse/build helpers.
+It is the **one and only** copy of these primitives across the whole feature:
 
-**Tech Stack:** Go stdlib only (`crypto/hmac`, `crypto/sha256`, `encoding/hex`, `encoding/json`, `net/http`, `net/url`, `sort`, `strings`, `time`). Tests use `go test ./...` (hermetic, no network). No third-party modules.
+- **Phase 3 Task 1 (this task): CREATES `adapter/awssig`.** The golden-signature test
+  lives here.
+- **Phase 3 Task 2 (bedrock chat adapter): IMPORTS `adapter/awssig`** — does NOT define
+  its own `sigv4.go`/`credentials.go`.
+- **Phase 4 Task 2 (opencode bedrock env): IMPORTS `adapter/awssig`** for the credential
+  parse — does NOT re-implement `parseBedrockSecret`/`bedrockComposite`.
+- **Phase 5 Task 1 (bedrock model-listing probe): IMPORTS `adapter/awssig`** for the
+  signer and the credential parse — does NOT add a second `adapter/probe/sigv4.go`.
+
+`adapter/awssig` is a **leaf**: stdlib-only, no arbitron imports, no import cycles. It is
+imported by `adapter/bedrock`, `adapter/opencode`, and `adapter/probe`. Exported API
+(stable across all four plans):
+
+```go
+package awssig
+
+type Credential struct { SecretAccessKey, SessionToken string } // EXPORTED
+func ParseCredential(sealed string) (Credential, error)         // bare OR JSON composite
+func BuildCredential(secret, sessionToken string) string        // seal helper (inverse)
+func Sign(req *http.Request, payload []byte, accessKeyID string, cred Credential, region, service string, now time.Time) error
+var ErrMissingSecret error
+var ErrSign error
+```
+
+All four plans MUST use these EXACT exported names (`awssig.Credential`,
+`awssig.ParseCredential`, `awssig.Sign`, `awssig.ErrMissingSecret`). The service string
+is `"bedrock"` for Converse (P3) and `"bedrock"` for the control-plane ListFoundationModels
+probe (P5) — both pass `service="bedrock"`.
+
+**Goal:** Build a self-contained, hand-rolled AWS SigV4 (v4) request signer plus a
+sealed-credential parser/builder in the shared `adapter/awssig` leaf package, both fully
+test-driven with a golden-signature test, as the foundation the Bedrock chat adapter (P3
+T2), the opencode bedrock env (P4 T2), and the Bedrock model-listing probe (P5 T1) all
+reuse.
+
+**Architecture:** A new `adapter/awssig` package gains `sigv4.go` (canonical request → string-to-sign → signing-key derivation → `Authorization`/`X-Amz-Date`/optional `X-Amz-Security-Token` headers, with an **injectable clock** for deterministic signatures) and `credentials.go` (parse the sealed `RevealKey` payload, tolerating both the bare secret-access-key string and the JSON composite `{"secret":"...","session_token":"..."}`, plus the inverse `BuildCredential` seal helper). No AWS SDK is pulled — the signer is hand-rolled against the documented SigV4 algorithm, a deliberate, signature-tested trade-off that keeps the dependency/supply-chain surface small.
+
+**Tech Stack:** Go stdlib only (`crypto/hmac`, `crypto/sha256`, `encoding/hex`, `encoding/json`, `net/http`, `net/url`, `sort`, `strings`, `time`). Tests use `go test ./...` (hermetic, no network). No third-party modules. **No arbitron imports** (leaf package — keeps it cycle-free and importable by `adapter/bedrock`, `adapter/opencode`, `adapter/probe`).
 
 ---
 
 ## Dependencies
 
-- **Upstream:** none functionally. Shares the connection/credential and `Config` patterns established by `adapter/openrouter` and `adapter/azurefoundry`.
+- **Upstream:** none functionally; stdlib-only leaf package.
 - **Reference symbols (read-only, do not modify in this task):**
-  - `domain/provider/provider.go` — `ResolvedBinding{Kind, Provider, BaseURL, Extras, Model, AllowedTools, RevealKey}`.
-  - `adapter/openrouter/provider.go` — `Config`, `scrubControl`, `ErrUpstreamStatus` patterns (mirrored in Task 2).
-- **Downstream:** Task 2 (`provider.go`, `request.go`, `response.go`, factory routing, `ValidateConnection` rule) consumes `signRequest`, `parseCredential`, and the `credential` type defined here.
+  - `adapter/openrouter/provider.go` — `scrubControl`, `ErrUpstreamStatus` patterns (mirrored by the bedrock adapter in Task 2, not by this leaf package).
+- **Downstream (importers of this package):**
+  - **Phase 3 Task 2** (`adapter/bedrock` provider/request/response, factory routing, `ValidateConnection` rule) consumes `awssig.Sign`, `awssig.ParseCredential`, `awssig.Credential`.
+  - **Phase 4 Task 2** (`adapter/opencode/env.go` bedrock env) consumes `awssig.ParseCredential`.
+  - **Phase 5 Task 1** (`adapter/probe/bedrock.go`) consumes `awssig.Sign` and `awssig.ParseCredential`.
 
 ## File Structure
 
-- Create: `adapter/bedrock/sigv4.go` — the signer: `signRequest`, `signingKey`, `hmacSHA256`, `sha256Hex`, `canonicalRequest`, `canonicalHeaders`, `signedHeaderNames`. Exported sentinel `ErrSign`.
-- Create: `adapter/bedrock/credentials.go` — `credential` struct, `parseCredential`, sentinel `ErrMissingSecret`.
-- Test: `adapter/bedrock/sigv4_test.go`
-- Test: `adapter/bedrock/credentials_test.go`
+- Create: `adapter/awssig/sigv4.go` — the signer: `Sign` (exported), `signingKey`, `hmacSHA256`, `sha256Hex`, `canonicalRequest`, `canonicalQueryString`. Exported sentinel `ErrSign`.
+- Create: `adapter/awssig/credentials.go` — `Credential` struct (exported), `ParseCredential` (exported), `BuildCredential` (exported seal helper), sentinel `ErrMissingSecret`.
+- Test: `adapter/awssig/sigv4_test.go`
+- Test: `adapter/awssig/credentials_test.go`
 
 ## Precise Signatures (defined in this task)
 
 ```go
-// adapter/bedrock/credentials.go
-package bedrock
+// adapter/awssig/credentials.go
+package awssig
 
-// credential is the parsed AWS secret material the adapter signs with. The
+// Credential is the parsed AWS secret material the signer uses. The
 // access-key-id is NOT here (it travels in Connection.Extras as a non-secret
 // identifier); only true secrets are carried.
-type credential struct {
+type Credential struct {
     SecretAccessKey string // the sealed secret-access-key (required)
     SessionToken    string // optional STS session token; "" when absent
 }
 
 // ErrMissingSecret is returned when the sealed payload yields no secret-access-key.
-var ErrMissingSecret = errors.New("bedrock: sealed credential payload has no secret-access-key")
+var ErrMissingSecret = errors.New("awssig: sealed credential payload has no secret-access-key")
 
-// parseCredential interprets the revealed sealed string. It tolerates BOTH forms:
+// ParseCredential interprets the revealed sealed string. It tolerates BOTH forms:
 //   - a JSON composite object {"secret":"...","session_token":"..."} (session_token optional)
 //   - a bare secret-access-key string (no session token)
 // A leading '{' (after trimming whitespace) selects the JSON form; anything else
 // is treated as the bare secret. An empty/whitespace-only payload, or a JSON
 // object whose "secret" is empty, returns ErrMissingSecret.
-func parseCredential(sealed string) (credential, error)
+func ParseCredential(sealed string) (Credential, error)
+
+// BuildCredential is the inverse seal helper used by the connection write-path:
+// when sessionToken == "" it returns the bare secret string; otherwise it returns
+// the JSON composite {"secret":"...","session_token":"..."}. ParseCredential
+// round-trips its output.
+func BuildCredential(secret, sessionToken string) string
 ```
 
 ```go
-// adapter/bedrock/sigv4.go
-package bedrock
+// adapter/awssig/sigv4.go
+package awssig
 
 // ErrSign wraps any signing failure (e.g. an unparseable target URL). The
 // secret-access-key and session token are NEVER included in the wrapped message.
-var ErrSign = errors.New("bedrock: sign request")
+var ErrSign = errors.New("awssig: sign request")
 
-// signRequest signs req in place with AWS Signature Version 4 for the given
+// Sign signs req in place with AWS Signature Version 4 for the given
 // region and service ("bedrock"). It sets X-Amz-Date, the Authorization header,
 // and — only when cred.SessionToken != "" — X-Amz-Security-Token. The request
 // body is read from a fresh bytes.Reader (payload supplied separately so the
 // body can be re-read by the HTTP client). now is injected for deterministic
-// signatures; service is "bedrock" in production.
+// signatures; service is "bedrock" for the Bedrock runtime (Converse) and the
+// Bedrock control plane (ListFoundationModels).
 //
 // SECURITY: the secret-access-key and session token contribute ONLY to the
 // derived signing key / Authorization signature and the X-Amz-Security-Token
 // header; they are never placed in any other header, never logged, and never
 // included in ErrSign.
-func signRequest(req *http.Request, payload []byte, accessKeyID string, cred credential, region, service string, now time.Time) error
+func Sign(req *http.Request, payload []byte, accessKeyID string, cred Credential, region, service string, now time.Time) error
 
 // signingKey derives the SigV4 signing key:
 //   kDate    = HMAC("AWS4"+secret, yyyymmdd)
@@ -118,14 +166,14 @@ func canonicalRequest(method, canonicalURI, canonicalQuery string, headers http.
 ## Task 1A: Credential-payload parser
 
 **Files:**
-- Create: `adapter/bedrock/credentials.go`
-- Test: `adapter/bedrock/credentials_test.go`
+- Create: `adapter/awssig/credentials.go`
+- Test: `adapter/awssig/credentials_test.go`
 
 - [ ] **Step 1: Write the failing tests (input-validation + edge-cases + security categories)**
 
 ```go
-// adapter/bedrock/credentials_test.go
-package bedrock
+// adapter/awssig/credentials_test.go
+package awssig
 
 import (
     "errors"
@@ -135,7 +183,7 @@ import (
 
 // happy-path / edge: bare secret string form (no session token).
 func TestParseCredential_BareSecret(t *testing.T) {
-    got, err := parseCredential("AKSECRET/raw+value")
+    got, err := ParseCredential("AKSECRET/raw+value")
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
     }
@@ -149,7 +197,7 @@ func TestParseCredential_BareSecret(t *testing.T) {
 
 // edge: JSON composite form with a session token.
 func TestParseCredential_JSONComposite(t *testing.T) {
-    got, err := parseCredential(`{"secret":"sek-123","session_token":"tok-abc"}`)
+    got, err := ParseCredential(`{"secret":"sek-123","session_token":"tok-abc"}`)
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
     }
@@ -160,7 +208,7 @@ func TestParseCredential_JSONComposite(t *testing.T) {
 
 // edge: JSON composite with leading whitespace and absent session_token.
 func TestParseCredential_JSONNoSessionToken(t *testing.T) {
-    got, err := parseCredential("  {\"secret\":\"only-secret\"}")
+    got, err := ParseCredential("  {\"secret\":\"only-secret\"}")
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
     }
@@ -169,25 +217,38 @@ func TestParseCredential_JSONNoSessionToken(t *testing.T) {
     }
 }
 
+// edge: BuildCredential round-trips through ParseCredential (both forms).
+func TestBuildCredential_RoundTrips(t *testing.T) {
+    bare := BuildCredential("only-secret", "")
+    if bare != "only-secret" {
+        t.Errorf("BuildCredential bare = %q, want bare string", bare)
+    }
+    composite := BuildCredential("sek-1", "tok-1")
+    got, err := ParseCredential(composite)
+    if err != nil || got.SecretAccessKey != "sek-1" || got.SessionToken != "tok-1" {
+        t.Errorf("round-trip = %+v err=%v, want secret=sek-1 session=tok-1", got, err)
+    }
+}
+
 // input-validation: empty / whitespace-only payload is rejected.
 func TestParseCredential_EmptyRejected(t *testing.T) {
     for _, in := range []string{"", "   ", "\t\n"} {
-        if _, err := parseCredential(in); !errors.Is(err, ErrMissingSecret) {
-            t.Errorf("parseCredential(%q) err = %v, want ErrMissingSecret", in, err)
+        if _, err := ParseCredential(in); !errors.Is(err, ErrMissingSecret) {
+            t.Errorf("ParseCredential(%q) err = %v, want ErrMissingSecret", in, err)
         }
     }
 }
 
 // input-validation: JSON object with empty "secret" is rejected.
 func TestParseCredential_JSONEmptySecretRejected(t *testing.T) {
-    if _, err := parseCredential(`{"secret":"","session_token":"x"}`); !errors.Is(err, ErrMissingSecret) {
+    if _, err := ParseCredential(`{"secret":"","session_token":"x"}`); !errors.Is(err, ErrMissingSecret) {
         t.Errorf("err = %v, want ErrMissingSecret", err)
     }
 }
 
 // security: a malformed JSON object does not leak its raw bytes into the error.
 func TestParseCredential_MalformedJSONNoLeak(t *testing.T) {
-    _, err := parseCredential(`{"secret":"super-secret-value", BROKEN`)
+    _, err := ParseCredential(`{"secret":"super-secret-value", BROKEN`)
     if err == nil {
         t.Fatal("expected an error for malformed JSON")
     }
@@ -199,14 +260,14 @@ func TestParseCredential_MalformedJSONNoLeak(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./adapter/bedrock/ -run TestParseCredential -v`
-Expected: FAIL — `undefined: parseCredential`, `undefined: ErrMissingSecret`.
+Run: `go test ./adapter/awssig/ -run 'TestParseCredential|TestBuildCredential' -v`
+Expected: FAIL — `undefined: ParseCredential`, `undefined: ErrMissingSecret`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```go
-// adapter/bedrock/credentials.go
-package bedrock
+// adapter/awssig/credentials.go
+package awssig
 
 import (
     "encoding/json"
@@ -214,34 +275,46 @@ import (
     "strings"
 )
 
-type credential struct {
+type Credential struct {
     SecretAccessKey string
     SessionToken    string
 }
 
-var ErrMissingSecret = errors.New("bedrock: sealed credential payload has no secret-access-key")
+var ErrMissingSecret = errors.New("awssig: sealed credential payload has no secret-access-key")
 
-func parseCredential(sealed string) (credential, error) {
+// jsonComposite is the sealed JSON shape when a session token is present.
+type jsonComposite struct {
+    Secret       string `json:"secret"`
+    SessionToken string `json:"session_token"`
+}
+
+func ParseCredential(sealed string) (Credential, error) {
     trimmed := strings.TrimSpace(sealed)
     if trimmed == "" {
-        return credential{}, ErrMissingSecret
+        return Credential{}, ErrMissingSecret
     }
     if strings.HasPrefix(trimmed, "{") {
-        var composite struct {
-            Secret       string `json:"secret"`
-            SessionToken string `json:"session_token"`
-        }
+        var composite jsonComposite
         if err := json.Unmarshal([]byte(trimmed), &composite); err != nil {
             // SECURITY: do not echo the payload; only a static reason.
-            return credential{}, errors.New("bedrock: malformed JSON credential payload")
+            return Credential{}, errors.New("awssig: malformed JSON credential payload")
         }
         if composite.Secret == "" {
-            return credential{}, ErrMissingSecret
+            return Credential{}, ErrMissingSecret
         }
-        return credential{SecretAccessKey: composite.Secret, SessionToken: composite.SessionToken}, nil
+        return Credential{SecretAccessKey: composite.Secret, SessionToken: composite.SessionToken}, nil
     }
     // Bare secret-access-key form (preserved verbatim, no session token).
-    return credential{SecretAccessKey: sealed}, nil
+    return Credential{SecretAccessKey: sealed}, nil
+}
+
+// BuildCredential is the inverse of ParseCredential's two forms.
+func BuildCredential(secret, sessionToken string) string {
+    if sessionToken == "" {
+        return secret
+    }
+    b, _ := json.Marshal(jsonComposite{Secret: secret, SessionToken: sessionToken})
+    return string(b)
 }
 ```
 
@@ -249,14 +322,14 @@ Note: the bare form returns `sealed` (not `trimmed`) so a secret is never silent
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `go test ./adapter/bedrock/ -run TestParseCredential -v`
-Expected: PASS (all six).
+Run: `go test ./adapter/awssig/ -run 'TestParseCredential|TestBuildCredential' -v`
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add adapter/bedrock/credentials.go adapter/bedrock/credentials_test.go
-git commit -m "feat(bedrock): credential-composite parser (bare + JSON forms)
+git add adapter/awssig/credentials.go adapter/awssig/credentials_test.go
+git commit -m "feat(awssig): sealed AWS credential parse/build (bare + JSON forms)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -266,14 +339,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 1B: SigV4 primitives (signing key + hashing)
 
 **Files:**
-- Create: `adapter/bedrock/sigv4.go`
-- Test: `adapter/bedrock/sigv4_test.go`
+- Create: `adapter/awssig/sigv4.go`
+- Test: `adapter/awssig/sigv4_test.go`
 
 - [ ] **Step 1: Write the failing tests (happy-path on primitives)**
 
 ```go
-// adapter/bedrock/sigv4_test.go
-package bedrock
+// adapter/awssig/sigv4_test.go
+package awssig
 
 import (
     "encoding/hex"
@@ -306,14 +379,14 @@ func TestSigningKey_AWSDocExample(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./adapter/bedrock/ -run 'TestSHA256Hex|TestSigningKey' -v`
+Run: `go test ./adapter/awssig/ -run 'TestSHA256Hex|TestSigningKey' -v`
 Expected: FAIL — `undefined: sha256Hex`, `undefined: signingKey`.
 
 - [ ] **Step 3: Write minimal implementation of the primitives**
 
 ```go
-// adapter/bedrock/sigv4.go
-package bedrock
+// adapter/awssig/sigv4.go
+package awssig
 
 import (
     "crypto/hmac"
@@ -342,30 +415,30 @@ func signingKey(secret, dateStamp, region, service string) []byte {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `go test ./adapter/bedrock/ -run 'TestSHA256Hex|TestSigningKey' -v`
+Run: `go test ./adapter/awssig/ -run 'TestSHA256Hex|TestSigningKey' -v`
 Expected: PASS. (If `TestSigningKey_AWSDocExample` fails, the HMAC chaining order is wrong — fix before proceeding; this is the load-bearing primitive.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add adapter/bedrock/sigv4.go adapter/bedrock/sigv4_test.go
-git commit -m "feat(bedrock): SigV4 signing-key derivation + sha256 primitives
+git add adapter/awssig/sigv4.go adapter/awssig/sigv4_test.go
+git commit -m "feat(awssig): SigV4 signing-key derivation + sha256 primitives
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 1C: Canonical request + full `signRequest` with golden signature
+## Task 1C: Canonical request + full `Sign` with golden signature
 
 **Files:**
-- Modify: `adapter/bedrock/sigv4.go`
-- Test: `adapter/bedrock/sigv4_test.go`
+- Modify: `adapter/awssig/sigv4.go`
+- Test: `adapter/awssig/sigv4_test.go`
 
 - [ ] **Step 1: Write the failing golden-signature test (SECURITY category) + header-presence tests (edge-cases)**
 
 ```go
-// append to adapter/bedrock/sigv4_test.go
+// append to adapter/awssig/sigv4_test.go
 import (
     "net/http"
     "strings"
@@ -376,7 +449,7 @@ import (
 // fixedClock is the injected, deterministic time for golden-signature tests.
 var fixedClock = time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 
-func newSignedReq(t *testing.T, cred credential, payload []byte) *http.Request {
+func newSignedReq(t *testing.T, cred Credential, payload []byte) *http.Request {
     t.Helper()
     req, err := http.NewRequest(http.MethodPost,
         "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-v2/converse",
@@ -385,9 +458,9 @@ func newSignedReq(t *testing.T, cred credential, payload []byte) *http.Request {
         t.Fatalf("build req: %v", err)
     }
     req.Header.Set("Content-Type", "application/json")
-    if err := signRequest(req, payload, "AKIDEXAMPLE", cred,
+    if err := Sign(req, payload, "AKIDEXAMPLE", cred,
         "us-east-1", "bedrock", fixedClock); err != nil {
-        t.Fatalf("signRequest: %v", err)
+        t.Fatalf("Sign: %v", err)
     }
     return req
 }
@@ -403,7 +476,7 @@ func newSignedReq(t *testing.T, cred credential, payload []byte) *http.Request {
 // produced value blindly — the point is an independent cross-check.
 func TestSignRequest_GoldenSignature(t *testing.T) {
     payload := []byte(`{"messages":[]}`)
-    req := newSignedReq(t, credential{SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"}, payload)
+    req := newSignedReq(t, Credential{SecretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"}, payload)
 
     if got := req.Header.Get("X-Amz-Date"); got != "20240102T030405Z" {
         t.Errorf("X-Amz-Date = %q, want 20240102T030405Z", got)
@@ -421,7 +494,7 @@ func TestSignRequest_GoldenSignature(t *testing.T) {
 // edge-case: with NO session token, X-Amz-Security-Token is absent and the
 // signed-headers list does not contain it.
 func TestSignRequest_NoSessionToken_NoSecurityTokenHeader(t *testing.T) {
-    req := newSignedReq(t, credential{SecretAccessKey: "sek"}, []byte(`{}`))
+    req := newSignedReq(t, Credential{SecretAccessKey: "sek"}, []byte(`{}`))
     if _, ok := req.Header["X-Amz-Security-Token"]; ok {
         t.Error("X-Amz-Security-Token must be absent when no session token")
     }
@@ -433,7 +506,7 @@ func TestSignRequest_NoSessionToken_NoSecurityTokenHeader(t *testing.T) {
 // edge-case: WITH a session token, X-Amz-Security-Token is set to the token and
 // is part of SignedHeaders (so it is integrity-covered by the signature).
 func TestSignRequest_SessionToken_SetsSecurityTokenHeader(t *testing.T) {
-    req := newSignedReq(t, credential{SecretAccessKey: "sek", SessionToken: "tok-xyz"}, []byte(`{}`))
+    req := newSignedReq(t, Credential{SecretAccessKey: "sek", SessionToken: "tok-xyz"}, []byte(`{}`))
     if got := req.Header.Get("X-Amz-Security-Token"); got != "tok-xyz" {
         t.Errorf("X-Amz-Security-Token = %q, want tok-xyz", got)
     }
@@ -446,7 +519,7 @@ func TestSignRequest_SessionToken_SetsSecurityTokenHeader(t *testing.T) {
 // signature does). The signature is a hex HMAC, so the raw secret cannot match it.
 func TestSignRequest_SecretNeverInHeaders(t *testing.T) {
     const secret = "TOTALLY-SECRET-RAW-KEY"
-    req := newSignedReq(t, credential{SecretAccessKey: secret, SessionToken: "sess-secret"}, []byte(`{}`))
+    req := newSignedReq(t, Credential{SecretAccessKey: secret, SessionToken: "sess-secret"}, []byte(`{}`))
     for name, vals := range req.Header {
         for _, v := range vals {
             if strings.Contains(v, secret) {
@@ -459,7 +532,7 @@ func TestSignRequest_SecretNeverInHeaders(t *testing.T) {
 // security: the session token appears ONLY in X-Amz-Security-Token, nowhere else.
 func TestSignRequest_SessionTokenOnlyInSecurityHeader(t *testing.T) {
     const sess = "SESSION-TOKEN-SECRET"
-    req := newSignedReq(t, credential{SecretAccessKey: "sek", SessionToken: sess}, []byte(`{}`))
+    req := newSignedReq(t, Credential{SecretAccessKey: "sek", SessionToken: sess}, []byte(`{}`))
     for name, vals := range req.Header {
         if http.CanonicalHeaderKey(name) == "X-Amz-Security-Token" {
             continue
@@ -475,13 +548,13 @@ func TestSignRequest_SessionTokenOnlyInSecurityHeader(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./adapter/bedrock/ -run TestSignRequest -v`
-Expected: FAIL — `undefined: signRequest` (and `canonicalRequest`).
+Run: `go test ./adapter/awssig/ -run TestSignRequest -v`
+Expected: FAIL — `undefined: Sign` (and `canonicalRequest`).
 
-- [ ] **Step 3: Write the canonicalization + `signRequest` implementation**
+- [ ] **Step 3: Write the canonicalization + `Sign` implementation**
 
 ```go
-// append to adapter/bedrock/sigv4.go
+// append to adapter/awssig/sigv4.go
 import (
     "errors"
     "fmt"
@@ -492,11 +565,11 @@ import (
     "time"
 )
 
-var ErrSign = errors.New("bedrock: sign request")
+var ErrSign = errors.New("awssig: sign request")
 
 const sigv4Algorithm = "AWS4-HMAC-SHA256"
 
-func signRequest(req *http.Request, payload []byte, accessKeyID string, cred credential, region, service string, now time.Time) error {
+func Sign(req *http.Request, payload []byte, accessKeyID string, cred Credential, region, service string, now time.Time) error {
     t := now.UTC()
     amzDate := t.Format("20060102T150405Z")
     dateStamp := t.Format("20060102")
@@ -604,20 +677,20 @@ Note: `canonicalRequest`'s signature here takes `host` explicitly (the version i
 
 - [ ] **Step 4: Run tests; fill the golden Authorization value**
 
-Run: `go test ./adapter/bedrock/ -run TestSignRequest -v`
+Run: `go test ./adapter/awssig/ -run TestSignRequest -v`
 Expected: all PASS **except** `TestSignRequest_GoldenSignature`, which fails showing the produced `Signature=...`. Verify that produced signature independently (AWS SigV4 walkthrough / `aws` CLI signing-debug with identical inputs), then paste the verified hex into `wantAuth` and re-run.
 Expected after fill: PASS.
 
 - [ ] **Step 5: Run the full package + vet**
 
-Run: `go test ./adapter/bedrock/ -v && go vet ./adapter/bedrock/`
+Run: `go test ./adapter/awssig/ -v && go vet ./adapter/awssig/`
 Expected: PASS, no vet findings.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add adapter/bedrock/sigv4.go adapter/bedrock/sigv4_test.go
-git commit -m "feat(bedrock): hand-rolled SigV4 signer with golden-signature test
+git add adapter/awssig/sigv4.go adapter/awssig/sigv4_test.go
+git commit -m "feat(awssig): hand-rolled SigV4 signer with golden-signature test
 
 Canonical request -> string-to-sign -> signature with injectable clock.
 X-Amz-Security-Token only when a session token is present; secret and
@@ -630,13 +703,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Acceptance Criteria (Task 1)
 
-- `adapter/bedrock/credentials.go` parses **both** the bare secret string and the JSON composite `{"secret","session_token"}`; empty payload / empty `"secret"` → `ErrMissingSecret`; malformed JSON error does **not** echo the payload.
-- `adapter/bedrock/sigv4.go` derives the signing key matching the **AWS documentation example** (`TestSigningKey_AWSDocExample` green) and produces a stable, independently-verified golden `Authorization` header for fixed key+time+request.
+- `adapter/awssig/credentials.go` parses **both** the bare secret string and the JSON composite `{"secret","session_token"}` via the EXPORTED `ParseCredential` returning the EXPORTED `Credential`; empty payload / empty `"secret"` → `ErrMissingSecret`; malformed JSON error does **not** echo the payload; `BuildCredential` round-trips both forms.
+- `adapter/awssig/sigv4.go` exports `Sign`, derives the signing key matching the **AWS documentation example** (`TestSigningKey_AWSDocExample` green) and produces a stable, independently-verified golden `Authorization` header for fixed key+time+request.
 - `X-Amz-Security-Token` is set **iff** a session token is present, and is part of `SignedHeaders` when present.
 - The secret-access-key never appears in any header; the session token appears **only** in `X-Amz-Security-Token`.
 - Time is injected (`now time.Time`) — no `time.Now()` inside the signer.
+- `adapter/awssig` imports **only** stdlib (leaf package; no arbitron imports) so it can be imported by `adapter/bedrock`, `adapter/opencode`, and `adapter/probe` without a cycle.
 - No third-party dependency added (verify `git diff go.mod` is empty).
-- `go test ./adapter/bedrock/...` and `go vet ./adapter/bedrock/...` pass; `make test` (== `go test ./...`) stays green.
+- `go test ./adapter/awssig/...` and `go vet ./adapter/awssig/...` pass; `make test` (== `go test ./...`) stays green.
 
 ## Five-Category Coverage Map (Task 1)
 

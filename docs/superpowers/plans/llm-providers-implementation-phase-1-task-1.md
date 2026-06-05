@@ -19,6 +19,21 @@
 - Spec `docs/specs/llm-providers-spec.md` — Provider Catalog (OpenAI API, Ollama cloud, Ollama local); "Universal chat" success criterion #2.
 - Design `docs/superpowers/specs/llm-providers-design-phase-1.md` §1 "Factory routing" and the provider→BaseURL→Key table.
 
+## Shared file: `adapter/provider/factory.go` (edit ordering)
+
+`adapter/provider/factory.go` is edited by **four** tasks across the feature, each touching
+a DISTINCT switch arm / struct field — apply them in **phase order (1→4)** to avoid churn:
+
+- **P1 T1 (this task):** adds the `openai`/`ollama`/`ollama-cloud` strings to the existing
+  openrouter `ChatProviderFor` arm.
+- **P2 T2:** adds a NEW `anthropic-api` case to `ChatProviderFor`.
+- **P3 T2:** adds a NEW `bedrock`/`amazon-bedrock` case to `ChatProviderFor`.
+- **P4 T2:** sets `AllowAllTools` in the `AgentProviderFor` opencode arm + adds
+  `Deps.OpencodeAllowAllTools`.
+
+These do not conflict (distinct arms/fields); just rebase in order. This task only touches
+the openrouter `ChatProviderFor` arm and the provider-const block.
+
 ## Files
 
 - **Modify:** `adapter/provider/factory.go`

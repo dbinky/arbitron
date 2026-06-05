@@ -2,17 +2,30 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the Bedrock chat `Provider` (Converse + converse-stream) that signs requests with the Task-1 SigV4 signer, derives its regional endpoint from `Extras["region"]` + `Model`, maps Converse responses/streams to `engine.ChatResponse`/`engine.ChatChunk`, plus the factory routing (`bedrock` / `amazon-bedrock`) and the `ValidateConnection` bedrock rule (region + access-key-id required).
+## Shared contracts / alignment (READ FIRST)
+
+This task IMPORTS the shared leaf package **`adapter/awssig`** (created by Phase 3 Task 1)
+for the SigV4 signer and the sealed-credential parser. It does **NOT** define its own
+`sigv4.go`/`credentials.go` — there is exactly one signer and one parser across the whole
+feature, in `adapter/awssig`. Use the EXACT exported API:
+
+- `awssig.Sign(req, payload, accessKeyID, cred, region, service, now)` — service is `"bedrock"`.
+- `awssig.ParseCredential(sealed) (awssig.Credential, error)` — tolerates bare + JSON composite.
+- `awssig.Credential{SecretAccessKey, SessionToken}`.
+
+**Dependency:** Phase 3 Task 1 (`adapter/awssig`) must be green before this task.
+
+**Goal:** Implement the Bedrock chat `Provider` (Converse + converse-stream) that signs requests with the **shared `adapter/awssig.Sign` signer**, derives its regional endpoint from `Extras["region"]` + `Model`, maps Converse responses/streams to `engine.ChatResponse`/`engine.ChatChunk`, plus the factory routing (`bedrock` / `amazon-bedrock`) and the `ValidateConnection` bedrock rule (region + access-key-id required).
 
 **Architecture:** New `adapter/bedrock` files `provider.go`, `endpoint.go`, `request.go`, `response.go` reuse the established HTTP-adapter shape (injectable `Config{Binding, HTTPClient, Timeout, MaxResponseBytes}`, bounded reader, `scrubControl` on error snippets, `ErrUpstreamStatus`). Unlike `openrouter`, Bedrock derives its own endpoint and **signs** each request (SigV4) instead of setting a Bearer header. The factory adds a dedicated `bedrock` arm; `ValidateConnection` gains a bedrock rule beside the Azure `api-version` rule.
 
-**Tech Stack:** Go stdlib (`net/http`, `net/http/httptest`, `encoding/json`, `bufio`, `context`, `io`). Reuses `domain/engine`, `domain/provider`, `adapter/procenv`. Depends on Task-1 `signRequest`/`parseCredential`/`credential`. Tests are hermetic (`httptest.Server`), `make test` == `go test ./...`.
+**Tech Stack:** Go stdlib (`net/http`, `net/http/httptest`, `encoding/json`, `bufio`, `context`, `io`). Reuses `domain/engine`, `domain/provider`, `adapter/procenv`, and the shared `adapter/awssig` (`awssig.Sign`, `awssig.ParseCredential`, `awssig.Credential`). Tests are hermetic (`httptest.Server`), `make test` == `go test ./...`.
 
 ---
 
 ## Dependencies
 
-- **Upstream (required):** Phase-3 **Task 1** — `signRequest`, `parseCredential`, `credential` in `adapter/bedrock/{sigv4.go,credentials.go}`. Do this task only after Task 1 is green.
+- **Upstream (required):** Phase-3 **Task 1** — `awssig.Sign`, `awssig.ParseCredential`, `awssig.Credential` in `adapter/awssig/{sigv4.go,credentials.go}`. Do this task only after Task 1 is green. Add the import `"github.com/arbitron/arbitron/adapter/awssig"` to `provider.go`.
 - **Reference symbols (read, mirror, do not break):**
   - `adapter/openrouter/provider.go` — `Config`, `Provider`, `boundedReader`, `limitedReader`, `errResponseTooLarge`, `statusError`, `scrubControl`, `send`; replicate these patterns (each adapter owns its own copies today).
   - `adapter/openrouter/response.go` — `ErrUpstreamStatus` sentinel pattern.
@@ -110,8 +123,8 @@ func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-ch
 
 // signedRequest builds the POST to the derived endpoint, reveals+parses the
 // sealed credential, and SigV4-signs it. region/access-key-id come from Extras;
-// the secret/session token come from RevealKey via parseCredential. It guards
-// missing region/access-key-id BEFORE revealing the secret.
+// the secret/session token come from RevealKey via awssig.ParseCredential. It
+// guards missing region/access-key-id BEFORE revealing the secret.
 func (p *Provider) signedRequest(ctx context.Context, body []byte, stream bool) (*http.Request, error)
 ```
 
@@ -957,6 +970,7 @@ import (
     "strings"
     "time"
 
+    "github.com/arbitron/arbitron/adapter/awssig"
     "github.com/arbitron/arbitron/adapter/procenv"
     "github.com/arbitron/arbitron/domain/engine"
     "github.com/arbitron/arbitron/domain/provider"
@@ -1033,7 +1047,7 @@ func (p *Provider) boundedReader(r io.Reader) io.Reader {
 
 // signedRequest derives the endpoint, guards region/access-key-id BEFORE
 // revealing the secret, reveals + parses the sealed credential, and SigV4-signs
-// the POST. The revealed secret is used only by signRequest.
+// the POST. The revealed secret is used only by awssig.Sign.
 func (p *Provider) signedRequest(ctx context.Context, body []byte, stream bool) (*http.Request, error) {
     accessKeyID := strings.TrimSpace(p.binding.Extras["access-key-id"])
     if accessKeyID == "" {
@@ -1060,11 +1074,11 @@ func (p *Provider) signedRequest(ctx context.Context, body []byte, stream bool) 
             return nil, fmt.Errorf("bedrock: reveal key: %w", err)
         }
     }
-    cred, err := parseCredential(sealed)
+    cred, err := awssig.ParseCredential(sealed)
     if err != nil {
         return nil, err
     }
-    if err := signRequest(httpReq, body, accessKeyID, cred, region, sigService, p.now()); err != nil {
+    if err := awssig.Sign(httpReq, body, accessKeyID, cred, region, sigService, p.now()); err != nil {
         return nil, err
     }
     return httpReq, nil
@@ -1218,7 +1232,7 @@ git add adapter/bedrock/provider.go adapter/bedrock/provider_test.go
 git commit -m "feat(bedrock): Converse Chat + StreamChat provider (SigV4-signed)
 
 Derived regional endpoint, bounded reader (MaxResponseBytes), no-leak
-status errors, credential guarded before reveal. Reuses Task-1 signer.
+status errors, credential guarded before reveal. Reuses adapter/awssig signer.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -1226,6 +1240,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ---
 
 ## Task 2F: Factory routing (`bedrock` / `amazon-bedrock`)
+
+> **Shared-file ordering:** `adapter/provider/factory.go` is edited by P1 T1 (openai/ollama arm), P2 T2 (anthropic-api arm), this task (bedrock arm), and P4 T2 (`AgentProviderFor` AllowAllTools + `Deps.OpencodeAllowAllTools`). Each touches a distinct `ChatProviderFor` switch arm / struct field — no real conflict; apply in phase order (1→4). This task adds ONE new `ChatProviderFor` case + two consts, leaving the openrouter and anthropic-api arms untouched.
 
 **Files:**
 - Modify: `adapter/provider/factory.go`
@@ -1328,5 +1344,5 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - **Spec coverage:** "Universal chat" success criterion #2 (Bedrock executes a chat node against a faked endpoint) → `TestChat_HappyPath` + `TestStreamChat_*`. "No secret leakage" #6 → the security-category tests + Task-1 golden/no-leak tests. Validation #5 (reachability) is exercised by `Chat` against `httptest`; on-demand connection validation + model listing is explicitly **out of scope** for Phase 3 (design doc: Phase 5).
 - **Out of scope (this phase):** ambient AWS credential chain, Bedrock on the agent path (Phase 4 / opencode), Bedrock model listing (Phase 5).
-- **Type consistency:** `signRequest`/`parseCredential`/`credential` referenced here are exactly as defined in Task 1; `ErrUpstreamStatus`, `ErrMissingRegion`, `ErrMissingModel`, `ErrMissingAccessKeyID`, `ErrBedrockCredentialsRequired` are each defined once in this task.
+- **Type consistency:** `awssig.Sign`/`awssig.ParseCredential`/`awssig.Credential` referenced here are exactly as defined in Task 1's `adapter/awssig` package (imported, not redefined); `ErrUpstreamStatus`, `ErrMissingRegion`, `ErrMissingModel`, `ErrMissingAccessKeyID`, `ErrBedrockCredentialsRequired` are each defined once in this task (in `adapter/bedrock` / `domain/provider`).
 - **Test seam caveat:** `recordingTransport` rewrites the host to the httptest server while preserving the SigV4-signed headers and path; this lets the adapter sign the real `bedrock-runtime.{region}.amazonaws.com` host yet send bytes to loopback without needing `provider.AllowAnyURLPolicy` (bedrock derives its endpoint and does not pass through the BaseURL write-path policy).

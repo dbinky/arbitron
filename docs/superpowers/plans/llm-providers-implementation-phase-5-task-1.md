@@ -2,7 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Shared contracts / alignment (READ FIRST)
+
+The Bedrock probe IMPORTS the shared leaf package **`adapter/awssig`** (created by Phase 3
+Task 1) for BOTH the SigV4 signer and the sealed-credential parser. There is exactly ONE
+signer and ONE parser across the whole feature — do **NOT** add `adapter/probe/sigv4.go`
+and do **NOT** write a local `parseSealedAWS`. Use:
+
+- `awssig.Sign(req, payload, accessKeyID, awssig.Credential{...}, region, "bedrock", clock())`
+- `awssig.ParseCredential(sealed) (awssig.Credential, error)` (bare + JSON composite).
+
+The Anthropic probe REUSES the pinned `anthropic-version` value `2023-06-01` — the SAME
+constant Phase 2's `adapter/anthropicapi` pins (`anthropicVersion`). Keep them identical;
+if the value ever changes it changes in lockstep. Add the import
+`"github.com/arbitron/arbitron/adapter/awssig"` to `adapter/probe/bedrock.go`.
+
 **Goal:** Add a domain-side `ConnectionProbe` port (`Probe(ctx, ResolvedBinding) (ProbeResult, error)`) plus a `ProbeSelector` that dispatches by `binding.Provider` to per-provider probe adapters, so an operator-facing CLI (Task 2) can validate any configured connection — confirm credentials authenticate + the endpoint is reachable, and list models where the provider exposes that capability — depending only on the domain port and never importing an adapter package.
+
+**Binding shape note (P5 T2 alignment):** the CLI (Task 2) builds the `ResolvedBinding`
+from a **connection** (`ConnectionStore.Get` + lazy `Reveal`), NOT from a profile alias, so
+`binding.Kind` and `binding.Model` may be **empty** when probing. `ProbeFactory.ProbeFor`
+therefore dispatches **purely on `binding.Provider`** (never on Kind/Model), and each probe
+reaches the listing/reachability endpoint without needing a Model. Do not read `binding.Kind`
+or `binding.Model` in any probe or in the selector.
 
 **Architecture:** Mirror the existing `ChatProviderSelector`/`Factory` selection pattern (`domain/engine/ports.go` + `adapter/provider/factory.go`). A new driven port `provider.ConnectionProbe` is defined in `domain/provider`. A new `adapter/probe` package supplies one probe per provider family reusing each chat adapter's auth + bounded-read + no-leak helpers (Bearer for OpenAI-compatible, `x-api-key`+`anthropic-version` for Anthropic, the Phase-3 SigV4 signer for Bedrock, the `CommandRunner` binary seam for the Claude CLI), and a `ProbeFactory` implementing `provider.ProbeSelector` that maps a `ResolvedBinding.Provider` string to the right probe. Probes return `ProbeResult{Reachable, ModelsUnsupported, Models}`; reachability-only providers (Claude CLI subscription) set `ModelsUnsupported = true`.
 
@@ -15,12 +37,12 @@
 - **Phases 1–3 endpoints/auth/signer (reused, not reimplemented):**
   - **OpenAI / OpenRouter / Ollama / Azure (OpenAI-compatible), Phase 1:** Bearer-key auth (`Authorization: Bearer <key>`) against `{base_url}`; the listing endpoint is `GET {base_url}/models` (when the base already ends in `/v1`, e.g. `https://api.openai.com/v1`) — i.e. `{base}/models`. The probe reuses the `checkScheme` (http|https) and `scrubControl`/bounded-read patterns from `adapter/openrouter/{provider.go,request.go}`.
   - **Anthropic API, Phase 2:** `GET {base_url}/v1/models` with headers `x-api-key: <key>` and `anthropic-version: 2023-06-01` (the pinned constant from `adapter/anthropicapi`), `base_url` defaulting to `https://api.anthropic.com`. Reuses Phase 2's no-leak/bounded-read helpers.
-  - **Amazon Bedrock, Phase 3:** `bedrock:ListFoundationModels` — `GET https://bedrock.{region}.amazonaws.com/foundation-models` (the **control-plane** `bedrock` host, NOT the `bedrock-runtime` Converse host), SigV4-signed with service `bedrock`, region from `Extras["region"]`, access-key-id from `Extras["access-key-id"]`, and the sealed secret-access-key (+ optional session token) from `RevealKey`. **REUSE the Phase 3 signer** (`adapter/bedrock/sigv4.go`) — do not write a second signer; the clock is injectable for deterministic test signatures.
+  - **Amazon Bedrock, Phase 3:** `bedrock:ListFoundationModels` — `GET https://bedrock.{region}.amazonaws.com/foundation-models` (the **control-plane** `bedrock` host, NOT the `bedrock-runtime` Converse host), SigV4-signed with service `bedrock`, region from `Extras["region"]`, access-key-id from `Extras["access-key-id"]`, and the sealed secret-access-key (+ optional session token) from `RevealKey`. **REUSE the shared `adapter/awssig` signer + parser** (`awssig.Sign`, `awssig.ParseCredential`, `awssig.Credential`) — do NOT write a second signer or a `adapter/probe/sigv4.go`; the clock is injectable for deterministic test signatures.
   - **Claude CLI subscription, existing:** reachability only via the binary, run through the `claudecli.CommandRunner` seam (`adapter/claudecli/runner.go`), e.g. `claude --version`.
 - **Domain seams already present:** `provider.ResolvedBinding{Kind,Provider,BaseURL,Extras,Model,AllowedTools,RevealKey}` (`domain/provider/provider.go`); `provider.ErrConnectionNotFound` (`domain/provider/connection.go`); the `normalizeProvider` (trim + lowercase) selection idiom and canonical provider constants (`adapter/provider/factory.go`).
 - **Task ordering:** This task depends on no other Phase-5 task. Task 2 (the CLI command) depends on this task's `provider.ConnectionProbe` / `provider.ProbeSelector` / `provider.ProbeResult` and the `adapter/probe.ProbeFactory`.
 
-> **Note on Phases 1–3 being un-merged in this worktree:** the per-provider chat adapters (`adapter/anthropicapi`, `adapter/bedrock`, and the `openai`/`ollama` Factory routing) are defined by the Phase 1–3 designs but may not all be merged here yet. Each probe below is **self-contained**: it constructs its own HTTP request and reuses only the *patterns* (Bearer header, `x-api-key`+`anthropic-version`, the SigV4 signer file, the bounded-reader + `scrubControl` no-leak helpers). If `adapter/bedrock/sigv4.go` exists, import and reuse it; if it does not yet exist in this worktree, the SigV4 signer is built **once** in `adapter/probe/sigv4.go` and the Phase-3 Converse adapter reuses *it* — there must remain exactly one signer. Confirm with `ls adapter/bedrock/sigv4.go` before Step "implement Bedrock probe" and follow whichever branch holds; the test list and signatures below are unchanged either way.
+> **Note on Phases 1–3 being un-merged in this worktree:** the per-provider chat adapters (`adapter/anthropicapi`, `adapter/bedrock`, and the `openai`/`ollama` Factory routing) are defined by the Phase 1–3 designs but may not all be merged here yet. The HTTP probes (OpenAI-compat, Anthropic) are **self-contained**: each constructs its own HTTP request and reuses only the *patterns* (Bearer header, `x-api-key`+`anthropic-version`, the bounded-reader + `scrubControl` no-leak helpers). The **Bedrock probe is NOT self-contained for signing**: it imports the shared `adapter/awssig` leaf package (created in Phase 3 Task 1) for `awssig.Sign` + `awssig.ParseCredential`. `adapter/awssig` is stdlib-only and independent of the un-merged chat adapters, so it can be imported here regardless of whether `adapter/bedrock`/`adapter/anthropicapi` are present. There must remain **exactly one** SigV4 signer and one credential parser — both in `adapter/awssig`; this task adds NO `adapter/probe/sigv4.go`. If `adapter/awssig` is not yet on this branch, sequence Phase 3 Task 1 first (it has no dependencies).
 
 ## Spec / design references
 
@@ -37,7 +59,7 @@
 | `adapter/probe/openai_compat.go` | **New.** `openAICompatProbe` — `GET {base}/models`, Bearer auth, lists model ids. Serves `openai`/`openrouter`/`litellm`/`ollama`/`azure-openai`/`azure-foundry`. |
 | `adapter/probe/ollama_native.go` | **New.** `ollamaNativeFallback` — `GET {base}/api/tags` used only when the OpenAI-compat `/models` is absent (404). |
 | `adapter/probe/anthropic.go` | **New.** `anthropicProbe` — `GET {base}/v1/models` with `x-api-key` + `anthropic-version`. |
-| `adapter/probe/bedrock.go` | **New.** `bedrockProbe` — SigV4-signed `GET …/foundation-models` (ListFoundationModels); reuses the Phase-3 signer. |
+| `adapter/probe/bedrock.go` | **New.** `bedrockProbe` — SigV4-signed `GET …/foundation-models` (ListFoundationModels); imports the shared `adapter/awssig` (`awssig.Sign`/`awssig.ParseCredential`) — NO `adapter/probe/sigv4.go`. |
 | `adapter/probe/claudecli.go` | **New.** `claudeCLIProbe` — runs `claude --version` via the `CommandRunner` seam; `ModelsUnsupported=true`. |
 | `adapter/probe/httpshared.go` | **New.** Shared `boundedReader`/`limitedReader`, `scrubControl`, `statusError`, `checkScheme`, and the `ProbeError` classification (`ErrCredentialsRejected`, `ErrUnreachable`, `ErrRegionConfig`). |
 | `adapter/probe/*_test.go` | **New.** Per-file `_test.go` covering the five TDD categories with `httptest` / fake runner / injected clock seams. |
@@ -246,6 +268,10 @@ type Deps struct {
 	Runner claudecli.CommandRunner
 	// ClaudeBinaryPath overrides PATH lookup for the claude binary; "" -> "claude".
 	ClaudeBinaryPath string
+	// BedrockEndpoint is a TEST-ONLY seam: it derives the Bedrock control-plane
+	// host for a region. nil -> the real https://bedrock.{region}.amazonaws.com
+	// derivation. Set in tests to point the probe at an httptest server.
+	BedrockEndpoint func(region string) string
 }
 
 // ProbeFactory selects a concrete ConnectionProbe per resolved binding. It
@@ -464,7 +490,10 @@ import (
 	domprovider "github.com/arbitron/arbitron/domain/provider"
 )
 
-// anthropicVersion is the pinned Messages-API version header (mirrors adapter/anthropicapi).
+// anthropicVersion is the pinned Messages-API version header. It MUST stay
+// identical to adapter/anthropicapi.anthropicVersion (Phase 2) — same value
+// "2023-06-01", changed only in lockstep. (A local const, not an import, because
+// adapter/anthropicapi may be un-merged on this branch; keep the values equal.)
 const anthropicVersion = "2023-06-01"
 
 // defaultAnthropicBase is used when the connection omits a base_url.
@@ -561,19 +590,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/awssig"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	domprovider "github.com/arbitron/arbitron/domain/provider"
 )
 
 // bedrockProbe lists foundation models via the control-plane ListFoundationModels
 // endpoint (GET https://bedrock.{region}.amazonaws.com/foundation-models),
-// SigV4-signed with service "bedrock". REUSE the Phase-3 signer; do not add a
-// second one (see plan note).
+// SigV4-signed with service "bedrock". REUSE the shared adapter/awssig signer +
+// parser; do not add a second signer or parser (see plan note).
 type bedrockProbe struct {
 	httpClient       *http.Client
 	timeout          func(context.Context) (context.Context, context.CancelFunc)
 	maxResponseBytes int64
 	clock            func() time.Time
+	// endpoint derives the control-plane host for a region; a test-only seam so
+	// the probe can be pointed at an httptest server. nil-safe default below.
+	endpoint func(region string) string
 }
 
 func newBedrockProbe(d Deps) *bedrockProbe {
@@ -585,11 +618,18 @@ func newBedrockProbe(d Deps) *bedrockProbe {
 	if clk == nil {
 		clk = time.Now
 	}
+	endpoint := d.BedrockEndpoint
+	if endpoint == nil {
+		endpoint = func(region string) string {
+			return fmt.Sprintf("https://bedrock.%s.amazonaws.com/foundation-models", region)
+		}
+	}
 	return &bedrockProbe{
 		httpClient:       hc,
 		timeout:          func(ctx context.Context) (context.Context, context.CancelFunc) { return procenv.WithTimeout(ctx, d.Timeout) },
 		maxResponseBytes: d.MaxResponseBytes,
 		clock:            clk,
+		endpoint:         endpoint,
 	}
 }
 
@@ -612,25 +652,31 @@ func (p *bedrockProbe) Probe(ctx context.Context, b domprovider.ResolvedBinding)
 	if region == "" || accessKeyID == "" {
 		return domprovider.ProbeResult{}, fmt.Errorf("%w: bedrock requires region and access-key-id in extras", ErrRegionConfig)
 	}
-	// Reveal the sealed secret (bare string or {"secret","session_token"} JSON).
-	var secret, sessionToken string
+	// Reveal the sealed secret (bare string or {"secret","session_token"} JSON),
+	// parsed by the SHARED awssig.ParseCredential.
+	var cred awssig.Credential
 	if b.RevealKey != nil {
 		payload, kerr := b.RevealKey(ctx)
 		if kerr != nil {
 			return domprovider.ProbeResult{}, fmt.Errorf("probe: reveal key: %w", kerr)
 		}
-		secret, sessionToken = parseSealedAWS(payload)
+		var perr error
+		cred, perr = awssig.ParseCredential(payload)
+		if perr != nil {
+			return domprovider.ProbeResult{}, fmt.Errorf("%w: %v", ErrRegionConfig, perr)
+		}
 	}
 
-	target := fmt.Sprintf("https://bedrock.%s.amazonaws.com/foundation-models", region)
+	// endpoint() is a test-only seam (default derives the real control-plane host).
+	target := p.endpoint(region)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return domprovider.ProbeResult{}, fmt.Errorf("probe: build request: %w", err)
 	}
-	// signAWS reuses the Phase-3 SigV4 signer (service "bedrock"); the injected
-	// clock makes the signature deterministic in tests. It sets Authorization,
-	// X-Amz-Date, and X-Amz-Security-Token (when sessionToken != "").
-	if err := signAWS(req, nil, region, "bedrock", accessKeyID, secret, sessionToken, p.clock()); err != nil {
+	// awssig.Sign is the SHARED Phase-3 SigV4 signer (service "bedrock"); the
+	// injected clock makes the signature deterministic in tests. It sets
+	// Authorization, X-Amz-Date, and X-Amz-Security-Token (when SessionToken != "").
+	if err := awssig.Sign(req, nil, accessKeyID, cred, region, "bedrock", p.clock()); err != nil {
 		return domprovider.ProbeResult{}, fmt.Errorf("%w: %v", ErrRegionConfig, err)
 	}
 
@@ -660,25 +706,16 @@ func (p *bedrockProbe) Probe(ctx context.Context, b domprovider.ResolvedBinding)
 	}
 	return domprovider.ProbeResult{Reachable: true, Models: ids}, nil
 }
-
-// parseSealedAWS tolerates both the bare secret-access-key string and the
-// {"secret":"...","session_token":"..."} composite (Phase-3 sealed forms).
-func parseSealedAWS(payload string) (secret, sessionToken string) {
-	trimmed := strings.TrimSpace(payload)
-	if strings.HasPrefix(trimmed, "{") {
-		var c struct {
-			Secret       string `json:"secret"`
-			SessionToken string `json:"session_token"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &c); err == nil {
-			return c.Secret, c.SessionToken
-		}
-	}
-	return payload, ""
-}
 ```
 
-> **`signAWS` sourcing:** if `adapter/bedrock/sigv4.go` exists in this worktree, export its signer (e.g. a `bedrock.SignV4(...)` func) and call it here instead of redeclaring `signAWS` — keep exactly one signer. If Phase 3 is not yet merged here, implement `signAWS` once in `adapter/probe/sigv4.go` (canonical request, string-to-sign, signing-key derivation, `Authorization` + `X-Amz-Date` (+ `X-Amz-Security-Token`)) and have the Phase-3 Converse adapter reuse it. The Security test below pins the signature against a fixed key+time+request golden.
+> **Signer + parser sourcing (single source of truth):** the credential parse is
+> `awssig.ParseCredential` and the signing is `awssig.Sign`, both from the shared
+> `adapter/awssig` leaf package created in Phase 3 Task 1. Do NOT add `adapter/probe/sigv4.go`
+> and do NOT write a local `parseSealedAWS` — exactly one signer and one parser exist, in
+> `adapter/awssig`. The golden-signature test for the signer lives in `adapter/awssig`
+> (Phase 3 Task 1); this probe's Security test only asserts the request carries a
+> non-empty `AWS4-HMAC-SHA256` `Authorization` header and the `X-Amz-Security-Token` header
+> when a session token is present (it does not re-pin the signature golden).
 
 - **Create:** `adapter/probe/claudecli.go`
 
@@ -766,7 +803,7 @@ func (p *claudeCLIProbe) Probe(ctx context.Context, _ domprovider.ResolvedBindin
 - [ ] `TestOpenAICompatProbe_EmptyModelList_ReachableNoModels` — server returns `200` `{"data":[]}`. Assert `require.NoError`, `res.Reachable == true`, `res.ModelsUnsupported == false`, `len(res.Models) == 0` (reachable, no models — not an error).
 - [ ] `TestClaudeCLIProbe_NoListingEndpoint_NotAnError` — re-asserts the happy-path: even though no models are listed, `err == nil` and `res.ModelsUnsupported == true` (a provider with no listing is success, not failure).
 - [ ] `TestOpenAICompatProbe_TrailingSlashBaseURL` — `b.BaseURL = srv.URL + "/"` still produces a single-slash `/models` path (server asserts `r.URL.Path == "/models"`). `require.NoError`.
-- [ ] `TestBedrockProbe_SessionToken_SecurityTokenHeader` — `b.RevealKey` returns `{"secret":"S","session_token":"TKN"}`; server asserts an `X-Amz-Security-Token: TKN` header is present. `require.NoError`. Also assert `parseSealedAWS` returns `("S","TKN")` and that a bare-string payload returns `(payload,"")`.
+- [ ] `TestBedrockProbe_SessionToken_SecurityTokenHeader` — `b.RevealKey` returns `{"secret":"S","session_token":"TKN"}`; server asserts an `X-Amz-Security-Token: TKN` header is present. `require.NoError`. (The credential-parse round-trip — composite → `("S","TKN")`, bare → `(payload,"")` — is owned and tested by `adapter/awssig` in Phase 3 Task 1, not re-tested here.)
 
 ### Security
 

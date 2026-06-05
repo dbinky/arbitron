@@ -158,6 +158,8 @@ func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlo
 
 ### 3. `adapter/provider/factory.go` — add the `anthropic-api` route
 
+> **Shared-file ordering:** `adapter/provider/factory.go` is edited by P1 T1 (openai/ollama arm), this task (anthropic-api arm), P3 T2 (bedrock arm), and P4 T2 (`AgentProviderFor` AllowAllTools + `Deps.OpencodeAllowAllTools`). Each touches a distinct `ChatProviderFor` switch arm / struct field — no real conflict; apply in phase order (1→4). This task adds ONE new `ChatProviderFor` case + one const, leaving the openrouter arm (P1) untouched.
+
 - Add a const beside the others:
   ```go
   providerAnthropicAPI = "anthropic-api"

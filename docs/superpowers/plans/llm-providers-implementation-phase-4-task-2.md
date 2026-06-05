@@ -4,13 +4,23 @@
 
 **Goal:** Extend `adapter/opencode/env_providers.go` (the single-source-of-truth auth table) to the full modern provider set — anthropic, openai, openrouter, azure, ollama, amazon-bedrock — including the **Bedrock AWS credential quartet** (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`, `AWS_REGION`) sourced from `Extras` + the sealed `RevealKey` composite (same payload shape as Phase 3) and the keyless **local-Ollama base-url-only** path; rewrite `provider.go` `RunAgent` to build the credential env FIRST (no-partial-env-launch invariant), add a **minimum-version probe** that fails on an incompatible binary, drain/parse the modern `run` output into `engine.AgentResult`, and add **fail-closed** Factory wiring (open-by-default `AllowAllTools=true`).
 
-**Architecture:** All changes within `adapter/opencode` plus a one-arm extension of `adapter/provider/factory.go`. The credential env stays env-only (never argv/logs), reusing the shared `adapter/claudecli.CommandRunner` + `RunSpec{Bin,Args,Dir,Env,MaxResponseBytes}` seam. The version probe runs once (memoized) on first call via the same runner, so it is hermetically testable with the fake runner. The Bedrock composite is parsed with the SAME tolerant bare-string-or-JSON logic as Phase 3's bedrock chat adapter.
+**Architecture:** All changes within `adapter/opencode` plus a one-arm extension of `adapter/provider/factory.go`. The credential env stays env-only (never argv/logs), reusing the shared `adapter/claudecli.CommandRunner` + `RunSpec{Bin,Args,Dir,Env,MaxResponseBytes}` seam. The version probe runs once (memoized) on first call via the same runner, so it is hermetically testable with the fake runner. The Bedrock composite is parsed by the **shared `adapter/awssig.ParseCredential`** (the SAME tolerant bare-string-or-JSON parser Phase 3's bedrock chat adapter uses) — not a private copy.
 
 **Tech Stack:** Go, table-driven `testing` + `testify`, the `adapter/opencode` `fakeRunner` (a `claudecli.CommandRunner` that records `RunSpec` argv/env/dir and replays canned stdout) already present in `adapter/opencode/provider_test.go`.
 
+## Shared contracts / alignment (READ FIRST)
+
+The Bedrock sealed-credential payload is parsed by the **shared leaf package
+`adapter/awssig`** (created in Phase 3 Task 1) — NOT by a private parser in this package.
+`bedrockEnv` MUST call `awssig.ParseCredential(sealed) (awssig.Credential, error)` and read
+`cred.SecretAccessKey` / `cred.SessionToken`. Do **NOT** define a local
+`parseBedrockSecret`/`bedrockComposite` — that would be a second copy of the parser the
+plan-alignment forbids. Add the import `"github.com/arbitron/arbitron/adapter/awssig"` to
+`env.go` and list `adapter/awssig` as a dependency.
+
 **Dependencies:**
 - **Task 1** (this phase): `mapProviderID`, `buildArgs(mission, binding, posture)`, `buildPosture`, `Posture`, `ErrModelRequired`, the `Config.AllowAllTools` knob.
-- **Shared with Phase 3 (Bedrock credential composite):** the sealed `RevealKey` payload is `{"secret":"...","session_token":"..."}` JSON when a session token is present, else the **bare** secret-access-key string. `Extras["region"]` (required) and `Extras["access-key-id"]` (required) are non-secret. Task 2's `bedrockEnv` MUST parse the SAME shape Phase 3's bedrock adapter seals, tolerating both forms. (Phase 3's `adapter/bedrock` is not yet on this branch; this task only consumes the documented payload contract, so it does not import `adapter/bedrock`.)
+- **`adapter/awssig` (Phase 3 Task 1):** `awssig.ParseCredential` + `awssig.Credential` — the single shared sealed-credential parser. The sealed `RevealKey` payload is `{"secret":"...","session_token":"..."}` JSON when a session token is present, else the **bare** secret-access-key string. `Extras["region"]` (required) and `Extras["access-key-id"]` (required) are non-secret. This task imports `adapter/awssig` directly (a stdlib-only leaf, no cycle) and does NOT import `adapter/bedrock`.
 - `domain/provider.ResolvedBinding` (Provider, BaseURL, Extras, Model, AllowedTools, RevealKey), `domain/engine.AgentMission`/`AgentResult`/`AgentStep`, `adapter/procenv` (`BaseEnv`, `IsBaseName`, `WithTimeout`, `StandardBinDirs`), `adapter/claudecli` (`RunSpec`, `CommandRunner`, `NewExecRunner`).
 
 **Out of scope (Task 2):** chat-path adapters (Phases 1–3), validation CLI (Phase 5), the claudecli agent adapter.
@@ -20,7 +30,7 @@
 ## File Structure
 
 - **Modify** `adapter/opencode/env_providers.go` — extend `providerEnvVarTable` to the full set; add `ollama` (key + base-url) and the `amazon-bedrock` marker; add an `aws` flag so `bedrock` routes to the AWS-quartet builder instead of the single-key path.
-- **Modify** `adapter/opencode/env.go` — `opencodeEnv` branches: AWS-quartet providers (bedrock) → `bedrockEnv`; keyless local-Ollama (no RevealKey / no key) → base-url-only; everyone else → existing single-key path. Add `bedrockEnv` + composite parsing.
+- **Modify** `adapter/opencode/env.go` — `opencodeEnv` branches: AWS-quartet providers (bedrock) → `bedrockEnv`; keyless local-Ollama (no RevealKey / no key) → base-url-only; everyone else → existing single-key path. Add `bedrockEnv` (which calls the shared `awssig.ParseCredential` — NO local composite parser).
 - **Create** `adapter/opencode/version.go` — `minOpencodeVersion` constant + `probeVersion(ctx, runner, bin)` running `opencode --version`, parsing it, and returning `ErrIncompatibleOpencode` when below minimum.
 - **Modify** `adapter/opencode/provider.go` — rewrite `RunAgent`: env-first, version-probe (memoized) before launch, modern-output drain/parse; remove the stale single-shot doc comments; set `allowAllTools` from `Config`.
 - **Modify** `adapter/opencode/parse.go` — keep tolerant text folding; document the modern `run` output is still line-oriented assistant text (no structured usage in this mode), so the coarse token accounting and step-folding contract is unchanged.
@@ -304,10 +314,10 @@ package opencode
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/arbitron/arbitron/adapter/awssig"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -374,8 +384,8 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 
 // bedrockEnv builds the AWS credential quartet for a bedrock binding. region and
 // access-key-id come from non-secret Extras; the secret-access-key (and optional
-// session token) come from the sealed RevealKey payload, parsed with the SAME
-// tolerant bare-string-or-JSON contract as Phase 3's bedrock chat adapter.
+// session token) come from the sealed RevealKey payload, parsed by the SHARED
+// awssig.ParseCredential (the SAME parser Phase 3's bedrock chat adapter uses).
 func bedrockEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
 	region := binding.Extras["region"]
 	accessKeyID := binding.Extras["access-key-id"]
@@ -393,42 +403,28 @@ func bedrockEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string
 	if err != nil {
 		return nil, err
 	}
-	secret, sessionToken := parseBedrockSecret(sealed)
-	if secret == "" {
-		return nil, fmt.Errorf("opencode: bedrock secret-access-key is empty")
+	// SHARED parser: tolerant bare-string-or-JSON composite (adapter/awssig).
+	cred, err := awssig.ParseCredential(sealed)
+	if err != nil {
+		// awssig.ErrMissingSecret (empty/empty-secret) maps to a config-class error.
+		return nil, fmt.Errorf("opencode: bedrock secret-access-key: %w", err)
 	}
 
 	env := procenv.BaseEnv()
 	env = append(env,
 		"AWS_ACCESS_KEY_ID="+accessKeyID,
-		"AWS_SECRET_ACCESS_KEY="+secret,
+		"AWS_SECRET_ACCESS_KEY="+cred.SecretAccessKey,
 		"AWS_REGION="+region,
 	)
-	if sessionToken != "" {
-		env = append(env, "AWS_SESSION_TOKEN="+sessionToken)
+	if cred.SessionToken != "" {
+		env = append(env, "AWS_SESSION_TOKEN="+cred.SessionToken)
 	}
 	return env, nil
 }
-
-// bedrockComposite is the JSON shape sealed by Phase 3 when a session token is
-// present: {"secret":"...","session_token":"..."}.
-type bedrockComposite struct {
-	Secret       string `json:"secret"`
-	SessionToken string `json:"session_token"`
-}
-
-// parseBedrockSecret tolerantly parses the sealed bedrock payload: a JSON
-// composite yields (secret, session_token); a bare string yields (string, "").
-func parseBedrockSecret(sealed string) (secret, sessionToken string) {
-	var c bedrockComposite
-	if err := json.Unmarshal([]byte(sealed), &c); err == nil && c.Secret != "" {
-		return c.Secret, c.SessionToken
-	}
-	return sealed, ""
-}
 ```
 
-Keep `rejectBaseNames` as-is in `env.go` (it is already defined there).
+Keep `rejectBaseNames` as-is in `env.go` (it is already defined there). Do NOT add a local
+`parseBedrockSecret`/`bedrockComposite` — `awssig.ParseCredential` is the single shared parser.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -958,6 +954,8 @@ git commit -m "feat(opencode): env-first + memoized version probe + modern run/p
 ---
 
 ### Task 2.5: Factory wiring — open-by-default + fail-closed (`factory.go`)
+
+> **Shared-file ordering:** `adapter/provider/factory.go` is edited by P1 T1 (openai/ollama `ChatProviderFor` arm), P2 T2 (anthropic-api arm), P3 T2 (bedrock arm), and this task. This task touches a DIFFERENT part: the `AgentProviderFor` opencode arm (`AllowAllTools`) and a new `Deps.OpencodeAllowAllTools` field — it does NOT touch any `ChatProviderFor` arm. No real conflict with P1–P3; apply in phase order (1→4).
 
 **Files:**
 - Modify: `adapter/provider/factory.go`
