@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -94,9 +95,31 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		filters.Limit = 50
 	}
 
+	// Admin lists arrive with no owner/department/public narrowing; mark the
+	// query unconstrained so the disjunctive WHERE admits every row.
+	unconstrained := int64(0)
+	if filters.OwnerID == nil && len(filters.Departments) == 0 && !filters.IncludePublic {
+		unconstrained = 1
+	}
+	deptJSON := "[]"
+	if len(filters.Departments) > 0 {
+		b, err := json.Marshal(filters.Departments)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling departments filter: %w", err)
+		}
+		deptJSON = string(b)
+	}
+	includePublic := int64(0)
+	if filters.IncludePublic {
+		includePublic = 1
+	}
+
 	params := generated.ListInstancesParams{
-		Limit:  int64(filters.Limit),
-		Offset: int64(filters.Offset),
+		Limit:         int64(filters.Limit),
+		Offset:        int64(filters.Offset),
+		Unconstrained: unconstrained,
+		IncludePublic: includePublic,
+		Departments:   deptJSON,
 	}
 	if filters.State != nil {
 		params.State = string(*filters.State)
