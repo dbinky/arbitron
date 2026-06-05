@@ -934,3 +934,82 @@ func TestAuthMiddleware_Enrich_SubjectLead_Match(t *testing.T) {
 		t.Errorf("Departments = %v, want to include platform (led dept union)", got.Departments)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// FA #26: claim → normalize → snapshot → context identity seam test
+// ---------------------------------------------------------------------------
+
+// TestProvisioner_Snapshot_ReadByMiddleware_Consistency verifies the critical
+// invariant of FA #26: the departments written by the provisioner at login time
+// (ReplaceDepartments) are the same departments read by the auth middleware at
+// request time (ListDepartments). Both halves share the same UserRepository.
+//
+// Input: raw claim groups ["Engineering", "Platform"] (mixed case)
+// Provisioner output: normalized ["engineering", "platform"] stored in repo
+// Middleware output: ["engineering", "platform"] + led ["platform"] in context
+//
+// This single test exercises the full chain without any fakeProvisioner stub.
+func TestProvisioner_Snapshot_ReadByMiddleware_Consistency(t *testing.T) {
+	uid := uuid.New()
+	subj := "bob-subject"
+	email := "bob@corp.example"
+
+	// Shared in-memory repo: provisioner writes, middleware reads.
+	users := newFakeUserRepo()
+	users.bySubject = map[string]*instance.User{}
+	users.byID[uid] = &instance.User{
+		ID:       uid,
+		Subject:  &subj,
+		Email:    &email,
+		Username: "bob",
+		Role:     identity.RoleUser,
+	}
+	users.bySubject[subj] = users.byID[uid]
+
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"bob@corp.example"}},
+	}
+
+	// Step 1 — login: provisioner resolves raw claim groups → normalizes →
+	// snapshots into the shared repo via ReplaceDepartments.
+	prov := instance.NewProvisioner(users, nil, groups)
+	_, err := prov.Resolve(context.Background(), instance.Claims{
+		Subject:  subj,
+		Email:    email,
+		Username: "bob",
+		Groups:   []string{"Engineering", "Platform"}, // raw, mixed case
+	})
+	require.NoError(t, err, "provisioner.Resolve must succeed")
+
+	// Verify normalization happened in the stored snapshot.
+	stored, err := users.ListDepartments(context.Background(), uid)
+	require.NoError(t, err)
+	require.Contains(t, stored, "engineering", "NormalizeDept must lowercase 'Engineering'")
+	require.Contains(t, stored, "platform", "NormalizeDept must lowercase 'Platform'")
+
+	// Step 2 — request: middleware reads the stored departments from the SAME
+	// repo and merges the config-based lead set into the context identity.
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{
+		ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour),
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	// The middleware must present the normalized claim departments (written by
+	// the provisioner) as the caller's effective membership.
+	assert.True(t, got.InDepartment("engineering"),
+		"middleware must reflect provisioner-stored 'engineering' in Departments")
+	assert.True(t, got.InDepartment("platform"),
+		"middleware must reflect provisioner-stored 'platform' in Departments")
+	assert.True(t, got.LeadsDepartment("platform"),
+		"platform lead config must appear in LedDepartments at request time")
+}
