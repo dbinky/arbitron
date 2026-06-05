@@ -933,3 +933,47 @@ func TestInstanceGet_DepartmentAndVisibilityInResponse(t *testing.T) {
 	assert.Contains(t, text, "department",
 		"visibility value 'department' must appear in the instance_get response")
 }
+
+// ---------------------------------------------------------------------------
+// FA #30: ErrForbidden on intervention paths (404-vs-403 MCP adapter mapping)
+// ---------------------------------------------------------------------------
+
+// TestInstancePause_ErrForbidden_IsError verifies that when the engine returns
+// ErrForbidden (department peer — canView=true, canIntervene=false), the MCP
+// tool surfaces it as an error result. The MCP protocol has no HTTP status
+// analog, but the tool must not silently succeed and must include the error
+// message so the caller can distinguish it from ErrNotFound.
+func TestInstancePause_ErrForbidden_IsError(t *testing.T) {
+	eng := &stubEngine{
+		pauseFn: func(id uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+		},
+	}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_pause", map[string]any{"id": uuid.New().String()})
+
+	assert.True(t, result.IsError,
+		"ErrForbidden must produce an error result — a dept peer cannot pause the run")
+	// The error message must contain distinguishing content from ErrForbidden,
+	// not silently succeed or return a generic "not found".
+	text := extractText(t, result)
+	assert.NotContains(t, text, "not found",
+		"ErrForbidden must not be presented as ErrNotFound — existence is NOT hidden from a dept peer")
+}
+
+// TestInstanceCancel_ErrForbidden_IsError mirrors the pause case for Cancel.
+func TestInstanceCancel_ErrForbidden_IsError(t *testing.T) {
+	eng := &stubEngine{
+		cancelFn: func(id uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+		},
+	}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+	assert.True(t, result.IsError,
+		"ErrForbidden must produce an error result on Cancel — dept peer cannot intervene")
+	text := extractText(t, result)
+	assert.NotContains(t, text, "not found",
+		"ErrForbidden must not be collapsed to ErrNotFound at the MCP adapter")
+}
