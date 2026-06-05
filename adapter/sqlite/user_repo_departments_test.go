@@ -125,3 +125,51 @@ func TestListDepartments_CascadeOnUserDelete(t *testing.T) {
 		t.Errorf("got %v, want empty after cascade", got)
 	}
 }
+
+// A new user with no department rows returns an empty slice, not an error.
+func TestListDepartments_FreshUser_ReturnsEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	uid := newUserForDepts(t, repo)
+
+	got, err := repo.ListDepartments(context.Background(), uid)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %v, want empty for fresh user", got)
+	}
+}
+
+// LIST ORDER BY department is enforced regardless of insert order.
+func TestListDepartments_AlphabeticalOrder(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	uid := newUserForDepts(t, repo)
+
+	// Insert in non-alphabetical order; expect sorted result.
+	ctx := context.Background()
+	if err := repo.ReplaceDepartments(ctx, uid, []string{"sales", "engineering", "platform"}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	got, err := repo.ListDepartments(ctx, uid)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []string{"engineering", "platform", "sales"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v (ORDER BY must be alphabetical)", got, want)
+	}
+}
+
+// ReplaceDepartments with a non-existent userID fails with a FK constraint error.
+// The delete succeeds (0 rows affected) but the subsequent insert is rejected.
+func TestReplaceDepartments_NonExistentUser_ReturnsError(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+
+	err := repo.ReplaceDepartments(context.Background(), uuid.New(), []string{"engineering"})
+	if err == nil {
+		t.Error("expected error for non-existent user, got nil")
+	}
+}
