@@ -78,18 +78,27 @@ func sweepExpiredDeviceCodes(ctx context.Context, svc *identity.DeviceCodeServic
 }
 
 func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the root command with its subcommands and the persistent
+// --config flag. Factored out of main() so tests can inspect it.
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "arbitron",
 		Short: "Arbitron workflow orchestration engine",
 		Long:  "Arbitron is a Go-based workflow orchestration engine with hexagonal architecture.",
 	}
 
+	rootCmd.PersistentFlags().String("config", "",
+		"path to config.yaml (overrides ARBITRON_CONFIG and the default ~/.arbitron/config.yaml)")
+
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newMCPCmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 func newServeCmd() *cobra.Command {
@@ -220,14 +229,8 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 // initDomain performs all shared initialisation: configuration, logging,
 // database, adapters, engine, queue manager, notifications, tracing, and
 // crash recovery. The returned domainStack must be closed by the caller.
-func initDomain(_ context.Context) (*domainStack, error) {
-	// 1. Load configuration.
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("determining home directory: %w", err)
-	}
-	configPath := filepath.Join(homeDir, ".arbitron", "config.yaml")
-
+func initDomain(_ context.Context, configPath string) (*domainStack, error) {
+	// 1. Load configuration from the resolved path.
 	slog.Info("loading configuration", "path", configPath)
 	cfg, err := configadapter.Load(configPath)
 	if err != nil {
@@ -714,7 +717,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 func runServe(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	ds, err := initDomain(ctx)
+	configPath, err := configPathFromCmd(cmd)
+	if err != nil {
+		return err
+	}
+	ds, err := initDomain(ctx, configPath)
 	if err != nil {
 		return err
 	}
@@ -845,7 +852,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 func runMCP(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	ds, err := initDomain(ctx)
+	configPath, err := configPathFromCmd(cmd)
+	if err != nil {
+		return err
+	}
+	ds, err := initDomain(ctx, configPath)
 	if err != nil {
 		return err
 	}
