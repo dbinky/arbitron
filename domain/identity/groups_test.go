@@ -60,6 +60,29 @@ func TestResolveDepartments(t *testing.T) {
 	})
 }
 
+func TestDefaultGroupOr(t *testing.T) {
+	t.Run("non-empty DefaultGroup is normalized and returned", func(t *testing.T) {
+		cfg := GroupConfig{DefaultGroup: "  Engineering  "}
+		if got := cfg.DefaultGroupOr(); got != "engineering" {
+			t.Errorf("DefaultGroupOr() = %q, want %q", got, "engineering")
+		}
+	})
+
+	t.Run("empty DefaultGroup returns the sentinel", func(t *testing.T) {
+		cfg := GroupConfig{}
+		if got := cfg.DefaultGroupOr(); got != "default" {
+			t.Errorf("DefaultGroupOr() = %q, want %q", got, "default")
+		}
+	})
+
+	t.Run("whitespace-only DefaultGroup returns the sentinel", func(t *testing.T) {
+		cfg := GroupConfig{DefaultGroup: "   "}
+		if got := cfg.DefaultGroupOr(); got != "default" {
+			t.Errorf("DefaultGroupOr() = %q, want %q", got, "default")
+		}
+	})
+}
+
 func TestLedDepartments(t *testing.T) {
 	cfg := GroupConfig{
 		DefaultGroup: "default",
@@ -96,6 +119,41 @@ func TestLedDepartments(t *testing.T) {
 			t.Errorf("got %v, want empty", got)
 		}
 	})
+
+	t.Run("blank subject and email yields empty without panicking", func(t *testing.T) {
+		got := LedDepartments("", "", cfg)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty", got)
+		}
+	})
+
+	t.Run("multi-dept lead returns sorted result", func(t *testing.T) {
+		multiCfg := GroupConfig{
+			Leads: map[string][]string{
+				"sales":       {"dana@corp.example"},
+				"engineering": {"dana@corp.example"},
+				"platform":    {"dana@corp.example"},
+			},
+		}
+		got := LedDepartments("", "dana@corp.example", multiCfg)
+		// Sorted deterministically regardless of map iteration order.
+		want := []string{"engineering", "platform", "sales"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("blank lead identifier in config is skipped", func(t *testing.T) {
+		blankCfg := GroupConfig{
+			Leads: map[string][]string{
+				"engineering": {"", "   ", "alice@corp.example"},
+			},
+		}
+		got := LedDepartments("", "alice@corp.example", blankCfg)
+		if !reflect.DeepEqual(got, []string{"engineering"}) {
+			t.Errorf("got %v, want [engineering]", got)
+		}
+	})
 }
 
 func TestEffectiveMembership(t *testing.T) {
@@ -123,6 +181,21 @@ func TestEffectiveMembership(t *testing.T) {
 		got := EffectiveMembership(nil, "alice-subj", "alice@corp.example", cfg)
 		if !reflect.DeepEqual(got, []string{"default", "platform"}) {
 			t.Errorf("got %v, want [default platform]", got)
+		}
+	})
+
+	t.Run("led department already in claim values is not duplicated", func(t *testing.T) {
+		// alice's token already carries "platform" (her led dept); it must appear once.
+		got := EffectiveMembership([]string{"engineering", "platform"}, "alice-subj", "alice@corp.example", cfg)
+		if !reflect.DeepEqual(got, []string{"engineering", "platform"}) {
+			t.Errorf("got %v, want [engineering platform] (no dup)", got)
+		}
+	})
+
+	t.Run("blank subject and email with no claims gets default group only", func(t *testing.T) {
+		got := EffectiveMembership(nil, "", "", cfg)
+		if !reflect.DeepEqual(got, []string{"default"}) {
+			t.Errorf("got %v, want [default]", got)
 		}
 	})
 }
