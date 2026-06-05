@@ -858,3 +858,79 @@ func TestAuthMiddleware_Enrich_OrgMode_NoStoredDepts_DefaultGroupFallback(t *tes
 		t.Errorf("LedDepartments = %v, want empty (user leads no departments)", got.LedDepartments)
 	}
 }
+
+// TestAuthMiddleware_Enrich_LedDeptAlreadyStored_Deduplicated pins the
+// unionDepts deduplication: when a user's stored departments include a
+// department they also lead (e.g. snapshot already contains the led dept),
+// it must appear exactly once in Departments. The middleware uses its own
+// unionDepts rather than EffectiveMembership, so this test covers that path.
+func TestAuthMiddleware_Enrich_LedDeptAlreadyStored_Deduplicated(t *testing.T) {
+	uid := uuid.New()
+	subj := "alice-subject"
+	email := "alice@corp.example"
+	users := newFakeUserRepo()
+	users.byID[uid] = &instance.User{ID: uid, Subject: &subj, Email: &email, Username: "alice", Role: identity.RoleUser}
+	users.depts[uid] = []string{"engineering", "platform"} // platform is also a led dept
+
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour)}
+
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"alice@corp.example"}},
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	// platform must appear exactly once even though it is both stored and led.
+	if !reflect.DeepEqual(got.Departments, []string{"engineering", "platform"}) {
+		t.Errorf("Departments = %v, want [engineering platform] (no duplicate for led dept already in stored)", got.Departments)
+	}
+	if !reflect.DeepEqual(got.LedDepartments, []string{"platform"}) {
+		t.Errorf("LedDepartments = %v, want [platform]", got.LedDepartments)
+	}
+}
+
+// TestAuthMiddleware_Enrich_SubjectLead_Match verifies that lead matching
+// works by subject (not only by email). The enrich path extracts the user's
+// subject and threads it through LedDepartments; this test uses a Leads
+// config entry that is the user's subject ID, ensuring the subject path fires.
+func TestAuthMiddleware_Enrich_SubjectLead_Match(t *testing.T) {
+	uid := uuid.New()
+	subj := "alice-oidc-sub-123"
+	users := newFakeUserRepo()
+	// User has subject but NO email — only subject-based lead matching is possible.
+	users.byID[uid] = &instance.User{ID: uid, Subject: &subj, Username: "alice", Role: identity.RoleUser}
+
+	sessions := newFakeSessionRepo()
+	sessions.byToken["tok"] = &identity.Session{ID: "tok", UserID: uid, ExpiresAt: time.Now().Add(time.Hour)}
+
+	// Leads config uses the subject ID, not an email.
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"alice-oidc-sub-123"}},
+	}
+	mw := NewAuthMiddleware(identity.ModeOrg, "arbitron_session", sessions, nil, users, groups)
+
+	var got identity.Identity
+	h := mw.Handler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got, _ = identity.FromContext(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "arbitron_session", Value: "tok"})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !got.LeadsDepartment("platform") {
+		t.Errorf("LedDepartments = %v, want to include platform (subject-based lead match)", got.LedDepartments)
+	}
+	if !got.InDepartment("platform") {
+		t.Errorf("Departments = %v, want to include platform (led dept union)", got.Departments)
+	}
+}

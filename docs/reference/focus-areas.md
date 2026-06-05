@@ -18,7 +18,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 3 | Department persistence (`adapter/sqlite` user_departments migration 009 + repo ListDepartments/ReplaceDepartments — transactional replace, FK cascade) | [x] | [x] | Done |
 | 4 | Provisioner (`domain/instance/provisioner.go` — live admin re-eval promote/demote, department snapshot at login, verified-email gating) | [x] | [x] | Done |
 | 5 | Claim extraction (`adapter/oidc/provider.go` + `identity.Claims.Groups` — configurable group claim, array-or-string tolerance) | [x] | [x] | Done |
-| 6 | Identity enrichment + middleware (`domain/identity/identity.go` Departments/LedDepartments/InDepartment/LeadsDepartment; `adapter/http/auth_middleware.go` population, local-mode default-group admin) | [x] | [ ] | |
+| 6 | Identity enrichment + middleware (`domain/identity/identity.go` Departments/LedDepartments/InDepartment/LeadsDepartment; `adapter/http/auth_middleware.go` population, local-mode default-group admin) | [x] | [x] | Done |
 | 7 | Whoami endpoint (`adapter/http/me_handler.go` — projection shape, []-not-null, no subject/email leak, 401 on no identity) | [ ] | [ ] | |
 | 8 | Published-workflow visibility schema/repo (`adapter/sqlite` migration 010 + PublicationOf/Upsert — visibility+department columns, shared→public default migration) | [ ] | [ ] | |
 | 9 | Visibility type + ports (`domain/workflow` Visibility, Publication, widened PublisherLookup/PublishedStore) | [ ] | [ ] | |
