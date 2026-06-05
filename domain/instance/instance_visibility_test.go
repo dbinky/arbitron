@@ -29,3 +29,12 @@ func TestInstance_ZeroValueIsPrivate(t *testing.T) {
 	assert.Equal(t, "", inst.Department)
 	assert.Equal(t, instance.Visibility(""), inst.Visibility)
 }
+
+func TestListFilters_HasVisibilityFields(t *testing.T) {
+	f := instance.ListFilters{
+		Departments:   []string{"engineering", "platform"},
+		IncludePublic: true,
+	}
+	assert.Equal(t, []string{"engineering", "platform"}, f.Departments)
+	assert.True(t, f.IncludePublic)
+}

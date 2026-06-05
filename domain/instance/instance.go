@@ -153,6 +153,14 @@ type ListFilters struct {
 	// request identity (non-admin => own UserID); list callers (HTTP/MCP handlers)
 	// MUST NOT set it from request input, or a non-admin could widen scope.
 	OwnerID *uuid.UUID
-	Limit   int
-	Offset  int
+	// Departments and IncludePublic widen a non-admin's list to the disjunction
+	// owner_id=self OR visibility=public (when IncludePublic) OR
+	// (visibility=department AND department IN Departments).
+	// SECURITY: like OwnerID above, these are SERVICE-SET by ListInstances from
+	// the request identity; list callers (HTTP/MCP) MUST NOT set them from
+	// request input, or a non-admin could widen scope to other departments.
+	Departments   []string
+	IncludePublic bool
+	Limit         int
+	Offset        int
 }
