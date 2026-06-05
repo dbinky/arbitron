@@ -1140,6 +1140,73 @@ func TestService_SetVisibility_PublisherCannotWidenToForeignDept(t *testing.T) {
 	assert.Equal(t, "engineering", pub.Department, "department must be unchanged after rejected scope-widening")
 }
 
+// Isolation/security (PR #21, HIGH cross-department visibility tampering): a lead
+// of department A must NOT be able to relevel a publication owned by another user
+// in department B. The mutate gate scopes to LeadsDepartment(cur.Department), not
+// "leads SOMETHING."
+func TestService_SetVisibility_LeadOfOtherDept_CannotRelevel(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000f1")
+	attacker := uuid.MustParse("00000000-0000-0000-0000-0000000000f2")
+	// A finance publication owned by someone else.
+	_ = pubs.Upsert(context.Background(), "fin-wf", publisher, "src", workflow.VisibilityDepartment, "finance")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	// Attacker is a lead of "support" — NOT finance — and is not the publisher.
+	err := svc.SetVisibility(ctxWithRoles(attacker, false, []string{"support"}, []string{"support"}),
+		"fin-wf", workflow.VisibilityDepartment, "support")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"a lead of another department must not relevel a foreign-department publication")
+
+	pub, _, _ := pubs.PublicationOf(context.Background(), "fin-wf")
+	assert.Equal(t, "finance", pub.Department, "department must be unchanged after the rejected attempt")
+}
+
+// Isolation/security (PR #21, HIGH): a lead of department A must NOT be able to
+// push a department-B publication to PUBLIC (org-wide). authorizePublish for
+// public scopes to leading the workflow's OWN department, not "leads SOMETHING."
+func TestService_SetVisibility_LeadOfOtherDept_CannotPromoteToPublic(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000f3")
+	attacker := uuid.MustParse("00000000-0000-0000-0000-0000000000f4")
+	_ = pubs.Upsert(context.Background(), "fin-wf", publisher, "src", workflow.VisibilityDepartment, "finance")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	// Attacker leads "support" only; tries to make the finance workflow public.
+	err := svc.SetVisibility(ctxWithRoles(attacker, false, []string{"support"}, []string{"support"}),
+		"fin-wf", workflow.VisibilityPublic, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"a lead of another department must not publish a foreign-department workflow to public")
+
+	pub, _, _ := pubs.PublicationOf(context.Background(), "fin-wf")
+	assert.Equal(t, workflow.VisibilityDepartment, pub.Visibility, "visibility must be unchanged")
+	assert.Equal(t, "finance", pub.Department)
+}
+
+// Counterpart: a lead of the workflow's OWN department CAN promote it to public,
+// even when they are not the publisher. This pins that the scoping is "leads THIS
+// department," not "is the publisher."
+func TestService_SetVisibility_LeadOfOwnDept_CanPromoteToPublic(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000f5")
+	lead := uuid.MustParse("00000000-0000-0000-0000-0000000000f6")
+	_ = pubs.Upsert(context.Background(), "fin-wf", publisher, "src", workflow.VisibilityDepartment, "finance")
+	repo.bucket(workflow.Shared())["fin-wf"] = wf("fin-wf")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	// lead is a configured lead of finance (the workflow's own department).
+	err := svc.SetVisibility(ctxWithRoles(lead, false, []string{"finance"}, []string{"finance"}),
+		"fin-wf", workflow.VisibilityPublic, "")
+	require.NoError(t, err, "a lead of the workflow's own department may promote it to public")
+	pub, _, _ := pubs.PublicationOf(context.Background(), "fin-wf")
+	assert.Equal(t, workflow.VisibilityPublic, pub.Visibility)
+}
+
 // Error: no identity in context → ErrUnauthenticated for SetVisibility
 // (same caller() contract that all other service methods enforce).
 func TestService_SetVisibility_NoIdentity_Rejected(t *testing.T) {

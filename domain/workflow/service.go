@@ -300,7 +300,9 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 	if s.published == nil {
 		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
 	}
-	if err := authorizePublish(id, visibility, department); err != nil {
+	// Fresh publish: the source is the caller's own private content, which belongs
+	// to no department yet, so ownerDept is "".
+	if err := authorizePublish(id, visibility, department, ""); err != nil {
 		return err
 	}
 
@@ -389,9 +391,16 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 // authorizePublish validates the requested visibility/department against the
 // caller's role per spec §Workflow Visibility:
 //   - department: caller must be a MEMBER of department; department required.
-//   - public: caller must be a LEAD (of any department) or an ADMIN.
+//   - public: ADMIN, or a LEAD of the workflow's OWN department (ownerDept). When
+//     ownerDept is "" (a fresh publish of the caller's own private content, which
+//     belongs to no department yet), any lead may make their own content public —
+//     there is no foreign department being escalated.
 //   - private: not a storable publication level → ErrInvalidVisibility.
-func authorizePublish(id identity.Identity, visibility Visibility, department string) error {
+//
+// ownerDept is the department the workflow currently belongs to. It scopes the
+// public lead-check so a lead of department A cannot push a department-B
+// publication org-wide (PR #21, cross-department visibility tampering).
+func authorizePublish(id identity.Identity, visibility Visibility, department, ownerDept string) error {
 	switch visibility {
 	case VisibilityDepartment:
 		if department == "" {
@@ -402,10 +411,20 @@ func authorizePublish(id identity.Identity, visibility Visibility, department st
 		}
 		return nil
 	case VisibilityPublic:
-		if id.IsAdmin() || len(id.LedDepartments) > 0 {
+		if id.IsAdmin() {
 			return nil
 		}
-		return fmt.Errorf("%w: publishing to public requires a lead or admin", ErrUnauthorized)
+		// A lead may take a workflow public only if they lead the department it
+		// currently belongs to. ownerDept == "" means fresh public publish of the
+		// caller's own content (no existing department), so any lead qualifies.
+		if ownerDept == "" {
+			if len(id.LedDepartments) > 0 {
+				return nil
+			}
+		} else if id.LeadsDepartment(ownerDept) {
+			return nil
+		}
+		return fmt.Errorf("%w: publishing to public requires admin or a lead of the workflow's department", ErrUnauthorized)
 	default:
 		return fmt.Errorf("%w: %q is not a publishable visibility", ErrInvalidVisibility, visibility)
 	}
@@ -433,12 +452,17 @@ func (s *WorkflowService) SetVisibility(ctx context.Context, publishedName strin
 		return fmt.Errorf("%w: %s", ErrNotFound, publishedName)
 	}
 
-	// Only the publisher, a lead, or an admin may mutate a publication.
-	if cur.Publisher != id.UserID && !id.IsAdmin() && len(id.LedDepartments) == 0 {
+	// Only the publisher, a lead of THIS publication's department, or an admin may
+	// mutate it. Scoping to LeadsDepartment(cur.Department) — not "leads SOMETHING"
+	// — stops a lead of department A from releveling a department-B publication
+	// (PR #21, cross-department visibility tampering).
+	if cur.Publisher != id.UserID && !id.IsAdmin() && !id.LeadsDepartment(cur.Department) {
 		return fmt.Errorf("%w: cannot change visibility of %q", ErrUnauthorized, publishedName)
 	}
-	// Target level role gate (same as Publish).
-	if err := authorizePublish(id, visibility, department); err != nil {
+	// Target level role gate (same as Publish). The workflow's own department
+	// (cur.Department) scopes the public lead-check so only a lead of THAT
+	// department (or an admin) may take it org-wide.
+	if err := authorizePublish(id, visibility, department, cur.Department); err != nil {
 		return err
 	}
 

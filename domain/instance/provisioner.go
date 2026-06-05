@@ -104,8 +104,14 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 		}
 	case errors.Is(err, ErrNotFound):
 		subj := c.Subject
+		// SECURITY: persist the email ONLY when it is VERIFIED. The stored email
+		// later drives privilege-bearing matching — lead resolution in the auth
+		// middleware (enrich → identity.LedDepartments) and the bootstrap-admin
+		// demotion floor (IsBootstrapAdmin over the persisted User). An unverified
+		// email is attacker-controllable at the IdP, so it must never reach storage,
+		// mirroring the matchEmail gate above that already protects admin promotion.
 		var emailPtr *string
-		if c.Email != "" {
+		if c.EmailVerified && c.Email != "" {
 			e := c.Email
 			emailPtr = &e
 		}

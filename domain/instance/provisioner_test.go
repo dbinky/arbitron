@@ -99,12 +99,14 @@ func (r *fakeProvUserRepo) ReplaceDepartments(_ context.Context, id uuid.UUID, d
 	return nil
 }
 
-// Happy path: an unknown, non-bootstrap subject creates a plain user.
+// Happy path: an unknown, non-bootstrap subject creates a plain user. The email
+// is persisted because it is VERIFIED (see TestResolve_UnverifiedEmailNotPersisted
+// for the unverified case).
 func TestProvisioner_Resolve_NewPlainUser(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.Resolve(context.Background(), Claims{Subject: "sub-1", Username: "alice", Email: "alice@x.com"})
+	u, err := p.Resolve(context.Background(), Claims{Subject: "sub-1", Username: "alice", Email: "alice@x.com", EmailVerified: true})
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls)
 	assert.Equal(t, identity.RoleUser, u.Role)
@@ -303,6 +305,36 @@ func TestResolve_UnverifiedEmailDoesNotGrantAdmin(t *testing.T) {
 	if u.Role != identity.RoleUser {
 		t.Errorf("role = %q, want user (unverified email must not bootstrap admin)", u.Role)
 	}
+}
+
+// Isolation/security (PR #21, HIGH lead privilege escalation): an UNVERIFIED
+// email must NOT be persisted on the created user. The persisted email drives
+// lead matching (adapter/http enrich → identity.LedDepartments) and the
+// bootstrap-admin demotion floor; an attacker-controllable unverified address
+// must therefore never reach storage, mirroring the matchEmail gate that already
+// protects bootstrap-admin promotion.
+func TestResolve_UnverifiedEmailNotPersisted(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.Resolve(context.Background(), Claims{
+		Subject: "grace-subject", Username: "grace", Email: "lead@corp.example", EmailVerified: false,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, u.Email, "unverified email must not be persisted (it would reach lead matching)")
+}
+
+// Counterpart: a VERIFIED email IS persisted (it is trusted for lead matching).
+func TestResolve_VerifiedEmailPersisted(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.Resolve(context.Background(), Claims{
+		Subject: "heidi-subject", Username: "heidi", Email: "heidi@corp.example", EmailVerified: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, u.Email)
+	assert.Equal(t, "heidi@corp.example", *u.Email)
 }
 
 func TestResolve_SnapshotsDepartmentsFromGroups(t *testing.T) {
