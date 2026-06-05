@@ -70,7 +70,7 @@ type routerMockService struct {
 	setPriorityFn     func(id uuid.UUID, priority string) error
 }
 
-func (m *routerMockService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *routerMockService) TriggerWithDepartment(_ context.Context, workflowName string, variables map[string]any, priority string, _ string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
@@ -726,6 +726,32 @@ func TestRouter_MCPEndpoint_Mounted(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code, "POST /mcp should be handled by the mounted MCP handler")
+}
+
+func TestMeRoute_MountedUnderAPIV1(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	router.ServeHTTP(rec, req)
+
+	// Without auth wired (deps.Auth == nil) the handler resolves via FromContext
+	// and returns 401 — either way it is NOT a 404 (route exists).
+	if rec.Code == http.StatusNotFound {
+		t.Fatalf("/api/v1/me returned 404 — route not mounted")
+	}
 }
 
 func TestRouter_MCPEndpoint_RealHandler(t *testing.T) {

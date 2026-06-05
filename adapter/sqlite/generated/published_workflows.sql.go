@@ -7,6 +7,7 @@ package generated
 
 import (
 	"context"
+	"database/sql"
 )
 
 const deletePublishedWorkflow = `-- name: DeletePublishedWorkflow :exec
@@ -19,7 +20,7 @@ func (q *Queries) DeletePublishedWorkflow(ctx context.Context, name string) erro
 }
 
 const getPublishedWorkflow = `-- name: GetPublishedWorkflow :one
-SELECT name, publisher_id, source_name, published_at
+SELECT name, publisher_id, source_name, published_at, visibility, department
 FROM published_workflows
 WHERE name = ?
 `
@@ -32,12 +33,14 @@ func (q *Queries) GetPublishedWorkflow(ctx context.Context, name string) (Publis
 		&i.PublisherID,
 		&i.SourceName,
 		&i.PublishedAt,
+		&i.Visibility,
+		&i.Department,
 	)
 	return i, err
 }
 
 const listPublishedWorkflows = `-- name: ListPublishedWorkflows :many
-SELECT name, publisher_id, source_name, published_at
+SELECT name, publisher_id, source_name, published_at, visibility, department
 FROM published_workflows
 ORDER BY name
 `
@@ -56,6 +59,8 @@ func (q *Queries) ListPublishedWorkflows(ctx context.Context) ([]PublishedWorkfl
 			&i.PublisherID,
 			&i.SourceName,
 			&i.PublishedAt,
+			&i.Visibility,
+			&i.Department,
 		); err != nil {
 			return nil, err
 		}
@@ -71,11 +76,13 @@ func (q *Queries) ListPublishedWorkflows(ctx context.Context) ([]PublishedWorkfl
 }
 
 const upsertPublishedWorkflow = `-- name: UpsertPublishedWorkflow :exec
-INSERT INTO published_workflows (name, publisher_id, source_name)
-VALUES (?, ?, ?)
+INSERT INTO published_workflows (name, publisher_id, source_name, visibility, department)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(name) DO UPDATE SET
     publisher_id = excluded.publisher_id,
     source_name  = excluded.source_name,
+    visibility   = excluded.visibility,
+    department   = excluded.department,
     published_at = strftime('%Y-%m-%dT%H:%M:%SZ')
 `
 
@@ -83,9 +90,17 @@ type UpsertPublishedWorkflowParams struct {
 	Name        string
 	PublisherID string
 	SourceName  string
+	Visibility  string
+	Department  sql.NullString
 }
 
 func (q *Queries) UpsertPublishedWorkflow(ctx context.Context, arg UpsertPublishedWorkflowParams) error {
-	_, err := q.db.ExecContext(ctx, upsertPublishedWorkflow, arg.Name, arg.PublisherID, arg.SourceName)
+	_, err := q.db.ExecContext(ctx, upsertPublishedWorkflow,
+		arg.Name,
+		arg.PublisherID,
+		arg.SourceName,
+		arg.Visibility,
+		arg.Department,
+	)
 	return err
 }

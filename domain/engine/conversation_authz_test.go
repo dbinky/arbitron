@@ -107,6 +107,68 @@ func TestConversationAuthz_NoIdentity_FailClosed(t *testing.T) {
 	assert.Equal(t, instance.StateWaiting, inst.State, "instance state is untouched")
 }
 
+// --- RBAC-INTERACT-001: department lead may participate; peer (member, not lead) may NOT ---
+
+// TestConversationAuthz_DepartmentLead_CanParticipate pins the explicit design
+// decision: participation is routed through canIntervene, which includes leads.
+// A department lead who does not own the run may send messages and end sessions.
+func TestConversationAuthz_DepartmentLead_CanParticipate(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	// Stamp the instance with a department so the lead gate is meaningful.
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID].Department = "engineering"
+	instRepo.instances[instanceID].Visibility = instance.VisibilityDepartment
+	instRepo.mu.Unlock()
+
+	llmProvider.streamCallFn = cannedStream([]string{"Sure"}, 10, 20)
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	// A lead of "engineering" who is NOT the owner may participate.
+	leadCtxLocal := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:         uuid.New(), // distinct from convoTestOwner
+		Username:       "eng-lead",
+		Role:           identity.RoleUser,
+		Departments:    []string{"engineering"},
+		LedDepartments: []string{"engineering"},
+	})
+
+	err := handler.HandleMessage(leadCtxLocal, instanceID, "lead message")
+	require.NoError(t, err, "department lead must be able to participate in an interactive session (canIntervene=true)")
+}
+
+// TestConversationAuthz_DepartmentPeer_Forbidden pins the read-vs-act split for
+// interactive sessions: a department member (viewer but not owner/lead/admin)
+// gets ErrForbidden — existence is not withheld, but participation is denied.
+func TestConversationAuthz_DepartmentPeer_Forbidden(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID].Department = "engineering"
+	instRepo.instances[instanceID].Visibility = instance.VisibilityDepartment
+	instRepo.mu.Unlock()
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	// A member of "engineering" who does NOT lead it gets ErrForbidden (not ErrNotFound).
+	peerCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:         uuid.New(),
+		Username:       "eng-peer",
+		Role:           identity.RoleUser,
+		Departments:    []string{"engineering"},
+		LedDepartments: nil,
+	})
+
+	err := handler.HandleMessage(peerCtx, instanceID, "peer message")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrForbidden, "department peer (viewer) must get ErrForbidden, not ErrNotFound")
+	assert.NotErrorIs(t, err, instance.ErrNotFound, "existence must not be withheld from a department viewer")
+
+	_, err = handler.EndSession(peerCtx, instanceID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrForbidden)
+}
+
 // --- Isolation/security: non-owner non-admin is refused with ErrNotFound, no mutation ---
 
 func TestConversationAuthz_NonOwner_RefusedNoMutation(t *testing.T) {

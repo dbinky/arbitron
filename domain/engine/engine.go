@@ -35,7 +35,9 @@ type Engine struct {
 	dismissals       instance.DismissalRepository
 	externalNotifier notification.ExternalNotifier
 	interventions    instance.InterventionRepository
+	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager WorkspaceManager
+	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
 	wg               sync.WaitGroup
@@ -109,33 +111,39 @@ func (e *Engine) SetInterventions(repo instance.InterventionRepository) {
 	e.interventions = repo
 }
 
+// SetAuditRecorder wires the Phase-2 audit service for non-owner interventions
+// (lead_intervention / admin.override). When unset, no domain audit events are
+// written (the legacy intervention attribution row + event are unaffected).
+func (e *Engine) SetAuditRecorder(r AuditRecorder) {
+	e.auditRecorder = r
+}
+
+// SetPublisherLookup wires the publication lookup used to gate the trigger read
+// path by workflow visibility. When unset (nil), all shared workflows are
+// triggerable (local/read-only mode), preserving today's behavior.
+func (e *Engine) SetPublisherLookup(p workflow.PublisherLookup) {
+	e.publishers = p
+}
+
 // recordIntervention writes an audit row and publishes instance.intervened when
 // the acting identity is NOT the instance owner. Owner self-actions (and
 // identity-less system actions) are skipped. Attribution is best-effort: a
 // repo write failure is logged, never returned, so the operation that already
 // succeeded is not undone.
 func (e *Engine) recordIntervention(ctx context.Context, inst *instance.Instance, action string, detail *string) {
-	id, ok := identity.FromContext(ctx)
-	if !ok || id.UserID == inst.OwnerID {
-		return // owner self-action (or no identity): not logged
-	}
-	if e.interventions != nil {
-		iv := &instance.Intervention{
-			ID:          uuid.New(),
-			InstanceID:  inst.ID,
-			ActorUserID: id.UserID,
-			Action:      action,
-			Detail:      detail,
-			CreatedAt:   time.Now(),
-		}
-		if err := e.interventions.Create(ctx, iv); err != nil {
-			slog.Error("failed to record intervention", "instanceID", inst.ID, "error", err)
-		}
+	// Attribution row + domain audit event are owned by the shared
+	// interventionRecorder so the engine and interactive paths cannot diverge
+	// (PR #21). It resolves the actor, writes the best-effort row, and emits the
+	// lead_intervention/admin.override audit event — all nil-safe.
+	rec := interventionRecorder{interventions: e.interventions, audit: e.auditRecorder}
+	actor, isNonOwner := rec.record(ctx, inst, action, detail)
+	if !isNonOwner {
+		return // owner self-action (or no identity): no event
 	}
 	e.eventBus.Publish(inst.ID, Event{
 		Type:      "instance.intervened",
 		Timestamp: time.Now(),
-		Data:      map[string]any{"actorUserId": id.UserID.String(), "action": action},
+		Data:      map[string]any{"actorUserId": actor.String(), "action": action},
 	})
 }
 
@@ -163,8 +171,59 @@ func triggerOwner(ctx context.Context, users instance.UserRepository) (uuid.UUID
 // Trigger loads a workflow by name, validates inputs, creates a new instance,
 // and delegates to the queue manager for capacity-based scheduling.
 // The second return value indicates whether the instance started immediately (true)
-// or stayed in queued state (false).
+// or stayed in queued state (false). It delegates to TriggerWithDepartment with
+// no per-trigger department override, preserving the existing entrypoint.
 func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+	return e.TriggerWithDepartment(ctx, workflowName, variables, priority, "")
+}
+
+// resolvePublication returns the resolved workflow's audience (visibility +
+// department) for instance stamping. A workflow resolved from the shared scope
+// MAY carry a publication record (department/public); a shared workflow with no
+// record, or any private-scope resolution, is private (owner-only). It mirrors
+// workflow.Visibility into the instance.Visibility self-owned type so the engine
+// does not leak the workflow type onto the instance.
+func (e *Engine) resolvePublication(ctx context.Context, scope workflow.Scope, workflowName string) (instance.Visibility, string) {
+	if scope.Kind != workflow.ScopeShared || e.publishers == nil {
+		return instance.VisibilityPrivate, ""
+	}
+	pub, found, err := e.publishers.PublicationOf(ctx, workflowName)
+	if err != nil || !found {
+		return instance.VisibilityPrivate, ""
+	}
+	// One named, tested conversion (instance.VisibilityFromWorkflow) replaces the
+	// inline default-to-private switch (PR #21). Department travels with the
+	// department level only; public/private carry no attribution department here.
+	vis := instance.VisibilityFromWorkflow(string(pub.Visibility))
+	if vis == instance.VisibilityDepartment {
+		return vis, pub.Department
+	}
+	return vis, ""
+}
+
+// triggerAdminOverrode reports whether admin status was the SOLE reason callerID
+// could access workflowName at trigger time, via the canonical
+// workflow.AdminOverrode predicate. It returns false for non-shared scopes, an
+// unconfigured lookup, an unpublished workflow, or a lookup error (best-effort —
+// a transient lookup failure must not block the trigger). Routing through the
+// shared predicate keeps the publisher branch the inline engine check dropped.
+func (e *Engine) triggerAdminOverrode(ctx context.Context, scope workflow.Scope, workflowName string, callerID identity.Identity) bool {
+	if scope.Kind != workflow.ScopeShared || e.publishers == nil {
+		return false
+	}
+	pub, found, err := e.publishers.PublicationOf(ctx, workflowName)
+	if err != nil || !found {
+		return false
+	}
+	return workflow.AdminOverrode(callerID, pub)
+}
+
+// TriggerWithDepartment loads a workflow, validates inputs, stamps the run's
+// visibility+department (applying the optional validated per-trigger department
+// override), creates the instance, and enqueues it. departmentOverride is "" for
+// the default Trigger entrypoint; when non-empty it must be one of the caller's
+// effective departments (else ErrInvalidDepartmentOverride and no instance).
+func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, departmentOverride string) (uuid.UUID, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -179,9 +238,50 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 		return uuid.Nil, false, fmt.Errorf("failed to resolve triggering user")
 	}
 
-	wf, _, err := workflow.LoadVisible(ctx, e.workflows, owner, workflowName)
+	// Gate the shared read path by visibility. The owner above may be the default
+	// system user; gating keys on the CONTEXT identity (a REST/MCP caller). A
+	// system trigger (no context identity) skips gating — a scheduler/webhook
+	// trigger already passed authorization at registration time.
+	var filter workflow.SharedVisibilityFilter
+	if id, ok := identity.FromContext(ctx); ok && e.publishers != nil {
+		pubs := e.publishers
+		filter = func(ctx context.Context, name string) (bool, error) {
+			pub, found, err := pubs.PublicationOf(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			if !found {
+				return true, nil // unpublished shared folder ⇒ open
+			}
+			return workflow.CanSeePublication(id, pub), nil
+		}
+	}
+	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
+	}
+
+	// Stamp the run's audience from the resolved publication (private when the
+	// workflow has no publication record), applying the validated per-trigger
+	// department override. A system trigger (no context identity) yields a
+	// zero-value identity whose Departments is nil, so a public/department run is
+	// stamped with an empty attribution department. An invalid override fails the
+	// trigger before any instance is created.
+	vis, pubDept := e.resolvePublication(ctx, scope, workflowName)
+	callerID, _ := identity.FromContext(ctx)
+	st, stErr := resolveStamp(callerID, vis, pubDept, departmentOverride)
+	if stErr != nil {
+		return uuid.Nil, false, stErr
+	}
+
+	// Emit admin.override when admin status was the SOLE reason the caller could
+	// access the workflow. This consults the ONE canonical sole-reason predicate
+	// (workflow.AdminOverrode) the read paths also use, so the override condition —
+	// which keeps the publisher branch (an admin who PUBLISHED the workflow sees it
+	// for a non-admin reason) — cannot drift from the read path (PR #21).
+	// Best-effort and nil-safe: identical contract to all other audit paths.
+	if e.auditRecorder != nil && e.triggerAdminOverrode(ctx, scope, workflowName, callerID) {
+		e.auditRecorder.Record(ctx, AuditActionAdminOverride, workflowName, `{"action":"trigger"}`)
 	}
 
 	// Validate inputs.
@@ -243,6 +343,8 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 		OwnerID:           ownerID,
 		WorkflowName:      workflowName,
 		WorkflowSnapshot:  wfSnapshot,
+		Department:        st.Department,
+		Visibility:        st.Visibility,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
@@ -277,11 +379,21 @@ func (e *Engine) Trigger(ctx context.Context, workflowName string, variables map
 // with no identity returns ErrNotFound (reveal nothing) and never queries the
 // repository.
 func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
-	owner, ok := ownerConstraint(ctx)
+	lc, ok := listConstraint(ctx)
 	if !ok {
 		return nil, instance.ErrNotFound // no identity: reveal nothing
 	}
-	filters.OwnerID = owner // service-set; ignore any caller-supplied value
+	if lc.Unconstrained {
+		// Admin: clear any visibility narrowing so the repo returns all rows.
+		filters.OwnerID = nil
+		filters.Departments = nil
+		filters.IncludePublic = false
+		return e.instances.List(ctx, filters)
+	}
+	// Non-admin: service-set the disjunction; ignore any caller-supplied values.
+	filters.OwnerID = lc.OwnerID
+	filters.Departments = lc.Departments
+	filters.IncludePublic = lc.IncludePublic
 	return e.instances.List(ctx, filters)
 }
 
@@ -298,7 +410,7 @@ func (e *Engine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Insta
 		// caller never dereferences a nil instance and existence is not leaked.
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
-	if !canView(ctx, inst.OwnerID) {
+	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	return inst, nil
@@ -314,11 +426,15 @@ func (e *Engine) authorizeView(ctx context.Context, id uuid.UUID) (*instance.Ins
 	return e.GetInstance(ctx, id)
 }
 
-// authorizeIntervention loads the instance and confirms the caller may act on
-// it (owner or admin). It returns the loaded instance so the caller reuses it
-// (avoiding a second Get). A non-viewer gets ErrNotFound so a write probe cannot
-// distinguish "exists but forbidden" from "absent" (existence not leaked),
-// consistent with the read posture.
+// authorizeIntervention loads the instance and confirms the caller may MUTATE
+// it (owner, a lead of the run's department, or an admin). It returns the loaded
+// instance so the caller reuses it (avoiding a second Get).
+//
+// A caller with no view access gets ErrNotFound so a write probe cannot
+// distinguish "exists but forbidden" from "absent" (existence not leaked). A
+// caller who CAN view but cannot intervene — a department peer — gets
+// ErrForbidden (403): they already see the run in their list, so existence is
+// not a secret, but a control action is denied.
 func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
 	inst, err := e.instances.Get(ctx, id)
 	if err != nil {
@@ -327,8 +443,13 @@ func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*inst
 	if inst == nil {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
-	if !canView(ctx, inst.OwnerID) {
+	// No view access => hide existence (404), preserving the non-leak posture.
+	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	// Viewable but not owner/lead/admin (a department peer) => 403, not 404.
+	if !canIntervene(ctx, inst) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
 	}
 	return inst, nil
 }

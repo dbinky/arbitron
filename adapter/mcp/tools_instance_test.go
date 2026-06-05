@@ -76,6 +76,7 @@ func (s *stubInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ tim
 type stubEngine struct {
 	triggerFn          func(wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
+	capturedDepartment string
 	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	capturedListCtx    context.Context
 	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
@@ -92,8 +93,9 @@ type stubEngine struct {
 	setPriorityFn      func(id uuid.UUID, priority string) error
 }
 
-func (s *stubEngine) Trigger(ctx context.Context, wfName string, vars map[string]any, priority string) (uuid.UUID, bool, error) {
+func (s *stubEngine) TriggerWithDepartment(ctx context.Context, wfName string, vars map[string]any, priority string, department string) (uuid.UUID, bool, error) {
 	s.capturedTriggerCtx = ctx
+	s.capturedDepartment = department
 	if s.triggerFn != nil {
 		return s.triggerFn(wfName, vars, priority)
 	}
@@ -885,4 +887,93 @@ func TestInstanceSetPriority(t *testing.T) {
 		text := extractText(t, result)
 		assert.Contains(t, text, "invalid priority")
 	})
+}
+
+// ---------------------------------------------------------------------------
+// FA #19: Instance adapter surface — MCP department trigger field
+// ---------------------------------------------------------------------------
+
+// Success: the optional department field on instance_trigger is forwarded to
+// TriggerWithDepartment — the stubEngine captures it and the test asserts it.
+func TestInstanceTrigger_DepartmentForwarded(t *testing.T) {
+	eng := &stubEngine{}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_trigger", map[string]any{
+		"workflowName": "wf",
+		"department":   "engineering",
+	})
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, "engineering", eng.capturedDepartment,
+		"department field must be threaded through to TriggerWithDepartment")
+}
+
+// Success: instance_get response includes department and visibility when the
+// instance carries those fields. This ensures the MCP layer surfaces both
+// columns added in migration 012.
+func TestInstanceGet_DepartmentAndVisibilityInResponse(t *testing.T) {
+	id := uuid.New()
+	repo := &stubInstanceRepo{
+		getFn: func(_ context.Context, _ uuid.UUID) (*instance.Instance, error) {
+			return &instance.Instance{
+				ID:           id,
+				WorkflowName: "wf",
+				Department:   "engineering",
+				Visibility:   instance.VisibilityDepartment,
+			}, nil
+		},
+	}
+	srv := newInstanceServer(repo, &stubEngine{})
+	result := callTool(t, srv, "instance_get", map[string]any{"id": id.String()})
+
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.Contains(t, text, "engineering",
+		"department must appear in the instance_get response")
+	assert.Contains(t, text, "department",
+		"visibility value 'department' must appear in the instance_get response")
+}
+
+// ---------------------------------------------------------------------------
+// FA #30: ErrForbidden on intervention paths (404-vs-403 MCP adapter mapping)
+// ---------------------------------------------------------------------------
+
+// TestInstancePause_ErrForbidden_IsError verifies that when the engine returns
+// ErrForbidden (department peer — canView=true, canIntervene=false), the MCP
+// tool surfaces it as an error result. The MCP protocol has no HTTP status
+// analog, but the tool must not silently succeed and must include the error
+// message so the caller can distinguish it from ErrNotFound.
+func TestInstancePause_ErrForbidden_IsError(t *testing.T) {
+	eng := &stubEngine{
+		pauseFn: func(id uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+		},
+	}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_pause", map[string]any{"id": uuid.New().String()})
+
+	assert.True(t, result.IsError,
+		"ErrForbidden must produce an error result — a dept peer cannot pause the run")
+	// The error message must contain distinguishing content from ErrForbidden,
+	// not silently succeed or return a generic "not found".
+	text := extractText(t, result)
+	assert.NotContains(t, text, "not found",
+		"ErrForbidden must not be presented as ErrNotFound — existence is NOT hidden from a dept peer")
+}
+
+// TestInstanceCancel_ErrForbidden_IsError mirrors the pause case for Cancel.
+func TestInstanceCancel_ErrForbidden_IsError(t *testing.T) {
+	eng := &stubEngine{
+		cancelFn: func(id uuid.UUID) error {
+			return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+		},
+	}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+	result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+	assert.True(t, result.IsError,
+		"ErrForbidden must produce an error result on Cancel — dept peer cannot intervene")
+	text := extractText(t, result)
+	assert.NotContains(t, text, "not found",
+		"ErrForbidden must not be collapsed to ErrNotFound at the MCP adapter")
 }

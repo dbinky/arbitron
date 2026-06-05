@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import QueueView from './routes/QueueView'
+import DashboardView from './routes/DashboardView'
 import ExecutionView from './routes/ExecutionView'
 import WorkflowsCatalog from './routes/WorkflowsCatalog'
 import WorkflowReview from './routes/WorkflowReview'
@@ -14,6 +15,7 @@ export default function App() {
         <NavBar />
         <main style={{ flex: 1, overflow: 'auto' }}>
           <Routes>
+            <Route path="/dashboard" element={<DashboardView />} />
             <Route path="/" element={<QueueView />} />
             <Route path="/instances/:id" element={<ExecutionView />} />
             <Route path="/workflows" element={<WorkflowsCatalog />} />

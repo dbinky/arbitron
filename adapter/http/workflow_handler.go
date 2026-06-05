@@ -64,7 +64,7 @@ func writeSharedReadOnlyOrNotFound(w http.ResponseWriter, name string, err error
 // middleware) so the engine resolves the caller's visible scopes and stamps the
 // triggering user as the instance owner.
 type TriggerService interface {
-	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error)
 }
 
 // WorkflowService is an alias retained for the EngineService composition in
@@ -127,6 +127,10 @@ func (h *WorkflowHandler) SetWorkflowService(svc *workflow.WorkflowService) {
 type triggerRequest struct {
 	Variables map[string]any `json:"variables"`
 	Priority  string         `json:"priority"`
+	// Department optionally stamps the run under one of the caller's departments
+	// (must be one they belong to). Empty => default stamping from the resolved
+	// publication. An out-of-department value yields 400 (validation, not 403).
+	Department string `json:"department"`
 }
 
 // safeWorkflowName checks that a workflow name is a plain filename component
@@ -223,10 +227,14 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		req.Priority = "normal"
 	}
 
-	id, started, err := h.service.Trigger(r.Context(), name, req.Variables, req.Priority)
+	id, started, err := h.service.TriggerWithDepartment(r.Context(), name, req.Variables, req.Priority, req.Department)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+			return
+		}
+		if errors.Is(err, engine.ErrInvalidDepartmentOverride) {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
 		if strings.Contains(err.Error(), "missing required input") {
@@ -253,6 +261,14 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 // publishRequest is the JSON body for publishing a private workflow.
 type publishRequest struct {
 	PublishedName string `json:"publishedName"`
+	Visibility    string `json:"visibility"` // "department" | "public"
+	Department    string `json:"department,omitempty"`
+}
+
+// visibilityRequest is the JSON body for changing a shared workflow's level.
+type visibilityRequest struct {
+	Visibility string `json:"visibility"`
+	Department string `json:"department,omitempty"`
 }
 
 // copyRequest is the JSON body for copying a shared workflow.
@@ -280,8 +296,16 @@ func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName); err != nil {
+	// Default empty→public to preserve the old single-arg publish contract for
+	// existing clients; the service enforces the role gate for the level.
+	vis := req.Visibility
+	if vis == "" {
+		vis = "public"
+	}
+	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName, workflow.Visibility(vis), req.Department); err != nil {
 		switch {
+		case errors.Is(err, workflow.ErrInvalidVisibility):
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		case errors.Is(err, workflow.ErrUnauthorized):
 			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 		case errors.Is(err, workflow.ErrNotFound):
@@ -294,6 +318,36 @@ func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]string{"status": "published", "name": req.PublishedName})
+}
+
+// SetVisibility handles PUT /workflows/{name}/visibility and changes an existing
+// shared workflow's sharing level. {name} is the published name.
+func (h *WorkflowHandler) SetVisibility(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxTriggerBodyBytes)
+	var req visibilityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid request body: "+err.Error())
+		return
+	}
+	if err := h.wfSvc.SetVisibility(r.Context(), name, workflow.Visibility(req.Visibility), req.Department); err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrInvalidVisibility):
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		case errors.Is(err, workflow.ErrUnauthorized):
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to set visibility")
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "visibility_updated", "name": name})
 }
 
 // Copy handles POST /workflows/{name}/copy and copies a shared workflow into

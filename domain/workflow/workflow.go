@@ -133,4 +133,8 @@ type WorkflowSummary struct {
 	Scope string `json:"scope,omitempty"`
 	// Publisher is the publishing user's id for shared entries; empty for private.
 	Publisher string `json:"publisher,omitempty"`
+	// Visibility is "department" or "public" for shared entries; empty for private.
+	Visibility string `json:"visibility,omitempty"`
+	// Department is the owning department for department-visibility shared entries.
+	Department string `json:"department,omitempty"`
 }

@@ -43,12 +43,57 @@ const (
 	PriorityLow    Priority = "low"
 )
 
+// Visibility is an instance's audience, stamped at trigger time from the
+// resolved workflow publication. Its values mirror the workflow visibility
+// model. It is redeclared locally (NOT imported from domain/workflow) to keep
+// the domain edge one-directional, the same pattern as instance.Claims
+// redeclaring identity.Claims.
+type Visibility string
+
+const (
+	VisibilityPrivate    Visibility = "private"
+	VisibilityDepartment Visibility = "department"
+	VisibilityPublic     Visibility = "public"
+)
+
+// Valid reports whether v is one of the three defined visibility levels.
+func (v Visibility) Valid() bool {
+	return v == VisibilityPrivate || v == VisibilityDepartment || v == VisibilityPublic
+}
+
+// VisibilityFromWorkflow maps a workflow visibility VALUE (passed as a string so
+// domain/instance never imports domain/workflow — the same one-directional edge
+// instance.Claims preserves) to the corresponding instance.Visibility. It is the
+// ONE place the workflow→instance conversion lives, replacing the inline switches
+// the engine hand-coded (PR #21).
+//
+// An unrecognized value maps to VisibilityPrivate (fail-closed to owner-only). A
+// totality test over workflow.Visibility's values guards against a fourth level
+// being added to workflow without extending this mapping — stronger protection
+// than a defaulting switch buried in the engine, which would silently downgrade
+// the new level with no failure.
+func VisibilityFromWorkflow(workflowVisibility string) Visibility {
+	switch workflowVisibility {
+	case string(VisibilityPublic):
+		return VisibilityPublic
+	case string(VisibilityDepartment):
+		return VisibilityDepartment
+	default: // "private" or unrecognized ⇒ owner-only (fail closed)
+		return VisibilityPrivate
+	}
+}
+
 // Instance is a single execution of a workflow definition.
 type Instance struct {
 	ID                uuid.UUID
 	OwnerID           uuid.UUID
 	WorkflowName      string
 	WorkflowSnapshot  map[string]any
+	// Department is the department this run was stamped under at trigger time
+	// (a snapshot; "" => default group / private). Visibility is the run's
+	// audience. Both are set by the engine Trigger path (Phase 3 Task 2).
+	Department        string
+	Visibility        Visibility
 	State             State
 	Priority          Priority
 	Variables         map[string]any
@@ -71,6 +116,8 @@ type InstanceSummary struct {
 	WorkflowName  string     `json:"workflowName"`
 	State         State      `json:"state"`
 	Priority      Priority   `json:"priority"`
+	Department    string     `json:"department,omitempty"`
+	Visibility    Visibility `json:"visibility,omitempty"`
 	CurrentNodeID *string    `json:"currentNodeId,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
@@ -135,6 +182,14 @@ type ListFilters struct {
 	// request identity (non-admin => own UserID); list callers (HTTP/MCP handlers)
 	// MUST NOT set it from request input, or a non-admin could widen scope.
 	OwnerID *uuid.UUID
-	Limit   int
-	Offset  int
+	// Departments and IncludePublic widen a non-admin's list to the disjunction
+	// owner_id=self OR visibility=public (when IncludePublic) OR
+	// (visibility=department AND department IN Departments).
+	// SECURITY: like OwnerID above, these are SERVICE-SET by ListInstances from
+	// the request identity; list callers (HTTP/MCP) MUST NOT set them from
+	// request input, or a non-admin could widen scope to other departments.
+	Departments   []string
+	IncludePublic bool
+	Limit         int
+	Offset        int
 }

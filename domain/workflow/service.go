@@ -2,26 +2,34 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/google/uuid"
 )
 
-// PublisherLookup resolves the publisher id for a shared workflow name. Backed
-// by the published_workflows repo (Task 4). A nil lookup yields empty publishers.
+// PublisherLookup resolves the publication record for a shared workflow name,
+// including its visibility level. Backed by the published_workflows repo. A nil
+// lookup yields no publications (local/read-only mode treats shared as public).
 type PublisherLookup interface {
+	// PublisherOf returns just the publisher id; retained for callers that only
+	// need attribution. (false, nil) when the name is not published.
 	PublisherOf(ctx context.Context, sharedName string) (uuid.UUID, bool, error)
+	// PublicationOf returns the full publication (publisher + visibility +
+	// department). (nil-value, false, nil) when the name is not published.
+	PublicationOf(ctx context.Context, sharedName string) (Publication, bool, error)
 }
 
 // PublishedStore is the read+write authority for the shared workspace's
-// publication records, used by Publish. The published_workflows repo satisfies
-// it. A WorkflowService constructed with only a PublisherLookup (no write side)
-// supports List/Load but rejects Publish.
+// publication records, used by Publish/SetVisibility. A WorkflowService
+// constructed with only a PublisherLookup (no write side) supports List/Load
+// but rejects Publish.
 type PublishedStore interface {
 	PublisherLookup
-	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string) error
+	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string, visibility Visibility, department string) error
 	Delete(ctx context.Context, name string) error
 }
 
@@ -36,6 +44,24 @@ type WorkflowService struct {
 	// published is the write side, set when the supplied lookup also implements
 	// PublishedStore; nil disables Publish.
 	published PublishedStore
+	audit     *audit.Service // optional; nil-safe best-effort audit emitter
+}
+
+// SetAudit wires the best-effort audit emitter. When unset (nil), no audit
+// events are recorded (local/unconfigured deployments behave as today).
+func (s *WorkflowService) SetAudit(a *audit.Service) {
+	s.audit = a
+}
+
+// auditDetail marshals a small map to compact JSON for an audit event's detail,
+// falling back to "{}" on the (practically impossible) marshal error so audit
+// recording is never blocked.
+func auditDetail(m map[string]string) string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // NewWorkflowService builds a WorkflowService over the given repository and an
@@ -132,13 +158,42 @@ func (s *WorkflowService) DeleteFile(ctx context.Context, name, rel string) erro
 	return s.translateWrite(ctx, name, s.repo.DeleteFile(ctx, Private(id.UserID), name, rel))
 }
 
+// auditingFilter returns a SharedVisibilityFilter bound to id, or nil when no
+// publisher lookup is configured (local/read-only ⇒ all shared visible). When a
+// shared read is granted ONLY because the caller is admin, a best-effort
+// admin.override audit event is recorded against the shared name.
+func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityFilter {
+	if s.publishers == nil {
+		return nil
+	}
+	return func(ctx context.Context, name string) (bool, error) {
+		pub, ok, err := s.publishers.PublicationOf(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return true, nil // unpublished shared folder ⇒ open, nothing to audit
+		}
+		if !CanSeePublication(id, pub) {
+			return false, nil
+		}
+		if AdminOverrode(id, pub) {
+			s.audit.Record(ctx, audit.ActionAdminOverride, name, auditDetail(map[string]string{
+				"visibility": string(pub.Visibility),
+				"department": pub.Department,
+			}))
+		}
+		return true, nil
+	}
+}
+
 // Load returns a workflow visible to the caller (private first, then shared).
 func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	wf, _, err := LoadVisible(ctx, s.repo, id.UserID, name)
+	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
 	return wf, err
 }
 
@@ -161,7 +216,7 @@ func (s *WorkflowService) ListFiles(ctx context.Context, name string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	files, _, err := ListFilesVisible(ctx, s.repo, id.UserID, name)
+	files, _, err := ListFilesVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
 	return files, err
 }
 
@@ -190,10 +245,30 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 	}
 	for _, sum := range shared {
 		sum.Scope = ScopeLabelShared
+		// Resolve the publication once; use it for both gating and tagging.
+		var pub Publication
+		published := false
 		if s.publishers != nil {
-			if pubID, ok, perr := s.publishers.PublisherOf(ctx, sum.Name); perr == nil && ok {
-				sum.Publisher = pubID.String()
+			if p, ok, perr := s.publishers.PublicationOf(ctx, sum.Name); perr == nil && ok {
+				pub, published = p, true
 			}
+		}
+		if published {
+			if !CanSeePublication(id, pub) {
+				continue // hide department workflows from non-members
+			}
+			if AdminOverrode(id, pub) {
+				s.audit.Record(ctx, audit.ActionAdminOverride, sum.Name, auditDetail(map[string]string{
+					"visibility": string(pub.Visibility),
+					"department": pub.Department,
+				}))
+			}
+			sum.Publisher = pub.Publisher.String()
+			sum.Visibility = string(pub.Visibility)
+			sum.Department = pub.Department
+		} else {
+			// Unpublished shared folder (pre-model) or local mode: treat as public.
+			sum.Visibility = string(VisibilityPublic)
 		}
 		out = append(out, sum)
 	}
@@ -217,13 +292,18 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 //     has already replaced a previously-good shared copy. If Upsert then fails we
 //     must NOT delete — that would destroy the shared copy entirely (data loss).
 //     The error is surfaced loudly so the operator can retry the record.
-func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string) error {
+func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
 	if s.published == nil {
 		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+	// Fresh publish: the source is the caller's own private content, which belongs
+	// to no department yet, so ownerDept is "".
+	if err := authorizePublish(id, visibility, department, ""); err != nil {
+		return err
 	}
 
 	// Source must exist privately.
@@ -250,7 +330,7 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		return err
 	}
 	// Record the publication after the folder is in place (copy-then-record).
-	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName); err != nil {
+	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName, visibility, department); err != nil {
 		if !overwrite {
 			// FRESH path: compensate by deleting the just-copied tree. The
 			// destination was empty before, so this restores the prior state. The
@@ -267,6 +347,11 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		// loudly; on overwrite we deliberately do NOT delete the shared copy.
 		return fmt.Errorf("recording publication for %q: %w", publishedName, err)
 	}
+	// Best-effort audit of the successful publish (nil-safe per audit.Service).
+	s.audit.Record(ctx, audit.ActionWorkflowPublish, publishedName, auditDetail(map[string]string{
+		"to":         string(visibility),
+		"department": department,
+	}))
 	return nil
 }
 
@@ -282,5 +367,117 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 	} else if ok {
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, newPrivateName)
 	}
+	// A user may only copy a shared workflow they can see.
+	if s.publishers != nil {
+		pub, ok, err := s.publishers.PublicationOf(ctx, sharedName)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if !CanSeePublication(id, pub) {
+				return fmt.Errorf("%w: %s", ErrNotFound, sharedName)
+			}
+			if AdminOverrode(id, pub) {
+				s.audit.Record(ctx, audit.ActionAdminOverride, sharedName, auditDetail(map[string]string{
+					"visibility": string(pub.Visibility),
+					"department": pub.Department,
+				}))
+			}
+		}
+	}
 	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
+}
+
+// authorizePublish validates the requested visibility/department against the
+// caller's role per spec §Workflow Visibility:
+//   - department: caller must be a MEMBER of department; department required.
+//   - public: ADMIN, or a LEAD of the workflow's OWN department (ownerDept). When
+//     ownerDept is "" (a fresh publish of the caller's own private content, which
+//     belongs to no department yet), any lead may make their own content public —
+//     there is no foreign department being escalated.
+//   - private: not a storable publication level → ErrInvalidVisibility.
+//
+// ownerDept is the department the workflow currently belongs to. It scopes the
+// public lead-check so a lead of department A cannot push a department-B
+// publication org-wide (PR #21, cross-department visibility tampering).
+func authorizePublish(id identity.Identity, visibility Visibility, department, ownerDept string) error {
+	switch visibility {
+	case VisibilityDepartment:
+		if department == "" {
+			return fmt.Errorf("%w: department required for department visibility", ErrInvalidVisibility)
+		}
+		if !id.IsAdmin() && !id.InDepartment(department) {
+			return fmt.Errorf("%w: not a member of department %q", ErrUnauthorized, department)
+		}
+		return nil
+	case VisibilityPublic:
+		if id.IsAdmin() {
+			return nil
+		}
+		// A lead may take a workflow public only if they lead the department it
+		// currently belongs to. ownerDept == "" means fresh public publish of the
+		// caller's own content (no existing department), so any lead qualifies.
+		if ownerDept == "" {
+			if len(id.LedDepartments) > 0 {
+				return nil
+			}
+		} else if id.LeadsDepartment(ownerDept) {
+			return nil
+		}
+		return fmt.Errorf("%w: publishing to public requires admin or a lead of the workflow's department", ErrUnauthorized)
+	default:
+		return fmt.Errorf("%w: %q is not a publishable visibility", ErrInvalidVisibility, visibility)
+	}
+}
+
+// SetVisibility changes an existing publication's level without re-copying the
+// shared tree (the metadata model makes this a cheap "column flip"). The caller
+// must be the original publisher, a lead of the relevant department, or an
+// admin; the target level is gated by the same rules as Publish (member→own
+// department, lead/admin→public). An unknown publication is ErrNotFound.
+func (s *WorkflowService) SetVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
+	id, err := caller(ctx)
+	if err != nil {
+		return err
+	}
+	if s.published == nil {
+		return fmt.Errorf("%w: publishing is not configured", ErrUnauthorized)
+	}
+
+	cur, ok, err := s.published.PublicationOf(ctx, publishedName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNotFound, publishedName)
+	}
+
+	// Only the publisher, a lead of THIS publication's department, or an admin may
+	// mutate it. Scoping to LeadsDepartment(cur.Department) — not "leads SOMETHING"
+	// — stops a lead of department A from releveling a department-B publication
+	// (PR #21, cross-department visibility tampering).
+	if cur.Publisher != id.UserID && !id.IsAdmin() && !id.LeadsDepartment(cur.Department) {
+		return fmt.Errorf("%w: cannot change visibility of %q", ErrUnauthorized, publishedName)
+	}
+	// Target level role gate (same as Publish). The workflow's own department
+	// (cur.Department) scopes the public lead-check so only a lead of THAT
+	// department (or an admin) may take it org-wide.
+	if err := authorizePublish(id, visibility, department, cur.Department); err != nil {
+		return err
+	}
+
+	// Preserve the original publisher and source name (Publication carries
+	// SourceName so the NOT NULL source_name column survives the flip); only the
+	// visibility level changes.
+	if err := s.published.Upsert(ctx, publishedName, cur.Publisher, cur.SourceName, visibility, department); err != nil {
+		return fmt.Errorf("updating visibility for %q: %w", publishedName, err)
+	}
+	// Best-effort audit of the level change, carrying from/to + departments.
+	s.audit.Record(ctx, audit.ActionWorkflowVisibilityChange, publishedName, auditDetail(map[string]string{
+		"from":            string(cur.Visibility),
+		"from_department": cur.Department,
+		"to":              string(visibility),
+		"to_department":   department,
+	}))
+	return nil
 }

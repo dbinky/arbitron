@@ -6,6 +6,7 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	coreoidc "github.com/coreos/go-oidc/v3/oidc"
@@ -20,8 +21,9 @@ import (
 // AT LOGIN and projects Claims; the access/refresh tokens are discarded and
 // never stored on this struct, so the IdP is never on the request hot path.
 type Provider struct {
-	oauth    oauth2.Config
-	verifier *coreoidc.IDTokenVerifier
+	oauth      oauth2.Config
+	verifier   *coreoidc.IDTokenVerifier
+	groupClaim string
 }
 
 var _ identity.OIDCProvider = (*Provider)(nil)
@@ -33,6 +35,9 @@ type Config struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string // openid is forced if absent
+	// GroupClaim is the ID-token claim name carrying group membership. Empty
+	// means no group claim is read (Groups is always nil => default group).
+	GroupClaim string
 }
 
 // New performs OIDC discovery against cfg.IssuerURL and builds the verifier and
@@ -55,7 +60,8 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 			Endpoint:     prov.Endpoint(),
 			Scopes:       scopes,
 		},
-		verifier: prov.Verifier(&coreoidc.Config{ClientID: cfg.ClientID}),
+		verifier:   prov.Verifier(&coreoidc.Config{ClientID: cfg.ClientID}),
+		groupClaim: cfg.GroupClaim,
 	}, nil
 }
 
@@ -98,6 +104,11 @@ func (p *Provider) Exchange(ctx context.Context, code string) (identity.Claims, 
 	if err := idTok.Claims(&c); err != nil {
 		return identity.Claims{}, fmt.Errorf("oidc: decoding claims: %w", err)
 	}
+	var rawClaims map[string]json.RawMessage
+	if err := idTok.Claims(&rawClaims); err != nil {
+		return identity.Claims{}, fmt.Errorf("oidc: decoding raw claims: %w", err)
+	}
+	groups := extractGroups(rawClaims, p.groupClaim)
 	// idTok.Subject is the verified subject; prefer it over the raw claim.
 	subject := idTok.Subject
 	if subject == "" {
@@ -107,7 +118,41 @@ func (p *Provider) Exchange(ctx context.Context, code string) (identity.Claims, 
 		return identity.Claims{}, fmt.Errorf("oidc: empty subject claim")
 	}
 	username := firstNonEmpty(c.PreferredUsername, c.Name, c.Email, subject)
-	return identity.Claims{Subject: subject, Username: username, Email: c.Email, EmailVerified: c.EmailVerified, Nonce: c.Nonce}, nil
+	return identity.Claims{Subject: subject, Username: username, Email: c.Email, EmailVerified: c.EmailVerified, Nonce: c.Nonce, Groups: groups}, nil
+}
+
+// extractGroups reads the configured group claim from the verified ID-token
+// claim set, tolerating both a JSON array of strings and a single string value.
+// Returns nil when claimName is empty, the claim is absent, or it is neither
+// shape; non-string array elements are skipped.
+func extractGroups(claims map[string]json.RawMessage, claimName string) []string {
+	if claimName == "" {
+		return nil
+	}
+	raw, ok := claims[claimName]
+	if !ok {
+		return nil
+	}
+	// Try array-of-any first (tolerate non-string elements by skipping them).
+	var arr []any
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		out := make([]string, 0, len(arr))
+		for _, v := range arr {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	// Fall back to a single string value.
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil && single != "" {
+		return []string{single}
+	}
+	return nil
 }
 
 func contains(ss []string, want string) bool {

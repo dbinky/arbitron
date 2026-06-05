@@ -147,10 +147,12 @@ func (r *errWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string
 type mockWorkflowService struct {
 	triggerFn          func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
+	capturedDepartment string
 }
 
-func (m *mockWorkflowService) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *mockWorkflowService) TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error) {
 	m.capturedTriggerCtx = ctx
+	m.capturedDepartment = department
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}
@@ -195,6 +197,17 @@ func withTestIdentity(r *http.Request) *http.Request {
 		UserID:   testUserID,
 		Username: "tester",
 		Role:     identity.RoleUser,
+	}))
+}
+
+// withAdminIdentity injects an admin identity (testUserID), overriding any
+// existing one, so role-gated publish/visibility handler tests can promote to
+// public without a lead/admin lookup.
+func withAdminIdentity(r *http.Request) *http.Request {
+	return r.WithContext(identity.WithIdentity(r.Context(), identity.Identity{
+		UserID:   testUserID,
+		Username: "admin",
+		Role:     identity.RoleAdmin,
 	}))
 }
 
@@ -1947,19 +1960,26 @@ func TestWorkflowHandler_DeleteFile(t *testing.T) {
 
 // fakePublishedStore is a workflow.PublishedStore for handler publish tests.
 type fakePublishedStore struct {
-	pub map[string]uuid.UUID
+	pub map[string]workflow.Publication
 }
 
 func newFakePublishedStore() *fakePublishedStore {
-	return &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	return &fakePublishedStore{pub: map[string]workflow.Publication{}}
 }
 
 func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
-	id, ok := p.pub[name]
-	return id, ok, nil
+	pub, ok := p.pub[name]
+	return pub.Publisher, ok, nil
 }
-func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
-	p.pub[name] = publisher
+func (p *fakePublishedStore) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	pub, ok := p.pub[name]
+	return pub, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
+	if p.pub == nil {
+		p.pub = map[string]workflow.Publication{}
+	}
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
 	return nil
 }
 func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
@@ -1984,6 +2004,7 @@ func TestWorkflowHandler_Publish_HappyPath(t *testing.T) {
 	body := `{"publishedName":"pub"}`
 	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
 	req = withChiURLParam(req, "name", "src")
+	req = withAdminIdentity(req)
 	w := httptest.NewRecorder()
 	h.Publish(w, req)
 
@@ -2000,6 +2021,7 @@ func TestWorkflowHandler_Publish_NotFound(t *testing.T) {
 	body := `{"publishedName":"pub"}`
 	req := httptest.NewRequest(http.MethodPost, "/workflows/ghost/publish", strings.NewReader(body))
 	req = withChiURLParam(req, "name", "ghost")
+	req = withAdminIdentity(req)
 	w := httptest.NewRecorder()
 	h.Publish(w, req)
 
@@ -2011,12 +2033,13 @@ func TestWorkflowHandler_Publish_DifferentPublisher_Forbidden(t *testing.T) {
 	repo.workflows["src"] = testWorkflow()
 	repo.shared["pub"] = testWorkflow()
 	store := newFakePublishedStore()
-	store.pub["pub"] = uuid.New() // owned by someone else (not testUserID)
+	store.pub["pub"] = workflow.Publication{Publisher: uuid.New(), Visibility: workflow.VisibilityPublic} // owned by someone else (not testUserID)
 	h := publishHandler(repo, store)
 
 	body := `{"publishedName":"pub"}`
 	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
 	req = withChiURLParam(req, "name", "src")
+	req = withAdminIdentity(req)
 	w := httptest.NewRecorder()
 	h.Publish(w, req)
 
@@ -2031,10 +2054,66 @@ func TestWorkflowHandler_Publish_InvalidPublishedName(t *testing.T) {
 	body := `{"publishedName":"../escape"}`
 	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
 	req = withChiURLParam(req, "name", "src")
+	req = withAdminIdentity(req)
 	w := httptest.NewRecorder()
 	h.Publish(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWorkflowHandler_Publish_MemberToPublic_Forbidden(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.workflows["src"] = testWorkflow()
+	store := newFakePublishedStore()
+	h := publishHandler(repo, store)
+
+	// Default identity (withChiURLParam) is RoleUser with no led departments, so
+	// promoting to public is forbidden.
+	body := `{"publishedName":"pub","visibility":"public"}`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/src/publish", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "src")
+	w := httptest.NewRecorder()
+	h.Publish(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestWorkflowHandler_SetVisibility_LeadPromotesToPublic(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.shared["pub"] = testWorkflow()
+	store := newFakePublishedStore()
+	store.pub["pub"] = workflow.Publication{Publisher: testUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"}
+	h := publishHandler(repo, store)
+
+	body := `{"visibility":"public"}`
+	req := httptest.NewRequest(http.MethodPut, "/workflows/pub/visibility", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "pub")
+	// A lead of engineering may promote to public.
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{
+		UserID: testUserID, Username: "lead", Role: identity.RoleUser,
+		Departments: []string{"engineering"}, LedDepartments: []string{"engineering"},
+	}))
+	w := httptest.NewRecorder()
+	h.SetVisibility(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, workflow.VisibilityPublic, store.pub["pub"].Visibility)
+}
+
+func TestWorkflowHandler_SetVisibility_MemberToPublic_Forbidden(t *testing.T) {
+	repo := newMockWorkflowRepo()
+	repo.shared["pub"] = testWorkflow()
+	store := newFakePublishedStore()
+	store.pub["pub"] = workflow.Publication{Publisher: testUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"}
+	h := publishHandler(repo, store)
+
+	body := `{"visibility":"public"}`
+	req := httptest.NewRequest(http.MethodPut, "/workflows/pub/visibility", strings.NewReader(body))
+	req = withChiURLParam(req, "name", "pub") // RoleUser, no led depts
+	w := httptest.NewRecorder()
+	h.SetVisibility(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestWorkflowHandler_Copy_HappyPath(t *testing.T) {

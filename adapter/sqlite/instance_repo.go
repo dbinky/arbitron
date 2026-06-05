@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -40,6 +41,14 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		return fmt.Errorf("marshalling original variables: %w", err)
 	}
 
+	// Default an unset visibility to private (owner-only), matching the column
+	// default and the pre-Phase-3 behavior of instances created without an
+	// explicit audience.
+	visibility := inst.Visibility
+	if visibility == "" {
+		visibility = instance.VisibilityPrivate
+	}
+
 	row, err := r.queries.CreateInstance(ctx, generated.CreateInstanceParams{
 		ID:                uuidToString(inst.ID),
 		OwnerID:           uuidToString(inst.OwnerID),
@@ -50,6 +59,8 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		Variables:         varsJSON,
 		OriginalVariables: origVarsJSON,
 		QueuedAt:          timeToNullString(inst.QueuedAt),
+		Department:        deptToNullString(inst.Department),
+		Visibility:        string(visibility),
 	})
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -84,9 +95,31 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		filters.Limit = 50
 	}
 
+	// Admin lists arrive with no owner/department/public narrowing; mark the
+	// query unconstrained so the disjunctive WHERE admits every row.
+	unconstrained := int64(0)
+	if filters.OwnerID == nil && len(filters.Departments) == 0 && !filters.IncludePublic {
+		unconstrained = 1
+	}
+	deptJSON := "[]"
+	if len(filters.Departments) > 0 {
+		b, err := json.Marshal(filters.Departments)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling departments filter: %w", err)
+		}
+		deptJSON = string(b)
+	}
+	includePublic := int64(0)
+	if filters.IncludePublic {
+		includePublic = 1
+	}
+
 	params := generated.ListInstancesParams{
-		Limit:  int64(filters.Limit),
-		Offset: int64(filters.Offset),
+		Limit:         int64(filters.Limit),
+		Offset:        int64(filters.Offset),
+		Unconstrained: unconstrained,
+		IncludePublic: includePublic,
+		Departments:   deptJSON,
 	}
 	if filters.State != nil {
 		params.State = string(*filters.State)
@@ -133,6 +166,8 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 			WorkflowName:  row.WorkflowName,
 			State:         instance.State(row.State),
 			Priority:      instance.Priority(row.Priority),
+			Department:    nullStringToString(row.Department),
+			Visibility:    instance.Visibility(row.Visibility),
 			CurrentNodeID: nullStringToPtr(row.CurrentNodeID),
 			CreatedAt:     createdAt,
 			UpdatedAt:     updatedAt,
@@ -363,6 +398,8 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 		OwnerID:           ownerID,
 		WorkflowName:      row.WorkflowName,
 		WorkflowSnapshot:  snapshot,
+		Department:        nullStringToString(row.Department),
+		Visibility:        instance.Visibility(row.Visibility),
 		State:             instance.State(row.State),
 		Priority:          instance.Priority(row.Priority),
 		Variables:         vars,

@@ -27,9 +27,9 @@ func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilPa
 }
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility
 `
 
 type CreateInstanceParams struct {
@@ -42,6 +42,8 @@ type CreateInstanceParams struct {
 	Variables         string
 	OriginalVariables string
 	QueuedAt          sql.NullString
+	Department        sql.NullString
+	Visibility        string
 }
 
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
@@ -55,6 +57,8 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.Variables,
 		arg.OriginalVariables,
 		arg.QueuedAt,
+		arg.Department,
+		arg.Visibility,
 	)
 	var i Instance
 	err := row.Scan(
@@ -76,12 +80,14 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.WebhookToken,
 		&i.WebhookSecretHash,
 		&i.WebhookReceivedAt,
+		&i.Department,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE id = ?
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE id = ?
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) {
@@ -106,28 +112,40 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 		&i.WebhookToken,
 		&i.WebhookSecretHash,
 		&i.WebhookReceivedAt,
+		&i.Department,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const listInstances = `-- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility
 FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
 AND (?3 IS NULL OR created_at >= ?3)
-AND (?4 IS NULL OR owner_id = ?4)
+AND (
+    ?4 = 1
+    OR (?5 IS NOT NULL AND owner_id = ?5)
+    OR (?6 = 1 AND visibility = 'public')
+    OR (visibility = 'department' AND department IN (
+        SELECT value FROM json_each(?7)
+    ))
+)
 ORDER BY created_at DESC
-LIMIT ?6 OFFSET ?5
+LIMIT ?9 OFFSET ?8
 `
 
 type ListInstancesParams struct {
-	State        interface{}
-	WorkflowName interface{}
-	Since        interface{}
-	OwnerID      interface{}
-	Offset       int64
-	Limit        int64
+	State         interface{}
+	WorkflowName  interface{}
+	Since         interface{}
+	Unconstrained interface{}
+	OwnerID       interface{}
+	IncludePublic interface{}
+	Departments   interface{}
+	Offset        int64
+	Limit         int64
 }
 
 type ListInstancesRow struct {
@@ -140,14 +158,28 @@ type ListInstancesRow struct {
 	UpdatedAt     string
 	CompletedAt   sql.NullString
 	QueuedAt      sql.NullString
+	Department    sql.NullString
+	Visibility    string
 }
 
+// Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
+// owned by them, OR public (when include_public), OR a department run in one of
+// their departments. An admin passes owner_id=NULL, include_public=0 (false),
+// and an empty departments array, in which case the guarded `unconstrained` arm
+// admits every row.
+//
+// departments is a JSON array string (e.g. '["engineering","platform"]'); the
+// json_each subquery turns it into a membership test. Portable to Postgres as
+// `instances.department = ANY($departments)`.
 func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([]ListInstancesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listInstances,
 		arg.State,
 		arg.WorkflowName,
 		arg.Since,
+		arg.Unconstrained,
 		arg.OwnerID,
+		arg.IncludePublic,
+		arg.Departments,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -168,6 +200,8 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 			&i.UpdatedAt,
 			&i.CompletedAt,
 			&i.QueuedAt,
+			&i.Department,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -183,7 +217,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -214,6 +248,8 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.WebhookToken,
 			&i.WebhookSecretHash,
 			&i.WebhookReceivedAt,
+			&i.Department,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}

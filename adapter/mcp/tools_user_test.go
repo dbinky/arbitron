@@ -16,11 +16,14 @@ import (
 
 // memUserRepo is an in-memory instance.UserRepository for user-tool tests.
 type memUserRepo struct {
-	mu   sync.Mutex
-	byID map[uuid.UUID]*instance.User
+	mu    sync.Mutex
+	byID  map[uuid.UUID]*instance.User
+	depts map[uuid.UUID][]string
 }
 
-func newMemUserRepo() *memUserRepo { return &memUserRepo{byID: map[uuid.UUID]*instance.User{}} }
+func newMemUserRepo() *memUserRepo {
+	return &memUserRepo{byID: map[uuid.UUID]*instance.User{}, depts: map[uuid.UUID][]string{}}
+}
 
 func (r *memUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) { return uuid.Nil, nil }
 func (r *memUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, error) {
@@ -69,9 +72,23 @@ func (r *memUserRepo) CountAdmins(_ context.Context) (int, error) {
 	}
 	return n, nil
 }
+func (r *memUserRepo) ListDepartments(_ context.Context, userID uuid.UUID) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.depts[userID]...), nil
+}
+func (r *memUserRepo) ReplaceDepartments(_ context.Context, userID uuid.UUID, departments []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.depts == nil {
+		r.depts = map[uuid.UUID][]string{}
+	}
+	r.depts[userID] = append([]string(nil), departments...)
+	return nil
+}
 
 func userToolServer(repo *memUserRepo, bootstrap ...string) *Server {
-	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap))
+	svc := instance.NewUserService(repo, instance.NewProvisioner(repo, bootstrap, identity.GroupConfig{DefaultGroup: "default"}))
 	return NewServerWithDeps("test", "0.0.0", &Deps{Users: svc})
 }
 

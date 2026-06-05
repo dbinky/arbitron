@@ -148,6 +148,11 @@ type Claims struct {
 	// matching must trust Email only when this is true. Absent/false => untrusted.
 	EmailVerified bool
 	Nonce         string // ID-token nonce; callback handler must verify == minted nonce
+	// Groups carries the verified, raw (un-normalized) values of the configured
+	// group claim, used to derive department membership. Nil when no group claim
+	// is configured or the token omits it (=> default group). The OIDC adapter
+	// tolerates both a JSON array and a single string value for the claim.
+	Groups []string
 }
 
 // OIDCProvider abstracts the IdP so the OIDC library stays in adapter/oidc.

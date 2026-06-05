@@ -18,6 +18,15 @@ type ApiToken struct {
 	LastUsedAt sql.NullString
 }
 
+type AuditEvent struct {
+	ID         string
+	OccurredAt string
+	ActorID    string
+	Action     string
+	Target     string
+	Detail     string
+}
+
 type Connection struct {
 	Name         string
 	Provider     string
@@ -57,6 +66,14 @@ type Instance struct {
 	WebhookToken      sql.NullString
 	WebhookSecretHash sql.NullString
 	WebhookReceivedAt sql.NullString
+	Department        sql.NullString
+	Visibility        string
+}
+
+type InstanceDismissal struct {
+	UserID      string
+	InstanceID  string
+	DismissedAt string
 }
 
 type InstanceIntervention struct {
@@ -103,6 +120,8 @@ type PublishedWorkflow struct {
 	PublisherID string
 	SourceName  string
 	PublishedAt string
+	Visibility  string
+	Department  sql.NullString
 }
 
 type Session struct {
@@ -119,6 +138,11 @@ type User struct {
 	CreatedAt string
 	Subject   sql.NullString
 	Email     sql.NullString
+}
+
+type UserDepartment struct {
+	UserID     string
+	Department string
 }
 
 type VariableSnapshot struct {

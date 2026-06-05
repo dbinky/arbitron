@@ -83,4 +83,13 @@ type UserRepository interface {
 	// CountAdmins returns the number of users with the admin role (the
 	// last-admin demotion floor reads it).
 	CountAdmins(ctx context.Context) (int, error)
+	// ListDepartments returns the user's persisted, normalized department set
+	// (sorted). Empty when the user has no stored departments. (RBAC Phase 1)
+	ListDepartments(ctx context.Context, userID uuid.UUID) ([]string, error)
+	// ReplaceDepartments atomically replaces the user's department set with the
+	// given normalized values (delete-all + insert in one transaction). An empty
+	// slice clears the set. Idempotent: re-running with the same values is a
+	// no-op. The provisioner calls this on every login to snapshot membership.
+	// (RBAC Phase 1)
+	ReplaceDepartments(ctx context.Context, userID uuid.UUID, departments []string) error
 }

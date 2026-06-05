@@ -230,6 +230,6 @@ The system needs a background mechanism to wake up when timer delays expire. Fro
 - Webhook request authentication beyond optional shared secret (full auth in Phase 6)
 - Scheduled triggers / cron (Phase 7)
 - Webhook triggers that start new instances (Phase 7 — distinct from webhook wait which resumes a running instance)
-- Fan-out / Fan-in parallel execution (Phase 8)
+- Fan-out / Fan-in parallel execution (deferred — future, formerly Phase 8)
 - Dashboard visualization of queue state (Phase 3)
 - Rate limiting on webhook wait endpoints (addressed by auth in Phase 6)

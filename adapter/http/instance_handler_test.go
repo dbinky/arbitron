@@ -2001,3 +2001,106 @@ func TestInstanceHandler_List_SinceFilter(t *testing.T) {
 		assert.Empty(t, resp, "instance created AT since boundary should be excluded (strictly after)")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// FA #19: Instance adapter surface — department+visibility in responses,
+//         ErrForbidden→403 propagation
+// ---------------------------------------------------------------------------
+
+// Success: GET /instances/:id response body includes department and visibility
+// when the instance carries those fields. This verifies that the JSON projection
+// (instanceResponse struct) surfaces both columns added in migration 012.
+func TestInstanceHandler_Get_DepartmentAndVisibilityInResponse(t *testing.T) {
+	h, instRepo, _, _, _ := newInstanceHandler()
+	inst := testInstance(instance.StateRunning)
+	inst.Department = "engineering"
+	inst.Visibility = instance.VisibilityDepartment
+	instRepo.instances[inst.ID] = inst
+
+	req := httptest.NewRequest(http.MethodGet, "/instances/"+inst.ID.String(), nil)
+	req = withChiURLParam(req, "id", inst.ID.String())
+	w := httptest.NewRecorder()
+	h.Get(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "engineering", resp["department"],
+		"department must appear in the GET response JSON")
+	assert.Equal(t, "department", resp["visibility"],
+		"visibility must appear in the GET response JSON")
+}
+
+// Success: ErrForbidden from the engine (department peer attempting an
+// intervention) must map to HTTP 403 — not 404 or 500. This preserves the
+// 404-vs-403 split defined in canView/canIntervene.
+func TestInstanceHandler_Pause_ErrForbidden_Returns403(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.pauseFn = func(_ uuid.UUID) error {
+		return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/pause", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Pause(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"ErrForbidden from the engine must produce HTTP 403, not 404 or 500")
+	var resp adapthttp.ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "FORBIDDEN", resp.Code)
+}
+
+// FA #19 Pass 2: robustness
+
+// List response includes department and visibility in each InstanceSummary.
+// The mock repo.List doesn't copy those fields, so we inject them via listFn.
+func TestInstanceHandler_List_DepartmentAndVisibilityInSummary(t *testing.T) {
+	_, _, _, _, svc := newInstanceHandler()
+	svc.listFn = func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+		return []instance.InstanceSummary{
+			{
+				ID:           uuid.New(),
+				WorkflowName: "wf",
+				State:        instance.StateRunning,
+				Priority:     instance.PriorityNormal,
+				Department:   "sales",
+				Visibility:   instance.VisibilityPublic,
+			},
+		}, nil
+	}
+	h := adapthttp.NewInstanceHandler(newMockInstanceRepo(), newMockNodeExecRepo(), newMockSnapshotRepo(), svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "sales", resp[0]["department"],
+		"department must appear in List summary JSON")
+	assert.Equal(t, "public", resp[0]["visibility"],
+		"visibility must appear in List summary JSON")
+}
+
+// Cancel with ErrForbidden also returns 403 (same mapEngineError path as Pause).
+// This spot-checks that all intervention endpoints share the 403 mapping rather
+// than special-casing Pause.
+func TestInstanceHandler_Cancel_ErrForbidden_Returns403(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	id := uuid.New()
+	svc.cancelFn = func(_ uuid.UUID) error {
+		return fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+	req = withChiURLParam(req, "id", id.String())
+	w := httptest.NewRecorder()
+	h.Cancel(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}

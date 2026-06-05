@@ -39,6 +39,12 @@ func (m *mockUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) erro
 	return nil
 }
 func (m *mockUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, nil }
+func (m *mockUserRepo) ListDepartments(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) ReplaceDepartments(_ context.Context, _ uuid.UUID, _ []string) error {
+	return nil
+}
 
 var _ instance.UserRepository = (*mockUserRepo)(nil)
 
@@ -218,6 +224,12 @@ func (e *errUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) error
 	return e.err
 }
 func (e *errUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, e.err }
+func (e *errUserRepo) ListDepartments(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, e.err
+}
+func (e *errUserRepo) ReplaceDepartments(_ context.Context, _ uuid.UUID, _ []string) error {
+	return e.err
+}
 
 var _ instance.UserRepository = (*errUserRepo)(nil)
 

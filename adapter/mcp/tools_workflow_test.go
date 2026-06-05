@@ -148,17 +148,31 @@ func newWorkflowServer(repo *stubWorkflowRepo, fr *stubFileReader) *adaptmcp.Ser
 
 func callTool(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any) *gomcp.CallToolResult {
 	t.Helper()
-	// Find the tool handler by calling through the MCPServer.
-	// We use the server's ListTools to verify the tool exists, then call via MCPServer.
-	req := gomcp.CallToolRequest{}
-	req.Params.Name = name
-	req.Params.Arguments = args
-
-	ctx := identity.WithIdentity(context.Background(), identity.Identity{
+	return callToolWithIdentity(t, srv, name, args, identity.Identity{
 		UserID:   mcpTestUserID,
 		Username: "tester",
 		Role:     identity.RoleUser,
 	})
+}
+
+// callToolAdmin invokes a tool with an admin identity (same user id), so
+// role-gated publish/visibility tools can promote to public.
+func callToolAdmin(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any) *gomcp.CallToolResult {
+	t.Helper()
+	return callToolWithIdentity(t, srv, name, args, identity.Identity{
+		UserID:   mcpTestUserID,
+		Username: "admin",
+		Role:     identity.RoleAdmin,
+	})
+}
+
+func callToolWithIdentity(t *testing.T, srv *adaptmcp.Server, name string, args map[string]any, id identity.Identity) *gomcp.CallToolResult {
+	t.Helper()
+	req := gomcp.CallToolRequest{}
+	req.Params.Name = name
+	req.Params.Arguments = args
+
+	ctx := identity.WithIdentity(context.Background(), id)
 	result := srv.MCPServer().HandleMessage(ctx, mustMarshal(t, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -938,18 +952,22 @@ func TestWorkflowDeleteFile(t *testing.T) {
 
 // fakePublishedStore is a workflow.PublishedStore for MCP publish/copy tests.
 type fakePublishedStore struct {
-	pub map[string]uuid.UUID
+	pub map[string]workflow.Publication
 }
 
 func (p *fakePublishedStore) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
-	id, ok := p.pub[name]
-	return id, ok, nil
+	pub, ok := p.pub[name]
+	return pub.Publisher, ok, nil
 }
-func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, _ string) error {
+func (p *fakePublishedStore) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	pub, ok := p.pub[name]
+	return pub, ok, nil
+}
+func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uuid.UUID, sourceName string, visibility workflow.Visibility, department string) error {
 	if p.pub == nil {
-		p.pub = map[string]uuid.UUID{}
+		p.pub = map[string]workflow.Publication{}
 	}
-	p.pub[name] = publisher
+	p.pub[name] = workflow.Publication{Publisher: publisher, SourceName: sourceName, Visibility: visibility, Department: department}
 	return nil
 }
 func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
@@ -978,13 +996,13 @@ func sampleManifest(name string) *workflow.Workflow {
 }
 
 func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	// Seed the caller's private source under the test identity's user id.
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
 
-	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
+	result := callToolAdmin(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "pub"})
 	assert.False(t, result.IsError, extractText(t, result))
 
 	ok, err := repo.Exists(ctxWithMCPIdentity(), workflow.Shared(), "pub")
@@ -993,16 +1011,16 @@ func TestWorkflowTool_Publish_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowTool_Publish_NotFound(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
-	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
+	result := callToolAdmin(t, srv, "workflow_publish", map[string]any{"name": "ghost", "publishedName": "pub"})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "not found")
 }
 
 func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	result := callTool(t, srv, "workflow_publish", map[string]any{"name": "src", "publishedName": "../escape"})
@@ -1014,7 +1032,7 @@ func TestWorkflowTool_Publish_InvalidName(t *testing.T) {
 // name and publishedName at the MCP adapter layer, not silently passed through to
 // the filesystem where it would match the scope root and return an opaque error.
 func TestWorkflowTool_Publish_DotName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	t.Run("dot source name rejected", func(t *testing.T) {
@@ -1032,7 +1050,7 @@ func TestWorkflowTool_Publish_DotName(t *testing.T) {
 // TestWorkflowTool_Copy_DotName verifies that "." is rejected as both source
 // and destination name at the MCP adapter layer.
 func TestWorkflowTool_Copy_DotName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	t.Run("dot source name rejected", func(t *testing.T) {
@@ -1048,7 +1066,7 @@ func TestWorkflowTool_Copy_DotName(t *testing.T) {
 }
 
 func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
@@ -1062,7 +1080,7 @@ func TestWorkflowTool_Copy_HappyPath(t *testing.T) {
 }
 
 func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Shared(), "orig", sampleManifest("orig")))
@@ -1079,7 +1097,7 @@ func TestWorkflowTool_Copy_DuplicatePrivateName(t *testing.T) {
 func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 	otherUser := uuid.New()
 	// Pre-seed the store so "pub" is already owned by a different user.
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{"pub": otherUser}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{"pub": {Publisher: otherUser, Visibility: workflow.VisibilityPublic}}}
 	srv, repo := newPublishServer(t, store)
 
 	require.NoError(t, repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
@@ -1092,12 +1110,105 @@ func TestWorkflowTool_Publish_DifferentPublisher_Unauthorized(t *testing.T) {
 // TestWorkflowTool_Copy_SharedMissing_NotFound verifies that copying a shared workflow
 // that does not exist returns a not-found tool error, not a server error.
 func TestWorkflowTool_Copy_SharedMissing_NotFound(t *testing.T) {
-	store := &fakePublishedStore{pub: map[string]uuid.UUID{}}
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
 	srv, _ := newPublishServer(t, store)
 
 	result := callTool(t, srv, "workflow_copy", map[string]any{"name": "ghost", "newName": "mine"})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// --- SetVisibility ---
+
+// Happy path: a lead of the publication's department can promote it to public.
+func TestWorkflowTool_SetVisibility_LeadPromotesToPublic(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolWithIdentity(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	}, identity.Identity{
+		UserID: mcpTestUserID, Username: "lead", Role: identity.RoleUser,
+		Departments: []string{"engineering"}, LedDepartments: []string{"engineering"},
+	})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.Equal(t, workflow.VisibilityPublic, store.pub["eng-wf"].Visibility)
+}
+
+// Success: admin can change visibility of any publication regardless of whether
+// they are the publisher or a department member. Admin is both authorized to
+// mutate and authorized to publish to public.
+func TestWorkflowTool_SetVisibility_AdminCanChange(t *testing.T) {
+	otherPublisher := uuid.New()
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: otherPublisher, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.Equal(t, workflow.VisibilityPublic, store.pub["eng-wf"].Visibility)
+}
+
+// Failure: a plain member (not lead, not admin) cannot promote a publication to
+// public — the role gate at authorizePublish is enforced on the MCP surface.
+func TestWorkflowTool_SetVisibility_MemberCannotPromoteToPublic(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	// callTool uses RoleUser with no led departments.
+	result := callTool(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+// Failure: an unknown publication name returns a not-found error, not a server
+// error. This verifies the ErrNotFound → ToolResultError mapping on the MCP surface.
+func TestWorkflowTool_SetVisibility_UnknownName_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "ghost", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// Error: an invalid visibility string (e.g. "private") is rejected with an
+// invalid-visibility error before reaching the store.
+func TestWorkflowTool_SetVisibility_InvalidVisibility(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "private",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid visibility")
+}
+
+// Edge: an unsafe workflow name (e.g. "../escape") is rejected at the adapter
+// input validation layer, not passed through to the service.
+func TestWorkflowTool_SetVisibility_InvalidName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "../escape", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid workflow name")
 }
 
 func ctxWithMCPIdentity() context.Context {

@@ -198,6 +198,6 @@ The same applies in the other direction. If the MCP connection drops while a use
 - Cron and webhook trigger configuration in the scheduling skill (Phase 7)
 - Multi-user authentication and role enforcement (Phase 6 — the access control framework is defined here but enforced by the permissions system that Phase 6 delivers)
 - Shared workflow directory, publishing, or copying (Phase 6)
-- Fan-out / fan-in parallel execution (Phase 8)
+- Fan-out / fan-in parallel execution (deferred — future, formerly Phase 8)
 - Dashboard changes — Phase 5 adds no new dashboard functionality
 - Offline or disconnected skill operation — skills require a running Arbitron server

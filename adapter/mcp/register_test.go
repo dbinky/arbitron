@@ -23,6 +23,7 @@ var expectedTools = []string{
 	"workflow_write_file",
 	"workflow_delete_file",
 	"workflow_publish",
+	"workflow_set_visibility",
 	"workflow_copy",
 	// Instance operations (9)
 	"instance_list",

@@ -30,4 +30,9 @@ var (
 	// ErrUnauthorized indicates the caller is not permitted to perform the
 	// requested operation (e.g. a non-admin loading another user's private workflow).
 	ErrUnauthorized = errors.New("not authorized")
+
+	// ErrInvalidVisibility indicates a publish/visibility request specified an
+	// unstorable level, or omitted the required department for a department-level
+	// publication.
+	ErrInvalidVisibility = errors.New("invalid visibility request")
 )

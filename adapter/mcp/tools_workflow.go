@@ -133,8 +133,20 @@ func RegisterWorkflowTools(srv *Server) {
 			gomcp.WithDescription("Publish a private workflow to the shared workspace"),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Private workflow name to publish")),
 			gomcp.WithString("publishedName", gomcp.Required(), gomcp.Description("Name to publish under in the shared workspace")),
+			gomcp.WithString("visibility", gomcp.Description("Sharing level: department or public (default public)")),
+			gomcp.WithString("department", gomcp.Description("Required when visibility=department; one of your departments")),
 		),
 		workflowPublishHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_set_visibility",
+			gomcp.WithDescription("Change an existing shared workflow's sharing level"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Published workflow name")),
+			gomcp.WithString("visibility", gomcp.Required(), gomcp.Description("department or public")),
+			gomcp.WithString("department", gomcp.Description("Required when visibility=department")),
+		),
+		workflowSetVisibilityHandler(srv),
 	)
 
 	srv.AddTool(
@@ -460,8 +472,15 @@ func workflowPublishHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(fmt.Sprintf("invalid published name: %s", publishedName)), nil
 		}
 
-		if err := workflowSvc(srv).Publish(ctx, name, publishedName); err != nil {
+		visibility, _ := args["visibility"].(string)
+		if visibility == "" {
+			visibility = "public"
+		}
+		department, _ := args["department"].(string)
+		if err := workflowSvc(srv).Publish(ctx, name, publishedName, workflow.Visibility(visibility), department); err != nil {
 			switch {
+			case errors.Is(err, workflow.ErrInvalidVisibility):
+				return gomcp.NewToolResultError(fmt.Sprintf("invalid visibility for %q: %s", publishedName, err)), nil
 			case errors.Is(err, workflow.ErrUnauthorized):
 				return gomcp.NewToolResultError(fmt.Sprintf("not authorized to publish %q: %s", publishedName, err)), nil
 			case errors.Is(err, workflow.ErrNotFound):
@@ -473,6 +492,34 @@ func workflowPublishHandler(srv *Server) server.ToolHandlerFunc {
 			}
 		}
 		return MarshalResult(map[string]string{"status": "published", "name": publishedName})
+	}
+}
+
+func workflowSetVisibilityHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		visibility, _ := args["visibility"].(string)
+		department, _ := args["department"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if err := workflowSvc(srv).SetVisibility(ctx, name, workflow.Visibility(visibility), department); err != nil {
+			switch {
+			case errors.Is(err, workflow.ErrInvalidVisibility):
+				return gomcp.NewToolResultError(fmt.Sprintf("invalid visibility: %s", err)), nil
+			case errors.Is(err, workflow.ErrUnauthorized):
+				return gomcp.NewToolResultError(fmt.Sprintf("not authorized: %s", err)), nil
+			case errors.Is(err, workflow.ErrNotFound):
+				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			default:
+				return gomcp.NewToolResultError(fmt.Sprintf("failed to set visibility: %s", err)), nil
+			}
+		}
+		return MarshalResult(map[string]string{"status": "visibility_updated", "name": name})
 	}
 }
 

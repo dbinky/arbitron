@@ -167,7 +167,7 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 		if filters.State != nil && inst.State != *filters.State {
 			continue
 		}
-		if filters.OwnerID != nil && inst.OwnerID != *filters.OwnerID {
+		if !listVisible(inst, filters) {
 			continue
 		}
 		summaries = append(summaries, instance.InstanceSummary{
@@ -178,6 +178,30 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 		})
 	}
 	return summaries, nil
+}
+
+// listVisible mirrors the repo's disjunctive visibility filter so engine list
+// tests exercise the same owner/public/department logic the SQL implements.
+// An admin call arrives with OwnerID=nil, Departments=nil, IncludePublic=false
+// (no narrowing) => everything is visible.
+func listVisible(inst *instance.Instance, f instance.ListFilters) bool {
+	if f.OwnerID == nil && len(f.Departments) == 0 && !f.IncludePublic {
+		return true // unconstrained (admin)
+	}
+	if f.OwnerID != nil && inst.OwnerID == *f.OwnerID {
+		return true
+	}
+	if f.IncludePublic && inst.Visibility == instance.VisibilityPublic {
+		return true
+	}
+	if inst.Visibility == instance.VisibilityDepartment {
+		for _, d := range f.Departments {
+			if d == inst.Department {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
@@ -453,6 +477,14 @@ func (r *mockUserRepo) List(_ context.Context) ([]instance.User, error) { return
 func (r *mockUserRepo) UpdateRole(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 
 func (r *mockUserRepo) CountAdmins(_ context.Context) (int, error) { return 0, nil }
+
+func (r *mockUserRepo) ListDepartments(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+
+func (r *mockUserRepo) ReplaceDepartments(_ context.Context, _ uuid.UUID, _ []string) error {
+	return nil
+}
 
 // mockQueueManager implements engine.QueueManager
 type mockQueueManager struct {

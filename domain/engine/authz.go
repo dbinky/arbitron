@@ -4,32 +4,63 @@ import (
 	"context"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
 
-// ownerConstraint returns the OwnerID filter the caller is allowed to see:
-// nil for an admin (unconstrained), or a pointer to the caller's own UserID
-// for a non-admin. The bool reports whether an identity was present.
-func ownerConstraint(ctx context.Context) (*uuid.UUID, bool) {
-	id, ok := identity.FromContext(ctx)
-	if !ok {
-		return nil, false
-	}
-	if id.IsAdmin() {
-		return nil, true
-	}
-	uid := id.UserID
-	return &uid, true
-}
-
-// canView reports whether the context identity may read an instance owned by
-// ownerID: admins may read any instance; a non-admin only their own. It is the
-// shared gate consumed by the scoped read service methods (get/trace/variables)
-// and the intervention authorization gate.
-func canView(ctx context.Context, ownerID uuid.UUID) bool {
+// canView reports whether the context identity may READ an instance: admins and
+// the owner always; a public run is visible to everyone; a department run is
+// visible to members of that department. Missing identity => false (fail closed).
+func canView(ctx context.Context, inst *instance.Instance) bool {
 	id, ok := identity.FromContext(ctx)
 	if !ok {
 		return false
 	}
-	return id.IsAdmin() || id.UserID == ownerID
+	if id.IsAdmin() || id.UserID == inst.OwnerID {
+		return true
+	}
+	if inst.Visibility == instance.VisibilityPublic {
+		return true
+	}
+	return inst.Visibility == instance.VisibilityDepartment && id.InDepartment(inst.Department)
+}
+
+// canIntervene reports whether the context identity may MUTATE an instance
+// (cancel/pause/resume/retry/rerun/priority): the owner, a lead of the run's
+// department, or an admin. A department peer (member, not owner, not lead) is
+// denied even though canView is true. Missing identity => false.
+func canIntervene(ctx context.Context, inst *instance.Instance) bool {
+	id, ok := identity.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	return id.IsAdmin() || id.UserID == inst.OwnerID || id.LeadsDepartment(inst.Department)
+}
+
+// listFilter is the service-derived visibility scope a caller may list.
+type listFilter struct {
+	OwnerID       *uuid.UUID // nil => unconstrained (admin)
+	Departments   []string
+	IncludePublic bool
+	Unconstrained bool // admin: no visibility narrowing at all
+}
+
+// listConstraint computes the visibility scope for ListInstances from the
+// context identity. The bool reports whether an identity was present (false =>
+// reveal nothing). An admin is unconstrained. A non-admin is scoped to the
+// disjunction owner=self OR public OR department-member.
+func listConstraint(ctx context.Context) (listFilter, bool) {
+	id, ok := identity.FromContext(ctx)
+	if !ok {
+		return listFilter{}, false
+	}
+	if id.IsAdmin() {
+		return listFilter{Unconstrained: true}, true
+	}
+	uid := id.UserID
+	return listFilter{
+		OwnerID:       &uid,
+		Departments:   id.Departments,
+		IncludePublic: true,
+	}, true
 }

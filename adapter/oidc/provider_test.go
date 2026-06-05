@@ -345,6 +345,76 @@ func TestProvider_Exchange_EmptyNonce_Passthrough(t *testing.T) {
 	assert.Equal(t, "", claims.Nonce, "Exchange must not inject a nonce — the empty value must propagate to the caller for rejection")
 }
 
+// TestProvider_Exchange_SurfacesGroupsClaim verifies that when GroupClaim is
+// configured, Exchange extracts the group array from the verified ID token and
+// surfaces it on Claims.Groups. This is the wiring test — extractGroups unit
+// tests cover parsing, but only this test confirms the field actually flows
+// through Exchange end-to-end.
+func TestProvider_Exchange_SurfacesGroupsClaim(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		c := baseClaims(h.issuer)
+		c["groups"] = []string{"engineering", "platform"}
+		return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+	}
+	p, err := adaptoidc.New(context.Background(), adaptoidc.Config{
+		IssuerURL:    h.issuer,
+		ClientID:     testClientID,
+		ClientSecret: "secret",
+		RedirectURL:  "https://app.example.com/auth/callback",
+		Scopes:       []string{"profile", "email"},
+		GroupClaim:   "groups",
+	})
+	require.NoError(t, err)
+
+	claims, err := p.Exchange(context.Background(), "any-code")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering", "platform"}, claims.Groups)
+}
+
+// TestProvider_Exchange_NoGroupClaim_GroupsNil verifies the security boundary:
+// when GroupClaim is not configured, Claims.Groups is nil even if the token
+// carries a groups claim. An unconfigured claim must not accidentally grant groups.
+func TestProvider_Exchange_NoGroupClaim_GroupsNil(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		c := baseClaims(h.issuer)
+		c["groups"] = []string{"engineering"}
+		return h.tokenResponse(h.signIDToken(t, nil, c)), http.StatusOK
+	}
+	// newProvider builds with empty GroupClaim.
+	p := newProvider(t, h)
+
+	claims, err := p.Exchange(context.Background(), "any-code")
+	require.NoError(t, err)
+	assert.Nil(t, claims.Groups, "Groups must be nil when GroupClaim is not configured")
+}
+
+// TestProvider_Exchange_GroupClaimConfiguredButAbsent_GroupsNil verifies the
+// robustness path: GroupClaim is configured but the ID token simply doesn't carry
+// that claim key. Real IdPs may omit the group claim for users with no memberships.
+// Exchange must return nil Groups without an error — a missing claim is not a failure.
+func TestProvider_Exchange_GroupClaimConfiguredButAbsent_GroupsNil(t *testing.T) {
+	h := newIDPHarness(t)
+	h.tokenFn = func(t *testing.T) (string, int) {
+		// baseClaims does not include a "groups" key.
+		return h.tokenResponse(h.signIDToken(t, nil, baseClaims(h.issuer))), http.StatusOK
+	}
+	p, err := adaptoidc.New(context.Background(), adaptoidc.Config{
+		IssuerURL:    h.issuer,
+		ClientID:     testClientID,
+		ClientSecret: "secret",
+		RedirectURL:  "https://app.example.com/auth/callback",
+		Scopes:       []string{"profile", "email"},
+		GroupClaim:   "groups", // configured, but the token won't carry it
+	})
+	require.NoError(t, err)
+
+	claims, err := p.Exchange(context.Background(), "any-code")
+	require.NoError(t, err, "missing group claim must not fail the exchange")
+	assert.Nil(t, claims.Groups, "Groups must be nil when the claim is absent from the token")
+}
+
 // Structural: Claims carries no IdP access/refresh token field, reinforcing that
 // the IdP is never on the request hot path.
 func TestProvider_Claims_DiscardsIdPTokens(t *testing.T) {

@@ -31,7 +31,9 @@ import (
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/config"
+	domaindashboard "github.com/arbitron/arbitron/domain/dashboard"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -142,17 +144,18 @@ type domainStack struct {
 	tracingShutdown     func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler and sweepCancel are nil in local mode.
-	sessionRepo identity.SessionRepository
-	tokenRepo   identity.TokenRepository
-	tokenSvc    *identity.TokenService
-	deviceRepo  identity.DeviceCodeRepository
-	deviceSvc   *identity.DeviceCodeService
-	provisioner *instance.Provisioner
-	userRepo    instance.UserRepository
-	userSvc     *instance.UserService
-	authMW      *adapthttp.AuthMiddleware
-	authHandler *adapthttp.AuthHandler
-	sweepCancel context.CancelFunc
+	sessionRepo  identity.SessionRepository
+	tokenRepo    identity.TokenRepository
+	tokenSvc     *identity.TokenService
+	deviceRepo   identity.DeviceCodeRepository
+	deviceSvc    *identity.DeviceCodeService
+	provisioner  *instance.Provisioner
+	userRepo     instance.UserRepository
+	userSvc      *instance.UserService
+	dashboardSvc *domaindashboard.Service
+	authMW       *adapthttp.AuthMiddleware
+	authHandler  *adapthttp.AuthHandler
+	sweepCancel  context.CancelFunc
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -257,6 +260,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 
 	// 5. Initialize adapters.
 	instanceRepo := adaptsqlite.NewInstanceRepo(db)
+	dashboardRepo := adaptsqlite.NewDashboardRepo(db)
+	dashboardSvc := domaindashboard.NewService(dashboardRepo)
 	nodeExecRepo := adaptsqlite.NewNodeExecutionRepo(db)
 	snapshotRepo := adaptsqlite.NewVariableSnapshotRepo(db)
 	userRepo := adaptsqlite.NewUserRepo(db)
@@ -278,7 +283,8 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// JIT provisioner (Phase 6, Phase 2). Resolves verified OIDC claims to a
 	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
 	// callback and Task 6's role-management demotion floor (one bootstrap rule).
-	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins)
+	groupCfg := configadapter.ToGroupConfig(cfg.Auth.RBAC)
+	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins, groupCfg)
 	// Admin-only role management (Phase 6, Phase 2). The demotion floor shares the
 	// provisioner's bootstrap rule so a bootstrap (incl. by-email) admin is
 	// protected using only the persisted User.
@@ -292,6 +298,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 			ClientSecret: cfg.Auth.OIDC.ClientSecret,
 			RedirectURL:  cfg.Auth.OIDC.RedirectURL,
 			Scopes:       cfg.Auth.OIDC.Scopes,
+			GroupClaim:   cfg.Auth.RBAC.GroupClaim,
 		})
 		if oerr != nil {
 			db.Close()
@@ -300,7 +307,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		}
 		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
 	}
-	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo)
+	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
@@ -328,6 +335,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// WorkflowService resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
+	// Best-effort audit emitter for publish/visibility/admin-override events. The
+	// engine is wired to this same auditSvc below (Phase 3 task 5) via
+	// eng.SetAuditRecorder(auditSvc), once eng exists — a single engine seam.
+	auditRepo := adaptsqlite.NewAuditRepo(db)
+	auditSvc := audit.NewService(auditRepo)
+	auditSvc.SetLogger(logger)
+	workflowSvc.SetAudit(auditSvc)
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -531,6 +545,15 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// admin actions on other users' instances are attributed.
 	interventionRepo := adaptsqlite.NewInterventionRepo(db)
 	eng.SetInterventions(interventionRepo)
+	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
+	// run they do not own emits a domain audit event (instance.lead_intervention /
+	// admin.override). *audit.Service.Record has exactly the void
+	// engine.AuditRecorder signature, so it satisfies the port with no adapter.
+	eng.SetAuditRecorder(auditSvc)
+	// 12a-1b. Gate the engine trigger read path by workflow visibility. Local
+	// mode's fixed identity is admin, for which CanSeePublication returns true,
+	// so local-mode openness is preserved.
+	eng.SetPublisherLookup(publishedRepo)
 	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
@@ -573,6 +596,16 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		SetInterventions(instance.InterventionRepository)
 	}); ok {
 		s.SetInterventions(interventionRepo)
+	}
+	// Wire the Phase-2 audit service so a lead/admin steering an interactive
+	// session they do not own emits a domain audit event
+	// (instance.lead_intervention / admin.override) — the same accountability
+	// trail the engine mutation paths produce. Without this, the highest-trust
+	// surface in the product left ZERO audit trail (PR #21 Must Fix).
+	if s, ok := conversationHandler.(interface {
+		SetAuditRecorder(engine.AuditRecorder)
+	}); ok {
+		s.SetAuditRecorder(auditSvc)
 	}
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
@@ -671,6 +704,7 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		provisioner:         provisioner,
 		userRepo:            userRepo,
 		userSvc:             userSvc,
+		dashboardSvc:        dashboardSvc,
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
@@ -725,6 +759,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		DeviceCodes:         ds.deviceSvc,
 		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
 		Users:               ds.userSvc,
+		DashboardStats:      ds.dashboardSvc,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

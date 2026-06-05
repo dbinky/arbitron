@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -176,6 +177,80 @@ func TestIntervention_NoIdentity_FailClosed(t *testing.T) {
 	assert.Equal(t, instance.StateQueued, currentState(t, f, queued))
 	assert.Equal(t, instance.StateFailed, currentState(t, f, failed))
 	assert.Equal(t, instance.StateCompleted, currentState(t, f, terminal))
+}
+
+// --- FA #17: canView vs canIntervene split — department peer gets 403 ---
+
+// A department peer (member of the run's department, but NOT the owner and NOT
+// a lead) can VIEW the instance but cannot intervene. The engine must return
+// ErrForbidden (403), NOT ErrNotFound (404) — existence is already known to
+// them via List, so hiding it would be misleading. This is the critical
+// canView/canIntervene split test.
+func TestIntervention_DepartmentPeer_Forbidden(t *testing.T) {
+	f := newTestFixtures()
+	owner := uuid.New()
+	peer := uuid.New() // same department, not owner, not lead
+
+	// Seed a department run owned by 'owner'.
+	id := uuid.New()
+	failedNode := "n1"
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID: id, OwnerID: owner, WorkflowName: "wf",
+		State: instance.StateRunning, Priority: instance.PriorityNormal,
+		Visibility: instance.VisibilityDepartment, Department: "engineering",
+		Variables:         map[string]any{},
+		OriginalVariables: map[string]any{},
+		FailedNodeID:      &failedNode,
+	}
+	f.instanceRepo.mu.Unlock()
+
+	// Peer is a member of engineering but is not the owner and leads nothing.
+	peerCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:      peer,
+		Username:    "p",
+		Role:        identity.RoleUser,
+		Departments: []string{"engineering"},
+	})
+
+	// canView=true (dept member) → canIntervene=false → ErrForbidden, NOT ErrNotFound.
+	err := f.engine.Pause(peerCtx, id)
+	assert.ErrorIs(t, err, instance.ErrForbidden,
+		"department peer must receive ErrForbidden (403), not ErrNotFound (404), because existence is already known")
+	assert.NotErrorIs(t, err, instance.ErrNotFound)
+
+	// State must be unchanged (intervention was refused).
+	assert.Equal(t, instance.StateRunning, currentState(t, f, id))
+}
+
+// FA #17 Pass 2: the 404-vs-403 distinction is correctly applied even when the
+// caller is a lead of a *different* department. A lead of "finance" cannot view
+// an "engineering" department run (canView=false → 404), which is the opposite
+// of the peer case above where a member of the SAME dept gets 403.
+func TestIntervention_LeadOfOtherDept_NotFound(t *testing.T) {
+	f := newTestFixtures()
+	owner := uuid.New()
+	financeLead := uuid.New()
+
+	id := uuid.New()
+	f.instanceRepo.mu.Lock()
+	f.instanceRepo.instances[id] = &instance.Instance{
+		ID: id, OwnerID: owner, WorkflowName: "wf",
+		State: instance.StateRunning, Priority: instance.PriorityNormal,
+		Visibility: instance.VisibilityDepartment, Department: "engineering",
+		Variables: map[string]any{}, OriginalVariables: map[string]any{},
+	}
+	f.instanceRepo.mu.Unlock()
+
+	// Finance lead: canView=false (not in engineering) → ErrNotFound (existence hidden).
+	finLeadCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: financeLead, Username: "fl", Role: identity.RoleUser,
+		Departments: []string{"finance"}, LedDepartments: []string{"finance"},
+	})
+	err := f.engine.Cancel(finLeadCtx, id)
+	assert.ErrorIs(t, err, instance.ErrNotFound,
+		"lead of a different department cannot view the run → must receive ErrNotFound (existence hidden)")
+	assert.NotErrorIs(t, err, instance.ErrForbidden)
 }
 
 // --- Isolation/security: non-owner non-admin refused, no state change ---

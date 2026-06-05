@@ -214,10 +214,22 @@ func systemUpdateTeamsConfigHandler(srv *Server) server.ToolHandlerFunc {
 
 // mcpNotifOwnerID returns the owner restriction for the calling MCP identity:
 // nil for admins (see all), &userID for non-admins (see own only).
+//
+// A MISSING identity fails CLOSED — it restricts to a non-matching owner
+// (uuid.Nil), never the unrestricted admin scope (nil). Today the auth middleware
+// always supplies an identity in org mode, but collapsing !ok into the admin-wide
+// scope was a latent cross-user disclosure the moment any path reached this
+// handler without the middleware. This matches the fail-closed convention every
+// other authz predicate uses (domain/engine/authz.go) (PR #21).
 func mcpNotifOwnerID(ctx context.Context) *uuid.UUID {
 	id, ok := identity.FromContext(ctx)
-	if !ok || id.IsAdmin() {
-		return nil
+	if !ok {
+		// No identity ⇒ fail closed: restrict to an owner that matches no rows.
+		nilOwner := uuid.Nil
+		return &nilOwner
+	}
+	if id.IsAdmin() {
+		return nil // admin: no owner restriction (see all)
 	}
 	uid := id.UserID
 	return &uid

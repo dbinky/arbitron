@@ -1,18 +1,34 @@
 -- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
 SELECT * FROM instances WHERE id = ?;
 
 -- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at
+-- Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
+-- owned by them, OR public (when include_public), OR a department run in one of
+-- their departments. An admin passes owner_id=NULL, include_public=0 (false),
+-- and an empty departments array, in which case the guarded `unconstrained` arm
+-- admits every row.
+--
+-- departments is a JSON array string (e.g. '["engineering","platform"]'); the
+-- json_each subquery turns it into a membership test. Portable to Postgres as
+-- `instances.department = ANY($departments)`.
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))
 AND (sqlc.narg('since') IS NULL OR created_at >= sqlc.narg('since'))
-AND (sqlc.narg('owner_id') IS NULL OR owner_id = sqlc.narg('owner_id'))
+AND (
+    sqlc.arg('unconstrained') = 1
+    OR (sqlc.narg('owner_id') IS NOT NULL AND owner_id = sqlc.narg('owner_id'))
+    OR (sqlc.arg('include_public') = 1 AND visibility = 'public')
+    OR (visibility = 'department' AND department IN (
+        SELECT value FROM json_each(sqlc.arg('departments'))
+    ))
+)
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 
