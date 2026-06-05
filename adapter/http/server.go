@@ -116,6 +116,10 @@ type RouterDeps struct {
 	// Users powers the admin-only role-management endpoints under /api/v1/users.
 	// The admin gate and demotion floors live in the service. Nil disables them.
 	Users *instance.UserService
+	// DashboardStats powers GET /api/v1/dashboard/stats. The service clamps
+	// requested departments to the caller's effective set (admins exempt). Nil
+	// disables the route (legacy/tests).
+	DashboardStats dashboardStatsService
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -244,6 +248,13 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		r.Get("/system/config", sysHandler.GetConfig)
 		r.Put("/system/config/queue", sysHandler.UpdateQueueConfig)
 		r.Put("/system/config/teams", sysHandler.UpdateTeamsConfig)
+
+		// Department dashboard stats (Phase 4). Inside the auth group so the
+		// service reads the caller identity from context for the department clamp.
+		if d.DashboardStats != nil {
+			dashStatsHandler := NewDashboardHandler(d.DashboardStats)
+			r.Get("/dashboard/stats", dashStatsHandler.Stats)
+		}
 
 		// Workflow endpoints
 		r.Route("/workflows", func(r chi.Router) {
