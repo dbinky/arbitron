@@ -275,6 +275,15 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		return uuid.Nil, false, stErr
 	}
 
+	// Emit admin.override when an admin triggers a department-visible workflow
+	// they are not a member of. Admin status is the SOLE reason for access
+	// (same logic as the workflow read-path in domain/workflow/service.go).
+	// Best-effort and nil-safe: identical contract to all other audit paths.
+	if e.auditRecorder != nil && vis == instance.VisibilityDepartment &&
+		callerID.IsAdmin() && !callerID.InDepartment(pubDept) {
+		e.auditRecorder.Record(ctx, AuditActionAdminOverride, workflowName, `{"action":"trigger"}`)
+	}
+
 	// Validate inputs.
 	vars := variable.NewStore()
 	for _, inp := range wf.Inputs {

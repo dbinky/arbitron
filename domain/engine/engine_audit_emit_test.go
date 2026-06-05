@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,4 +104,79 @@ func TestAudit_NoRecorder_NilSafe(t *testing.T) {
 	owner := uuid.New()
 	run := seedDeptInstance(f, owner, "engineering", instance.StateRunning)
 	require.NoError(t, f.engine.Pause(leadCtx(uuid.New(), "engineering"), run))
+}
+
+// --- Trigger-path admin.override audit (RBAC-AUDIT-003) ---
+
+// An admin triggering a department-visible workflow they are not a member of
+// emits admin.override (sole-reason: same logic as the workflow read-path).
+func TestAudit_Trigger_AdminOverride_DepartmentWorkflow(t *testing.T) {
+	h := newTriggerHarness()
+	audit := &fakeAuditRecorder{}
+	h.engine.SetAuditRecorder(audit)
+
+	publisher := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: publisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	// Admin who is NOT in "engineering" triggers the department workflow.
+	adminID := uuid.New()
+	adminCtxLocal := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: adminID, Username: "admin", Role: identity.RoleAdmin,
+		Departments: []string{"default"}, // not in engineering
+	})
+
+	_, _, err := h.engine.Trigger(adminCtxLocal, "eng-wf", nil, "normal")
+	require.NoError(t, err, "admin should be able to trigger the workflow")
+
+	events := audit.all()
+	require.Len(t, events, 1, "one admin.override event expected")
+	assert.Equal(t, engine.AuditActionAdminOverride, events[0].action)
+	assert.Equal(t, "eng-wf", events[0].target, "target is the workflow name")
+	assert.Contains(t, events[0].detail, "trigger", "detail records the action type")
+}
+
+// An admin who IS a member of the department does NOT emit admin.override —
+// department membership, not admin status, is the access reason.
+func TestAudit_Trigger_Admin_InDept_NoOverride(t *testing.T) {
+	h := newTriggerHarness()
+	audit := &fakeAuditRecorder{}
+	h.engine.SetAuditRecorder(audit)
+
+	publisher := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: publisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	// Admin who IS in "engineering" — admin is NOT the sole reason.
+	adminID := uuid.New()
+	adminCtxLocal := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: adminID, Username: "admin-eng", Role: identity.RoleAdmin,
+		Departments: []string{"engineering"},
+	})
+
+	_, _, err := h.engine.Trigger(adminCtxLocal, "eng-wf", nil, "normal")
+	require.NoError(t, err)
+	assert.Empty(t, audit.all(), "admin who is a dept member must not emit admin.override")
+}
+
+// No recorder wired on the trigger path => no panic (nil-safe).
+func TestAudit_Trigger_NoRecorder_NilSafe(t *testing.T) {
+	h := newTriggerHarness()
+	publisher := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: publisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	adminID := uuid.New()
+	adminCtxLocal := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: adminID, Username: "admin", Role: identity.RoleAdmin, Departments: []string{"default"},
+	})
+
+	_, _, err := h.engine.Trigger(adminCtxLocal, "eng-wf", nil, "normal")
+	require.NoError(t, err, "nil recorder must not panic on trigger path")
 }

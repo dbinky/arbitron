@@ -102,6 +102,14 @@ Each successful **lead** intervention on an instance they do not own records an
 `instance.lead_intervention` audit event (Phase 2 audit service). Admin acting
 outside ownership records `admin.override`.
 
+> **Interactive session participation** (HandleMessage / EndSession) is also
+> routed through `canIntervene`, making it consistent with all other mutate actions:
+> a department **lead** who does not own a session may join and drive it, while a
+> plain department peer (viewer) gets 403. This is an intentional design choice —
+> participation is a mutate action; leads routinely step in during operational
+> triage sessions. If a future requirement narrows participation to owner/admin only,
+> a dedicated `canParticipate` gate should replace the shared `canIntervene` reuse.
+
 ## Adapter Surface
 
 - HTTP `instance_handler` and MCP `tools_instance` gain an optional `department`

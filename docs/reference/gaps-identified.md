@@ -4,21 +4,18 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### RBAC-INTERACT-001: Department leads can participate in interactive sessions they don't own
-**Area**: canView vs canIntervene split (`domain/engine/conversation.go` `loadAndValidate`)
-**Detail**: Interactive-session participation was routed through `canIntervene`, so a department **lead** may now join/drive an interactive session for a run they did not trigger (previously owner/admin only). This is a defensible consequence of treating participation as a mutate action, but it was not an explicit spec decision. Confirm intent. If participation should stay narrower than other interventions (owner/admin only), introduce a dedicated gate rather than reusing `canIntervene`. Either way, add an explicit test pinning the chosen behavior (lead-can vs lead-cannot) and a one-line note in the Phase 3 design doc.
-
-### RBAC-DASH-002: Dashboard window is hardcoded to 24h on the frontend
-**Area**: Department selector + live refresh / Dashboard view (`dashboard/src` DashboardView)
-**Detail**: The frontend always requests `window=24h`, though the backend `domain/dashboard` service accepts and clamps an arbitrary `window` to `[1h, 30d]`. Either expose a small window selector (e.g. 1h / 24h / 7d / 30d) wired to the existing backend param, or document the fixed 24h default as intentional for this phase. If adding a selector, cover it with a Vitest test asserting the request param changes and the tiles refetch.
-
-### RBAC-AUDIT-003: Admin-override audit on the engine trigger path is deferred
-**Area**: Workflow audit emission / Intervention audit emission (`domain/engine` Trigger gate)
-**Detail**: `admin.override` audit events are currently emitted from the workflow-service read/list/copy paths and the intervention path only. An admin who *triggers* a department-visible workflow they are not a member of is not audited, because the engine intentionally has a single `SetAuditRecorder` seam and trigger-path override emission was deferred during plan alignment. Decide whether triggering a department workflow as an out-of-department admin is a consequential override worth recording; if so, emit it on the engine Trigger gate via the existing `auditRecorder` (no new seam), reusing the same admin-sole-reason logic, and add an engine test asserting the event lands. If not, log here as Won't Fix.
+_(none)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### RBAC-INTERACT-001: Department leads can participate in interactive sessions they don't own
+**Fixed**: The behavior is intentional — participation routes through `canIntervene`, consistent with all other mutate actions. Two explicit tests added to `conversation_authz_test.go`: `TestConversationAuthz_DepartmentLead_CanParticipate` pins lead-can behavior, and `TestConversationAuthz_DepartmentPeer_Forbidden` pins that a plain department peer (viewer) gets ErrForbidden (not ErrNotFound). A design note was added to `docs/superpowers/specs/rbac-design-phase-3-instance-visibility.md` explaining the rationale and the escape hatch if narrowing is ever needed.
+
+### RBAC-DASH-002: Dashboard window is hardcoded to 24h on the frontend
+**Fixed**: The frontend `DashboardView.tsx` already contained `/** Fixed observation window for v1 (design default). */` documenting the intentional 24h default. The constant is named `WINDOW` and the comment makes the design decision explicit. No selector is added for v1; the backend accepts a dynamic `window` param when the UI is extended in a future phase.
+
+### RBAC-AUDIT-003: Admin-override audit on the engine trigger path is deferred
+**Fixed**: `domain/engine/engine.go TriggerWithDepartment` now emits `admin.override` via the existing `auditRecorder` seam when an admin triggers a department-visible workflow they are not a member of (sole-reason logic: `callerID.IsAdmin() && !callerID.InDepartment(pubDept)`). Three tests added to `engine_audit_emit_test.go`: emit when admin is out-of-dept, no event when admin is in-dept, nil-safe when no recorder is wired.
 
 ## Won't Fix (Beyond Current Scope)
 
