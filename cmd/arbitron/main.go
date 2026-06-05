@@ -31,6 +31,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/process"
 	providersadapter "github.com/arbitron/arbitron/adapter/provider"
 	adaptsqlite "github.com/arbitron/arbitron/adapter/sqlite"
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
@@ -330,6 +331,13 @@ func initDomain(_ context.Context) (*domainStack, error) {
 	// WorkflowService resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
+	// Best-effort audit emitter for publish/visibility/admin-override events. The
+	// engine is wired to this same auditSvc in Phase 3 (task 5) via
+	// eng.SetAuditRecorder(auditSvc) — not here, to keep a single engine seam.
+	auditRepo := adaptsqlite.NewAuditRepo(db)
+	auditSvc := audit.NewService(auditRepo)
+	auditSvc.SetLogger(logger)
+	workflowSvc.SetAudit(auditSvc)
 
 	// 7. Create the chat + agent providers based on config.
 	//

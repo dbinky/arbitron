@@ -1,8 +1,6 @@
 package workflow
 
 import (
-	"context"
-
 	"github.com/arbitron/arbitron/domain/identity"
 )
 
@@ -23,20 +21,16 @@ func CanSeePublication(id identity.Identity, p Publication) bool {
 		(p.Visibility == VisibilityDepartment && id.InDepartment(p.Department))
 }
 
-// canSeeShared resolves the publication for a shared name and applies
-// CanSeePublication. A nil lookup, or a name with no publication record, is
-// treated as visible-public (local/read-only mode, and pre-publication-model
-// folders, stay open).
-func canSeeShared(ctx context.Context, lookup PublisherLookup, id identity.Identity, sharedName string) (bool, error) {
-	if lookup == nil {
-		return true, nil
+// adminOverrode reports whether admin status was the SOLE reason id can see p:
+// access is granted, but a copy of the identity with admin cleared would be
+// denied. This is the precise condition for an admin.override audit event
+// (design doc §Audit Log).
+func adminOverrode(id identity.Identity, p Publication) bool {
+	if !id.IsAdmin() {
+		return false
 	}
-	pub, ok, err := lookup.PublicationOf(ctx, sharedName)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return true, nil
-	}
-	return CanSeePublication(id, pub), nil
+	demoted := id
+	demoted.Role = identity.RoleUser
+	return CanSeePublication(id, p) && !CanSeePublication(demoted, p)
 }
+

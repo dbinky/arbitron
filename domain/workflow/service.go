@@ -2,9 +2,11 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/google/uuid"
 )
@@ -42,6 +44,24 @@ type WorkflowService struct {
 	// published is the write side, set when the supplied lookup also implements
 	// PublishedStore; nil disables Publish.
 	published PublishedStore
+	audit     *audit.Service // optional; nil-safe best-effort audit emitter
+}
+
+// SetAudit wires the best-effort audit emitter. When unset (nil), no audit
+// events are recorded (local/unconfigured deployments behave as today).
+func (s *WorkflowService) SetAudit(a *audit.Service) {
+	s.audit = a
+}
+
+// auditDetail marshals a small map to compact JSON for an audit event's detail,
+// falling back to "{}" on the (practically impossible) marshal error so audit
+// recording is never blocked.
+func auditDetail(m map[string]string) string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // NewWorkflowService builds a WorkflowService over the given repository and an
@@ -138,14 +158,32 @@ func (s *WorkflowService) DeleteFile(ctx context.Context, name, rel string) erro
 	return s.translateWrite(ctx, name, s.repo.DeleteFile(ctx, Private(id.UserID), name, rel))
 }
 
-// sharedFilter returns a SharedVisibilityFilter bound to id, or nil when no
-// publisher lookup is configured (local/read-only ⇒ all shared visible).
-func (s *WorkflowService) sharedFilter(id identity.Identity) SharedVisibilityFilter {
+// auditingFilter returns a SharedVisibilityFilter bound to id, or nil when no
+// publisher lookup is configured (local/read-only ⇒ all shared visible). When a
+// shared read is granted ONLY because the caller is admin, a best-effort
+// admin.override audit event is recorded against the shared name.
+func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityFilter {
 	if s.publishers == nil {
 		return nil
 	}
 	return func(ctx context.Context, name string) (bool, error) {
-		return canSeeShared(ctx, s.publishers, id, name)
+		pub, ok, err := s.publishers.PublicationOf(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return true, nil // unpublished shared folder ⇒ open, nothing to audit
+		}
+		if !CanSeePublication(id, pub) {
+			return false, nil
+		}
+		if adminOverrode(id, pub) {
+			s.audit.Record(ctx, audit.ActionAdminOverride, name, auditDetail(map[string]string{
+				"visibility": string(pub.Visibility),
+				"department": pub.Department,
+			}))
+		}
+		return true, nil
 	}
 }
 
@@ -155,7 +193,7 @@ func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, err
 	if err != nil {
 		return nil, err
 	}
-	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.sharedFilter(id))
+	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
 	return wf, err
 }
 
@@ -178,7 +216,7 @@ func (s *WorkflowService) ListFiles(ctx context.Context, name string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	files, _, err := ListFilesVisibleFiltered(ctx, s.repo, id.UserID, name, s.sharedFilter(id))
+	files, _, err := ListFilesVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
 	return files, err
 }
 
@@ -218,6 +256,12 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 		if published {
 			if !CanSeePublication(id, pub) {
 				continue // hide department workflows from non-members
+			}
+			if adminOverrode(id, pub) {
+				s.audit.Record(ctx, audit.ActionAdminOverride, sum.Name, auditDetail(map[string]string{
+					"visibility": string(pub.Visibility),
+					"department": pub.Department,
+				}))
 			}
 			sum.Publisher = pub.Publisher.String()
 			sum.Visibility = string(pub.Visibility)
@@ -301,6 +345,11 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		// loudly; on overwrite we deliberately do NOT delete the shared copy.
 		return fmt.Errorf("recording publication for %q: %w", publishedName, err)
 	}
+	// Best-effort audit of the successful publish (nil-safe per audit.Service).
+	s.audit.Record(ctx, audit.ActionWorkflowPublish, publishedName, auditDetail(map[string]string{
+		"to":         string(visibility),
+		"department": department,
+	}))
 	return nil
 }
 
@@ -318,12 +367,20 @@ func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName s
 	}
 	// A user may only copy a shared workflow they can see.
 	if s.publishers != nil {
-		canSee, err := canSeeShared(ctx, s.publishers, id, sharedName)
+		pub, ok, err := s.publishers.PublicationOf(ctx, sharedName)
 		if err != nil {
 			return err
 		}
-		if !canSee {
-			return fmt.Errorf("%w: %s", ErrNotFound, sharedName)
+		if ok {
+			if !CanSeePublication(id, pub) {
+				return fmt.Errorf("%w: %s", ErrNotFound, sharedName)
+			}
+			if adminOverrode(id, pub) {
+				s.audit.Record(ctx, audit.ActionAdminOverride, sharedName, auditDetail(map[string]string{
+					"visibility": string(pub.Visibility),
+					"department": pub.Department,
+				}))
+			}
 		}
 	}
 	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
@@ -391,5 +448,12 @@ func (s *WorkflowService) SetVisibility(ctx context.Context, publishedName strin
 	if err := s.published.Upsert(ctx, publishedName, cur.Publisher, cur.SourceName, visibility, department); err != nil {
 		return fmt.Errorf("updating visibility for %q: %w", publishedName, err)
 	}
+	// Best-effort audit of the level change, carrying from/to + departments.
+	s.audit.Record(ctx, audit.ActionWorkflowVisibilityChange, publishedName, auditDetail(map[string]string{
+		"from":            string(cur.Visibility),
+		"from_department": cur.Department,
+		"to":              string(visibility),
+		"to_department":   department,
+	}))
 	return nil
 }
