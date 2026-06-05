@@ -119,3 +119,48 @@ func TestTrigger_BackwardCompatEntrypoint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, instance.VisibilityPublic, inst.Visibility)
 }
+
+// ---------------------------------------------------------------------------
+// FA #15: Trigger stamping robustness — missing stamp scenarios
+// ---------------------------------------------------------------------------
+
+// A system trigger (scheduler/webhook — no context identity) on a public
+// workflow stamps visibility=public with an empty attribution department.
+// firstDepartment of a zero identity is ""; this must persist to the instance.
+func TestTrigger_SystemTrigger_PublicWorkflow_EmptyAttributionDept(t *testing.T) {
+	h := newTriggerHarness()
+	h.repo.put(workflow.Shared(), sharedWf("pub-wf"))
+	setPublication(h, "pub-wf", workflow.VisibilityPublic, "")
+
+	// context.Background() has no identity → system/webhook trigger path.
+	id, _, err := h.engine.Trigger(context.Background(), "pub-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst, err := h.instances.Get(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, instance.VisibilityPublic, inst.Visibility)
+	assert.Equal(t, "", inst.Department,
+		"system trigger has no effective departments; attribution department must be empty")
+}
+
+// An admin trigger on a department-visibility workflow they are NOT a member of
+// stamps the run with the PUBLICATION's department (not the admin's — they have
+// none). The admin override audit path fires; the stamp comes from pubDept.
+func TestTrigger_AdminNonMember_DeptWorkflow_StampsPublicationDept(t *testing.T) {
+	h := newTriggerHarness()
+	admin := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	setPublication(h, "eng-wf", workflow.VisibilityDepartment, "engineering")
+
+	// Admin belongs to NO departments.
+	adminCtx := identity.WithIdentity(context.Background(),
+		identity.Identity{UserID: admin, Username: "adm", Role: identity.RoleAdmin})
+	id, _, err := h.engine.Trigger(adminCtx, "eng-wf", nil, "normal")
+	require.NoError(t, err)
+
+	inst, err := h.instances.Get(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, instance.VisibilityDepartment, inst.Visibility)
+	assert.Equal(t, "engineering", inst.Department,
+		"admin override must stamp the publication's department, not the admin's (empty) membership")
+}
