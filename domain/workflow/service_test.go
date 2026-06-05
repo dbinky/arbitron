@@ -1115,6 +1115,43 @@ func TestService_SetVisibility_DifferentPublisher_Unauthorized(t *testing.T) {
 	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
 }
 
+// Failure: a publisher cannot reassign their own publication to a department
+// they are NOT a member of. This pins the scope-widening protection in
+// authorizePublish: even though the caller is the publisher (passes the
+// mutation gate), they still cannot publish to a department they don't belong
+// to (fails the target-level gate). Without this check a publisher could move
+// engineering content into sales or vice versa.
+func TestService_SetVisibility_PublisherCannotWidenToForeignDept(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000e7")
+	// Publisher is in engineering only.
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	// Attempt to reassign to "sales" — a department the publisher is NOT in.
+	err := svc.SetVisibility(ctxWithRoles(publisher, false, []string{"engineering"}, nil), "eng-wf", workflow.VisibilityDepartment, "sales")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"publisher must not be able to reassign their publication to a department they don't belong to")
+
+	// Publication must remain on engineering after the rejected attempt.
+	pub, _, _ := pubs.PublicationOf(context.Background(), "eng-wf")
+	assert.Equal(t, "engineering", pub.Department, "department must be unchanged after rejected scope-widening")
+}
+
+// Error: no identity in context → ErrUnauthenticated for SetVisibility
+// (same caller() contract that all other service methods enforce).
+func TestService_SetVisibility_NoIdentity_Rejected(t *testing.T) {
+	pubs := newFakePublishers()
+	_ = pubs.Upsert(context.Background(), "shared", uuid.New(), "src", workflow.VisibilityPublic, "")
+	svc := workflow.NewWorkflowService(newFakeRepo(), pubs)
+
+	err := svc.SetVisibility(context.Background(), "shared", workflow.VisibilityPublic, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
+}
+
 // ---------------------------------------------------------------------------
 // FA #10: read-path gating — additional coverage
 // ---------------------------------------------------------------------------
