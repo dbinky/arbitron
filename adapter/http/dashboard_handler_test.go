@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -90,4 +91,104 @@ func TestDashboardHandler_ServiceErrorIs500(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.Stats(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// ---------------------------------------------------------------------------
+// FA #22 Pass 1: route wiring via the full router
+// ---------------------------------------------------------------------------
+
+// TestDashboardStatsRoute_WiredWhenServiceNonNil verifies that the /api/v1/dashboard/stats
+// route is registered and returns 200 when DashboardStats is set in RouterDeps.
+// Composition test: proves the handler is mounted in the router, not just that
+// the handler logic works.
+func TestDashboardStatsRoute_WiredWhenServiceNonNil(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	statsSvc := &fakeStatsService{out: dashboard.Stats{
+		Departments: []string{"engineering"},
+	}}
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:        svc,
+		Workflows:      wfRepo,
+		Instances:      instRepo,
+		NodeExecs:      nodeExecRepo,
+		Snapshots:      snapRepo,
+		FileReader:     fileReader,
+		EventBus:       bus,
+		Config:         cfg,
+		QueueManager:   qm,
+		QueueRepo:      qr,
+		DashboardStats: statsSvc,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/stats", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code, "GET /api/v1/dashboard/stats must be 200 when DashboardStats is set")
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	_, ok := body["departments"]
+	assert.True(t, ok, "response must contain 'departments' field")
+}
+
+// TestDashboardStatsRoute_AbsentWhenServiceNil verifies that GET /api/v1/dashboard/stats
+// returns 404 when DashboardStats is nil — the route must not be mounted at all
+// (no stale handler, correct nil-guard in NewRouterFromDeps).
+func TestDashboardStatsRoute_AbsentWhenServiceNil(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:      svc,
+		Workflows:    wfRepo,
+		Instances:    instRepo,
+		NodeExecs:    nodeExecRepo,
+		Snapshots:    snapRepo,
+		FileReader:   fileReader,
+		EventBus:     bus,
+		Config:       cfg,
+		QueueManager: qm,
+		QueueRepo:    qr,
+		// DashboardStats intentionally nil
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/stats", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, "route must 404 when DashboardStats is nil")
+}
+
+// ---------------------------------------------------------------------------
+// FA #22 Pass 2: parseDepartments robustness
+// ---------------------------------------------------------------------------
+
+// TestDashboardHandler_BlankOnlyCSV_TreatedAsNil verifies that a departments
+// param containing only whitespace or empty segments yields nil, so the service
+// applies the union-all default rather than filtering to zero departments (which
+// would produce empty stats for the caller).
+func TestDashboardHandler_BlankOnlyCSV_TreatedAsNil(t *testing.T) {
+	for _, raw := range []string{" ", "  ", ",", " , , "} {
+		svc := &fakeStatsService{}
+		h := adapthttp.NewDashboardHandler(svc)
+		u := "/api/v1/dashboard/stats?departments=" + url.QueryEscape(raw)
+		req := httptest.NewRequest(http.MethodGet, u, nil)
+		rec := httptest.NewRecorder()
+		h.Stats(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Nil(t, svc.got.Departments,
+			"blank-only param %q must yield nil departments (union default)", raw)
+	}
+}
+
+// TestDashboardHandler_SpacesAroundDepartmentNames_Trimmed verifies that spaces
+// around individual department names in the CSV are trimmed before forwarding
+// to the service, so "engineering , sales" is equivalent to "engineering,sales".
+func TestDashboardHandler_SpacesAroundDepartmentNames_Trimmed(t *testing.T) {
+	svc := &fakeStatsService{}
+	h := adapthttp.NewDashboardHandler(svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/stats?departments="+url.QueryEscape("engineering , sales"), nil)
+	rec := httptest.NewRecorder()
+	h.Stats(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"engineering", "sales"}, svc.got.Departments,
+		"spaces around department names must be trimmed before forwarding to service")
 }
