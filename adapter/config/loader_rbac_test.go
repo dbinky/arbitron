@@ -79,3 +79,33 @@ func TestLoad_RBAC_EnvOverlay(t *testing.T) {
 		t.Errorf("Leads[platform] = %#v, want %#v", cfg.Auth.RBAC.Leads["platform"], want)
 	}
 }
+
+// ARBITRON_AUTH_RBAC_DEFAULTGROUP sets the sentinel department for claimless
+// users via the generic env provider. This pins the env → koanf key mapping so
+// a rename or transformation change is caught immediately.
+func TestLoad_RBAC_DefaultGroup_EnvOverride(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_DEFAULTGROUP", "everyone")
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.DefaultGroup != "everyone" {
+		t.Errorf("DefaultGroup = %q, want everyone", cfg.Auth.RBAC.DefaultGroup)
+	}
+}
+
+// Multiple per-dept env overlays can coexist; each adds one department's leads.
+func TestLoad_RBAC_MultipleLeadsEnvOverlays(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_LEADS_ENGINEERING", "alice@corp.example")
+	t.Setenv("ARBITRON_AUTH_RBAC_LEADS_SALES", "bob@corp.example, carol-subj ")
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Auth.RBAC.Leads["engineering"], []string{"alice@corp.example"}) {
+		t.Errorf("Leads[engineering] = %v, want [alice@corp.example]", cfg.Auth.RBAC.Leads["engineering"])
+	}
+	if !reflect.DeepEqual(cfg.Auth.RBAC.Leads["sales"], []string{"bob@corp.example", "carol-subj"}) {
+		t.Errorf("Leads[sales] = %v, want [bob@corp.example carol-subj]", cfg.Auth.RBAC.Leads["sales"])
+	}
+}

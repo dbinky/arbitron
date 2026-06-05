@@ -57,3 +57,23 @@ func TestServerConfig_PublicBaseURL_RoundTrip(t *testing.T) {
 
 	assert.Equal(t, "http://localhost:8080", sc.PublicBaseURL)
 }
+
+// Happy-path: RBACConfig fields round-trip without mutation.
+func TestRBACConfig_RoundTrip(t *testing.T) {
+	cfg := RBACConfig{
+		GroupClaim:   "groups",
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"engineering": {"alice@corp.example"}},
+	}
+	assert.Equal(t, "groups", cfg.GroupClaim)
+	assert.Equal(t, "default", cfg.DefaultGroup)
+	assert.Equal(t, []string{"alice@corp.example"}, cfg.Leads["engineering"])
+}
+
+// Edge: zero-value RBACConfig is a valid "no RBAC" config (local-mode equivalent).
+func TestRBACConfig_ZeroValue(t *testing.T) {
+	var cfg RBACConfig
+	assert.Equal(t, "", cfg.GroupClaim, "empty GroupClaim means no claim is read")
+	assert.Equal(t, "", cfg.DefaultGroup, "empty DefaultGroup defers to the default sentinel in GroupConfig.DefaultGroupOr")
+	assert.Nil(t, cfg.Leads)
+}
