@@ -76,3 +76,29 @@ func TestService_Record_NewServiceWithNilStore_IsNoop(t *testing.T) {
 		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
 	})
 }
+
+// TestService_SetLogger_NilArgPreservesLogger verifies that SetLogger(nil) is
+// a safe no-op: the existing logger is not replaced, and the service does not
+// panic on subsequent Record calls (the store failure path still logs).
+func TestService_SetLogger_NilArgPreservesLogger(t *testing.T) {
+	store := &fakeStore{failErr: errors.New("db down")}
+	svc := audit.NewService(store)
+	svc.SetLogger(nil) // must not replace the logger with nil
+	assert.NotPanics(t, func() {
+		// Store fails → code tries to log; must not dereference a nil logger.
+		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
+	})
+}
+
+// TestService_Record_TwoCallsProduceDifferentIDs verifies that each Record
+// invocation stamps a fresh UUID. Reusing the same ID would collapse two
+// separate audit events into one in the store.
+func TestService_Record_TwoCallsProduceDifferentIDs(t *testing.T) {
+	store := &fakeStore{}
+	svc := audit.NewService(store)
+	svc.Record(context.Background(), audit.ActionWorkflowPublish, "wf-1", "")
+	svc.Record(context.Background(), audit.ActionWorkflowVisibilityChange, "wf-1", "")
+	require.Len(t, store.events, 2)
+	assert.NotEqual(t, store.events[0].ID, store.events[1].ID,
+		"each Record call must assign a distinct UUID")
+}

@@ -146,3 +146,22 @@ func TestAuditRepo_ListByActor_Empty(t *testing.T) {
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
 }
+
+// TestAuditRepo_ListByActor_ZeroLimit verifies that limit=0 returns nothing
+// without panicking. The SQL LIMIT 0 clause is valid and must produce an empty
+// result, not an error or a full table scan.
+func TestAuditRepo_ListByActor_ZeroLimit(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAuditRepo(db.DB)
+	ctx := context.Background()
+
+	actor := "00000000-0000-0000-0000-000000000001"
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: time.Now().UTC(), ActorID: actor,
+		Action: audit.ActionWorkflowPublish, Target: "wf",
+	}))
+
+	got, err := repo.ListByActor(ctx, actor, 0)
+	require.NoError(t, err)
+	assert.Empty(t, got, "LIMIT 0 must return no rows")
+}
