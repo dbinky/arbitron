@@ -1114,3 +1114,55 @@ func TestService_SetVisibility_DifferentPublisher_Unauthorized(t *testing.T) {
 	err := svc.SetVisibility(ctxWithRoles(other, false, []string{"engineering"}, nil), "shared", workflow.VisibilityDepartment, "engineering")
 	assert.ErrorIs(t, err, workflow.ErrUnauthorized)
 }
+
+// ---------------------------------------------------------------------------
+// FA #10: read-path gating — additional coverage
+// ---------------------------------------------------------------------------
+
+// Success: nil publishers (local mode) means all shared workflows are visible via
+// Load, regardless of caller identity. auditingFilter returns nil → no gating.
+func TestService_Load_NilPublishers_SharedVisible(t *testing.T) {
+	repo := newFakeRepo()
+	svc := workflow.NewWorkflowService(repo, nil) // nil publishers = local mode
+	caller := uuid.MustParse("00000000-0000-0000-0000-0000000000f1")
+	repo.bucket(workflow.Shared())["any-shared"] = wf("any-shared")
+
+	got, err := svc.Load(ctxWithDepts(caller, false), "any-shared")
+	require.NoError(t, err, "nil publishers must make all shared workflows visible (local openness)")
+	assert.Equal(t, "any-shared", got.Name)
+}
+
+// Success: admin can Load a department-visibility shared workflow even without
+// department membership. CanSeePublication grants admin access unconditionally.
+func TestService_Load_DeptVisibility_Admin_Succeeds(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000f2")
+	admin := uuid.MustParse("00000000-0000-0000-0000-0000000000f3")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	// admin has NO engineering membership — still must see the workflow.
+	got, err := svc.Load(ctxWithDepts(admin, true /* admin */), "eng-wf")
+	require.NoError(t, err, "admin must bypass department visibility gating")
+	assert.Equal(t, "eng-wf", got.Name)
+}
+
+// Failure: ListFiles of a department-visibility shared workflow returns ErrNotFound
+// for a non-member — the filter is applied to ListFilesVisibleFiltered the same
+// way it is to LoadVisibleFiltered. Existence must not be revealed.
+func TestService_ListFiles_DeptVisibility_NonMember_NotFound(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000f4")
+	outsider := uuid.MustParse("00000000-0000-0000-0000-0000000000f5")
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	_, err := svc.ListFiles(ctxWithDepts(outsider, false, "sales"), "eng-wf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound,
+		"ListFiles must return ErrNotFound for dept workflow when caller is not a member (no existence leak)")
+}
