@@ -23,7 +23,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 8 | Published-workflow visibility schema/repo (`adapter/sqlite` migration 010 + PublicationOf/Upsert — visibility+department columns, shared→public default migration) | [x] | [x] | Done |
 | 9 | Visibility type + ports (`domain/workflow` Visibility, Publication, widened PublisherLookup/PublishedStore) | [x] | [x] | Done |
 | 10 | Workflow read-path gating (`domain/workflow/service.go` canSeePublication on List/Load/LoadVisible/Copy/ListFiles + engine Trigger — ErrNotFound, no existence leak, nil-lookup local openness) | [x] | [x] | Done |
-| 11 | Publish/SetVisibility role gating (`domain/workflow/service.go` + HTTP `PUT /workflows/{name}/visibility` + MCP `workflow_set_visibility` — member→dept, lead/admin→public, copy-then-record invariant) | [ ] | [ ] | |
+| 11 | Publish/SetVisibility role gating (`domain/workflow/service.go` + HTTP `PUT /workflows/{name}/visibility` + MCP `workflow_set_visibility` — member→dept, lead/admin→public, copy-then-record invariant) | [x] | [ ] | |
 | 12 | Audit infrastructure (`domain/audit` + `adapter/sqlite` migration 011 EventRepo — void best-effort Service.Record, nil-safe, actor-from-context) | [ ] | [ ] | |
 | 13 | Workflow audit emission (`domain/workflow/service.go` — publish / visibility_change / admin.override only when admin is sole reason) | [ ] | [ ] | |
 | 14 | Instance visibility schema/model (`adapter/sqlite` migration 012 + index idx_instances_dept_vis; `domain/instance` self-owned Visibility + Department fields, repo round-trip) | [ ] | [ ] | |

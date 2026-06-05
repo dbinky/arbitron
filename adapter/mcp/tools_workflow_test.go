@@ -1118,6 +1118,99 @@ func TestWorkflowTool_Copy_SharedMissing_NotFound(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "not found")
 }
 
+// --- SetVisibility ---
+
+// Happy path: a lead of the publication's department can promote it to public.
+func TestWorkflowTool_SetVisibility_LeadPromotesToPublic(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolWithIdentity(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	}, identity.Identity{
+		UserID: mcpTestUserID, Username: "lead", Role: identity.RoleUser,
+		Departments: []string{"engineering"}, LedDepartments: []string{"engineering"},
+	})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.Equal(t, workflow.VisibilityPublic, store.pub["eng-wf"].Visibility)
+}
+
+// Success: admin can change visibility of any publication regardless of whether
+// they are the publisher or a department member. Admin is both authorized to
+// mutate and authorized to publish to public.
+func TestWorkflowTool_SetVisibility_AdminCanChange(t *testing.T) {
+	otherPublisher := uuid.New()
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: otherPublisher, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.Equal(t, workflow.VisibilityPublic, store.pub["eng-wf"].Visibility)
+}
+
+// Failure: a plain member (not lead, not admin) cannot promote a publication to
+// public — the role gate at authorizePublish is enforced on the MCP surface.
+func TestWorkflowTool_SetVisibility_MemberCannotPromoteToPublic(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	// callTool uses RoleUser with no led departments.
+	result := callTool(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+// Failure: an unknown publication name returns a not-found error, not a server
+// error. This verifies the ErrNotFound → ToolResultError mapping on the MCP surface.
+func TestWorkflowTool_SetVisibility_UnknownName_NotFound(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "ghost", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// Error: an invalid visibility string (e.g. "private") is rejected with an
+// invalid-visibility error before reaching the store.
+func TestWorkflowTool_SetVisibility_InvalidVisibility(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{
+		"eng-wf": {Publisher: mcpTestUserID, SourceName: "src", Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "eng-wf", "visibility": "private",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid visibility")
+}
+
+// Edge: an unsafe workflow name (e.g. "../escape") is rejected at the adapter
+// input validation layer, not passed through to the service.
+func TestWorkflowTool_SetVisibility_InvalidName(t *testing.T) {
+	store := &fakePublishedStore{pub: map[string]workflow.Publication{}}
+	srv, _ := newPublishServer(t, store)
+
+	result := callToolAdmin(t, srv, "workflow_set_visibility", map[string]any{
+		"name": "../escape", "visibility": "public",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid workflow name")
+}
+
 func ctxWithMCPIdentity() context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: mcpTestUserID, Username: "tester", Role: identity.RoleUser})
 }
