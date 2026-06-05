@@ -14,14 +14,15 @@ import (
 
 // fakeProvUserRepo is a fake UserRepository capturing provisioning calls.
 type fakeProvUserRepo struct {
-	bySubject     map[string]*User
-	getErr        error
-	createErr     error
-	created       []*User
-	updatedNames  map[uuid.UUID]string
-	updateNameErr error
-	createCalls   int
-	depts         map[uuid.UUID][]string
+	bySubject       map[string]*User
+	getErr          error
+	createErr       error
+	created         []*User
+	updatedNames    map[uuid.UUID]string
+	updateNameErr   error
+	createCalls     int
+	depts           map[uuid.UUID][]string
+	replaceDeptErr  error
 }
 
 func newFakeProvUserRepo() *fakeProvUserRepo {
@@ -85,6 +86,9 @@ func (r *fakeProvUserRepo) ListDepartments(_ context.Context, id uuid.UUID) ([]s
 }
 
 func (r *fakeProvUserRepo) ReplaceDepartments(_ context.Context, id uuid.UUID, departments []string) error {
+	if r.replaceDeptErr != nil {
+		return r.replaceDeptErr
+	}
 	r.depts[id] = append([]string(nil), departments...)
 	return nil
 }
@@ -332,5 +336,35 @@ func TestResolve_ReplacesDepartmentsOnEachLogin(t *testing.T) {
 	_, _ = p.Resolve(ctx, Claims{Subject: "ed-subject", Username: "ed", Groups: []string{"eng"}})
 	if !reflect.DeepEqual(repo.depts[u1.ID], []string{"eng"}) {
 		t.Errorf("snapshot = %v, want [eng] after re-login", repo.depts[u1.ID])
+	}
+}
+
+// Failure: if ReplaceDepartments fails, Resolve must return an error and not
+// return a user whose department state is inconsistent with their claims.
+func TestResolve_SnapshotFailurePropagates(t *testing.T) {
+	boom := errors.New("dept store down")
+	repo := newFakeProvUserRepo()
+	repo.replaceDeptErr = boom
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	_, err := p.Resolve(context.Background(), Claims{Subject: "fiona-subject", Username: "fiona"})
+	if !errors.Is(err, boom) {
+		t.Errorf("expected wrapped dept-store error, got %v", err)
+	}
+}
+
+// Edge: bootstrap admin also gets departments snapshotted — the snapshot is
+// unconditional (runs after the role path, for both new and existing users).
+func TestResolve_AdminAlsoGetsDepartmentsSnapshotted(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"admin-subject"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.Resolve(context.Background(), Claims{
+		Subject: "admin-subject", Username: "ga", Groups: []string{"engineering"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, identity.RoleAdmin, u.Role)
+	if !reflect.DeepEqual(repo.depts[u.ID], []string{"engineering"}) {
+		t.Errorf("admin snapshot = %v, want [engineering] (admins are not exempt from dept snapshot)", repo.depts[u.ID])
 	}
 }

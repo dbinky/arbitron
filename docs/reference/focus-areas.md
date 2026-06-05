@@ -16,7 +16,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 1 | Group resolution helper (`domain/identity/groups.go` — NormalizeDept, ResolveDepartments default-group fallback, LedDepartments subject/email match, EffectiveMembership) | [x] | [x] | Done |
 | 2 | RBAC config (`domain/config` RBACConfig + `adapter/config` ToGroupConfig — groupclaim/defaultgroup/leads, per-dept env overlay, normalization) | [x] | [x] | Done |
 | 3 | Department persistence (`adapter/sqlite` user_departments migration 009 + repo ListDepartments/ReplaceDepartments — transactional replace, FK cascade) | [x] | [x] | Done |
-| 4 | Provisioner (`domain/instance/provisioner.go` — live admin re-eval promote/demote, department snapshot at login, verified-email gating) | [ ] | [ ] | |
+| 4 | Provisioner (`domain/instance/provisioner.go` — live admin re-eval promote/demote, department snapshot at login, verified-email gating) | [x] | [ ] | |
 | 5 | Claim extraction (`adapter/oidc/provider.go` + `identity.Claims.Groups` — configurable group claim, array-or-string tolerance) | [ ] | [ ] | |
 | 6 | Identity enrichment + middleware (`domain/identity/identity.go` Departments/LedDepartments/InDepartment/LeadsDepartment; `adapter/http/auth_middleware.go` population, local-mode default-group admin) | [ ] | [ ] | |
 | 7 | Whoami endpoint (`adapter/http/me_handler.go` — projection shape, []-not-null, no subject/email leak, 401 on no identity) | [ ] | [ ] | |
