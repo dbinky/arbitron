@@ -164,3 +164,22 @@ func TestTrigger_AdminNonMember_DeptWorkflow_StampsPublicationDept(t *testing.T)
 	assert.Equal(t, "engineering", inst.Department,
 		"admin override must stamp the publication's department, not the admin's (empty) membership")
 }
+
+// ---------------------------------------------------------------------------
+// FA #28: cross-package visibility constant equality
+// ---------------------------------------------------------------------------
+
+// TestWorkflowAndInstanceVisibilityConstants_AreEqual verifies that the
+// workflow-side and instance-side visibility constant strings are identical.
+// The engine uses these interchangeably: a workflow publication's Visibility
+// is directly assigned to the instance stamp in resolveStamp. A silent
+// divergence (e.g., workflow uses "dept" but instance uses "department") would
+// break the entire visibility gating system without failing any isolated unit test.
+func TestWorkflowAndInstanceVisibilityConstants_AreEqual(t *testing.T) {
+	assert.Equal(t, string(workflow.VisibilityPrivate), string(instance.VisibilityPrivate),
+		"workflow.VisibilityPrivate must equal instance.VisibilityPrivate (shared DB CHECK constraint value)")
+	assert.Equal(t, string(workflow.VisibilityDepartment), string(instance.VisibilityDepartment),
+		"workflow.VisibilityDepartment must equal instance.VisibilityDepartment")
+	assert.Equal(t, string(workflow.VisibilityPublic), string(instance.VisibilityPublic),
+		"workflow.VisibilityPublic must equal instance.VisibilityPublic")
+}

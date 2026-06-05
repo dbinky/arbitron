@@ -47,7 +47,7 @@ A review pass is only checked when the checklist produces a passing result for t
 |---|---|---|---|
 | 26 | Group resolution + Provisioner + Middleware (claim → normalize → snapshot → context identity: a department resolved at login is the SAME set used for request-time authz) | [x] | Done |
 | 27 | Config + All RBAC predicates (groupclaim/leads/defaultgroup actually drive department/lead/admin decisions; missing claim ⇒ default group everywhere) | [x] | Done |
-| 28 | Workflow visibility + Instance visibility (a workflow's visibility transfers to the instance stamp; the three levels mean the same thing on both sides) | [ ] | |
+| 28 | Workflow visibility + Instance visibility (a workflow's visibility transfers to the instance stamp; the three levels mean the same thing on both sides) | [x] | Done |
 | 29 | Read gating + List authz consistency (workflow canSeePublication and instance listConstraint enforce the SAME department/public/admin rule across surfaces) | [ ] | |
 | 30 | canView/canIntervene + Adapter mapping (the 404-vs-403 distinction is preserved through HTTP and MCP, not collapsed at the adapter) | [ ] | |
 | 31 | Audit infrastructure + emission sites (workflow + intervention) (every consequential mutation is recorded once, with the right actor and action, and never fails the operation) | [ ] | |
