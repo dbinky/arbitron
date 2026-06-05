@@ -7,35 +7,52 @@ import "errors"
 // providerEnvVarTable below.
 var ErrUnknownProvider = errors.New("opencode: no env mapping for provider")
 
-// providerEnvVarTable is the single source of truth for opencode's per-provider
-// subprocess env contract: which environment variables carry the API key and
-// (optional) base-url override for each provider.
-//
-// LIMITATION (opencode v0.0.55, the installed Go variant): this binary has NO
-// `--model` / provider-routing flag. Headless model selection is implicit and
-// driven entirely by which provider key is present in the env — and in
-// practice this build authenticates Anthropic via ANTHROPIC_API_KEY. The
-// non-anthropic entries below are forward-looking: they encode the documented
-// per-provider env names so that a future opencode build with explicit
-// provider routing can be swapped in WITHOUT touching the adapter. On the
-// installed binary, open-weight / non-Anthropic routing is effectively limited
-// to whatever the binary auto-selects from the injected key.
-var providerEnvVarTable = map[string]struct {
+// providerEnvEntry describes a provider's opencode subprocess env contract.
+//   - keyVar/baseURLVar: the env var names carrying the API key and optional
+//     base-url override (single-key providers).
+//   - aws: when true, the provider authenticates via the AWS credential quartet
+//     (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / optional AWS_SESSION_TOKEN /
+//     AWS_REGION) instead of a single key, and keyVar/baseURLVar are unused.
+type providerEnvEntry struct {
 	keyVar     string
 	baseURLVar string
-}{
-	"anthropic":  {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"},
-	"openai":     {"OPENAI_API_KEY", "OPENAI_BASE_URL"},
-	"openrouter": {"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"},
-	"azure":      {"AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"},
+	aws        bool
+}
+
+// providerEnvVarTable is the single source of truth for opencode's per-provider
+// subprocess env contract. Keys are opencode provider ids (the output of
+// mapProviderID), so the table and the `-m` flag share one vocabulary.
+//
+// Local vs cloud Ollama: both are the same opencode provider id "ollama". The
+// cloud connection carries a key → the single-key path sets OLLAMA_API_KEY (+
+// base-url). The LOCAL connection is keyless: its binding has a BaseURL and a
+// nil/empty RevealKey, so opencodeEnv sets only OLLAMA_BASE_URL. Keyless is a
+// per-binding property (detected at reveal time, restricted to the ollama
+// provider), not a table flag.
+var providerEnvVarTable = map[string]providerEnvEntry{
+	"anthropic":      {keyVar: "ANTHROPIC_API_KEY", baseURLVar: "ANTHROPIC_BASE_URL"},
+	"openai":         {keyVar: "OPENAI_API_KEY", baseURLVar: "OPENAI_BASE_URL"},
+	"openrouter":     {keyVar: "OPENROUTER_API_KEY", baseURLVar: "OPENROUTER_BASE_URL"},
+	"azure":          {keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
+	"ollama":         {keyVar: "OLLAMA_API_KEY", baseURLVar: "OLLAMA_BASE_URL"},
+	"amazon-bedrock": {aws: true},
 }
 
 // providerEnvVars resolves the key and base-url environment variable names for
-// a provider. ok is false for an unknown (or empty) provider.
+// a provider. ok is false for an unknown (or empty) provider. AWS providers
+// return ok=true with empty key/base-url names (the caller routes them to the
+// AWS-quartet builder via providerEnvEntryFor).
 func providerEnvVars(provider string) (keyVar, baseURLVar string, ok bool) {
 	v, ok := providerEnvVarTable[provider]
 	if !ok {
 		return "", "", false
 	}
 	return v.keyVar, v.baseURLVar, true
+}
+
+// providerEnvEntryFor returns the full entry (including the aws flag) for a
+// provider; ok is false for an unknown/empty provider.
+func providerEnvEntryFor(provider string) (providerEnvEntry, bool) {
+	v, ok := providerEnvVarTable[provider]
+	return v, ok
 }

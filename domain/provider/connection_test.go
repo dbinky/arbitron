@@ -112,3 +112,32 @@ func TestValidateConnection_AzureEmptyAPIVersion_Rejected(t *testing.T) {
 	err := provider.ValidateConnection(c)
 	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
 }
+
+// Input-validation: a bedrock connection requires both region and access-key-id
+// in Extras; either missing (or nil extras) yields ErrBedrockCredentialsRequired.
+func TestValidateConnection_BedrockRequiresRegionAndAccessKey(t *testing.T) {
+	cases := []struct {
+		name   string
+		extras map[string]string
+		wantOK bool
+	}{
+		{"both present", map[string]string{"region": "us-east-1", "access-key-id": "AKID"}, true},
+		{"missing region", map[string]string{"access-key-id": "AKID"}, false},
+		{"missing access-key-id", map[string]string{"region": "us-east-1"}, false},
+		{"empty region value", map[string]string{"region": "", "access-key-id": "AKID"}, false},
+		{"nil extras", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := provider.ValidateConnection(provider.Connection{
+				Name: "bd", Provider: "bedrock", Extras: tc.extras,
+			})
+			if tc.wantOK && err != nil {
+				t.Fatalf("want ok, got %v", err)
+			}
+			if !tc.wantOK && !errors.Is(err, provider.ErrBedrockCredentialsRequired) {
+				t.Fatalf("want ErrBedrockCredentialsRequired, got %v", err)
+			}
+		})
+	}
+}

@@ -153,6 +153,15 @@ func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan stri
 	joined := strings.Join(spec.Args, " ")
 
 	var lines []string
+	// The modern opencode adapter probes `--version` once before its first run;
+	// answer with a compatible version so the probe passes hermetically.
+	if strings.Contains(joined, "--version") {
+		f.mu.Unlock()
+		ch := make(chan string, 1)
+		ch <- "opencode 99.0.0"
+		close(ch)
+		return ch, func() error { return nil }, nil
+	}
 	// An armed chat done-script takes precedence for chat (assessor) calls.
 	if f.chatDoneScript != nil && isChatInvocation(joined) {
 		idx := f.chatCalls

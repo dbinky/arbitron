@@ -15,6 +15,177 @@ import (
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
+// ---------------------------------------------------------------------------
+// env_providers.go — table coverage for the full provider set
+// ---------------------------------------------------------------------------
+
+// All non-AWS, keyed providers map to a key var + base-url var.
+func TestProviderEnvVars_FullKeyedSet(t *testing.T) {
+	cases := []struct{ prov, keyVar, baseURLVar string }{
+		{"anthropic", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"},
+		{"openai", "OPENAI_API_KEY", "OPENAI_BASE_URL"},
+		{"openrouter", "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"},
+		{"azure", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"},
+		{"ollama", "OLLAMA_API_KEY", "OLLAMA_BASE_URL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.prov, func(t *testing.T) {
+			k, b, ok := providerEnvVars(tc.prov)
+			require.True(t, ok)
+			assert.Equal(t, tc.keyVar, k)
+			assert.Equal(t, tc.baseURLVar, b)
+		})
+	}
+}
+
+// amazon-bedrock is registered and flagged as an AWS-quartet provider.
+func TestProviderEnvVars_BedrockIsAWS(t *testing.T) {
+	entry, ok := providerEnvVarTable["amazon-bedrock"]
+	require.True(t, ok, "amazon-bedrock must be registered")
+	assert.True(t, entry.aws, "bedrock must route to the AWS-quartet env builder")
+}
+
+// Ollama base-url var name is exposed for the keyless local path.
+func TestProviderEnvVars_OllamaBaseURLVar(t *testing.T) {
+	_, baseURLVar, ok := providerEnvVars("ollama")
+	require.True(t, ok)
+	assert.Equal(t, "OLLAMA_BASE_URL", baseURLVar)
+}
+
+// ---------------------------------------------------------------------------
+// env.go — bedrock AWS-quartet + keyless local-ollama branches
+// ---------------------------------------------------------------------------
+
+// bedrockBinding builds a binding whose Extras carry region + access-key-id and
+// whose RevealKey returns the sealed payload (bare secret or JSON composite).
+func bedrockBinding(region, accessKeyID, sealedPayload string, err error) provider.ResolvedBinding {
+	return provider.ResolvedBinding{
+		Provider: "amazon-bedrock",
+		Extras: map[string]string{
+			"region":        region,
+			"access-key-id": accessKeyID,
+		},
+		RevealKey: func(_ context.Context) (string, error) {
+			if err != nil {
+				return "", err
+			}
+			return sealedPayload, nil
+		},
+	}
+}
+
+// EDGE-CASE / HAPPY — bedrock bare-secret payload expands to the 3-var quartet
+// (no session token): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION.
+func TestOpencodeEnv_BedrockBareSecret(t *testing.T) {
+	b := bedrockBinding("us-east-1", "AKIA-TEST", "raw-secret-key", nil)
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	id, ok := envValue(env, "AWS_ACCESS_KEY_ID")
+	require.True(t, ok)
+	assert.Equal(t, "AKIA-TEST", id)
+	secret, ok := envValue(env, "AWS_SECRET_ACCESS_KEY")
+	require.True(t, ok)
+	assert.Equal(t, "raw-secret-key", secret)
+	region, ok := envValue(env, "AWS_REGION")
+	require.True(t, ok)
+	assert.Equal(t, "us-east-1", region)
+	_, ok = envValue(env, "AWS_SESSION_TOKEN")
+	assert.False(t, ok, "no session token => AWS_SESSION_TOKEN omitted")
+}
+
+// EDGE-CASE — bedrock JSON composite payload expands to the FULL quartet incl.
+// AWS_SESSION_TOKEN.
+func TestOpencodeEnv_BedrockComposite(t *testing.T) {
+	payload := `{"secret":"composite-secret","session_token":"sess-123"}`
+	b := bedrockBinding("eu-west-1", "AKIA-2", payload, nil)
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	secret, _ := envValue(env, "AWS_SECRET_ACCESS_KEY")
+	assert.Equal(t, "composite-secret", secret)
+	tok, ok := envValue(env, "AWS_SESSION_TOKEN")
+	require.True(t, ok)
+	assert.Equal(t, "sess-123", tok)
+	region, _ := envValue(env, "AWS_REGION")
+	assert.Equal(t, "eu-west-1", region)
+}
+
+// INPUT-VALIDATION — bedrock missing region or access-key-id fails before reveal.
+func TestOpencodeEnv_BedrockMissingExtras(t *testing.T) {
+	for _, tc := range []struct{ region, id string }{
+		{"", "AKIA"},
+		{"us-east-1", ""},
+	} {
+		b := bedrockBinding(tc.region, tc.id, "secret", nil)
+		env, err := opencodeEnv(context.Background(), b)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrBedrockConfig)
+		assert.Nil(t, env, "no partial env on missing bedrock config")
+	}
+}
+
+// ERROR — bedrock RevealKey failure aborts with no env.
+func TestOpencodeEnv_BedrockRevealError(t *testing.T) {
+	b := bedrockBinding("us-east-1", "AKIA", "", errors.New("decrypt boom"))
+	env, err := opencodeEnv(context.Background(), b)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decrypt boom")
+	assert.Nil(t, env)
+}
+
+// SECURITY — neither the bedrock secret nor session token leaks into logs; both
+// reach the child env only.
+func TestOpencodeEnv_BedrockSecretsNotLogged(t *testing.T) {
+	const secret = "super-secret-aws"
+	const sess = "super-secret-session"
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	payload := `{"secret":"` + secret + `","session_token":"` + sess + `"}`
+	b := bedrockBinding("us-east-1", "AKIA", payload, nil)
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	assert.NotContains(t, buf.String(), secret)
+	assert.NotContains(t, buf.String(), sess)
+	gotSecret, _ := envValue(env, "AWS_SECRET_ACCESS_KEY")
+	assert.Equal(t, secret, gotSecret)
+}
+
+// EDGE-CASE — keyless local Ollama: a binding with no RevealKey but a BaseURL
+// sets ONLY OLLAMA_BASE_URL, no key var, no error.
+func TestOpencodeEnv_LocalOllamaKeyless(t *testing.T) {
+	b := provider.ResolvedBinding{
+		Provider:  "ollama",
+		BaseURL:   "http://localhost:11434",
+		RevealKey: nil, // keyless local path
+	}
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	base, ok := envValue(env, "OLLAMA_BASE_URL")
+	require.True(t, ok)
+	assert.Equal(t, "http://localhost:11434", base)
+	_, ok = envValue(env, "OLLAMA_API_KEY")
+	assert.False(t, ok, "keyless local ollama must NOT set a key var")
+}
+
+// SECURITY — keyless launches are restricted to the allowlist: a NON-ollama
+// provider with a nil RevealKey must NOT run unauthenticated even with a BaseURL.
+func TestOpencodeEnv_KeylessRestrictedToOllama(t *testing.T) {
+	b := provider.ResolvedBinding{
+		Provider:  "openai",
+		BaseURL:   "https://api.openai.com",
+		RevealKey: nil,
+	}
+	env, err := opencodeEnv(context.Background(), b)
+	require.Error(t, err, "non-ollama keyless launch must be rejected")
+	assert.Nil(t, env)
+}
+
 // bindingWithKey builds a ResolvedBinding whose RevealKey returns the given
 // sentinel (or err when non-nil).
 func bindingWithKey(prov, baseURL, sentinel string, err error) provider.ResolvedBinding {

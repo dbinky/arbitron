@@ -53,6 +53,10 @@ var ErrConnectionExists = errors.New("connection already exists")
 // provider connection lacks a non-empty "api-version" entry in Extras.
 var ErrAzureAPIVersionRequired = errors.New("azure connections require an api-version in extras")
 
+// ErrBedrockCredentialsRequired is returned by ValidateConnection when a bedrock
+// connection lacks a non-empty "region" or "access-key-id" entry in Extras.
+var ErrBedrockCredentialsRequired = errors.New("bedrock connections require region and access-key-id in extras")
+
 // azureProviders is the set of providers that require an api-version in Extras.
 // Centralized so later phases can extend the Azure set in one place.
 var azureProviders = map[string]bool{
@@ -69,6 +73,11 @@ func ValidateConnection(c Connection) error {
 	if azureProviders[c.Provider] {
 		if c.Extras["api-version"] == "" {
 			return ErrAzureAPIVersionRequired
+		}
+	}
+	if c.Provider == "bedrock" {
+		if c.Extras["region"] == "" || c.Extras["access-key-id"] == "" {
+			return ErrBedrockCredentialsRequired
 		}
 	}
 	return nil

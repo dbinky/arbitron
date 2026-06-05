@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
@@ -38,23 +39,32 @@ type Config struct {
 	Timeout time.Duration
 	// MaxResponseBytes caps per-request stdout bytes; 0 means no cap.
 	MaxResponseBytes int64
+	// AllowAllTools enables the open-by-default allow-all permission posture
+	// (operator knob (a)). It is narrowed further by a per-profile AllowedTools
+	// allowlist on the binding (knob (b)). The composition root sets this true
+	// for open-by-default; the zero value (false) is a closed posture so a
+	// caller that has not yet wired the knob still compiles and stays safe.
+	AllowAllTools bool
 }
 
-// Provider implements engine.AgentProvider by driving the `opencode` CLI in
-// single-shot headless mode (`opencode -p <prompt> -c <cwd> -q -f text`).
-//
-// SINGLE-SHOT CONTRACT (spike finding, spec §9 fallback): the installed
-// opencode v0.0.55 exposes no headless session-resume primitive, so each
-// mission is one independent invocation and AgentMission.SessionID is unused.
-// MULTI-PROVIDER LIMITATION: this build has no `--model`/provider-routing flag
-// and authenticates Anthropic via ANTHROPIC_API_KEY; open-weight routing is
-// limited on this binary. See env_providers.go and args.go.
+// Provider implements engine.AgentProvider by driving the modern `opencode run
+// <prompt> -m <provider>/<model>` contract: per-provider auth is injected via
+// the subprocess env (never argv/logs), tool/permission selection follows an
+// open-by-default posture, and a one-time version probe rejects an incompatible
+// binary. Each mission is one independent `run` invocation (no session resume),
+// so AgentMission.SessionID is unused. See args.go, posture.go, env.go,
+// env_providers.go, and version.go.
 type Provider struct {
 	binding          provider.ResolvedBinding
 	binPath          string
 	runner           claudecli.CommandRunner
 	timeout          time.Duration
 	maxResponseBytes int64
+	allowAllTools    bool
+
+	// probeOnce memoizes the binary version probe across missions.
+	probeOnce sync.Once
+	probeErr  error
 }
 
 var _ engine.AgentProvider = (*Provider)(nil)
@@ -73,21 +83,42 @@ func New(cfg Config) *Provider {
 		runner:           runner,
 		timeout:          cfg.Timeout,
 		maxResponseBytes: cfg.MaxResponseBytes,
+		allowAllTools:    cfg.AllowAllTools,
 	}
 }
 
-// RunAgent runs a single-shot opencode mission and folds its output into an
-// AgentResult. SessionID is never threaded (single-shot contract).
+// RunAgent runs a modern `opencode run` mission and folds its output into an
+// AgentResult. SessionID is never threaded (one independent run per mission).
+//
+// Strict ordering guarantees a fail-closed launch with no partial state:
+// WorkDir guard → build args (fail-closed on unknown provider / empty model) →
+// build credential env (fail-closed on RevealKey/bedrock-config) → memoized
+// version probe → run. A RevealKey failure, unknown provider, or empty model
+// produces ZERO subprocess launches (not even the version probe).
 func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*engine.AgentResult, error) {
 	if mission.WorkDir == "" {
 		return nil, ErrWorkDirRequired
 	}
 
-	// Build the credential env FIRST so a RevealKey / unknown-provider failure
-	// aborts before any subprocess launch (no partial-env launch).
+	// Build args FIRST so an unknown provider / empty model fails closed with NO
+	// launch (never a silent tool-less run). buildArgs names the provider in the
+	// error; we add the node/model context here.
+	args, err := buildArgs(mission, p.binding, buildPosture(p.binding, p.allowAllTools))
+	if err != nil {
+		return nil, fmt.Errorf("opencode agent (provider %q, model %q): %w", p.binding.Provider, mission.Model, err)
+	}
+
+	// Build the credential env BEFORE any subprocess so a RevealKey / config
+	// failure aborts before launch (no partial-env, no probe).
 	env, err := opencodeEnv(ctx, p.binding)
 	if err != nil {
 		return nil, fmt.Errorf("opencode: build env: %w", err)
+	}
+
+	// Version probe (memoized): an incompatible/missing binary fails closed here,
+	// before the run launches.
+	if err := p.ensureCompatible(ctx); err != nil {
+		return nil, err
 	}
 
 	timeout := mission.Timeout
@@ -99,7 +130,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	spec := claudecli.RunSpec{
 		Bin:              p.binPath,
-		Args:             buildArgs(mission),
+		Args:             args,
 		Dir:              mission.WorkDir,
 		Env:              env,
 		MaxResponseBytes: p.maxResponseBytes,
@@ -138,6 +169,15 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		// TokensIn left zero (coarse subprocess accounting; text mode emits no
 		// structured usage). SessionID empty per the single-shot contract.
 	}, nil
+}
+
+// ensureCompatible runs the version probe at most once per Provider. A failure
+// is memoized so every subsequent mission fails closed without re-probing.
+func (p *Provider) ensureCompatible(ctx context.Context) error {
+	p.probeOnce.Do(func() {
+		p.probeErr = probeVersion(ctx, p.runner, p.binPath)
+	})
+	return p.probeErr
 }
 
 // resolveBinary returns the opencode binary path. An explicit path is returned

@@ -1,64 +1,131 @@
-// Package opencode implements the engine.AgentProvider port by driving the
-// `opencode` CLI in single-shot headless mode (`opencode -p <prompt> -c <cwd>`).
-//
-// IMPORTANT — installed-binary reality (opencode v0.0.55, the older Go variant):
-// this build has NO `run` subcommand, NO `--model`/provider-routing flag, NO
-// `--resume`/`--session`, and NO `serve`. Its real headless contract is
-//
-//	opencode -p "<prompt>" -c <cwd> [-q] [-f text|json]
-//
-// with auth read from the process env (Anthropic via ANTHROPIC_API_KEY). The
-// adapter is therefore a SINGLE-SHOT mission-per-step backend (no SessionID
-// threading) per the spike finding's spec §9 fallback. See env_providers.go for
-// the documented multi-provider limitation.
+// Package opencode implements engine.AgentProvider by driving the modern
+// `opencode run <prompt> -m <provider>/<model>` contract with per-provider auth
+// injected via the subprocess env (never argv/logs) and an open-by-default
+// permission posture. See args.go (run contract), posture.go (permissions),
+// env_providers.go (auth table), and version.go (binary version probe).
 package opencode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/arbitron/arbitron/adapter/awssig"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
-// opencodeEnv returns procenv.BaseEnv() with the provider-keyed API key and
-// base-url variables appended for the opencode subprocess. The key is fetched
-// from binding.RevealKey(ctx) at call time and placed ONLY in the returned
-// child env; it is never logged or written to a file. Injected var names that
-// would shadow the base allowlist are rejected.
+// ErrBedrockConfig is returned when a bedrock binding lacks the required
+// non-secret Extras (region, access-key-id). It is a configuration-class error
+// raised BEFORE any secret is revealed.
+var ErrBedrockConfig = errors.New("opencode: bedrock requires region and access-key-id in Extras")
+
+// keylessProviders may authenticate with no key (local self-hosted endpoints).
+// SECURITY: this allowlist restricts keyless launches so non-self-hosted
+// providers cannot run unauthenticated even if a binding omits its RevealKey.
+var keylessProviders = map[string]bool{"ollama": true}
+
+// opencodeEnv returns procenv.BaseEnv() with the provider-keyed credential
+// variables appended for the opencode subprocess. The secret is fetched from
+// binding.RevealKey(ctx) at call time and placed ONLY in the returned child env;
+// it is never logged or written to a file.
 //
-// On RevealKey error or an unknown provider, NO env is produced (nil is
-// returned alongside the error) so the caller cannot launch with a partial env.
+// On any error (unknown provider, missing bedrock config, RevealKey failure,
+// base-name collision) NO env is produced (nil is returned alongside the error)
+// so the caller cannot launch with a partial env.
 func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
-	keyVar, baseURLVar, ok := providerEnvVars(binding.Provider)
+	entry, ok := providerEnvEntryFor(binding.Provider)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
 	}
 
-	// SECURITY: a provider mapping that names a base-allowlist var (PATH, HOME,
-	// ...) could shadow / spoof the controlled base env. Reject before touching
-	// the secret. Mirrors adapter/process/env.go's node-env collision guard.
-	if err := rejectBaseNames(keyVar, baseURLVar); err != nil {
+	// AWS-quartet providers (bedrock) take a dedicated builder.
+	if entry.aws {
+		return bedrockEnv(ctx, binding)
+	}
+
+	// SECURITY: reject injected names that would shadow the base allowlist.
+	if err := rejectBaseNames(entry.keyVar, entry.baseURLVar); err != nil {
 		return nil, err
 	}
 
-	// Reveal the key LAST, only after validation, so a rejected/unknown
-	// provider never even decrypts the secret. The revealed value flows only
-	// into the returned slice below — never into a log line.
+	// Keyless local path (e.g. local Ollama): no RevealKey => set only base-url.
+	// Restricted to the keyless allowlist so other providers cannot run
+	// unauthenticated.
 	if binding.RevealKey == nil {
-		return nil, fmt.Errorf("opencode: binding has no RevealKey — a connection is required")
+		if !keylessProviders[binding.Provider] {
+			return nil, fmt.Errorf("opencode: provider %q requires a key (nil RevealKey)", binding.Provider)
+		}
+		if binding.BaseURL == "" {
+			return nil, fmt.Errorf("opencode: keyless provider %q requires a BaseURL", binding.Provider)
+		}
+		env := procenv.BaseEnv()
+		if entry.baseURLVar != "" {
+			env = append(env, entry.baseURLVar+"="+binding.BaseURL)
+		}
+		return env, nil
 	}
+
 	key, err := binding.RevealKey(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	env := procenv.BaseEnv()
-	env = append(env, keyVar+"="+key)
+	// A non-nil RevealKey may still return an empty key (a keyless connection);
+	// treat empty as base-url-only, but only for keyless-allowed providers.
+	if key != "" {
+		env = append(env, entry.keyVar+"="+key)
+	} else if !keylessProviders[binding.Provider] {
+		return nil, fmt.Errorf("opencode: provider %q produced an empty key", binding.Provider)
+	}
 	// An empty BaseURL omits the var entirely so opencode falls back to its own
 	// default endpoint rather than seeing an empty override.
-	if binding.BaseURL != "" {
-		env = append(env, baseURLVar+"="+binding.BaseURL)
+	if binding.BaseURL != "" && entry.baseURLVar != "" {
+		env = append(env, entry.baseURLVar+"="+binding.BaseURL)
+	}
+	if key == "" && binding.BaseURL == "" {
+		return nil, fmt.Errorf("opencode: provider %q produced no key and no BaseURL", binding.Provider)
+	}
+	return env, nil
+}
+
+// bedrockEnv builds the AWS credential quartet for a bedrock binding. region and
+// access-key-id come from non-secret Extras; the secret-access-key (and optional
+// session token) come from the sealed RevealKey payload, parsed by the SHARED
+// awssig.ParseCredential (the SAME parser Phase 3's bedrock chat adapter uses).
+func bedrockEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
+	region := binding.Extras["region"]
+	accessKeyID := binding.Extras["access-key-id"]
+	if region == "" || accessKeyID == "" {
+		return nil, ErrBedrockConfig
+	}
+	// SECURITY: reject any base-name collision before revealing.
+	if err := rejectBaseNames("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"); err != nil {
+		return nil, err
+	}
+	if binding.RevealKey == nil {
+		return nil, fmt.Errorf("opencode: bedrock binding has no RevealKey — a connection is required")
+	}
+	sealed, err := binding.RevealKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// SHARED parser: tolerant bare-string-or-JSON composite (adapter/awssig).
+	cred, err := awssig.ParseCredential(sealed)
+	if err != nil {
+		// awssig.ErrMissingSecret (empty/empty-secret) maps to a config-class error.
+		return nil, fmt.Errorf("opencode: bedrock secret-access-key: %w", err)
+	}
+
+	env := procenv.BaseEnv()
+	env = append(env,
+		"AWS_ACCESS_KEY_ID="+accessKeyID,
+		"AWS_SECRET_ACCESS_KEY="+cred.SecretAccessKey,
+		"AWS_REGION="+region,
+	)
+	if cred.SessionToken != "" {
+		env = append(env, "AWS_SESSION_TOKEN="+cred.SessionToken)
 	}
 	return env, nil
 }
