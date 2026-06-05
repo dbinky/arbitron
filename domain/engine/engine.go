@@ -352,11 +352,21 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 // with no identity returns ErrNotFound (reveal nothing) and never queries the
 // repository.
 func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
-	owner, ok := ownerConstraint(ctx)
+	lc, ok := listConstraint(ctx)
 	if !ok {
 		return nil, instance.ErrNotFound // no identity: reveal nothing
 	}
-	filters.OwnerID = owner // service-set; ignore any caller-supplied value
+	if lc.Unconstrained {
+		// Admin: clear any visibility narrowing so the repo returns all rows.
+		filters.OwnerID = nil
+		filters.Departments = nil
+		filters.IncludePublic = false
+		return e.instances.List(ctx, filters)
+	}
+	// Non-admin: service-set the disjunction; ignore any caller-supplied values.
+	filters.OwnerID = lc.OwnerID
+	filters.Departments = lc.Departments
+	filters.IncludePublic = lc.IncludePublic
 	return e.instances.List(ctx, filters)
 }
 

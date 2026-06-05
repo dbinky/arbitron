@@ -7,21 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// ownerConstraint returns the OwnerID filter the caller is allowed to see:
-// nil for an admin (unconstrained), or a pointer to the caller's own UserID
-// for a non-admin. The bool reports whether an identity was present.
-func ownerConstraint(ctx context.Context) (*uuid.UUID, bool) {
-	id, ok := identity.FromContext(ctx)
-	if !ok {
-		return nil, false
-	}
-	if id.IsAdmin() {
-		return nil, true
-	}
-	uid := id.UserID
-	return &uid, true
-}
-
 // canView reports whether the context identity may read an instance owned by
 // ownerID: admins may read any instance; a non-admin only their own. It is the
 // shared gate consumed by the scoped read service methods (get/trace/variables)
@@ -32,4 +17,32 @@ func canView(ctx context.Context, ownerID uuid.UUID) bool {
 		return false
 	}
 	return id.IsAdmin() || id.UserID == ownerID
+}
+
+// listFilter is the service-derived visibility scope a caller may list.
+type listFilter struct {
+	OwnerID       *uuid.UUID // nil => unconstrained (admin)
+	Departments   []string
+	IncludePublic bool
+	Unconstrained bool // admin: no visibility narrowing at all
+}
+
+// listConstraint computes the visibility scope for ListInstances from the
+// context identity. The bool reports whether an identity was present (false =>
+// reveal nothing). An admin is unconstrained. A non-admin is scoped to the
+// disjunction owner=self OR public OR department-member.
+func listConstraint(ctx context.Context) (listFilter, bool) {
+	id, ok := identity.FromContext(ctx)
+	if !ok {
+		return listFilter{}, false
+	}
+	if id.IsAdmin() {
+		return listFilter{Unconstrained: true}, true
+	}
+	uid := id.UserID
+	return listFilter{
+		OwnerID:       &uid,
+		Departments:   id.Departments,
+		IncludePublic: true,
+	}, true
 }
