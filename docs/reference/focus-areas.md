@@ -1,14 +1,11 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of **Phase 6 — Multi-User & Auth**
-(`docs/specs/arbitron-phase6-spec.md`) for correctness, isolation, security, and
-robustness.
+This document tracks the systematic review of the **RBAC & Department Dashboard** feature (`docs/specs/rbac-spec.md`) for correctness, visibility isolation, role enforcement, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
 
-A review pass is only checked when the checklist (in `RALPH.md`) produces a passing
-result for that area.
+A review pass is only checked when the checklist produces a passing result for that area.
 
 ---
 
@@ -16,30 +13,31 @@ result for that area.
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Auth config & mode (`domain/config` AuthConfig/OIDC/Session/BootstrapAdmins, `adapter/config/loader.go` — defaults, org-mode fail-fast validation, secret redaction) | [x] | [x] | Done |
-| 2 | Identity package (`domain/identity` — `Identity`/`Role`/`Mode`, `WithIdentity`/`FromContext`/`MustFromContext`, no import of `domain/instance`) | [x] | [x] | Done |
-| 3 | Identity ports (`domain/identity` — `SessionRepository`, `OIDCProvider`, `Claims`, `TokenRepository`) | [x] | [x] | Done |
-| 4 | Users schema & repo (migration 003 sessions+`users.subject`/`users.email`; `instance.User`; `UserRepository` GetByID/GetBySubject/Create/UpdateUsername/List/UpdateRole/CountAdmins; sqlc) | [x] | [x] | Done |
-| 5 | Session store (`adapter/sqlite` SessionRepo — SHA-256 hash-on-store, expiry filter, `DeleteExpired`, sweep; secrecy test) | [x] | [x] | Done |
-| 6 | OIDC adapter (`adapter/oidc` — discovery, `AuthCodeURL`, code exchange, ID-token signature/issuer/audience verification, claims projection) | [x] | [x] | Done |
-| 7 | Auth middleware (`adapter/http/auth_middleware.go` — local-mode admin injection; org-mode session→bearer resolve order; 401 vs login-redirect; covers REST/`/mcp`/WS) | [x] | [x] | Done |
-| 8 | `/auth` handlers (`adapter/http` — login/callback/logout, signed state+nonce cookie, session cookie HttpOnly/SameSite/Secure, open-redirect-safe `next`) | [x] | [x] | Done |
-| 9 | API tokens store & format (migration 004 `api_tokens`; `arb_<prefix>_<secret>`; SHA-256 of full token; `TokenRepository`; secrecy test) | [x] | [x] | Done |
-| 10 | Token service & surface (`TokenService` Mint/List/Revoke owner-scoped; REST `/api/v1/tokens`; MCP `token_create`/`token_list`/`token_revoke`; plaintext once, hash never echoed) | [x] | [x] | Done |
-| 11 | Bearer-token auth path (`AuthMiddleware.resolve` bearer branch — prefix pre-filter, hashed `GetByHash`, async `TouchLastUsed`, revoked→401; REST/`/mcp`/WS) | [x] | [x] | Done |
-| 12 | Device-code login (migration 005 `device_codes`; `/auth/device/code`/`token`/`approve`/`deny`; RFC-8628 errors; at-most-once consume→mint Arbitron token; expiry sweep) | [x] | [x] | Done |
-| 13 | JIT provisioning & bootstrap admin (`instance.Provisioner.Resolve` — GetBySubject-else-Create, default User, bootstrap promote email-ci-then-subject; wired in OIDC callback) | [x] | [x] | Done |
-| 14 | Role management (`instance.UserService.SetRole` admin-only; bootstrap-admin floor; last-admin guard; REST `/api/v1/users`+`/role`; MCP `user_list`/`user_set_role`) | [x] | [x] | Done |
-| 15 | Workflow scope & repo (`domain/workflow` `Scope`/`Private`/`Shared`; scope-aware `WorkflowRepository`; adapter path resolution `users/<id>` vs `shared/`; traversal+scope-escape guards; 0o700) | [x] | [x] | Done |
-| 16 | Scope resolution at call sites (`domain/workflow/resolve.go` `LoadVisible`; scope-aware `FileReader` owner threading via `engine.withOwner`/`OwnerFromContext`; HTTP/MCP/engine callers) | [x] | [x] | Done |
-| 17 | Workflow service authz (`domain/workflow/service.go` — create/edit/delete→private, edit-shared→`ErrSharedReadOnly`, list private+shared tagged, `LoadAs` admin-gated→`ErrUnauthorized`) | [x] | [x] | Done |
-| 18 | Publish/copy & publisher store (migration 006 `published_workflows`; `PublishedWorkflowRepo`; `Publish` publisher-only-overwrite+unique name; `Copy` independent; atomic `CopyTree`; REST+MCP) | [x] | [x] | Done |
-| 19 | Flat-store migration & run-shared-directly (marker-guarded startup move into `users/<default-user>/`; `Trigger(ctx,...)` resolves visible scope, owner=triggering user) | [x] | [x] | Done |
-| 20 | Instance list scoping (`instance.ListFilters.OwnerID`; `domain/engine/authz.go` `ownerConstraint`/`canView`; `Engine.ListInstances` service-set owner; `instances.sql` predicate; HTTP/MCP repointed) | [x] | [x] | Done |
-| 21 | Instance read scoping (scoped `GetInstance`/`GetTrace`/`GetNodeTrace`/`GetVariables`/`GetVariableHistory` → `ErrNotFound` for non-viewers; HTTP+MCP reads) | [x] | [x] | Done |
-| 22 | WebSocket scoping (per-instance connect authz before `Accept`; system stream `ScopedEvent` per-connection ownership filter, fail-closed; admins see all) | [x] | [x] | Done |
-| 23 | Interactive participation gate (`conversationHandler.loadAndValidate` owner-or-admin chokepoint → WS/REST/MCP `HandleMessage`/`EndSession`; `interactive_get_history` scoped) | [x] | [x] | Done |
-| 24 | Intervention authz & attribution (ctx-threaded Pause/Resume/Cancel/SetPriority/Retry/Rerun + `authorizeIntervention`; migration 007 `instance_interventions`; `recordIntervention` actor≠owner; `instance.intervened` event; REST `GET /interventions`+MCP `trace_interventions`) | [x] | [x] | Done |
+| 1 | Group resolution helper (`domain/identity/groups.go` — NormalizeDept, ResolveDepartments default-group fallback, LedDepartments subject/email match, EffectiveMembership) | [ ] | [ ] | |
+| 2 | RBAC config (`domain/config` RBACConfig + `adapter/config` ToGroupConfig — groupclaim/defaultgroup/leads, per-dept env overlay, normalization) | [ ] | [ ] | |
+| 3 | Department persistence (`adapter/sqlite` user_departments migration 009 + repo ListDepartments/ReplaceDepartments — transactional replace, FK cascade) | [ ] | [ ] | |
+| 4 | Provisioner (`domain/instance/provisioner.go` — live admin re-eval promote/demote, department snapshot at login, verified-email gating) | [ ] | [ ] | |
+| 5 | Claim extraction (`adapter/oidc/provider.go` + `identity.Claims.Groups` — configurable group claim, array-or-string tolerance) | [ ] | [ ] | |
+| 6 | Identity enrichment + middleware (`domain/identity/identity.go` Departments/LedDepartments/InDepartment/LeadsDepartment; `adapter/http/auth_middleware.go` population, local-mode default-group admin) | [ ] | [ ] | |
+| 7 | Whoami endpoint (`adapter/http/me_handler.go` — projection shape, []-not-null, no subject/email leak, 401 on no identity) | [ ] | [ ] | |
+| 8 | Published-workflow visibility schema/repo (`adapter/sqlite` migration 010 + PublicationOf/Upsert — visibility+department columns, shared→public default migration) | [ ] | [ ] | |
+| 9 | Visibility type + ports (`domain/workflow` Visibility, Publication, widened PublisherLookup/PublishedStore) | [ ] | [ ] | |
+| 10 | Workflow read-path gating (`domain/workflow/service.go` canSeePublication on List/Load/LoadVisible/Copy/ListFiles + engine Trigger — ErrNotFound, no existence leak, nil-lookup local openness) | [ ] | [ ] | |
+| 11 | Publish/SetVisibility role gating (`domain/workflow/service.go` + HTTP `PUT /workflows/{name}/visibility` + MCP `workflow_set_visibility` — member→dept, lead/admin→public, copy-then-record invariant) | [ ] | [ ] | |
+| 12 | Audit infrastructure (`domain/audit` + `adapter/sqlite` migration 011 EventRepo — void best-effort Service.Record, nil-safe, actor-from-context) | [ ] | [ ] | |
+| 13 | Workflow audit emission (`domain/workflow/service.go` — publish / visibility_change / admin.override only when admin is sole reason) | [ ] | [ ] | |
+| 14 | Instance visibility schema/model (`adapter/sqlite` migration 012 + index idx_instances_dept_vis; `domain/instance` self-owned Visibility + Department fields, repo round-trip) | [ ] | [ ] | |
+| 15 | Trigger stamping + override (`domain/engine` resolveStamp / TriggerWithDepartment — public/department/private stamping, validated per-trigger override, webhook/token persisted-dept) | [ ] | [ ] | |
+| 16 | Instance list authorization (`domain/engine/authz.go` listConstraint + `adapter/sqlite` disjunctive query — owner OR public OR department-in-set, service-set filters) | [ ] | [ ] | |
+| 17 | canView vs canIntervene split (`domain/engine/authz.go` + intervention path — peer read 403-not-404 vs non-viewer 404; owner/lead/admin intervene) | [ ] | [ ] | |
+| 18 | Intervention audit emission (`domain/engine` auditActionFor + SetAuditRecorder — lead_intervention / admin.override, void recorder) | [ ] | [ ] | |
+| 19 | Instance adapter surface (`adapter/http/instance_handler.go` + `adapter/mcp/tools_instance.go` — department+visibility on read/list, optional department trigger param, override→400, ErrForbidden→403) | [ ] | [ ] | |
+| 20 | Dashboard stats service + clamp (`domain/dashboard` — department clamp admins-exempt/union-default/non-member-empty, window clamp [1h,30d]) | [ ] | [ ] | |
+| 21 | Dashboard aggregates (`adapter/sqlite` DashboardRepo — queue health point-in-time, throughput buckets, outcomes incl p95, per-workflow ranked; visibility IN (department,public), empty-dept short-circuit) | [ ] | [ ] | |
+| 22 | Dashboard endpoint + wiring (`adapter/http` GET /dashboard/stats thin handler, route in authenticated group, main.go composition) | [ ] | [ ] | |
+| 23 | Dashboard frontend data layer (`dashboard/src/api` — Me/DashboardStats types, api.me(), api.dashboard.stats(); request URL/param contract) | [ ] | [ ] | |
+| 24 | Dashboard tab + view (`dashboard/src` NavBar tab before Queue, /dashboard route, DashboardView tiles reusing UsageStats pattern, throughput strip, per-workflow table) | [ ] | [ ] | |
+| 25 | Department selector + live refresh (`dashboard/src` DepartmentSelector single-vs-multi behavior, union default; debounced useSystemWebSocket refresh) | [ ] | [ ] | |
 
 ---
 
@@ -47,16 +45,16 @@ result for that area.
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 25 | Auth middleware + session store (cookie→hashed lookup→identity; expired/forged cookie never matches; sweep removes only past-due) | [x] | Done |
-| 26 | Auth middleware + token service (bearer→hashed `GetByHash`→identity; revoked token fails closed; one user cannot resolve another's token) | [x] | Done |
-| 27 | OIDC handlers + provisioner (callback exchange→JIT create→bootstrap-admin promotion; state/nonce binding; email persisted for later floor checks) | [x] | Done |
-| 28 | Device-code + token service (approval consumes the request exactly once and mints exactly one Arbitron token; never returns a raw IdP token) | [x] | Done |
-| 29 | Role management + bootstrap floor (`SetRole` and `Provisioner.IsBootstrapAdmin` share one rule; bootstrap admin cannot be demoted; last admin cannot be demoted) | [x] | Done |
-| 30 | Workflow scope/repo + workflow service authz (scope resolved from identity, not caller; edit-shared rejected; non-owner cannot reach another user's private path) | [x] | Done |
-| 31 | Publish/copy + published store (publisher-only-overwrite and unique-name authority in `published_workflows`; re-publish leaves running instances' snapshots untouched) | [x] | Done |
-| 32 | Trigger(ctx) + instance ownership + list/read scoping (run-shared-directly sets owner=triggering user; that owner is exactly what list/read scoping keys on) | [x] | Done |
-| 33 | Instance list/read scoping + MCP tools (REST and MCP return the identical scoped set for the same identity — the MCP/REST parity test, extended) | [x] | Done |
-| 34 | Intervention authz + attribution (gate allows owner-or-admin; an attribution row is written iff actor≠owner; the row is visible to owner+admins only) | [x] | Done |
+| 26 | Group resolution + Provisioner + Middleware (claim → normalize → snapshot → context identity: a department resolved at login is the SAME set used for request-time authz) | [ ] | |
+| 27 | Config + All RBAC predicates (groupclaim/leads/defaultgroup actually drive department/lead/admin decisions; missing claim ⇒ default group everywhere) | [ ] | |
+| 28 | Workflow visibility + Instance visibility (a workflow's visibility transfers to the instance stamp; the three levels mean the same thing on both sides) | [ ] | |
+| 29 | Read gating + List authz consistency (workflow canSeePublication and instance listConstraint enforce the SAME department/public/admin rule across surfaces) | [ ] | |
+| 30 | canView/canIntervene + Adapter mapping (the 404-vs-403 distinction is preserved through HTTP and MCP, not collapsed at the adapter) | [ ] | |
+| 31 | Audit infrastructure + emission sites (workflow + intervention) (every consequential mutation is recorded once, with the right actor and action, and never fails the operation) | [ ] | |
+| 32 | Trigger override + List authz (an instance stamped via per-trigger override is visible to exactly the right department audience; override cannot widen scope) | [ ] | |
+| 33 | Dashboard service clamp + aggregates + /me (the department set from /me drives the clamp, which drives the query; a non-member cannot pull another department's stats) | [ ] | |
+| 34 | Local-mode inertness across all areas (departments, visibility gating, list authz, intervention split, dashboard selector all no-op as a single default-group admin) | [ ] | |
+| 35 | Migration correctness (009–012) (existing shared→public, existing instances private/default-group; up/down pairs; no data loss; CHECK constraints) | [ ] | |
 
 ---
 
@@ -65,22 +63,21 @@ result for that area.
 ### Single Area Reviews — What To Check
 
 **Pass 1 (Correctness & Coverage):**
-- All public functions have test coverage across the 5 categories (happy, success, failure, error, edge).
-- The code does what the design doc says and satisfies the relevant spec success criterion (§8).
-- Error handling is thorough — no silent failures; auth/authz failures fail **closed**.
-- Module boundaries are clean (`domain/` imports no adapter; `domain/identity` imports no `domain/instance`).
+- All public functions have test coverage (happy / success / failure / error / edge)
+- The code does what the spec and design doc say it should
+- Error handling is thorough — no silent failures; the right sentinel (`ErrNotFound` vs `ErrForbidden`) is returned
+- Module boundaries are clean (no leaking types across boundaries; `domain/instance` does not import `domain/workflow`)
 
-**Pass 2 (Robustness & Security / Isolation):**
-- Authorization lives in the domain service, so REST, WS, and MCP enforce the same rule — verify all three, not just REST.
-- Non-owner non-admin access returns `ErrNotFound` (existence never leaked), and a caller cannot widen scope by supplying another owner.
-- Secret hygiene: session/API tokens stored only as SHA-256 hashes, plaintext returned at most once, never echoed, never logged.
-- Local mode stays frictionless (default admin, no credential); org mode is the only mode that enforces credentials.
-- Edge cases: empty/expired/forged credentials, missing identity in context, traversal/cross-scope path escapes, re-publish during a running instance.
+**Pass 2 (Robustness & Isolation):**
+- Code aligns to the spirit of the design, not just surface conformance
+- Visibility isolation holds — a user cannot see or confirm the existence of another department's data, and cannot widen scope by supplying input
+- Local mode stays inert for this area
+- Test assertions test real risks (cross-department denial, override rejection, admin override, demotion-on-login), not just happy-path ceremony
 
 ### Paired Area Reviews — What To Check
 
-Paired reviews verify two components integrate correctly:
-- Data flows cleanly across the boundary (identity → scope → owner filter; claims → user → role).
-- Error propagation works end-to-end (auth failure → 401; authz failure → ErrNotFound/ErrForbidden; resolve error → instance failure).
-- No assumption in one component the other doesn't satisfy (e.g. the hashing scheme, the bootstrap-admin rule, the snapshot-at-trigger invariant).
-- Integration/parity tests cover the seam (especially REST↔MCP parity and the cross-surface isolation guarantee), not just unit happy paths.
+Paired reviews verify that two components integrate correctly:
+- The same authorization rule is enforced on both sides of the boundary (domain service, not adapter)
+- Data (department, visibility) flows cleanly and means the same thing across the boundary
+- Error propagation works end-to-end (404 vs 403 preserved through REST and MCP)
+- The integration tests cover the seams between the pair, including the local-mode no-op path
