@@ -137,3 +137,57 @@ func TestService_Load_PublicWorkflow_AdminNoOverrideEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, store.events)
 }
+
+// ---------------------------------------------------------------------------
+// FA #13 Pass 2: robustness — List and Copy admin override emission sites
+// ---------------------------------------------------------------------------
+
+// Success: admin List includes a department-only workflow they are NOT a member
+// of → exactly one ActionAdminOverride event is emitted for that entry in the
+// list (same adminOverrode gate as Load, but via the List code path).
+func TestService_List_AdminOverride_EmitsAuditEvent(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	store := &recordingStore{}
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	adminID := uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
+
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetAudit(audit.NewService(store))
+
+	// Admin has NO engineering membership → override.
+	_, err := svc.List(ctxWithRoles(adminID, true, nil, nil))
+	require.NoError(t, err)
+
+	require.Len(t, store.events, 1, "List must emit AdminOverride for each dept-only entry visible only via admin")
+	assert.Equal(t, audit.ActionAdminOverride, store.events[0].Action)
+	assert.Equal(t, "eng-wf", store.events[0].Target)
+}
+
+// Success: admin Copy of a department-visibility workflow they are NOT a member
+// of → one ActionAdminOverride event is emitted. The ordering differs from
+// Publish: audit fires before CopyTree (the intent is already consequential).
+func TestService_Copy_AdminOverride_EmitsAuditEvent(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	store := &recordingStore{}
+	publisher := uuid.MustParse("00000000-0000-0000-0000-0000000000b1")
+	adminID := uuid.MustParse("00000000-0000-0000-0000-0000000000b2")
+
+	repo.bucket(workflow.Shared())["eng-wf"] = wf("eng-wf")
+	_ = pubs.Upsert(context.Background(), "eng-wf", publisher, "src", workflow.VisibilityDepartment, "engineering")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetAudit(audit.NewService(store))
+
+	// Admin has NO engineering membership → override.
+	err := svc.Copy(ctxWithRoles(adminID, true, nil, nil), "eng-wf", "my-copy")
+	require.NoError(t, err)
+
+	require.Len(t, store.events, 1, "Copy must emit AdminOverride when admin is sole reason for access")
+	assert.Equal(t, audit.ActionAdminOverride, store.events[0].Action)
+	assert.Equal(t, "eng-wf", store.events[0].Target)
+}
