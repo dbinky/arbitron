@@ -399,11 +399,15 @@ func (e *Engine) authorizeView(ctx context.Context, id uuid.UUID) (*instance.Ins
 	return e.GetInstance(ctx, id)
 }
 
-// authorizeIntervention loads the instance and confirms the caller may act on
-// it (owner or admin). It returns the loaded instance so the caller reuses it
-// (avoiding a second Get). A non-viewer gets ErrNotFound so a write probe cannot
-// distinguish "exists but forbidden" from "absent" (existence not leaked),
-// consistent with the read posture.
+// authorizeIntervention loads the instance and confirms the caller may MUTATE
+// it (owner, a lead of the run's department, or an admin). It returns the loaded
+// instance so the caller reuses it (avoiding a second Get).
+//
+// A caller with no view access gets ErrNotFound so a write probe cannot
+// distinguish "exists but forbidden" from "absent" (existence not leaked). A
+// caller who CAN view but cannot intervene — a department peer — gets
+// ErrForbidden (403): they already see the run in their list, so existence is
+// not a secret, but a control action is denied.
 func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
 	inst, err := e.instances.Get(ctx, id)
 	if err != nil {
@@ -412,8 +416,13 @@ func (e *Engine) authorizeIntervention(ctx context.Context, id uuid.UUID) (*inst
 	if inst == nil {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
+	// No view access => hide existence (404), preserving the non-leak posture.
 	if !canView(ctx, inst) {
 		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+	}
+	// Viewable but not owner/lead/admin (a department peer) => 403, not 404.
+	if !canIntervene(ctx, inst) {
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrForbidden)
 	}
 	return inst, nil
 }
