@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/audit"
@@ -190,4 +191,47 @@ func TestService_Copy_AdminOverride_EmitsAuditEvent(t *testing.T) {
 	require.Len(t, store.events, 1, "Copy must emit AdminOverride when admin is sole reason for access")
 	assert.Equal(t, audit.ActionAdminOverride, store.events[0].Action)
 	assert.Equal(t, "eng-wf", store.events[0].Target)
+}
+
+// ---------------------------------------------------------------------------
+// FA #31: best-effort audit — SetVisibility still succeeds on store failure
+// ---------------------------------------------------------------------------
+
+// failingStore returns an error on every Append, simulating an unavailable DB.
+type failingStore struct{ err error }
+
+func (f *failingStore) Append(_ context.Context, _ audit.Event) error    { return f.err }
+func (f *failingStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
+	return nil, f.err
+}
+
+// TestService_SetVisibility_AuditStoreFailure_OperationSucceeds verifies that
+// a store failure during Record() inside SetVisibility does NOT propagate to
+// the caller. Audit is best-effort and void — the mutation must still succeed.
+// If this contract is broken, a transient audit-DB outage would make all
+// visibility changes fail, which is strictly worse than silent audit loss.
+func TestService_SetVisibility_AuditStoreFailure_OperationSucceeds(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	owner := uuid.MustParse("00000000-0000-0000-0000-000000000c01")
+
+	seedPrivate(repo, owner, "wf")
+	// First publish so SetVisibility has an existing record to update.
+	svcSetup := workflow.NewWorkflowService(repo, pubs)
+	require.NoError(t, svcSetup.Publish(
+		ctxWithRoles(owner, false, []string{"engineering"}, nil),
+		"wf", "shared", workflow.VisibilityDepartment, "engineering"))
+
+	// Wire a failing audit store — every Append returns an error.
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetAudit(audit.NewService(&failingStore{err: errors.New("db unavailable")}))
+
+	// SetVisibility must succeed even though the audit store is broken.
+	// Use admin=true so the role gate (lead/admin required for public) is satisfied;
+	// the test focuses on audit failure, not authorization.
+	err := svc.SetVisibility(
+		ctxWithRoles(owner, true, []string{"engineering"}, []string{"engineering"}),
+		"shared", workflow.VisibilityPublic, "")
+	assert.NoError(t, err,
+		"SetVisibility must succeed when the audit store fails — audit is best-effort")
 }
