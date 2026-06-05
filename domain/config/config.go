@@ -198,6 +198,14 @@ type LLMConfig struct {
 	// agent to emit unbounded tool output (e.g. `dd if=/dev/urandom`).
 	// Without this, an unbounded ReadBytes('\n') would OOM the engine.
 	MaxResponseBytes int64
+	// AgentAllowAllTools is the operator knob (a) for the opencode agent path's
+	// open-by-default permission posture. It defaults to TRUE (open-by-default):
+	// non-claude agent providers driven through opencode run with the allow-all
+	// posture so a basic agent mission works out of the box. Set it to false to
+	// disable the allow-all posture for every opencode-driven agent provider.
+	// Per-profile ResolvedBinding.AllowedTools (knob (b)) narrows independently
+	// of this switch.
+	AgentAllowAllTools bool
 }
 
 // LoggingConfig holds logging settings.

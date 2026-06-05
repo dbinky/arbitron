@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/anthropicapi"
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
+	"github.com/arbitron/arbitron/adapter/bedrock"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	"github.com/arbitron/arbitron/adapter/openrouter"
@@ -27,6 +29,22 @@ const (
 	providerLiteLLM      = "litellm"
 	providerAzureOpenAI  = "azure-openai"
 	providerAzureFoundry = "azure-foundry"
+	// providerOpenAI and providerOllama route to the OpenAI-compatible
+	// adapter/openrouter chat adapter. Local vs cloud Ollama are distinguished
+	// by the connection's BaseURL + presence/absence of a key, not by the
+	// provider string.
+	providerOpenAI = "openai"
+	providerOllama = "ollama"
+	// providerOllamaCloud is an accepted alias for the ollama family; it is
+	// normalized to providerOllama in ChatProviderFor.
+	providerOllamaCloud = "ollama-cloud"
+	// providerAnthropicAPI routes to the Anthropic Messages-API chat adapter
+	// (adapter/anthropicapi), distinct from the empty/claude-cli path.
+	providerAnthropicAPI = "anthropic-api"
+	// providerBedrock (and the amazon-bedrock alias) route to the SigV4-signed
+	// Bedrock Converse chat adapter (adapter/bedrock).
+	providerBedrock       = "bedrock"
+	providerAmazonBedrock = "amazon-bedrock"
 )
 
 // Deps carries the shared construction inputs the Factory threads into each
@@ -55,12 +73,19 @@ type Deps struct {
 	// OpencodeTimeout is the default per-mission opencode timeout; <=0 means no
 	// default.
 	OpencodeTimeout time.Duration
-	// MaxResponseBytes caps the per-request response/stdout read across ALL three
-	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry)
-	// bound their response-body read, and opencode bounds its subprocess stdout.
-	// 0 means no cap. SECURITY: a non-zero cap bounds the OOM DoS from an
-	// attacker-pointed base_url (or hostile subprocess) streaming an unbounded body.
+	// MaxResponseBytes caps the per-request response/stdout read across ALL the
+	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry,
+	// anthropicapi, bedrock) bound their response-body read, and opencode bounds
+	// its subprocess stdout. 0 means no cap. SECURITY: a non-zero cap bounds the
+	// OOM DoS from an attacker-pointed base_url (or hostile subprocess) streaming
+	// an unbounded body.
 	MaxResponseBytes int64
+	// OpencodeAllowAllTools is the operator knob (a) for the agent path's
+	// open-by-default permission posture. It defaults to true (open-by-default)
+	// in the composition root; a false value disables the allow-all posture for
+	// every opencode-driven provider. Per-profile ResolvedBinding.AllowedTools
+	// (knob (b)) narrows independently of this switch.
+	OpencodeAllowAllTools bool
 }
 
 // Factory holds the shared construction inputs and selects a concrete backend
@@ -90,9 +115,11 @@ func normalizeProvider(p string) string {
 
 // ChatProviderFor returns the concrete engine.ChatProvider for a chat-kind
 // binding, selected by binding.Provider. An empty (or "claude-cli") provider
-// returns the claude-cli ChatAdapter; openrouter/litellm map to adapter/openrouter;
-// azure-openai/azure-foundry map to adapter/azurefoundry. Unknown providers
-// return ErrUnknownProvider.
+// returns the claude-cli ChatAdapter; openrouter/litellm and the
+// OpenAI-compatible openai/ollama (incl. the ollama-cloud alias) map to
+// adapter/openrouter; azure-openai/azure-foundry map to adapter/azurefoundry;
+// anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
+// alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
 	switch normalizeProvider(b.Provider) {
 	case "", providerClaudeCLI:
@@ -100,7 +127,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 			return nil, errors.New("provider: claude-cli chat adapter is not configured for the empty-provider path")
 		}
 		return f.deps.ClaudeChat, nil
-	case providerOpenRouter, providerLiteLLM:
+	case providerOpenRouter, providerLiteLLM, providerOpenAI, providerOllama, providerOllamaCloud:
 		return openrouter.New(openrouter.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
@@ -109,6 +136,22 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 		}), nil
 	case providerAzureOpenAI, providerAzureFoundry:
 		return azurefoundry.New(azurefoundry.Config{
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
+		}), nil
+	case providerAnthropicAPI:
+		return anthropicapi.New(anthropicapi.Config{
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
+		}), nil
+	case providerBedrock, providerAmazonBedrock:
+		// Now is left nil here so the adapter uses time.Now in production; tests
+		// inject a fixed clock through the adapter's own Config.
+		return bedrock.New(bedrock.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
 			Timeout:          f.deps.HTTPTimeout,
@@ -131,12 +174,18 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 		}
 		return f.deps.ClaudeAgent, nil
 	default:
+		// Fail-closed: a provider opencode cannot drive (unknown to its provider
+		// map) surfaces a clear agent error at RunAgent time naming the provider;
+		// it is NEVER a silent tool-less run. AllowAllTools carries the
+		// open-by-default posture (knob (a)); per-profile AllowedTools (knob (b))
+		// narrows independently inside opencode.
 		return opencode.New(opencode.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.OpencodeBinaryPath,
 			Runner:           f.deps.Runner,
 			Timeout:          f.deps.OpencodeTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
+			AllowAllTools:    f.deps.OpencodeAllowAllTools,
 		}), nil
 	}
 }

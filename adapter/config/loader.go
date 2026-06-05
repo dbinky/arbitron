@@ -41,8 +41,11 @@ func defaults() map[string]interface{} {
 		// SECURITY: 256 MB per-request stdout cap; bounds the OOM DoS from
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
-		"llm.maxresponsebytes":  int64(256 * 1024 * 1024),
-		"logging.level":         "info",
+		"llm.maxresponsebytes": int64(256 * 1024 * 1024),
+		// Open-by-default agent posture: non-claude agent providers driven through
+		// opencode run with the allow-all permission posture unless disabled.
+		"llm.agentallowalltools": true,
+		"logging.level":          "info",
 		"logging.file":          "arbitron.log",
 		"tracing.enabled":       false,
 		"tracing.exportdir":     "./traces",
@@ -140,6 +143,15 @@ llm:
   # maxresponsebytes: 268435456   # 256 MiB
   #   Per-request stdout cap. Bounds OOM DoS from hostile prompts that flood
   #   tool output. 0 = no cap (test convenience only).
+  #
+  # agentallowalltools: true
+  #   Open-by-default agent posture (knob (a)). Non-claude agent providers
+  #   driven through opencode run with the allow-all permission posture so a
+  #   basic agent mission works out of the box. Set false to disable allow-all
+  #   for every opencode-driven agent provider; per-profile allowedtools
+  #   (knob (b)) narrows independently. NOTE: the opencode agent path requires a
+  #   modern opencode binary (>= the adapter's minimum version, enforced at the
+  #   first agent call).
 script:
   # envpassthrough: []
   #   SECURITY: names (not values) of engine environment variables that script

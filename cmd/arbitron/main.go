@@ -86,6 +86,7 @@ func main() {
 
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newMCPCmd())
+	rootCmd.AddCommand(newConnectionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -469,10 +470,14 @@ func initDomain(_ context.Context) (*domainStack, error) {
 		// Runner nil -> opencode uses the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
-		// three credential-bearing backends (openrouter, azurefoundry, opencode).
-		// Dropping this lets an attacker-pointed base_url stream an unbounded body
-		// into io.ReadAll and OOM-kill the engine. 256MiB default per config.
+		// the credential-bearing backends (openrouter, azurefoundry, anthropicapi,
+		// bedrock, opencode). Dropping this lets an attacker-pointed base_url stream
+		// an unbounded body into io.ReadAll and OOM-kill the engine. 256MiB default.
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// Open-by-default agent posture (knob (a)): non-claude agent providers
+		// driven through opencode run with the allow-all permission posture unless
+		// disabled via llm.agentallowalltools=false.
+		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
 	})
 
 	// 9. Create all node executors and build the executor map.

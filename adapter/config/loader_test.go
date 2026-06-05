@@ -67,6 +67,33 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.Queue.PerUserCap, "default PerUserCap must be 5")
 }
 
+func TestLoad_AgentAllowAllToolsDefaultsTrue(t *testing.T) {
+	// With the key omitted, the open-by-default agent posture defaults to true.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, cfg.LLM.AgentAllowAllTools, "omitted llm.agentallowalltools must default to true (open-by-default)")
+}
+
+func TestLoad_AgentAllowAllToolsOverrideFalse(t *testing.T) {
+	// An explicit false in YAML disables the open-by-default agent posture.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := "llm:\n  agentallowalltools: false\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools, "explicit false must disable the allow-all agent posture")
+}
+
 func TestLoad_YAMLOverride(t *testing.T) {
 	// A YAML config file should override default values.
 	tmpDir := t.TempDir()
