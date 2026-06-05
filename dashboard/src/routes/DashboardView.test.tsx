@@ -99,4 +99,65 @@ describe('DashboardView', () => {
     render(<DashboardView />)
     expect(await screen.findByText(/boom/)).toBeInTheDocument()
   })
+
+  // ---------------------------------------------------------------------------
+  // FA #24 Pass 1: per-workflow table columns + throughput header
+  // ---------------------------------------------------------------------------
+
+  it('renders per-workflow table with runs and failure rate columns', async () => {
+    meMock.mockResolvedValue(me())
+    statsMock.mockResolvedValue(stats({
+      perWorkflow: [
+        { workflowName: 'triage', runs: 10, failureRate: 0.3, avgDurationSeconds: 12 },
+        { workflowName: 'onboard', runs: 5, failureRate: 0.0, avgDurationSeconds: 4 },
+      ],
+    }))
+    render(<DashboardView />)
+    await screen.findByText('triage')
+
+    // Both workflow names appear
+    expect(screen.getByText('onboard')).toBeInTheDocument()
+    // Runs column values — '10' appears in both the outcome tile and the table;
+    // use getAllByText and verify at least two occurrences (tile + table row).
+    expect(screen.getAllByText('10').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('5')).toBeInTheDocument()   // onboard runs
+    // Failure rate column (formatted) — 30.0% also appears in the outcomes tile;
+    // verify at least two occurrences.
+    expect(screen.getAllByText('30.0%').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('0.0%')).toBeInTheDocument()   // onboard failure rate
+  })
+
+  it('shows the throughput run total in the section heading', async () => {
+    meMock.mockResolvedValue(me())
+    statsMock.mockResolvedValue(stats({
+      throughput: [
+        { bucket: '2026-06-04T10:00:00Z', runs: 3 },
+        { bucket: '2026-06-04T11:00:00Z', runs: 7 },
+      ],
+    }))
+    render(<DashboardView />)
+    await screen.findByText(/10 runs/)  // throughputTotal(buckets) = 10
+  })
+
+  // ---------------------------------------------------------------------------
+  // FA #24 Pass 2: robustness — empty throughput + zero data
+  // ---------------------------------------------------------------------------
+
+  it('renders without crashing when throughput is empty', async () => {
+    meMock.mockResolvedValue(me())
+    statsMock.mockResolvedValue(stats({ throughput: [] }))
+    render(<DashboardView />)
+    await screen.findByText(/0 runs/)  // throughputTotal([]) = 0
+    // No bars — section heading still present
+    expect(screen.getByText(/Throughput/)).toBeInTheDocument()
+  })
+
+  it('renders without crashing when perWorkflow is empty', async () => {
+    meMock.mockResolvedValue(me())
+    statsMock.mockResolvedValue(stats({ perWorkflow: [] }))
+    render(<DashboardView />)
+    await screen.findByText('70.0%')  // outcomes still render
+    // Table headers present, no rows
+    expect(screen.getByText('Workflow')).toBeInTheDocument()
+  })
 })

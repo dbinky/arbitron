@@ -36,7 +36,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 21 | Dashboard aggregates (`adapter/sqlite` DashboardRepo — queue health point-in-time, throughput buckets, outcomes incl p95, per-workflow ranked; visibility IN (department,public), empty-dept short-circuit) | [x] | [x] | Done |
 | 22 | Dashboard endpoint + wiring (`adapter/http` GET /dashboard/stats thin handler, route in authenticated group, main.go composition) | [x] | [x] | Done |
 | 23 | Dashboard frontend data layer (`dashboard/src/api` — Me/DashboardStats types, api.me(), api.dashboard.stats(); request URL/param contract) | [x] | [x] | Done |
-| 24 | Dashboard tab + view (`dashboard/src` NavBar tab before Queue, /dashboard route, DashboardView tiles reusing UsageStats pattern, throughput strip, per-workflow table) | [ ] | [ ] | |
+| 24 | Dashboard tab + view (`dashboard/src` NavBar tab before Queue, /dashboard route, DashboardView tiles reusing UsageStats pattern, throughput strip, per-workflow table) | [x] | [x] | Done |
 | 25 | Department selector + live refresh (`dashboard/src` DepartmentSelector single-vs-multi behavior, union default; debounced useSystemWebSocket refresh) | [ ] | [ ] | |
 
 ---
