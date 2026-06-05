@@ -14,15 +14,17 @@ import (
 
 // fakeProvUserRepo is a fake UserRepository capturing provisioning calls.
 type fakeProvUserRepo struct {
-	bySubject       map[string]*User
-	getErr          error
-	createErr       error
-	created         []*User
-	updatedNames    map[uuid.UUID]string
-	updateNameErr   error
-	createCalls     int
-	depts           map[uuid.UUID][]string
-	replaceDeptErr  error
+	bySubject      map[string]*User
+	getErr         error
+	createErr      error
+	created        []*User
+	updatedNames   map[uuid.UUID]string
+	updateNameErr  error
+	createCalls    int
+	depts          map[uuid.UUID][]string
+	replaceDeptErr error
+	updateRoleErr  error
+	updateRoleCalls int
 }
 
 func newFakeProvUserRepo() *fakeProvUserRepo {
@@ -68,6 +70,10 @@ func (r *fakeProvUserRepo) CountAdmins(context.Context) (int, error) { return 0,
 // UpdateRole mutates the stored user (by ID, across both bySubject and created)
 // so the live role re-evaluation tests can observe the change.
 func (r *fakeProvUserRepo) UpdateRole(_ context.Context, id uuid.UUID, role string) error {
+	r.updateRoleCalls++
+	if r.updateRoleErr != nil {
+		return r.updateRoleErr
+	}
 	for _, u := range r.bySubject {
 		if u.ID == id {
 			u.Role = identity.Role(role)
@@ -367,4 +373,37 @@ func TestResolve_AdminAlsoGetsDepartmentsSnapshotted(t *testing.T) {
 	if !reflect.DeepEqual(repo.depts[u.ID], []string{"engineering"}) {
 		t.Errorf("admin snapshot = %v, want [engineering] (admins are not exempt from dept snapshot)", repo.depts[u.ID])
 	}
+}
+
+// Failure: UpdateRole failure during live demotion must abort the login.
+// If a removed-from-bootstrap admin's demotion fails silently, they retain
+// privilege beyond the config's intent. The login must fail so the inconsistency
+// is surfaced immediately.
+func TestResolve_DemotionFailurePropagates(t *testing.T) {
+	dbErr := errors.New("role store down")
+	repo := newFakeProvUserRepo()
+	subj := "formerly-admin"
+	repo.bySubject[subj] = &User{ID: uuid.New(), Subject: &subj, Username: "fa", Role: identity.RoleAdmin}
+	repo.updateRoleErr = dbErr
+
+	// Bootstrap list no longer contains this subject → demotion required, but DB fails.
+	p := NewProvisioner(repo, []string{"someone-else"}, identity.GroupConfig{DefaultGroup: "default"})
+	_, err := p.Resolve(context.Background(), Claims{Subject: subj, Username: "fa"})
+	if !errors.Is(err, dbErr) {
+		t.Errorf("expected wrapped role-store error on failed demotion, got %v", err)
+	}
+}
+
+// Edge: an existing admin still on the bootstrap list must NOT call UpdateRole
+// (the role is unchanged — avoid a spurious write on every login).
+func TestResolve_ExistingAdminStillOnList_NoRoleWrite(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	subj := "still-admin"
+	repo.bySubject[subj] = &User{ID: uuid.New(), Subject: &subj, Username: "sa", Role: identity.RoleAdmin}
+
+	p := NewProvisioner(repo, []string{"still-admin"}, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.Resolve(context.Background(), Claims{Subject: subj, Username: "sa"})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role)
+	assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when the role is unchanged")
 }
