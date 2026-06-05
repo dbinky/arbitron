@@ -169,6 +169,53 @@ func TestMeHandler_AllowedKeysOnly(t *testing.T) {
 	}
 }
 
+// TestMeHandler_LocalModeIdentity verifies that the local-mode identity shape
+// (admin, single default-group department, nil LedDepartments) serializes
+// correctly. This is the inertness check for FA #7: in local mode the /me
+// response must be valid and usable by the client, not null or empty.
+func TestMeHandler_LocalModeIdentity(t *testing.T) {
+	uid := uuid.New()
+	// Mirrors what AuthMiddleware injects for local mode.
+	id := identity.Identity{
+		UserID:         uid,
+		Username:       "local",
+		Role:           identity.RoleAdmin,
+		Departments:    []string{"default"},
+		LedDepartments: nil, // local mode never sets LedDepartments
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), id))
+	NewMeHandler().Me(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		UserID         string   `json:"userId"`
+		Role           string   `json:"role"`
+		Departments    []string `json:"departments"`
+		LedDepartments []string `json:"ledDepartments"`
+		IsAdmin        bool     `json:"isAdmin"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Role != "admin" || !got.IsAdmin {
+		t.Errorf("role=%q isAdmin=%v, want admin/true", got.Role, got.IsAdmin)
+	}
+	if !reflect.DeepEqual(got.Departments, []string{"default"}) {
+		t.Errorf("Departments = %v, want [default]", got.Departments)
+	}
+	// nil LedDepartments must be serialized as [] (not null) in local mode.
+	if got.LedDepartments == nil {
+		t.Error("LedDepartments serialized as null, want []")
+	}
+	if len(got.LedDepartments) != 0 {
+		t.Errorf("LedDepartments = %v, want empty in local mode", got.LedDepartments)
+	}
+}
+
 // meContains is a tiny local helper (avoid importing strings just for this).
 func meContains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
