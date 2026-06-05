@@ -70,7 +70,7 @@ type routerMockService struct {
 	setPriorityFn     func(id uuid.UUID, priority string) error
 }
 
-func (m *routerMockService) Trigger(_ context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *routerMockService) TriggerWithDepartment(_ context.Context, workflowName string, variables map[string]any, priority string, _ string) (uuid.UUID, bool, error) {
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}

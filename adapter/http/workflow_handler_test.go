@@ -147,10 +147,12 @@ func (r *errWorkflowRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string
 type mockWorkflowService struct {
 	triggerFn          func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 	capturedTriggerCtx context.Context
+	capturedDepartment string
 }
 
-func (m *mockWorkflowService) Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error) {
+func (m *mockWorkflowService) TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error) {
 	m.capturedTriggerCtx = ctx
+	m.capturedDepartment = department
 	if m.triggerFn != nil {
 		return m.triggerFn(workflowName, variables, priority)
 	}

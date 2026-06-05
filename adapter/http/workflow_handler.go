@@ -64,7 +64,7 @@ func writeSharedReadOnlyOrNotFound(w http.ResponseWriter, name string, err error
 // middleware) so the engine resolves the caller's visible scopes and stamps the
 // triggering user as the instance owner.
 type TriggerService interface {
-	Trigger(ctx context.Context, workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
+	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error)
 }
 
 // WorkflowService is an alias retained for the EngineService composition in
@@ -127,6 +127,10 @@ func (h *WorkflowHandler) SetWorkflowService(svc *workflow.WorkflowService) {
 type triggerRequest struct {
 	Variables map[string]any `json:"variables"`
 	Priority  string         `json:"priority"`
+	// Department optionally stamps the run under one of the caller's departments
+	// (must be one they belong to). Empty => default stamping from the resolved
+	// publication. An out-of-department value yields 400 (validation, not 403).
+	Department string `json:"department"`
 }
 
 // safeWorkflowName checks that a workflow name is a plain filename component
@@ -223,10 +227,14 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		req.Priority = "normal"
 	}
 
-	id, started, err := h.service.Trigger(r.Context(), name, req.Variables, req.Priority)
+	id, started, err := h.service.TriggerWithDepartment(r.Context(), name, req.Variables, req.Priority, req.Department)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+			return
+		}
+		if errors.Is(err, engine.ErrInvalidDepartmentOverride) {
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
 		if strings.Contains(err.Error(), "missing required input") {
