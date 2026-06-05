@@ -43,12 +43,30 @@ const (
 	PriorityLow    Priority = "low"
 )
 
+// Visibility is an instance's audience, stamped at trigger time from the
+// resolved workflow publication. Its values mirror the workflow visibility
+// model. It is redeclared locally (NOT imported from domain/workflow) to keep
+// the domain edge one-directional, the same pattern as instance.Claims
+// redeclaring identity.Claims.
+type Visibility string
+
+const (
+	VisibilityPrivate    Visibility = "private"
+	VisibilityDepartment Visibility = "department"
+	VisibilityPublic     Visibility = "public"
+)
+
 // Instance is a single execution of a workflow definition.
 type Instance struct {
 	ID                uuid.UUID
 	OwnerID           uuid.UUID
 	WorkflowName      string
 	WorkflowSnapshot  map[string]any
+	// Department is the department this run was stamped under at trigger time
+	// (a snapshot; "" => default group / private). Visibility is the run's
+	// audience. Both are set by the engine Trigger path (Phase 3 Task 2).
+	Department        string
+	Visibility        Visibility
 	State             State
 	Priority          Priority
 	Variables         map[string]any
