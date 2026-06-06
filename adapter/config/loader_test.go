@@ -493,6 +493,40 @@ func TestLoad_TimeoutSecondsFloor(t *testing.T) {
 	}
 }
 
+// seam (config → Factory Deps → all adapters; config → buildValidateDeps):
+// both initDomain (serve) and buildValidateDeps (connection validate) derive
+// their adapter/probe timeout from cfg.LLM.TimeoutSeconds via
+//
+//	time.Duration(cfg.LLM.TimeoutSeconds) * time.Second
+//
+// If an operator sets ARBITRON_LLM_TIMEOUTSECONDS=0 in a containerized
+// environment to make things "fast", both paths must still floor to
+// DefaultTimeoutSeconds — the YAML floor path is tested by TestLoad_TimeoutSecondsFloor;
+// this test closes the env-var path.
+func TestLoad_TimeoutSecondsFloor_EnvVarZeroFloored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_TIMEOUTSECONDS", "0")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, adapterconfig.DefaultTimeoutSeconds, cfg.LLM.TimeoutSeconds,
+		"ARBITRON_LLM_TIMEOUTSECONDS=0 must be floored at load — a zero timeout disables all deadlines for both serve and connection validate")
+	assert.Positive(t, cfg.LLM.TimeoutSeconds)
+}
+
+// seam (config → buildValidateDeps): a positive ARBITRON_LLM_TIMEOUTSECONDS
+// overrides the default and is preserved (not floored). Both serve and
+// connection validate should honour a deliberate operator timeout value.
+func TestLoad_TimeoutSecondsFloor_EnvVarPositivePreserved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_TIMEOUTSECONDS", "120")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, 120, cfg.LLM.TimeoutSeconds,
+		"a positive ARBITRON_LLM_TIMEOUTSECONDS must be preserved so operators can tune adapter timeouts")
+}
+
 // Happy-path: notifications.teams.* and server.public_base_url load from YAML.
 func TestLoad_TeamsAndPublicBaseURL_FromYAML(t *testing.T) {
 	tmpDir := t.TempDir()

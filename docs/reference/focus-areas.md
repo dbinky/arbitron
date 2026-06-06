@@ -43,7 +43,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 21 | anthropicapi adapter + anthropic probe (anthropic-version pinned in lockstep; x-api-key header parity) | [x] | Done |
 | 22 | ConnectionProbe port + validate CLI (ProbeSelector dispatch from a connection-name binding; result/error rendering; exit codes) | [x] | Done |
 | 23 | Credential secrecy + mixed-provider acceptance (`test/acceptance/scenario_08` — keyed secrets never logged across the ollama→anthropic→openai run) | [x] | Done |
-| 24 | Config wiring + composition root (cfg.LLM → Factory Deps → all adapters; connection cmd built from the same stack as serve) | [ ] | |
+| 24 | Config wiring + composition root (cfg.LLM → Factory Deps → all adapters; connection cmd built from the same stack as serve) | [x] | Done |
 
 ---
 
