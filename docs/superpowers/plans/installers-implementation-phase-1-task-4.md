@@ -135,7 +135,22 @@ shellcheck: `install.sh` clean.
 - [ ] No sudo on the local path; unit-rendering + lifecycle seams are factored for P2.
 - [ ] `shellcheck install.sh` clean.
 
+## Alignment notes (cross-phase)
+
+- **`arbitron version` is owned by P5 Task 1, not P0 — do NOT hard-depend on it.**
+  The upgrade flow here decides what to fetch by comparing the **installed release
+  tag** (recorded by the installer in a small state marker, e.g. a `version` line in
+  the secrets/config dir or the resolved artifact name) against the **latest release
+  tag / `ARBITRON_VERSION`** — NOT by shelling out to `arbitron version`. If a built
+  binary happens to support `arbitron version` (after P5 Task 1 ships) it may be used
+  as a nicety, but the flow must remain correct when the subcommand is absent
+  (graceful degradation). This keeps P1 shippable before P5.
+- The release artifact naming + `SHA256SUMS` URL the binary swap fetches are
+  finalized in P5 (see Task 3's `download_binary` note); P1 may target a provisional
+  layout and be re-pointed by P5 Task 2 through the shared `verify_download` helper.
+
 ## Dependencies
 
 - Depends on: Tasks 1–3 (helpers/layout, config + secrets on disk, binary installed).
 - Required by: Task 5 (tests); P2 reuses the unit-render + lifecycle seams.
+- Soft-relates to P5 Task 1 (`arbitron version`) — used opportunistically, never required.

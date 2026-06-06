@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. STRICT TDD: write the Pester test first, watch it fail, then implement.
 
-**Goal:** Drive the **shared** configuration Q&A (kept byte-for-byte parallel to the P2 Linux shared question set, in the same order), render `%ProgramData%\Arbitron\config.yaml` (absolute paths, P0 `--config`-compatible), and write secrets (API/master key) via the service environment / **DPAPI machine scope**. The master key is auto-generated silently.
+**Goal:** Drive the **shared** configuration Q&A (kept byte-for-byte parallel to the P2 Linux shared question set, in the same order — the single source of truth is the **"CANONICAL shared Q&A order"** block in `installers-implementation-phase-2-task-2.md`; mirror it exactly), render `%ProgramData%\Arbitron\config.yaml` (absolute paths, P0 `--config`-compatible), and write secrets (API/master key) via the service environment / **DPAPI machine scope**. The master key is auto-generated silently.
 
-**Design refs:** `installers-design-phase-4.md` (§Config Q&A (shared — parallel to P2), §Secrets handling); `installers-design-phase-2.md` (§Config Q&A (shared), §Secrets handling) — **source of truth for question order**; master design §Config Q&A (Shared), §Secrets handling.
+**Design refs:** `installers-design-phase-4.md` (§Config Q&A (shared — parallel to P2), §Secrets handling); `installers-design-phase-2.md` (§Config Q&A (shared), §Secrets handling). **Source of truth for the question order = the "CANONICAL shared Q&A order" block in the P2 plan `installers-implementation-phase-2-task-2.md`** (mirror it 1:1, including the P0 TLS invariants). Master design §Config Q&A (Shared), §Secrets handling.
 
 ---
 
@@ -55,11 +55,11 @@ Pester suite `tests/install/Shared.Config.Tests.ps1`. Mock the Q&A input helper 
 
 - [ ] **Step 1:** Write the failing Pester cases in `tests/install/Shared.Config.Tests.ps1`; confirm red.
 - [ ] **Step 2:** Implement `Invoke-SharedConfigQA` calling the P3 prompt helpers in the **P2 order**. Centralize prompt strings in one place so they can be asserted/compared to P2 (consider a shared constants block both installers conceptually mirror).
-- [ ] **Step 3:** Auth-model branch. Edge-auth → force `host = 127.0.0.1`, set local-mode admin, Secure cookies. OIDC → collect issuer/client id/secret/redirect/bootstrap admins; then optional RBAC sub-questions.
+- [ ] **Step 3:** Auth-model branch. Edge-auth → force `host = 127.0.0.1`, set local-mode admin, Secure cookies. OIDC → collect issuer/client id/secret/redirect/bootstrap admins; then optional RBAC sub-questions. Route the OIDC **client secret** to the secrets store as **`ARBITRON_AUTH_OIDC_CLIENTSECRET`** (the loader binds this env name → `auth.oidc.clientsecret`; same as P2) — never into `config.yaml`.
 - [ ] **Step 4:** TLS-model branch with three sub-paths (tunnel/proxy, direct cert+key, autocert). Apply P0 invariants: autocert ⇒ set `server.port = 443`; local-mode + non-loopback TLS ⇒ set `allowunauthenticated`. Print tunnel/proxy guidance text for the proxy path.
 - [ ] **Step 5:** Skip-permissions prompt with the explicit RCE-equivalent warning; map answer to the config flag.
-- [ ] **Step 6:** Compose the config object and render YAML via the shared config-writer helper (P3) to `%ProgramData%\Arbitron\config.yaml`, all paths absolute.
-- [ ] **Step 7:** Secrets: `Get-RandomBytes 32 | base64` for the master key (silent). Store master key + any pasted API key via DPAPI machine scope (`ProtectedData.Protect` with `DataProtectionScope.LocalMachine`) and/or set the Windows **service environment** variables consumed by the service (wired into the service definition in Task 3). Never echo secret values.
+- [ ] **Step 6:** Compose the config object and render YAML via P3's config-writer helper **`Write-ArbitronConfig`** (P3 Task 3's canonical name — reuse it, parameterized for the ProgramData path + shared host/auth) to `%ProgramData%\Arbitron\config.yaml`, all paths absolute.
+- [ ] **Step 7:** Secrets: reuse P3's **`New-MasterKey`** (32 random bytes → base64, RNG behind a seam — do NOT introduce a separate `Get-RandomBytes` helper; P3 already owns master-key generation) for the master key (silent). Store master key + any pasted API key via P3's **`Set-ArbitronSecret`** with the DPAPI **machine** scope variant (`ProtectedData.Protect` with `DataProtectionScope.LocalMachine`) — the shared analogue of P3's User-scope call — and/or set the Windows **service environment** variables consumed by the service (wired into the service definition in Task 3). Use the same secret env-var **names** as P3/P2: `ARBITRON_MASTER_KEY`, `ARBITRON_LLM_APIKEY` (and the OIDC client secret per Task 2's auth section). Never echo secret values.
 - [ ] **Step 8:** Reconfigure mode: load existing `config.yaml`, feed values as prompt defaults; preserve untouched keys and existing secrets.
 - [ ] **Step 9:** Pester green; `Invoke-ScriptAnalyzer` clean.
 

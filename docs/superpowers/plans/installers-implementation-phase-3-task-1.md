@@ -124,6 +124,43 @@ or gate on a `$env:ARBITRON_INSTALL_NOEXEC` flag the tests set).
       P4 can add a `Shared` branch without editing call sites.
 - [ ] All Pester tests green; PSScriptAnalyzer reports zero errors/warnings.
 
+## Alignment notes (cross-phase contracts — authoritative)
+
+This task defines the canonical PowerShell names that **P4 reuses verbatim** (P4 must
+NOT invent variants such as `Read-Answer`, `Wait-HealthCheck`, `Write-Summary`, or
+`Get-RandomBytes`).
+
+**Canonical PowerShell helper names (defined here / in later P3 tasks):**
+- Logging: `Write-ArbitronLog` (with `-Secret` redaction).
+- Prompts: `Read-PromptDefault`, `Read-PromptChoice`, `Read-PromptYesNo` (there is
+  **no** `Read-Answer`).
+- Paths: `Get-ArbitronPaths -InstallType` (single source of truth; P4 extends it with
+  the `Shared` class).
+- Checksum: `Test-Sha256` (low-level hash compare). P5 Task 2 adds the fail-closed
+  download contract as `Test-Download`.
+- Existing-install: `Test-ExistingInstall`; dispatch: `Invoke-FreshInstall`,
+  `Invoke-Upgrade`, `Invoke-Reconfigure`, `Invoke-Uninstall`.
+- Deps (P3 Task 2): `Resolve-Dependency`, `Resolve-AllDependencies`.
+- Config/secrets (P3 Task 3): `Invoke-ConfigQA`, `Write-ArbitronConfig`,
+  `New-MasterKey` (master-key generator — P4 reuses this, **not** a `Get-RandomBytes`),
+  `Set-ArbitronSecret` (P4 reuses with a machine-scope DPAPI variant).
+- Service/health/summary (P3 Task 4): `Register-ArbitronService` (install-type switch),
+  `Test-ArbitronHealth`, `Write-InstallSummary` — P4 reuses these names (extended for
+  the shared scheme/paths), **not** `Wait-HealthCheck` / `Write-Summary`.
+
+**Canonical repository + download constants (used by P3/P4, finalized by P5):**
+- Go **module path** `github.com/arbitron/arbitron` is an import path, never a URL.
+- The **GitHub repository** hosting releases + raw scripts is **`dbinky/arbitron`**.
+  Define one script-level value, e.g. `$ArbitronRepo = $env:ARBITRON_REPO ?? 'dbinky/arbitron'`,
+  and build every URL from it (release download, `releases/latest` redirect, the raw
+  `install.ps1` URL). P3 Task 3's `Get-ArbitronBinary` and P5 Task 2's
+  `Get-ArtifactUrl` / `Get-ArbitronVersion` reference this; do not hard-code
+  `arbitron/arbitron` as the owner/host.
+
+**Secrets:** master key = `ARBITRON_MASTER_KEY` (base64 of 32 bytes) read from the
+environment / DPAPI, never a YAML key; API key = `ARBITRON_LLM_APIKEY` (or
+`ANTHROPIC_API_KEY`), never written into `config.yaml`.
+
 ## Dependencies
 
 - **P0** (merged): `--config` / `ARBITRON_CONFIG`.

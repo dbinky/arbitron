@@ -101,10 +101,13 @@ shellcheck: `install.sh` clean.
 5. Add `claude_login` (subscription mode only): export `CLAUDE_CONFIG_DIR` under the
    data dir and run `claude /login` interactively (skipped/mocked in tests).
 6. Add `download_binary`: resolve version (`ARBITRON_VERSION` or latest), build the
-   `arbitron_<version>_<os>_<arch>` URL + its `SHA256SUMS` entry, call Task 2's
-   `download_verified`, place at `$(layout_bin)/arbitron`, `chmod 0755`. (Release
-   artifact naming is finalised in P5; P1 targets the current layout and can be
-   re-pointed.)
+   `arbitron_<version>_<os>_<arch>` URL + its `SHA256SUMS` entry from the canonical
+   repo constant `ARBITRON_REPO` (default **`dbinky/arbitron`** — see Task 1's
+   "Alignment notes"; the Go module path `github.com/arbitron/arbitron` is NOT a URL),
+   call Task 2's `download_verified`, place at `$(layout_bin)/arbitron`, `chmod 0755`.
+   (The exact version-resolution + URL builders are finalised in P5 Task 2 as
+   `arbitron_resolve_version` / `arbitron_release_base`; P1 may target a provisional
+   layout via `ARBITRON_REPO` and be re-pointed.)
 7. Wire these into `run_fresh`/`run_reconfigure` from Task 1 in the correct order
    (deps already resolved by Task 2 → Q&A → download → write config + secrets).
 8. Run `shellcheck`; write `config.bats` + `binary.bats`; make green.

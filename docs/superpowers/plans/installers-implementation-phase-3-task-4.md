@@ -16,9 +16,10 @@ dashboard, and the full lifecycle branches — **Upgrade**, **Reconfigure**,
 reconfigure = re-run Q&A pre-filled + rewrite config, preserve data + secrets;
 uninstall = remove service/binary/config, prompt before deleting data, default
 **keep**). The Windows service mechanism is a **Scheduled Task** (P1 uses
-launchd/systemd-user). **The native Go Windows Service from P0 is NOT used here** —
-that is P4 (shared). Local needs no elevation, so a per-user Scheduled Task is the
-right mechanism.
+launchd/systemd-user). **The native Go Windows Service is NOT used here** — local
+needs no elevation, so a per-user Scheduled Task is the right mechanism. (Note: the
+native Windows-service awareness is delivered by **P4 Task 0**, not P0; P3 does not
+depend on it at all.)
 
 **Depends on:** Task 1 (paths, helpers, dispatch stubs), Task 2 (deps), Task 3
 (config + secrets + binary).
@@ -136,9 +137,18 @@ Pester suite `tests/install/Install.Service.Tests.ps1`. Mock
 - [ ] Service registration is behind an install-type seam for P4 reuse.
 - [ ] All Pester tests green; PSScriptAnalyzer clean.
 
+## Alignment notes (cross-phase)
+
+- **`arbitron version` is owned by P5 Task 1, not P0 — do NOT hard-depend on it.**
+  `Invoke-Upgrade` decides what to fetch by comparing the installed release tag
+  (recorded by the installer) against the latest release / `$env:ARBITRON_VERSION`,
+  NOT by invoking `arbitron.exe version`. Use the subcommand opportunistically once
+  P5 Task 1 ships, but the flow must work when it is absent.
+
 ## Dependencies
 
 - **Tasks 1–3** (helpers/paths, deps, config+secrets+binary).
-- **P0** (merged): `--config` flag passed in the task action. (P0's native Windows
-  Service is **not** used here — it is P4.)
+- **Soft-relates to P5 Task 1** (`arbitron version`) — opportunistic, never required.
+- **P0** (merged): `--config` flag passed in the task action. (The native Windows
+  Service is **not** used here — it is P4, delivered by **P4 Task 0**, not P0.)
 - Conceptual mirror of **P1 Task 4**; keep lifecycle semantics + summary parallel.

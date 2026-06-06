@@ -138,6 +138,51 @@ Helpers (`helpers.bats`):
 - [ ] Detection/select/helper functions are factored so a P2 Shared branch can
       reuse them (documented extension seams present).
 
+## Alignment notes (cross-phase contracts — authoritative)
+
+This task defines the canonical bash names and constants that **P2 reuses verbatim**
+(P2 must NOT invent variants). The PowerShell side has its own canonical set defined
+in **P3 Task 1**, reused verbatim by **P4**.
+
+**Canonical bash helper names (defined here):**
+- Logging/UI: `log_info`, `log_warn`, `log_error`, `die`.
+- Prompts: `prompt_default`, `prompt_yes_no` (the yes/no prompt is `prompt_yes_no` —
+  **not** `confirm`).
+- Detection: `detect_os`, `detect_arch` (two separate functions — **not** a combined
+  `detect_os_arch`), `is_elevated`, `select_install_type`,
+  `detect_state` (returns `Fresh|Upgrade|Reconfigure|Uninstall` — **not**
+  `detect_install_state`).
+- Layout: `arbitron_home`, `layout_bin`, `layout_config`, `layout_data`,
+  `layout_db`, `layout_workspaces`, `layout_logs`, `layout_secrets_env`,
+  `layout_runtime` (P2 supplies parallel system-path implementations behind the same
+  names).
+- Checksum/download: `sha256_tool`, `verify_checksum`; the verified-download primitive
+  is `download_verified` (defined in Task 2 — **not** `download_and_verify`). P5
+  Task 2 wraps the fail-closed verification *contract* as `verify_download`, but the
+  download primitive callers invoke stays `download_verified`.
+- Sourcing guard: `ARBITRON_INSTALL_LIB_ONLY=1` (source without running `main`) — the
+  single canonical guard; **not** `ARBITRON_INSTALL_NO_MAIN`.
+
+**Canonical repository + download constants (used by P1–P4, finalized by P5):**
+- Go **module path** is `github.com/arbitron/arbitron` — this is an import path, NOT a
+  URL. Do **not** build any download/raw URL from the module path.
+- The **GitHub repository** that hosts releases and the raw scripts is
+  **`dbinky/arbitron`**. Define a single shell constant near the top of `install.sh`,
+  e.g. `ARBITRON_REPO="${ARBITRON_REPO:-dbinky/arbitron}"`, and build every URL from
+  it:
+  - release base: `https://github.com/${ARBITRON_REPO}/releases/download/v<version>/…`
+  - latest redirect: `https://github.com/${ARBITRON_REPO}/releases/latest`
+  - raw script: `https://raw.githubusercontent.com/${ARBITRON_REPO}/main/install.sh`
+  P1 Task 3's `download_binary` and P5 Task 2's `arbitron_release_base` /
+  `arbitron_resolve_version` all reference this constant. P5 Task 2 finalizes the
+  exact URL shapes; P1 must not hard-code `arbitron/arbitron` (the module path) as a
+  host/owner.
+
+**Master key:** the secret is the **`ARBITRON_MASTER_KEY` env var** (base64 of 32
+random bytes), read by the binary from the environment — it is **never** a YAML key.
+The API key uses `ANTHROPIC_API_KEY` (loader special-cases it → `llm.apikey`) or
+`ARBITRON_LLM_APIKEY`; never written into `config.yaml`.
+
 ## Dependencies
 
 - Depends on: none (first P1 task).

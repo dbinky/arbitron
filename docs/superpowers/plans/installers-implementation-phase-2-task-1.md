@@ -31,22 +31,34 @@ It deliberately stops short of writing config (Task 2) and the systemd unit (Tas
   system paths chosen here (`/etc/arbitron/config.yaml`) are what Task 3's unit passes
   via `--config`.
 - **P1 tasks (the local `install.sh`):** this task assumes P1 has already factored the
-  script into reusable functions. Concretely it reuses, by name (rename to match P1's
-  actual helper names if they differ):
-  - `detect_os_arch` — OS/arch detection.
-  - `detect_install_state` — Fresh | Upgrade | Reconfigure | Uninstall detection
-    (this task passes it the **system** config/service locations).
+  script into reusable functions. It reuses them by their **canonical P1 names** (the
+  names P1 Task 1 actually defines — these are authoritative; do NOT invent variants):
+  - `detect_os` **and** `detect_arch` — OS and arch detection (P1 defines these as two
+    separate functions, NOT a combined `detect_os_arch`).
+  - `detect_state` — Fresh | Upgrade | Reconfigure | Uninstall detection (P1's name is
+    `detect_state`, NOT `detect_install_state`). This task drives it against the
+    **system** config/service locations.
   - `resolve_dependencies` — node/claude/git/gh resolution.
-  - `download_and_verify` — release artifact download + SHA256 verification.
-  - `log_info` / `log_warn` / `die` / `prompt_default` / `confirm` — UI helpers.
-  - The install-type selection point where Local vs Shared is chosen.
+  - `download_verified` — release artifact download + SHA256 verification (P1's name is
+    `download_verified`, NOT `download_and_verify`). P5 Task 2 later wraps the verify
+    contract as `verify_download`; the download primitive callers use stays
+    `download_verified`.
+  - `log_info` / `log_warn` / `log_error` / `die` / `prompt_default` /
+    `prompt_yes_no` — UI helpers (P1's yes/no prompt is `prompt_yes_no`, NOT `confirm`).
+  - `arbitron_home` / `layout_bin` / `layout_config` / `layout_data` / … — layout
+    resolvers (P1 names; P2 adds a parallel **system-path** implementation behind the
+    same `layout_*` names so call sites don't fork).
+  - The install-type selection point where Local vs Shared is chosen
+    (`select_install_type`).
+  - **Sourcing guard:** P1 defines `ARBITRON_INSTALL_LIB_ONLY=1` (source without
+    running `main`). Use that exact variable in the bats tests below — NOT a
+    `ARBITRON_INSTALL_NO_MAIN` variant.
 
 ## Test plan (write first)
 
-New bats file `tests/install/shared_skeleton.bats`. Tests source `install.sh` with a
-guard so it does not auto-run `main` (P1 must expose an `ARBITRON_INSTALL_NO_MAIN=1`
-sourcing guard or equivalent `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` main guard — assume
-P1 provides it; if not, add it as the first step here). All privileged commands are
+New bats file `tests/install/shared_skeleton.bats`. Tests source `install.sh` with the
+P1 sourcing guard `ARBITRON_INSTALL_LIB_ONLY=1` so it does not auto-run `main` (P1 Task
+1 provides this guard; do not introduce a second variant). All privileged commands are
 mocked via a `PATH`-prepended fake-bin dir (`sudo`, `useradd`, `getent`, `id`,
 `install`, `chown`, `chmod`, `mkdir`) that log their argv to `$BATS_TEST_TMPDIR`.
 
@@ -71,17 +83,19 @@ mocked via a `PATH`-prepended fake-bin dir (`sudo`, `useradd`, `getent`, `id`,
    `/var/log/arbitron` owned by the service account; `/etc/arbitron` stays `root`-owned.
 7. **Directory modes.** `/etc/arbitron` is `0755` root-owned; `/var/lib/arbitron` is
    `0750` service-account-owned (data not world-readable); assert the `chmod` argv.
-8. **Binary install location.** `download_and_verify` output is installed to
+8. **Binary install location.** `download_verified` output is installed to
    `/usr/local/bin/arbitron` mode `0755` root-owned (assert `install` argv).
-9. **Reuses P1 detection helpers.** Stub `detect_os_arch` and `download_and_verify` and
-   assert the Shared branch calls them (call-count file), proving no duplicate logic.
+9. **Reuses P1 detection helpers.** Stub `detect_os`/`detect_arch` and
+   `download_verified` and assert the Shared branch calls them (call-count file),
+   proving no duplicate logic.
 10. **shellcheck clean.** A bats test (or CI step) runs `shellcheck install.sh` and
     asserts exit 0.
 
 ## Implementation steps
 
-- [ ] **Step 1:** Confirm/add a sourcing guard in `install.sh` so bats can source it
-  without executing `main`. Run the new bats file; all tests fail (functions undefined).
+- [ ] **Step 1:** Confirm P1's `ARBITRON_INSTALL_LIB_ONLY=1` sourcing guard lets bats
+  source `install.sh` without executing `main` (it should; P1 Task 1 provides it). Run
+  the new bats file; all tests fail (functions undefined).
 - [ ] **Step 2:** Add Shared-path globals near P1's path constants: `ARB_PREFIX_BIN=/usr/local/bin`,
   `ARB_ETC=/etc/arbitron`, `ARB_LIB=/var/lib/arbitron`, `ARB_LOG=/var/log/arbitron`,
   `ARB_SVC_USER` (default `arbitron`, overridable; Task 2 sets it from Q&A).
@@ -96,10 +110,10 @@ mocked via a `PATH`-prepended fake-bin dir (`sudo`, `useradd`, `getent`, `id`,
   `$ARB_LIB` + `$ARB_LIB/workspaces` (0750, `chown $ARB_SVC_USER:$ARB_SVC_USER`),
   `$ARB_LOG` (0750, service-account-owned). Use `install -d -m MODE -o OWNER -g GROUP`
   where available, else `mkdir -p` + `chmod` + `chown`.
-- [ ] **Step 6:** `install_binary_system()` — call P1's `download_and_verify`, then
+- [ ] **Step 6:** `install_binary_system()` — call P1's `download_verified`, then
   `install -m 0755 -o root -g root <downloaded> /usr/local/bin/arbitron`.
 - [ ] **Step 7:** `run_shared_install()` orchestrator (skeleton): `require_root` →
-  `detect_install_state` (system locations) → `resolve_dependencies` →
+  `detect_state` (system locations) → `resolve_dependencies` →
   `ensure_service_account` → `create_system_layout` → `install_binary_system`. Leave
   TODO markers where Task 2 (config) and Task 3 (unit + health check) plug in.
 - [ ] **Step 8:** Hook `run_shared_install` into P1's install-type selection (Shared
@@ -124,8 +138,9 @@ mocked via a `PATH`-prepended fake-bin dir (`sudo`, `useradd`, `getent`, `id`,
 - [ ] System layout created with correct ownership/modes: `/etc/arbitron` 0755 root;
   `/var/lib/arbitron` (+ `workspaces`) 0750 service-account; `/var/log/arbitron` 0750
   service-account; binary at `/usr/local/bin/arbitron` 0755 root.
-- [ ] Reuses P1 helpers (`detect_os_arch`, `detect_install_state`,
-  `resolve_dependencies`, `download_and_verify`, UI helpers) rather than duplicating.
+- [ ] Reuses P1 helpers by their canonical names (`detect_os`/`detect_arch`,
+  `detect_state`, `resolve_dependencies`, `download_verified`, `prompt_yes_no`, the
+  `layout_*` resolvers, UI helpers) rather than duplicating.
 - [ ] macOS cannot enter the Shared path.
 - [ ] All `tests/install/shared_skeleton.bats` pass; `shellcheck install.sh` clean.
 

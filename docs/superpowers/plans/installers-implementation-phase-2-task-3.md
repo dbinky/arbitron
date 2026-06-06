@@ -95,7 +95,7 @@ return success), `curl`/`wget` (health check), `chown`/`chmod`/`rm`/`userdel`.
     `journalctl -u arbitron` and the log dir; exit non-zero.
 
 **Upgrade:**
-12. Upgrade swaps `/usr/local/bin/arbitron` via `download_and_verify` + `install`, then
+12. Upgrade swaps `/usr/local/bin/arbitron` via `download_verified` + `install`, then
     `systemctl restart arbitron` (assert no config rewrite, no account changes).
 13. Upgrade surfaces the forward-only migration caveat in printed notes (assert stdout
     contains the one-way down-migration warning).
@@ -132,7 +132,7 @@ return success), `curl`/`wget` (health check), `chown`/`chmod`/`rm`/`userdel`.
   written → `write_systemd_unit` → `enable_systemd_unit` → `health_check_shared` →
   print summary (dashboard URL, service name `arbitron`, log location, next steps incl.
   tunnel guidance when edge mode).
-- [ ] **Step 5:** `upgrade_shared()` — `download_and_verify` → `install` new binary →
+- [ ] **Step 5:** `upgrade_shared()` — `download_verified` → `install` new binary →
   `systemctl restart arbitron`; print forward-only-migration caveat.
 - [ ] **Step 6:** `reconfigure_shared()` — re-run Task 2 Q&A (pre-filled) →
   `write_shared_config` (preserve env/data) → `systemctl restart arbitron`.
@@ -150,7 +150,7 @@ return success), `curl`/`wget` (health check), `chown`/`chmod`/`rm`/`userdel`.
   `health_check_shared`, completed `run_shared_install`, `upgrade_shared`,
   `reconfigure_shared`, `uninstall_shared`, shared lifecycle dispatch.
 - Created: `tests/install/shared_service.bats`.
-- Reuse: P1 `download_and_verify`, install-state dispatcher, summary/printing helpers;
+- Reuse: P1 `download_verified`, install-state dispatcher, summary/printing helpers;
   Task 2 Q&A + `write_shared_config`/`write_shared_env`.
 
 ## Acceptance criteria
@@ -177,5 +177,5 @@ return success), `curl`/`wget` (health check), `chown`/`chmod`/`rm`/`userdel`.
   `TLS_ENABLED`/host/port variables that drive the unit + health check.
 - **P0 (merged):** the `--config` flag the unit passes; `server.tls` behavior the health
   check scheme depends on.
-- **P1 tasks:** `download_and_verify` (upgrade), the install-state dispatcher pattern,
+- **P1 tasks:** `download_verified` (upgrade), the install-state dispatcher pattern,
   and summary-printing helpers.

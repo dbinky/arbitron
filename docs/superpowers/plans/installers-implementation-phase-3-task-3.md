@@ -111,9 +111,13 @@ download cmdlets, and `Test-Sha256`.
    subscription mode set `CLAUDE_CONFIG_DIR` and run `claude /login` (interactive;
    guarded/mocked in tests).
 6. `Get-ArbitronBinary -Paths -Version -Arch`: resolve the release URL for
-   `arbitron_<version>_windows_<arch>.exe`; download to a temp path; download
-   `SHA256SUMS`; `Test-Sha256` against the matching line; on success move to
-   `$Paths.BinaryExe`; on failure throw and clean up the temp file.
+   `arbitron_<version>_windows_<arch>.exe` from the canonical repo value
+   `$ArbitronRepo` (default **`dbinky/arbitron`** — see Task 1's "Alignment notes";
+   the Go module path `github.com/arbitron/arbitron` is NOT a URL); download to a temp
+   path; download `SHA256SUMS`; `Test-Sha256` against the matching line; on success
+   move to `$Paths.BinaryExe`; on failure throw and clean up the temp file. (P5 Task 2
+   finalizes the version resolver + URL builders as `Get-ArbitronVersion` /
+   `Get-ArtifactUrl`.)
 7. Ensure all created directories exist (`New-Item -ItemType Directory -Force`).
 
 ## Files

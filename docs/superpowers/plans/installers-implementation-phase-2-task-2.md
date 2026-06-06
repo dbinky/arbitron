@@ -29,6 +29,31 @@ This task plugs into the `run_shared_install` orchestrator's config TODO from Ta
 > functions (e.g. `prompt_shared_auth`, `prompt_shared_tls`, `prompt_oidc`) whose
 > labels/order P4 can mirror verbatim. Note any wording in a comment block at the top of
 > the Q&A section so P4 can copy it.
+>
+> ### CANONICAL shared Q&A order (source of truth — P2 ↔ P4 parity)
+> This is THE ordered list; P2 implements it here and **P4 Task 2 / Task 4 assert
+> against this exact list** (P4 Task 4's parity test references this block). Identical
+> order AND semantics on both installers:
+> 1. **Bind host / port.** (Default host `0.0.0.0`, port `8080`; edge+local later
+>    forces host to `127.0.0.1`.)
+> 2. **Auth model** — `edge-auth + local mode` **or** `OIDC org mode`.
+> 3. **If OIDC:** issuer URL → client ID → client secret → redirect URL (derived
+>    `publicbaseurl + /auth/callback`) → bootstrap admins → **optional RBAC** (group
+>    claim → default group → department leads).
+> 4. **TLS model** — `tunnel/proxy` (→ `PublicBaseURL` + Secure cookies + guidance)
+>    **or** `direct app-TLS` (cert + key paths) **or** `autocert` (domain; forces
+>    port 443).
+> 5. **"Enable unattended agent tools?"** — the `--dangerously-skip-permissions`
+>    prompt with the RCE-equivalent warning (asked explicitly, default No).
+> 6. **Service account name** (default `arbitron`).
+> 7. **Data location** (default shown — `/var/lib/arbitron` on Linux,
+>    `%ProgramData%\Arbitron\data` on Windows).
+> 8. **Master key** — auto-generated **silently** into the secrets store (no prompt).
+>
+> **P0 TLS invariants — encoded identically on both installers:** cert XOR autocert
+> (never both, never neither when TLS enabled); autocert ⇒ `server.port == 443` (+
+> `autocertcachedir`); local mode + TLS on a **non-loopback** host ⇒
+> `server.tls.allowunauthenticated=true` only after an explicit extra confirmation.
 
 ## Config field reference (exact koanf keys — from `adapter/config/loader.go`)
 
@@ -46,10 +71,13 @@ the commented template):
 - `database.path` (`/var/lib/arbitron/arbitron.db`),
   `workspace.path` (`/var/lib/arbitron/workspaces`), logging path under `/var/log/arbitron`.
 
-Secrets in `config.yaml` are avoided: API key and master key go to the env file. OIDC
-client secret SHOULD also go to the env file (`ARBITRON_AUTH_OIDC_CLIENTSECRET` — verify
-the env-var binding prefix in the loader; if the loader does not bind that key from env,
-write it into config.yaml but keep config.yaml mode-restricted and note the limitation).
+Secrets in `config.yaml` are avoided: API key and master key go to the env file. The
+OIDC client secret ALSO goes to the env file as **`ARBITRON_AUTH_OIDC_CLIENTSECRET`** —
+this IS bound by the loader: `adapter/config/loader.go` loads `env.Provider("ARBITRON_",
+".", …)` which maps `ARBITRON_AUTH_OIDC_CLIENTSECRET` → the `auth.oidc.clientsecret` key
+(uppercase→lowercase, `_`→`.`). So the client secret never needs to live in
+`config.yaml`. (The earlier "verify the binding / fallback to config.yaml" caveat is
+resolved: the env binding exists; use it.)
 
 ## P0 validation rules to respect (mirror them in prompts so the operator never hits a
 ## load-time failure):
@@ -156,9 +184,10 @@ mechanism). Mock `chown`/`chmod`/`install` and a master-key generator
 - [ ] **Step 9:** `generate_master_key()` — 32 random bytes → base64
   (`head -c 32 /dev/urandom | base64` or `openssl rand -base64 32`); never log it.
 - [ ] **Step 10:** `write_shared_config()` — emit `/etc/arbitron/config.yaml` from the
-  collected variables using the exact koanf keys above; `chmod 0644 root:root`
-  (no secrets inside) — but if the OIDC client secret had to live in config.yaml
-  (no env binding), `chmod 0640 root:arbitron` instead and document why.
+  collected variables using the exact koanf keys above; `chmod 0644 root:root` (no
+  secrets inside — the OIDC client secret goes to `arbitron.env` as
+  `ARBITRON_AUTH_OIDC_CLIENTSECRET`, which the loader binds, so config.yaml stays
+  secret-free).
 - [ ] **Step 11:** `write_shared_env()` — emit `/etc/arbitron/arbitron.env` with
   `ARBITRON_MASTER_KEY`, optional API key, optional OIDC client secret; then
   `chmod 0600` + `chown root:arbitron`.

@@ -88,4 +88,5 @@
 - **Task 1:** artifact names + cosign trust root (for the verify/security section).
 - **Task 2:** stable script URLs, `ARBITRON_VERSION` behavior, fail-closed checksum contract.
 - **P1–P4:** the actual layouts, Q&A, services, and upgrade/reconfigure/uninstall flows being documented.
-- **P0 (merged):** `server.tls`, `PublicBaseURL`, `allowunauthenticated`, `--config`, `arbitron version`.
+- **P0 (merged):** `server.tls`, `PublicBaseURL`, `allowunauthenticated`, `--config`.
+- **P5 Task 1** (NOT P0): the `arbitron version` subcommand documented in `upgrading.md`.

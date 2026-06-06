@@ -21,10 +21,15 @@
 - P3 **install-type detection** helper (the `Local | Shared` prompt/parse).
 - P3 **dependency resolution** (`node`, `claude`, `git`, `gh`; `opencode` optional) — reused unchanged; runs after the Shared branch is chosen.
 - P3 **download + checksum-verify** helper for the binary.
-- P3 **Q&A engine** primitives (`Read-Answer`/prompt helpers, default rendering) — reused by Task 2.
+- P3 **Q&A engine** primitives — the prompt helpers P3 Task 1 actually defines:
+  `Read-PromptDefault`, `Read-PromptChoice`, `Read-PromptYesNo` (NOT a `Read-Answer`
+  function — that name does not exist; use P3's canonical names) — reused by Task 2.
 - P3 helper factoring requirement ("Feeds P4"): these helpers must be parameterizable by install class (Local vs Shared) so paths/elevation differ without duplicating logic.
 
-**Consumes P0:** native Windows-service awareness (`windows/svc`) and `--config` — exercised in Task 3, declared here for the layout.
+**Consumes P0:** `--config` (merged in P0). **Native Windows-service awareness
+(`windows/svc`) is NOT in P0** — it is delivered by **P4 Task 0** (a Go change in
+this phase) and exercised in Task 3; declared here only for the layout. See P4
+Task 0's "Why this task exists" note.
 
 **Parallel to P2:** mirror the Linux shared privilege/account skeleton (sudo→admin; dedicated `arbitron` account; system paths).
 
@@ -54,7 +59,7 @@ Pester suite `tests/install/Shared.Skeleton.Tests.ps1`. Mock elevation checks, a
 - [ ] **Step 2:** Add `Test-IsElevated` (returns `$true` when the current principal is in the built-in Administrators role via `[Security.Principal.WindowsPrincipal]`). Keep it as a thin, mockable function.
 - [ ] **Step 3:** Extend the path resolver (P3) to take an install class. For `Shared`, resolve `$BinDir = Join-Path $env:ProgramFiles 'Arbitron'`, `$DataRoot = Join-Path $env:ProgramData 'Arbitron'`, and derive `ConfigPath`, `DataDir`, `WorkspacesDir`, `LogsDir` under `$DataRoot`. Return an object/hashtable both branches consume.
 - [ ] **Step 4:** In the Shared branch (entered from the P3 install-type dispatch): call `Test-IsElevated`; on `$false`, `Write-Error` with elevation guidance and `exit 1` (do nothing else).
-- [ ] **Step 5:** Create the `%ProgramData%\Arbitron\` tree (`data`, `workspaces`, `logs`) via the shared `New-Directory` helper (idempotent: `-Force`).
+- [ ] **Step 5:** Create the `%ProgramData%\Arbitron\` tree (`data`, `workspaces`, `logs`) via an idempotent directory create (P3's `New-Item -ItemType Directory -Force` pattern; if a `New-Directory` wrapper is introduced, define it once in the shared helper section so both Local and Shared use the same one).
 - [ ] **Step 6:** Add `Get-RunAsChoice` — prompt "Run the service as LocalSystem (default) or a dedicated account?"; on dedicated, prompt for account name (default `arbitron`). Return `{ Kind = 'LocalSystem' | 'Account'; Name }`.
 - [ ] **Step 7:** For `Kind = 'Account'`: `Get-LocalUser -Name $Name`; if absent, `New-LocalUser` with a generated password, `-PasswordNeverExpires`, no interactive logon, and grant "Log on as a service" (defer the actual `secedit`/privilege grant detail to Task 3 if cleaner — capture the account here). Apply data/log ACLs via `Set-Acl`/`icacls`.
 - [ ] **Step 8:** Reuse P3 dependency resolution and download+verify after the skeleton is set up (call the existing helpers; the binary is placed at `$BinDir\arbitron.exe`).
@@ -83,5 +88,7 @@ Pester suite `tests/install/Shared.Skeleton.Tests.ps1`. Mock elevation checks, a
 ## Dependencies
 
 - **P3:** install-type detection, dependency resolution, download+checksum-verify, Q&A-engine primitives, install-class-parameterizable helpers ("Feeds P4").
-- **P0:** layout assumes the service-aware binary + `--config` (consumed in Task 3).
+- **P4 Task 0:** the service-aware binary (native `windows/svc`) the layout assumes;
+  consumed in Task 3.
+- **P0 (merged):** `--config` only (the Windows-service awareness is P4 Task 0, not P0).
 - **Parallel to P2** (Linux shared) Task-equivalent privilege/account skeleton — keep the run-as/account semantics aligned.

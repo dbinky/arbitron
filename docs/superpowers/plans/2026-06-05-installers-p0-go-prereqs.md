@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.25, cobra, koanf, testify, `crypto/tls`, `golang.org/x/crypto/acme/autocert` (new dependency).
 
-**Scope:** This is plan P0 of the installers feature (design: `docs/superpowers/specs/2026-06-05-installers-design.md`). The installer scripts (P1–P5) are separate plans and are not covered here. The optional native Windows-service awareness (design §Required Go changes #3) is deferred to the Windows installer plan (P3), where it can be validated on Windows.
+**Scope:** This is plan P0 of the installers feature (design: `docs/superpowers/specs/2026-06-05-installers-design.md`). The installer scripts (P1–P5) are separate plans and are not covered here. The native Windows-service awareness (design §Required Go changes #3) is **NOT** delivered by P0 — it is owned by **P4 Task 0** (`installers-implementation-phase-4-task-0.md`), the phase where it can be validated on a Windows runner. (P3, the *local* Windows installer, uses a Scheduled Task and needs no SCM awareness; only P4's shared Windows Service does.)
 
 ---
 
@@ -762,7 +762,7 @@ git commit -m "feat(cli): serve HTTPS directly when server.tls configured"
 **Spec coverage (design §Required Go changes):**
 - #1 Configurable config path → Tasks 1–2. ✓
 - #2 Direct TLS serving (config block + validation + cert/key + autocert) → Tasks 3–5. ✓
-- #3 Native Windows-service awareness → explicitly deferred to P3 (noted in Scope). ✓ (intentional non-goal here)
+- #3 Native Windows-service awareness → NOT shipped here; owned by **P4 Task 0** (noted in Scope). ✓ (intentional non-goal for P0; P4 delivers the build-tagged `service_windows.go` + `svc.Run` dispatch)
 
 **Placeholder scan:** No TBD/TODO; every code step has complete code; every command has expected output. ✓
 
