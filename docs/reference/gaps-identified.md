@@ -31,6 +31,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **OPENCODE-buildArgs-quoting** (Area 6 Pass 2): `buildArgs` error path (`args.go:52`) uses `%q` to quote the provider string but this was untested. Added `TestBuildArgs_UnknownProviderControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped in the error message (same property verified for the factory in Area 5).
 - **OPENCODE-env-error-paths** (Area 7 Pass 1): Three error-path guards in `env.go` were untested: (1) `bedrockEnv` nil RevealKey (line 107–109), (2) keyless ollama with empty BaseURL (line 59–62), (3) non-keyless provider whose RevealKey returns `("", nil)` (line 79–81). Added `TestOpencodeEnv_BedrockNilRevealKey`, `TestOpencodeEnv_KeylessOllamaEmptyBaseURL`, and `TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless`.
 - **OPENCODE-env-quoting** (Area 7 Pass 2): `opencodeEnv` error path (`env.go:39`) uses `%q` to quote the provider string — same property verified for `buildArgs` (Area 6 Pass 2). Added `TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted`.
+- **PROBE-anthropic-coverage** (Area 8 Pass 1): `anthropic_test.go` was missing 5 paths compared with the openai_compat coverage: RevealKey error, transport → `ErrUnreachable`, 5xx → `ErrUpstreamStatus`, empty base URL uses default endpoint, and bounded response. Added corresponding tests.
 
 ## Won't Fix (Beyond Current Scope)
 

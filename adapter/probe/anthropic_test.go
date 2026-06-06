@@ -3,6 +3,7 @@ package probe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// captureHostTransport records the Host of the first outgoing request then
+// returns an error, allowing tests to assert what URL the probe targeted without
+// making a real network call.
+type captureHostTransport struct{ captured string }
+
+func (c *captureHostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.captured = r.URL.Host
+	return nil, errors.New("captured: no real connection")
+}
 
 // Happy-path: Anthropic lists models via GET /v1/models with x-api-key and the
 // pinned anthropic-version header.
@@ -55,6 +66,80 @@ func TestAnthropicProbe_403_CredentialsRejected(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCredentialsRejected)
+}
+
+// Error-handling: a transport failure classifies as ErrUnreachable.
+func TestAnthropicProbe_Transport_Unreachable(t *testing.T) {
+	p := newAnthropicProbe(Deps{HTTPClient: &http.Client{Transport: dialErrTransport{}}})
+	_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider: "anthropic-api",
+		BaseURL:  "http://127.0.0.1:1",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnreachable)
+}
+
+// Error-handling: a 5xx response classifies as ErrUpstreamStatus (not credentials).
+func TestAnthropicProbe_500_UpstreamStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer srv.Close()
+
+	p := newAnthropicProbe(Deps{HTTPClient: srv.Client()})
+	_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider: "anthropic-api",
+		BaseURL:  srv.URL,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUpstreamStatus)
+	assert.NotErrorIs(t, err, ErrCredentialsRejected)
+}
+
+// Error-handling: RevealKey returning an error aborts before any HTTP call.
+func TestAnthropicProbe_RevealKeyError(t *testing.T) {
+	p := newAnthropicProbe(Deps{HTTPClient: &http.Client{Transport: failingTransport{t}}})
+	wantErr := errors.New("decrypt failed")
+	_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider:  "anthropic-api",
+		BaseURL:   "https://api.anthropic.com",
+		RevealKey: func(context.Context) (string, error) { return "", wantErr },
+	})
+	require.ErrorIs(t, err, wantErr)
+}
+
+// Edge-case: an empty base URL falls back to the default Anthropic endpoint
+// (https://api.anthropic.com). Verified by capturing the request host via a
+// transport that records and immediately errors.
+func TestAnthropicProbe_EmptyBaseURL_UsesDefault(t *testing.T) {
+	ct := &captureHostTransport{}
+	p := &anthropicProbe{
+		httpClient: &http.Client{Transport: ct},
+		timeout:    func(ctx context.Context) (context.Context, context.CancelFunc) { return ctx, func() {} },
+	}
+	_, _ = p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider: "anthropic-api",
+		BaseURL:  "",
+	})
+	assert.Contains(t, ct.captured, "api.anthropic.com",
+		"empty BaseURL must resolve to the default Anthropic endpoint")
+}
+
+// Security: a response larger than MaxResponseBytes is bounded (OOM backstop).
+func TestAnthropicProbe_BoundedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("{"), 1<<20)) // 1 MiB
+	}))
+	defer srv.Close()
+
+	p := newAnthropicProbe(Deps{HTTPClient: srv.Client(), MaxResponseBytes: 64})
+	_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider: "anthropic-api",
+		BaseURL:  srv.URL,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errResponseTooLarge)
 }
 
 // Security: the api key never appears in the returned error nor in slog output.
