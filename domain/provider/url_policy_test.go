@@ -174,6 +174,28 @@ func TestValidateConnectionURL_OllamaUnspecified_Rejected(t *testing.T) {
 
 // Security: the load-bearing scoping checks that lock the carve-out's scope.
 
+// SECURITY (SSRF, userinfo smuggling) — a loopback literal placed in the URL
+// userinfo (http://127.0.0.1@evil.com) must NOT earn the ollama loopback
+// carve-out: url.Hostname() resolves to the REAL host "evil.com", so the
+// carve-out declines and the request falls through to StrictURLPolicy. With the
+// non-https (http) scheme the carve-out is the ONLY thing that could have let it
+// through, so StrictURLPolicy rejects it. This pins the carve-out against a
+// future denylist refactor that might naively substring-match the loopback
+// literal in the raw URL. (PR #23 security LOW.)
+func TestValidateConnectionURL_OllamaUserinfoSmuggling_Rejected(t *testing.T) {
+	cases := []string{
+		"http://127.0.0.1@evil.com/v1",
+		"http://localhost@evil.com/v1",
+		"http://127.0.0.1:11434@evil.com/v1",
+		"http://user:127.0.0.1@evil.com/v1",
+	}
+	for _, raw := range cases {
+		c := provider.Connection{Name: "ollama-smuggle", Provider: "ollama", BaseURL: raw}
+		err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+		assert.ErrorIs(t, err, provider.ErrInvalidBaseURL, "userinfo-smuggled URL %q must be rejected", raw)
+	}
+}
+
 func TestValidateConnectionURL_NonOllamaLocalhost_StillRejected(t *testing.T) {
 	for _, prov := range []string{"openrouter", "openai", "litellm", "azure-openai", ""} {
 		c := provider.Connection{Name: "x", Provider: prov, BaseURL: "http://localhost:11434/v1"}

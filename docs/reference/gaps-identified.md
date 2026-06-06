@@ -2,17 +2,45 @@
 
 Issues found during review iterations. Only the user can move items to the Won't Fix sections.
 
+## 🚩 RELEASE GATES (block any GA / production claim)
+
+These are not code-review gates — the build is green and the failure modes are
+safe (fail-closed). But each MUST be cleared by a real-binary / live-API smoke
+test before the affected path is claimed GA or production-ready. (Promoted to
+named gates per PR #23 review, 10x items 2-3 + security.)
+
+- **RELEASE-GATE BEDROCK-001 — Bedrock `/converse-stream` event-stream decoder.**
+  The streaming Bedrock path uses an NDJSON-style scanner, not the real
+  `application/vnd.amazon.eventstream` binary framing (no signed
+  `Accept: application/vnd.amazon.eventstream`). Streaming Bedrock is
+  NON-FUNCTIONAL until the binary-frame decoder lands. Non-streaming Converse is
+  fine. GATE: no GA/prod claim on **streaming** Bedrock until done. (Detail under
+  Open Issues → BEDROCK-001.)
+- **RELEASE-GATE OPENCODE-001 — opencode flag spellings + `minOpencodeVersion`.**
+  `--allow-all-tools` / `--allowed-tools` / `run` / `minOpencodeVersion="0.4.0"`
+  are placeholders chosen from docs, unverified against an installed modern
+  opencode binary. The version probe is correctly FAIL-CLOSED (a mismatched
+  binary refuses to launch), so the failure mode is safe. GATE: one real-binary
+  smoke test (`opencode run --help`, `opencode --version`) confirming the consts
+  before any GA claim on the agent tier. (Detail under Open Issues → OPENCODE-001.)
+- **RELEASE-GATE OPENCODE-002 — agent-path multi-provider routing is fake-tested
+  only.** The `run -m <provider>/<model>` argv + per-provider auth-env contract
+  is asserted hermetically via a fake `CommandRunner`; no live smoke test
+  exercises a real binary per provider. GATE: a documented manual/build-tagged
+  live smoke test per provider before any GA claim on the agent tier. (Detail
+  under Open Issues → OPENCODE-002.)
+
 ## Open Issues
 
-### OPENCODE-001: Modern-opencode contract details are unverified placeholders
+### OPENCODE-001: Modern-opencode contract details are unverified placeholders 🚩 RELEASE GATE
 **Area**: opencode args + version (`adapter/opencode/args.go`, `adapter/opencode/version.go`)
 **Detail**: The flag spellings `permissionAllowAllFlag="--allow-all-tools"`, `toolScopeFlag="--allowed-tools"`, `runSubcommand="run"`, and `minOpencodeVersion="0.4.0"` are placeholders chosen from documentation, not confirmed against an installed modern opencode binary. They are deliberately localized so a correction is a one-line edit each. Verify against `opencode run --help` and `opencode --version`, correct the consts, and update the unit tests' expected argv accordingly. Until confirmed, agent runs against a real binary may use the wrong flags.
 
-### OPENCODE-002: Agent-path multi-provider routing only fake-tested
+### OPENCODE-002: Agent-path multi-provider routing only fake-tested 🚩 RELEASE GATE
 **Area**: opencode env + run (`adapter/opencode/{env,provider}.go`)
 **Detail**: The `opencode run -m <provider>/<model>` argv + per-provider auth-env contract is asserted hermetically via a fake `CommandRunner` only. No live smoke test exercises a real opencode binary per provider (anthropic/openai/openrouter/ollama/amazon-bedrock/azure). Once OPENCODE-001 is confirmed, add a documented manual/integration smoke check (kept out of `make test`) or a build-tagged live test, and note any provider the installed binary cannot actually drive (fail-closed path).
 
-### BEDROCK-001: Converse + ListFoundationModels shapes not verified against live AWS
+### BEDROCK-001: Converse + ListFoundationModels shapes not verified against live AWS 🚩 RELEASE GATE (streaming)
 **Area**: bedrock adapter + probe (`adapter/bedrock/{request,response}.go`, `adapter/probe/bedrock.go`)
 **Detail**: The Converse request/response body and the `ListFoundationModels` control-plane shape are validated only against fixture servers. Confirm against live AWS: the `/model/{id}/converse` (and `/converse-stream`) runtime host vs the `bedrock.{region}.amazonaws.com/foundation-models` control-plane host, the `inferenceConfig`/`usage` field names, and the streaming event framing. Adjust fixtures and parsing if reality differs.
 
