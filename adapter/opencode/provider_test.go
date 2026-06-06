@@ -390,6 +390,75 @@ func TestRunAgent_KeyAbsentFromLogs(t *testing.T) {
 	}
 }
 
+// bedrockAgentBinding builds a bedrock binding with a JSON composite sealed
+// credential containing both secretAccessKey and sessionToken.
+func bedrockAgentBinding(secretAccessKey, sessionToken string) provider.ResolvedBinding {
+	payload := `{"secret":"` + secretAccessKey + `","session_token":"` + sessionToken + `"}`
+	return provider.ResolvedBinding{
+		Provider: "amazon-bedrock",
+		Extras: map[string]string{
+			"region":        "us-east-1",
+			"access-key-id": "AKID-TEST",
+		},
+		Model: "amazon-bedrock/anthropic.claude-3-sonnet",
+		RevealKey: func(_ context.Context) (string, error) {
+			return payload, nil
+		},
+	}
+}
+
+// Security: bedrock AWS credential quartet (SecretAccessKey + SessionToken) must
+// reach the subprocess only via RunSpec.Env, never via argv or slog output.
+// The bedrock path is separately risky because TWO secrets travel in the sealed
+// payload — the secret access key AND the session token — either of which in
+// argv would be extractable from os.Args or process listings.
+func TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs(t *testing.T) {
+	const secretKey = "BEDROCK-SUPER-SECRET-DO-NOT-LOG"
+	const sessionTok = "BEDROCK-SESSION-TOKEN-SENTINEL"
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"bedrock work done"}}}}
+	p := New(Config{
+		Binding:       bedrockAgentBinding(secretKey, sessionTok),
+		BinaryPath:    "opencode",
+		Runner:        mr,
+		AllowAllTools: true,
+	})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "do the thing",
+		WorkDir: "/tmp/ws",
+		Model:   "amazon-bedrock/anthropic.claude-3-sonnet",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// Secrets must not appear in logs.
+	assert.NotContains(t, buf.String(), secretKey, "AWS_SECRET_ACCESS_KEY leaked into logs")
+	assert.NotContains(t, buf.String(), sessionTok, "AWS_SESSION_TOKEN leaked into logs")
+
+	// The run subprocess must have received the secrets only via env, never argv.
+	require.GreaterOrEqual(t, len(mr.calls), 2, "expected probe + run calls")
+	runSpec := mr.calls[1]
+
+	secretVal, ok := envValue(runSpec.Env, "AWS_SECRET_ACCESS_KEY")
+	require.True(t, ok, "AWS_SECRET_ACCESS_KEY must be in subprocess env")
+	assert.Equal(t, secretKey, secretVal)
+
+	sessionVal, ok := envValue(runSpec.Env, "AWS_SESSION_TOKEN")
+	require.True(t, ok, "AWS_SESSION_TOKEN must be in subprocess env")
+	assert.Equal(t, sessionTok, sessionVal)
+
+	for _, a := range runSpec.Args {
+		assert.NotContains(t, a, secretKey, "AWS_SECRET_ACCESS_KEY must never appear in argv")
+		assert.NotContains(t, a, sessionTok, "AWS_SESSION_TOKEN must never appear in argv")
+	}
+}
+
 // parseOutput table test — covers the whitespace-filtering, token-counting,
 // and step-folding logic directly so the pure function's contract is auditable.
 func TestParseOutput(t *testing.T) {
