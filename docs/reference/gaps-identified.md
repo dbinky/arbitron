@@ -28,6 +28,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **FACTORY-MaxResponseBytes-threading** (Area 5 Pass 1): `TestFactory_ProviderFor_ThreadsMaxResponseBytes` covered only 3 of 5 credential-bearing backends (openrouter, azurefoundry, opencode) and omitted `anthropic-api` and `bedrock`. Extended the test to include all five and updated the comment accordingly.
 - **FACTORY-ErrUnknownProvider-quoting** (Area 5 Pass 2): `ErrUnknownProvider` uses `%q` to quote the provider string, preventing control-char injection into logs. This property was untested. Added `TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped rather than emitted raw.
 - **OPENCODE-ToolScope-precedence** (Area 6 Pass 1): `mission.ToolScope` wins over `posture.AllowedTools` when both are non-empty, but no test covered the case where both were simultaneously non-empty. Added `TestBuildArgs_MissionToolScopeWinsOverProfileAllowlist` to `args_test.go` — verifies a 3-tool mission scope beats a 1-tool profile allowlist.
+- **OPENCODE-buildArgs-quoting** (Area 6 Pass 2): `buildArgs` error path (`args.go:52`) uses `%q` to quote the provider string but this was untested. Added `TestBuildArgs_UnknownProviderControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped in the error message (same property verified for the factory in Area 5).
 
 ## Won't Fix (Beyond Current Scope)
 

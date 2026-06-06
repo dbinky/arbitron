@@ -171,6 +171,18 @@ func TestBuildArgs_UnknownProviderFailsClosed(t *testing.T) {
 	assert.Nil(t, args, "no argv on unknown provider")
 }
 
+// SECURITY — control chars in a provider string must be %q-escaped in the error
+// message so they never reach logs as raw bytes (same property as the factory).
+func TestBuildArgs_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
+	b := bindingForArgs("foo\nmalicious", "m", nil)
+	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	require.ErrorIs(t, err, ErrUnknownProvider)
+	assert.NotContains(t, err.Error(), "\n",
+		"raw newline must not appear in the error message")
+	assert.Contains(t, err.Error(), `\n`,
+		"escaped \\n should appear via %q-quoted provider string")
+}
+
 // SECURITY — default allow-all posture grants broad tools/permissions in the argv.
 func TestBuildArgs_AllowAllEmitsBroadPermissions(t *testing.T) {
 	b := bindingForArgs("anthropic", "anthropic/m", nil)
