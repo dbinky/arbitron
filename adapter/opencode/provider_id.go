@@ -1,33 +1,34 @@
 package opencode
 
-import "strings"
+import "github.com/arbitron/arbitron/domain/provider"
 
-// providerIDMap maps arbitron provider strings (as they appear on
-// ResolvedBinding.Provider) to opencode's provider ids used in
+// providerIDMap maps a DOMAIN-CANONICAL provider id (the output of
+// provider.Canonicalize) to opencode's provider id used in
 // `run -m <provider>/<model>`. It is the single source of truth shared by
 // args.go (the -m flag) and env_providers.go (the auth env table): the env table
 // is keyed by these opencode ids, so both share one vocabulary.
+//
+// The alias collapse (bedrock/amazon-bedrock, anthropic-api/anthropic, the azure
+// trio) lives ONCE in provider.Canonicalize, so this map only needs the canonical
+// ids — it does not re-list every spelling.
 //
 // Note: "claude-cli" is intentionally ABSENT — the Factory never routes a
 // claude-cli agent binding to opencode (it uses adapter/claudecli), so a
 // claude-cli value here is an unknown provider and must fail closed.
 var providerIDMap = map[string]string{
-	"anthropic":      "anthropic",
-	"anthropic-api":  "anthropic",
-	"openai":         "openai",
-	"openrouter":     "openrouter",
-	"ollama":         "ollama",
-	"bedrock":        "amazon-bedrock",
-	"amazon-bedrock": "amazon-bedrock",
-	"azure":          "azure",
-	"azure-openai":   "azure",
-	"azure-foundry":  "azure",
+	provider.CanonicalAnthropicAPI: "anthropic",
+	"openai":                       "openai",
+	"openrouter":                   "openrouter",
+	"ollama":                       "ollama",
+	provider.CanonicalBedrock:      "amazon-bedrock",
+	provider.CanonicalAzure:        "azure",
 }
 
-// mapProviderID normalizes (trim + lowercase) and maps an arbitron provider
-// string to its opencode provider id. ok is false for an unknown or empty
-// provider so callers can fail closed.
+// mapProviderID canonicalizes an arbitron provider string (via the shared
+// provider.Canonicalize: trim + lowercase + documented alias collapse) and maps
+// the canonical id to its opencode provider id. ok is false for an unknown or
+// empty provider so callers can fail closed.
 func mapProviderID(arbitronProvider string) (opencodeID string, ok bool) {
-	id, ok := providerIDMap[strings.ToLower(strings.TrimSpace(arbitronProvider))]
+	id, ok := providerIDMap[provider.Canonicalize(arbitronProvider)]
 	return id, ok
 }

@@ -3,27 +3,23 @@ package probe
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	domprovider "github.com/arbitron/arbitron/domain/provider"
 )
 
-// Canonical provider strings after normalization (trim + lowercase). These
-// mirror adapter/provider/factory.go's constants so the two selectors agree.
+// Probe-dispatch provider ids, matched after domprovider.Canonicalize. The
+// azure/anthropic-api/bedrock alias groups are collapsed to a single canonical
+// id by Canonicalize (the arms use domprovider.Canonical*); the
+// OpenAI-compatible ids canonicalize to themselves and are listed here.
 const (
-	providerClaudeCLI     = "claude-cli"
-	providerOpenAI        = "openai"
-	providerOpenRouter    = "openrouter"
-	providerLiteLLM       = "litellm"
-	providerOllama        = "ollama"
-	providerOllamaCloud   = "ollama-cloud"
-	providerAzureOpenAI   = "azure-openai"
-	providerAzureFoundry  = "azure-foundry"
-	providerAnthropicAPI  = "anthropic-api"
-	providerBedrock       = "bedrock"
-	providerAmazonBedrock = "amazon-bedrock"
+	providerClaudeCLI   = "claude-cli"
+	providerOpenAI      = "openai"
+	providerOpenRouter  = "openrouter"
+	providerLiteLLM     = "litellm"
+	providerOllama      = "ollama"
+	providerOllamaCloud = "ollama-cloud"
 )
 
 // Deps carries the shared construction inputs threaded into each probe.
@@ -59,8 +55,6 @@ func NewProbeFactory(deps Deps) *ProbeFactory { return &ProbeFactory{deps: deps}
 
 var _ domprovider.ProbeSelector = (*ProbeFactory)(nil)
 
-func normalizeProvider(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
-
 // ProbeFor dispatches by binding.Provider. The empty/claude-cli path returns the
 // reachability-only CLI probe; OpenAI-compatible families return the
 // {base}/models probe; anthropic-api and bedrock return their dedicated probes.
@@ -69,15 +63,18 @@ func normalizeProvider(p string) string { return strings.ToLower(strings.TrimSpa
 // SECURITY/contract: dispatch is purely on Provider — Kind and Model are never
 // read (a connection-built binding may leave both empty).
 func (f *ProbeFactory) ProbeFor(b domprovider.ResolvedBinding) (domprovider.ConnectionProbe, error) {
-	switch normalizeProvider(b.Provider) {
+	// Dispatch on the domain-canonical id so this selector shares ONE provider
+	// vocabulary with the chat/agent factories and opencode (alias collapse lives
+	// once in domprovider.Canonicalize).
+	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
 		return newClaudeCLIProbe(f.deps), nil
 	case providerOpenAI, providerOpenRouter, providerLiteLLM,
-		providerOllama, providerOllamaCloud, providerAzureOpenAI, providerAzureFoundry:
+		providerOllama, providerOllamaCloud, domprovider.CanonicalAzure:
 		return newOpenAICompatProbe(f.deps), nil
-	case providerAnthropicAPI:
+	case domprovider.CanonicalAnthropicAPI:
 		return newAnthropicProbe(f.deps), nil
-	case providerBedrock, providerAmazonBedrock:
+	case domprovider.CanonicalBedrock:
 		return newBedrockProbe(f.deps), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", domprovider.ErrNoProbeForProvider, b.Provider)

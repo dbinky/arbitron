@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/anthropicapi"
@@ -22,29 +21,23 @@ import (
 // opencode, so they cannot produce this error.)
 var ErrUnknownProvider = errors.New("provider: no adapter for provider")
 
-// Canonical provider strings, after normalization (trim + lowercase).
+// Chat-dispatch provider ids, matched after domprovider.Canonicalize. The
+// azure/bedrock/anthropic-api alias groups are collapsed to a single canonical
+// id by Canonicalize (so the arms below use domprovider.Canonical* rather than
+// re-listing each spelling); the OpenAI-compatible ids canonicalize to
+// themselves and are listed explicitly here.
 const (
-	providerClaudeCLI    = ProviderClaudeCLI
-	providerOpenRouter   = "openrouter"
-	providerLiteLLM      = "litellm"
-	providerAzureOpenAI  = "azure-openai"
-	providerAzureFoundry = "azure-foundry"
+	providerClaudeCLI  = ProviderClaudeCLI
+	providerOpenRouter = "openrouter"
+	providerLiteLLM    = "litellm"
 	// providerOpenAI and providerOllama route to the OpenAI-compatible
 	// adapter/openrouter chat adapter. Local vs cloud Ollama are distinguished
 	// by the connection's BaseURL + presence/absence of a key, not by the
 	// provider string.
 	providerOpenAI = "openai"
 	providerOllama = "ollama"
-	// providerOllamaCloud is an accepted alias for the ollama family; it is
-	// normalized to providerOllama in ChatProviderFor.
+	// providerOllamaCloud is an accepted alias for the ollama family.
 	providerOllamaCloud = "ollama-cloud"
-	// providerAnthropicAPI routes to the Anthropic Messages-API chat adapter
-	// (adapter/anthropicapi), distinct from the empty/claude-cli path.
-	providerAnthropicAPI = "anthropic-api"
-	// providerBedrock (and the amazon-bedrock alias) route to the SigV4-signed
-	// Bedrock Converse chat adapter (adapter/bedrock).
-	providerBedrock       = "bedrock"
-	providerAmazonBedrock = "amazon-bedrock"
 )
 
 // Deps carries the shared construction inputs the Factory threads into each
@@ -107,13 +100,6 @@ var (
 	_ engine.AgentProviderSelector = (*Factory)(nil)
 )
 
-// normalizeProvider trims surrounding whitespace and lowercases the provider
-// string so configured values are matched case- and whitespace-insensitively.
-// A whitespace-only value normalizes to empty (the subscription path).
-func normalizeProvider(p string) string {
-	return strings.ToLower(strings.TrimSpace(p))
-}
-
 // ChatProviderFor returns the concrete engine.ChatProvider for a chat-kind
 // binding, selected by binding.Provider. An empty (or "claude-cli") provider
 // returns the claude-cli ChatAdapter; openrouter/litellm and the
@@ -122,7 +108,10 @@ func normalizeProvider(p string) string {
 // anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
 // alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
-	switch normalizeProvider(b.Provider) {
+	// Dispatch on the domain-canonical id so the chat/agent/probe selectors and
+	// the opencode path all share ONE provider vocabulary (alias collapse lives
+	// once in domprovider.Canonicalize, not forked per selector).
+	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
 		if f.deps.ClaudeChat == nil {
 			return nil, errors.New("provider: claude-cli chat adapter is not configured for the empty-provider path")
@@ -135,21 +124,21 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
-	case providerAzureOpenAI, providerAzureFoundry:
+	case domprovider.CanonicalAzure:
 		return azurefoundry.New(azurefoundry.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
-	case providerAnthropicAPI:
+	case domprovider.CanonicalAnthropicAPI:
 		return anthropicapi.New(anthropicapi.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
-	case providerBedrock, providerAmazonBedrock:
+	case domprovider.CanonicalBedrock:
 		// Now is left nil here so the adapter uses time.Now in production; tests
 		// inject a fixed clock through the adapter's own Config.
 		return bedrock.New(bedrock.Config{
@@ -168,7 +157,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 // AgentAdapter; any other (non-Claude) provider routes to adapter/opencode,
 // which carries the per-provider credential env contract.
 func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
-	switch normalizeProvider(b.Provider) {
+	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
 		if f.deps.ClaudeAgent == nil {
 			return nil, errors.New("provider: claude-cli agent adapter is not configured for the empty-provider path")

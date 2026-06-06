@@ -383,11 +383,43 @@ func TestFactory_ChatProviderFor_AmazonBedrockAlias_MapsToBedrock(t *testing.T) 
 	assert.IsType(t, (*bedrock.Provider)(nil), cp)
 }
 
+// ---- Canonicalization: documented aliases route to the same adapter ----
+
+// The chat factory dispatches on domprovider.Canonicalize, so each documented
+// alias group resolves to the SAME concrete adapter as its canonical id. This
+// pins the alias-collapse contract at the selector seam (PR #23 Should Fix #2).
+func TestFactory_ChatProviderFor_CanonicalAliases_RouteToSameAdapter(t *testing.T) {
+	f := newTestFactory(t)
+
+	// anthropic-api family: "anthropic" is an accepted alias of "anthropic-api".
+	for _, name := range []string{"anthropic-api", "anthropic", "  Anthropic  "} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*anthropicapi.Provider)(nil), cp, "alias %q -> anthropicapi", name)
+	}
+
+	// azure trio: azure-openai / azure-foundry / azure all route to azurefoundry.
+	for _, name := range []string{"azure-openai", "azure-foundry", "azure"} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*azurefoundry.Provider)(nil), cp, "alias %q -> azurefoundry", name)
+	}
+
+	// bedrock family: bedrock / amazon-bedrock route to bedrock.
+	for _, name := range []string{"bedrock", "amazon-bedrock"} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*bedrock.Provider)(nil), cp, "alias %q -> bedrock", name)
+	}
+}
+
 // ---- Error: near-miss strings still fail (no over-matching by the new arms) ----
 
 func TestFactory_ChatProviderFor_UnknownProviderStillErrors_NearMiss(t *testing.T) {
 	f := newTestFactory(t)
-	for _, name := range []string{"ollamaa", "open-ai", "anthropic", "amazon-bedrockk"} {
+	// NB: "anthropic" is NOT a near-miss — it canonicalizes to "anthropic-api"
+	// (see TestFactory_ChatProviderFor_CanonicalAliases_RouteToSameAdapter).
+	for _, name := range []string{"ollamaa", "open-ai", "anthropicc", "amazon-bedrockk"} {
 		_, err := f.ChatProviderFor(chatBinding(name))
 		require.Error(t, err, "provider %q must be unknown", name)
 		assert.ErrorIs(t, err, adapterprovider.ErrUnknownProvider)
