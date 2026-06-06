@@ -126,6 +126,52 @@ func TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials(t *testin
 	assert.NoError(t, provider.ValidateConnection(withExtras))
 }
 
+// SECURITY (SSRF) — a bedrock connection's region is interpolated into the
+// request host (bedrock-runtime.{region}.amazonaws.com), a path the BaseURL SSRF
+// policy does NOT cover. ValidateConnection must reject a malformed or
+// injection-shaped region at write time so a credential-bearing request can
+// never be redirected to an attacker host. (PR #23 security MEDIUM.)
+func TestValidateConnection_BedrockRejectsMalformedRegion(t *testing.T) {
+	bad := []string{
+		"us-east-1.evil.com",            // host smuggling via a trailing label
+		"us-east-1/../../foo",           // path traversal
+		"us-east-1.attacker.com/v1",     // path + alternate host
+		"US-EAST-1",                     // uppercase (regions are lowercase)
+		"us_east_1",                     // underscores
+		"us east 1",                     // spaces
+		"useast1",                       // no separators / no trailing digits
+		"us-east",                       // missing the numeric suffix
+		"-us-east-1",                    // leading dash
+		"us-east-1\n169.254.169.254",    // newline injection
+		"http://evil",                   // scheme injection
+	}
+	for _, region := range bad {
+		c := provider.Connection{
+			Name: "bd", Provider: "bedrock",
+			Extras: map[string]string{"region": region, "access-key-id": "AKID"},
+		}
+		err := provider.ValidateConnection(c)
+		if !errors.Is(err, provider.ErrBedrockInvalidRegion) {
+			t.Fatalf("region %q: want ErrBedrockInvalidRegion, got %v", region, err)
+		}
+	}
+}
+
+// Success — well-formed AWS regions (including the gov/multi-segment forms) are
+// accepted by ValidateConnection.
+func TestValidateConnection_BedrockAcceptsValidRegion(t *testing.T) {
+	good := []string{"us-east-1", "eu-west-2", "ap-southeast-2", "us-gov-west-1", "ca-central-1"}
+	for _, region := range good {
+		c := provider.Connection{
+			Name: "bd", Provider: "bedrock",
+			Extras: map[string]string{"region": region, "access-key-id": "AKID"},
+		}
+		if err := provider.ValidateConnection(c); err != nil {
+			t.Fatalf("region %q: want ok, got %v", region, err)
+		}
+	}
+}
+
 // Input-validation: a bedrock connection requires both region and access-key-id
 // in Extras; either missing (or nil extras) yields ErrBedrockCredentialsRequired.
 func TestValidateConnection_BedrockRequiresRegionAndAccessKey(t *testing.T) {

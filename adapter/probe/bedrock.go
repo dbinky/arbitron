@@ -71,6 +71,12 @@ func (p *bedrockProbe) Probe(ctx context.Context, b domprovider.ResolvedBinding)
 	if region == "" || accessKeyID == "" {
 		return domprovider.ProbeResult{}, fmt.Errorf("%w: bedrock requires region and access-key-id in extras", ErrRegionConfig)
 	}
+	// SECURITY (defense-in-depth): the region is interpolated into the
+	// control-plane host below, so reject a malformed/injection region before
+	// signing or sending. ValidateConnection is the authoritative write-time guard.
+	if !domprovider.ValidBedrockRegion(region) {
+		return domprovider.ProbeResult{}, fmt.Errorf("%w: malformed AWS region", ErrRegionConfig)
+	}
 	// Reveal the sealed secret (bare string or {"secret","session_token"} JSON),
 	// parsed by the SHARED awssig.ParseCredential.
 	var cred awssig.Credential

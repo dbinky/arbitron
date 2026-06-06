@@ -56,6 +56,24 @@ func TestEndpointURL_MissingRegion(t *testing.T) {
 }
 
 // input-validation: empty model rejected.
+// SECURITY (defense-in-depth) — even though ValidateConnection rejects a
+// malformed region at write time, endpointURL guards defensively before
+// interpolating the region into the host so a binding that reaches the adapter
+// with a bad region (test/fixture/regression) can never build an attacker host.
+func TestEndpointURL_RejectsMalformedRegion(t *testing.T) {
+	for _, region := range []string{
+		"us-east-1.evil.com",
+		"us-east-1/../foo",
+		"US-EAST-1",
+		"us east 1",
+		"us-east-1\n169.254.169.254",
+	} {
+		if _, err := endpointURL(binding(region, "m"), false); !errors.Is(err, ErrInvalidRegion) {
+			t.Fatalf("region %q: err = %v, want ErrInvalidRegion", region, err)
+		}
+	}
+}
+
 func TestEndpointURL_MissingModel(t *testing.T) {
 	if _, err := endpointURL(binding("us-east-1", "  "), false); !errors.Is(err, ErrMissingModel) {
 		t.Fatalf("err = %v, want ErrMissingModel", err)

@@ -16,6 +16,12 @@ var ErrMissingRegion = errors.New("bedrock: binding Extras[\"region\"] is empty"
 // which is required in the Converse endpoint path.
 var ErrMissingModel = errors.New("bedrock: binding Model (modelId) is empty")
 
+// ErrInvalidRegion is returned when Extras["region"] is not a well-formed AWS
+// region. SECURITY: the region is interpolated into the request host, so a
+// malformed/injection value is rejected defensively here (the authoritative
+// guard is provider.ValidateConnection at write time).
+var ErrInvalidRegion = errors.New("bedrock: region is not a well-formed AWS region")
+
 // endpointURL derives the regional Converse endpoint from Extras["region"] and
 // Model. stream=false → /converse, stream=true → /converse-stream:
 //
@@ -27,6 +33,12 @@ func endpointURL(b provider.ResolvedBinding, stream bool) (string, error) {
 	region := strings.TrimSpace(b.Extras["region"])
 	if region == "" {
 		return "", ErrMissingRegion
+	}
+	// SECURITY (defense-in-depth): reject a malformed region before it is
+	// interpolated into the host, even though write-time ValidateConnection is
+	// the authoritative guard.
+	if !provider.ValidBedrockRegion(region) {
+		return "", ErrInvalidRegion
 	}
 	model := strings.TrimSpace(b.Model)
 	if model == "" {

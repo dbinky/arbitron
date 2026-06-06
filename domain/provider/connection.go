@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"regexp"
 )
 
 // Connection binds an endpoint to its credential. model-id is deliberately
@@ -57,6 +58,28 @@ var ErrAzureAPIVersionRequired = errors.New("azure connections require an api-ve
 // connection lacks a non-empty "region" or "access-key-id" entry in Extras.
 var ErrBedrockCredentialsRequired = errors.New("bedrock connections require region and access-key-id in extras")
 
+// ErrBedrockInvalidRegion is returned when a bedrock connection's "region" is
+// not a well-formed AWS region. SECURITY: the region is interpolated into the
+// request host (bedrock-runtime.{region}.amazonaws.com) on a path the BaseURL
+// SSRF policy does not cover, so a malformed/injection value could redirect a
+// credential-bearing request to an attacker host.
+var ErrBedrockInvalidRegion = errors.New("bedrock region is not a well-formed AWS region")
+
+// bedrockRegionRE anchors an AWS region: two lowercase letters, one or more
+// lowercase-letter segments (covers gov/iso multi-segment forms such as
+// us-gov-west-1), and a trailing numeric suffix — e.g. us-east-1,
+// ap-southeast-2, us-gov-west-1. Anchored end-to-end so an embedded dot, slash,
+// space, or newline (host/path/SSRF smuggling) is rejected.
+var bedrockRegionRE = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d+$`)
+
+// ValidBedrockRegion reports whether region is a well-formed AWS region. It is
+// the single source of truth for the rule enforced at connection write time
+// (ValidateConnection); adapters reuse it as a defensive guard immediately
+// before interpolating the region into a request host.
+func ValidBedrockRegion(region string) bool {
+	return bedrockRegionRE.MatchString(region)
+}
+
 // azureProviders is the set of providers that require an api-version in Extras.
 // Centralized so later phases can extend the Azure set in one place.
 var azureProviders = map[string]bool{
@@ -75,8 +98,10 @@ var bedrockProviders = map[string]bool{
 // ValidateConnection enforces provider-specific requirements at create/update
 // time (not at workflow validate time). Azure providers ("azure-openai",
 // "azure-foundry") require a non-empty "api-version" entry in Extras; an absent
-// or empty value returns ErrAzureAPIVersionRequired. Non-Azure providers pass
-// with no extras requirement.
+// or empty value returns ErrAzureAPIVersionRequired. Bedrock providers require a
+// non-empty "region" + "access-key-id" (ErrBedrockCredentialsRequired) and a
+// well-formed region (ErrBedrockInvalidRegion) since the region is interpolated
+// into the request host. Other providers pass with no extras requirement.
 func ValidateConnection(c Connection) error {
 	if azureProviders[c.Provider] {
 		if c.Extras["api-version"] == "" {
@@ -86,6 +111,12 @@ func ValidateConnection(c Connection) error {
 	if bedrockProviders[c.Provider] {
 		if c.Extras["region"] == "" || c.Extras["access-key-id"] == "" {
 			return ErrBedrockCredentialsRequired
+		}
+		// SECURITY: the region is interpolated into the request host on a path the
+		// BaseURL SSRF policy does not cover; reject anything that is not a
+		// well-formed AWS region at write time.
+		if !ValidBedrockRegion(c.Extras["region"]) {
+			return ErrBedrockInvalidRegion
 		}
 	}
 	return nil

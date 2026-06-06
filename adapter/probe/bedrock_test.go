@@ -88,6 +88,29 @@ func TestBedrockProbe_MissingRegion_RegionConfigError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrRegionConfig)
 }
 
+// SECURITY (SSRF, defense-in-depth) — the probe interpolates region into the
+// control-plane host, so a malformed/injection region must be rejected as a
+// region/config fault BEFORE any signed request is built, even though
+// ValidateConnection is the authoritative write-time guard.
+func TestBedrockProbe_MalformedRegion_RegionConfigError(t *testing.T) {
+	p := newBedrockProbe(Deps{Clock: fixedClock})
+	for _, region := range []string{
+		"us-east-1.evil.com",
+		"us-east-1/../foo",
+		"US-EAST-1",
+		"us east 1",
+		"us-east-1\n169.254.169.254",
+	} {
+		_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+			Provider:  "bedrock",
+			Extras:    map[string]string{"region": region, "access-key-id": "AKIAEXAMPLE"},
+			RevealKey: revealKey("topsecret"),
+		})
+		require.Error(t, err, "region %q must be rejected", region)
+		assert.ErrorIs(t, err, ErrRegionConfig)
+	}
+}
+
 // Error-handling: a 403 from Bedrock is a SigV4/credentials rejection.
 func TestBedrockProbe_403_CredentialsRejected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
