@@ -43,9 +43,13 @@ func defaults() map[string]interface{} {
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
 		"llm.maxresponsebytes": int64(256 * 1024 * 1024),
-		// Open-by-default agent posture: non-claude agent providers driven through
-		// opencode run with the allow-all permission posture unless disabled.
-		"llm.agentallowalltools":      true,
+		// SECURITY: default CLOSED (false). agentallowalltools grants the opencode
+		// agent subprocess permission-free tool execution (allow-all). On a
+		// credential-bearing, tool-using subprocess fed model-influenced prompts
+		// that is a lethal-trifecta / RCE-equivalent posture, so allow-all is an
+		// explicit operator opt-in, never the shipped default. Per-profile
+		// allowedtools (knob (b)) narrows independently. See PR #23 security HIGH.
+		"llm.agentallowalltools":      false,
 		"logging.level":               "info",
 		"logging.file":                "arbitron.log",
 		"tracing.enabled":             false,
@@ -160,14 +164,15 @@ llm:
   #   Per-request stdout cap. Bounds OOM DoS from hostile prompts that flood
   #   tool output. 0 = no cap (test convenience only).
   #
-  # agentallowalltools: true
-  #   Open-by-default agent posture (knob (a)). Non-claude agent providers
-  #   driven through opencode run with the allow-all permission posture so a
-  #   basic agent mission works out of the box. Set false to disable allow-all
-  #   for every opencode-driven agent provider; per-profile allowedtools
-  #   (knob (b)) narrows independently. NOTE: the opencode agent path requires a
-  #   modern opencode binary (>= the adapter's minimum version, enforced at the
-  #   first agent call).
+  # agentallowalltools: false
+  #   SECURITY (knob (a)): default false (CLOSED). Setting true grants every
+  #   opencode-driven (non-claude) agent provider permission-free, allow-all
+  #   tool execution. On a credential-bearing subprocess fed model-influenced
+  #   prompts this is RCE-equivalent (the lethal trifecta), so leave it false
+  #   unless every prompt input is fully trusted; enabling it is an explicit
+  #   operator opt-in. Per-profile allowedtools (knob (b)) narrows independently.
+  #   NOTE: the opencode agent path requires a modern opencode binary (>= the
+  #   adapter's minimum version, enforced at the first agent call).
 script:
   # envpassthrough: []
   #   SECURITY: names (not values) of engine environment variables that script

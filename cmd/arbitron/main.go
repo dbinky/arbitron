@@ -477,9 +477,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// bedrock, opencode). Dropping this lets an attacker-pointed base_url stream
 		// an unbounded body into io.ReadAll and OOM-kill the engine. 256MiB default.
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-		// Open-by-default agent posture (knob (a)): non-claude agent providers
-		// driven through opencode run with the allow-all permission posture unless
-		// disabled via llm.agentallowalltools=false.
+		// SECURITY: agent permission posture (knob (a)) defaults CLOSED. Allow-all
+		// is an explicit operator opt-in via llm.agentallowalltools=true; on a
+		// credential-bearing opencode subprocess fed model-influenced prompts an
+		// allow-all posture is RCE-equivalent (the lethal trifecta).
 		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
 	})
 

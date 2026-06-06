@@ -224,10 +224,11 @@ type LLMConfig struct {
 	// Without this, an unbounded ReadBytes('\n') would OOM the engine.
 	MaxResponseBytes int64
 	// AgentAllowAllTools is the operator knob (a) for the opencode agent path's
-	// open-by-default permission posture. It defaults to TRUE (open-by-default):
-	// non-claude agent providers driven through opencode run with the allow-all
-	// posture so a basic agent mission works out of the box. Set it to false to
-	// disable the allow-all posture for every opencode-driven agent provider.
+	// permission posture. SECURITY: it defaults to FALSE (CLOSED). Setting it
+	// true grants every non-claude agent provider driven through opencode run a
+	// permission-free, allow-all tool posture; on a credential-bearing subprocess
+	// fed model-influenced prompts that is RCE-equivalent (the lethal trifecta),
+	// so allow-all is an explicit operator opt-in rather than the shipped default.
 	// Per-profile ResolvedBinding.AllowedTools (knob (b)) narrows independently
 	// of this switch.
 	AgentAllowAllTools bool

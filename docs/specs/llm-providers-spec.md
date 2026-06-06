@@ -128,6 +128,15 @@ the operator is trusted and has host access, and because frictionless agent exec
 is the priority for experimentation. Secrets are still never exposed in errors or logs,
 and the kind guard still prevents chat→agent escalation.
 
+> **Security amendment (allow-all is opt-in, CLOSED by default).** For the
+> opencode-driven (non-claude) agent providers, the allow-all tool posture is
+> gated behind `llm.agentallowalltools`, which **ships `false` (closed)**.
+> Granting allow-all to a credential-bearing, tool-using subprocess fed
+> model-influenced prompts is a lethal-trifecta / RCE-equivalent posture, so it
+> is an explicit operator opt-in (`agentallowalltools: true`) rather than the
+> out-of-the-box behavior. Per-profile `allowedtools` narrows tool access
+> independently of this switch.
+
 ## Connection Validation & Model Listing
 
 An operator can validate any configured connection on demand, outside of a workflow run:

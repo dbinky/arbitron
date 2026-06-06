@@ -81,9 +81,10 @@ type Deps struct {
 	// an unbounded body.
 	MaxResponseBytes int64
 	// OpencodeAllowAllTools is the operator knob (a) for the agent path's
-	// open-by-default permission posture. It defaults to true (open-by-default)
-	// in the composition root; a false value disables the allow-all posture for
-	// every opencode-driven provider. Per-profile ResolvedBinding.AllowedTools
+	// permission posture. SECURITY: it defaults to false (CLOSED) in the
+	// composition root; a true value is an explicit operator opt-in that grants
+	// every opencode-driven provider an allow-all tool posture (RCE-equivalent on
+	// model-influenced prompts). Per-profile ResolvedBinding.AllowedTools
 	// (knob (b)) narrows independently of this switch.
 	OpencodeAllowAllTools bool
 }
