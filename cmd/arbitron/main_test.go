@@ -123,3 +123,11 @@ func TestOrgModeOIDC_FailsFastOnUnreachableIssuer(t *testing.T) {
 	})
 	require.Error(t, err, "org mode with an unreachable issuer must fail fast")
 }
+
+// The root command exposes a persistent --config flag (default empty), used to
+// override the config-file path for system/service installs.
+func TestRootCommand_HasConfigFlag(t *testing.T) {
+	f := newRootCmd().PersistentFlags().Lookup("config")
+	require.NotNil(t, f, "--config persistent flag must be registered on root")
+	assert.Equal(t, "", f.DefValue, "--config default must be empty")
+}

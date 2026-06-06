@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,14 +42,19 @@ func defaults() map[string]interface{} {
 		// SECURITY: 256 MB per-request stdout cap; bounds the OOM DoS from
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
-		"llm.maxresponsebytes":  int64(256 * 1024 * 1024),
-		"logging.level":         "info",
-		"logging.file":          "arbitron.log",
-		"tracing.enabled":       false,
-		"tracing.exportdir":     "./traces",
-		"queue.globalcap":       20,
-		"queue.perusercap":      5,
-		"script.envpassthrough": []string{},
+		"llm.maxresponsebytes":        int64(256 * 1024 * 1024),
+		"logging.level":               "info",
+		"logging.file":                "arbitron.log",
+		"tracing.enabled":             false,
+		"tracing.exportdir":           "./traces",
+		"queue.globalcap":             20,
+		"queue.perusercap":            5,
+		"script.envpassthrough":       []string{},
+		"server.tls.enabled":          false,
+		"server.tls.certfile":         "",
+		"server.tls.keyfile":          "",
+		"server.tls.autocertdomain":   "",
+		"server.tls.autocertcachedir": "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
 		"auth.mode":                 "local",
@@ -114,6 +120,16 @@ func defaultYAMLContent() string {
   #   "http://localhost:8080"). Used to build deep links in outbound
   #   notifications (Teams). Trailing slashes are trimmed automatically.
   #   Override via ARBITRON_SERVER_PUBLICBASEURL.
+  # tls:
+  #   enabled: false
+  #     Serve HTTPS directly. Leave false when behind a TLS-terminating
+  #     tunnel/proxy (e.g. cloudflared); set true to serve HTTPS from arbitron.
+  #   certfile: ""   # PEM cert path (BYO / internal CA). Requires keyfile.
+  #   keyfile:  ""   # PEM key path.
+  #   autocertdomain: ""    # automatic Let's Encrypt for this host (mutually
+  #                         # exclusive with certfile/keyfile). Needs public DNS
+  #                         # and reachable :80/:443.
+  #   autocertcachedir: ""  # directory to cache autocert certificates.
 database:
   path: "./arbitron.db"
 workspace:
@@ -351,6 +367,10 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		return nil, err
 	}
 
+	if err := validateTLS(&cfg); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
 }
 
@@ -420,6 +440,63 @@ func validateAuth(cfg *domainconfig.Config) error {
 	default:
 		return fmt.Errorf("invalid auth.mode %q (want %q or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg)
 	}
+}
+
+// validateTLS enforces the direct-HTTPS contract fail-fast at load: when TLS is
+// enabled, exactly one of {certfile+keyfile} or {autocertdomain} must be set,
+// and autocert requires a cache directory. Mirrors the validateAuth precedent.
+func validateTLS(cfg *domainconfig.Config) error {
+	t := cfg.Server.TLS
+	if !t.Enabled {
+		return nil
+	}
+	hasCert := t.CertFile != ""
+	hasKey := t.KeyFile != ""
+	hasAutocert := t.AutocertDomain != ""
+	if hasCert != hasKey {
+		return fmt.Errorf("server.tls.enabled requires both certfile and keyfile")
+	}
+	if hasCert && hasAutocert {
+		return fmt.Errorf("server.tls: set either cert/key or autocertdomain, not both")
+	}
+	if !hasCert && !hasAutocert {
+		return fmt.Errorf("server.tls.enabled requires cert/key or autocertdomain")
+	}
+	if hasAutocert && t.AutocertCacheDir == "" {
+		return fmt.Errorf("server.tls autocertdomain requires autocertcachedir")
+	}
+	// Autocert provisions its certificate over the ACME tls-alpn-01/HTTP-01 flow
+	// and Let's Encrypt only validates the cert against the standard HTTPS port;
+	// serving on any other port provisions a cert but leaves the server silently
+	// unreachable. Cert/key and disabled modes leave the port free.
+	if hasAutocert && cfg.Server.Port != 443 {
+		return fmt.Errorf("server.tls autocertdomain requires server.port 443 (got %d); autocert provisions for the standard HTTPS port and any other port leaves the server unreachable", cfg.Server.Port)
+	}
+	// Local mode has NO authentication (a fixed auto-admin). Direct TLS on a
+	// non-loopback host fronts a fully unauthenticated admin API behind a
+	// legitimate-looking padlock — the exploit path is an unauthenticated GET.
+	// Fail fast unless the operator explicitly opts in via AllowUnauthenticated.
+	if cfg.Auth.Mode == domainconfig.AuthModeLocal && !t.AllowUnauthenticated && !isLoopbackHost(cfg.Server.Host) {
+		return fmt.Errorf("server.tls.enabled with auth.mode=local (local mode has no authentication) on non-loopback host %q exposes an unauthenticated admin API behind TLS; bind to a loopback address, use auth.mode=org, or set server.tls.allowunauthenticated=true to override", cfg.Server.Host)
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is a loopback bind address. It accepts the
+// "localhost" alias and any loopback IP literal (127.0.0.0/8, ::1); an empty
+// host (bind all interfaces) is treated as non-loopback.
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return false
+	}
+	if h == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.
