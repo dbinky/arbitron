@@ -33,6 +33,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **OPENCODE-env-quoting** (Area 7 Pass 2): `opencodeEnv` error path (`env.go:39`) uses `%q` to quote the provider string — same property verified for `buildArgs` (Area 6 Pass 2). Added `TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted`.
 - **PROBE-anthropic-coverage** (Area 8 Pass 1): `anthropic_test.go` was missing 5 paths compared with the openai_compat coverage: RevealKey error, transport → `ErrUnreachable`, 5xx → `ErrUpstreamStatus`, empty base URL uses default endpoint, and bounded response. Added corresponding tests.
 - **PROBE-factory-quoting + scrubControl** (Area 8 Pass 2): `factory.go:83` uses `%q` on the provider string in `ErrNoProbeForProvider` — untested with control chars. Added `TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted`. Also added `TestProbeScrubControl` direct unit test for `httpshared.go`'s `scrubControl` (mirrors bedrock/openrouter pattern).
+- **DOMAIN-probe-failure-path** (Area 9 Pass 1): `probe_test.go` had no test for `ConnectionProbe.Probe` returning an error (failure category empty). Added `TestConnectionProbe_ProbeError` using `fakeProbe{err: ...}`.
 
 ## Won't Fix (Beyond Current Scope)
 

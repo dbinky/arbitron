@@ -31,6 +31,16 @@ func (s fakeSelector) ProbeFor(_ provider.ResolvedBinding) (provider.ConnectionP
 	return s.probe, s.err
 }
 
+// Failure: a ConnectionProbe returning an error propagates it unchanged so
+// callers can errors.Is against classification sentinels.
+func TestConnectionProbe_ProbeError(t *testing.T) {
+	wantErr := provider.ErrNoProbeForProvider
+	var p provider.ConnectionProbe = fakeProbe{err: wantErr}
+	res, err := p.Probe(context.Background(), provider.ResolvedBinding{})
+	assert.ErrorIs(t, err, wantErr)
+	assert.False(t, res.Reachable, "failed probe must return zero ProbeResult")
+}
+
 // Happy path: a ConnectionProbe can be invoked through the interface and its
 // ProbeResult round-trips the supported-listing shape.
 func TestConnectionProbe_PortShape(t *testing.T) {
