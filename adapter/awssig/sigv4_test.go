@@ -2,6 +2,7 @@ package awssig
 
 import (
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -142,4 +143,42 @@ func TestSign_ReturnsNilOnValidRequest(t *testing.T) {
 		t.Error("Authorization not set")
 	}
 	_ = ErrSign // sentinel must exist and be referenceable by importers
+}
+
+// failure: Sign(nil, ...) returns an error wrapping ErrSign.
+func TestSign_NilRequest_ReturnsErrSign(t *testing.T) {
+	err := Sign(nil, nil, "AKID", Credential{SecretAccessKey: "s"}, "us-east-1", "bedrock", fixedClock)
+	if err == nil {
+		t.Fatal("expected error for nil request, got nil")
+	}
+	if !errors.Is(err, ErrSign) {
+		t.Errorf("error = %v, want errors.Is(err, ErrSign)==true", err)
+	}
+}
+
+// failure: a request whose URL is nil returns ErrSign.
+func TestSign_NilURL_ReturnsErrSign(t *testing.T) {
+	req := &http.Request{}
+	err := Sign(req, nil, "AKID", Credential{SecretAccessKey: "s"}, "us-east-1", "bedrock", fixedClock)
+	if err == nil {
+		t.Fatal("expected error for nil URL, got nil")
+	}
+	if !errors.Is(err, ErrSign) {
+		t.Errorf("error = %v, want errors.Is(err, ErrSign)==true", err)
+	}
+}
+
+// edge: canonicalQueryString sorts multiple keys and multiple values per key
+// correctly, following the SigV4 requirement (keys lexicographic, values per-key
+// lexicographic).
+func TestCanonicalQueryString_MultiKey(t *testing.T) {
+	q := map[string][]string{
+		"z": {"beta", "alpha"},
+		"a": {"1"},
+	}
+	got := canonicalQueryString(q)
+	const want = "a=1&z=alpha&z=beta"
+	if got != want {
+		t.Errorf("canonicalQueryString = %q, want %q", got, want)
+	}
 }
