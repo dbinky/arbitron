@@ -182,6 +182,18 @@ func TestValidateConnectionURL_NonOllamaLocalhost_StillRejected(t *testing.T) {
 	}
 }
 
+// seam (url_policy ↔ factory): the factory normalizes "ollama-cloud" to the same
+// routing arm as "ollama", but the url_policy carve-out must NOT extend to the
+// alias. "ollama-cloud" is for cloud Ollama (https public endpoint), so a loopback
+// URL must be rejected. This prevents the factory alias from inadvertently widening
+// the SSRF carve-out.
+func TestValidateConnectionURL_OllamaCloudLocalhost_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-cloud-local", Provider: "ollama-cloud", BaseURL: "http://localhost:11434/v1"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL,
+		"ollama-cloud must not earn the loopback carve-out (only 'ollama' earns it)")
+}
+
 func TestValidateConnectionURL_OllamaMetadataEndpoint_StillRejected(t *testing.T) {
 	c := provider.Connection{Name: "ollama-meta", Provider: "ollama", BaseURL: "http://169.254.169.254/latest/meta-data/"}
 	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
