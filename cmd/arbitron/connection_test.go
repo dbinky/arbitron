@@ -212,6 +212,18 @@ func TestRunConnectionValidate_RegionConfigError(t *testing.T) {
 	assert.ErrorIs(t, err, adaptprobe.ErrRegionConfig)
 }
 
+func TestRunConnectionValidate_UpstreamStatus(t *testing.T) {
+	store := &fakeConnectionStore{conn: provider.Connection{Name: "oai", Provider: "openai"}}
+	sel := &fakeProbeSelector{probe: &fakeProbe{err: adaptprobe.ErrUpstreamStatus}}
+	var buf bytes.Buffer
+
+	err := runConnectionValidate(context.Background(), newDeps(store, sel), "oai", &buf)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adaptprobe.ErrUpstreamStatus)
+	assert.Contains(t, err.Error(), "oai")
+	assert.Equal(t, 0, buf.Len())
+}
+
 func TestRunConnectionValidate_NoProbeForProvider(t *testing.T) {
 	store := &fakeConnectionStore{conn: provider.Connection{Name: "x", Provider: "mystery"}}
 	fp := &fakeProbe{}
