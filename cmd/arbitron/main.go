@@ -796,7 +796,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	tlsConf, acMgr, err := buildTLSConfig(ds.cfg.Server.TLS)
+	tlsConf, challengeSrv, err := buildTLSConfig(ds.cfg.Server.TLS, ds.logger)
 	if err != nil {
 		return fmt.Errorf("configuring TLS: %w", err)
 	}
@@ -821,55 +821,24 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	errCh := make(chan error, 1)
+	// Translate the OS signal into a stop channel for the serve loop, and cancel
+	// the MCP stdio context when shutdown begins so it stops accepting requests.
+	stop := make(chan struct{})
 	go func() {
-		if acMgr != nil {
-			// ACME HTTP-01 challenges must be reachable on :80.
-			go func() {
-				challengeSrv := &http.Server{Addr: ":80", Handler: acMgr.HTTPHandler(nil)}
-				if cerr := challengeSrv.ListenAndServe(); cerr != nil && !errors.Is(cerr, http.ErrServerClosed) {
-					ds.logger.Error("ACME challenge server error", "error", cerr)
-				}
-			}()
+		select {
+		case sig := <-shutdownCh:
+			ds.logger.Info("shutdown signal received", "signal", sig)
+		case <-ctx.Done():
 		}
-		ds.logger.Info("server starting", "addr", addr, "tls", tlsConf != nil)
-		var serveErr error
-		if tlsConf != nil {
-			// Cert/key (or autocert) come from srv.TLSConfig, so the file
-			// arguments are empty.
-			serveErr = srv.ListenAndServeTLS("", "")
-		} else {
-			serveErr = srv.ListenAndServe()
-		}
-		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("server error: %w", serveErr)
-		}
-		close(errCh)
+		mcpCancel()
+		close(stop)
 	}()
 
-	select {
-	case sig := <-shutdownCh:
-		ds.logger.Info("shutdown signal received", "signal", sig)
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-	}
-
-	// Cancel the MCP stdio context so it stops accepting new requests.
-	mcpCancel()
-
-	// 18. Shutdown with a 15-second deadline.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	ds.logger.Info("shutting down server")
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
-	}
-
-	ds.logger.Info("server stopped gracefully")
-	return nil
+	// serveHTTP owns the symmetric two-listener lifecycle: the main server and
+	// the optional ACME challenge server are started together, both push serve
+	// errors to a shared channel (so a non-root :80 bind failure aborts startup),
+	// and both are shut down together.
+	return serveHTTP(ctx, ds.logger, srv, challengeSrv, stop)
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {

@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -53,39 +57,65 @@ func genSelfSigned(t *testing.T) (certPath, keyPath string) {
 }
 
 func TestBuildTLSConfig_Disabled(t *testing.T) {
-	tc, mgr, err := buildTLSConfig(config.TLSConfig{Enabled: false})
+	tc, challengeSrv, err := buildTLSConfig(config.TLSConfig{Enabled: false}, slog.Default())
 	require.NoError(t, err)
 	assert.Nil(t, tc)
-	assert.Nil(t, mgr)
+	assert.Nil(t, challengeSrv)
 }
 
 func TestBuildTLSConfig_CertKey(t *testing.T) {
 	cert, key := genSelfSigned(t)
-	tc, mgr, err := buildTLSConfig(config.TLSConfig{Enabled: true, CertFile: cert, KeyFile: key})
+	tc, challengeSrv, err := buildTLSConfig(config.TLSConfig{Enabled: true, CertFile: cert, KeyFile: key}, slog.Default())
 	require.NoError(t, err)
 	require.NotNil(t, tc)
 	assert.Len(t, tc.Certificates, 1)
-	assert.Nil(t, mgr)
+	assert.Equal(t, uint16(tls.VersionTLS12), tc.MinVersion)
+	assert.Nil(t, challengeSrv)
 }
 
 func TestBuildTLSConfig_Autocert(t *testing.T) {
-	tc, mgr, err := buildTLSConfig(config.TLSConfig{
+	tc, challengeSrv, err := buildTLSConfig(config.TLSConfig{
 		Enabled:          true,
 		AutocertDomain:   "a.example",
 		AutocertCacheDir: t.TempDir(),
-	})
+	}, slog.Default())
 	require.NoError(t, err)
 	require.NotNil(t, tc)
-	require.NotNil(t, mgr)
+	// Autocert mode produces the ACME HTTP-01 challenge server bound to :80.
+	require.NotNil(t, challengeSrv)
+	assert.Equal(t, ":80", challengeSrv.Addr)
+}
+
+func TestBuildTLSConfig_WarnsOnReadableKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits do not apply on Windows")
+	}
+	cert, key := genSelfSigned(t)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	// 0600 key: no warning.
+	require.NoError(t, os.Chmod(key, 0o600))
+	_, _, err := buildTLSConfig(config.TLSConfig{Enabled: true, CertFile: cert, KeyFile: key}, logger)
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "group- or world-readable")
+
+	// 0644 key: warning fires.
+	buf.Reset()
+	require.NoError(t, os.Chmod(key, 0o644))
+	_, _, err = buildTLSConfig(config.TLSConfig{Enabled: true, CertFile: cert, KeyFile: key}, logger)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "group- or world-readable")
 }
 
 func TestBuildTLSConfig_BadKeypair(t *testing.T) {
-	tc, mgr, err := buildTLSConfig(config.TLSConfig{
+	tc, challengeSrv, err := buildTLSConfig(config.TLSConfig{
 		Enabled:  true,
 		CertFile: "/nope/cert.pem",
 		KeyFile:  "/nope/key.pem",
-	})
+	}, slog.Default())
 	require.Error(t, err)
 	assert.Nil(t, tc)
-	assert.Nil(t, mgr)
+	assert.Nil(t, challengeSrv)
 }
