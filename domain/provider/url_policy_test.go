@@ -79,9 +79,11 @@ func TestAllowAnyURLPolicy_AcceptsHTTPAndLoopback(t *testing.T) {
 	}
 }
 
-// Failure: AllowAnyURLPolicy still rejects an empty base_url.
+// Failure: AllowAnyURLPolicy still rejects an empty or whitespace-only base_url.
 func TestAllowAnyURLPolicy_RejectsEmpty(t *testing.T) {
-	assert.ErrorIs(t, provider.AllowAnyURLPolicy.ValidateURL(""), provider.ErrInvalidBaseURL)
+	for _, raw := range []string{"", "   ", "\t"} {
+		assert.ErrorIs(t, provider.AllowAnyURLPolicy.ValidateURL(raw), provider.ErrInvalidBaseURL, "url %q", raw)
+	}
 }
 
 // Happy path: ValidateConnectionURL applies the policy and names the connection
