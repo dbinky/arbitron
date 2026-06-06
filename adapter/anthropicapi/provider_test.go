@@ -503,6 +503,41 @@ func TestMessagesOutput_PrefersToolUseOverText(t *testing.T) {
 	assert.JSONEq(t, `{"answer":42}`, out)
 }
 
+// edge: when the forced-tool block carries a nil, empty, or whitespace-only
+// Input it is skipped (bytes.TrimSpace check). If there are no text blocks
+// either, output() returns an error — not a silent empty string.
+func TestMessagesOutput_ToolUseEmptyInput_NoTextFallback_Errors(t *testing.T) {
+	cases := []json.RawMessage{
+		nil,
+		json.RawMessage(""),
+		json.RawMessage("   "),
+	}
+	for _, input := range cases {
+		m := &messagesResponse{
+			Content: []contentBlock{
+				{Type: "tool_use", Name: "structured_output", Input: input},
+			},
+		}
+		_, err := m.output()
+		require.Error(t, err, "expected error for empty/whitespace Input = %q", input)
+		assert.Contains(t, err.Error(), "no text or tool_use content")
+	}
+}
+
+// edge: JSON literal `null` (RawMessage("null")) is non-empty after
+// bytes.TrimSpace, so output() treats it as a valid (if unusual) tool-use
+// input and returns the raw string "null" for the executor to parse.
+func TestMessagesOutput_ToolUseNullInput_ReturnedVerbatim(t *testing.T) {
+	m := &messagesResponse{
+		Content: []contentBlock{
+			{Type: "tool_use", Name: "structured_output", Input: json.RawMessage("null")},
+		},
+	}
+	out, err := m.output()
+	require.NoError(t, err)
+	assert.Equal(t, "null", out)
+}
+
 // =====================================================================
 // CATEGORY: Happy-path (streaming)
 // =====================================================================
