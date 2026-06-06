@@ -64,6 +64,14 @@ var azureProviders = map[string]bool{
 	"azure-foundry": true,
 }
 
+// bedrockProviders is the set of providers that require region and
+// access-key-id in Extras. Includes both the short alias "bedrock" and the
+// canonical long-form "amazon-bedrock" so either spelling enforces the rule.
+var bedrockProviders = map[string]bool{
+	"bedrock":        true,
+	"amazon-bedrock": true,
+}
+
 // ValidateConnection enforces provider-specific requirements at create/update
 // time (not at workflow validate time). Azure providers ("azure-openai",
 // "azure-foundry") require a non-empty "api-version" entry in Extras; an absent
@@ -75,7 +83,7 @@ func ValidateConnection(c Connection) error {
 			return ErrAzureAPIVersionRequired
 		}
 	}
-	if c.Provider == "bedrock" {
+	if bedrockProviders[c.Provider] {
 		if c.Extras["region"] == "" || c.Extras["access-key-id"] == "" {
 			return ErrBedrockCredentialsRequired
 		}

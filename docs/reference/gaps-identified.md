@@ -36,6 +36,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **DOMAIN-probe-failure-path** (Area 9 Pass 1): `probe_test.go` had no test for `ConnectionProbe.Probe` returning an error (failure category empty). Added `TestConnectionProbe_ProbeError` using `fakeProbe{err: ...}`.
 - **CLI-connection-ErrUpstreamStatus** (Area 10 Pass 1): `connection_test.go` covered `ErrCredentialsRejected`, `ErrUnreachable`, and `ErrRegionConfig` probe errors but not `ErrUpstreamStatus` (4xx/5xx upstream). Added `TestRunConnectionValidate_UpstreamStatus`.
 - **CLI-connection-RevealKey-error** (Area 10 Pass 2): `bindingFromConnection` creates a `RevealKey` closure but no test verified that `store.Reveal` errors propagate without leaking the stored secret. Added `TestBindingFromConnection_RevealKeyError_SecretFree`.
+- **DOMAIN-bedrock-amazon-bedrock-alias** (Area 11 Pass 1): `ValidateConnection` used `c.Provider == "bedrock"` (exact match) and skipped the region+access-key-id requirement for `"amazon-bedrock"` (the canonical alias used in adapter maps). Fixed by introducing a `bedrockProviders` set (mirrors `azureProviders` pattern) and changing the check to `bedrockProviders[c.Provider]`. Added `TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials`.
 
 ## Won't Fix (Beyond Current Scope)
 

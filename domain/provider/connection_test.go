@@ -113,6 +113,19 @@ func TestValidateConnection_AzureEmptyAPIVersion_Rejected(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
 }
 
+// Input-validation: "amazon-bedrock" (the canonical long-form alias) must also
+// enforce the region + access-key-id requirement, not silently skip it.
+func TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials(t *testing.T) {
+	noExtras := provider.Connection{Name: "bd", Provider: "amazon-bedrock"}
+	assert.ErrorIs(t, provider.ValidateConnection(noExtras), provider.ErrBedrockCredentialsRequired)
+
+	withExtras := provider.Connection{
+		Name: "bd", Provider: "amazon-bedrock",
+		Extras: map[string]string{"region": "us-east-1", "access-key-id": "AKID"},
+	}
+	assert.NoError(t, provider.ValidateConnection(withExtras))
+}
+
 // Input-validation: a bedrock connection requires both region and access-key-id
 // in Extras; either missing (or nil extras) yields ErrBedrockCredentialsRequired.
 func TestValidateConnection_BedrockRequiresRegionAndAccessKey(t *testing.T) {

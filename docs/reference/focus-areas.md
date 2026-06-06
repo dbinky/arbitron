@@ -23,7 +23,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 8 | probe adapters (`adapter/probe/*.go` — OpenAI-compat /models, ollama /api/tags fallback, anthropic /v1/models, bedrock ListFoundationModels, claude-cli reachability, error classification) | [x] | [x] | Done |
 | 9 | ConnectionProbe domain port (`domain/provider/probe.go` — ConnectionProbe, ProbeResult, ProbeSelector, ErrNoProbeForProvider; dispatch on Provider only) | [x] | [x] | Done |
 | 10 | connection validate CLI (`cmd/arbitron/connection.go` — runConnectionValidate core, connection-name binding via Get+Reveal, output shapes, exit codes, no-secret-print) | [x] | [x] | Done |
-| 11 | url_policy ollama loopback + bedrock ValidateConnection (`domain/provider/{url_policy,connection}.go` — provider-scoped loopback carve-out, bedrock region/access-key rule) | [ ] | [ ] | |
+| 11 | url_policy ollama loopback + bedrock ValidateConnection (`domain/provider/{url_policy,connection}.go` — provider-scoped loopback carve-out, bedrock region/access-key rule) | [x] | [ ] | |
 | 12 | Config + composition root (`domain/config/config.go`, `adapter/config/loader.go`, `cmd/arbitron/main.go` — AgentAllowAllTools default-true, YAML doc, Factory Deps wiring, connection cmd registration) | [ ] | [ ] | |
 | 13 | Credential secrecy (cross-cutting — key/secret/session-token never in logs/errors/argv across all adapters + CLI; scrubControl + bounded readers + no-leak tests) | [ ] | [ ] | |
 | 14 | Open-by-default posture & fail-closed (cross-cutting — skip-permissions + broad tools default, operator restriction narrows, unsupported provider fails closed, kind guard intact) | [ ] | [ ] | |
