@@ -219,14 +219,14 @@ func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
 
 // ---- Edge case: MaxResponseBytes is threaded from Deps into ALL backends ----
 
-// TestFactory_ProviderFor_ThreadsMaxResponseBytes proves FACTORY-001 is fixed
-// across all THREE credential-bearing backends: the cap from Deps reaches the
-// openrouter and azurefoundry HTTP adapters AND the opencode subprocess adapter.
-// The field is stored unexported inside each adapter, so this test proves the
-// fix at the construction boundary: the Deps field exists (compile-time), is
-// accepted by NewFactory, and each ProviderFor call selects the right adapter
-// without error. The per-adapter byte-cap behavior is exercised by the adapters'
-// own tests; the opencode adapter's own test asserts the cap value is stored.
+// TestFactory_ProviderFor_ThreadsMaxResponseBytes proves the response-body cap
+// from Deps reaches all FIVE credential-bearing backends: the four HTTP adapters
+// (openrouter, azurefoundry, anthropicapi, bedrock) AND the opencode subprocess
+// adapter. The field is stored unexported inside each adapter, so this test
+// proves the fix at the construction boundary: the Deps field exists
+// (compile-time), is accepted by NewFactory, and each ProviderFor call selects
+// the right adapter without error. The per-adapter byte-cap behavior is
+// exercised by the adapters' own tests.
 func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	hc := &http.Client{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
@@ -243,6 +243,16 @@ func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, (*azurefoundry.Provider)(nil), cp2,
 		"azurefoundry provider constructed with MaxResponseBytes from Deps")
+
+	cp3, err := f.ChatProviderFor(chatBinding("anthropic-api"))
+	require.NoError(t, err)
+	assert.IsType(t, (*anthropicapi.Provider)(nil), cp3,
+		"anthropicapi provider constructed with MaxResponseBytes from Deps")
+
+	cp4, err := f.ChatProviderFor(chatBinding("bedrock"))
+	require.NoError(t, err)
+	assert.IsType(t, (*bedrock.Provider)(nil), cp4,
+		"bedrock provider constructed with MaxResponseBytes from Deps")
 
 	ap, err := f.AgentProviderFor(agentBinding("openrouter"))
 	require.NoError(t, err)
