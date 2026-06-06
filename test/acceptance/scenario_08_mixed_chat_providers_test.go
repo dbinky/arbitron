@@ -101,6 +101,26 @@ func TestAcceptance_08_MixedChatProviders(t *testing.T) {
 	assert.Equal(t, "Bearer "+openaiKey, openaiReq.Auth, "openai uses a Bearer key")
 	assert.Empty(t, openaiReq.APIKey)
 
+	// Cross-contamination: each provider's key must be absent from every OTHER
+	// provider's request. The fakeTransport captures all headers, so a mis-wired
+	// adapter that sends a key to the wrong endpoint is caught here.
+	assert.Empty(t, ollamaReq.XAPIKey,
+		"keyless Ollama request must not carry an x-api-key header (Anthropic leak)")
+	assert.NotContains(t, ollamaReq.Auth, anthropicKey,
+		"Ollama request must not carry the Anthropic key in Authorization")
+	assert.NotContains(t, ollamaReq.Auth, openaiKey,
+		"Ollama request must not carry the OpenAI key in Authorization")
+
+	assert.Empty(t, anthropicReq.APIKey,
+		"Anthropic request must not carry an Azure api-key header")
+	assert.NotContains(t, anthropicReq.XAPIKey, openaiKey,
+		"Anthropic request must not carry the OpenAI key in x-api-key")
+
+	assert.Empty(t, openaiReq.XAPIKey,
+		"OpenAI request must not carry an x-api-key header (Anthropic leak)")
+	assert.NotContains(t, openaiReq.Auth, anthropicKey,
+		"OpenAI request must not carry the Anthropic key in Authorization")
+
 	// Secrecy: neither keyed secret appears in any captured log output.
 	logs := h.logBuf.String()
 	assert.NotContains(t, logs, anthropicKey)

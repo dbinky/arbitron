@@ -42,7 +42,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 20 | url_policy ollama allowance + Factory ollama routing (a localhost ollama connection is both creatable and routable end-to-end; non-ollama localhost still rejected) | [x] | Done |
 | 21 | anthropicapi adapter + anthropic probe (anthropic-version pinned in lockstep; x-api-key header parity) | [x] | Done |
 | 22 | ConnectionProbe port + validate CLI (ProbeSelector dispatch from a connection-name binding; result/error rendering; exit codes) | [x] | Done |
-| 23 | Credential secrecy + mixed-provider acceptance (`test/acceptance/scenario_08` — keyed secrets never logged across the ollama→anthropic→openai run) | [ ] | |
+| 23 | Credential secrecy + mixed-provider acceptance (`test/acceptance/scenario_08` — keyed secrets never logged across the ollama→anthropic→openai run) | [x] | Done |
 | 24 | Config wiring + composition root (cfg.LLM → Factory Deps → all adapters; connection cmd built from the same stack as serve) | [ ] | |
 
 ---
