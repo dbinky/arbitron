@@ -158,6 +158,20 @@ func TestFactory_ChatProviderFor_UnknownProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "does-not-exist")
 }
 
+// security: ErrUnknownProvider uses %q so a hostile provider string containing
+// control characters (newlines, CR, terminal escapes) cannot inject them into
+// structured log output. The raw control char must not appear in the error string.
+func TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted(t *testing.T) {
+	f := newTestFactory(t)
+	_, err := f.ChatProviderFor(chatBinding("foo\nmalicious"))
+	require.ErrorIs(t, err, adapterprovider.ErrUnknownProvider)
+	// %q encodes the newline as the two-character sequence \n, not a raw newline.
+	assert.NotContains(t, err.Error(), "\n",
+		"raw newline must not appear in ErrUnknownProvider message")
+	assert.Contains(t, err.Error(), `\n`,
+		"escaped \\n should appear in the %q-quoted provider string")
+}
+
 // An agent binding only has two destinations (claude-cli or opencode); a chat
 // provider string used for an agent binding still routes to opencode, so the
 // only agent-side error is a missing claude-cli adapter for the empty path,

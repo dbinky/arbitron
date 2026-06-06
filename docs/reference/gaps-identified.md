@@ -26,6 +26,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **BEDROCK-002** (Area 4 Pass 1): Two untested error paths in `provider.go` — `StreamChat` non-2xx status (error delivered via channel) and `signedRequest` RevealKey-returns-error. Fixed by adding `TestStreamChat_NonOKStatusDeliveredViaChannel` and `TestChat_RevealKeyError` to `provider_test.go`.
 - **BEDROCK-scrubControl** (Area 4 Pass 2): `scrubControl` security function had no direct unit test. Added `TestScrubControl` to `provider_test.go` with 13 cases covering empty, printable ASCII, all control-char variants (0x00–0x1F, 0x7F), and valid UTF-8 multibyte preservation.
 - **FACTORY-MaxResponseBytes-threading** (Area 5 Pass 1): `TestFactory_ProviderFor_ThreadsMaxResponseBytes` covered only 3 of 5 credential-bearing backends (openrouter, azurefoundry, opencode) and omitted `anthropic-api` and `bedrock`. Extended the test to include all five and updated the comment accordingly.
+- **FACTORY-ErrUnknownProvider-quoting** (Area 5 Pass 2): `ErrUnknownProvider` uses `%q` to quote the provider string, preventing control-char injection into logs. This property was untested. Added `TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped rather than emitted raw.
 
 ## Won't Fix (Beyond Current Scope)
 
