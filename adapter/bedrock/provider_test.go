@@ -352,6 +352,32 @@ func TestStreamChat_403AuthError_NoSecretLeak(t *testing.T) {
 	}
 }
 
+// seam (awssig ↔ bedrock): the bedrock adapter passes service="bedrock" and the
+// binding's region to awssig.Sign. The Authorization Credential scope must
+// contain exactly those values — a mis-wiring of service or region would cause
+// AWS to reject every request. Uses a non-default region (eu-west-2) so the
+// assertion cannot accidentally pass from a hardcoded "us-east-1".
+func TestChat_CredentialScopeContainsRegionAndBedrockService(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"output":{"message":{"content":[{"text":"ok"}]}},"usage":{}}`)
+	}))
+	defer srv.Close()
+
+	rt := rewriteTo(srv.URL)
+	b := bindingTo(srv.URL, "eu-west-2", "anthropic.claude-v2", false)
+	p := New(Config{Binding: b, HTTPClient: &http.Client{Transport: rt}, Now: fixedNow})
+	if _, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	auth := rt.last.Header.Get("Authorization")
+	if !strings.Contains(auth, "/eu-west-2/") {
+		t.Errorf("Authorization scope missing region eu-west-2: %q", auth)
+	}
+	if !strings.Contains(auth, "/bedrock/") {
+		t.Errorf("Authorization scope missing service bedrock: %q", auth)
+	}
+}
+
 // security: scrubControl prevents a hostile upstream error body from injecting
 // control characters (newlines, CR, terminal escapes) into structured log output.
 func TestScrubControl(t *testing.T) {
