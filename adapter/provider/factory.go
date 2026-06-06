@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/anthropicapi"
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
+	"github.com/arbitron/arbitron/adapter/bedrock"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	"github.com/arbitron/arbitron/adapter/openrouter"
@@ -20,13 +21,23 @@ import (
 // opencode, so they cannot produce this error.)
 var ErrUnknownProvider = errors.New("provider: no adapter for provider")
 
-// Canonical provider strings, after normalization (trim + lowercase).
+// Chat-dispatch provider ids, matched after domprovider.Canonicalize. The
+// azure/bedrock/anthropic-api alias groups are collapsed to a single canonical
+// id by Canonicalize (so the arms below use domprovider.Canonical* rather than
+// re-listing each spelling); the OpenAI-compatible ids canonicalize to
+// themselves and are listed explicitly here.
 const (
-	providerClaudeCLI    = ProviderClaudeCLI
-	providerOpenRouter   = "openrouter"
-	providerLiteLLM      = "litellm"
-	providerAzureOpenAI  = "azure-openai"
-	providerAzureFoundry = "azure-foundry"
+	providerClaudeCLI  = ProviderClaudeCLI
+	providerOpenRouter = "openrouter"
+	providerLiteLLM    = "litellm"
+	// providerOpenAI and providerOllama route to the OpenAI-compatible
+	// adapter/openrouter chat adapter. Local vs cloud Ollama are distinguished
+	// by the connection's BaseURL + presence/absence of a key, not by the
+	// provider string.
+	providerOpenAI = "openai"
+	providerOllama = "ollama"
+	// providerOllamaCloud is an accepted alias for the ollama family.
+	providerOllamaCloud = "ollama-cloud"
 )
 
 // Deps carries the shared construction inputs the Factory threads into each
@@ -55,18 +66,36 @@ type Deps struct {
 	// OpencodeTimeout is the default per-mission opencode timeout; <=0 means no
 	// default.
 	OpencodeTimeout time.Duration
-	// MaxResponseBytes caps the per-request response/stdout read across ALL three
-	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry)
-	// bound their response-body read, and opencode bounds its subprocess stdout.
-	// 0 means no cap. SECURITY: a non-zero cap bounds the OOM DoS from an
-	// attacker-pointed base_url (or hostile subprocess) streaming an unbounded body.
+	// MaxResponseBytes caps the per-request response/stdout read across ALL the
+	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry,
+	// anthropicapi, bedrock) bound their response-body read, and opencode bounds
+	// its subprocess stdout. 0 means no cap. SECURITY: a non-zero cap bounds the
+	// OOM DoS from an attacker-pointed base_url (or hostile subprocess) streaming
+	// an unbounded body.
 	MaxResponseBytes int64
+	// OpencodeAllowAllTools is the operator knob (a) for the agent path's
+	// permission posture. SECURITY: it defaults to false (CLOSED) in the
+	// composition root; a true value is an explicit operator opt-in that grants
+	// every opencode-driven provider an allow-all tool posture (RCE-equivalent on
+	// model-influenced prompts). Per-profile ResolvedBinding.AllowedTools
+	// (knob (b)) narrows independently of this switch.
+	OpencodeAllowAllTools bool
 }
 
 // Factory holds the shared construction inputs and selects a concrete backend
 // per resolved binding. It implements engine.ChatProviderSelector and
 // engine.AgentProviderSelector, so the executors depend on the domain selector
 // ports and never import these adapter packages.
+//
+// INVARIANT (tier routing): the native HTTP adapters (openrouter/azurefoundry/
+// anthropicapi/bedrock) are CHAT-TIER ONLY — they are reachable only through
+// ChatProviderFor. The AGENT tier routes EVERY non-claude provider to
+// adapter/opencode (AgentProviderFor's default arm); there is no native-HTTP
+// agent adapter. So a provider's chat credentials/env (e.g. the x-api-key or the
+// SigV4 quartet) flow through the HTTP adapter on the chat path but through
+// opencode's subprocess env on the agent path — the two paths must agree on the
+// provider vocabulary (see domprovider.Canonicalize), which is why an env/-m
+// mismatch in opencode is a live bug rather than a dead branch.
 type Factory struct {
 	deps Deps
 }
@@ -81,34 +110,48 @@ var (
 	_ engine.AgentProviderSelector = (*Factory)(nil)
 )
 
-// normalizeProvider trims surrounding whitespace and lowercases the provider
-// string so configured values are matched case- and whitespace-insensitively.
-// A whitespace-only value normalizes to empty (the subscription path).
-func normalizeProvider(p string) string {
-	return strings.ToLower(strings.TrimSpace(p))
-}
-
 // ChatProviderFor returns the concrete engine.ChatProvider for a chat-kind
 // binding, selected by binding.Provider. An empty (or "claude-cli") provider
-// returns the claude-cli ChatAdapter; openrouter/litellm map to adapter/openrouter;
-// azure-openai/azure-foundry map to adapter/azurefoundry. Unknown providers
-// return ErrUnknownProvider.
+// returns the claude-cli ChatAdapter; openrouter/litellm and the
+// OpenAI-compatible openai/ollama (incl. the ollama-cloud alias) map to
+// adapter/openrouter; azure-openai/azure-foundry map to adapter/azurefoundry;
+// anthropic-api maps to adapter/anthropicapi; bedrock (incl. the amazon-bedrock
+// alias) maps to adapter/bedrock. Unknown providers return ErrUnknownProvider.
 func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatProvider, error) {
-	switch normalizeProvider(b.Provider) {
+	// Dispatch on the domain-canonical id so the chat/agent/probe selectors and
+	// the opencode path all share ONE provider vocabulary (alias collapse lives
+	// once in domprovider.Canonicalize, not forked per selector).
+	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
 		if f.deps.ClaudeChat == nil {
 			return nil, errors.New("provider: claude-cli chat adapter is not configured for the empty-provider path")
 		}
 		return f.deps.ClaudeChat, nil
-	case providerOpenRouter, providerLiteLLM:
+	case providerOpenRouter, providerLiteLLM, providerOpenAI, providerOllama, providerOllamaCloud:
 		return openrouter.New(openrouter.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
 			Timeout:          f.deps.HTTPTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
-	case providerAzureOpenAI, providerAzureFoundry:
+	case domprovider.CanonicalAzure:
 		return azurefoundry.New(azurefoundry.Config{
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
+		}), nil
+	case domprovider.CanonicalAnthropicAPI:
+		return anthropicapi.New(anthropicapi.Config{
+			Binding:          b,
+			HTTPClient:       f.deps.HTTPClient,
+			Timeout:          f.deps.HTTPTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
+		}), nil
+	case domprovider.CanonicalBedrock:
+		// Now is left nil here so the adapter uses time.Now in production; tests
+		// inject a fixed clock through the adapter's own Config.
+		return bedrock.New(bedrock.Config{
 			Binding:          b,
 			HTTPClient:       f.deps.HTTPClient,
 			Timeout:          f.deps.HTTPTimeout,
@@ -124,19 +167,25 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 // AgentAdapter; any other (non-Claude) provider routes to adapter/opencode,
 // which carries the per-provider credential env contract.
 func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
-	switch normalizeProvider(b.Provider) {
+	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
 		if f.deps.ClaudeAgent == nil {
 			return nil, errors.New("provider: claude-cli agent adapter is not configured for the empty-provider path")
 		}
 		return f.deps.ClaudeAgent, nil
 	default:
+		// Fail-closed: a provider opencode cannot drive (unknown to its provider
+		// map) surfaces a clear agent error at RunAgent time naming the provider;
+		// it is NEVER a silent tool-less run. AllowAllTools carries the
+		// open-by-default posture (knob (a)); per-profile AllowedTools (knob (b))
+		// narrows independently inside opencode.
 		return opencode.New(opencode.Config{
 			Binding:          b,
 			BinaryPath:       f.deps.OpencodeBinaryPath,
 			Runner:           f.deps.Runner,
 			Timeout:          f.deps.OpencodeTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
+			AllowAllTools:    f.deps.OpencodeAllowAllTools,
 		}), nil
 	}
 }

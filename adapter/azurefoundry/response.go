@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // APIError is the typed error returned for upstream non-2xx responses. It
@@ -80,19 +82,7 @@ func apiErrorFromBody(status int, body []byte) *APIError {
 	if err := json.Unmarshal(body, &env); err == nil {
 		msg = env.Error.Message
 	}
-	return &APIError{StatusCode: status, Message: scrubControl(msg)}
-}
-
-// scrubControl replaces ASCII control characters with a space so an
-// upstream-shaped error message cannot inject newlines, carriage returns, or
-// terminal escapes into logs. Printable bytes and valid UTF-8 are preserved.
-func scrubControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || r == '\r' || (r >= 0 && r < 0x20) || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)
+	return &APIError{StatusCode: status, Message: procenv.ScrubControl(msg)}
 }
 
 // parseSSELine extracts the data payload from a single SSE line. It returns

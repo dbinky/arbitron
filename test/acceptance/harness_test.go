@@ -153,6 +153,15 @@ func (f *fakeRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan stri
 	joined := strings.Join(spec.Args, " ")
 
 	var lines []string
+	// The modern opencode adapter probes `--version` once before its first run;
+	// answer with a compatible version so the probe passes hermetically.
+	if strings.Contains(joined, "--version") {
+		f.mu.Unlock()
+		ch := make(chan string, 1)
+		ch <- "opencode 99.0.0"
+		close(ch)
+		return ch, func() error { return nil }, nil
+	}
 	// An armed chat done-script takes precedence for chat (assessor) calls.
 	if f.chatDoneScript != nil && isChatInvocation(joined) {
 		idx := f.chatCalls
@@ -223,9 +232,10 @@ func chatInvocationSpecs(f *fakeRunner) []claudecli.RunSpec {
 // scenario can assert which endpoint/credential a node resolved to without ever
 // touching the network.
 type recordedRequest struct {
-	URL    string
-	Auth   string // Authorization header
-	APIKey string // api-key header (Azure)
+	URL     string
+	Auth    string // Authorization header (Bearer, OpenAI/OpenRouter)
+	APIKey  string // api-key header (Azure)
+	XAPIKey string // x-api-key header (Anthropic Messages API)
 }
 
 // fakeTransport is an http.RoundTripper that returns a canned chat-completions
@@ -269,27 +279,44 @@ func (t *fakeTransport) nextDone() bool {
 func (t *fakeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.mu.Lock()
 	t.requests = append(t.requests, recordedRequest{
-		URL:    req.URL.String(),
-		Auth:   req.Header.Get("Authorization"),
-		APIKey: req.Header.Get("api-key"),
+		URL:     req.URL.String(),
+		Auth:    req.Header.Get("Authorization"),
+		APIKey:  req.Header.Get("api-key"),
+		XAPIKey: req.Header.Get("x-api-key"),
 	})
 	done := t.nextDone()
 	t.mu.Unlock()
 
 	// The assessor declares an outputSchema, so the chat adapters parse the
 	// assistant content as JSON. Emit a structured {done, notes} object as the
-	// message content (itself a JSON string, OpenAI/Azure chat-completions shape).
+	// message content (itself a JSON string).
 	content, _ := json.Marshal(map[string]any{
 		"done":  done,
 		"notes": "assessment via hermetic fake transport",
 	})
-	body, _ := json.Marshal(map[string]any{
-		"model": "fake-model",
-		"choices": []map[string]any{
-			{"message": map[string]any{"role": "assistant", "content": string(content)}},
-		},
-		"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2},
-	})
+
+	// Shape the canned body by the adapter dialect inferred from the request
+	// path: the Anthropic Messages API (anthropicapi adapter) POSTs to
+	// {base-url}/v1/messages and expects a `content`-block response; the
+	// OpenAI-compatible adapters (openrouter, azurefoundry, openai/ollama) POST to
+	// {base-url}/chat/completions and expect a `choices` response. Existing
+	// scenarios only ever hit /chat/completions, so this branch is additive.
+	var body []byte
+	if strings.Contains(req.URL.Path, "/messages") {
+		body, _ = json.Marshal(map[string]any{
+			"model":   "fake-model",
+			"content": []map[string]any{{"type": "text", "text": string(content)}},
+			"usage":   map[string]any{"input_tokens": 5, "output_tokens": 2},
+		})
+	} else {
+		body, _ = json.Marshal(map[string]any{
+			"model": "fake-model",
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": string(content)}},
+			},
+			"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 2},
+		})
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -368,6 +395,19 @@ type binding struct {
 	connections []seedConn
 	runner      *fakeRunner
 	transport   *fakeTransport
+	// workflowName overrides the example folder the harness copies + runs. Empty
+	// means the default worked example (native-ralph-loop); a scenario that
+	// exercises a different committed example (e.g. mixed-chat-providers) sets it.
+	workflowName string
+}
+
+// exampleName returns the example workflow folder this binding runs (defaulting
+// to the worked example when unset).
+func (b binding) exampleName() string {
+	if b.workflowName == "" {
+		return workedExample
+	}
+	return b.workflowName
 }
 
 // seedConn is a connection plus its plaintext key to seal into the store.
@@ -503,8 +543,9 @@ func newHarness(t *testing.T, b binding) *harness {
 	defaultUser, err := users.GetDefaultUser(context.Background())
 	require.NoError(t, err)
 	root := t.TempDir()
-	copyDirTree(t, filepath.Join(examplesRoot(t), workedExample),
-		filepath.Join(root, "users", defaultUser.String(), workedExample))
+	example := b.exampleName()
+	copyDirTree(t, filepath.Join(examplesRoot(t), example),
+		filepath.Join(root, "users", defaultUser.String(), example))
 	workflowRepo := filesystem.NewWorkflowRepo(root)
 	fileReader := filesystem.NewFileReader(root)
 	wsMgr, err := filesystem.NewWorkspaceManager(t.TempDir())
@@ -533,6 +574,10 @@ func newHarness(t *testing.T, b binding) *harness {
 		HTTPClient:         httpClient,
 		Runner:             runner,
 		OpencodeBinaryPath: "opencode",
+		// Mirror the composition root's open-by-default agent posture (config
+		// llm.agentallowalltools defaults to true) so the opencode agent path runs
+		// as it does in production.
+		OpencodeAllowAllTools: true,
 	})
 
 	// Real executors: agent_call + llm_call over the factory/resolver; real
@@ -585,6 +630,19 @@ func (h *harness) trigger(t *testing.T, maxIterations float64) uuid.UUID {
 	}, "normal")
 	require.NoError(t, err)
 	return id
+}
+
+// runExample triggers this harness's bound example workflow with the given
+// inputs and waits for it to reach a terminal state. It is the generic driver
+// for scenarios that run a committed example other than the native-ralph-loop
+// worked example (e.g. mixed-chat-providers), so they are not tied to the
+// loop-specific mission/max_iterations inputs.
+func (h *harness) runExample(t *testing.T, inputs map[string]any) runResult {
+	t.Helper()
+	id, _, err := h.engine.Trigger(context.Background(), h.binding.exampleName(), inputs, "normal")
+	require.NoError(t, err)
+	inst := h.waitForTerminal(t, id, 10*time.Second)
+	return runResult{instance: inst}
 }
 
 // runWorkedExample triggers the worked example under this harness's binding and

@@ -1,0 +1,62 @@
+{
+  "name": "mixed-chat-providers",
+  "description": "Worked example for spec Success Criterion #1 (mixed-provider workflow runs end-to-end): a linear chain of three tool-suppressed chat (llm_call) nodes, each bound to a DIFFERENT provider via its own profile alias — a local-Ollama drafter, an Anthropic-API reviewer, and an OpenAI summarizer. Nodes reference only profile aliases, so the same graph runs by repointing the alias bindings. The chain terminates in a transform so the walk ends cleanly.",
+  "author": "arbitron",
+  "inputs": [
+    {
+      "name": "topic",
+      "type": "string",
+      "description": "The subject the drafter drafts, the reviewer reviews, and the summarizer summarizes.",
+      "required": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "drafter",
+      "type": "llm_call",
+      "label": "Drafter (local Ollama chat)",
+      "description": "Drafts the topic using a keyless local-Ollama chat backend.",
+      "entrypoint": true,
+      "config": {
+        "templateFile": "draft.md",
+        "model_profile": "drafter"
+      }
+    },
+    {
+      "id": "reviewer",
+      "type": "llm_call",
+      "label": "Reviewer (Anthropic API chat)",
+      "description": "Reviews the draft using a keyed Anthropic Messages-API chat backend.",
+      "config": {
+        "templateFile": "review.md",
+        "model_profile": "reviewer"
+      }
+    },
+    {
+      "id": "summarizer",
+      "type": "llm_call",
+      "label": "Summarizer (OpenAI chat)",
+      "description": "Summarizes the review using a keyed OpenAI-compatible chat backend.",
+      "config": {
+        "templateFile": "summarize.md",
+        "model_profile": "summarizer"
+      }
+    },
+    {
+      "id": "done",
+      "type": "transform",
+      "label": "Done (terminal)",
+      "description": "Terminal node with no outgoing edges. Records the final status so the walk ends cleanly.",
+      "config": {
+        "operations": [
+          {"variable": "status", "operation": "set", "value": "mixed-chat-complete"}
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {"source": "drafter", "target": "reviewer"},
+    {"source": "reviewer", "target": "summarizer"},
+    {"source": "summarizer", "target": "done"}
+  ]
+}

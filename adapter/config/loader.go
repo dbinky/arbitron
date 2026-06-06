@@ -42,7 +42,14 @@ func defaults() map[string]interface{} {
 		// SECURITY: 256 MB per-request stdout cap; bounds the OOM DoS from
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
-		"llm.maxresponsebytes":        int64(256 * 1024 * 1024),
+		"llm.maxresponsebytes": int64(256 * 1024 * 1024),
+		// SECURITY: default CLOSED (false). agentallowalltools grants the opencode
+		// agent subprocess permission-free tool execution (allow-all). On a
+		// credential-bearing, tool-using subprocess fed model-influenced prompts
+		// that is a lethal-trifecta / RCE-equivalent posture, so allow-all is an
+		// explicit operator opt-in, never the shipped default. Per-profile
+		// allowedtools (knob (b)) narrows independently. See PR #23 security HIGH.
+		"llm.agentallowalltools":      false,
 		"logging.level":               "info",
 		"logging.file":                "arbitron.log",
 		"tracing.enabled":             false,
@@ -156,6 +163,16 @@ llm:
   # maxresponsebytes: 268435456   # 256 MiB
   #   Per-request stdout cap. Bounds OOM DoS from hostile prompts that flood
   #   tool output. 0 = no cap (test convenience only).
+  #
+  # agentallowalltools: false
+  #   SECURITY (knob (a)): default false (CLOSED). Setting true grants every
+  #   opencode-driven (non-claude) agent provider permission-free, allow-all
+  #   tool execution. On a credential-bearing subprocess fed model-influenced
+  #   prompts this is RCE-equivalent (the lethal trifecta), so leave it false
+  #   unless every prompt input is fully trusted; enabling it is an explicit
+  #   operator opt-in. Per-profile allowedtools (knob (b)) narrows independently.
+  #   NOTE: the opencode agent path requires a modern opencode binary (>= the
+  #   adapter's minimum version, enforced at the first agent call).
 script:
   # envpassthrough: []
   #   SECURITY: names (not values) of engine environment variables that script

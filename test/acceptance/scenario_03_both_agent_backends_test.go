@@ -68,26 +68,26 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 		require.Equal(t, instance.StateCompleted, res.instance.State,
 			"open-weight run completes (opencode editor + openrouter assessor)")
 
-		// The opencode invocation: single-shot headless contract (-p prompt, -c
-		// cwd), running in the instance {{workspace}}, NO claude --print flag.
+		// The opencode invocation: modern run contract (`run <prompt> -m
+		// provider/model`), the cwd carried as cmd.Dir (the {{workspace}} pin, NOT
+		// an arg), running in the instance {{workspace}}, NO claude --print flag.
+		// The `--version` probe spec is skipped.
 		var opencodeSpec *claudecli.RunSpec
 		recorded := runner.recordedSpecs()
 		for i := range recorded {
 			joined := strings.Join(recorded[i].Args, " ")
-			if strings.Contains(joined, "-c") && !strings.Contains(joined, "--print") {
+			if strings.Contains(joined, "run") && strings.Contains(joined, "-m") && !strings.Contains(joined, "--print") {
 				opencodeSpec = &recorded[i]
 				break
 			}
 		}
 		require.NotNil(t, opencodeSpec, "editor must run via the opencode AgentProvider")
-		joined := strings.Join(opencodeSpec.Args, " ")
-		assert.Contains(t, joined, "-p", "opencode passes the prompt via -p")
-		assert.Contains(t, joined, "-c", "opencode passes the cwd via -c")
+		assert.Equal(t, "run", opencodeSpec.Args[0], "opencode uses the modern run subcommand")
+		m, ok := argValue(opencodeSpec.Args, "-m")
+		require.True(t, ok, "opencode routes the model via -m provider/model")
+		assert.Equal(t, "openrouter/qwen/qwen3-coder", m,
+			"the open-weight model is routed to the opencode provider id")
 		assert.NotEmpty(t, opencodeSpec.Dir, "opencode runs in cmd.Dir = the instance {{workspace}}")
-		// -c arg value equals cmd.Dir (the workspace).
-		if v, ok := argValue(opencodeSpec.Args, "-c"); ok {
-			assert.Equal(t, opencodeSpec.Dir, v, "the opencode -c cwd is the workspace dir")
-		}
 
 		// ENV-INJECTION: the connection key + base-url reach the opencode
 		// subprocess as provider-keyed env vars (delivery half of #7).

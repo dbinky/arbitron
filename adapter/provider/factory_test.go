@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/arbitron/arbitron/adapter/anthropicapi"
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
+	"github.com/arbitron/arbitron/adapter/bedrock"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/openrouter"
 	"github.com/arbitron/arbitron/adapter/opencode"
@@ -156,6 +159,20 @@ func TestFactory_ChatProviderFor_UnknownProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "does-not-exist")
 }
 
+// security: ErrUnknownProvider uses %q so a hostile provider string containing
+// control characters (newlines, CR, terminal escapes) cannot inject them into
+// structured log output. The raw control char must not appear in the error string.
+func TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted(t *testing.T) {
+	f := newTestFactory(t)
+	_, err := f.ChatProviderFor(chatBinding("foo\nmalicious"))
+	require.ErrorIs(t, err, adapterprovider.ErrUnknownProvider)
+	// %q encodes the newline as the two-character sequence \n, not a raw newline.
+	assert.NotContains(t, err.Error(), "\n",
+		"raw newline must not appear in ErrUnknownProvider message")
+	assert.Contains(t, err.Error(), `\n`,
+		"escaped \\n should appear in the %q-quoted provider string")
+}
+
 // An agent binding only has two destinations (claude-cli or opencode); a chat
 // provider string used for an agent binding still routes to opencode, so the
 // only agent-side error is a missing claude-cli adapter for the empty path,
@@ -203,6 +220,25 @@ func TestFactory_ChatProviderFor_WhitespaceOnlyIsClaudeCLI(t *testing.T) {
 	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
 }
 
+// ---- seam (Factory → HTTP adapters): Deps.HTTPTimeout threads into each adapter ----
+
+// Deps.HTTPTimeout threads from the factory into all four HTTP chat adapters.
+// Mirrors TestFactory_ProviderFor_ThreadsMaxResponseBytes for the timeout Deps field:
+// both are zero-means-no-cap fields, and both must reach each adapter's constructor.
+// Without this test a silent removal of Timeout: f.deps.HTTPTimeout would go unnoticed
+// and adapters would hang indefinitely in production without a per-call bound.
+func TestFactory_ChatProviderFor_ThreadsHTTPTimeout(t *testing.T) {
+	f := adapterprovider.NewFactory(adapterprovider.Deps{HTTPTimeout: 30 * time.Second})
+	for _, prov := range []string{"openrouter", "azure-foundry", "anthropic-api", "bedrock"} {
+		t.Run(prov, func(t *testing.T) {
+			cp, err := f.ChatProviderFor(chatBinding(prov))
+			require.NoError(t, err,
+				"provider %q must be constructable when HTTPTimeout is set from Deps", prov)
+			assert.NotNil(t, cp)
+		})
+	}
+}
+
 // ---- Success (variants): HTTP adapters get the injected client ----
 
 func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
@@ -217,14 +253,14 @@ func TestFactory_ChatProviderFor_UsesInjectedHTTPClient(t *testing.T) {
 
 // ---- Edge case: MaxResponseBytes is threaded from Deps into ALL backends ----
 
-// TestFactory_ProviderFor_ThreadsMaxResponseBytes proves FACTORY-001 is fixed
-// across all THREE credential-bearing backends: the cap from Deps reaches the
-// openrouter and azurefoundry HTTP adapters AND the opencode subprocess adapter.
-// The field is stored unexported inside each adapter, so this test proves the
-// fix at the construction boundary: the Deps field exists (compile-time), is
-// accepted by NewFactory, and each ProviderFor call selects the right adapter
-// without error. The per-adapter byte-cap behavior is exercised by the adapters'
-// own tests; the opencode adapter's own test asserts the cap value is stored.
+// TestFactory_ProviderFor_ThreadsMaxResponseBytes proves the response-body cap
+// from Deps reaches all FIVE credential-bearing backends: the four HTTP adapters
+// (openrouter, azurefoundry, anthropicapi, bedrock) AND the opencode subprocess
+// adapter. The field is stored unexported inside each adapter, so this test
+// proves the fix at the construction boundary: the Deps field exists
+// (compile-time), is accepted by NewFactory, and each ProviderFor call selects
+// the right adapter without error. The per-adapter byte-cap behavior is
+// exercised by the adapters' own tests.
 func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	hc := &http.Client{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
@@ -241,6 +277,16 @@ func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, (*azurefoundry.Provider)(nil), cp2,
 		"azurefoundry provider constructed with MaxResponseBytes from Deps")
+
+	cp3, err := f.ChatProviderFor(chatBinding("anthropic-api"))
+	require.NoError(t, err)
+	assert.IsType(t, (*anthropicapi.Provider)(nil), cp3,
+		"anthropicapi provider constructed with MaxResponseBytes from Deps")
+
+	cp4, err := f.ChatProviderFor(chatBinding("bedrock"))
+	require.NoError(t, err)
+	assert.IsType(t, (*bedrock.Provider)(nil), cp4,
+		"bedrock provider constructed with MaxResponseBytes from Deps")
 
 	ap, err := f.AgentProviderFor(agentBinding("openrouter"))
 	require.NoError(t, err)
@@ -272,4 +318,253 @@ func TestFactory_Selection_DoesNotLogRevealedKey(t *testing.T) {
 
 	assert.False(t, strings.Contains(buf.String(), secret),
 		"revealed key must never appear in logs during selection")
+}
+
+// ---- Happy path: OpenAI-compatible providers route to adapter/openrouter ----
+
+func TestFactory_ChatProviderFor_OpenAI_MapsToOpenRouter(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("openai"))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp)
+}
+
+func TestFactory_ChatProviderFor_Ollama_MapsToOpenRouter(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("ollama"))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp)
+}
+
+// Input-validation: the ollama-cloud alias normalizes to the ollama family.
+func TestFactory_ChatProviderFor_OllamaCloudAlias_NormalizesToOllama(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("ollama-cloud"))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp)
+}
+
+func TestFactory_ChatProviderFor_OpenAI_CaseAndWhitespaceNormalized(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("  OpenAI  "))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp)
+}
+
+func TestFactory_ChatProviderFor_OllamaCloud_CaseAndWhitespaceNormalized(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("  Ollama-Cloud "))
+	require.NoError(t, err)
+	assert.IsType(t, (*openrouter.Provider)(nil), cp)
+}
+
+// ---- Happy path: anthropic-api routes to adapter/anthropicapi ----
+
+func TestFactory_ChatProviderFor_AnthropicAPI_MapsToAnthropicAPI(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("anthropic-api"))
+	require.NoError(t, err)
+	assert.IsType(t, (*anthropicapi.Provider)(nil), cp)
+}
+
+// ---- Happy path: bedrock + amazon-bedrock alias route to adapter/bedrock ----
+
+func TestFactory_ChatProviderFor_Bedrock_MapsToBedrock(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("bedrock"))
+	require.NoError(t, err)
+	assert.IsType(t, (*bedrock.Provider)(nil), cp)
+}
+
+func TestFactory_ChatProviderFor_AmazonBedrockAlias_MapsToBedrock(t *testing.T) {
+	f := newTestFactory(t)
+	cp, err := f.ChatProviderFor(chatBinding("amazon-bedrock"))
+	require.NoError(t, err)
+	assert.IsType(t, (*bedrock.Provider)(nil), cp)
+}
+
+// ---- Canonicalization: documented aliases route to the same adapter ----
+
+// The chat factory dispatches on domprovider.Canonicalize, so each documented
+// alias group resolves to the SAME concrete adapter as its canonical id. This
+// pins the alias-collapse contract at the selector seam (PR #23 Should Fix #2).
+func TestFactory_ChatProviderFor_CanonicalAliases_RouteToSameAdapter(t *testing.T) {
+	f := newTestFactory(t)
+
+	// anthropic-api family: "anthropic" is an accepted alias of "anthropic-api".
+	for _, name := range []string{"anthropic-api", "anthropic", "  Anthropic  "} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*anthropicapi.Provider)(nil), cp, "alias %q -> anthropicapi", name)
+	}
+
+	// azure trio: azure-openai / azure-foundry / azure all route to azurefoundry.
+	for _, name := range []string{"azure-openai", "azure-foundry", "azure"} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*azurefoundry.Provider)(nil), cp, "alias %q -> azurefoundry", name)
+	}
+
+	// bedrock family: bedrock / amazon-bedrock route to bedrock.
+	for _, name := range []string{"bedrock", "amazon-bedrock"} {
+		cp, err := f.ChatProviderFor(chatBinding(name))
+		require.NoError(t, err, "alias %q must route", name)
+		assert.IsType(t, (*bedrock.Provider)(nil), cp, "alias %q -> bedrock", name)
+	}
+}
+
+// ---- Error: near-miss strings still fail (no over-matching by the new arms) ----
+
+func TestFactory_ChatProviderFor_UnknownProviderStillErrors_NearMiss(t *testing.T) {
+	f := newTestFactory(t)
+	// NB: "anthropic" is NOT a near-miss — it canonicalizes to "anthropic-api"
+	// (see TestFactory_ChatProviderFor_CanonicalAliases_RouteToSameAdapter).
+	for _, name := range []string{"ollamaa", "open-ai", "anthropicc", "amazon-bedrockk"} {
+		_, err := f.ChatProviderFor(chatBinding(name))
+		require.Error(t, err, "provider %q must be unknown", name)
+		assert.ErrorIs(t, err, adapterprovider.ErrUnknownProvider)
+		assert.Contains(t, err.Error(), name)
+	}
+}
+
+// ---- Edge case: the agent path for the new chat providers is unchanged ----
+
+func TestFactory_AgentProviderFor_OpenAI_RoutesToOpencode_NotChanged(t *testing.T) {
+	f := newTestFactory(t)
+	ap, err := f.AgentProviderFor(agentBinding("openai"))
+	require.NoError(t, err)
+	assert.IsType(t, (*opencode.Provider)(nil), ap)
+}
+
+// ---- Security: selecting the new providers never logs a revealed key ----
+
+func TestFactory_ChatProviderFor_NewProviders_DoNotLogRevealedKey(t *testing.T) {
+	for _, name := range []string{"openai", "ollama", "anthropic-api", "bedrock"} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			defer slog.SetDefault(prev)
+
+			const secret = "sk-NEW-PROVIDER-SENTINEL"
+			b := chatBinding(name)
+			b.RevealKey = func(context.Context) (string, error) { return secret, nil }
+
+			f := newTestFactory(t)
+			cp, err := f.ChatProviderFor(b)
+			require.NoError(t, err)
+			require.NotNil(t, cp)
+
+			assert.False(t, strings.Contains(buf.String(), secret),
+				"revealed key must never appear in logs during selection of %q", name)
+		})
+	}
+}
+
+// ---- Agent path: OpencodeAllowAllTools is threaded into the opencode arm ----
+
+// recRunner records every RunSpec and replays a compatible version probe then a
+// canned run line, so the agent path can be driven end-to-end through opencode.
+type recRunner struct {
+	calls []claudecli.RunSpec
+}
+
+func (r *recRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
+	r.calls = append(r.calls, spec)
+	line := "ok"
+	if len(spec.Args) > 0 && spec.Args[len(spec.Args)-1] == "--version" {
+		line = "opencode 99.0.0"
+	}
+	ch := make(chan string, 1)
+	ch <- line
+	close(ch)
+	return ch, func() error { return nil }, nil
+}
+
+func openAgentBinding() provider.ResolvedBinding {
+	return provider.ResolvedBinding{
+		Kind:      provider.ProfileKindAgent,
+		Provider:  "openai",
+		Model:     "gpt-4o",
+		RevealKey: func(context.Context) (string, error) { return "sk-x", nil },
+	}
+}
+
+// Default-true Deps => opencode runs open-by-default (allow-all flag emitted).
+func TestFactory_AgentProviderFor_OpenByDefault(t *testing.T) {
+	rr := &recRunner{}
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: true})
+	ap, err := f.AgentProviderFor(openAgentBinding())
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.Contains(t, runArgs, "--allow-all-tools", "OpencodeAllowAllTools=true must be open-by-default")
+}
+
+// OpencodeAllowAllTools=false disables the allow-all posture.
+func TestFactory_AgentProviderFor_AllowAllDisabled(t *testing.T) {
+	rr := &recRunner{}
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: false})
+	ap, err := f.AgentProviderFor(openAgentBinding())
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.NotContains(t, runArgs, "--allow-all-tools", "OpencodeAllowAllTools=false must disable allow-all")
+}
+
+// Per-profile AllowedTools (knob b) narrows end-to-end through the factory path.
+// Even when OpencodeAllowAllTools=true (knob a), a non-empty binding.AllowedTools
+// must suppress --allow-all-tools and emit --allowed-tools with the named tools.
+// This exercises the full chain: Factory.AgentProviderFor → opencode.buildPosture
+// → buildArgs → subprocess argv, verifying the two knobs compose correctly.
+func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
+	rr := &recRunner{}
+	b := openAgentBinding()
+	b.AllowedTools = []string{"Read", "Write"}
+
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: true})
+	ap, err := f.AgentProviderFor(b)
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.NotContains(t, runArgs, "--allow-all-tools",
+		"per-profile AllowedTools must suppress allow-all even when OpencodeAllowAllTools=true")
+	assert.Contains(t, runArgs, "--allowed-tools",
+		"per-profile AllowedTools must emit the tool-scope flag in the run argv")
+	assert.Contains(t, runArgs, "Read,Write",
+		"per-profile AllowedTools must name the permitted tools in the run argv")
+}
+
+// seam (posture config knob a + knob b): per-profile AllowedTools (knob b) must
+// emit --allowed-tools even when OpencodeAllowAllTools=false (knob a). Both
+// controls can be independently active; knob b narrows regardless of knob a's
+// global switch. This exercises the composition of the two knobs via the factory.
+func TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled(t *testing.T) {
+	rr := &recRunner{}
+	b := openAgentBinding()
+	b.AllowedTools = []string{"Read"}
+
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: false})
+	ap, err := f.AgentProviderFor(b)
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.NotContains(t, runArgs, "--allow-all-tools",
+		"global allow-all disabled: --allow-all-tools must NOT be emitted")
+	assert.Contains(t, runArgs, "--allowed-tools",
+		"per-profile AllowedTools must emit --allowed-tools even when global allow-all is disabled")
+	assert.Contains(t, runArgs, "Read",
+		"per-profile AllowedTools must name the permitted tools in the argv")
 }

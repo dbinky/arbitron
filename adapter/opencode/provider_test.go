@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 
 // fakeRunner is a claudecli.CommandRunner that replays canned stdout lines and
 // records the RunSpec it received. It mirrors the claudecli package's own fake.
+// It is used for the version probe (single invocation) and pure-arg tests.
 type fakeRunner struct {
 	lines     []string
 	waitErr   error
@@ -56,6 +56,54 @@ func (f *fakeRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan st
 	return ch, wait, nil
 }
 
+// multiRunner replays a sequence of canned invocations (probe, then run...),
+// recording each RunSpec. It satisfies claudecli.CommandRunner. It honours ctx
+// cancellation when a script sets blockOnCtx.
+type multiRunner struct {
+	scripts []runScript
+	calls   []claudecli.RunSpec
+	idx     int
+}
+
+type runScript struct {
+	lines      []string
+	waitErr    error
+	startErr   error
+	blockOnCtx bool
+}
+
+func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
+	m.calls = append(m.calls, spec)
+	var s runScript
+	if m.idx < len(m.scripts) {
+		s = m.scripts[m.idx]
+	}
+	m.idx++
+	if s.startErr != nil {
+		return nil, nil, s.startErr
+	}
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		if s.blockOnCtx {
+			<-ctx.Done()
+			return
+		}
+		for _, l := range s.lines {
+			ch <- l
+		}
+	}()
+	wait := func() error {
+		if s.blockOnCtx {
+			return ctx.Err()
+		}
+		return s.waitErr
+	}
+	return ch, wait, nil
+}
+
+func compatibleProbe() runScript { return runScript{lines: []string{"opencode " + minOpencodeVersion}} }
+
 func anthropicBinding(sentinel string, err error) provider.ResolvedBinding {
 	return provider.ResolvedBinding{
 		Provider: "anthropic",
@@ -74,44 +122,19 @@ func TestProviderImplementsPort(t *testing.T) {
 	var _ engine.AgentProvider = (*Provider)(nil)
 }
 
-// SECURITY (OOM DoS): a configured MaxResponseBytes flows into the RunSpec so
-// the subprocess stdout read is bounded. This is the composition-root guard for
-// the opencode half of the MaxResponseBytes wiring fix: the cap must be carried,
-// not silently dropped (which would leave the subprocess stdout uncapped).
-func TestRunAgent_ThreadsMaxResponseBytes(t *testing.T) {
-	fr := &fakeRunner{lines: []string{"Done."}}
-	const cap = int64(1 << 20)
-	p := New(Config{
-		Binding:          anthropicBinding("sk-sentinel", nil),
-		BinaryPath:       "opencode",
-		Runner:           fr,
-		MaxResponseBytes: cap,
-	})
-
-	_, err := p.RunAgent(context.Background(), engine.AgentMission{
-		Prompt:  "x",
-		WorkDir: "/tmp/ws",
-		Model:   "anthropic/claude-3-5-sonnet",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, cap, fr.gotSpec.MaxResponseBytes,
-		"the configured MaxResponseBytes must reach the subprocess RunSpec")
-}
-
-// Happy path — single-shot run with canned output → AgentResult; the fake
-// receives -p/-c/cwd and the injected env (base allowlist + key + base-url).
-func TestRunAgent_HappyPath(t *testing.T) {
-	fr := &fakeRunner{lines: []string{
-		"Working on the task.",
-		"Edited hello.txt.",
-		"Done: the file now reads goodbye.",
+// HAPPY — agent mission: probe passes, then `run -m anthropic/<model>` argv with
+// the injected env; canned output folds into an AgentResult.
+func TestRunAgent_ModernRunContract(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: []string{"Working.", "Edited hello.txt.", "Done: goodbye."}},
 	}}
 	p := New(Config{
-		Binding:    anthropicBinding("sk-sentinel", nil),
-		BinaryPath: "opencode",
-		Runner:     fr,
+		Binding:       anthropicBinding("sk-sentinel", nil),
+		BinaryPath:    "opencode",
+		Runner:        mr,
+		AllowAllTools: true,
 	})
-
 	res, err := p.RunAgent(context.Background(), engine.AgentMission{
 		Prompt:  "edit hello.txt to say goodbye",
 		WorkDir: "/tmp/ws",
@@ -119,109 +142,207 @@ func TestRunAgent_HappyPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, res)
-
-	// Summary is the joined output; steps are tolerant best-effort.
 	assert.Contains(t, res.Summary, "goodbye")
 	assert.Equal(t, "anthropic/claude-3-5-sonnet", res.Model)
-	// Single-shot contract: no session id threaded back.
-	assert.Empty(t, res.SessionID)
+	assert.Empty(t, res.SessionID, "single-shot contract: no session id threaded")
 
-	// Arg threading: -p <prompt>, -c <cwd>, single-shot (no resume/session).
-	require.True(t, fr.runCalled)
-	args := fr.gotSpec.Args
-	assert.Contains(t, args, "-p")
-	assert.Contains(t, args, "edit hello.txt to say goodbye")
-	assert.Contains(t, args, "-c")
-	assert.Contains(t, args, "/tmp/ws")
-	assert.NotContains(t, strings.Join(args, " "), "--resume")
-	assert.NotContains(t, strings.Join(args, " "), "--session")
-	assert.NotContains(t, strings.Join(args, " "), "--model")
-
-	// cmd.Dir is the WorkDir.
-	assert.Equal(t, "/tmp/ws", fr.gotSpec.Dir)
-
-	// Env carries the injected key + base-url on top of the base allowlist.
-	key, ok := envValue(fr.gotSpec.Env, "ANTHROPIC_API_KEY")
+	// Second call is the run; assert modern argv.
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	runSpec := mr.calls[1]
+	assert.Equal(t, "run", runSpec.Args[0])
+	assert.Contains(t, runSpec.Args, "edit hello.txt to say goodbye", "prompt is the run positional")
+	m, ok := argValue(runSpec.Args, "-m")
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-3-5-sonnet", m)
+	assert.Equal(t, "/tmp/ws", runSpec.Dir, "WorkDir is the cwd pin")
+	assert.Contains(t, runSpec.Args, permissionAllowAllFlag, "open-by-default posture")
+	key, ok := envValue(runSpec.Env, "ANTHROPIC_API_KEY")
 	require.True(t, ok)
 	assert.Equal(t, "sk-sentinel", key)
-	_, ok = envValue(fr.gotSpec.Env, "PATH")
-	assert.True(t, ok, "base allowlist PATH must be present")
 }
 
-// Success (variants) — tool scope threads to a permission arg; multiple output
-// lines fold into ordered steps; no resume/session arg in default contract.
+// HAPPY (variants) — per-request ToolScope threads into a narrowed tool flag;
+// multiple output lines fold into ordered steps.
 func TestRunAgent_Variants(t *testing.T) {
 	t.Run("tool scope threaded", func(t *testing.T) {
-		fr := &fakeRunner{lines: []string{"ok"}}
-		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"ok"}}}}
+		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 		_, err := p.RunAgent(context.Background(), engine.AgentMission{
 			Prompt:    "go",
 			WorkDir:   "/tmp/ws",
+			Model:     "anthropic/claude-3-5-sonnet",
 			ToolScope: []string{"Read", "Write"},
 		})
 		require.NoError(t, err)
-		// quiet + json/text output format flags present for headless mode.
-		joined := strings.Join(fr.gotSpec.Args, " ")
-		assert.Contains(t, joined, "-q")
-		assert.Contains(t, joined, "-f")
+		require.GreaterOrEqual(t, len(mr.calls), 2)
+		tools, ok := argValue(mr.calls[1].Args, toolScopeFlag)
+		require.True(t, ok)
+		assert.Equal(t, "Read,Write", tools)
 	})
 
 	t.Run("multiple lines fold into ordered steps", func(t *testing.T) {
-		fr := &fakeRunner{lines: []string{"line one", "line two", "line three"}}
-		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
-		res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"line one", "line two", "line three"}}}}
+		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+		res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 		require.NoError(t, err)
 		require.Len(t, res.Steps, 3)
 		assert.Equal(t, "line one", res.Steps[0].Summary)
 		assert.Equal(t, "line three", res.Steps[2].Summary)
-		// Coarse token accounting is non-negative.
 		assert.GreaterOrEqual(t, res.TokensIn, 0)
 		assert.GreaterOrEqual(t, res.TokensOut, 0)
 	})
 }
 
-// Failure — non-zero process exit (wait() error) → wrapped error.
-func TestRunAgent_NonZeroExit(t *testing.T) {
-	fr := &fakeRunner{lines: []string{"partial"}, waitErr: errors.New("exit status 1")}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
+// SECURITY (OOM DoS): a configured MaxResponseBytes flows into the run RunSpec.
+func TestRunAgent_ThreadsMaxResponseBytes(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"Done."}}}}
+	const cap = int64(1 << 20)
+	p := New(Config{
+		Binding:          anthropicBinding("sk-sentinel", nil),
+		BinaryPath:       "opencode",
+		Runner:           mr,
+		MaxResponseBytes: cap,
+		AllowAllTools:    true,
+	})
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "x",
+		WorkDir: "/tmp/ws",
+		Model:   "anthropic/claude-3-5-sonnet",
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	assert.Equal(t, cap, mr.calls[1].MaxResponseBytes,
+		"the configured MaxResponseBytes must reach the run subprocess RunSpec")
+}
 
+// SECURITY — RevealKey failure aborts BEFORE any subprocess launch (no probe, no run).
+func TestRunAgent_RevealKeyAbortsBeforeLaunch(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"ok"}}}}
+	p := New(Config{
+		Binding:       anthropicBinding("", errors.New("decrypt boom")),
+		BinaryPath:    "opencode",
+		Runner:        mr,
+		AllowAllTools: true,
+	})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "decrypt boom")
+	assert.Empty(t, mr.calls, "no subprocess (not even the version probe) may launch when env fails")
+}
+
+// ERROR — incompatible binary: probe fails => mission fails closed, run never launches.
+func TestRunAgent_IncompatibleBinary(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{{lines: []string{"opencode 0.0.55"}}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, ErrIncompatibleOpencode)
+	assert.Len(t, mr.calls, 1, "only the probe ran; the run never launched")
+}
+
+// INPUT-VALIDATION — empty WorkDir rejected before env build and before any launch.
+func TestRunAgent_EmptyWorkDir(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"ok"}}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "", Model: "anthropic/m"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, ErrWorkDirRequired)
+	assert.Empty(t, mr.calls, "no launch on empty WorkDir")
+}
+
+// INPUT-VALIDATION — empty model rejected (fail-closed) before any launch.
+func TestRunAgent_EmptyModelFailsClosed(t *testing.T) {
+	mr := &multiRunner{}
+	binding := anthropicBinding("k", nil)
+	binding.Model = ""
+	p := New(Config{Binding: binding, BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, ErrModelRequired)
+	assert.Empty(t, mr.calls, "no launch on empty model")
+}
+
+// FAIL-CLOSED — unknown provider names provider+node in the error, no run launches.
+func TestRunAgent_UnknownProviderFailsClosed(t *testing.T) {
+	mr := &multiRunner{}
+	binding := provider.ResolvedBinding{
+		Provider:  "mystery",
+		Model:     "m",
+		RevealKey: func(context.Context) (string, error) { return "k", nil },
+	}
+	p := New(Config{Binding: binding, BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "m"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, ErrUnknownProvider)
+	assert.Contains(t, err.Error(), "mystery", "error must name the provider")
+	assert.Empty(t, mr.calls, "fail-closed: never a silent tool-less run")
+}
+
+// SECURITY — the version probe is memoized: a second mission does NOT re-probe.
+func TestRunAgent_ProbeMemoized(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: []string{"first"}},
+		{lines: []string{"second"}},
+	}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	for i := 0; i < 2; i++ {
+		_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
+		require.NoError(t, err)
+	}
+	require.Len(t, mr.calls, 3)
+	assert.Contains(t, mr.calls[0].Args, "--version")
+	assert.NotContains(t, mr.calls[1].Args, "--version")
+	assert.NotContains(t, mr.calls[2].Args, "--version")
+}
+
+// Failure — non-zero process exit (run wait() error) → wrapped error.
+func TestRunAgent_NonZeroExit(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"partial"}, waitErr: errors.New("exit status 1")}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.Contains(t, err.Error(), "exit status 1")
 }
 
-// Error — binary-not-found (runner Run returns error before streaming).
+// Error — run binary-not-found (runner Run returns error on the run invocation).
 func TestRunAgent_BinaryNotFound(t *testing.T) {
-	fr := &fakeRunner{startErr: errors.New("exec: \"opencode\": not found")}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
-
-	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {startErr: errors.New("exec: \"opencode\": not found")}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.Contains(t, err.Error(), "not found")
 }
 
-// Error — context cancel/timeout → returns a context error.
+// Error — context cancel → returns a context error.
 func TestRunAgent_ContextCancel(t *testing.T) {
-	fr := &fakeRunner{blockOnCtx: true}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	res, err := p.RunAgent(ctx, engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+	res, err := p.RunAgent(ctx, engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
+// Error — timeout → returns a context deadline error.
 func TestRunAgent_Timeout(t *testing.T) {
-	fr := &fakeRunner{blockOnCtx: true}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 
 	res, err := p.RunAgent(context.Background(), engine.AgentMission{
 		Prompt:  "go",
 		WorkDir: "/tmp/ws",
+		Model:   "anthropic/m",
 		Timeout: 10 * time.Millisecond,
 	})
 	require.Error(t, err)
@@ -229,47 +350,19 @@ func TestRunAgent_Timeout(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
-// Error — RevealKey error propagates (via the env helper) before launch.
-func TestRunAgent_RevealKeyError(t *testing.T) {
-	fr := &fakeRunner{lines: []string{"ok"}}
-	p := New(Config{
-		Binding:    anthropicBinding("", errors.New("decrypt boom")),
-		BinaryPath: "opencode",
-		Runner:     fr,
-	})
-	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.Contains(t, err.Error(), "decrypt boom")
-	assert.False(t, fr.runCalled, "runner must not launch when env fails")
-}
-
-// Edge case — empty WorkDir is rejected before launch.
-func TestRunAgent_EmptyWorkDir(t *testing.T) {
-	fr := &fakeRunner{lines: []string{"ok"}}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
-
-	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: ""})
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.ErrorIs(t, err, ErrWorkDirRequired)
-	assert.False(t, fr.runCalled, "runner must not launch with empty WorkDir")
-}
-
 // Edge case — malformed / empty output is parsed tolerantly (no panic).
 func TestRunAgent_EmptyOutput(t *testing.T) {
-	fr := &fakeRunner{lines: nil}
-	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: fr})
-
-	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: nil}}}
+	p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Empty(t, res.Summary)
 	assert.Empty(t, res.Steps)
 }
 
-// Security / log-capture — the revealed key never appears in any log line or
-// the returned error, and reaches the subprocess only via RunSpec.Env.
+// Security / log-capture — the revealed key never appears in any log line or the
+// returned error, and reaches the subprocess only via RunSpec.Env (never argv).
 func TestRunAgent_KeyAbsentFromLogs(t *testing.T) {
 	const sentinel = "sk-very-secret-opencode"
 	var buf bytes.Buffer
@@ -277,35 +370,118 @@ func TestRunAgent_KeyAbsentFromLogs(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	// Run a failing branch too so the error path is covered.
-	fr := &fakeRunner{lines: []string{"work"}, waitErr: errors.New("boom")}
-	p := New(Config{Binding: anthropicBinding(sentinel, nil), BinaryPath: "opencode", Runner: fr})
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"work"}, waitErr: errors.New("boom")}}}
+	p := New(Config{Binding: anthropicBinding(sentinel, nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 
-	_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws"})
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 	require.Error(t, err)
 
 	assert.NotContains(t, buf.String(), sentinel, "key leaked into logs")
 	assert.NotContains(t, err.Error(), sentinel, "key leaked into error")
 
-	// The key reached the subprocess only via the env.
-	key, ok := envValue(fr.gotSpec.Env, "ANTHROPIC_API_KEY")
+	// The key reached the run subprocess only via the env, never argv.
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	runSpec := mr.calls[1]
+	key, ok := envValue(runSpec.Env, "ANTHROPIC_API_KEY")
 	require.True(t, ok)
 	assert.Equal(t, sentinel, key)
+	for _, a := range runSpec.Args {
+		assert.NotContains(t, a, sentinel, "secret must never appear in argv")
+	}
 }
 
-// buildArgs table test — default single-shot contract.
-func TestBuildArgs(t *testing.T) {
-	t.Run("default single-shot: -p, -c, -q, -f text; no resume/model", func(t *testing.T) {
-		args := buildArgs(engine.AgentMission{Prompt: "do it", WorkDir: "/ws"})
-		joined := strings.Join(args, " ")
-		assert.Contains(t, joined, "-p do it")
-		assert.Contains(t, joined, "-c /ws")
-		assert.Contains(t, joined, "-q")
-		assert.Contains(t, joined, "-f")
-		assert.NotContains(t, joined, "--resume")
-		assert.NotContains(t, joined, "--session")
-		assert.NotContains(t, joined, "--model")
+// bedrockAgentBinding builds a bedrock binding with a JSON composite sealed
+// credential containing both secretAccessKey and sessionToken.
+func bedrockAgentBinding(secretAccessKey, sessionToken string) provider.ResolvedBinding {
+	payload := `{"secret":"` + secretAccessKey + `","session_token":"` + sessionToken + `"}`
+	return provider.ResolvedBinding{
+		Provider: "amazon-bedrock",
+		Extras: map[string]string{
+			"region":        "us-east-1",
+			"access-key-id": "AKID-TEST",
+		},
+		Model: "amazon-bedrock/anthropic.claude-3-sonnet",
+		RevealKey: func(_ context.Context) (string, error) {
+			return payload, nil
+		},
+	}
+}
+
+// Security: bedrock AWS credential quartet (SecretAccessKey + SessionToken) must
+// reach the subprocess only via RunSpec.Env, never via argv or slog output.
+// The bedrock path is separately risky because TWO secrets travel in the sealed
+// payload — the secret access key AND the session token — either of which in
+// argv would be extractable from os.Args or process listings.
+func TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs(t *testing.T) {
+	const secretKey = "BEDROCK-SUPER-SECRET-DO-NOT-LOG"
+	const sessionTok = "BEDROCK-SESSION-TOKEN-SENTINEL"
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"bedrock work done"}}}}
+	p := New(Config{
+		Binding:       bedrockAgentBinding(secretKey, sessionTok),
+		BinaryPath:    "opencode",
+		Runner:        mr,
+		AllowAllTools: true,
 	})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "do the thing",
+		WorkDir: "/tmp/ws",
+		Model:   "amazon-bedrock/anthropic.claude-3-sonnet",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// Secrets must not appear in logs.
+	assert.NotContains(t, buf.String(), secretKey, "AWS_SECRET_ACCESS_KEY leaked into logs")
+	assert.NotContains(t, buf.String(), sessionTok, "AWS_SESSION_TOKEN leaked into logs")
+
+	// The run subprocess must have received the secrets only via env, never argv.
+	require.GreaterOrEqual(t, len(mr.calls), 2, "expected probe + run calls")
+	runSpec := mr.calls[1]
+
+	secretVal, ok := envValue(runSpec.Env, "AWS_SECRET_ACCESS_KEY")
+	require.True(t, ok, "AWS_SECRET_ACCESS_KEY must be in subprocess env")
+	assert.Equal(t, secretKey, secretVal)
+
+	sessionVal, ok := envValue(runSpec.Env, "AWS_SESSION_TOKEN")
+	require.True(t, ok, "AWS_SESSION_TOKEN must be in subprocess env")
+	assert.Equal(t, sessionTok, sessionVal)
+
+	for _, a := range runSpec.Args {
+		assert.NotContains(t, a, secretKey, "AWS_SECRET_ACCESS_KEY must never appear in argv")
+		assert.NotContains(t, a, sessionTok, "AWS_SESSION_TOKEN must never appear in argv")
+	}
+}
+
+// SECURITY — the zero value of Config.AllowAllTools is a closed posture: when
+// the caller omits the field, the run must NOT emit --allow-all-tools. The
+// composition root opts in to open-by-default by setting AllowAllTools: true;
+// every other caller (e.g. an in-process test or a future adapter) is safe
+// by default without needing to know the open-by-default convention.
+func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"done"}}}}
+	p := New(Config{
+		Binding:    anthropicBinding("sk-x", nil),
+		BinaryPath: "opencode",
+		Runner:     mr,
+		// AllowAllTools deliberately omitted (zero value false) — must be closed.
+	})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "go",
+		WorkDir: "/tmp/ws",
+		Model:   "anthropic/m",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	assert.NotContains(t, mr.calls[1].Args, permissionAllowAllFlag,
+		"zero-value AllowAllTools must NOT emit --allow-all-tools (safe-by-zero-value contract)")
 }
 
 // parseOutput table test — covers the whitespace-filtering, token-counting,
@@ -361,7 +537,6 @@ func TestParseOutput(t *testing.T) {
 			assert.Equal(t, tc.wantSummary, summary)
 			assert.Len(t, steps, tc.wantStepCount)
 			assert.Equal(t, tc.wantTokensOut, tokensOut)
-			// All produced steps carry Kind "assistant".
 			for _, s := range steps {
 				assert.Equal(t, "assistant", s.Kind)
 			}

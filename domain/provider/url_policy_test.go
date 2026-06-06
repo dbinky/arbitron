@@ -79,9 +79,11 @@ func TestAllowAnyURLPolicy_AcceptsHTTPAndLoopback(t *testing.T) {
 	}
 }
 
-// Failure: AllowAnyURLPolicy still rejects an empty base_url.
+// Failure: AllowAnyURLPolicy still rejects an empty or whitespace-only base_url.
 func TestAllowAnyURLPolicy_RejectsEmpty(t *testing.T) {
-	assert.ErrorIs(t, provider.AllowAnyURLPolicy.ValidateURL(""), provider.ErrInvalidBaseURL)
+	for _, raw := range []string{"", "   ", "\t"} {
+		assert.ErrorIs(t, provider.AllowAnyURLPolicy.ValidateURL(raw), provider.ErrInvalidBaseURL, "url %q", raw)
+	}
 }
 
 // Happy path: ValidateConnectionURL applies the policy and names the connection
@@ -97,4 +99,139 @@ func TestValidateConnectionURL_StrictRejectsInternal(t *testing.T) {
 func TestValidateConnectionURL_NilPolicyDefaultsStrict(t *testing.T) {
 	c := provider.Connection{Name: "n", Provider: "openrouter", BaseURL: "http://x"}
 	assert.ErrorIs(t, provider.ValidateConnectionURL(c, nil), provider.ErrInvalidBaseURL)
+}
+
+// --- Provider-aware local-Ollama loopback carve-out (Phase 1, Task 2) ---
+
+// Happy-path: local Ollama over http on a loopback host is allowed even though
+// StrictURLPolicy would otherwise reject http + loopback.
+
+func TestValidateConnectionURL_OllamaLocalhostHTTP_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-local", Provider: "ollama", BaseURL: "http://localhost:11434/v1"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+func TestValidateConnectionURL_Ollama127001HTTP_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-local", Provider: "ollama", BaseURL: "http://127.0.0.1:11434/v1"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+func TestValidateConnectionURL_OllamaIPv6LoopbackHTTP_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-local", Provider: "ollama", BaseURL: "http://[::1]:11434/v1"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+func TestValidateConnectionURL_OllamaCloudHTTPS_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-cloud", Provider: "ollama", BaseURL: "https://ollama.com/v1"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+// Input-validation.
+
+func TestValidateConnectionURL_OllamaProviderCaseAndWhitespace_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-local", Provider: "  Ollama  ", BaseURL: "http://localhost:11434"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+func TestValidateConnectionURL_OllamaEmptyBaseURL_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-empty", Provider: "ollama", BaseURL: ""}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+func TestValidateConnectionURL_OllamaUnparseableBaseURL_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-bad", Provider: "ollama", BaseURL: "http://%zz"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+// Error-handling.
+
+func TestValidateConnectionURL_OllamaPublicHTTP_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-pub", Provider: "ollama", BaseURL: "http://api.example.com/v1"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+	assert.Contains(t, err.Error(), "ollama-pub")
+}
+
+func TestValidateConnectionURL_NilPolicyWithOllamaLoopback_Allowed(t *testing.T) {
+	c := provider.Connection{Provider: "ollama", BaseURL: "http://localhost:11434"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, nil))
+}
+
+// Edge-cases.
+
+func TestValidateConnectionURL_OllamaLoopback8HTTP_Allowed(t *testing.T) {
+	c := provider.Connection{Name: "ollama-local", Provider: "ollama", BaseURL: "http://127.0.0.8:11434/v1"}
+	assert.NoError(t, provider.ValidateConnectionURL(c, provider.StrictURLPolicy))
+}
+
+func TestValidateConnectionURL_OllamaUnspecified_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-zero", Provider: "ollama", BaseURL: "http://0.0.0.0:11434"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+// Security: the load-bearing scoping checks that lock the carve-out's scope.
+
+// SECURITY (SSRF, userinfo smuggling) — a loopback literal placed in the URL
+// userinfo (http://127.0.0.1@evil.com) must NOT earn the ollama loopback
+// carve-out: url.Hostname() resolves to the REAL host "evil.com", so the
+// carve-out declines and the request falls through to StrictURLPolicy. With the
+// non-https (http) scheme the carve-out is the ONLY thing that could have let it
+// through, so StrictURLPolicy rejects it. This pins the carve-out against a
+// future denylist refactor that might naively substring-match the loopback
+// literal in the raw URL. (PR #23 security LOW.)
+func TestValidateConnectionURL_OllamaUserinfoSmuggling_Rejected(t *testing.T) {
+	cases := []string{
+		"http://127.0.0.1@evil.com/v1",
+		"http://localhost@evil.com/v1",
+		"http://127.0.0.1:11434@evil.com/v1",
+		"http://user:127.0.0.1@evil.com/v1",
+	}
+	for _, raw := range cases {
+		c := provider.Connection{Name: "ollama-smuggle", Provider: "ollama", BaseURL: raw}
+		err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+		assert.ErrorIs(t, err, provider.ErrInvalidBaseURL, "userinfo-smuggled URL %q must be rejected", raw)
+	}
+}
+
+func TestValidateConnectionURL_NonOllamaLocalhost_StillRejected(t *testing.T) {
+	for _, prov := range []string{"openrouter", "openai", "litellm", "azure-openai", ""} {
+		c := provider.Connection{Name: "x", Provider: prov, BaseURL: "http://localhost:11434/v1"}
+		err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+		assert.ErrorIs(t, err, provider.ErrInvalidBaseURL, "provider %q must not earn loopback allowance", prov)
+	}
+}
+
+// seam (url_policy ↔ factory): the factory normalizes "ollama-cloud" to the same
+// routing arm as "ollama", but the url_policy carve-out must NOT extend to the
+// alias. "ollama-cloud" is for cloud Ollama (https public endpoint), so a loopback
+// URL must be rejected. This prevents the factory alias from inadvertently widening
+// the SSRF carve-out.
+func TestValidateConnectionURL_OllamaCloudLocalhost_Rejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-cloud-local", Provider: "ollama-cloud", BaseURL: "http://localhost:11434/v1"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL,
+		"ollama-cloud must not earn the loopback carve-out (only 'ollama' earns it)")
+}
+
+func TestValidateConnectionURL_OllamaMetadataEndpoint_StillRejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-meta", Provider: "ollama", BaseURL: "http://169.254.169.254/latest/meta-data/"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+func TestValidateConnectionURL_OllamaLinkLocal_StillRejected(t *testing.T) {
+	c := provider.Connection{Name: "ollama-ll", Provider: "ollama", BaseURL: "http://169.254.0.10/v1"}
+	err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+	assert.ErrorIs(t, err, provider.ErrInvalidBaseURL)
+}
+
+func TestValidateConnectionURL_OllamaRFC1918Hosts_StillRejected(t *testing.T) {
+	for _, host := range []string{"10.0.0.5", "192.168.1.10", "172.16.0.1"} {
+		c := provider.Connection{Name: "ollama-priv", Provider: "ollama", BaseURL: "http://" + host + "/v1"}
+		err := provider.ValidateConnectionURL(c, provider.StrictURLPolicy)
+		assert.ErrorIs(t, err, provider.ErrInvalidBaseURL, "rfc1918 host %q must be rejected", host)
+	}
 }

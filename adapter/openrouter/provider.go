@@ -12,11 +12,9 @@ package openrouter
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
@@ -65,38 +63,10 @@ func New(cfg Config) *Provider {
 	}
 }
 
-// boundedReader wraps r with the configured MaxResponseBytes cap. A zero cap
-// returns r unchanged.
+// boundedReader wraps r with the configured MaxResponseBytes cap (the shared
+// procenv bounded read; over-cap yields procenv.ErrResponseTooLarge).
 func (p *Provider) boundedReader(r io.Reader) io.Reader {
-	if p.maxResponseBytes <= 0 {
-		return r
-	}
-	return &limitedReader{r: r, remaining: p.maxResponseBytes}
-}
-
-// errResponseTooLarge is returned when a response exceeds MaxResponseBytes.
-var errResponseTooLarge = errors.New("openrouter: response exceeds MaxResponseBytes")
-
-// limitedReader is like io.LimitReader but returns an error (rather than EOF)
-// when the limit is exceeded, so an over-large body is a hard failure.
-type limitedReader struct {
-	r         io.Reader
-	remaining int64
-}
-
-func (l *limitedReader) Read(p []byte) (int, error) {
-	if l.remaining <= 0 {
-		return 0, errResponseTooLarge
-	}
-	if int64(len(p)) > l.remaining+1 {
-		p = p[:l.remaining+1]
-	}
-	n, err := l.r.Read(p)
-	l.remaining -= int64(n)
-	if l.remaining < 0 {
-		return int(l.remaining + int64(n)), errResponseTooLarge
-	}
-	return n, err
+	return procenv.BoundedReader(r, p.maxResponseBytes)
 }
 
 // Chat POSTs a non-streaming completion and maps the first choice's content to
@@ -235,28 +205,9 @@ func send(ctx context.Context, out chan<- engine.ChatChunk, c engine.ChatChunk) 
 }
 
 // statusError reads the bounded error body and wraps ErrUpstreamStatus with a
-// snippet. It never includes the Authorization header or revealed key, and it
-// scrubs control characters so a hostile upstream cannot shape an error string
-// that injects newlines/escapes into a structured logger.
+// control-scrubbed, 512-byte-capped snippet (the shared procenv.StatusSnippet).
+// It never includes the Authorization header or revealed key.
 func (p *Provider) statusError(status int, body io.Reader) error {
-	snippet, _ := io.ReadAll(body)
-	const max = 512
-	if len(snippet) > max {
-		snippet = snippet[:max]
-	}
-	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, scrubControl(string(snippet)))
-}
-
-// scrubControl replaces ASCII control characters (except none are kept) with a
-// space so an upstream-shaped error snippet cannot inject newlines, carriage
-// returns, or terminal escapes into logs. Printable bytes and valid UTF-8 are
-// preserved.
-func scrubControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || r == '\r' || (r >= 0 && r < 0x20) || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)
+	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, procenv.StatusSnippet(body))
 }
 

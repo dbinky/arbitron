@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -103,6 +106,47 @@ func TestDomainStack_Close_NilOptionalsDoNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() { ds.Close(context.Background()) })
 }
 
+// ---------------------------------------------------------------------------
+// Tests: connection subcommand (feat/llm-providers)
+// ---------------------------------------------------------------------------
+
+// Happy path: the "connection" subcommand is registered on the root command,
+// parallel to "serve" and "mcp".
+func TestRootCommand_HasConnectionSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newServeCmd())
+	rootCmd.AddCommand(newMCPCmd())
+	rootCmd.AddCommand(newConnectionCmd())
+
+	connCmd, _, err := rootCmd.Find([]string{"connection"})
+	assert.NoError(t, err)
+	assert.Equal(t, "connection", connCmd.Name())
+}
+
+// Happy path: the "validate" subcommand is registered under "connection".
+func TestConnectionCmd_HasValidateSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newConnectionCmd())
+
+	validateCmd, _, err := rootCmd.Find([]string{"connection", "validate"})
+	assert.NoError(t, err)
+	assert.Equal(t, "validate", validateCmd.Name())
+}
+
+// Error path: connection validate RunE is wired (not accidentally left nil).
+func TestConnectionValidateCmd_HasRunE(t *testing.T) {
+	connCmd := newConnectionCmd()
+	var validateCmd *cobra.Command
+	for _, sub := range connCmd.Commands() {
+		if sub.Name() == "validate" {
+			validateCmd = sub
+			break
+		}
+	}
+	require.NotNil(t, validateCmd, "validate subcommand must be registered on connection")
+	assert.NotNil(t, validateCmd.RunE, "connection validate must have a RunE handler wired")
+}
+
 // The org-mode session sweep must be cancelled on Close so its goroutine stops
 // cleanly on shutdown (no leaked ticker writing to a closed DB).
 func TestDomainStack_Close_CancelsSessionSweep(t *testing.T) {
@@ -130,4 +174,21 @@ func TestRootCommand_HasConfigFlag(t *testing.T) {
 	f := newRootCmd().PersistentFlags().Lookup("config")
 	require.NotNil(t, f, "--config persistent flag must be registered on root")
 	assert.Equal(t, "", f.DefValue, "--config default must be empty")
+}
+
+// SECURITY (defense-in-depth) — the shared outbound HTTP client threaded into
+// every credential-bearing LLM chat adapter (openrouter/azurefoundry/
+// anthropicapi/bedrock) pins an explicit TLS floor of 1.2. The Go stdlib default
+// is already TLS 1.2+, so this makes the floor explicit and regression-proof.
+// (PR #23 Consider #1.)
+func TestNewOutboundHTTPClient_PinsTLS12(t *testing.T) {
+	c := newOutboundHTTPClient(30 * time.Second)
+	require.NotNil(t, c)
+	assert.Equal(t, 30*time.Second, c.Timeout, "the per-call backstop timeout is preserved")
+
+	tr, ok := c.Transport.(*http.Transport)
+	require.True(t, ok, "outbound client must use an *http.Transport")
+	require.NotNil(t, tr.TLSClientConfig, "transport must carry an explicit TLS config")
+	assert.Equal(t, uint16(tls.VersionTLS12), tr.TLSClientConfig.MinVersion,
+		"outbound TLS floor must be pinned to TLS 1.2")
 }

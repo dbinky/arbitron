@@ -67,6 +67,72 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.Queue.PerUserCap, "default PerUserCap must be 5")
 }
 
+// SECURITY: the shipped default is CLOSED (false). Allow-all on a
+// credential-bearing, tool-using subprocess fed model-influenced prompts is a
+// lethal-trifecta posture, so it must be an explicit operator opt-in — never the
+// out-of-the-box behavior. (PR #23 security HIGH.)
+func TestLoad_AgentAllowAllToolsDefaultsFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools, "omitted llm.agentallowalltools must default to false (closed; allow-all is an explicit opt-in)")
+}
+
+// An explicit true in YAML opts in to the allow-all agent posture.
+func TestLoad_AgentAllowAllToolsOverrideTrue(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	yamlContent := "llm:\n  agentallowalltools: true\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, cfg.LLM.AgentAllowAllTools, "explicit true must opt in to the allow-all agent posture")
+}
+
+// Edge: ARBITRON_LLM_AGENTALLOWALLTOOLS=false lets an operator tighten the
+// open-by-default posture at deployment time without touching the config file
+// (the primary zero-touch path for containerized / 12-factor deployments).
+// The env provider maps ARBITRON_LLM_AGENTALLOWALLTOOLS → llm.agentallowalltools.
+func TestLoad_AgentAllowAllTools_EnvVarDisables(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_AGENTALLOWALLTOOLS", "false")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools,
+		"ARBITRON_LLM_AGENTALLOWALLTOOLS=false must disable the open-by-default agent posture")
+}
+
+// Success: env var override of agentallowalltools takes precedence over YAML true.
+// An operator can harden a deployment without modifying the checked-in config file.
+func TestLoad_AgentAllowAllTools_EnvVarWinsOverYAMLTrue(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_AGENTALLOWALLTOOLS", "false")
+
+	// YAML says true, env says false — env must win (highest precedence).
+	yamlContent := "llm:\n  agentallowalltools: true\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools,
+		"env ARBITRON_LLM_AGENTALLOWALLTOOLS=false must win over YAML agentallowalltools: true")
+}
+
 func TestLoad_YAMLOverride(t *testing.T) {
 	// A YAML config file should override default values.
 	tmpDir := t.TempDir()
@@ -427,6 +493,40 @@ func TestLoad_TimeoutSecondsFloor(t *testing.T) {
 				"the timeout must always be positive so deadlines cannot be disabled")
 		})
 	}
+}
+
+// seam (config → Factory Deps → all adapters; config → buildValidateDeps):
+// both initDomain (serve) and buildValidateDeps (connection validate) derive
+// their adapter/probe timeout from cfg.LLM.TimeoutSeconds via
+//
+//	time.Duration(cfg.LLM.TimeoutSeconds) * time.Second
+//
+// If an operator sets ARBITRON_LLM_TIMEOUTSECONDS=0 in a containerized
+// environment to make things "fast", both paths must still floor to
+// DefaultTimeoutSeconds — the YAML floor path is tested by TestLoad_TimeoutSecondsFloor;
+// this test closes the env-var path.
+func TestLoad_TimeoutSecondsFloor_EnvVarZeroFloored(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_TIMEOUTSECONDS", "0")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, adapterconfig.DefaultTimeoutSeconds, cfg.LLM.TimeoutSeconds,
+		"ARBITRON_LLM_TIMEOUTSECONDS=0 must be floored at load — a zero timeout disables all deadlines for both serve and connection validate")
+	assert.Positive(t, cfg.LLM.TimeoutSeconds)
+}
+
+// seam (config → buildValidateDeps): a positive ARBITRON_LLM_TIMEOUTSECONDS
+// overrides the default and is preserved (not floored). Both serve and
+// connection validate should honour a deliberate operator timeout value.
+func TestLoad_TimeoutSecondsFloor_EnvVarPositivePreserved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_TIMEOUTSECONDS", "120")
+	cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, 120, cfg.LLM.TimeoutSeconds,
+		"a positive ARBITRON_LLM_TIMEOUTSECONDS must be preserved so operators can tune adapter timeouts")
 }
 
 // Happy-path: notifications.teams.* and server.public_base_url load from YAML.
