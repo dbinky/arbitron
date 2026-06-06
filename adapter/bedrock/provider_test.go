@@ -121,6 +121,22 @@ func TestChat_StatusErrorsMapped(t *testing.T) {
 	}
 }
 
+// error-handling: RevealKey returning an error surfaces through Chat (no secret printed).
+func TestChat_RevealKeyError(t *testing.T) {
+	revealErr := errors.New("vault unreachable")
+	b := provider.ResolvedBinding{
+		Provider:  "bedrock",
+		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKID"},
+		Model:     "m",
+		RevealKey: func(context.Context) (string, error) { return "", revealErr },
+	}
+	p := New(Config{Binding: b, Now: fixedNow})
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	if !errors.Is(err, revealErr) {
+		t.Fatalf("err = %v, want errors.Is revealErr", err)
+	}
+}
+
 // input-validation: missing region guarded BEFORE revealing the secret.
 func TestChat_MissingRegionGuarded(t *testing.T) {
 	revealed := false
@@ -229,6 +245,30 @@ func TestStreamChat_OrderedTokensThenDone(t *testing.T) {
 	}
 	if !done.Done || done.TokensIn != 5 || done.TokensOut != 6 {
 		t.Errorf("done = %+v, want Done with usage 5/6", done)
+	}
+}
+
+// error-handling: StreamChat non-2xx status is delivered via channel, not as a
+// direct return — the goroutine is already running when the status is checked.
+func TestStreamChat_NonOKStatusDeliveredViaChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"unauthorized"}`)
+	}))
+	defer srv.Close()
+	p := newProvider(t, srv, bindingTo(srv.URL, "us-east-1", "m", false), 0)
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	if err != nil {
+		t.Fatalf("StreamChat must not return a direct error on non-2xx — got: %v", err)
+	}
+	var gotErr error
+	for c := range ch {
+		if c.Error != nil {
+			gotErr = c.Error
+		}
+	}
+	if !errors.Is(gotErr, ErrUpstreamStatus) {
+		t.Fatalf("channel error = %v, want errors.Is ErrUpstreamStatus", gotErr)
 	}
 }
 

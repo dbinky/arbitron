@@ -20,16 +20,10 @@ Issues found during review iterations. Only the user can move items to the Won't
 **Area**: anthropicapi adapter (`adapter/anthropicapi/{request,response}.go`)
 **Detail**: The structured-output mapping (single forced tool via `tool_choice`, returning the tool-use `input` as a raw pre-parse string) and the SSE event handling (`content_block_delta` text_delta/input_json_delta, usage split across `message_start`/`message_delta`, `message_stop`) are tested only against fixtures. Confirm against the live Anthropic `/v1/messages` API, including the pinned `anthropic-version: 2023-06-01`, and reconcile any divergence.
 
-### BEDROCK-002: Untested paths in bedrock provider
-**Area**: bedrock chat adapter (`adapter/bedrock/provider.go`)
-**Detail**: Two error paths in `provider.go` are not directly tested:
-1. `StreamChat` non-2xx status — the goroutine sends `ChatChunk{Error: statusError(...)}` via channel, but no test exercises this path (only `Chat` has the 4xx test).
-2. `signedRequest` RevealKey-returns-error — the `fmt.Errorf("bedrock: reveal key: %w", err)` path is unexercised; only the missing-region and missing-access-key-id guards are tested.
-Both are fixable with httptest stubs.
-
 ## Fixed Previously
 
 - **BEDROCK-parseConverseEvent-coverage** (Area 4 Pass 1): `parseConverseEvent` was missing direct tests for the blank/whitespace-only input (edge) and malformed JSON (error) paths. Added `TestParseConverseEvent_BlankLine` and `TestParseConverseEvent_MalformedJSON` to `response_test.go`.
+- **BEDROCK-002** (Area 4 Pass 1): Two untested error paths in `provider.go` — `StreamChat` non-2xx status (error delivered via channel) and `signedRequest` RevealKey-returns-error. Fixed by adding `TestStreamChat_NonOKStatusDeliveredViaChannel` and `TestChat_RevealKeyError` to `provider_test.go`.
 
 ## Won't Fix (Beyond Current Scope)
 

@@ -16,7 +16,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 1 | awssig SigV4 signer (`adapter/awssig/sigv4.go` — canonical request, string-to-sign, signing-key, injectable clock, golden signature, X-Amz-Security-Token) | [x] | [x] | Done |
 | 2 | awssig sealed credentials (`adapter/awssig/credentials.go` — ParseCredential bare/JSON-composite, BuildCredential round-trip, ErrMissingSecret, no-leak) | [x] | [x] | Done |
 | 3 | anthropicapi chat adapter (`adapter/anthropicapi/{provider,request,response}.go` — /v1/messages, x-api-key fail-closed, max_tokens default, forced-tool structured output, SSE StreamChat) | [x] | [x] | Done |
-| 4 | bedrock chat adapter (`adapter/bedrock/{provider,endpoint,request,response}.go` — Converse, regional endpoint derivation, signing via awssig, streaming, guards before reveal) | [ ] | [ ] | |
+| 4 | bedrock chat adapter (`adapter/bedrock/{provider,endpoint,request,response}.go` — Converse, regional endpoint derivation, signing via awssig, streaming, guards before reveal) | [x] | [ ] | |
 | 5 | Factory chat routing (`adapter/provider/factory.go` — openai/ollama/anthropic-api/bedrock arms, provider normalization, ErrUnknownProvider, Deps wiring) | [ ] | [ ] | |
 | 6 | opencode args + provider-id + posture (`adapter/opencode/{args,provider_id,posture}.go` — run -m contract, model de-prefix, ToolScope/AllowedTools precedence, open-by-default) | [ ] | [ ] | |
 | 7 | opencode env + run + version probe (`adapter/opencode/{env,env_providers,version,provider}.go` — auth-env table, bedrock AWS quartet via awssig, keyless allowlist, no-partial-env, fail-closed) | [ ] | [ ] | |
