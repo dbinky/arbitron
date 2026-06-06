@@ -297,6 +297,61 @@ func TestStreamChat_MalformedEventError(t *testing.T) {
 	}
 }
 
+// error-handling: RevealKey returning an error during StreamChat surfaces as a
+// direct return (not via channel), wraps the underlying error, and does not
+// include any secret in the error string. Mirrors TestChat_RevealKeyError for
+// the streaming path, which shares the same signedRequest pre-launch guard.
+func TestStreamChat_RevealKeyError(t *testing.T) {
+	revealErr := errors.New("vault unreachable")
+	b := provider.ResolvedBinding{
+		Provider:  "bedrock",
+		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKID"},
+		Model:     "m",
+		RevealKey: func(context.Context) (string, error) { return "", revealErr },
+	}
+	p := New(Config{Binding: b, Now: fixedNow})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	if !errors.Is(err, revealErr) {
+		t.Fatalf("StreamChat must return the RevealKey error directly; got %v", err)
+	}
+	if ch != nil {
+		t.Error("channel must be nil when StreamChat returns a pre-launch error")
+	}
+	if strings.Contains(err.Error(), testSecret) {
+		t.Errorf("error leaked testSecret: %v", err)
+	}
+}
+
+// security: StreamChat 403 error body is scrubbed and never includes the secret.
+// Mirrors TestChat_403AuthError_NoSecretLeak for the streaming path: the error
+// arrives via the channel (the goroutine is already running), not as a direct
+// return, but the secrecy property must hold either way.
+func TestStreamChat_403AuthError_NoSecretLeak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"message":"The security token included in the request is invalid"}`)
+	}))
+	defer srv.Close()
+
+	p := newProvider(t, srv, bindingTo(srv.URL, "us-east-1", "m", true), 0)
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	if err != nil {
+		t.Fatalf("StreamChat must not return a direct error on non-2xx; got: %v", err)
+	}
+	var gotErr error
+	for c := range ch {
+		if c.Error != nil {
+			gotErr = c.Error
+		}
+	}
+	if !errors.Is(gotErr, ErrUpstreamStatus) {
+		t.Fatalf("want ErrUpstreamStatus in channel, got %v", gotErr)
+	}
+	if strings.Contains(gotErr.Error(), testSecret) || strings.Contains(gotErr.Error(), testSession) {
+		t.Errorf("stream error leaked a secret: %v", gotErr)
+	}
+}
+
 // security: scrubControl prevents a hostile upstream error body from injecting
 // control characters (newlines, CR, terminal escapes) into structured log output.
 func TestScrubControl(t *testing.T) {

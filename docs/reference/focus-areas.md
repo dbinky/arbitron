@@ -25,7 +25,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 10 | connection validate CLI (`cmd/arbitron/connection.go` — runConnectionValidate core, connection-name binding via Get+Reveal, output shapes, exit codes, no-secret-print) | [x] | [x] | Done |
 | 11 | url_policy ollama loopback + bedrock ValidateConnection (`domain/provider/{url_policy,connection}.go` — provider-scoped loopback carve-out, bedrock region/access-key rule) | [x] | [x] | Done |
 | 12 | Config + composition root (`domain/config/config.go`, `adapter/config/loader.go`, `cmd/arbitron/main.go` — AgentAllowAllTools default-true, YAML doc, Factory Deps wiring, connection cmd registration) | [x] | [x] | Done |
-| 13 | Credential secrecy (cross-cutting — key/secret/session-token never in logs/errors/argv across all adapters + CLI; scrubControl + bounded readers + no-leak tests) | [ ] | [ ] | |
+| 13 | Credential secrecy (cross-cutting — key/secret/session-token never in logs/errors/argv across all adapters + CLI; scrubControl + bounded readers + no-leak tests) | [x] | [ ] | |
 | 14 | Open-by-default posture & fail-closed (cross-cutting — skip-permissions + broad tools default, operator restriction narrows, unsupported provider fails closed, kind guard intact) | [ ] | [ ] | |
 
 ---
