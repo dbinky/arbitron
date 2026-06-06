@@ -465,3 +465,29 @@ func TestFactory_AgentProviderFor_AllowAllDisabled(t *testing.T) {
 	runArgs := strings.Join(rr.calls[1].Args, " ")
 	assert.NotContains(t, runArgs, "--allow-all-tools", "OpencodeAllowAllTools=false must disable allow-all")
 }
+
+// Per-profile AllowedTools (knob b) narrows end-to-end through the factory path.
+// Even when OpencodeAllowAllTools=true (knob a), a non-empty binding.AllowedTools
+// must suppress --allow-all-tools and emit --allowed-tools with the named tools.
+// This exercises the full chain: Factory.AgentProviderFor → opencode.buildPosture
+// → buildArgs → subprocess argv, verifying the two knobs compose correctly.
+func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
+	rr := &recRunner{}
+	b := openAgentBinding()
+	b.AllowedTools = []string{"Read", "Write"}
+
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: true})
+	ap, err := f.AgentProviderFor(b)
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.NotContains(t, runArgs, "--allow-all-tools",
+		"per-profile AllowedTools must suppress allow-all even when OpencodeAllowAllTools=true")
+	assert.Contains(t, runArgs, "--allowed-tools",
+		"per-profile AllowedTools must emit the tool-scope flag in the run argv")
+	assert.Contains(t, runArgs, "Read,Write",
+		"per-profile AllowedTools must name the permitted tools in the run argv")
+}
