@@ -105,6 +105,37 @@ func TestBedrockProbe_403_CredentialsRejected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCredentialsRejected)
 }
 
+// seam (awssig ↔ bedrock probe): the probe passes service="bedrock" and the
+// binding's region to awssig.Sign; both must appear in the Authorization
+// Credential scope. Uses ap-southeast-2 to distinguish from the default
+// us-east-1 used in other tests — a mis-wired region would produce a different
+// scope and AWS would reject every probe request.
+func TestBedrockProbe_CredentialScopeContainsRegionAndService(t *testing.T) {
+	var capturedAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"modelSummaries":[]}`))
+	}))
+	defer srv.Close()
+
+	deps := Deps{
+		HTTPClient:      srv.Client(),
+		Clock:           fixedClock,
+		BedrockEndpoint: func(string) string { return srv.URL },
+	}
+	p := newBedrockProbe(deps)
+	_, err := p.Probe(context.Background(), domprovider.ResolvedBinding{
+		Provider:  "bedrock",
+		Extras:    map[string]string{"region": "ap-southeast-2", "access-key-id": "AKIA"},
+		RevealKey: revealKey("topsecret"),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, capturedAuth, "/ap-southeast-2/",
+		"probe Authorization scope must contain the binding's region")
+	assert.Contains(t, capturedAuth, "/bedrock/",
+		"probe Authorization scope must contain the service name 'bedrock'")
+}
+
 // Security: the secret-access-key never appears in errors or slog (it lives only
 // in the SigV4 signature).
 func TestBedrockProbe_SecretNeverInError(t *testing.T) {

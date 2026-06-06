@@ -36,7 +36,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 |---|---|---|---|
 | 15 | awssig signer + bedrock adapter (signature applied to Converse request; region/service correct; security-token header) | [x] | Done |
 | 16 | awssig credentials + opencode env (sealed composite → AWS_ACCESS_KEY_ID/SECRET/SESSION/REGION quartet; bare-string path) | [x] | Done |
-| 17 | awssig signer + bedrock probe (ListFoundationModels signed on control-plane host; injected clock; endpoint seam) | [ ] | |
+| 17 | awssig signer + bedrock probe (ListFoundationModels signed on control-plane host; injected clock; endpoint seam) | [x] | Done |
 | 18 | Factory routing + chat adapters (ResolvedBinding → correct concrete provider per string; Deps threaded; unknown → error) | [ ] | |
 | 19 | opencode posture + config knob (AgentAllowAllTools → Deps.OpencodeAllowAllTools → Config.AllowAllTools → emitted argv; AllowedTools overrides) | [ ] | |
 | 20 | url_policy ollama allowance + Factory ollama routing (a localhost ollama connection is both creatable and routable end-to-end; non-ollama localhost still rejected) | [ ] | |
