@@ -459,6 +459,31 @@ func TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs(t *testing.T) {
 	}
 }
 
+// SECURITY — the zero value of Config.AllowAllTools is a closed posture: when
+// the caller omits the field, the run must NOT emit --allow-all-tools. The
+// composition root opts in to open-by-default by setting AllowAllTools: true;
+// every other caller (e.g. an in-process test or a future adapter) is safe
+// by default without needing to know the open-by-default convention.
+func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"done"}}}}
+	p := New(Config{
+		Binding:    anthropicBinding("sk-x", nil),
+		BinaryPath: "opencode",
+		Runner:     mr,
+		// AllowAllTools deliberately omitted (zero value false) — must be closed.
+	})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "go",
+		WorkDir: "/tmp/ws",
+		Model:   "anthropic/m",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	assert.NotContains(t, mr.calls[1].Args, permissionAllowAllFlag,
+		"zero-value AllowAllTools must NOT emit --allow-all-tools (safe-by-zero-value contract)")
+}
+
 // parseOutput table test — covers the whitespace-filtering, token-counting,
 // and step-folding logic directly so the pure function's contract is auditable.
 func TestParseOutput(t *testing.T) {
