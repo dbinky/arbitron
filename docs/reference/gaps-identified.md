@@ -35,6 +35,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **PROBE-factory-quoting + scrubControl** (Area 8 Pass 2): `factory.go:83` uses `%q` on the provider string in `ErrNoProbeForProvider` — untested with control chars. Added `TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted`. Also added `TestProbeScrubControl` direct unit test for `httpshared.go`'s `scrubControl` (mirrors bedrock/openrouter pattern).
 - **DOMAIN-probe-failure-path** (Area 9 Pass 1): `probe_test.go` had no test for `ConnectionProbe.Probe` returning an error (failure category empty). Added `TestConnectionProbe_ProbeError` using `fakeProbe{err: ...}`.
 - **CLI-connection-ErrUpstreamStatus** (Area 10 Pass 1): `connection_test.go` covered `ErrCredentialsRejected`, `ErrUnreachable`, and `ErrRegionConfig` probe errors but not `ErrUpstreamStatus` (4xx/5xx upstream). Added `TestRunConnectionValidate_UpstreamStatus`.
+- **CLI-connection-RevealKey-error** (Area 10 Pass 2): `bindingFromConnection` creates a `RevealKey` closure but no test verified that `store.Reveal` errors propagate without leaking the stored secret. Added `TestBindingFromConnection_RevealKeyError_SecretFree`.
 
 ## Won't Fix (Beyond Current Scope)
 

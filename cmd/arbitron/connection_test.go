@@ -309,6 +309,23 @@ func TestRunConnectionValidate_NeverPrintsSecret(t *testing.T) {
 	assert.NotContains(t, logBuf.String(), secret)
 }
 
+// SECURITY — the RevealKey closure created by bindingFromConnection propagates
+// store.Reveal errors and never leaks the stored secret in the error message.
+func TestBindingFromConnection_RevealKeyError_SecretFree(t *testing.T) {
+	const secret = "sk-SHOULD-NEVER-APPEAR"
+	store := &fakeConnectionStore{
+		conn:      provider.Connection{Name: "oai", Provider: "openai"},
+		secret:    secret,
+		revealErr: errors.New("decrypt failed"),
+	}
+	b := bindingFromConnection(store, "oai", store.conn)
+	require.NotNil(t, b.RevealKey)
+	_, err := b.RevealKey(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, store.revealErr)
+	assert.NotContains(t, err.Error(), secret, "secret must not appear in RevealKey error")
+}
+
 func TestRunConnectionValidate_ProbeErrorSecretFree(t *testing.T) {
 	const secret = "sk-SUPER-SECRET"
 	store := &fakeConnectionStore{conn: provider.Connection{Name: "oai", Provider: "openai"}, secret: secret}
