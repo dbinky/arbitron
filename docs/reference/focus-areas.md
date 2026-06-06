@@ -38,7 +38,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 16 | awssig credentials + opencode env (sealed composite → AWS_ACCESS_KEY_ID/SECRET/SESSION/REGION quartet; bare-string path) | [x] | Done |
 | 17 | awssig signer + bedrock probe (ListFoundationModels signed on control-plane host; injected clock; endpoint seam) | [x] | Done |
 | 18 | Factory routing + chat adapters (ResolvedBinding → correct concrete provider per string; Deps threaded; unknown → error) | [x] | Done |
-| 19 | opencode posture + config knob (AgentAllowAllTools → Deps.OpencodeAllowAllTools → Config.AllowAllTools → emitted argv; AllowedTools overrides) | [ ] | |
+| 19 | opencode posture + config knob (AgentAllowAllTools → Deps.OpencodeAllowAllTools → Config.AllowAllTools → emitted argv; AllowedTools overrides) | [x] | Done |
 | 20 | url_policy ollama allowance + Factory ollama routing (a localhost ollama connection is both creatable and routable end-to-end; non-ollama localhost still rejected) | [ ] | |
 | 21 | anthropicapi adapter + anthropic probe (anthropic-version pinned in lockstep; x-api-key header parity) | [ ] | |
 | 22 | ConnectionProbe port + validate CLI (ProbeSelector dispatch from a connection-name binding; result/error rendering; exit codes) | [ ] | |

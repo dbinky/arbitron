@@ -511,3 +511,28 @@ func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
 	assert.Contains(t, runArgs, "Read,Write",
 		"per-profile AllowedTools must name the permitted tools in the run argv")
 }
+
+// seam (posture config knob a + knob b): per-profile AllowedTools (knob b) must
+// emit --allowed-tools even when OpencodeAllowAllTools=false (knob a). Both
+// controls can be independently active; knob b narrows regardless of knob a's
+// global switch. This exercises the composition of the two knobs via the factory.
+func TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled(t *testing.T) {
+	rr := &recRunner{}
+	b := openAgentBinding()
+	b.AllowedTools = []string{"Read"}
+
+	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: false})
+	ap, err := f.AgentProviderFor(b)
+	require.NoError(t, err)
+
+	_, err = ap.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rr.calls), 2)
+	runArgs := strings.Join(rr.calls[1].Args, " ")
+	assert.NotContains(t, runArgs, "--allow-all-tools",
+		"global allow-all disabled: --allow-all-tools must NOT be emitted")
+	assert.Contains(t, runArgs, "--allowed-tools",
+		"per-profile AllowedTools must emit --allowed-tools even when global allow-all is disabled")
+	assert.Contains(t, runArgs, "Read",
+		"per-profile AllowedTools must name the permitted tools in the argv")
+}
