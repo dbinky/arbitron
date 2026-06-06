@@ -34,7 +34,16 @@ var keylessProviders = map[string]bool{"ollama": true}
 // base-name collision) NO env is produced (nil is returned alongside the error)
 // so the caller cannot launch with a partial env.
 func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
-	entry, ok := providerEnvEntryFor(binding.Provider)
+	// Route the env lookup through the SAME mapProviderID normalization that
+	// buildArgs uses for `-m <provider>/<model>`, so args and env share one
+	// vocabulary. The env table is keyed by opencode provider ids, so a raw
+	// alias (bedrock, anthropic-api, azure-openai/foundry) or a cased/spaced
+	// variant must be canonicalized first or it fails closed at launch.
+	opencodeID, ok := mapProviderID(binding.Provider)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
+	}
+	entry, ok := providerEnvEntryFor(opencodeID)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
 	}
@@ -53,7 +62,7 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 	// Restricted to the keyless allowlist so other providers cannot run
 	// unauthenticated.
 	if binding.RevealKey == nil {
-		if !keylessProviders[binding.Provider] {
+		if !keylessProviders[opencodeID] {
 			return nil, fmt.Errorf("opencode: provider %q requires a key (nil RevealKey)", binding.Provider)
 		}
 		if binding.BaseURL == "" {
@@ -76,7 +85,7 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 	// treat empty as base-url-only, but only for keyless-allowed providers.
 	if key != "" {
 		env = append(env, entry.keyVar+"="+key)
-	} else if !keylessProviders[binding.Provider] {
+	} else if !keylessProviders[opencodeID] {
 		return nil, fmt.Errorf("opencode: provider %q produced an empty key", binding.Provider)
 	}
 	// An empty BaseURL omits the var entirely so opencode falls back to its own

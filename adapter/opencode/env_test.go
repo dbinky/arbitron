@@ -187,6 +187,97 @@ func TestOpencodeEnv_KeylessRestrictedToOllama(t *testing.T) {
 	assert.Nil(t, env)
 }
 
+// GOTCHA / SECURITY — opencodeEnv must route binding.Provider through
+// mapProviderID before the env-table lookup, exactly as buildArgs does, so args
+// and env share ONE vocabulary. A non-canonical alias (bedrock, anthropic-api,
+// azure-openai, azure-foundry) or a cased/spaced variant previously failed
+// closed at launch because the raw string missed the opencode-keyed table.
+func TestOpencodeEnv_AliasedProvidersResolveEnv(t *testing.T) {
+	cases := []struct {
+		name        string
+		provider    string
+		keyVar      string // expected key var ("" => AWS quartet)
+		baseURLVar  string // expected base-url var ("" => not checked)
+		bedrockAWS  bool
+	}{
+		{name: "anthropic-api alias", provider: "anthropic-api", keyVar: "ANTHROPIC_API_KEY", baseURLVar: "ANTHROPIC_BASE_URL"},
+		{name: "azure-openai alias", provider: "azure-openai", keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
+		{name: "azure-foundry alias", provider: "azure-foundry", keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
+		{name: "cased+spaced anthropic", provider: "  Anthropic-API ", keyVar: "ANTHROPIC_API_KEY", baseURLVar: "ANTHROPIC_BASE_URL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := bindingWithKey(tc.provider, "https://base", "sentinel-key", nil)
+			env, err := opencodeEnv(context.Background(), b)
+			require.NoError(t, err, "aliased provider must resolve an env, not fail closed")
+
+			key, ok := envValue(env, tc.keyVar)
+			require.True(t, ok, "expected %s to be set for alias %q", tc.keyVar, tc.provider)
+			assert.Equal(t, "sentinel-key", key)
+			base, ok := envValue(env, tc.baseURLVar)
+			require.True(t, ok, "expected %s to be set for alias %q", tc.baseURLVar, tc.provider)
+			assert.Equal(t, "https://base", base)
+		})
+	}
+}
+
+// GOTCHA — the bedrock alias resolves the AWS-quartet builder via mapProviderID,
+// so a "bedrock" (non-canonical) agent binding sets AWS_* env rather than
+// failing closed at launch.
+func TestOpencodeEnv_BedrockAliasResolvesAWSQuartet(t *testing.T) {
+	b := provider.ResolvedBinding{
+		Provider: "bedrock", // alias of the opencode id "amazon-bedrock"
+		Extras:   map[string]string{"region": "us-east-1", "access-key-id": "AKIA-ALIAS"},
+		RevealKey: func(_ context.Context) (string, error) { return "raw-secret", nil },
+	}
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err, "bedrock alias must route to the AWS-quartet builder")
+
+	id, ok := envValue(env, "AWS_ACCESS_KEY_ID")
+	require.True(t, ok)
+	assert.Equal(t, "AKIA-ALIAS", id)
+	secret, ok := envValue(env, "AWS_SECRET_ACCESS_KEY")
+	require.True(t, ok)
+	assert.Equal(t, "raw-secret", secret)
+}
+
+// SECURITY — keyless allowlist survives the canonicalization: a cased/spaced
+// "ollama" alias with a nil RevealKey still takes the keyless local path
+// (OLLAMA_BASE_URL only), while a non-ollama provider with a nil RevealKey is
+// still rejected (covered separately).
+func TestOpencodeEnv_KeylessOllamaAliasStillAllowed(t *testing.T) {
+	b := provider.ResolvedBinding{
+		Provider:  " Ollama ",
+		BaseURL:   "http://localhost:11434",
+		RevealKey: nil,
+	}
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err, "cased/spaced ollama must still take the keyless local path")
+	base, ok := envValue(env, "OLLAMA_BASE_URL")
+	require.True(t, ok)
+	assert.Equal(t, "http://localhost:11434", base)
+}
+
+// SECURITY (fail-closed) — a non-ollama provider whose RevealKey returns an
+// EMPTY key (e.g. a misconfigured/expired sealed key that decrypts to "") must
+// NOT launch unauthenticated: opencodeEnv returns an error and no partial env.
+// This pins the keyless allowlist boundary at the empty-reveal seam (distinct
+// from the nil-RevealKey case) so a future refactor cannot silently let an
+// unauthenticated agent subprocess start. Covers every keyed (non-keyless)
+// provider id in the table.
+func TestOpencodeEnv_NonKeylessEmptyKeyFailsClosed(t *testing.T) {
+	for _, prov := range []string{"anthropic", "openai", "openrouter", "azure-openai"} {
+		t.Run(prov, func(t *testing.T) {
+			require.False(t, keylessProviders[prov], "sanity: %q is not on the keyless allowlist", prov)
+			b := bindingWithKey(prov, "https://base", "", nil) // RevealKey returns ("", nil)
+			env, err := opencodeEnv(context.Background(), b)
+			require.Error(t, err, "empty revealed key must fail closed for a non-keyless provider")
+			assert.Contains(t, err.Error(), "empty key")
+			assert.Nil(t, env, "no partial env when the key is empty for a non-keyless provider")
+		})
+	}
+}
+
 // bindingWithKey builds a ResolvedBinding whose RevealKey returns the given
 // sentinel (or err when non-nil).
 func bindingWithKey(prov, baseURL, sentinel string, err error) provider.ResolvedBinding {
