@@ -103,6 +103,47 @@ func TestDomainStack_Close_NilOptionalsDoNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() { ds.Close(context.Background()) })
 }
 
+// ---------------------------------------------------------------------------
+// Tests: connection subcommand (feat/llm-providers)
+// ---------------------------------------------------------------------------
+
+// Happy path: the "connection" subcommand is registered on the root command,
+// parallel to "serve" and "mcp".
+func TestRootCommand_HasConnectionSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newServeCmd())
+	rootCmd.AddCommand(newMCPCmd())
+	rootCmd.AddCommand(newConnectionCmd())
+
+	connCmd, _, err := rootCmd.Find([]string{"connection"})
+	assert.NoError(t, err)
+	assert.Equal(t, "connection", connCmd.Name())
+}
+
+// Happy path: the "validate" subcommand is registered under "connection".
+func TestConnectionCmd_HasValidateSubcommand(t *testing.T) {
+	rootCmd := &cobra.Command{Use: "arbitron"}
+	rootCmd.AddCommand(newConnectionCmd())
+
+	validateCmd, _, err := rootCmd.Find([]string{"connection", "validate"})
+	assert.NoError(t, err)
+	assert.Equal(t, "validate", validateCmd.Name())
+}
+
+// Error path: connection validate RunE is wired (not accidentally left nil).
+func TestConnectionValidateCmd_HasRunE(t *testing.T) {
+	connCmd := newConnectionCmd()
+	var validateCmd *cobra.Command
+	for _, sub := range connCmd.Commands() {
+		if sub.Name() == "validate" {
+			validateCmd = sub
+			break
+		}
+	}
+	require.NotNil(t, validateCmd, "validate subcommand must be registered on connection")
+	assert.NotNil(t, validateCmd.RunE, "connection validate must have a RunE handler wired")
+}
+
 // The org-mode session sweep must be cancelled on Close so its goroutine stops
 // cleanly on shutdown (no leaked ticker writing to a closed DB).
 func TestDomainStack_Close_CancelsSessionSweep(t *testing.T) {

@@ -38,6 +38,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **CLI-connection-RevealKey-error** (Area 10 Pass 2): `bindingFromConnection` creates a `RevealKey` closure but no test verified that `store.Reveal` errors propagate without leaking the stored secret. Added `TestBindingFromConnection_RevealKeyError_SecretFree`.
 - **DOMAIN-bedrock-amazon-bedrock-alias** (Area 11 Pass 1): `ValidateConnection` used `c.Provider == "bedrock"` (exact match) and skipped the region+access-key-id requirement for `"amazon-bedrock"` (the canonical alias used in adapter maps). Fixed by introducing a `bedrockProviders` set (mirrors `azureProviders` pattern) and changing the check to `bedrockProviders[c.Provider]`. Added `TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials`.
 - **DOMAIN-allowany-whitespace-url** (Area 11 Pass 2): `TestAllowAnyURLPolicy_RejectsEmpty` only tested `""` but not whitespace-only strings (`"   "`, `"\t"`). Extended to cover all empty-after-trim variants.
+- **CLI-connection-subcommand-registration** (Area 12 Pass 1): `main_test.go` had tests for the `mcp` and `serve` subcommands but none for `connection`, which is registered at `main.go:89` in the same pattern. Added `TestRootCommand_HasConnectionSubcommand`, `TestConnectionCmd_HasValidateSubcommand`, and `TestConnectionValidateCmd_HasRunE`.
 
 ## Won't Fix (Beyond Current Scope)
 
