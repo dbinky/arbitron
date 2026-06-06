@@ -6,7 +6,8 @@
 
 ## Scope
 
-Deliver `install.ps1` (PowerShell) covering **(b) Windows local**. Local Windows
+Deliver `install.ps1` (PowerShell, at **repo root**; tests under `tests/install/`)
+covering **(b) Windows local**. Local Windows
 installs are **user-level**: no elevation, everything under `%LOCALAPPDATA%`, and a
 per-user **Scheduled Task** (at-logon) as the service mechanism (no admin needed).
 Entry point: `irm … | iex`.

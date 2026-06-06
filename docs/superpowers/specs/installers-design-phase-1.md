@@ -24,8 +24,9 @@ release/distribution machinery (P5).
 
 ## Deliverables
 
-- `install.sh` at repo root (or `scripts/install.sh`, hosted later at a stable URL
-  in P5). Entry point: `curl … | bash`.
+- `install.sh` at **repo root** (hosted at a stable URL in P5). Entry point:
+  `curl … | bash`. (`install.ps1`, also at repo root, is P3/P4.) Test suites live
+  under `tests/install/`.
 - The common installer flow from the master design, implemented for local:
   ```
   detect OS / arch / elevation → install type = Local
