@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -468,7 +469,7 @@ func TestScrubControl(t *testing.T) {
 		{"a b", "a b", "0x20 (space) preserved as-is"},
 	}
 	for _, c := range cases {
-		got := scrubControl(c.input)
+		got := procenv.ScrubControl(c.input)
 		assert.Equal(t, c.want, got, c.desc)
 	}
 }

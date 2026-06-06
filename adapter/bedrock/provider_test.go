@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -378,8 +379,9 @@ func TestChat_CredentialScopeContainsRegionAndBedrockService(t *testing.T) {
 	}
 }
 
-// security: scrubControl prevents a hostile upstream error body from injecting
-// control characters (newlines, CR, terminal escapes) into structured log output.
+// security: the shared procenv.ScrubControl (used by this adapter's statusError)
+// prevents a hostile upstream error body from injecting control characters
+// (newlines, CR, terminal escapes) into structured log output.
 func TestScrubControl(t *testing.T) {
 	cases := []struct {
 		input string
@@ -401,9 +403,9 @@ func TestScrubControl(t *testing.T) {
 		{"a b", "a b", "0x20 (space) preserved as-is"},
 	}
 	for _, c := range cases {
-		got := scrubControl(c.input)
+		got := procenv.ScrubControl(c.input)
 		if got != c.want {
-			t.Errorf("scrubControl(%q) = %q, want %q (%s)", c.input, got, c.want, c.desc)
+			t.Errorf("procenv.ScrubControl(%q) = %q, want %q (%s)", c.input, got, c.want, c.desc)
 		}
 	}
 }

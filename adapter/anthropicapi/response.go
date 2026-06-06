@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // ErrUpstreamStatus is the sentinel wrapping a non-2xx Messages response. Callers
@@ -130,7 +132,7 @@ func parseSSEEvent(line []byte, curEvent *string) (token string, usage *usageBlo
 		if ev.Error != nil {
 			msg = ev.Error.Message
 		}
-		return "", nil, false, fmt.Errorf("anthropicapi: upstream stream error: %s", scrubControl(msg))
+		return "", nil, false, fmt.Errorf("anthropicapi: upstream stream error: %s", procenv.ScrubControl(msg))
 	}
 
 	switch ev.Type {
