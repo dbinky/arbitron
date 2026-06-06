@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/adapter/anthropicapi"
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
@@ -217,6 +218,25 @@ func TestFactory_ChatProviderFor_WhitespaceOnlyIsClaudeCLI(t *testing.T) {
 	cp, err := f.ChatProviderFor(chatBinding("   "))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
+}
+
+// ---- seam (Factory → HTTP adapters): Deps.HTTPTimeout threads into each adapter ----
+
+// Deps.HTTPTimeout threads from the factory into all four HTTP chat adapters.
+// Mirrors TestFactory_ProviderFor_ThreadsMaxResponseBytes for the timeout Deps field:
+// both are zero-means-no-cap fields, and both must reach each adapter's constructor.
+// Without this test a silent removal of Timeout: f.deps.HTTPTimeout would go unnoticed
+// and adapters would hang indefinitely in production without a per-call bound.
+func TestFactory_ChatProviderFor_ThreadsHTTPTimeout(t *testing.T) {
+	f := adapterprovider.NewFactory(adapterprovider.Deps{HTTPTimeout: 30 * time.Second})
+	for _, prov := range []string{"openrouter", "azure-foundry", "anthropic-api", "bedrock"} {
+		t.Run(prov, func(t *testing.T) {
+			cp, err := f.ChatProviderFor(chatBinding(prov))
+			require.NoError(t, err,
+				"provider %q must be constructable when HTTPTimeout is set from Deps", prov)
+			assert.NotNil(t, cp)
+		})
+	}
 }
 
 // ---- Success (variants): HTTP adapters get the injected client ----
