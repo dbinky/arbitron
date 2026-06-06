@@ -54,6 +54,45 @@ func TestProbeFactory_ProbeFor_UnknownProvider_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "made-up")
 }
 
+// SECURITY — control chars in a provider string must be %q-escaped in the error
+// so they cannot inject newlines into logs (same property as factory / env / args).
+func TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted(t *testing.T) {
+	f := NewProbeFactory(Deps{})
+	_, err := f.ProbeFor(domprovider.ResolvedBinding{Provider: "foo\nmalicious"})
+	require.ErrorIs(t, err, domprovider.ErrNoProbeForProvider)
+	assert.NotContains(t, err.Error(), "\n",
+		"raw newline must not appear in the error message")
+	assert.Contains(t, err.Error(), `\n`,
+		"escaped \\n should appear via %q-quoted provider string")
+}
+
+// SECURITY — scrubControl replaces all ASCII control chars with spaces so upstream
+// snippets cannot inject log escape sequences. These are the same cases tested in
+// the bedrock and openrouter adapter scrubControl unit tests.
+func TestProbeScrubControl(t *testing.T) {
+	cases := []struct {
+		input, want, desc string
+	}{
+		{"", "", "empty"},
+		{"hello", "hello", "printable ASCII unchanged"},
+		{"a\x00b", "a b", "NUL → space"},
+		{"a\tb", "a b", "TAB → space"},
+		{"a\nb", "a b", "LF → space"},
+		{"a\rb", "a b", "CR → space"},
+		{"a\x1bb", "a b", "ESC → space"},
+		{"a\x7fb", "a b", "DEL → space"},
+		{"\x00\t\n\r\x1b\x7f", "      ", "sequence all → space"},
+		{"café", "café", "valid UTF-8 preserved"},
+		{"a b", "a b", "0x20 (space) preserved"},
+	}
+	for _, c := range cases {
+		got := scrubControl(c.input)
+		if got != c.want {
+			t.Errorf("scrubControl(%q) = %q, want %q (%s)", c.input, got, c.want, c.desc)
+		}
+	}
+}
+
 // Input-validation: provider matching is case- and whitespace-insensitive.
 func TestProbeFactory_ProbeFor_NormalizesCaseWhitespace(t *testing.T) {
 	f := NewProbeFactory(Deps{})

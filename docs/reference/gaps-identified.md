@@ -32,6 +32,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 - **OPENCODE-env-error-paths** (Area 7 Pass 1): Three error-path guards in `env.go` were untested: (1) `bedrockEnv` nil RevealKey (line 107–109), (2) keyless ollama with empty BaseURL (line 59–62), (3) non-keyless provider whose RevealKey returns `("", nil)` (line 79–81). Added `TestOpencodeEnv_BedrockNilRevealKey`, `TestOpencodeEnv_KeylessOllamaEmptyBaseURL`, and `TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless`.
 - **OPENCODE-env-quoting** (Area 7 Pass 2): `opencodeEnv` error path (`env.go:39`) uses `%q` to quote the provider string — same property verified for `buildArgs` (Area 6 Pass 2). Added `TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted`.
 - **PROBE-anthropic-coverage** (Area 8 Pass 1): `anthropic_test.go` was missing 5 paths compared with the openai_compat coverage: RevealKey error, transport → `ErrUnreachable`, 5xx → `ErrUpstreamStatus`, empty base URL uses default endpoint, and bounded response. Added corresponding tests.
+- **PROBE-factory-quoting + scrubControl** (Area 8 Pass 2): `factory.go:83` uses `%q` on the provider string in `ErrNoProbeForProvider` — untested with control chars. Added `TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted`. Also added `TestProbeScrubControl` direct unit test for `httpshared.go`'s `scrubControl` (mirrors bedrock/openrouter pattern).
 
 ## Won't Fix (Beyond Current Scope)
 
