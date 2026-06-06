@@ -81,3 +81,43 @@ func TestParseCredential_MalformedJSONNoLeak(t *testing.T) {
 		t.Errorf("error leaked the secret: %v", err)
 	}
 }
+
+// edge: a JSON composite where the "secret" key is absent (not empty — absent)
+// is rejected with ErrMissingSecret because json.Unmarshal leaves the field at
+// its zero value "".
+func TestParseCredential_JSONAbsentSecretRejected(t *testing.T) {
+	if _, err := ParseCredential(`{"session_token":"tok"}`); !errors.Is(err, ErrMissingSecret) {
+		t.Errorf("err = %v, want ErrMissingSecret when 'secret' key is absent", err)
+	}
+}
+
+// edge: a secret or session token containing JSON-special characters (double
+// quotes, backslashes) must round-trip through BuildCredential+ParseCredential
+// without corruption. A bug here would cause silent AWS auth failures.
+func TestBuildCredential_SpecialCharsRoundTrip(t *testing.T) {
+	secret := `sek/"\\with"quotes`
+	session := `tok/"\\with"session`
+	sealed := BuildCredential(secret, session)
+	got, err := ParseCredential(sealed)
+	if err != nil {
+		t.Fatalf("ParseCredential error: %v", err)
+	}
+	if got.SecretAccessKey != secret || got.SessionToken != session {
+		t.Errorf("round-trip mismatch:\n got secret=%q session=%q\nwant secret=%q session=%q",
+			got.SecretAccessKey, got.SessionToken, secret, session)
+	}
+}
+
+// edge: bare string form preserves the input verbatim, including any leading or
+// trailing whitespace. Callers are responsible for storing clean values; the
+// parser does not silently strip whitespace from the non-JSON path.
+func TestParseCredential_BareStringVerbatim(t *testing.T) {
+	const withSpaces = "  AKEXAMPLE  "
+	got, err := ParseCredential(withSpaces)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.SecretAccessKey != withSpaces {
+		t.Errorf("SecretAccessKey = %q, want verbatim %q", got.SecretAccessKey, withSpaces)
+	}
+}
