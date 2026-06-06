@@ -1,4 +1,22 @@
-.PHONY: ui build test test-ui test-all
+.PHONY: ui build test test-ui test-all dist release clean-dist test-release test-install
+
+# Release version/build metadata. VERSION defaults to the current git tag with a
+# leading "v" stripped (tag v1.2.3 -> 1.2.3), falling back to the short SHA when
+# untagged. Override on the command line: `make dist VERSION=0.0.0-test`.
+# DATE uses the commit date (not wall-clock) so two builds of the same commit are
+# byte-identical (reproducible builds).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null)
+DATE    ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
+
+# The os/arch matrix for release artifacts (6 targets). Pure-Go (CGO_ENABLED=0)
+# cross-compiles every target from a single host — no per-OS runner needed.
+DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+
+# Reproducible build flags: -trimpath strips local paths; -buildid= zeroes the
+# build id; -s -w drop symbol/debug tables; -X stamps the version vars consumed
+# by `arbitron version`.
+DIST_LDFLAGS = -s -w -buildid= -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 # Rebuild the dashboard and sync it into the embedded dir that the Go binary
 # serves (adapter/dashboard/dist, via //go:embed dist/*). Run this after
@@ -28,3 +46,51 @@ test-ui:
 # Full Definition-of-Done gate: the Go suite AND the dashboard suite. "Full
 # test suite green" means this target passes, not just `test`.
 test-all: test test-ui
+
+# Cross-compile the 6 release binaries named arbitron_<version>_<os>_<arch>[.exe]
+# into dist/, then emit dist/SHA256SUMS with basename-only entries (so
+# `sha256sum -c SHA256SUMS` works from inside dist/). The artifact is the raw
+# binary (no tar/zip). This target builds from the CURRENT adapter/dashboard/dist
+# — CI runs `make ui` first to rebuild the SPA from source before calling it.
+dist: clean-dist
+	@mkdir -p dist
+	@for platform in $(DIST_PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		ext=; [ "$$os" = "windows" ] && ext=.exe; \
+		out=dist/arbitron_$(VERSION)_$${os}_$${arch}$$ext; \
+		echo "building $$out"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+			-ldflags "$(DIST_LDFLAGS)" -o $$out ./cmd/arbitron || exit 1; \
+	done
+	@cd dist && (sha256sum arbitron_* > SHA256SUMS 2>/dev/null || shasum -a 256 arbitron_* > SHA256SUMS)
+	@echo "wrote dist/SHA256SUMS:"; cat dist/SHA256SUMS
+
+# Release = dist plus a detached cosign keyless signature over SHA256SUMS. Signing
+# requires an OIDC token (the GitHub Actions workflow provides it). Locally,
+# without cosign on PATH, this is a no-op skip with a printed notice so a bare
+# `make release` still produces the artifacts.
+release: dist
+	@if command -v cosign >/dev/null 2>&1; then \
+		echo "signing dist/SHA256SUMS with cosign (keyless)"; \
+		cosign sign-blob --yes dist/SHA256SUMS \
+			--output-signature dist/SHA256SUMS.sig \
+			--output-certificate dist/SHA256SUMS.pem; \
+	else \
+		echo "NOTICE: cosign not found on PATH; skipping signature (CI signs the release)"; \
+	fi
+
+# Remove the dist/ output directory.
+clean-dist:
+	rm -rf dist
+
+# Run the release-artifact bats tests (naming, checksum self-consistency,
+# determinism, version round-trip). Requires `bats`.
+test-release:
+	bats tests/release
+
+# Lint + test the bash installer (install.sh, P1 local path): shellcheck the
+# script clean, then run the mocked bats suite under tests/install. Requires
+# `shellcheck` and `bats` on PATH.
+test-install:
+	shellcheck install.sh
+	bats tests/install

@@ -1,0 +1,64 @@
+#!/usr/bin/env bats
+#
+# Task 3: arbitron binary download + checksum-verify.
+
+load test_helper
+
+setup() {
+  install_setup_sandbox
+  install_isolate_path
+  ARBITRON_INSTALL_LIB_ONLY=1 source "$INSTALL_SH"
+}
+
+teardown() {
+  install_teardown_sandbox
+}
+
+@test "download_binary builds a URL with the resolved os/arch triple" {
+  export ARBITRON_VERSION="1.2.3"
+  export ARBITRON_UNAME_S=Darwin ARBITRON_UNAME_M=arm64
+  # curl mock: write deterministic bytes to -o dest, and record argv.
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_1.2.3_darwin_arm64\n" "$(printf BIN | shasum -a 256 | cut -d" " -f1)" > "$dest" ;;
+      *)            printf "BIN" > "$dest" ;;
+    esac
+  '
+  run download_binary
+  [ "$status" -eq 0 ]
+  mock_log_has "arbitron_1.2.3_darwin_arm64"
+  [ -x "$(layout_bin)/arbitron" ]
+}
+
+@test "download_binary installs mode 0755 on checksum match" {
+  export ARBITRON_VERSION="2.0.0"
+  export ARBITRON_UNAME_S=Linux ARBITRON_UNAME_M=x86_64
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_2.0.0_linux_amd64\n" "$(printf BIN | sha256sum | cut -d" " -f1)" > "$dest" ;;
+      *)            printf "BIN" > "$dest" ;;
+    esac
+  '
+  run download_binary
+  [ "$status" -eq 0 ]
+  local perms
+  perms="$(stat -f '%Lp' "$(layout_bin)/arbitron" 2>/dev/null || stat -c '%a' "$(layout_bin)/arbitron")"
+  [ "$perms" = "755" ]
+}
+
+@test "download_binary aborts on checksum mismatch and installs nothing" {
+  export ARBITRON_VERSION="3.0.0"
+  export ARBITRON_UNAME_S=Linux ARBITRON_UNAME_M=x86_64
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_3.0.0_linux_amd64\n" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" > "$dest" ;;
+      *)            printf "REAL-BYTES" > "$dest" ;;
+    esac
+  '
+  run download_binary
+  [ "$status" -ne 0 ]
+  [ ! -e "$(layout_bin)/arbitron" ]
+}

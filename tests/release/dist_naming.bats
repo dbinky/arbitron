@@ -1,0 +1,90 @@
+#!/usr/bin/env bats
+#
+# P5 Task 1: release artifact naming, SHA256SUMS self-consistency, determinism,
+# and version round-trip for `make dist`.
+#
+# Runs on macOS (shasum) and Linux (sha256sum) — the checksum tool is detected.
+
+REPO_ROOT="${BATS_TEST_DIRNAME}/../.."
+TEST_VERSION="0.0.0-test"
+
+# sha_check <SHA256SUMS-file-in-cwd> : verify all checksums, tool-agnostic.
+sha_check() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "$1"
+  else
+    shasum -a 256 -c "$1"
+  fi
+}
+
+setup() {
+  cd "$REPO_ROOT" || return 1
+  make dist VERSION="$TEST_VERSION" >/dev/null 2>&1
+}
+
+teardown() {
+  cd "$REPO_ROOT" || return 1
+  make clean-dist >/dev/null 2>&1 || true
+}
+
+@test "dist produces exactly the 6 expected artifacts plus SHA256SUMS" {
+  for name in \
+    "arbitron_${TEST_VERSION}_darwin_amd64" \
+    "arbitron_${TEST_VERSION}_darwin_arm64" \
+    "arbitron_${TEST_VERSION}_linux_amd64" \
+    "arbitron_${TEST_VERSION}_linux_arm64" \
+    "arbitron_${TEST_VERSION}_windows_amd64.exe" \
+    "arbitron_${TEST_VERSION}_windows_arm64.exe"; do
+    [ -f "${REPO_ROOT}/dist/${name}" ] || {
+      echo "missing artifact: ${name}"; return 1
+    }
+  done
+  [ -f "${REPO_ROOT}/dist/SHA256SUMS" ]
+}
+
+@test "only windows artifacts carry the .exe extension" {
+  [ -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_windows_amd64.exe" ]
+  [ -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_windows_arm64.exe" ]
+  # No .exe on non-windows targets.
+  [ ! -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_linux_amd64.exe" ]
+  [ ! -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_darwin_arm64.exe" ]
+}
+
+@test "SHA256SUMS has 6 well-formed basename-only lines" {
+  run wc -l < "${REPO_ROOT}/dist/SHA256SUMS"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | tr -d ' ')" -eq 6 ]
+
+  # Every line: 64 hex + two spaces + a basename (no dist/ path prefix).
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[0-9a-f]{64}\ \ arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+(\.exe)?$ ]] || {
+      echo "malformed or path-prefixed line: $line"; return 1
+    }
+  done < "${REPO_ROOT}/dist/SHA256SUMS"
+}
+
+@test "checksums verify from inside dist/" {
+  cd "${REPO_ROOT}/dist" || return 1
+  run sha_check SHA256SUMS
+  [ "$status" -eq 0 ]
+}
+
+@test "host-native artifact reports the stamped version" {
+  hostos="$(go env GOOS)"
+  hostarch="$(go env GOARCH)"
+  ext=""
+  [ "$hostos" = "windows" ] && ext=".exe"
+  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  [ -x "$bin" ]
+  run "$bin" version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"${TEST_VERSION}"* ]]
+}
+
+@test "two dist runs of the same commit yield byte-identical SHA256SUMS" {
+  cp "${REPO_ROOT}/dist/SHA256SUMS" "${BATS_TEST_TMPDIR}/SHA256SUMS.first"
+  cd "$REPO_ROOT" || return 1
+  make dist VERSION="$TEST_VERSION" >/dev/null 2>&1
+  run diff "${BATS_TEST_TMPDIR}/SHA256SUMS.first" "${REPO_ROOT}/dist/SHA256SUMS"
+  [ "$status" -eq 0 ]
+}

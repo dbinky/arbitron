@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Generic recording fake. Appends "<name> <args...>" to $MOCK_LOG and exits 0.
+# Symlink/copy this under any tool name (brew, apt-get, npm, ...). Behaviour can
+# be tweaked per-tool via MOCK_<TOOL>_RC / MOCK_<TOOL>_STDOUT env vars.
+self="$(basename "$0")"
+{
+  printf '%s' "$self"
+  for a in "$@"; do printf ' %s' "$a"; done
+  printf '\n'
+} >>"${MOCK_LOG:-/dev/null}"
+
+# Uppercased tool name for env lookups (dashes -> underscores).
+upper="$(printf '%s' "$self" | tr '[:lower:]-' '[:upper:]_')"
+
+out_var="MOCK_${upper}_STDOUT"
+rc_var="MOCK_${upper}_RC"
+
+if [ -n "${!out_var:-}" ]; then
+  printf '%s\n' "${!out_var}"
+fi
+
+exit "${!rc_var:-0}"

@@ -1,0 +1,156 @@
+//go:build windows
+
+package main
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows/svc"
+)
+
+// When the binary is run interactively on Windows (not started by the SCM),
+// runUnderServiceManager must report handled == false so the caller drives the
+// normal interactive serve path. The IsWindowsService probe is forced false via
+// the package seam.
+func TestRunUnderServiceManager_InteractiveWindowsRun(t *testing.T) {
+	orig := isWindowsService
+	t.Cleanup(func() { isWindowsService = orig })
+	isWindowsService = func() (bool, error) { return false, nil }
+
+	called := 0
+	handled, err := runUnderServiceManager(context.Background(), func(context.Context) error {
+		called++
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.False(t, handled, "interactive Windows run must not be handled by the SCM dispatch")
+	assert.Equal(t, 0, called, "the caller drives serve on an interactive run, not runUnderServiceManager")
+}
+
+// An error from the IsWindowsService probe propagates and reports not-handled so
+// the caller can decide; serve must not be invoked.
+func TestRunUnderServiceManager_ProbeError(t *testing.T) {
+	orig := isWindowsService
+	t.Cleanup(func() { isWindowsService = orig })
+	wantErr := assert.AnError
+	isWindowsService = func() (bool, error) { return false, wantErr }
+
+	handled, err := runUnderServiceManager(context.Background(), func(context.Context) error {
+		t.Fatal("serve must not be called when the probe errors")
+		return nil
+	})
+
+	assert.False(t, handled)
+	assert.ErrorIs(t, err, wantErr)
+}
+
+// The control handler maps an SCM Stop into ctx cancellation, reports
+// StopPending, and returns once serve has drained — without a live SCM.
+func TestHandleControlLoop_StopCancelsContext(t *testing.T) {
+	r := make(chan svc.ChangeRequest, 1)
+	s := make(chan svc.Status, 8)
+	done := make(chan struct{})
+
+	cancelled := false
+	cancel := func() { cancelled = true; close(done) }
+
+	go func() { r <- svc.ChangeRequest{Cmd: svc.Stop} }()
+
+	loopDone := make(chan struct{})
+	go func() { handleControlLoop(r, s, done, cancel); close(loopDone) }()
+
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleControlLoop did not return after Stop")
+	}
+
+	assert.True(t, cancelled, "Stop must cancel the serve context")
+
+	var sawStopPending bool
+	for {
+		select {
+		case st := <-s:
+			if st.State == svc.StopPending {
+				sawStopPending = true
+			}
+		default:
+			require.True(t, sawStopPending, "loop must report StopPending on Stop")
+			return
+		}
+	}
+}
+
+// Shutdown behaves like Stop: cancel + StopPending + return.
+func TestHandleControlLoop_ShutdownCancelsContext(t *testing.T) {
+	r := make(chan svc.ChangeRequest, 1)
+	s := make(chan svc.Status, 8)
+	done := make(chan struct{})
+
+	cancelled := false
+	cancel := func() { cancelled = true; close(done) }
+
+	go func() { r <- svc.ChangeRequest{Cmd: svc.Shutdown} }()
+
+	loopDone := make(chan struct{})
+	go func() { handleControlLoop(r, s, done, cancel); close(loopDone) }()
+
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleControlLoop did not return after Shutdown")
+	}
+	assert.True(t, cancelled, "Shutdown must cancel the serve context")
+}
+
+// If serve exits on its own (done closes) before any control request, the loop
+// returns without cancelling.
+func TestHandleControlLoop_ServeExitsOnItsOwn(t *testing.T) {
+	r := make(chan svc.ChangeRequest)
+	s := make(chan svc.Status, 8)
+	done := make(chan struct{})
+
+	cancelled := false
+	cancel := func() { cancelled = true }
+
+	close(done) // serve already returned
+
+	loopDone := make(chan struct{})
+	go func() { handleControlLoop(r, s, done, cancel); close(loopDone) }()
+
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleControlLoop did not return when serve exited on its own")
+	}
+	assert.False(t, cancelled, "no control request means no cancellation")
+}
+
+// Interrogate echoes the current status back without stopping the loop.
+func TestHandleControlLoop_InterrogateEchoesStatus(t *testing.T) {
+	r := make(chan svc.ChangeRequest, 2)
+	s := make(chan svc.Status, 8)
+	done := make(chan struct{})
+	cancel := func() { close(done) }
+
+	cur := svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	r <- svc.ChangeRequest{Cmd: svc.Interrogate, CurrentStatus: cur}
+	r <- svc.ChangeRequest{Cmd: svc.Stop}
+
+	loopDone := make(chan struct{})
+	go func() { handleControlLoop(r, s, done, cancel); close(loopDone) }()
+
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleControlLoop did not return")
+	}
+
+	echoed := <-s
+	assert.Equal(t, cur.State, echoed.State, "Interrogate must echo the current status state")
+}

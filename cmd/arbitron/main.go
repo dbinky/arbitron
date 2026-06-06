@@ -88,10 +88,15 @@ func main() {
 // --config flag. Factored out of main() so tests can inspect it.
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "arbitron",
-		Short: "Arbitron workflow orchestration engine",
-		Long:  "Arbitron is a Go-based workflow orchestration engine with hexagonal architecture.",
+		Use:     "arbitron",
+		Short:   "Arbitron workflow orchestration engine",
+		Long:    "Arbitron is a Go-based workflow orchestration engine with hexagonal architecture.",
+		Version: version,
 	}
+
+	// Make `--version`/`-v` print the same rich line as the `version` subcommand
+	// (version + commit + build date) rather than cobra's bare default.
+	rootCmd.SetVersionTemplate(versionString() + "\n")
 
 	rootCmd.PersistentFlags().String("config", "",
 		"path to config.yaml (overrides ARBITRON_CONFIG and the default ~/.arbitron/config.yaml)")
@@ -99,6 +104,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newMCPCmd())
 	rootCmd.AddCommand(newConnectionCmd())
+	rootCmd.AddCommand(newVersionCmd())
 
 	return rootCmd
 }
@@ -859,11 +865,26 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		close(stop)
 	}()
 
-	// serveHTTP owns the symmetric two-listener lifecycle: the main server and
-	// the optional ACME challenge server are started together, both push serve
-	// errors to a shared channel (so a non-root :80 bind failure aborts startup),
-	// and both are shut down together.
-	return serveHTTP(ctx, ds.logger, srv, challengeSrv, stop)
+	// serveFn owns the symmetric two-listener lifecycle: the main server and the
+	// optional ACME challenge server are started together, both push serve errors
+	// to a shared channel (so a non-root :80 bind failure aborts startup), and
+	// both are shut down together. It is a closure so the same body runs whether
+	// the process is supervised by the Windows SCM or launched interactively. The
+	// passed-in context is the serve context; on Windows under the SCM it is
+	// cancelled when a Stop/Shutdown control request arrives.
+	serveFn := func(serveCtx context.Context) error {
+		return serveHTTP(serveCtx, ds.logger, srv, challengeSrv, stop)
+	}
+
+	// On Windows, when started by the Service Control Manager, dispatch through
+	// svc.Run so SCM Stop/Shutdown is translated into context cancellation. On
+	// every other platform (and on an interactive Windows run) this is a no-op
+	// returning (false, nil) and we fall through to the normal serve path.
+	if handled, err := runUnderServiceManager(ctx, serveFn); handled {
+		return err
+	}
+
+	return serveFn(ctx)
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {

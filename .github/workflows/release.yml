@@ -1,0 +1,125 @@
+name: release
+
+# Tag-triggered release: build the 6 cross-compiled artifacts, generate
+# SHA256SUMS, cosign-sign it (keyless OIDC), self-verify, and upload to the
+# GitHub Release. A workflow_dispatch with dry_run=true exercises the whole
+# pipeline against a throwaway draft/pre-release without touching `latest`.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build, sign, and upload to a draft/pre-release only (no public release)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # create/upload the GitHub Release
+  id-token: write   # cosign keyless signing via the workflow OIDC identity
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags for `git describe`
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-rc.${GITHUB_RUN_ID}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${version}"
+
+      - name: Build dashboard
+        run: make ui
+
+      - name: Cross-compile artifacts + SHA256SUMS
+        run: make dist VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS (cosign keyless)
+        run: make release VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Self-verify checksums and signature
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c SHA256SUMS
+          else
+            shasum -a 256 -c SHA256SUMS
+          fi
+          cosign verify-blob SHA256SUMS \
+            --signature SHA256SUMS.sig \
+            --certificate SHA256SUMS.pem \
+            --certificate-identity-regexp "https://github.com/dbinky/arbitron/.github/workflows/release.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+          files: |
+            dist/arbitron_*
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/SHA256SUMS.pem
+
+  # On a real tag, re-download the published artifacts and re-verify them — this
+  # proves the *published* release (not just the build dir) is consumable by the
+  # install scripts. Skipped on dry-run dispatch.
+  verify-release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Download and verify published artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir verify && cd verify
+          gh release download "$TAG" --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'SHA256SUMS' \
+            --pattern 'SHA256SUMS.sig' \
+            --pattern 'SHA256SUMS.pem' \
+            --pattern 'arbitron_*_linux_amd64'
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c SHA256SUMS
+          else
+            shasum -a 256 -c SHA256SUMS
+          fi
+          cosign verify-blob SHA256SUMS \
+            --signature SHA256SUMS.sig \
+            --certificate SHA256SUMS.pem \
+            --certificate-identity-regexp "https://github.com/dbinky/arbitron/.github/workflows/release.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
