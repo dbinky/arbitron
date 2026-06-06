@@ -67,3 +67,24 @@ func TestParseConverseEvent_IgnoredEvent(t *testing.T) {
 		t.Fatalf("unexpected non-zero for ignored event: %q %d %d %v %v", delta, in, out, done, err)
 	}
 }
+
+// edge-case: blank / whitespace-only lines are silently ignored (all-zero, no error).
+// These appear as line separators in streaming responses and must never cause errors.
+func TestParseConverseEvent_BlankLine(t *testing.T) {
+	for _, input := range [][]byte{nil, {}, []byte("   \t  ")} {
+		delta, in, out, done, err := parseConverseEvent(input)
+		if err != nil || delta != "" || in != 0 || out != 0 || done {
+			t.Errorf("input %q: want all-zero no-error, got delta=%q in=%d out=%d done=%v err=%v",
+				input, delta, in, out, done, err)
+		}
+	}
+}
+
+// error: malformed JSON returns a wrapped error (never silently discarded).
+// The scanner may deliver partial or corrupt frames; the error must surface.
+func TestParseConverseEvent_MalformedJSON(t *testing.T) {
+	_, _, _, _, err := parseConverseEvent([]byte(`{"contentBlockDelta": BROKEN`))
+	if err == nil {
+		t.Fatal("expected error for malformed JSON event, got nil")
+	}
+}
