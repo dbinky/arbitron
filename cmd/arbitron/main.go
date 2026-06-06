@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -224,6 +225,25 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
 		Logger:              ds.logger,
+	}
+}
+
+// newOutboundHTTPClient builds the shared outbound HTTP client threaded into
+// every credential-bearing LLM chat adapter (openrouter/azurefoundry/
+// anthropicapi/bedrock). timeout is an absolute per-call backstop independent of
+// the context deadline. SECURITY (defense-in-depth): it clones the stdlib
+// default transport (preserving connection pooling/proxy/keep-alive behavior)
+// and pins an explicit MinVersion: tls.VersionTLS12. The Go default is already
+// TLS 1.2+, so this only makes the floor explicit and regression-proof.
+func newOutboundHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	}
+	transport.TLSClientConfig.MinVersion = tls.VersionTLS12
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
 	}
 }
 
@@ -460,10 +480,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// independent of ctx so a wedged endpoint can never block a node forever even
 	// if the per-call deadline plumbing regresses. A dedicated client (not the
 	// global http.DefaultClient) is used so this Timeout does not leak to other
-	// callers; the transport still pools connections.
-	httpClient := &http.Client{
-		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-	}
+	// callers; the transport still pools connections and pins an explicit TLS 1.2
+	// floor (see newOutboundHTTPClient).
+	httpClient := newOutboundHTTPClient(time.Duration(cfg.LLM.TimeoutSeconds) * time.Second)
 
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,

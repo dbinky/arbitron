@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -171,4 +174,21 @@ func TestRootCommand_HasConfigFlag(t *testing.T) {
 	f := newRootCmd().PersistentFlags().Lookup("config")
 	require.NotNil(t, f, "--config persistent flag must be registered on root")
 	assert.Equal(t, "", f.DefValue, "--config default must be empty")
+}
+
+// SECURITY (defense-in-depth) — the shared outbound HTTP client threaded into
+// every credential-bearing LLM chat adapter (openrouter/azurefoundry/
+// anthropicapi/bedrock) pins an explicit TLS floor of 1.2. The Go stdlib default
+// is already TLS 1.2+, so this makes the floor explicit and regression-proof.
+// (PR #23 Consider #1.)
+func TestNewOutboundHTTPClient_PinsTLS12(t *testing.T) {
+	c := newOutboundHTTPClient(30 * time.Second)
+	require.NotNil(t, c)
+	assert.Equal(t, 30*time.Second, c.Timeout, "the per-call backstop timeout is preserved")
+
+	tr, ok := c.Transport.(*http.Transport)
+	require.True(t, ok, "outbound client must use an *http.Transport")
+	require.NotNil(t, tr.TLSClientConfig, "transport must carry an explicit TLS config")
+	assert.Equal(t, uint16(tls.VersionTLS12), tr.TLSClientConfig.MinVersion,
+		"outbound TLS floor must be pinned to TLS 1.2")
 }
