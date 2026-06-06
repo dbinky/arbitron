@@ -13,9 +13,13 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 )
 
-// anthropicVersion is the pinned Anthropic API version header value. Bumping it
-// is a deliberate, reviewed change — never derived from config or upstream.
-const anthropicVersion = "2023-06-01"
+// AnthropicVersionHeader is the pinned Anthropic API version header value.
+// Exported so adapter/probe can assert the two constants stay in lockstep.
+// Bumping it is a deliberate, reviewed change — never derived from config or upstream.
+const AnthropicVersionHeader = "2023-06-01"
+
+// anthropicVersion is the package-internal alias for AnthropicVersionHeader.
+const anthropicVersion = AnthropicVersionHeader
 
 // defaultBaseURL is used when the binding omits a BaseURL.
 const defaultBaseURL = "https://api.anthropic.com"

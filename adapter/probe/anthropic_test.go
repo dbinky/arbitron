@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/arbitron/arbitron/adapter/anthropicapi"
 	domprovider "github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +50,16 @@ func TestAnthropicProbe_ListsModels(t *testing.T) {
 // Regression: the pinned version stays in lockstep with adapter/anthropicapi.
 func TestAnthropicProbe_VersionPinned(t *testing.T) {
 	assert.Equal(t, "2023-06-01", anthropicVersion)
+}
+
+// seam (anthropicapi ↔ probe): both the chat adapter and the probe must send
+// the same anthropic-version header value. This cross-package assertion catches
+// version drift — if one constant is bumped without the other, this test fails.
+// The probe uses a local copy (adapter/probe.anthropicVersion) to avoid an
+// import cycle in production code; this test is the only enforcement of lockstep.
+func TestAnthropicProbe_VersionMatchesChatAdapter(t *testing.T) {
+	assert.Equal(t, anthropicapi.AnthropicVersionHeader, anthropicVersion,
+		"adapter/probe.anthropicVersion must equal adapter/anthropicapi.AnthropicVersionHeader — change both in lockstep")
 }
 
 // Error-handling: a 403 classifies as ErrCredentialsRejected.
