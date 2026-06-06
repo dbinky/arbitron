@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/awssig"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -293,6 +294,20 @@ func TestOpencodeEnv_RevealKeyError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 	assert.Nil(t, env, "no env should be produced on RevealKey error")
+}
+
+// seam (awssig.ParseCredential ↔ bedrockEnv): when RevealKey returns ("", nil)
+// the empty payload is forwarded to awssig.ParseCredential, which returns
+// ErrMissingSecret. bedrockEnv must wrap and propagate that error — no partial
+// env, no panic. This is distinct from RevealKey returning an error directly;
+// it exercises the awssig parsing step at the credential seam.
+func TestOpencodeEnv_BedrockEmptyRevealPropagatesMissingSecret(t *testing.T) {
+	b := bedrockBinding("us-east-1", "AKIA", "", nil) // RevealKey returns ("", nil)
+	env, err := opencodeEnv(context.Background(), b)
+	require.Error(t, err, "empty sealed credential must fail via awssig.ErrMissingSecret")
+	assert.ErrorIs(t, err, awssig.ErrMissingSecret,
+		"error chain must include awssig.ErrMissingSecret from the ParseCredential seam")
+	assert.Nil(t, env, "no partial env when sealed credential is empty")
 }
 
 // ERROR — bedrock binding with nil RevealKey fails closed before any reveal.
