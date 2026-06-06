@@ -290,6 +290,58 @@ func TestBindingFromConnection_MapsFields(t *testing.T) {
 	assert.Equal(t, "bed", store.revealNames[0])
 }
 
+// seam (bindingFromConnection ↔ ProbeFactory): BaseURL must pass through
+// unchanged — probes like the OpenAI-compat probe use it to build the request
+// target. A regression removing BaseURL: c.BaseURL would be invisible to
+// TestBindingFromConnection_MapsFields (which uses BaseURL: "").
+func TestBindingFromConnection_BaseURLPassedThrough(t *testing.T) {
+	store := &fakeConnectionStore{secret: ""}
+	c := provider.Connection{Provider: "openai", BaseURL: "https://api.openai.com/v1"}
+	b := bindingFromConnection(store, "oai", c)
+	assert.Equal(t, "https://api.openai.com/v1", b.BaseURL,
+		"BaseURL must pass through bindingFromConnection unchanged")
+}
+
+// seam (bindingFromConnection ↔ ProbeFactory dispatch): connection-built
+// bindings have no Kind or Model set; ProbeFor must dispatch purely on Provider.
+// This verifies the end-to-end seam: bindingFromConnection → ProbeFactory for
+// every canonical provider family that the CLI validates.
+func TestRunConnectionValidate_ProbeFactoryDispatchesOnProviderOnly(t *testing.T) {
+	factory := adaptprobe.NewProbeFactory(adaptprobe.Deps{})
+	cases := []struct {
+		prov      string
+		wantProbe bool
+	}{
+		{"openai", true},
+		{"openrouter", true},
+		{"anthropic-api", true},
+		{"bedrock", true},
+		{"amazon-bedrock", true},
+		{"ollama", true},
+		{"ollama-cloud", true},
+		{"azure-foundry", true},
+		{"claude-cli", true},
+		{"", true},
+		{"mystery-provider", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.prov, func(t *testing.T) {
+			store := &fakeConnectionStore{conn: provider.Connection{Provider: tc.prov}}
+			b := bindingFromConnection(store, "test", store.conn)
+			// Kind and Model are zero — that is the connection path; factory must not read them.
+			assert.Equal(t, provider.ProfileKind(""), b.Kind, "connection binding has zero Kind")
+			assert.Equal(t, "", b.Model, "connection binding has empty Model")
+			probe, err := factory.ProbeFor(b)
+			if tc.wantProbe {
+				assert.NoError(t, err, "provider %q should have a probe", tc.prov)
+				assert.NotNil(t, probe)
+			} else {
+				assert.ErrorIs(t, err, provider.ErrNoProbeForProvider, "provider %q should return ErrNoProbeForProvider", tc.prov)
+			}
+		})
+	}
+}
+
 // --- Security ------------------------------------------------------------
 
 func TestRunConnectionValidate_NeverPrintsSecret(t *testing.T) {
