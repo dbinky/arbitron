@@ -442,6 +442,37 @@ func TestStatusError_ScrubsControlCharacters(t *testing.T) {
 	assert.Contains(t, msg, "escape")
 }
 
+// SECURITY (direct unit): scrubControl is the chokepoint that prevents hostile
+// upstream bodies from injecting control characters into structured log output.
+// This table pins every character category so a regression in the function
+// itself is caught independently of the integration paths above.
+func TestScrubControl(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+		desc  string
+	}{
+		{"", "", "empty string unchanged"},
+		{"hello world", "hello world", "printable ASCII preserved"},
+		{"a\x00b", "a b", "NUL (0x00) → space"},
+		{"a\tb", "a b", "TAB (0x09) → space"},
+		{"a\nb", "a b", "LF (0x0A) → space"},
+		{"a\rb", "a b", "CR (0x0D) → space"},
+		{"a\x1bb", "a b", "ESC (0x1B) → space"},
+		{"a\x7fb", "a b", "DEL (0x7F) → space"},
+		{"\x00\t\n\r\x1b\x7f", "      ", "sequence of control chars all → space"},
+		{"café", "café", "valid UTF-8 multibyte preserved"},
+		{"你好世界", "你好世界", "CJK runes preserved"},
+		// Verify the printable boundary: 0x1F is control, 0x20 (space) is printable.
+		{"a\x1fb", "a b", "0x1F (unit sep) → space"},
+		{"a b", "a b", "0x20 (space) preserved as-is"},
+	}
+	for _, c := range cases {
+		got := scrubControl(c.input)
+		assert.Equal(t, c.want, got, c.desc)
+	}
+}
+
 func TestChat_MaxResponseBytesExceeded(t *testing.T) {
 	big := `{"content":[{"type":"text","text":"` + strings.Repeat("A", 1000) + `"}]}`
 	ft := &fakeTransport{resp: jsonResponse(200, big)}
