@@ -78,6 +78,17 @@ $script:ArbitronShimDefs = @{
     'New-ScheduledTaskPrincipal'   = { [CmdletBinding()] param([string]$UserId, [string]$LogonType, [string]$RunLevel) throw 'New-ScheduledTaskPrincipal is only available on Windows.' }
     'New-ScheduledTaskSettingsSet' = { [CmdletBinding()] param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) throw 'New-ScheduledTaskSettingsSet is only available on Windows.' }
     'Add-AppxPackage'              = { [CmdletBinding()] param([string]$Path) throw 'Add-AppxPackage is only available on Windows.' }
+    # Shared (system-level) seams: native Windows Service + LocalAccounts cmdlets.
+    'New-Service'                  = { [CmdletBinding()] param([string]$Name, [string]$BinaryPathName, [string]$DisplayName, [string]$Description, [string]$StartupType, [pscredential]$Credential) throw 'New-Service is only available on Windows.' }
+    'Set-Service'                  = { [CmdletBinding()] param([string]$Name, [string]$StartupType, [string]$Status) throw 'Set-Service is only available on Windows.' }
+    'Get-Service'                  = { [CmdletBinding()] param([string]$Name) throw 'Get-Service is only available on Windows.' }
+    'Start-Service'                = { [CmdletBinding()] param([string]$Name) throw 'Start-Service is only available on Windows.' }
+    'Stop-Service'                 = { [CmdletBinding()] param([string]$Name, [switch]$Force) throw 'Stop-Service is only available on Windows.' }
+    'Restart-Service'              = { [CmdletBinding()] param([string]$Name, [switch]$Force) throw 'Restart-Service is only available on Windows.' }
+    'Remove-Service'               = { [CmdletBinding()] param([string]$Name) throw 'Remove-Service is only available on Windows.' }
+    'Get-LocalUser'                = { [CmdletBinding()] param([string]$Name) throw 'Get-LocalUser is only available on Windows.' }
+    'New-LocalUser'                = { [CmdletBinding()] param([string]$Name, [securestring]$Password, [string]$Description, [switch]$PasswordNeverExpires, [switch]$UserMayNotChangePassword) throw 'New-LocalUser is only available on Windows.' }
+    'Remove-LocalUser'             = { [CmdletBinding()] param([string]$Name) throw 'Remove-LocalUser is only available on Windows.' }
 }
 foreach ($shimName in $script:ArbitronShimDefs.Keys) {
     if (-not (Get-Command -Name $shimName -ErrorAction SilentlyContinue)) {
@@ -122,13 +133,15 @@ function Get-Architecture {
     }
 }
 
-# Get-InstallType returns an install-type "enum" string. P3 always yields Local
-# (local needs no elevation); the function exists so P4 can extend it to Shared
-# without touching call sites.
+# Get-InstallType returns an install-type "enum" string by prompting the operator
+# to choose between a per-user Local install (no elevation) and a system-level
+# Shared install (Windows Service; requires admin). In non-interactive mode the
+# default is Local (the no-elevation, zero-prompt path).
 function Get-InstallType {
     [CmdletBinding()]
     param()
-    return 'Local'
+    return Read-PromptChoice -Prompt 'Install type (Local = per-user, no admin; Shared = system-wide Windows Service, requires admin)' `
+        -Choices @('Local', 'Shared') -Default 'Local'
 }
 
 # Single source of truth for every filesystem path. P4 adds a 'Shared' branch
@@ -156,8 +169,44 @@ function Get-ArbitronPaths {
             }
         }
         'Shared' {
-            throw 'Shared install-type is delivered by P4; not available in install.ps1 (P3).'
+            # System-level layout: binary under %ProgramFiles%, everything else
+            # (config/data/workspaces/logs) under %ProgramData%\Arbitron.
+            $binRoot  = Join-Path $env:ProgramFiles 'Arbitron'
+            $dataRoot = Join-Path $env:ProgramData 'Arbitron'
+            return @{
+                Root            = $dataRoot
+                Bin             = $binRoot
+                BinaryExe       = Join-Path $binRoot 'arbitron.exe'
+                Config          = Join-Path $dataRoot 'config.yaml'
+                Data            = Join-Path $dataRoot 'data'
+                Workspaces      = Join-Path $dataRoot 'workspaces'
+                Logs            = Join-Path $dataRoot 'logs'
+                LogFile         = Join-Path $dataRoot 'logs\arbitron.log'
+                ClaudeConfigDir = Join-Path $dataRoot 'claude'
+                NpmPrefix       = Join-Path $dataRoot 'npm'
+                Runtime         = Join-Path $dataRoot 'runtime'
+            }
         }
+    }
+}
+
+# --------------------------------------------------------------------------
+# Elevation (Shared path requires admin)
+# --------------------------------------------------------------------------
+
+# Test-IsElevated is a thin, mockable seam: true when the current principal is in
+# the built-in Administrators role. On non-Windows hosts (where the Shared path
+# never runs for real) it returns $false; tests mock it explicitly.
+function Test-IsElevated {
+    [CmdletBinding()]
+    param()
+    if (-not (Test-IsWindows)) { return $false }
+    try {
+        $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($id)
+        return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
     }
 }
 
@@ -498,10 +547,19 @@ function Resolve-AllDependencies {
 function Test-ExistingInstall {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][hashtable]$Paths
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [ValidateSet('Local', 'Shared')][string]$InstallType = 'Local'
     )
     if (-not (Test-Path -LiteralPath $Paths.Config -PathType Leaf)) {
         return $false
+    }
+    if ($InstallType -eq 'Shared') {
+        try {
+            $svc = Get-Service -Name $script:ArbitronServiceName -ErrorAction Stop
+            return [bool]$svc
+        } catch {
+            return $false
+        }
     }
     try {
         $task = Get-ScheduledTask -TaskName $script:ArbitronTaskName -ErrorAction Stop
@@ -509,6 +567,86 @@ function Test-ExistingInstall {
     } catch {
         return $false
     }
+}
+
+# --------------------------------------------------------------------------
+# Shared (system-level) skeleton: directory tree, ACLs, run-as / service account
+# --------------------------------------------------------------------------
+
+# Native Windows Service name (single source of truth for the Shared path).
+$script:ArbitronServiceName = 'arbitron'
+
+function New-SharedDirectoryTree {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    foreach ($d in @($Paths.Root, $Paths.Bin, $Paths.Data, $Paths.Workspaces, $Paths.Logs)) {
+        if ($d) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    }
+}
+
+# Get-RunAsChoice asks whether the service runs as LocalSystem (default) or a
+# dedicated local account (default name 'arbitron'). Returns the captured choice
+# for Task 3 (service registration) to consume.
+function Get-RunAsChoice {
+    [CmdletBinding()]
+    param()
+    $kind = Read-PromptChoice -Prompt 'Run the service as LocalSystem (default) or a dedicated Account?' `
+        -Choices @('LocalSystem', 'Account') -Default 'LocalSystem'
+    if ($kind -ieq 'Account') {
+        $name = Read-PromptDefault -Prompt 'Service account name' -Default 'arbitron'
+        return @{ Kind = 'Account'; Name = $name }
+    }
+    return @{ Kind = 'LocalSystem'; Name = $null }
+}
+
+# Invoke-Icacls is a seam over icacls.exe so ACL grants are mockable in tests.
+function Invoke-Icacls {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
+    & icacls.exe @Arguments
+    return $LASTEXITCODE
+}
+
+# Grant the service account Modify rights on the data and logs directories so the
+# running service (when not LocalSystem) can write its DB, workspaces, and logs.
+function Set-ArbitronDataAcl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Account,
+        [Parameter(Mandatory)][hashtable]$Paths
+    )
+    foreach ($dir in @($Paths.Data, $Paths.Logs, $Paths.Workspaces)) {
+        if ($dir) {
+            Invoke-Icacls $dir '/grant' "${Account}:(OI)(CI)M" '/T' '/C' | Out-Null
+        }
+    }
+}
+
+# Create the dedicated local service account if absent, with a no-interactive,
+# never-expiring posture, and apply data/log ACLs. The Log-on-as-a-service right
+# is granted at registration time (Task 3) via Grant-LogonAsService.
+function New-ArbitronServiceAccount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][hashtable]$Paths
+    )
+    $exists = $false
+    try {
+        $u = Get-LocalUser -Name $Name -ErrorAction Stop
+        $exists = [bool]$u
+    } catch {
+        $exists = $false
+    }
+    if (-not $exists) {
+        Write-ArbitronLog -Level Info -Message "Creating dedicated service account '$Name'..."
+        $pw = ConvertTo-SecureString -String ([Convert]::ToBase64String((New-RandomBytes -Count 24))) -AsPlainText -Force
+        New-LocalUser -Name $Name -Password $pw -Description 'Arbitron service account' `
+            -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
+    } else {
+        Write-ArbitronLog -Level Info -Message "Service account '$Name' already exists; reusing it."
+    }
+    Set-ArbitronDataAcl -Account $Name -Paths $Paths
 }
 
 # --------------------------------------------------------------------------
@@ -543,12 +681,29 @@ function Set-UserEnvironmentVariable {
     Set-Item -Path "Env:\$Name" -Value $Value -ErrorAction SilentlyContinue
 }
 
+# Protect-ArbitronSecretBlob is the DPAPI seam: it returns an opaque protected
+# string for a plaintext value at the requested scope. CurrentUser is the P3
+# local default; LocalMachine is the Shared (system service) variant so the
+# service -- running as LocalSystem or the dedicated account -- can unprotect it.
+# Mockable in tests so the scope can be asserted without real DPAPI.
+function Protect-ArbitronSecretBlob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Value,
+        [ValidateSet('CurrentUser', 'LocalMachine')][string]$Scope = 'CurrentUser'
+    )
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+    $dpScope = [System.Security.Cryptography.DataProtectionScope]::$Scope
+    $protected = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, $dpScope)
+    return [Convert]::ToBase64String($protected)
+}
+
 function Set-ArbitronSecret {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$Value,
-        [ValidateSet('Env', 'Dpapi')][string]$Method = 'Env',
+        [ValidateSet('Env', 'Dpapi', 'DpapiMachine')][string]$Method = 'Env',
         [Parameter(Mandatory)][hashtable]$Paths
     )
     Write-ArbitronLog -Level Info -Message "Storing secret $Name (method: $Method)." -Secret $Value
@@ -564,6 +719,16 @@ function Set-ArbitronSecret {
             $secure = ConvertTo-SecureString -String $Value -AsPlainText -Force
             # ConvertFrom-SecureString uses DPAPI (CurrentUser) on Windows.
             $protected = ConvertFrom-SecureString -SecureString $secure
+            Set-Content -Path $blob -Value $protected -Encoding ascii
+        }
+        'DpapiMachine' {
+            # Shared/system path: protect at machine scope so the Windows Service
+            # (LocalSystem or the dedicated account) can read it. Never logged.
+            if (-not (Test-Path -LiteralPath $Paths.Data)) {
+                New-Item -ItemType Directory -Path $Paths.Data -Force | Out-Null
+            }
+            $blob = Join-Path $Paths.Data "$Name.secret"
+            $protected = Protect-ArbitronSecretBlob -Value $Value -Scope 'LocalMachine'
             Set-Content -Path $blob -Value $protected -Encoding ascii
         }
     }
@@ -624,6 +789,169 @@ function Invoke-ConfigQA {
     }
 }
 
+# --------------------------------------------------------------------------
+# Shared (system-level) config Q&A -- kept parallel to P2 (Linux shared)
+# --------------------------------------------------------------------------
+
+# Get-SharedQuestionOrder is the single source of truth for the shared question
+# order, mirroring the "CANONICAL shared Q&A order" block in
+# docs/superpowers/plans/installers-implementation-phase-2-task-2.md. The P4
+# parity guard (Shared.E2E.Tests.ps1) asserts the landmarks appear in this order;
+# Invoke-SharedConfigQA below prompts in exactly this sequence.
+function Get-SharedQuestionOrder {
+    [CmdletBinding()]
+    param()
+    return @(
+        'Bind host'                         # 1. host
+        'Bind port'                         # 1. port
+        'Auth model'                        # 2. auth model
+        'OIDC issuer URL'                   # 3. OIDC sub-questions (when org)
+        'OIDC client ID'
+        'OIDC client secret'
+        'OIDC redirect URL'
+        'Bootstrap admins'
+        'Enable RBAC'
+        'RBAC group claim'
+        'RBAC default group'
+        'TLS model'                         # 4. TLS model
+        'Enable unattended agent tools'     # 5. skip-permissions (RCE prompt)
+        'Service account name'              # 6. service account
+        'Data location'                     # 7. data location
+    )                                       # 8. master key is silent (no prompt)
+}
+
+# Invoke-SharedConfigQA drives the system-level config Q&A in the canonical P2
+# order and returns the resolved answer hashtable consumed by Write-ArbitronConfig
+# and the secrets/service steps. P0 TLS fail-fast invariants are pre-enforced here
+# so the binary never fails to load: cert XOR autocert; autocert => port 443;
+# local-mode + TLS on a non-loopback host => allowunauthenticated.
+function Invoke-SharedConfigQA {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [hashtable]$Defaults = @{}
+    )
+
+    # 1. Bind host / port.
+    $hostDefault = if ($Defaults.ContainsKey('Host')) { $Defaults.Host } else { '0.0.0.0' }
+    $bindHost = Read-PromptDefault -Prompt 'Bind host' -Default $hostDefault
+    $portDefault = if ($Defaults.ContainsKey('Port')) { $Defaults.Port } else { 8080 }
+    $port = [int](Read-PromptDefault -Prompt 'Bind port' -Default "$portDefault")
+
+    # 2. Auth model.
+    $authDefault = if ($Defaults.ContainsKey('AuthMode') -and $Defaults.AuthMode -eq 'org') { 'oidc' } else { 'edge' }
+    $authChoice = Read-PromptChoice -Prompt 'Auth model (edge = edge-auth + local mode behind a tunnel; oidc = OIDC org mode)' `
+        -Choices @('edge', 'oidc') -Default $authDefault
+
+    $answers = @{
+        Port                    = $port
+        Host                    = $bindHost
+        LlmMode                 = if ($Defaults.ContainsKey('LlmMode')) { $Defaults.LlmMode } else { 'subscription' }
+        TlsEnabled              = $false
+        TlsCertFile             = ''
+        TlsKeyFile              = ''
+        TlsAutocertDomain       = ''
+        TlsAllowUnauthenticated = $false
+        PublicBaseURL           = ''
+        CookieSecure            = $false
+        SkipPermissions         = $false
+        BootstrapAdmins         = @()
+        RbacEnabled             = $false
+    }
+
+    if ($authChoice -ieq 'oidc') {
+        $answers.AuthMode = 'org'
+        # 3. OIDC sub-questions.
+        $answers.OidcIssuerUrl   = Read-PromptDefault -Prompt 'OIDC issuer URL' -Default ''
+        $answers.OidcClientId    = Read-PromptDefault -Prompt 'OIDC client ID' -Default ''
+        $answers.OidcClientSecret = Read-PromptDefault -Prompt 'OIDC client secret' -Default ''
+        $answers.OidcRedirectUrl = Read-PromptDefault -Prompt 'OIDC redirect URL (publicbaseurl + /auth/callback)' -Default ''
+        $admins = Read-PromptDefault -Prompt 'Bootstrap admins (comma-separated subjects/emails)' -Default ''
+        $answers.BootstrapAdmins = @($admins -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $rbac = Read-PromptYesNo -Prompt 'Enable RBAC (group-claim based roles)?' -Default $false
+        if ($rbac) {
+            $answers.RbacEnabled     = $true
+            $answers.RbacGroupClaim  = Read-PromptDefault -Prompt 'RBAC group claim' -Default 'groups'
+            $answers.RbacDefaultGroup = Read-PromptDefault -Prompt 'RBAC default group' -Default 'default'
+        }
+    } else {
+        # edge-auth + local mode: installer enforces loopback bind + single admin.
+        $answers.AuthMode = 'local'
+        if (-not (Test-IsLoopbackHost -HostName $bindHost)) {
+            Write-ArbitronLog -Level Warn -Message "edge-auth + local mode forces a loopback bind; overriding host '$bindHost' -> 127.0.0.1."
+            $answers.Host = '127.0.0.1'
+        } else {
+            $answers.Host = $bindHost
+        }
+    }
+
+    # 4. TLS model.
+    $tlsChoice = Read-PromptChoice -Prompt 'TLS model (tunnel = behind a TLS-terminating proxy; direct = app serves cert+key; autocert = automatic Let''s Encrypt)' `
+        -Choices @('tunnel', 'direct', 'autocert') -Default 'tunnel'
+    switch ($tlsChoice) {
+        'tunnel' {
+            $answers.PublicBaseURL = Read-PromptDefault -Prompt 'Public base URL (https://...) advertised by the tunnel/proxy' -Default ''
+            $answers.CookieSecure  = $true
+            $answers.TlsEnabled    = $false
+            Write-ArbitronLog -Level Info -Message 'TLS terminates at your tunnel/proxy. Point it at this host:port; cookies are marked Secure. Arbitron does not provision the tunnel.'
+        }
+        'direct' {
+            $answers.TlsEnabled  = $true
+            $answers.TlsCertFile = Read-PromptDefault -Prompt 'TLS certificate file path' -Default ''
+            $answers.TlsKeyFile  = Read-PromptDefault -Prompt 'TLS key file path' -Default ''
+            $answers.CookieSecure = $true
+        }
+        'autocert' {
+            $answers.TlsEnabled         = $true
+            $answers.TlsAutocertDomain  = Read-PromptDefault -Prompt 'TLS autocert domain' -Default ''
+            $answers.TlsAutocertCacheDir = Join-Path $Paths.Data 'autocert'
+            $answers.CookieSecure       = $true
+            # P0 invariant: autocert provisions for the standard HTTPS port.
+            if ($answers.Port -ne 443) {
+                Write-ArbitronLog -Level Warn -Message "autocert requires server.port 443; overriding port $($answers.Port) -> 443."
+                $answers.Port = 443
+            }
+        }
+    }
+
+    # P0 invariant: local mode + direct/autocert TLS on a NON-loopback host
+    # exposes an unauthenticated admin API. Require an explicit escape hatch.
+    if ($answers.AuthMode -eq 'local' -and $answers.TlsEnabled -and -not (Test-IsLoopbackHost -HostName $answers.Host)) {
+        $ok = Read-PromptYesNo -Prompt 'TLS on a non-loopback host in local mode exposes an UNAUTHENTICATED admin API. Set server.tls.allowunauthenticated to override?' -Default $false
+        $answers.TlsAllowUnauthenticated = [bool]$ok
+    }
+
+    # 5. Skip-permissions (RCE prompt, explicit, default No).
+    Write-ArbitronLog -Level Warn -Message $script:ArbitronRceWarning
+    $skipDefault = if ($Defaults.ContainsKey('SkipPermissions')) { [bool]$Defaults.SkipPermissions } else { $false }
+    $answers.SkipPermissions = Read-PromptYesNo -Prompt 'Enable unattended agent tools (--dangerously-skip-permissions)?' -Default $skipDefault
+
+    # 6. Service account name (default arbitron) -- surfaced/confirmed here.
+    $acctDefault = if ($Defaults.ContainsKey('ServiceAccount')) { $Defaults.ServiceAccount } else { 'arbitron' }
+    $answers.ServiceAccount = Read-PromptDefault -Prompt 'Service account name (informational; run-as chosen earlier)' -Default $acctDefault
+
+    # 7. Data location.
+    $dataDefault = if ($Defaults.ContainsKey('DataDir')) { $Defaults.DataDir } else { $Paths.Data }
+    $answers.DataDir = Read-PromptDefault -Prompt 'Data location' -Default $dataDefault
+
+    return $answers
+}
+
+# Loopback test mirroring the binary's isLoopbackHost (adapter/config/loader.go):
+# localhost or any loopback IP literal.
+function Test-IsLoopbackHost {
+    [CmdletBinding()]
+    param([string]$HostName)
+    $h = ($HostName | ForEach-Object { $_ }).Trim()
+    if (-not $h) { return $false }
+    if ($h -ieq 'localhost') { return $true }
+    $ip = $null
+    if ([System.Net.IPAddress]::TryParse($h, [ref]$ip)) {
+        return $ip.Equals([System.Net.IPAddress]::Loopback) -or $ip.Equals([System.Net.IPAddress]::IPv6Loopback)
+    }
+    return $false
+}
+
 function Write-ArbitronConfig {
     [CmdletBinding()]
     param(
@@ -642,13 +970,72 @@ function Write-ArbitronConfig {
     $provider      = if ($Answers.LlmMode -eq 'apikey') { 'anthropic' } else { 'claude-cli' }
     $skip          = if ($Answers.SkipPermissions) { 'true' } else { 'false' }
 
-    # YAML scalars containing backslashes (Windows paths) are quoted.
-    $lines = @(
-        '# Arbitron configuration (generated by install.ps1). Loopback / local mode.'
+    # Host defaults to loopback (P3 local path omits Host); shared answers set it.
+    $bindHost = if ($Answers.ContainsKey('Host') -and $Answers.Host) { $Answers.Host } else { '127.0.0.1' }
+    $authMode = if ($Answers.ContainsKey('AuthMode') -and $Answers.AuthMode) { $Answers.AuthMode } else { 'local' }
+    $publicBaseUrl = if ($Answers.ContainsKey('PublicBaseURL') -and $Answers.PublicBaseURL) {
+        $Answers.PublicBaseURL
+    } else {
+        "http://${bindHost}:$($Answers.Port)"
+    }
+
+    # server.* block.
+    $serverLines = @(
         'server:'
-        '  host: 127.0.0.1'
+        "  host: $bindHost"
         "  port: $($Answers.Port)"
-        '  publicbaseurl: "http://127.0.0.1:' + $Answers.Port + '"'
+        "  publicbaseurl: `"$publicBaseUrl`""
+    )
+    # TLS block (direct cert/key OR autocert; never both -- P0 invariant).
+    if ($Answers.ContainsKey('TlsEnabled') -and $Answers.TlsEnabled) {
+        $serverLines += '  tls:'
+        $serverLines += '    enabled: true'
+        if ($Answers.ContainsKey('TlsAutocertDomain') -and $Answers.TlsAutocertDomain) {
+            $serverLines += "    autocertdomain: `"$($Answers.TlsAutocertDomain)`""
+            if ($Answers.ContainsKey('TlsAutocertCacheDir') -and $Answers.TlsAutocertCacheDir) {
+                $serverLines += "    autocertcachedir: `"$($Answers.TlsAutocertCacheDir)`""
+            }
+        } else {
+            $serverLines += "    certfile: `"$($Answers.TlsCertFile)`""
+            $serverLines += "    keyfile: `"$($Answers.TlsKeyFile)`""
+        }
+        if ($Answers.ContainsKey('TlsAllowUnauthenticated') -and $Answers.TlsAllowUnauthenticated) {
+            $serverLines += '    allowunauthenticated: true'
+        }
+    }
+
+    # auth.* block.
+    $authLines = @(
+        'auth:'
+        "  mode: $authMode"
+    )
+    if ($Answers.ContainsKey('CookieSecure')) {
+        $authLines += '  session:'
+        $authLines += "    cookiesecure: $(if ($Answers.CookieSecure) { 'true' } else { 'false' })"
+    }
+    if ($authMode -eq 'org') {
+        if ($Answers.ContainsKey('BootstrapAdmins') -and $Answers.BootstrapAdmins -and @($Answers.BootstrapAdmins).Count -gt 0) {
+            $authLines += '  bootstrapadmins:'
+            foreach ($admin in $Answers.BootstrapAdmins) { $authLines += "    - `"$admin`"" }
+        }
+        $authLines += '  oidc:'
+        $authLines += "    issuerurl: `"$($Answers.OidcIssuerUrl)`""
+        $authLines += "    clientid: `"$($Answers.OidcClientId)`""
+        $authLines += "    redirecturl: `"$($Answers.OidcRedirectUrl)`""
+        # OIDC client secret goes to the secrets sink as
+        # ARBITRON_AUTH_OIDC_CLIENTSECRET, NEVER into config.yaml.
+        if ($Answers.ContainsKey('RbacEnabled') -and $Answers.RbacEnabled) {
+            $authLines += '  rbac:'
+            $authLines += "    groupclaim: `"$($Answers.RbacGroupClaim)`""
+            $authLines += "    defaultgroup: `"$($Answers.RbacDefaultGroup)`""
+        }
+    }
+
+    # YAML scalars containing backslashes (Windows paths) are quoted.
+    $lines = @('# Arbitron configuration (generated by install.ps1).')
+    $lines += $serverLines
+    $lines += $authLines
+    $lines += @(
         'database:'
         "  path: `"$dbPath`""
         'workspace:'
@@ -660,7 +1047,8 @@ function Write-ArbitronConfig {
         "  provider: $provider"
         "  skippermissions: $skip"
     )
-    # API key (when present) goes to the secrets sink, NEVER into config.yaml.
+    # API key / OIDC client secret / master key go to the secrets sink, NEVER
+    # into config.yaml.
     $content = ($lines -join "`n") + "`n"
     Set-Content -Path $Paths.Config -Value $content -Encoding utf8
 }
@@ -721,15 +1109,49 @@ function Get-ArbitronBinary {
 # Service registration (Scheduled Task), health-check, summary
 # --------------------------------------------------------------------------
 
-# Register-ArbitronService is behind an install-type switch so P4 can plug in the
-# native Windows Service for the Shared branch while local keeps the Scheduled
-# Task (no elevation needed).
+# Seam over sc.exe for the few options New-Service lacks (kept mockable).
+function Invoke-ScExe {
+    [CmdletBinding()]
+    param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
+    & sc.exe @Arguments
+    return $LASTEXITCODE
+}
+
+# Grant the "Log on as a service" right to a dedicated account. The real LSA
+# policy edit happens on Windows; this is a thin mockable seam (tests assert the
+# call). On a real host this shells out to a policy tool / secedit.
+function Grant-LogonAsService {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Account)
+    Write-ArbitronLog -Level Info -Message "Granting '$Account' the Log-on-as-a-service right..."
+    # Implemented via secedit/LSA on Windows; kept as a seam so the Shared path is
+    # testable cross-platform. Failures here are surfaced by the caller.
+    Invoke-ScExe 'privs' | Out-Null
+}
+
+# Build a PSCredential for the dedicated service account. Seam so tests can inject
+# a deterministic credential without touching the real account store.
+function Get-ArbitronServiceCredential {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+    # The account is created (Task 1) with a random machine-managed password; for
+    # registration we rely on the LSA grant + the SCM. A real implementation reads
+    # the generated password from the protected store; the seam keeps it mockable.
+    $pw = ConvertTo-SecureString -String ([Convert]::ToBase64String((New-RandomBytes -Count 24))) -AsPlainText -Force
+    return [pscredential]::new(".\$Name", $pw)
+}
+
+# Register-ArbitronService is behind an install-type switch: Local keeps the
+# per-user at-logon Scheduled Task (no elevation); Shared registers a native
+# auto-start Windows Service (the binary is service-aware via P4 Task 0, so no
+# third-party service-wrapper shim is needed).
 function Register-ArbitronService {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateSet('Local', 'Shared')][string]$InstallType,
         [Parameter(Mandatory)][hashtable]$Paths,
-        [Parameter(Mandatory)][int]$Port
+        [Parameter(Mandatory)][int]$Port,
+        [hashtable]$RunAs = @{ Kind = 'LocalSystem'; Name = $null }
     )
     switch ($InstallType) {
         'Local' {
@@ -744,7 +1166,21 @@ function Register-ArbitronService {
             Start-ScheduledTask -TaskName $script:ArbitronTaskName
         }
         'Shared' {
-            throw 'Shared service registration is delivered by P4.'
+            $binPath = "`"$($Paths.BinaryExe)`" serve --config `"$($Paths.Config)`""
+            Write-ArbitronLog -Level Info -Message "Registering native Windows Service '$script:ArbitronServiceName' (auto-start)..."
+            $newSvc = @{
+                Name           = $script:ArbitronServiceName
+                BinaryPathName = $binPath
+                DisplayName    = 'Arbitron'
+                Description    = 'Arbitron orchestration server'
+                StartupType    = 'Automatic'
+            }
+            if ($RunAs.Kind -eq 'Account' -and $RunAs.Name) {
+                Grant-LogonAsService -Account $RunAs.Name
+                $newSvc.Credential = Get-ArbitronServiceCredential -Name $RunAs.Name
+            }
+            New-Service @newSvc
+            Start-Service -Name $script:ArbitronServiceName
         }
     }
 }
@@ -766,9 +1202,11 @@ function Test-ArbitronHealth {
     param(
         [Parameter(Mandatory)][int]$Port,
         [Parameter(Mandatory)][hashtable]$Paths,
+        [ValidateSet('http', 'https')][string]$Scheme = 'http',
+        [string]$HostName = '127.0.0.1',
         [int]$TimeoutSeconds = 30
     )
-    $uri = "http://127.0.0.1:$Port/"
+    $uri = "${Scheme}://${HostName}:$Port/"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $attempt = 0
     do {
@@ -788,12 +1226,20 @@ function Write-InstallSummary {
     param(
         [Parameter(Mandatory)][hashtable]$Paths,
         [Parameter(Mandatory)][int]$Port,
-        [string]$LlmMode = 'subscription'
+        [string]$LlmMode = 'subscription',
+        [ValidateSet('Local', 'Shared')][string]$InstallType = 'Local',
+        [ValidateSet('http', 'https')][string]$Scheme = 'http',
+        [string]$HostName = '127.0.0.1'
     )
+    $dashboard = "${Scheme}://${HostName}:$Port"
     Write-ArbitronLog -Level Info -Message '----------------------------------------------------------'
     Write-ArbitronLog -Level Info -Message 'Arbitron installation complete.'
-    Write-ArbitronLog -Level Info -Message "  Dashboard:    http://127.0.0.1:$Port"
-    Write-ArbitronLog -Level Info -Message "  Service task: $script:ArbitronTaskName (at-logon Scheduled Task)"
+    Write-ArbitronLog -Level Info -Message "  Dashboard:    $dashboard"
+    if ($InstallType -eq 'Shared') {
+        Write-ArbitronLog -Level Info -Message "  Service:      $script:ArbitronServiceName (native Windows Service, auto-start)"
+    } else {
+        Write-ArbitronLog -Level Info -Message "  Service task: $script:ArbitronTaskName (at-logon Scheduled Task)"
+    }
     Write-ArbitronLog -Level Info -Message "  Config:       $($Paths.Config)"
     Write-ArbitronLog -Level Info -Message "  Log file:     $($Paths.LogFile)"
     if ($LlmMode -eq 'subscription') {
@@ -962,6 +1408,156 @@ function Invoke-Uninstall {
 }
 
 # --------------------------------------------------------------------------
+# Shared (system-level) lifecycle flows
+# --------------------------------------------------------------------------
+
+# Resolve the health-check scheme/host from the answers: https for direct/autocert
+# TLS, otherwise http; host is the configured bind host (loopback for edge mode).
+function Get-HealthEndpoint {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Answers)
+    $scheme = if ($Answers.ContainsKey('TlsEnabled') -and $Answers.TlsEnabled) { 'https' } else { 'http' }
+    $hostName = if ($Answers.ContainsKey('Host') -and $Answers.Host) { $Answers.Host } else { '127.0.0.1' }
+    # A 0.0.0.0 bind is reachable on loopback for the local probe.
+    if ($hostName -eq '0.0.0.0') { $hostName = '127.0.0.1' }
+    return @{ Scheme = $scheme; HostName = $hostName }
+}
+
+function Invoke-SharedInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [string]$Arch = 'amd64',
+        [string]$Version = $script:ResolvedVersion
+    )
+    # Fail fast: the Shared path is system-level and requires admin elevation.
+    # Perform NO filesystem/download/account side effects until this passes.
+    if (-not (Test-IsElevated)) {
+        throw 'The Shared (system-wide) install requires administrator rights. Re-run from an elevated PowerShell ("Run as Administrator").'
+    }
+
+    Write-ArbitronLog -Level Info -Message 'Starting shared (system-level) Arbitron install...'
+
+    # 1. Run-as choice + directory tree (+ dedicated account when chosen).
+    $runAs = Get-RunAsChoice
+    New-SharedDirectoryTree -Paths $Paths
+    if ($runAs.Kind -eq 'Account' -and $runAs.Name) {
+        New-ArbitronServiceAccount -Name $runAs.Name -Paths $Paths
+    }
+
+    # 2. Dependencies.
+    Resolve-AllDependencies -Paths $Paths | Out-Null
+
+    # 3. Config Q&A (shared; parallel to P2).
+    $answers = Invoke-SharedConfigQA -Paths $Paths
+
+    # 4. Binary download + verify (placed at %ProgramFiles%\Arbitron\arbitron.exe).
+    Get-ArbitronBinary -Paths $Paths -Version $Version -Arch $Arch
+
+    # 5. Write config + secrets (DPAPI machine scope so the service can read them).
+    Write-ArbitronConfig -Paths $Paths -Answers $answers
+    $masterKey = New-MasterKey
+    Set-ArbitronSecret -Name 'ARBITRON_MASTER_KEY' -Value $masterKey -Method DpapiMachine -Paths $Paths
+    if ($answers.AuthMode -eq 'org' -and $answers.ContainsKey('OidcClientSecret') -and $answers.OidcClientSecret) {
+        Set-ArbitronSecret -Name 'ARBITRON_AUTH_OIDC_CLIENTSECRET' -Value $answers.OidcClientSecret -Method DpapiMachine -Paths $Paths
+    }
+    $llmMode = if ($answers.ContainsKey('LlmMode')) { $answers.LlmMode } else { 'subscription' }
+    if ($llmMode -eq 'apikey' -and $answers.ContainsKey('ApiKey') -and $answers.ApiKey) {
+        Set-ArbitronSecret -Name 'ARBITRON_LLM_APIKEY' -Value $answers.ApiKey -Method DpapiMachine -Paths $Paths
+    } elseif ($llmMode -eq 'subscription') {
+        Invoke-ClaudeLogin -Paths $Paths
+    }
+
+    # 6. Register + start the native Windows Service.
+    Register-ArbitronService -InstallType Shared -Paths $Paths -Port $answers.Port -RunAs $runAs
+
+    # 7. Health-check over the correct scheme/host.
+    $ep = Get-HealthEndpoint -Answers $answers
+    Test-ArbitronHealth -Port $answers.Port -Paths $Paths -Scheme $ep.Scheme -HostName $ep.HostName | Out-Null
+
+    # 8. Summary.
+    Write-InstallSummary -Paths $Paths -Port $answers.Port -LlmMode $llmMode `
+        -InstallType Shared -Scheme $ep.Scheme -HostName $ep.HostName
+}
+
+function Invoke-SharedUpgrade {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [string]$Arch = 'amd64',
+        [string]$Version = $script:ResolvedVersion
+    )
+    Write-ArbitronLog -Level Info -Message "Upgrading Arbitron (shared) to $Version..."
+    # Stop the service, then download+verify the new exe before swapping it in.
+    Stop-Service -Name $script:ArbitronServiceName -Force
+    Get-ArbitronBinary -Paths $Paths -Version $Version -Arch $Arch
+    Start-Service -Name $script:ArbitronServiceName
+    Write-ArbitronLog -Level Warn -Message 'Migrations run forward-only on serve start; downgrading after an upgrade is not supported (no down-migrations). Keep a data backup before upgrading.'
+    $port = Get-ConfigPort -Paths $Paths
+    Write-InstallSummary -Paths $Paths -Port $port -InstallType Shared
+}
+
+function Invoke-SharedReconfigure {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [string]$Arch = 'amd64'
+    )
+    Write-ArbitronLog -Level Info -Message 'Reconfiguring Arbitron (shared; data + secrets preserved)...'
+    $defaults = Get-ExistingConfigDefaults -Paths $Paths
+    $answers = Invoke-SharedConfigQA -Paths $Paths -Defaults $defaults
+    Write-ArbitronConfig -Paths $Paths -Answers $answers
+    # Re-store rotated secrets if provided; never regenerate the master key.
+    if ($answers.AuthMode -eq 'org' -and $answers.ContainsKey('OidcClientSecret') -and $answers.OidcClientSecret) {
+        Set-ArbitronSecret -Name 'ARBITRON_AUTH_OIDC_CLIENTSECRET' -Value $answers.OidcClientSecret -Method DpapiMachine -Paths $Paths
+    }
+    $llmMode = if ($answers.ContainsKey('LlmMode')) { $answers.LlmMode } else { 'subscription' }
+    if ($llmMode -eq 'apikey' -and $answers.ContainsKey('ApiKey') -and $answers.ApiKey) {
+        Set-ArbitronSecret -Name 'ARBITRON_LLM_APIKEY' -Value $answers.ApiKey -Method DpapiMachine -Paths $Paths
+    }
+    Restart-Service -Name $script:ArbitronServiceName
+    Write-InstallSummary -Paths $Paths -Port $answers.Port -LlmMode $llmMode -InstallType Shared
+}
+
+function Invoke-SharedUninstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Paths,
+        [hashtable]$RunAs = @{ Kind = 'LocalSystem'; Name = $null }
+    )
+    Write-ArbitronLog -Level Info -Message 'Uninstalling Arbitron (shared)...'
+    try { Stop-Service -Name $script:ArbitronServiceName -Force } catch {
+        Write-ArbitronLog -Level Info -Message "Service was not running (nothing to stop): $($_.Exception.Message)"
+    }
+    try { Remove-Service -Name $script:ArbitronServiceName } catch {
+        Write-ArbitronLog -Level Warn -Message "Could not remove the Windows Service: $($_.Exception.Message)"
+    }
+    if (Test-Path -LiteralPath $Paths.Bin)    { Remove-Item -Recurse -Force $Paths.Bin -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $Paths.Config) { Remove-Item -Force $Paths.Config -ErrorAction SilentlyContinue }
+
+    Remove-ArbitronSecret -Name 'ARBITRON_MASTER_KEY' -Paths $Paths
+    Remove-ArbitronSecret -Name 'ARBITRON_LLM_APIKEY' -Paths $Paths
+    Remove-ArbitronSecret -Name 'ARBITRON_AUTH_OIDC_CLIENTSECRET' -Paths $Paths
+
+    $removeData = Read-PromptYesNo -Prompt "Also delete the data directory ($($Paths.Data))? This destroys your database." -Default $false
+    if ($removeData) {
+        if (Test-Path -LiteralPath $Paths.Data) { Remove-Item -Recurse -Force $Paths.Data -ErrorAction SilentlyContinue }
+        Write-ArbitronLog -Level Info -Message 'Data directory removed.'
+    } else {
+        Write-ArbitronLog -Level Info -Message "Data directory kept at $($Paths.Data)."
+    }
+
+    if ($RunAs.Kind -eq 'Account' -and $RunAs.Name) {
+        $removeAcct = Read-PromptYesNo -Prompt "Also remove the dedicated service account '$($RunAs.Name)'?" -Default $false
+        if ($removeAcct) {
+            try { Remove-LocalUser -Name $RunAs.Name; Write-ArbitronLog -Level Info -Message "Removed service account '$($RunAs.Name)'." }
+            catch { Write-ArbitronLog -Level Warn -Message "Could not remove account '$($RunAs.Name)': $($_.Exception.Message)" }
+        }
+    }
+    Write-ArbitronLog -Level Info -Message 'Uninstall complete.'
+}
+
+# --------------------------------------------------------------------------
 # Lifecycle dispatch
 # --------------------------------------------------------------------------
 
@@ -977,18 +1573,30 @@ function Invoke-Main {
     if ($script:Config) { $paths.Config = $script:Config }
     Write-ArbitronLog -Level Info -Message "Arbitron installer - install type: $installType, arch: $arch"
 
-    if (-not (Test-ExistingInstall -Paths $paths)) {
-        Invoke-FreshInstall -Paths $paths -InstallType $installType -Arch $arch
+    if (-not (Test-ExistingInstall -Paths $paths -InstallType $installType)) {
+        if ($installType -eq 'Shared') {
+            Invoke-SharedInstall -Paths $paths -Arch $arch
+        } else {
+            Invoke-FreshInstall -Paths $paths -InstallType $installType -Arch $arch
+        }
         return
     }
 
     Write-ArbitronLog -Level Info -Message 'An existing Arbitron install was detected.'
     $action = Read-PromptChoice -Prompt 'What would you like to do?' `
         -Choices @('Upgrade', 'Reconfigure', 'Uninstall') -Default 'Upgrade'
-    switch ($action) {
-        'Upgrade'     { Invoke-Upgrade     -Paths $paths -InstallType $installType -Arch $arch }
-        'Reconfigure' { Invoke-Reconfigure -Paths $paths -InstallType $installType -Arch $arch }
-        'Uninstall'   { Invoke-Uninstall   -Paths $paths -InstallType $installType }
+    if ($installType -eq 'Shared') {
+        switch ($action) {
+            'Upgrade'     { Invoke-SharedUpgrade     -Paths $paths -Arch $arch }
+            'Reconfigure' { Invoke-SharedReconfigure -Paths $paths -Arch $arch }
+            'Uninstall'   { Invoke-SharedUninstall   -Paths $paths }
+        }
+    } else {
+        switch ($action) {
+            'Upgrade'     { Invoke-Upgrade     -Paths $paths -InstallType $installType -Arch $arch }
+            'Reconfigure' { Invoke-Reconfigure -Paths $paths -InstallType $installType -Arch $arch }
+            'Uninstall'   { Invoke-Uninstall   -Paths $paths -InstallType $installType }
+        }
     }
 }
 

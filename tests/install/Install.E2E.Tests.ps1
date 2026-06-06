@@ -13,6 +13,8 @@ BeforeAll {
     function Register-StandardMocks {
         Mock -CommandName Test-IsWindows -MockWith { $true }
         Mock -CommandName Get-Architecture -MockWith { 'amd64' }
+        # Get-InstallType now prompts (Local | Shared); pin Local for the P3 e2e.
+        Mock -CommandName Get-InstallType -MockWith { 'Local' }
         Mock -CommandName Test-WingetPresent -MockWith { $true }
         Mock -CommandName Invoke-Winget -MockWith { 0 }
         Mock -CommandName Invoke-Npm -MockWith { 0 }

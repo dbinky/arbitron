@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Recording `rm` fake: appends "rm <args...>" to $MOCK_LOG AND performs the real
+# removal (so uninstall tests can assert BOTH that rm was called and that the
+# target files actually went away in the sandbox). It refuses to act outside the
+# per-test sandbox as a safety net.
+{
+  printf 'rm'
+  for a in "$@"; do printf ' %s' "$a"; done
+  printf '\n'
+} >>"${MOCK_LOG:-/dev/null}"
+
+# Only operate within the sandbox; ignore anything else.
+real_rm="$(PATH=/bin:/usr/bin command -v rm)"
+safe_args=()
+for a in "$@"; do
+  case "$a" in
+    -*) safe_args+=("$a") ;;
+    "${TEST_SANDBOX:-/__none__}"*) safe_args+=("$a") ;;
+    *) ;; # outside the sandbox: skip
+  esac
+done
+[ "${#safe_args[@]}" -gt 0 ] && "$real_rm" "${safe_args[@]}" 2>/dev/null
+exit 0

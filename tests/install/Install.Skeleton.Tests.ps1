@@ -111,6 +111,10 @@ Describe 'Invoke-Main dispatch' {
     BeforeEach {
         Mock -CommandName Assert-SupportedPlatform -MockWith { }
         Mock -CommandName Get-Architecture -MockWith { 'amd64' }
+        # Get-InstallType now prompts (Local | Shared); pin it to Local so these
+        # cases exercise the local dispatch path. (Shared dispatch is covered by
+        # Shared.* suites.)
+        Mock -CommandName Get-InstallType -MockWith { 'Local' }
         Mock -CommandName Invoke-FreshInstall -MockWith { }
         Mock -CommandName Invoke-Upgrade -MockWith { }
         Mock -CommandName Invoke-Reconfigure -MockWith { }
