@@ -256,12 +256,92 @@ sha256_tool() {
 }
 
 # verify_checksum <file> <expected_sha256> -> 0 on match, non-zero on mismatch.
+# Comparison is case-insensitive (SHA256SUMS may use either hex case).
 verify_checksum() {
   local file="$1" expected="$2" actual
   [ -f "$file" ] || { log_error "verify_checksum: missing file $file"; return 1; }
   actual="$(sha256_tool <"$file")" || return 1
-  if [ "$actual" != "$expected" ]; then
+  if [ "$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')" ]; then
     log_error "checksum mismatch for $file: expected $expected got $actual"
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The canonical FAIL-CLOSED verification contract (P5 Task 2).
+#
+# verify_download is the single gate every release artifact passes before it is
+# made executable or installed. It is MANDATORY and has NO bypass: any of
+#   { missing SHA256SUMS, artifact not listed, hash mismatch, no hash tool }
+# aborts (non-zero), deletes the partial download, and leaves nothing in place.
+# verify_signature is OPTIONAL defense-in-depth (cosign); its absence NEVER
+# bypasses the checksum gate.
+# ---------------------------------------------------------------------------
+
+# verify_download <downloaded_file> <artifact_basename> <sha256sums_file>
+#   Read <artifact_basename>'s expected hash out of <sha256sums_file>, compute the
+#   actual hash of <downloaded_file>, and compare. On ANY failure: log, `rm -f`
+#   the download, return non-zero. On match: return 0 (the file is left in place
+#   for the caller to install). FAIL-CLOSED; no skip/insecure path.
+verify_download() {
+  local file="$1" name="$2" sums="$3" expected
+  if [ ! -f "$sums" ]; then
+    log_error "could not fetch/read SHA256SUMS ($sums); refusing to install"
+    rm -f "$file"
+    return 1
+  fi
+  # SHA256SUMS lines are "<hash>  <name>" (sha256sum) or "<hash> *<name>" (binary
+  # mode). Match the exact basename only.
+  expected="$(awk -v a="$name" '$2==a || $2=="*"a {print $1; exit}' "$sums")"
+  if [ -z "$expected" ]; then
+    log_error "no checksum for $name in SHA256SUMS; refusing to install"
+    rm -f "$file"
+    return 1
+  fi
+  if ! verify_checksum "$file" "$expected"; then
+    log_error "refusing to install unverified artifact: $name"
+    rm -f "$file"
+    return 1
+  fi
+  return 0
+}
+
+# verify_signature <sha256sums_file> [sig_file] [pem_file]
+#   OPTIONAL cosign verification of SHA256SUMS (keyless, Task-1 identity). Runs
+#   only when cosign is present OR ARBITRON_VERIFY_SIGNATURE=1. When requested and
+#   cosign fails -> non-zero (fail-closed for the signature too). When cosign is
+#   absent and not explicitly requested -> a one-line notice + return 0 (the
+#   checksum gate already passed and is never bypassed here).
+verify_signature() {
+  local sums="$1"
+  local sig="${2:-${sums}.sig}"
+  local pem="${3:-${sums}.pem}"
+  local want="${ARBITRON_VERIFY_SIGNATURE:-}"
+  if ! require_cmd cosign; then
+    if [ "$want" = "1" ]; then
+      log_error "ARBITRON_VERIFY_SIGNATURE=1 but cosign is not installed"
+      return 1
+    fi
+    log_info "cosign not found; skipping optional signature check (checksum already verified)"
+    return 0
+  fi
+  if [ ! -f "$sig" ] || [ ! -f "$pem" ]; then
+    if [ "$want" = "1" ]; then
+      log_error "signature verification requested but $sig / $pem is missing"
+      return 1
+    fi
+    log_info "no signature/cert alongside SHA256SUMS; skipping optional signature check"
+    return 0
+  fi
+  log_info "verifying SHA256SUMS signature with cosign"
+  if ! cosign verify-blob \
+      --certificate "$pem" \
+      --signature "$sig" \
+      --certificate-identity-regexp "https://github.com/${ARBITRON_REPO}/.*" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      "$sums" >/dev/null 2>&1; then
+    log_error "cosign signature verification FAILED for SHA256SUMS"
     return 1
   fi
   return 0
@@ -663,21 +743,60 @@ claude_login() {
   "$claude_bin" /login || log_warn "claude /login did not complete; re-run it later"
 }
 
-# arbitron_resolve_version — ARBITRON_VERSION override, else "latest". (P5 Task 2
-# finalises latest-tag resolution; P1 targets the provisional layout.)
-arbitron_resolve_version() {
-  printf '%s\n' "${ARBITRON_VERSION:-latest}"
+# _arbitron_latest_tag — follow the releases/latest redirect (NO API token, no
+# rate-limit) and echo the final tag's version. The effective URL ends in
+# `/tag/v<ver>`; parse <ver>. Falls back to the GitHub API `.tag_name` when the
+# redirect parse fails. Isolated behind `curl` so the bats suite can stub it.
+_arbitron_latest_tag() {
+  local effective ver
+  effective="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${ARBITRON_REPO}/releases/latest" 2>/dev/null || true)"
+  ver="$(printf '%s' "$effective" | sed -n 's#.*/tag/v\{0,1\}\([0-9][^/[:space:]]*\).*#\1#p')"
+  if [ -z "$ver" ]; then
+    # API fallback: parse `"tag_name": "v1.2.3"`.
+    ver="$(curl -fsSL "https://api.github.com/repos/${ARBITRON_REPO}/releases/latest" 2>/dev/null \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)"
+  fi
+  printf '%s' "$ver"
 }
 
-# arbitron_release_base <version> — the release download base URL, built from the
-# canonical ARBITRON_REPO constant (NOT the Go module path). P5 Task 2 finalises.
-arbitron_release_base() {
-  local version="$1"
-  if [ "$version" = "latest" ]; then
-    printf 'https://github.com/%s/releases/latest/download\n' "$ARBITRON_REPO"
-  else
-    printf 'https://github.com/%s/releases/download/v%s\n' "$ARBITRON_REPO" "$version"
+# arbitron_resolve_version — resolve the release version to install.
+#   - ARBITRON_VERSION set  -> use it verbatim, normalised to NO leading `v`
+#     (accepts both `1.2.3` and `v1.2.3`).
+#   - unset                 -> the latest release, via the releases/latest
+#     redirect (API fallback).
+# Fails closed (non-zero) when no version can be determined.
+arbitron_resolve_version() {
+  local version="${ARBITRON_VERSION:-}"
+  if [ -n "$version" ]; then
+    printf '%s\n' "${version#v}"
+    return 0
   fi
+  version="$(_arbitron_latest_tag)"
+  version="${version#v}"
+  if [ -z "$version" ]; then
+    log_error "could not resolve the latest Arbitron release version; pin one with ARBITRON_VERSION"
+    return 1
+  fi
+  printf '%s\n' "$version"
+}
+
+# arbitron_artifact_name <version> <os> <arch> — the release artifact basename
+# `arbitron_<version>_<os>_<arch>` (+ `.exe` on windows). Pure string in/out.
+arbitron_artifact_name() {
+  local version="$1" os="$2" arch="$3"
+  local name="arbitron_${version}_${os}_${arch}"
+  [ "$os" = "windows" ] && name="${name}.exe"
+  printf '%s\n' "$name"
+}
+
+# arbitron_release_base <version> — the release download base URL for a resolved
+# (concrete) version, built from the canonical ARBITRON_REPO constant (NOT the Go
+# module path). The version is always concrete here (arbitron_resolve_version
+# turns `latest` into a real tag first), so the URL points at the pinned tag.
+arbitron_release_base() {
+  local version="${1#v}"
+  printf 'https://github.com/%s/releases/download/v%s\n' "$ARBITRON_REPO" "$version"
 }
 
 # fetch_binary_to <dest> — resolve version + os/arch, fetch the artifact and its
@@ -686,42 +805,53 @@ arbitron_release_base() {
 # system install (install_binary_system) so the verify contract is identical.
 fetch_binary_to() {
   local dest="$1"
-  local version os arch base artifact tmpdir sumsfile expected
-  version="$(arbitron_resolve_version)"
+  local version os arch base artifact tmpdir sumsfile tmpbin
+  version="$(arbitron_resolve_version)" || return 1
   os="$(detect_os)"   || return 1
   arch="$(detect_arch)" || return 1
   base="$(arbitron_release_base "$version")"
 
-  # Provisional artifact name: arbitron_<version>_<os>_<arch>. The os token uses
-  # the Go-style names (darwin/linux). P5 re-points if the release layout differs.
+  # The release artifact uses the Go-style OS token (darwin/linux).
   local ostoken="$os"
   [ "$os" = "macos" ] && ostoken="darwin"
-  local vtoken="$version"
-  [ "$version" = "latest" ] && vtoken="latest"
-  artifact="arbitron_${vtoken}_${ostoken}_${arch}"
+  artifact="$(arbitron_artifact_name "$version" "$ostoken" "$arch")"
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-bin.XXXXXX")" || return 1
 
-  # Fetch SHA256SUMS and extract this artifact's expected digest.
+  # Fetch SHA256SUMS (+ optional signature material) into the temp dir.
   sumsfile="$tmpdir/SHA256SUMS"
   if ! curl -fsSL -o "$sumsfile" "${base}/SHA256SUMS"; then
     log_error "could not fetch SHA256SUMS from ${base}"
     rm -rf "$tmpdir"
     return 1
   fi
-  expected="$(awk -v a="$artifact" '$2==a || $2=="*"a {print $1; exit}' "$sumsfile")"
-  if [ -z "$expected" ]; then
-    log_error "no checksum entry for $artifact in SHA256SUMS"
+  # Best-effort fetch of the cosign material; verify_signature decides if it is
+  # required. A missing .sig/.pem never bypasses the (already mandatory) checksum.
+  curl -fsSL -o "${sumsfile}.sig" "${base}/SHA256SUMS.sig" 2>/dev/null || true
+  curl -fsSL -o "${sumsfile}.pem" "${base}/SHA256SUMS.pem" 2>/dev/null || true
+
+  # Download the binary to a temp file, then run the mandatory fail-closed gate
+  # BEFORE anything is made executable or moved into place.
+  log_info "downloading $artifact"
+  tmpbin="$tmpdir/$artifact"
+  if ! curl -fsSL -o "$tmpbin" "${base}/${artifact}"; then
+    log_error "download failed: ${base}/${artifact}"
     rm -rf "$tmpdir"
     return 1
   fi
-
-  log_info "downloading $artifact"
-  if ! download_verified "${base}/${artifact}" "$expected" "$dest"; then
+  if ! verify_download "$tmpbin" "$artifact" "$sumsfile"; then
     log_error "binary download/verification failed"
     rm -rf "$tmpdir"
     return 1
   fi
+  if ! verify_signature "$sumsfile"; then
+    log_error "signature verification failed; refusing to install"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$dest")"
+  mv "$tmpbin" "$dest"
   rm -rf "$tmpdir"
 }
 

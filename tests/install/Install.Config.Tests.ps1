@@ -178,13 +178,14 @@ Describe 'Get-ArbitronBinary' {
     }
     AfterEach { Remove-Item -Recurse -Force $script:p.Root -ErrorAction SilentlyContinue }
 
-    It 'downloads, verifies, and places the exe on checksum match' {
+    It 'downloads, verifies (fail-closed gate), and places the exe on checksum match' {
         Mock -CommandName Invoke-ArbitronDownload -MockWith {
             param($Uri, $OutFile) Set-Content -Path $OutFile -Value 'fakebinary' -NoNewline
         }
-        Mock -CommandName Get-Sha256ForArtifact -MockWith { 'DEADBEEF' }
-        Mock -CommandName Test-Sha256 -MockWith { $true }
+        Mock -CommandName Test-Download -MockWith { }
+        Mock -CommandName Test-Signature -MockWith { }
         Get-ArbitronBinary -Paths $script:p -Version '1.2.3' -Arch 'amd64'
+        Should -Invoke Test-Download -Times 1
         Test-Path $script:p.BinaryExe | Should -BeTrue
     }
 
@@ -192,8 +193,10 @@ Describe 'Get-ArbitronBinary' {
         Mock -CommandName Invoke-ArbitronDownload -MockWith {
             param($Uri, $OutFile) Set-Content -Path $OutFile -Value 'tampered' -NoNewline
         }
-        Mock -CommandName Get-Sha256ForArtifact -MockWith { 'DEADBEEF' }
-        Mock -CommandName Test-Sha256 -MockWith { $false }
+        # The canonical verifier throws (fail-closed) on a mismatch and removes
+        # the partial download; Get-ArbitronBinary must propagate it.
+        Mock -CommandName Test-Download -MockWith { throw 'Checksum verification failed for arbitron; aborting (no binary placed).' }
+        Mock -CommandName Test-Signature -MockWith { }
         { Get-ArbitronBinary -Paths $script:p -Version '1.2.3' -Arch 'amd64' } |
             Should -Throw -ExpectedMessage '*checksum*'
         Test-Path $script:p.BinaryExe | Should -BeFalse
@@ -206,8 +209,8 @@ Describe 'Get-ArbitronBinary' {
             if ($Uri -like '*arbitron_*windows*') { $script:seenUri = $Uri }
             Set-Content -Path $OutFile -Value 'x' -NoNewline
         }
-        Mock -CommandName Get-Sha256ForArtifact -MockWith { 'x' }
-        Mock -CommandName Test-Sha256 -MockWith { $true }
+        Mock -CommandName Test-Download -MockWith { }
+        Mock -CommandName Test-Signature -MockWith { }
         Get-ArbitronBinary -Paths $script:p -Version '1.2.3' -Arch 'amd64'
         $script:seenUri | Should -BeLike '*dbinky/arbitron*'
         $script:seenUri | Should -BeLike '*arbitron_1.2.3_windows_amd64.exe*'

@@ -114,17 +114,17 @@ teardown() {
 
 @test "install_binary_system places binary at /usr/local/bin 0755 root" {
   export ARBITRON_VERSION=1.0.0 OS_TOKEN=linux ARCH_TOKEN=amd64
-  # curl serves SHA256SUMS; download_verified is stubbed to drop the artifact.
+  # curl serves a matching SHA256SUMS + the binary; the canonical fail-closed
+  # verify_download gate runs inside fetch_binary_to before placement.
   install_fake curl '
     for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
     case "$*" in
       *SHA256SUMS*) printf "%s  arbitron_1.0.0_linux_amd64\n" "$(printf BIN | shasum -a 256 | cut -d" " -f1)" > "$dest" ;;
+      *arbitron_1.0.0_linux_amd64*) printf "BIN" > "$dest" ;;
     esac
   '
-  download_verified() { echo "download_verified $*" >>"$MOCK_LOG"; printf 'BIN' >"$3"; }
   run install_binary_system
   [ "$status" -eq 0 ]
-  grep -q "download_verified" "$MOCK_LOG"
   grep -qE "install .*-m 0?755 .*/usr/local/bin/arbitron" "$MOCK_LOG"
   grep -qE "install .*(-o root|root:root) " "$MOCK_LOG"
 }

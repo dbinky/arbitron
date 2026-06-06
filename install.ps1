@@ -308,6 +308,165 @@ function Test-Sha256 {
 }
 
 # --------------------------------------------------------------------------
+# Version selection + release URL builders (P5 Task 2)
+# --------------------------------------------------------------------------
+
+# Get-LatestReleaseTag follows the releases/latest redirect (no API token, no
+# rate-limit) and returns the final tag (e.g. 'v1.2.3'). Falls back to the GitHub
+# API .tag_name when the redirect parse fails. Isolated as a seam so tests stub
+# it without a real network call.
+function Get-LatestReleaseTag {
+    [CmdletBinding()]
+    param()
+    $latestUrl = "https://github.com/$script:ArbitronRepo/releases/latest"
+    try {
+        $resp = Invoke-WebRequest -Uri $latestUrl -Method Head -MaximumRedirection 0 `
+            -UseBasicParsing -ErrorAction SilentlyContinue
+        $location = $resp.Headers.Location
+    } catch {
+        # PowerShell can surface the 3xx as an exception; recover the Location.
+        $location = $_.Exception.Response.Headers.Location.ToString()
+    }
+    if ($location -and ($location -match '/tag/(v?[\d][^/\s]*)$')) {
+        return $Matches[1]
+    }
+    # API fallback.
+    try {
+        $api = Invoke-WebRequest -Uri "https://api.github.com/repos/$script:ArbitronRepo/releases/latest" `
+            -UseBasicParsing
+        $json = $api.Content | ConvertFrom-Json
+        if ($json.tag_name) { return $json.tag_name }
+    } catch {
+        Write-ArbitronLog -Level Warn -Message "Could not query the latest release tag: $($_.Exception.Message)"
+    }
+    return $null
+}
+
+# Get-ArbitronVersion resolves the release version to install. With
+# -Version/$env:ARBITRON_VERSION set it is used verbatim, normalized to NO
+# leading 'v' (accepts both '1.2.3' and 'v1.2.3'). Unset -> the latest release.
+# Throws (fail-closed) when no version can be determined.
+function Get-ArbitronVersion {
+    [CmdletBinding()]
+    param(
+        [string]$Version = $env:ARBITRON_VERSION
+    )
+    if ($Version) {
+        return ($Version -replace '^v', '')
+    }
+    $tag = Get-LatestReleaseTag
+    if (-not $tag) {
+        throw 'Could not resolve the latest Arbitron release version; pin one with -Version / $env:ARBITRON_VERSION.'
+    }
+    return ($tag -replace '^v', '')
+}
+
+# Get-ArtifactName -> arbitron_<version>_windows_<arch>.exe (this script is
+# Windows-only; the .exe suffix is always present).
+function Get-ArtifactName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$Arch
+    )
+    $v = $Version -replace '^v', ''
+    return "arbitron_${v}_windows_${Arch}.exe"
+}
+
+# Get-ArtifactUrl -> the pinned-tag download URL for the resolved version.
+function Get-ArtifactUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$Arch
+    )
+    $v = $Version -replace '^v', ''
+    $name = Get-ArtifactName -Version $v -Arch $Arch
+    return "https://github.com/$script:ArbitronRepo/releases/download/v$v/$name"
+}
+
+# --------------------------------------------------------------------------
+# The canonical FAIL-CLOSED verification contract (P5 Task 2)
+# --------------------------------------------------------------------------
+# Test-Download is the single gate every release artifact passes before it is
+# installed. It is MANDATORY and has NO bypass: any of { missing SHA256SUMS,
+# artifact not listed, hash mismatch } throws a terminating error AND removes the
+# partial download, so the install aborts before the binary is placed/executed.
+# Test-Signature is OPTIONAL defense-in-depth (cosign); its absence NEVER
+# bypasses the checksum gate.
+
+function Test-Download {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$SumsFile
+    )
+    if (-not (Test-Path -LiteralPath $SumsFile -PathType Leaf)) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw "Could not fetch/read SHA256SUMS ($SumsFile); refusing to install $Name."
+    }
+    $expected = $null
+    foreach ($line in (Get-Content -LiteralPath $SumsFile)) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -eq 2) {
+            $entry = $parts[1].Trim().TrimStart('*')
+            if ($entry -eq $Name) { $expected = $parts[0].Trim(); break }
+        }
+    }
+    if (-not $expected) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw "No checksum for $Name in SHA256SUMS; refusing to install."
+    }
+    if (-not (Test-Sha256 -Path $Path -ExpectedHash $expected)) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw "Checksum verification failed for $Name; aborting (no binary placed)."
+    }
+}
+
+# Test-CosignPresent is a mockable seam.
+function Test-CosignPresent {
+    [CmdletBinding()]
+    param()
+    return [bool](Get-Command -Name cosign -ErrorAction SilentlyContinue)
+}
+
+# Test-Signature OPTIONALLY verifies the SHA256SUMS cosign signature. Runs only
+# when cosign is present OR $env:ARBITRON_VERIFY_SIGNATURE='1'. When requested and
+# cosign fails it throws (fail-closed for the signature too). When cosign is
+# absent and not requested it logs a notice and returns (the checksum gate
+# already passed and is never bypassed here).
+function Test-Signature {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SumsFile,
+        [string]$SigFile = "$SumsFile.sig",
+        [string]$PemFile = "$SumsFile.pem"
+    )
+    $want = ($env:ARBITRON_VERIFY_SIGNATURE -eq '1')
+    if (-not (Test-CosignPresent)) {
+        if ($want) { throw 'ARBITRON_VERIFY_SIGNATURE=1 but cosign is not installed.' }
+        Write-ArbitronLog -Level Info -Message 'cosign not found; skipping optional signature check (checksum already verified).'
+        return
+    }
+    if (-not (Test-Path -LiteralPath $SigFile) -or -not (Test-Path -LiteralPath $PemFile)) {
+        if ($want) { throw "Signature verification requested but $SigFile / $PemFile is missing." }
+        Write-ArbitronLog -Level Info -Message 'No signature/cert alongside SHA256SUMS; skipping optional signature check.'
+        return
+    }
+    Write-ArbitronLog -Level Info -Message 'Verifying SHA256SUMS signature with cosign...'
+    & cosign verify-blob `
+        --certificate $PemFile `
+        --signature $SigFile `
+        --certificate-identity-regexp "https://github.com/$script:ArbitronRepo/.*" `
+        --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' `
+        $SumsFile 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'cosign signature verification FAILED for SHA256SUMS.'
+    }
+}
+
+# --------------------------------------------------------------------------
 # Dependency resolution
 # --------------------------------------------------------------------------
 # Ladder per dependency: present? -> winget -> bootstrap App Installer ->
@@ -1083,25 +1242,49 @@ function Get-ArbitronBinary {
         [Parameter(Mandatory)][string]$Version,
         [Parameter(Mandatory)][string]$Arch
     )
-    $artifact = "arbitron_${Version}_windows_${Arch}.exe"
-    $base = "https://github.com/$script:ArbitronRepo/releases/download/v$Version"
-    $binUri  = "$base/$artifact"
-    $sumsUri = "$base/SHA256SUMS"
+    # Resolve 'latest' (or any unresolved value) to a concrete release version so
+    # every download URL targets a real pinned tag.
+    $resolved = if (-not $Version -or $Version -eq 'latest') {
+        Get-ArbitronVersion
+    } else {
+        $Version -replace '^v', ''
+    }
+    $artifact = Get-ArtifactName -Version $resolved -Arch $Arch
+    $binUri   = Get-ArtifactUrl  -Version $resolved -Arch $Arch
+    $base     = "https://github.com/$script:ArbitronRepo/releases/download/v$resolved"
+    $sumsUri  = "$base/SHA256SUMS"
 
     if (-not (Test-Path -LiteralPath $Paths.Bin)) {
         New-Item -ItemType Directory -Path $Paths.Bin -Force | Out-Null
     }
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('arbitron_' + [guid]::NewGuid() + '.exe')
-    Write-ArbitronLog -Level Info -Message "Downloading $artifact ..."
-    Invoke-ArbitronDownload -Uri $binUri -OutFile $tmp
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ('arbitron_' + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+    $tmpBin  = Join-Path $tmpDir $artifact
+    $tmpSums = Join-Path $tmpDir 'SHA256SUMS'
     try {
-        $expected = Get-Sha256ForArtifact -SumsUri $sumsUri -ArtifactName $artifact
-        if (-not (Test-Sha256 -Path $tmp -ExpectedHash $expected)) {
-            throw "Binary checksum verification failed; aborting (no binary placed)."
+        # Fetch SHA256SUMS (+ optional cosign material) BEFORE trusting the binary.
+        Invoke-ArbitronDownload -Uri $sumsUri -OutFile $tmpSums
+        foreach ($ext in @('sig', 'pem')) {
+            try {
+                Invoke-ArbitronDownload -Uri "$sumsUri.$ext" -OutFile "$tmpSums.$ext"
+            } catch {
+                # Best-effort: the cosign material is optional. Test-Signature
+                # decides whether its absence is fatal (only when explicitly
+                # requested); it NEVER bypasses the mandatory checksum gate.
+                Write-Verbose "No SHA256SUMS.$ext available: $($_.Exception.Message)"
+            }
         }
-        Move-Item -LiteralPath $tmp -Destination $Paths.BinaryExe -Force
+        Write-ArbitronLog -Level Info -Message "Downloading $artifact ..."
+        Invoke-ArbitronDownload -Uri $binUri -OutFile $tmpBin
+
+        # Mandatory fail-closed gate, then optional signature, BEFORE placement.
+        Test-Download -Path $tmpBin -Name $artifact -SumsFile $tmpSums
+        Test-Signature -SumsFile $tmpSums
+        Move-Item -LiteralPath $tmpBin -Destination $Paths.BinaryExe -Force
     } finally {
-        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $tmpDir) {
+            Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 

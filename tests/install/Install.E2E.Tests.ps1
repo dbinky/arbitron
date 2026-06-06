@@ -28,6 +28,11 @@ BeforeAll {
         }
         Mock -CommandName Test-Sha256 -MockWith { $true }
         Mock -CommandName Get-Sha256ForArtifact -MockWith { 'FAKEHASH' }
+        # P5 Task 2: the binary download now flows through the canonical
+        # fail-closed verifier (Test-Download) + optional signature step.
+        Mock -CommandName Test-Download -MockWith { }
+        Mock -CommandName Test-Signature -MockWith { }
+        Mock -CommandName Get-ArbitronVersion -MockWith { '1.2.3' }
         Mock -CommandName New-ScheduledTaskAction -MockWith { [pscustomobject]@{ k = 'action' } }
         Mock -CommandName New-ScheduledTaskTrigger -MockWith { [pscustomobject]@{ k = 'trigger' } }
         Mock -CommandName New-ScheduledTaskPrincipal -MockWith { [pscustomobject]@{ k = 'principal' } }
@@ -67,8 +72,8 @@ Describe 'E2E fresh install (subscription)' {
 
         # winget invoked for missing deps (node/git/gh at least).
         Should -Invoke Invoke-Winget -Times 1
-        # binary downloaded + verified before placement.
-        Should -Invoke Test-Sha256 -Times 1
+        # binary downloaded + verified (fail-closed gate) before placement.
+        Should -Invoke Test-Download -Times 1
         Test-Path $paths.BinaryExe | Should -BeTrue
         # scheduled task registered once, at-logon, with serve --config.
         Should -Invoke Register-ScheduledTask -Times 1 -Exactly -ParameterFilter { $TaskName -eq 'Arbitron' }
