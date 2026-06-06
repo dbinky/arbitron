@@ -78,19 +78,28 @@ func sweepExpiredDeviceCodes(ctx context.Context, svc *identity.DeviceCodeServic
 }
 
 func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCmd builds the root command with its subcommands and the persistent
+// --config flag. Factored out of main() so tests can inspect it.
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "arbitron",
 		Short: "Arbitron workflow orchestration engine",
 		Long:  "Arbitron is a Go-based workflow orchestration engine with hexagonal architecture.",
 	}
 
+	rootCmd.PersistentFlags().String("config", "",
+		"path to config.yaml (overrides ARBITRON_CONFIG and the default ~/.arbitron/config.yaml)")
+
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newMCPCmd())
 	rootCmd.AddCommand(newConnectionCmd())
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
 
 func newServeCmd() *cobra.Command {
@@ -221,14 +230,8 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 // initDomain performs all shared initialisation: configuration, logging,
 // database, adapters, engine, queue manager, notifications, tracing, and
 // crash recovery. The returned domainStack must be closed by the caller.
-func initDomain(_ context.Context) (*domainStack, error) {
-	// 1. Load configuration.
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("determining home directory: %w", err)
-	}
-	configPath := filepath.Join(homeDir, ".arbitron", "config.yaml")
-
+func initDomain(_ context.Context, configPath string) (*domainStack, error) {
+	// 1. Load configuration from the resolved path.
 	slog.Info("loading configuration", "path", configPath)
 	cfg, err := configadapter.Load(configPath)
 	if err != nil {
@@ -719,7 +722,11 @@ func initDomain(_ context.Context) (*domainStack, error) {
 func runServe(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	ds, err := initDomain(ctx)
+	configPath, err := configPathFromCmd(cmd)
+	if err != nil {
+		return err
+	}
+	ds, err := initDomain(ctx, configPath)
 	if err != nil {
 		return err
 	}
@@ -794,6 +801,12 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	tlsConf, challengeSrv, err := buildTLSConfig(ds.cfg.Server.TLS, ds.logger)
+	if err != nil {
+		return fmt.Errorf("configuring TLS: %w", err)
+	}
+	srv.TLSConfig = tlsConf
+
 	// 17. Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM)
@@ -813,44 +826,34 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		}()
 	}
 
-	errCh := make(chan error, 1)
+	// Translate the OS signal into a stop channel for the serve loop, and cancel
+	// the MCP stdio context when shutdown begins so it stops accepting requests.
+	stop := make(chan struct{})
 	go func() {
-		ds.logger.Info("server starting", "addr", addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("server error: %w", err)
+		select {
+		case sig := <-shutdownCh:
+			ds.logger.Info("shutdown signal received", "signal", sig)
+		case <-ctx.Done():
 		}
-		close(errCh)
+		mcpCancel()
+		close(stop)
 	}()
 
-	select {
-	case sig := <-shutdownCh:
-		ds.logger.Info("shutdown signal received", "signal", sig)
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-	}
-
-	// Cancel the MCP stdio context so it stops accepting new requests.
-	mcpCancel()
-
-	// 18. Shutdown with a 15-second deadline.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	ds.logger.Info("shutting down server")
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
-	}
-
-	ds.logger.Info("server stopped gracefully")
-	return nil
+	// serveHTTP owns the symmetric two-listener lifecycle: the main server and
+	// the optional ACME challenge server are started together, both push serve
+	// errors to a shared channel (so a non-root :80 bind failure aborts startup),
+	// and both are shut down together.
+	return serveHTTP(ctx, ds.logger, srv, challengeSrv, stop)
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	ds, err := initDomain(ctx)
+	configPath, err := configPathFromCmd(cmd)
+	if err != nil {
+		return err
+	}
+	ds, err := initDomain(ctx, configPath)
 	if err != nil {
 		return err
 	}

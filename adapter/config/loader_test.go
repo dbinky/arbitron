@@ -451,7 +451,6 @@ func TestLoad_ScriptEnvPassthrough_AllEmptyEntriesDropped(t *testing.T) {
 		"whitespace-only/comma-only passthrough must produce an empty slice, not empty strings")
 }
 
-
 // SECURITY: a non-positive llm.timeoutseconds is floored at config load to the
 // sane default so a misconfigured 0 cannot silently disable every per-call
 // deadline (a hang-forever DoS on the credential-bearing HTTP adapters and the
@@ -463,18 +462,18 @@ func TestLoad_TimeoutSecondsFloor(t *testing.T) {
 		wantSec int
 	}{
 		{
-			name: "zero is floored to the default",
-			yaml: "llm:\n  timeoutseconds: 0\n",
+			name:    "zero is floored to the default",
+			yaml:    "llm:\n  timeoutseconds: 0\n",
 			wantSec: adapterconfig.DefaultTimeoutSeconds,
 		},
 		{
-			name: "negative is floored to the default",
-			yaml: "llm:\n  timeoutseconds: -5\n",
+			name:    "negative is floored to the default",
+			yaml:    "llm:\n  timeoutseconds: -5\n",
 			wantSec: adapterconfig.DefaultTimeoutSeconds,
 		},
 		{
-			name: "a positive value is preserved",
-			yaml: "llm:\n  timeoutseconds: 90\n",
+			name:    "a positive value is preserved",
+			yaml:    "llm:\n  timeoutseconds: 90\n",
 			wantSec: 90,
 		},
 	} {
@@ -1021,6 +1020,133 @@ auth:
 	require.NoError(t, err, "local mode must not validate or require OIDC config")
 	require.NotNil(t, cfg)
 	assert.Equal(t, "local", cfg.Auth.Mode)
+}
+
+// writeConfigFile writes YAML to a temp config path and returns it.
+func writeConfigFile(t *testing.T, yaml string) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(yaml), 0600))
+	return p
+}
+
+func TestLoad_TLSValidation(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "disabled is ok",
+			yaml: "server:\n  tls:\n    enabled: false\n",
+		},
+		{
+			name: "cert and key ok",
+			yaml: "server:\n  tls:\n    enabled: true\n    certfile: /etc/a/cert.pem\n    keyfile: /etc/a/key.pem\n",
+		},
+		{
+			name:    "only certfile is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n    certfile: /etc/a/cert.pem\n",
+			wantErr: "certfile and keyfile",
+		},
+		{
+			name: "autocert with cache dir ok",
+			yaml: "server:\n  port: 443\n  tls:\n    enabled: true\n    autocertdomain: a.example\n    autocertcachedir: /var/lib/arbitron/acme\n",
+		},
+		{
+			name:    "autocert without cache dir is an error",
+			yaml:    "server:\n  port: 443\n  tls:\n    enabled: true\n    autocertdomain: a.example\n",
+			wantErr: "autocertcachedir",
+		},
+		{
+			name:    "cert and autocert together is an error",
+			yaml:    "server:\n  port: 443\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n    autocertdomain: a.example\n    autocertcachedir: /cache\n",
+			wantErr: "either",
+		},
+		{
+			name:    "enabled with nothing is an error",
+			yaml:    "server:\n  tls:\n    enabled: true\n",
+			wantErr: "requires",
+		},
+		{
+			name:    "autocert on non-443 port is an error",
+			yaml:    "server:\n  port: 8443\n  tls:\n    enabled: true\n    autocertdomain: a.example\n    autocertcachedir: /cache\n",
+			wantErr: "443",
+		},
+		{
+			name: "autocert on port 443 is ok",
+			yaml: "server:\n  port: 443\n  tls:\n    enabled: true\n    autocertdomain: a.example\n    autocertcachedir: /cache\n",
+		},
+		{
+			name: "cert/key on a non-443 port is ok (port stays free)",
+			yaml: "server:\n  port: 8443\n  tls:\n    enabled: true\n    certfile: /etc/a/cert.pem\n    keyfile: /etc/a/key.pem\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adapterconfig.Load(writeConfigFile(t, tc.yaml))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestLoad_TLSLocalModePublicHost asserts the fail-fast guard against the
+// highest-risk misconfiguration: local mode (no authentication) serving direct
+// TLS on a non-loopback host. A real cert and a green padlock would otherwise
+// front a fully unauthenticated admin API. The combination is rejected unless
+// the operator opts in via the explicit escape hatch.
+func TestLoad_TLSLocalModePublicHost(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "local mode + tls on public host is rejected",
+			yaml:    "server:\n  host: 0.0.0.0\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n",
+			wantErr: "local mode",
+		},
+		{
+			name: "local mode + tls on loopback is ok",
+			yaml: "server:\n  host: 127.0.0.1\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n",
+		},
+		{
+			name: "local mode + tls on localhost is ok",
+			yaml: "server:\n  host: localhost\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n",
+		},
+		{
+			name: "org mode + tls on public host is ok (authenticated)",
+			yaml: "server:\n  host: 0.0.0.0\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n" +
+				"auth:\n  mode: org\n  oidc:\n    issuerurl: https://i.example\n    clientid: cid\n    clientsecret: sec\n    redirecturl: https://i.example/auth/callback\n",
+		},
+		{
+			name: "local mode + tls on public host with escape hatch is ok",
+			yaml: "server:\n  host: 0.0.0.0\n  tls:\n    enabled: true\n    certfile: /c\n    keyfile: /k\n    allowunauthenticated: true\n",
+		},
+		{
+			name: "local mode + plain http on public host is not a tls error",
+			yaml: "server:\n  host: 0.0.0.0\n  tls:\n    enabled: false\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := adapterconfig.Load(writeConfigFile(t, tc.yaml))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
 }
 
 // TestLoad_CreatedConfigFile_HasRestrictivePermissions verifies that the
