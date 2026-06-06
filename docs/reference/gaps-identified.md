@@ -24,6 +24,7 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 - **BEDROCK-parseConverseEvent-coverage** (Area 4 Pass 1): `parseConverseEvent` was missing direct tests for the blank/whitespace-only input (edge) and malformed JSON (error) paths. Added `TestParseConverseEvent_BlankLine` and `TestParseConverseEvent_MalformedJSON` to `response_test.go`.
 - **BEDROCK-002** (Area 4 Pass 1): Two untested error paths in `provider.go` — `StreamChat` non-2xx status (error delivered via channel) and `signedRequest` RevealKey-returns-error. Fixed by adding `TestStreamChat_NonOKStatusDeliveredViaChannel` and `TestChat_RevealKeyError` to `provider_test.go`.
+- **BEDROCK-scrubControl** (Area 4 Pass 2): `scrubControl` security function had no direct unit test. Added `TestScrubControl` to `provider_test.go` with 13 cases covering empty, printable ASCII, all control-char variants (0x00–0x1F, 0x7F), and valid UTF-8 multibyte preservation.
 
 ## Won't Fix (Beyond Current Scope)
 

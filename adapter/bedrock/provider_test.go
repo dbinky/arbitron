@@ -296,3 +296,33 @@ func TestStreamChat_MalformedEventError(t *testing.T) {
 		t.Fatal("expected a mid-stream ChatChunk{Error} for malformed JSON")
 	}
 }
+
+// security: scrubControl prevents a hostile upstream error body from injecting
+// control characters (newlines, CR, terminal escapes) into structured log output.
+func TestScrubControl(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+		desc  string
+	}{
+		{"", "", "empty string unchanged"},
+		{"hello world", "hello world", "printable ASCII preserved"},
+		{"a\x00b", "a b", "NUL (0x00) → space"},
+		{"a\tb", "a b", "TAB (0x09) → space"},
+		{"a\nb", "a b", "LF (0x0A) → space"},
+		{"a\rb", "a b", "CR (0x0D) → space"},
+		{"a\x1bb", "a b", "ESC (0x1B) → space"},
+		{"a\x7fb", "a b", "DEL (0x7F) → space"},
+		{"\x00\t\n\r\x1b\x7f", "      ", "sequence of control chars all → space"},
+		{"café", "café", "valid UTF-8 multibyte preserved"},
+		{"你好世界", "你好世界", "CJK runes preserved"},
+		{"a\x1fb", "a b", "0x1F (unit sep) → space"},
+		{"a b", "a b", "0x20 (space) preserved as-is"},
+	}
+	for _, c := range cases {
+		got := scrubControl(c.input)
+		if got != c.want {
+			t.Errorf("scrubControl(%q) = %q, want %q (%s)", c.input, got, c.want, c.desc)
+		}
+	}
+}
