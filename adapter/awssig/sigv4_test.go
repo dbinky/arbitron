@@ -182,3 +182,16 @@ func TestCanonicalQueryString_MultiKey(t *testing.T) {
 		t.Errorf("canonicalQueryString = %q, want %q", got, want)
 	}
 }
+
+// edge: spaces in query keys/values must be encoded as "%20" (RFC 3986), not "+"
+// (HTML form encoding). The SigV4 spec explicitly prohibits "+" for space.
+func TestCanonicalQueryString_SpaceEncodedAsPercent20(t *testing.T) {
+	q := map[string][]string{
+		"my key": {"hello world"},
+	}
+	got := canonicalQueryString(q)
+	const want = "my%20key=hello%20world"
+	if got != want {
+		t.Errorf("canonicalQueryString = %q, want %q (spaces must be %%20, not +)", got, want)
+	}
+}

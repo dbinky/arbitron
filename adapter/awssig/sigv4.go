@@ -104,8 +104,15 @@ func Sign(req *http.Request, payload []byte, accessKeyID string, cred Credential
 	return nil
 }
 
+// sigv4Escape percent-encodes s per RFC 3986 as required by SigV4. It differs
+// from url.QueryEscape in one critical way: spaces become "%20" not "+".
+func sigv4Escape(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
 // canonicalQueryString builds the SigV4 canonical query: keys sorted, each value
-// URL-encoded, joined by '&'. Bedrock Converse has none, so this is usually "".
+// RFC 3986–encoded (spaces as %20, never +), joined by '&'.
+// Bedrock Converse has no query params, so this returns "" in normal usage.
 func canonicalQueryString(q url.Values) string {
 	if len(q) == 0 {
 		return ""
@@ -120,7 +127,7 @@ func canonicalQueryString(q url.Values) string {
 		vals := append([]string(nil), q[k]...)
 		sort.Strings(vals)
 		for _, v := range vals {
-			parts = append(parts, url.QueryEscape(k)+"="+url.QueryEscape(v))
+			parts = append(parts, sigv4Escape(k)+"="+sigv4Escape(v))
 		}
 	}
 	return strings.Join(parts, "&")

@@ -13,7 +13,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | awssig SigV4 signer (`adapter/awssig/sigv4.go` — canonical request, string-to-sign, signing-key, injectable clock, golden signature, X-Amz-Security-Token) | [x] | [ ] | |
+| 1 | awssig SigV4 signer (`adapter/awssig/sigv4.go` — canonical request, string-to-sign, signing-key, injectable clock, golden signature, X-Amz-Security-Token) | [x] | [x] | Done |
 | 2 | awssig sealed credentials (`adapter/awssig/credentials.go` — ParseCredential bare/JSON-composite, BuildCredential round-trip, ErrMissingSecret, no-leak) | [ ] | [ ] | |
 | 3 | anthropicapi chat adapter (`adapter/anthropicapi/{provider,request,response}.go` — /v1/messages, x-api-key fail-closed, max_tokens default, forced-tool structured output, SSE StreamChat) | [ ] | [ ] | |
 | 4 | bedrock chat adapter (`adapter/bedrock/{provider,endpoint,request,response}.go` — Converse, regional endpoint derivation, signing via awssig, streaming, guards before reveal) | [ ] | [ ] | |
