@@ -141,6 +141,14 @@ type TLSConfig struct {
 	// exclusive with CertFile/KeyFile. Requires AutocertCacheDir for cert storage.
 	AutocertDomain   string
 	AutocertCacheDir string
+	// AllowUnauthenticated is the explicit escape hatch for serving direct TLS in
+	// local mode (which has NO authentication — a fixed auto-admin) on a
+	// non-loopback host. That combination is rejected at load by default because
+	// a real cert and a green padlock would otherwise front a fully
+	// unauthenticated admin API reachable by an unauthenticated GET. Set true
+	// only for a genuinely trusted internal network where the operator
+	// understands the API is unauthenticated.
+	AllowUnauthenticated bool
 }
 
 // TeamsConfig holds the single global Microsoft Teams webhook settings.

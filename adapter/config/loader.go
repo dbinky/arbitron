@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,14 +42,14 @@ func defaults() map[string]interface{} {
 		// SECURITY: 256 MB per-request stdout cap; bounds the OOM DoS from
 		// hostile prompts that flood tool output. See PR #8 security thread
 		// 3291941918.
-		"llm.maxresponsebytes":  int64(256 * 1024 * 1024),
-		"logging.level":         "info",
-		"logging.file":          "arbitron.log",
-		"tracing.enabled":       false,
-		"tracing.exportdir":     "./traces",
-		"queue.globalcap":       20,
-		"queue.perusercap":      5,
-		"script.envpassthrough": []string{},
+		"llm.maxresponsebytes":        int64(256 * 1024 * 1024),
+		"logging.level":               "info",
+		"logging.file":                "arbitron.log",
+		"tracing.enabled":             false,
+		"tracing.exportdir":           "./traces",
+		"queue.globalcap":             20,
+		"queue.perusercap":            5,
+		"script.envpassthrough":       []string{},
 		"server.tls.enabled":          false,
 		"server.tls.certfile":         "",
 		"server.tls.keyfile":          "",
@@ -464,7 +465,38 @@ func validateTLS(cfg *domainconfig.Config) error {
 	if hasAutocert && t.AutocertCacheDir == "" {
 		return fmt.Errorf("server.tls autocertdomain requires autocertcachedir")
 	}
+	// Autocert provisions its certificate over the ACME tls-alpn-01/HTTP-01 flow
+	// and Let's Encrypt only validates the cert against the standard HTTPS port;
+	// serving on any other port provisions a cert but leaves the server silently
+	// unreachable. Cert/key and disabled modes leave the port free.
+	if hasAutocert && cfg.Server.Port != 443 {
+		return fmt.Errorf("server.tls autocertdomain requires server.port 443 (got %d); autocert provisions for the standard HTTPS port and any other port leaves the server unreachable", cfg.Server.Port)
+	}
+	// Local mode has NO authentication (a fixed auto-admin). Direct TLS on a
+	// non-loopback host fronts a fully unauthenticated admin API behind a
+	// legitimate-looking padlock — the exploit path is an unauthenticated GET.
+	// Fail fast unless the operator explicitly opts in via AllowUnauthenticated.
+	if cfg.Auth.Mode == domainconfig.AuthModeLocal && !t.AllowUnauthenticated && !isLoopbackHost(cfg.Server.Host) {
+		return fmt.Errorf("server.tls.enabled with auth.mode=local (local mode has no authentication) on non-loopback host %q exposes an unauthenticated admin API behind TLS; bind to a loopback address, use auth.mode=org, or set server.tls.allowunauthenticated=true to override", cfg.Server.Host)
+	}
 	return nil
+}
+
+// isLoopbackHost reports whether host is a loopback bind address. It accepts the
+// "localhost" alias and any loopback IP literal (127.0.0.0/8, ::1); an empty
+// host (bind all interfaces) is treated as non-loopback.
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" {
+		return false
+	}
+	if h == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // splitCSV splits a comma-separated list, trimming spaces and dropping empties.
