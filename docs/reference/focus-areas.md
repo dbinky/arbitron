@@ -18,7 +18,7 @@ A review pass is only checked when the checklist (in `RALPH.md`) produces a pass
 | 3 | anthropicapi chat adapter (`adapter/anthropicapi/{provider,request,response}.go` — /v1/messages, x-api-key fail-closed, max_tokens default, forced-tool structured output, SSE StreamChat) | [x] | [x] | Done |
 | 4 | bedrock chat adapter (`adapter/bedrock/{provider,endpoint,request,response}.go` — Converse, regional endpoint derivation, signing via awssig, streaming, guards before reveal) | [x] | [x] | Done |
 | 5 | Factory chat routing (`adapter/provider/factory.go` — openai/ollama/anthropic-api/bedrock arms, provider normalization, ErrUnknownProvider, Deps wiring) | [x] | [x] | Done |
-| 6 | opencode args + provider-id + posture (`adapter/opencode/{args,provider_id,posture}.go` — run -m contract, model de-prefix, ToolScope/AllowedTools precedence, open-by-default) | [ ] | [ ] | |
+| 6 | opencode args + provider-id + posture (`adapter/opencode/{args,provider_id,posture}.go` — run -m contract, model de-prefix, ToolScope/AllowedTools precedence, open-by-default) | [x] | [ ] | |
 | 7 | opencode env + run + version probe (`adapter/opencode/{env,env_providers,version,provider}.go` — auth-env table, bedrock AWS quartet via awssig, keyless allowlist, no-partial-env, fail-closed) | [ ] | [ ] | |
 | 8 | probe adapters (`adapter/probe/*.go` — OpenAI-compat /models, ollama /api/tags fallback, anthropic /v1/models, bedrock ListFoundationModels, claude-cli reachability, error classification) | [ ] | [ ] | |
 | 9 | ConnectionProbe domain port (`domain/provider/probe.go` — ConnectionProbe, ProbeResult, ProbeSelector, ErrNoProbeForProvider; dispatch on Provider only) | [ ] | [ ] | |

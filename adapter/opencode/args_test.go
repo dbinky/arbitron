@@ -212,6 +212,26 @@ func TestBuildArgs_MissionToolScopeNarrows(t *testing.T) {
 	assert.Equal(t, "Read", tools)
 }
 
+// PRECEDENCE — mission.ToolScope wins over posture.AllowedTools when both are
+// set. The per-request scope (knob c) always overrides the per-profile restriction
+// (knob b), matching the claudecli ToolScope-over-global precedence.
+func TestBuildArgs_MissionToolScopeWinsOverProfileAllowlist(t *testing.T) {
+	b := bindingForArgs("anthropic", "anthropic/m", []string{"Read"}) // profile: only Read
+	posture := buildPosture(b, false)                                  // => AllowedTools=["Read"]
+	args, err := buildArgs(
+		engine.AgentMission{Prompt: "x", WorkDir: "/ws", ToolScope: []string{"Read", "Write", "BashTool"}},
+		b,
+		posture,
+	)
+	require.NoError(t, err)
+	tools, ok := argValue(args, toolScopeFlag)
+	require.True(t, ok, "tool-scope flag must be present when mission.ToolScope is set")
+	// Mission scope has 3 tools; if profile won we would see only "Read".
+	assert.Equal(t, "Read,Write,BashTool", tools,
+		"mission.ToolScope must win over posture.AllowedTools when both are non-empty")
+	assert.NotContains(t, strings.Join(args, " "), permissionAllowAllFlag)
+}
+
 // EDGE-CASE — config-disabled allow-all with no allowlist emits neither the
 // allow-all flag nor a tool-scope flag (opencode's own default permissioning applies).
 func TestBuildArgs_NoAllowAllNoAllowlist(t *testing.T) {
