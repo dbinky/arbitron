@@ -44,6 +44,10 @@ type Config struct {
 }
 
 // Provider implements engine.ChatProvider by POSTing to {base-url}/v1/messages.
+//
+// TIER: chat-only. This native HTTP adapter is reachable solely via the
+// Factory's ChatProviderFor; the agent tier routes anthropic-api through
+// adapter/opencode (the ANTHROPIC_API_KEY subprocess env), not through here.
 type Provider struct {
 	binding          provider.ResolvedBinding
 	httpClient       *http.Client

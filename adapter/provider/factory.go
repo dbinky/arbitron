@@ -86,6 +86,16 @@ type Deps struct {
 // per resolved binding. It implements engine.ChatProviderSelector and
 // engine.AgentProviderSelector, so the executors depend on the domain selector
 // ports and never import these adapter packages.
+//
+// INVARIANT (tier routing): the native HTTP adapters (openrouter/azurefoundry/
+// anthropicapi/bedrock) are CHAT-TIER ONLY — they are reachable only through
+// ChatProviderFor. The AGENT tier routes EVERY non-claude provider to
+// adapter/opencode (AgentProviderFor's default arm); there is no native-HTTP
+// agent adapter. So a provider's chat credentials/env (e.g. the x-api-key or the
+// SigV4 quartet) flow through the HTTP adapter on the chat path but through
+// opencode's subprocess env on the agent path — the two paths must agree on the
+// provider vocabulary (see domprovider.Canonicalize), which is why an env/-m
+// mismatch in opencode is a live bug rather than a dead branch.
 type Factory struct {
 	deps Deps
 }

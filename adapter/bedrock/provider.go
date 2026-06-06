@@ -51,6 +51,10 @@ type Config struct {
 
 // Provider implements engine.ChatProvider by POSTing a SigV4-signed Converse
 // request to the derived regional bedrock-runtime endpoint.
+//
+// TIER: chat-only. This native HTTP adapter is reachable solely via the
+// Factory's ChatProviderFor; the agent tier routes bedrock through
+// adapter/opencode (the AWS-quartet subprocess env), not through here.
 type Provider struct {
 	binding          provider.ResolvedBinding
 	httpClient       *http.Client
