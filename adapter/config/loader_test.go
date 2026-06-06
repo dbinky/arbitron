@@ -94,6 +94,42 @@ func TestLoad_AgentAllowAllToolsOverrideFalse(t *testing.T) {
 	assert.False(t, cfg.LLM.AgentAllowAllTools, "explicit false must disable the allow-all agent posture")
 }
 
+// Edge: ARBITRON_LLM_AGENTALLOWALLTOOLS=false lets an operator tighten the
+// open-by-default posture at deployment time without touching the config file
+// (the primary zero-touch path for containerized / 12-factor deployments).
+// The env provider maps ARBITRON_LLM_AGENTALLOWALLTOOLS → llm.agentallowalltools.
+func TestLoad_AgentAllowAllTools_EnvVarDisables(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_AGENTALLOWALLTOOLS", "false")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools,
+		"ARBITRON_LLM_AGENTALLOWALLTOOLS=false must disable the open-by-default agent posture")
+}
+
+// Success: env var override of agentallowalltools takes precedence over YAML true.
+// An operator can harden a deployment without modifying the checked-in config file.
+func TestLoad_AgentAllowAllTools_EnvVarWinsOverYAMLTrue(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ARBITRON_LLM_AGENTALLOWALLTOOLS", "false")
+
+	// YAML says true, env says false — env must win (highest precedence).
+	yamlContent := "llm:\n  agentallowalltools: true\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0644))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.LLM.AgentAllowAllTools,
+		"env ARBITRON_LLM_AGENTALLOWALLTOOLS=false must win over YAML agentallowalltools: true")
+}
+
 func TestLoad_YAMLOverride(t *testing.T) {
 	// A YAML config file should override default values.
 	tmpDir := t.TempDir()
