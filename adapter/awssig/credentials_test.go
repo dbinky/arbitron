@@ -121,3 +121,19 @@ func TestParseCredential_BareStringVerbatim(t *testing.T) {
 		t.Errorf("SecretAccessKey = %q, want verbatim %q", got.SecretAccessKey, withSpaces)
 	}
 }
+
+// security/edge: BuildCredential is not defensive — callers must not pass an
+// empty secret. If they do, ParseCredential correctly rejects the resulting
+// blob with ErrMissingSecret (defense in depth prevents empty-secret credentials
+// from ever reaching the AWS signing path).
+func TestBuildCredential_EmptySecretRoundTripRejects(t *testing.T) {
+	// Bare form: BuildCredential("","") → "" → ParseCredential("") → ErrMissingSecret.
+	if _, err := ParseCredential(BuildCredential("", "")); !errors.Is(err, ErrMissingSecret) {
+		t.Errorf("bare empty round-trip: err=%v, want ErrMissingSecret", err)
+	}
+	// Composite form: BuildCredential("","tok") → JSON with empty secret →
+	// ParseCredential → ErrMissingSecret.
+	if _, err := ParseCredential(BuildCredential("", "tok")); !errors.Is(err, ErrMissingSecret) {
+		t.Errorf("composite empty-secret round-trip: err=%v, want ErrMissingSecret", err)
+	}
+}
