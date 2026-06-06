@@ -342,6 +342,18 @@ func TestOpencodeEnv_UnknownProvider(t *testing.T) {
 	}
 }
 
+// SECURITY — control chars in a provider string must be %q-escaped in the env
+// error so they never reach logs as raw bytes (same property as buildArgs / factory).
+func TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
+	b := bindingWithKey("foo\nmalicious", "https://x", "sentinel", nil)
+	_, err := opencodeEnv(context.Background(), b)
+	require.ErrorIs(t, err, ErrUnknownProvider)
+	assert.NotContains(t, err.Error(), "\n",
+		"raw newline must not appear in the error message")
+	assert.Contains(t, err.Error(), `\n`,
+		"escaped \\n should appear via %q-quoted provider string")
+}
+
 // Edge case — empty BaseURL still injects the key var; the base-url var is
 // omitted (not set to empty), so opencode falls back to its own default.
 func TestOpencodeEnv_EmptyBaseURL(t *testing.T) {
