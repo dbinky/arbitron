@@ -78,5 +78,38 @@ func TestVersionCommand_HonorsOutputStream(t *testing.T) {
 	assert.Contains(t, out.String(), version)
 }
 
+// Format contract: the output of versionString() must follow the exact pattern
+// "arbitron VERSION (commit COMMIT, built DATE)" so that upgrade scripts can
+// extract the version field with a consistent grep/sed without knowing the
+// exact sentinel values.
+func TestVersionString_Format(t *testing.T) {
+	got := versionString()
+	// Pattern: starts with "arbitron ", then a non-space token (the version),
+	// then " (commit ", then a non-space token (the commit hash),
+	// then ", built ", then a non-space token (the date), then ")".
+	assert.Regexp(t, `^arbitron \S+ \(commit \S+, built \S+\)$`, strings.TrimSpace(got),
+		"versionString format must be stable for upgrade script parsing")
+}
+
+// Parity: the version subcommand and --version flag must produce identical
+// output because both surfaces use the same versionString() call via
+// SetVersionTemplate.
+func TestVersionCommand_And_FlagProduceSameOutput(t *testing.T) {
+	root1 := newRootCmd()
+	var out1 bytes.Buffer
+	root1.SetOut(&out1)
+	root1.SetArgs([]string{"version"})
+	require.NoError(t, root1.Execute())
+
+	root2 := newRootCmd()
+	var out2 bytes.Buffer
+	root2.SetOut(&out2)
+	root2.SetArgs([]string{"--version"})
+	require.NoError(t, root2.Execute())
+
+	assert.Equal(t, strings.TrimSpace(out1.String()), strings.TrimSpace(out2.String()),
+		"'version' subcommand and '--version' flag must print identical text")
+}
+
 // Compile-time guard: newVersionCmd returns a *cobra.Command.
 var _ = func() *cobra.Command { return newVersionCmd() }
