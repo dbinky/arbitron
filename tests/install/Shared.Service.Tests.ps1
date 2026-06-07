@@ -152,6 +152,20 @@ Describe 'Invoke-SharedReconfigure' {
         Should -Invoke New-MasterKey -Times 0 -Exactly
         Should -Invoke Restart-Service -Times 1 -Exactly
     }
+
+    It 'stores ARBITRON_AUTH_OIDC_CLIENTSECRET via DpapiMachine when switching to OIDC mode' {
+        # Switching to OIDC during reconfigure must persist the client secret.
+        # Without the test, a code path error would leave mode:org in config.yaml
+        # but no ARBITRON_AUTH_OIDC_CLIENTSECRET in DPAPI -- a silently broken reconfigure.
+        Mock -CommandName Invoke-SharedConfigQA -MockWith {
+            @{ Port = 8080; Host = '0.0.0.0'; AuthMode = 'org'
+               OidcClientSecret = 'top-secret-value'
+               TlsEnabled = $false; SkipPermissions = $false; DataDir = $script:p.Data; LlmMode = 'subscription' }
+        }
+        Invoke-SharedReconfigure -Paths $script:p -Arch amd64
+        Should -Invoke Set-ArbitronSecret -Times 1 -Exactly `
+            -ParameterFilter { $Name -eq 'ARBITRON_AUTH_OIDC_CLIENTSECRET' -and $Value -eq 'top-secret-value' -and $Method -eq 'DpapiMachine' }
+    }
 }
 
 Describe 'Invoke-SharedUninstall' {
