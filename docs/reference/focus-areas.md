@@ -45,7 +45,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 23 | install.sh shared + install.ps1 shared (parity of the shared auth/TLS/OIDC question set and the P0 invariant guards) | [x] | Done |
 | 24 | Fail-closed verification + Release machinery (the `SHA256SUMS`/cosign the workflow produces are exactly what the scripts consume; naming + format match) | [x] | Done |
 | 25 | Hosting/version selection + version subcommand (`releases/latest`/`ARBITRON_VERSION` resolution vs the binary's stamped `arbitron version`; upgrade comparison degrades gracefully) | [x] | Done |
-| 26 | Shared config Q&A + Secrets handling (OIDC client secret + master key route to the env file/DPAPI via `ARBITRON_AUTH_OIDC_CLIENTSECRET`, never into config.yaml) | [ ] | |
+| 26 | Shared config Q&A + Secrets handling (OIDC client secret + master key route to the env file/DPAPI via `ARBITRON_AUTH_OIDC_CLIENTSECRET`, never into config.yaml) | [x] | Done |
 | 27 | install.ps1 shared service + Go windows/svc (the registered service runs the service-aware binary; BinaryPathName + serve `--config` contract matches the SCM dispatch) | [ ] | |
 | 28 | Shared config Q&A + P0 TLS invariants (installer prompt guards exactly mirror the loader's fail-fast: cert XOR autocert, autocert⇒443, local+TLS+non-loopback⇒allowunauthenticated) | [ ] | |
 | 29 | Documentation + scripts (every documented command/path/Q&A/service in `docs/install/` matches actual script behavior; `docs_commands.bats` covers the URLs) | [ ] | |

@@ -904,6 +904,21 @@ function Remove-ArbitronSecret {
     if (Test-Path -LiteralPath $blob) { Remove-Item -LiteralPath $blob -Force }
 }
 
+function Set-ArbitronServiceEnvironment {
+    # Writes key=value pairs into the Windows Service's registry environment
+    # (HKLM:\SYSTEM\CurrentControlSet\Services\<name> Environment REG_MULTI_SZ).
+    # The SCM reads this value at Start-Service and injects the entries into the
+    # service process environment -- the Windows-native equivalent of systemd's
+    # EnvironmentFile=. Call BEFORE Start-Service so the service boots with its
+    # full environment. Secret values are never logged.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Secrets)
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$script:ArbitronServiceName"
+    $entries = @($Secrets.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+    Set-ItemProperty -Path $regPath -Name 'Environment' -Value $entries -Type MultiString
+    Write-ArbitronLog -Level Info -Message "Service environment configured ($($Secrets.Count) secret(s))."
+}
+
 $script:ArbitronRceWarning = @'
 WARNING: Enabling unattended agent tools passes --dangerously-skip-permissions
 to the claude CLI. This removes EVERY tool-permission prompt: the agent will run
@@ -1377,7 +1392,8 @@ function Register-ArbitronService {
         [Parameter(Mandatory)][ValidateSet('Local', 'Shared')][string]$InstallType,
         [Parameter(Mandatory)][hashtable]$Paths,
         [Parameter(Mandatory)][int]$Port,
-        [hashtable]$RunAs = @{ Kind = 'LocalSystem'; Name = $null }
+        [hashtable]$RunAs = @{ Kind = 'LocalSystem'; Name = $null },
+        [hashtable]$ServiceSecrets = @{}
     )
     switch ($InstallType) {
         'Local' {
@@ -1406,6 +1422,14 @@ function Register-ArbitronService {
                 $newSvc.Credential = Get-ArbitronServiceCredential -Name $RunAs.Name
             }
             New-Service @newSvc
+            # Inject secrets into the service registry environment before starting.
+            # The SCM reads HKLM:\...\Services\arbitron Environment (REG_MULTI_SZ)
+            # and delivers each KEY=VALUE pair to the service process on Start-Service.
+            # This is the Windows-native equivalent of systemd's EnvironmentFile= and
+            # is required because the Go binary reads ARBITRON_MASTER_KEY from env only.
+            if ($ServiceSecrets -and $ServiceSecrets.Count -gt 0) {
+                Set-ArbitronServiceEnvironment -Secrets $ServiceSecrets
+            }
             Start-Service -Name $script:ArbitronServiceName
         }
     }
@@ -1680,22 +1704,30 @@ function Invoke-SharedInstall {
     # 4. Binary download + verify (placed at %ProgramFiles%\Arbitron\arbitron.exe).
     Get-ArbitronBinary -Paths $Paths -Version $Version -Arch $Arch
 
-    # 5. Write config + secrets (DPAPI machine scope so the service can read them).
+    # 5. Write config + secrets.
+    # DPAPI machine-scope files provide at-rest encryption. The $svcSecrets hashtable
+    # carries the same values to Register-ArbitronService, which writes them to the
+    # service registry key (REG_MULTI_SZ Environment) so the SCM injects them into
+    # the service process on Start-Service -- the binary reads ARBITRON_MASTER_KEY
+    # from env only (LoadMasterKey; OS keyring is a no-op stub in the current build).
     Write-ArbitronConfig -Paths $Paths -Answers $answers
     $masterKey = New-MasterKey
     Set-ArbitronSecret -Name 'ARBITRON_MASTER_KEY' -Value $masterKey -Method DpapiMachine -Paths $Paths
+    $svcSecrets = @{ ARBITRON_MASTER_KEY = $masterKey }
     if ($answers.AuthMode -eq 'org' -and $answers.ContainsKey('OidcClientSecret') -and $answers.OidcClientSecret) {
         Set-ArbitronSecret -Name 'ARBITRON_AUTH_OIDC_CLIENTSECRET' -Value $answers.OidcClientSecret -Method DpapiMachine -Paths $Paths
+        $svcSecrets['ARBITRON_AUTH_OIDC_CLIENTSECRET'] = $answers.OidcClientSecret
     }
     $llmMode = if ($answers.ContainsKey('LlmMode')) { $answers.LlmMode } else { 'subscription' }
     if ($llmMode -eq 'apikey' -and $answers.ContainsKey('ApiKey') -and $answers.ApiKey) {
         Set-ArbitronSecret -Name 'ARBITRON_LLM_APIKEY' -Value $answers.ApiKey -Method DpapiMachine -Paths $Paths
+        $svcSecrets['ARBITRON_LLM_APIKEY'] = $answers.ApiKey
     } elseif ($llmMode -eq 'subscription') {
         Invoke-ClaudeLogin -Paths $Paths
     }
 
-    # 6. Register + start the native Windows Service.
-    Register-ArbitronService -InstallType Shared -Paths $Paths -Port $answers.Port -RunAs $runAs
+    # 6. Register + start the native Windows Service (secrets injected via registry env).
+    Register-ArbitronService -InstallType Shared -Paths $Paths -Port $answers.Port -RunAs $runAs -ServiceSecrets $svcSecrets
 
     # 7. Health-check over the correct scheme/host.
     $ep = Get-HealthEndpoint -Answers $answers

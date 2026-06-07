@@ -87,6 +87,44 @@ Describe 'Register-ArbitronService -InstallType Shared' {
     }
 }
 
+Describe 'Register-ArbitronService -InstallType Shared service environment injection' {
+    # Closing the gap: secrets written only to DPAPI files are never read by the
+    # Go binary (LoadMasterKey reads ARBITRON_MASTER_KEY from env only; the OS
+    # keyring getter is a no-op stub). The service registry key Environment value
+    # (REG_MULTI_SZ under HKLM:\SYSTEM\CurrentControlSet\Services\arbitron) is
+    # read by the SCM and injected into the service process on Start-Service --
+    # the Windows-native equivalent of systemd's EnvironmentFile=.
+    BeforeEach {
+        $script:p = New-SharedSvcPaths
+        $script:order = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName New-Service -MockWith { $script:order.Add('new-service') }
+        Mock -CommandName Start-Service -MockWith { $script:order.Add('start') }
+        Mock -CommandName Grant-LogonAsService -MockWith { }
+        Mock -CommandName Invoke-ScExe -MockWith { 0 }
+        $script:capturedSecrets = $null
+        Mock -CommandName Set-ArbitronServiceEnvironment -MockWith {
+            $script:order.Add('set-env')
+            $script:capturedSecrets = $Secrets
+        }
+    }
+
+    It 'calls Set-ArbitronServiceEnvironment before Start-Service with the provided secrets' {
+        Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 `
+            -RunAs @{ Kind = 'LocalSystem'; Name = $null } `
+            -ServiceSecrets @{ ARBITRON_MASTER_KEY = 'base64key==' }
+        Should -Invoke Set-ArbitronServiceEnvironment -Times 1 -Exactly `
+            -ParameterFilter { $Secrets.ARBITRON_MASTER_KEY -eq 'base64key==' }
+        # env must be written BEFORE Start-Service so the SCM reads it at service boot.
+        $script:order.IndexOf('set-env') | Should -BeLessThan ($script:order.IndexOf('start'))
+    }
+
+    It 'skips Set-ArbitronServiceEnvironment when ServiceSecrets is empty' {
+        Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 `
+            -RunAs @{ Kind = 'LocalSystem'; Name = $null } -ServiceSecrets @{}
+        Should -Invoke Set-ArbitronServiceEnvironment -Times 0 -Exactly
+    }
+}
+
 Describe 'Test-ArbitronHealth scheme/host awareness' {
     It 'probes https when TLS is enabled' {
         $p = New-SharedSvcPaths

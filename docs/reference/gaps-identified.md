@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-020: PS1 shared Windows Service never received secret env vars — master key inaccessible (FA26)
+**Area**: Shared config Q&A + Secrets handling (Paired area 26)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedInstall` stored `ARBITRON_MASTER_KEY` (and the OIDC client secret + API key) via `Set-ArbitronSecret -Method DpapiMachine`, which writes DPAPI-protected blobs to files. The Windows Service was registered with `New-Service -BinaryPathName "arbitron.exe serve --config config.yaml"` with no environment variable injection. The Go binary's `LoadMasterKey` reads `ARBITRON_MASTER_KEY` only from the process environment variable or the OS keyring (which is a no-op stub returning `errKeyringNotFound`). The binary has no code to open or DPAPI-decrypt `.secret` files. Result: the service booted with no master key and would fail to decrypt any stored connections. Fixed by: (1) adding `Set-ArbitronServiceEnvironment` — writes secrets as a REG_MULTI_SZ `Environment` value under `HKLM:\SYSTEM\CurrentControlSet\Services\arbitron`, which the Windows SCM reads at `Start-Service` time and injects into the service process environment (the Windows-native equivalent of systemd's `EnvironmentFile=`); (2) adding `-ServiceSecrets` parameter to `Register-ArbitronService` that calls `Set-ArbitronServiceEnvironment` between `New-Service` and `Start-Service`; (3) collecting all secrets into `$svcSecrets` in `Invoke-SharedInstall` and passing them via `-ServiceSecrets`. Three new Pester tests added: two unit tests (`calls Set-ArbitronServiceEnvironment before Start-Service`, `skips it when no secrets provided`) and one E2E invariant (`Invoke-SharedInstall delivers ARBITRON_MASTER_KEY to the Windows Service environment`). 214 bats + 198 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
 ### INST-019: No cross-seam test for arbitron version output format parseability + dev sentinel graceful degradation (FA25)
 **Area**: Hosting/version selection + version subcommand (Paired area 25)
 **Fixed**: This iteration

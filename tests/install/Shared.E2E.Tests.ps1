@@ -100,6 +100,8 @@ BeforeAll {
         Mock -CommandName Invoke-ScExe -MockWith { 0 }
         Mock -CommandName Test-ArbitronHealth -MockWith { $true }
         Mock -CommandName Invoke-ClaudeLogin -MockWith { }
+        $script:SvcEnvSecrets = $null
+        Mock -CommandName Set-ArbitronServiceEnvironment -MockWith { $script:SvcEnvSecrets = $Secrets }
 
         $transcript = Invoke-SharedInstall -Paths $p -Arch amd64 -Version '1.0.0' 6>&1 | Out-String
         $configText = if (Test-Path $p.Config) { Get-Content -Raw -LiteralPath $p.Config } else { '' }
@@ -107,6 +109,7 @@ BeforeAll {
             Paths            = $p
             Config           = $configText
             NewServiceParams = $script:NewServiceParams
+            SvcEnvSecrets    = $script:SvcEnvSecrets
             Transcript       = $transcript
         }
     }
@@ -205,6 +208,20 @@ Describe 'E2E invariants' {
         # secret line leaked. We pin by checking the protected-blob seam was used
         # and that the literal key value is masked everywhere.
         $r.Transcript | Should -Not -Match 'ARBITRON_MASTER_KEY=[A-Za-z0-9+/=]{20,}'
+    }
+
+    It 'Invoke-SharedInstall delivers ARBITRON_MASTER_KEY to the Windows Service environment' {
+        # Architectural gap fix (INST-020): DPAPI files alone are never read by the
+        # Go binary (LoadMasterKey reads ARBITRON_MASTER_KEY from the process env
+        # only; the OS keyring getter is a no-op stub). The installer must also call
+        # Set-ArbitronServiceEnvironment so the SCM injects the master key into the
+        # service process on Start-Service, equivalent to systemd's EnvironmentFile=.
+        $r = Invoke-E2EShared -Answers @{
+            'Auth model' = 'edge'; 'TLS model' = 'tunnel'; 'Public' = 'https://x'
+            'unattended agent tools' = $false
+        }
+        $r.SvcEnvSecrets | Should -Not -BeNullOrEmpty -Because 'Set-ArbitronServiceEnvironment must be called for a shared install'
+        $r.SvcEnvSecrets.ContainsKey('ARBITRON_MASTER_KEY') | Should -BeTrue -Because 'master key must reach the service process environment'
     }
 
     It 'non-elevated run mutates nothing (no service, no config, no dir tree)' {
