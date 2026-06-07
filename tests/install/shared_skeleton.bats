@@ -112,6 +112,25 @@ teardown() {
 
 # --- binary install ----------------------------------------------------------
 
+@test "install_binary_system aborts without calling install when SHA256 verification fails" {
+  # Fail-closed contract: a tampered binary (hash mismatch) must cause
+  # install_binary_system to return non-zero and must NEVER invoke `install`
+  # for the system binary path. This guards the most critical security
+  # invariant of the shared install.
+  export ARBITRON_VERSION=1.0.0
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "deadbeef  arbitron_1.0.0_linux_amd64\n" > "$dest" ;;
+      *arbitron_1.0.0_linux_amd64*) printf "TAMPERED" > "$dest" ;;
+    esac
+  '
+  run install_binary_system
+  [ "$status" -ne 0 ]
+  # The mock `install` must NOT have been called for the system binary path.
+  ! grep -qF "$ARB_PREFIX_BIN" "$MOCK_LOG"
+}
+
 @test "install_binary_system places binary at /usr/local/bin 0755 root" {
   export ARBITRON_VERSION=1.0.0 OS_TOKEN=linux ARCH_TOKEN=amd64
   # curl serves a matching SHA256SUMS + the binary; the canonical fail-closed
