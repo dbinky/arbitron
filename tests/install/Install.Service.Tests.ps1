@@ -219,6 +219,19 @@ Describe 'Invoke-Reconfigure' {
         Should -Invoke New-MasterKey -Times 0 -Exactly
         Should -Invoke Start-ScheduledTask -Times 1 -Exactly
     }
+
+    It 'stores ARBITRON_LLM_APIKEY when switching to api-key mode during reconfigure' {
+        # Switching LLM mode during reconfigure must persist the new key.
+        # If skipped, provider: anthropic is written but the key is never stored --
+        # a silently broken reconfigure.
+        Mock -CommandName Invoke-ConfigQA -MockWith {
+            @{ Port = 8080; LlmMode = 'apikey'; ApiKey = 'sk-ant-RECFG-KEY'
+               SkipPermissions = $false; DataDir = $script:p.Data }
+        }
+        Invoke-Reconfigure -Paths $script:p -InstallType Local -Arch amd64
+        Should -Invoke Set-ArbitronSecret -Times 1 -Exactly `
+            -ParameterFilter { $Name -eq 'ARBITRON_LLM_APIKEY' -and $Value -eq 'sk-ant-RECFG-KEY' }
+    }
 }
 
 Describe 'Invoke-Uninstall' {
