@@ -57,6 +57,14 @@ PS_URL="https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1"
   grep -qF "refs/tags/v" "${DOCS}/security.md"
 }
 
+@test "installers.yml exercises make test-release in CI" {
+  # tests/release/ covers artifact naming, SHA256SUMS self-consistency, version
+  # round-trip, and docs URL accuracy. Without CI coverage these tests only run
+  # manually; a regression can slip through on any PR that changes the Makefile,
+  # Go sources, or docs without being caught.
+  grep -qE 'test-release' "${REPO_ROOT}/.github/workflows/installers.yml"
+}
+
 @test "runnable bash fences in the install docs are shellcheck-clean" {
   if ! command -v shellcheck >/dev/null 2>&1; then
     skip "shellcheck not on PATH"

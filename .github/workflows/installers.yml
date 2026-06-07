@@ -11,14 +11,24 @@ on:
       - 'install.sh'
       - 'install.ps1'
       - 'tests/install/**'
+      - 'tests/release/**'
       - 'Makefile'
+      - 'cmd/arbitron/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'docs/install/**'
       - '.github/workflows/installers.yml'
   pull_request:
     paths:
       - 'install.sh'
       - 'install.ps1'
       - 'tests/install/**'
+      - 'tests/release/**'
       - 'Makefile'
+      - 'cmd/arbitron/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'docs/install/**'
       - '.github/workflows/installers.yml'
 
 jobs:
@@ -74,3 +84,24 @@ jobs:
           $config.Output.Verbosity = 'Detailed'
           $config.Should.ErrorAction = 'Stop'
           Invoke-Pester -Configuration $config
+
+  release-tests:
+    # Verify artifact naming, SHA256SUMS self-consistency, version round-trip,
+    # and docs URL accuracy. Requires Go to run `make dist`.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: make test-release
+        run: make test-release

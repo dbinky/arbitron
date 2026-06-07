@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-014: tests/release/ not exercised in CI (FA21 Pass 1)
+**Area**: Test harness integrity (Focus Area 21)
+**Fixed**: This iteration
+**Detail**: `installers.yml` only ran `make test-install`; `make test-release` (artifact naming, SHA256SUMS self-consistency, version round-trip, docs URL accuracy via `docs_commands.bats` and `dist_naming.bats`) was never executed in CI. A regression in the Makefile, Go sources, or docs could ship without being caught. Added a `release-tests` job (ubuntu-latest, Go + bats + `make test-release`) and extended the path triggers to include `tests/release/**`, `cmd/arbitron/**`, `go.mod`, `go.sum`, and `docs/install/**`. Added a bats assertion `installers.yml exercises make test-release in CI` (in `docs_commands.bats`) as the failing-first TDD anchor; all 17 release tests pass.
+
 ### INST-013: PS1 Invoke-SharedConfigQA missing direct-TLS cert+key both-or-neither guard (parity with bash)
 **Area**: install.ps1 shared config Q&A / TLS models (Focus Area 20 / paired 23, 28)
 **Fixed**: This iteration
