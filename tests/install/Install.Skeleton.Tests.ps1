@@ -150,6 +150,60 @@ Describe 'Invoke-Main dispatch' {
     }
 }
 
+Describe 'Invoke-Main dispatch: Shared install type' {
+    # These tests verify that Invoke-Main routes to the Shared lifecycle functions
+    # (not the Local ones) when Get-InstallType returns 'Shared'. The Shared.*
+    # suites test those functions directly; these tests close the routing seam.
+    BeforeEach {
+        $env:ProgramFiles = Join-Path ([System.IO.Path]::GetTempPath()) ('ArbDisp_PF_' + [guid]::NewGuid())
+        $env:ProgramData  = Join-Path ([System.IO.Path]::GetTempPath()) ('ArbDisp_PD_' + [guid]::NewGuid())
+        Mock -CommandName Assert-SupportedPlatform -MockWith { }
+        Mock -CommandName Get-Architecture -MockWith { 'amd64' }
+        Mock -CommandName Get-InstallType -MockWith { 'Shared' }
+        # Local lifecycle stubs -- asserted NOT called for the Shared path.
+        Mock -CommandName Invoke-FreshInstall -MockWith { }
+        Mock -CommandName Invoke-Upgrade -MockWith { }
+        Mock -CommandName Invoke-Reconfigure -MockWith { }
+        Mock -CommandName Invoke-Uninstall -MockWith { }
+        # Shared lifecycle stubs -- asserted called for the Shared path.
+        Mock -CommandName Invoke-SharedInstall -MockWith { }
+        Mock -CommandName Invoke-SharedUpgrade -MockWith { }
+        Mock -CommandName Invoke-SharedReconfigure -MockWith { }
+        Mock -CommandName Invoke-SharedUninstall -MockWith { }
+    }
+
+    It 'fresh Shared install calls Invoke-SharedInstall not Invoke-FreshInstall' {
+        Mock -CommandName Test-ExistingInstall -MockWith { $false }
+        Invoke-Main
+        Should -Invoke Invoke-SharedInstall -Times 1 -Exactly
+        Should -Invoke Invoke-FreshInstall -Times 0 -Exactly
+    }
+
+    It 'existing Shared Upgrade calls Invoke-SharedUpgrade not Invoke-Upgrade' {
+        Mock -CommandName Test-ExistingInstall -MockWith { $true }
+        Mock -CommandName Read-PromptChoice -MockWith { 'Upgrade' }
+        Invoke-Main
+        Should -Invoke Invoke-SharedUpgrade -Times 1 -Exactly
+        Should -Invoke Invoke-Upgrade -Times 0 -Exactly
+    }
+
+    It 'existing Shared Reconfigure calls Invoke-SharedReconfigure not Invoke-Reconfigure' {
+        Mock -CommandName Test-ExistingInstall -MockWith { $true }
+        Mock -CommandName Read-PromptChoice -MockWith { 'Reconfigure' }
+        Invoke-Main
+        Should -Invoke Invoke-SharedReconfigure -Times 1 -Exactly
+        Should -Invoke Invoke-Reconfigure -Times 0 -Exactly
+    }
+
+    It 'existing Shared Uninstall calls Invoke-SharedUninstall not Invoke-Uninstall' {
+        Mock -CommandName Test-ExistingInstall -MockWith { $true }
+        Mock -CommandName Read-PromptChoice -MockWith { 'Uninstall' }
+        Invoke-Main
+        Should -Invoke Invoke-SharedUninstall -Times 1 -Exactly
+        Should -Invoke Invoke-Uninstall -Times 0 -Exactly
+    }
+}
+
 Describe 'Write-ArbitronLog redaction' {
     It 'never emits a -Secret value to output' {
         $secret = 'SUPER-SECRET-VALUE-123'
