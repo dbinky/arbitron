@@ -105,6 +105,40 @@ teardown() {
   done
 }
 
+@test "verify_download awk pattern parses the SHA256SUMS produced by make dist (cross-seam)" {
+  # Closes the format-compatibility seam between release tooling and installer
+  # consumption: apply the EXACT awk line from install.sh verify_download (line 296)
+  #   awk -v a="$name" '$2==a || $2=="*"a {print $1; exit}'
+  # to the real SHA256SUMS from make dist and confirm it extracts the correct hash.
+  # If the release tool ever changes to BSD-sum format, path-prefixes, or another
+  # variant, this test fails before anything ships.
+  hostos="$(go env GOOS)"
+  hostarch="$(go env GOARCH)"
+  ext=""; [ "$hostos" = "windows" ] && ext=".exe"
+  artifact="arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  sumsfile="${REPO_ROOT}/dist/SHA256SUMS"
+  binfile="${REPO_ROOT}/dist/${artifact}"
+  [ -f "$binfile" ]   || { echo "artifact not built: $artifact"; return 1; }
+  [ -f "$sumsfile" ]  || { echo "SHA256SUMS not found"; return 1; }
+
+  # Extract the hash using the identical awk expression from verify_download.
+  extracted="$(awk -v a="$artifact" '$2==a || $2=="*"a {print $1; exit}' "$sumsfile")"
+  [ -n "$extracted" ] || { echo "no hash found for $artifact in SHA256SUMS"; return 1; }
+  # Must be 64 lowercase hex chars — a valid SHA-256 digest.
+  [[ "$extracted" =~ ^[0-9a-f]{64}$ ]] || { echo "extracted hash malformed: $extracted"; return 1; }
+
+  # Cross-check: the awk-extracted hash matches what the system checksum tool reports.
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$binfile" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$binfile" | awk '{print $1}')"
+  fi
+  [ "$extracted" = "$actual" ] || {
+    echo "hash mismatch: SHA256SUMS has $extracted but file is $actual"
+    return 1
+  }
+}
+
 @test "SHA256SUMS can be spot-checked for a single artifact via grep+sha256sum" {
   # Mirrors the verify-release CI job: only one artifact (linux_amd64) is downloaded
   # alongside SHA256SUMS, then verified. Running 'sha256sum -c SHA256SUMS' with only

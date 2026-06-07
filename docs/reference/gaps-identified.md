@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-018: No cross-seam test bridging make dist SHA256SUMS format and verify_download parsing (FA24)
+**Area**: Fail-closed verification + Release machinery (Paired area 24)
+**Fixed**: This iteration
+**Detail**: Both sides of the format-compatibility seam were tested in isolation — `dist_naming.bats` confirmed `make dist` produces `<hash>  <name>` (two-space text mode, basename-only lines) and `verify.bats` confirmed `verify_download`'s awk pattern `$2==a || $2=="*"a` handles both text and binary-mode formats — but no test applied the exact awk expression from `verify_download` to a SHA256SUMS produced by `make dist`. If the release tool ever changed to BSD-sum format, path-prefixes, or another variant, individual tests could still pass while the real seam broke. Added a cross-seam bats test ("verify_download awk pattern parses the SHA256SUMS produced by make dist") in `tests/release/dist_naming.bats` that: (1) locates the host-native artifact in `dist/`; (2) applies the identical awk expression from install.sh:296; (3) asserts the extracted hash is valid 64-hex; (4) cross-checks against the system sha256sum tool. 214 bats + 18 release bats + 192 Pester, all green.
+
 ### INST-017: PS1 Invoke-SharedConfigQA OIDC sub-questions order mismatch + missing redirect URL derivation (FA23)
 **Area**: install.ps1 shared config Q&A / OIDC parity (Paired area 23)
 **Fixed**: This iteration
