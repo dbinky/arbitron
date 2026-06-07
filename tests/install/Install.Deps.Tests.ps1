@@ -199,3 +199,36 @@ Describe 'Resolve-AllDependencies' {
         $summary.Count | Should -BeGreaterThan 3
     }
 }
+
+Describe 'Resolve-Dependency ViaNpm routing (claude)' {
+    # claude has ViaNpm = $true and WingetId = $null. Resolve-Dependency must
+    # route it to Install-ClaudeCli -- never through the winget ladder.
+    # If this seam breaks, claude falls through to Install-ViaWinget with a null
+    # WingetId and the install silently fails or errors in an uncontrolled way.
+    BeforeEach {
+        Mock -CommandName Test-DependencyPresent -MockWith { $false }
+        Mock -CommandName Install-ClaudeCli -MockWith { }
+        Mock -CommandName Install-ViaWinget -MockWith { }
+        Mock -CommandName Test-WingetPresent -MockWith { $false }
+        Mock -CommandName Install-AppInstaller -MockWith { $false }
+    }
+
+    It 'routes claude to Install-ClaudeCli (not winget) when missing' {
+        Resolve-Dependency -Name claude -Paths $script:Paths | Out-Null
+        Should -Invoke Install-ClaudeCli -Times 1 -Exactly
+        Should -Invoke Install-ViaWinget -Times 0 -Exactly
+    }
+
+    It 'returns resolved status after Install-ClaudeCli' {
+        $result = Resolve-Dependency -Name claude -Paths $script:Paths
+        $result.Status | Should -Be 'resolved'
+    }
+}
+
+Describe 'Install-ViaWinget failure path' {
+    It 'throws with the exit code when winget returns non-zero' {
+        Mock -CommandName Invoke-Winget -MockWith { 1603 }
+        $spec = [pscustomobject]@{ Name = 'git'; WingetId = 'Git.Git' }
+        { Install-ViaWinget -Spec $spec } | Should -Throw -ExpectedMessage '*1603*'
+    }
+}
