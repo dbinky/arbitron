@@ -173,6 +173,14 @@ _make_fixture() {
   [ "$output" = "https://github.com/dbinky/arbitron/releases/download/v4.5.6" ]
 }
 
+@test "ARBITRON_REPO override flows into arbitron_release_base URL" {
+  # Fork testing: ARBITRON_REPO=my-org/my-fork must change the download URLs so
+  # that test/fork runs can exercise the script against a different release host.
+  # Catches any hardcoded dbinky/arbitron in the URL builders.
+  ARBITRON_REPO="my-org/my-fork" run arbitron_release_base "1.0.0"
+  [ "$output" = "https://github.com/my-org/my-fork/releases/download/v1.0.0" ]
+}
+
 @test "arbitron_resolve_version fails closed when the latest-tag probe returns nothing" {
   # If curl and the API fallback both return empty (network unavailable) and
   # ARBITRON_VERSION is unset, the installer must abort rather than silently

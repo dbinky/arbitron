@@ -94,7 +94,11 @@ Describe 'Test-Download fail-closed checksum contract' {
 }
 
 Describe 'Version selection + artifact URL builders' {
-    AfterEach { Remove-Item Env:\ARBITRON_VERSION -ErrorAction SilentlyContinue }
+    AfterEach {
+        Remove-Item Env:\ARBITRON_VERSION -ErrorAction SilentlyContinue
+        Remove-Item Env:\ARBITRON_REPO -ErrorAction SilentlyContinue
+        $script:ArbitronRepo = 'dbinky/arbitron'
+    }
 
     It 'Get-ArtifactName builds arbitron_VERSION_windows_ARCH.exe' {
         $name = Get-ArtifactName -Version '1.2.3' -Arch 'amd64'
@@ -129,6 +133,15 @@ Describe 'Version selection + artifact URL builders' {
         Remove-Item Env:\ARBITRON_VERSION -ErrorAction SilentlyContinue
         Mock -CommandName Get-LatestReleaseTag -MockWith { $null }
         { Get-ArbitronVersion } | Should -Throw -ExpectedMessage '*Could not resolve*'
+    }
+
+    It 'ARBITRON_REPO override flows into Get-ArtifactUrl' {
+        # Fork testing: ARBITRON_REPO=my-org/my-fork must change download URLs.
+        # Catches any hardcoded dbinky/arbitron in the URL builders.
+        $script:ArbitronRepo = 'my-org/my-fork'
+        $url = Get-ArtifactUrl -Version '1.0.0' -Arch 'amd64'
+        $url | Should -BeLike '*my-org/my-fork*'
+        $url | Should -Not -BeLike '*dbinky*'
     }
 }
 
