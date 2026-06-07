@@ -205,6 +205,16 @@ _mock() { install_mock recording-fake "$@"; }
   ! mock_log_has "npm install -g @anthropic-ai/claude-code"
 }
 
+@test "ensure_claude errors when npm is absent after installing node" {
+  # Node is present but npm is not on PATH; ensure_claude must fail with a
+  # clear error rather than silently leaving claude uninstalled.
+  install_fake node 'echo v20.0.0'
+  # npm intentionally NOT mocked, so require_cmd npm returns non-zero.
+  ARBITRON_UNAME_S=Darwin run ensure_claude
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"npm not found"* ]]
+}
+
 # --- pkg_install error handling -------------------------------------------
 
 @test "pkg_install errors when no package manager is available" {
@@ -253,6 +263,14 @@ _mock() { install_mock recording-fake "$@"; }
   ! mock_log_has "brew install opencode"
 }
 
+@test "ensure_opencode install failure is non-fatal when accepted" {
+  # User accepts opencode but the pkg mgr fails (e.g., package not available).
+  install_fake brew 'exit 1'
+  ARBITRON_UNAME_S=Darwin ARBITRON_INSTALL_OPENCODE=yes run ensure_opencode
+  [ "$status" -eq 0 ]   # non-fatal; install continues
+  [[ "$output" == *"optional"* || "$output" == *"failed"* ]]
+}
+
 # --- resolve_dependencies orchestration -------------------------------------
 
 @test "resolve_dependencies skips the agent toolchain for api-key installs" {
@@ -260,4 +278,21 @@ _mock() { install_mock recording-fake "$@"; }
   ARBITRON_UNAME_S=Darwin ARBITRON_LLM_ACCESS=api-key run resolve_dependencies
   [ "$status" -eq 0 ]
   ! mock_log_has "npm install -g @anthropic-ai/claude-code"
+}
+
+@test "resolve_dependencies succeeds when all toolchain tools are present (subscription)" {
+  install_fake node 'echo v20.0.0'
+  install_fake git  'echo git version 2.40.0'
+  install_fake gh   'echo gh version 2.40.0'
+  install_fake claude 'echo 1.2.3'
+  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription \
+    ARBITRON_INSTALL_OPENCODE=no run resolve_dependencies
+  [ "$status" -eq 0 ]
+  ! mock_log_has "npm install"  # claude was already present; no npm needed
+}
+
+@test "resolve_dependencies fails when ensure_node fails (Linux, no pkg mgr)" {
+  # No node, no package manager, no bootstrap on Linux.
+  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription run resolve_dependencies
+  [ "$status" -ne 0 ]
 }
