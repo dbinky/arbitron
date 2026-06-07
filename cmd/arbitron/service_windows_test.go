@@ -201,3 +201,59 @@ func TestHandleControlLoop_InterrogateEchoesStatus(t *testing.T) {
 	echoed := <-s
 	assert.Equal(t, cur.State, echoed.State, "Interrogate must echo the current status state")
 }
+
+// Execute emits StartPending before Running and Stopped after the loop, even
+// when no control requests arrive (serve exits on its own). The SCM requires
+// this exact sequence; a missing StartPending causes a "service did not start"
+// error; a missing Stopped leaves the SCM waiting indefinitely.
+func TestServiceHandler_Execute_StateSequence(t *testing.T) {
+	r := make(chan svc.ChangeRequest) // no control requests
+	s := make(chan svc.Status, 8)
+
+	serveDone := make(chan struct{})
+	h := &serviceHandler{
+		ctx: context.Background(),
+		serve: func(ctx context.Context) error {
+			close(serveDone) // signal so the test can unblock serve via ctx wait
+			<-ctx.Done()
+			return nil
+		},
+	}
+
+	execDone := make(chan struct{})
+	go func() {
+		h.Execute(nil, r, s)
+		close(execDone)
+	}()
+
+	// Wait for serve to start (it signals serveDone), then send Stop so Execute finishes.
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve goroutine did not start")
+	}
+
+	r <- svc.ChangeRequest{Cmd: svc.Stop}
+
+	select {
+	case <-execDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Execute did not return after Stop")
+	}
+
+	// Drain and collect state sequence.
+	var states []svc.State
+	for {
+		select {
+		case st := <-s:
+			states = append(states, st.State)
+		default:
+			goto done
+		}
+	}
+done:
+	require.GreaterOrEqual(t, len(states), 3, "Execute must emit at least StartPending, Running, Stopped")
+	assert.Equal(t, svc.StartPending, states[0], "first status must be StartPending")
+	assert.Equal(t, svc.Running, states[1], "second status must be Running")
+	assert.Equal(t, svc.Stopped, states[len(states)-1], "last status must be Stopped")
+}
