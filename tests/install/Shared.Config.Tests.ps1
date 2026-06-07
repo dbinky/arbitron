@@ -227,21 +227,38 @@ Describe 'Invoke-SharedConfigQA TLS models' {
     }
 
     It 'local-mode + non-loopback host + TLS sets allowunauthenticated after confirmation' {
+        # Test-IsLoopbackHost is mocked to $false so the guard code is reachable;
+        # without the mock, edge mode forces the host to 127.0.0.1 and the guard
+        # condition is never true (the assertion never ran before this fix).
+        Mock -CommandName Test-IsLoopbackHost -MockWith { $false }
         Set-ScriptedSharedAnswers @{
-            'host'       = '10.0.0.5'
-            'Auth model' = 'edge'
-            'TLS model'  = 'direct'
-            'certificate file' = 'C:\certs\arb.crt'
-            'key file'         = 'C:\certs\arb.key'
+            'Auth model'           = 'edge'
+            'TLS model'            = 'direct'
+            'certificate file'     = 'C:\certs\arb.crt'
+            'key file'             = 'C:\certs\arb.key'
             'allowunauthenticated' = $true
-            'unauthenticated' = $true
+            'unauthenticated'      = $true
         }
         $a = Invoke-SharedConfigQA -Paths $script:p
-        # Edge keeps the bind loopback by default; but if the operator forces a
-        # non-loopback host for direct TLS, the escape hatch must be set.
-        if ($a.Host -notin @('127.0.0.1', 'localhost', '::1')) {
-            $a.TlsAllowUnauthenticated | Should -BeTrue
+        $a.TlsAllowUnauthenticated | Should -BeTrue
+    }
+
+    It 'throws when local mode TLS on a non-loopback host is declined (P0 guard parity with bash die)' {
+        # Parity with install.sh _guard_local_tls_public_bind: if the operator
+        # declines the allowunauthenticated escape hatch, the installer must abort.
+        # Without the throw, the service is registered, starts, and immediately
+        # exits because validateTLS rejects auth.mode=local + TLS + non-loopback +
+        # allowunauthenticated=false at boot.
+        Mock -CommandName Test-IsLoopbackHost -MockWith { $false }
+        Set-ScriptedSharedAnswers @{
+            'Auth model'           = 'edge'
+            'TLS model'            = 'direct'
+            'certificate file'     = 'C:\certs\arb.crt'
+            'key file'             = 'C:\certs\arb.key'
+            'allowunauthenticated' = $false
+            'unauthenticated'      = $false
         }
+        { Invoke-SharedConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*allowunauthenticated*'
     }
 
     It 'throws when direct TLS certificate is given without a key (P0 guard)' {

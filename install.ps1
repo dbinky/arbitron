@@ -1122,6 +1122,9 @@ function Invoke-SharedConfigQA {
     if ($answers.AuthMode -eq 'local' -and $answers.TlsEnabled -and -not (Test-IsLoopbackHost -HostName $answers.Host)) {
         $ok = Read-PromptYesNo -Prompt 'TLS on a non-loopback host in local mode exposes an UNAUTHENTICATED admin API. Set server.tls.allowunauthenticated to override?' -Default $false
         $answers.TlsAllowUnauthenticated = [bool]$ok
+        if (-not $ok) {
+            throw 'refusing local-mode TLS on a public bind; bind loopback, use OIDC, or confirm the allowunauthenticated override'
+        }
     }
 
     # 5. Skip-permissions (RCE prompt, explicit, default No).

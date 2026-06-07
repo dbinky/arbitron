@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-022: PS1 shared config Q&A P0 TLS guard silently continues when operator declines (FA28)
+**Area**: Shared config Q&A + P0 TLS invariants (Paired area 28)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` contains a P0 guard at lines 1122-1125: when `AuthMode='local'`, TLS is enabled, and the bind host is non-loopback, the installer prompts the operator to confirm the `allowunauthenticated` escape hatch. If the operator says no, the bash `_guard_local_tls_public_bind` calls `die` (aborts the installer). The PS1 equivalent silently set `TlsAllowUnauthenticated = $false` and continued. Result: install succeeds, service is registered, service starts and immediately exits because `validateTLS` (Go loader) rejects `auth.mode=local + TLS + non-loopback + allowunauthenticated=false` at boot — a silent failure with no install-time error. Additionally, the existing happy-path test ("local-mode + non-loopback host + TLS sets allowunauthenticated after confirmation") was a no-op: edge mode forces the host to `127.0.0.1`, the guard condition is never true, and the `Should -BeTrue` assertion inside `if ($a.Host -notin @(...))` never ran. Fixed by: (1) adding `if (-not $ok) { throw '...' }` after `$answers.TlsAllowUnauthenticated = [bool]$ok`, matching bash's `die` message; (2) rewriting the existing happy-path test to mock `Test-IsLoopbackHost` as `$false` so the guard actually fires and the assertion runs; (3) adding a new failure-path test that mocks the same way, scripts `allowunauthenticated = $false`, and asserts `Should -Throw -ExpectedMessage '*allowunauthenticated*'`. 214 bats + 199 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
 ### INST-021: No cross-seam test for cobra --config flag inheritance into configPathFromCmd (FA27)
 **Area**: install.ps1 shared service + Go windows/svc (Paired area 27)
 **Fixed**: This iteration
