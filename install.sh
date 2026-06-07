@@ -90,6 +90,35 @@ prompt_default() {
   fi
 }
 
+# prompt_secret VAR "question" "default"
+#   Same resolution order as prompt_default, but the interactive entry is read
+#   WITHOUT echo (read -rs) so the secret is not shown on screen, captured in
+#   terminal scrollback, or (for inline answers) at risk via the prompt. Used for
+#   the Anthropic API key and the OIDC client secret. A trailing newline is
+#   emitted to stderr after the silent read so the next prompt starts on a fresh
+#   line. ARBITRON_<VAR> still works for non-interactive/CI runs.
+prompt_secret() {
+  local var="$1" question="$2" default="${3:-}"
+  local envname="ARBITRON_${var}"
+  if [ -n "${!envname:-}" ]; then
+    printf '%s\n' "${!envname}"
+    return 0
+  fi
+  local reply=""
+  if [ -t 0 ]; then
+    printf '%s: ' "$question" >&2
+    IFS= read -rs reply || true
+    printf '\n' >&2
+  else
+    IFS= read -r reply || true
+  fi
+  if [ -z "$reply" ]; then
+    printf '%s\n' "$default"
+  else
+    printf '%s\n' "$reply"
+  fi
+}
+
 # prompt_yes_no VAR "question" <yes|no default>
 #   Returns 0 for yes, 1 for no. Honours ARBITRON_<VAR> ("yes"/"y"/"true"/"1"
 #   -> yes; "no"/"n"/"false"/"0" -> no), then stdin, then the default.
@@ -427,6 +456,12 @@ pkg_install() {
 # bootstrap_pkg_mgr — on macOS, offer to install Homebrew. Returns success when
 # the bootstrap ran, non-zero when declined/unsupported so the caller can fall
 # back to a direct download.
+# Pinned Homebrew/install ref. Pinned to a tag (NOT HEAD) so the fetched script
+# cannot change under us between runs; bump deliberately. This is upstream's
+# published install method, trusted over TLS — the prompt names that it downloads
+# and executes a remote third-party script, and the resolved URL is logged.
+ARBITRON_BREW_INSTALL_REF="${ARBITRON_BREW_INSTALL_REF:-4.3.10}"
+
 bootstrap_pkg_mgr() {
   local os
   os="$(detect_os)" || return 1
@@ -434,14 +469,17 @@ bootstrap_pkg_mgr() {
     log_warn "no package-manager bootstrap available for $os"
     return 1
   fi
-  if ! prompt_yes_no BOOTSTRAP_BREW "Homebrew not found. Install it now?" yes; then
+  local brew_url="https://raw.githubusercontent.com/Homebrew/install/${ARBITRON_BREW_INSTALL_REF}/install.sh"
+  if ! prompt_yes_no BOOTSTRAP_BREW \
+      "Homebrew not found. Download and run the official Homebrew installer (a remote third-party script fetched over TLS from ${brew_url})?" yes; then
     log_warn "Homebrew bootstrap declined"
     return 1
   fi
-  log_info "bootstrapping Homebrew"
+  log_info "bootstrapping Homebrew from ${brew_url}"
   # The official installer is itself fetched over curl; in tests curl is mocked.
+  # Pinned to a tag (no HEAD) so the content is stable between runs.
   /bin/bash -c \
-    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    "$(curl -fsSL "$brew_url")" \
     </dev/null
 }
 
@@ -631,7 +669,7 @@ run_config_qa() {
     "subscription")"
 
   if [ "$CFG_LLM_ACCESS" = "api-key" ]; then
-    CFG_API_KEY="$(prompt_default API_KEY "Paste your Anthropic API key" "")"
+    CFG_API_KEY="$(prompt_secret API_KEY "Paste your Anthropic API key" "")"
     if [ -z "${CFG_API_KEY:-}" ]; then
       die "api-key mode requires a non-empty Anthropic API key. Re-run with ARBITRON_API_KEY set or choose 'subscription'."
     fi
@@ -1052,7 +1090,7 @@ prompt_shared_auth() {
 prompt_oidc() {
   SCFG_OIDC_ISSUER="$(prompt_default OIDC_ISSUER "OIDC issuer URL" "$SCFG_OIDC_ISSUER")"
   SCFG_OIDC_CLIENT_ID="$(prompt_default OIDC_CLIENT_ID "OIDC client ID" "$SCFG_OIDC_CLIENT_ID")"
-  SCFG_OIDC_CLIENT_SECRET="$(prompt_default OIDC_CLIENT_SECRET "OIDC client secret (stored in arbitron.env)" "")"
+  SCFG_OIDC_CLIENT_SECRET="$(prompt_secret OIDC_CLIENT_SECRET "OIDC client secret (stored in arbitron.env)" "")"
   if [ -z "${SCFG_OIDC_CLIENT_SECRET:-}" ]; then
     die "OIDC mode requires a non-empty client secret. Re-run with ARBITRON_OIDC_CLIENT_SECRET set."
   fi
@@ -1178,7 +1216,7 @@ run_shared_qa() {
     "LLM access — 'subscription' (Claude login) or 'api-key' (Anthropic key)" \
     "subscription")"
   if [ "$CFG_LLM_ACCESS" = "api-key" ]; then
-    CFG_API_KEY="$(prompt_default API_KEY "Paste your Anthropic API key" "")"
+    CFG_API_KEY="$(prompt_secret API_KEY "Paste your Anthropic API key" "")"
     if [ -z "${CFG_API_KEY:-}" ]; then
       die "api-key mode requires a non-empty Anthropic API key. Re-run with ARBITRON_API_KEY set or choose 'subscription'."
     fi

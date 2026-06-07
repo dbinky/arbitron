@@ -54,6 +54,43 @@ teardown() {
   [ "$output" = "7777" ]
 }
 
+@test "prompt_secret honours ARBITRON_<VAR> env override without prompting" {
+  export ARBITRON_API_KEY="sk-ant-secret"
+  run prompt_secret API_KEY 'Paste your Anthropic API key' '' </dev/null
+  [ "$status" -eq 0 ]
+  [ "$output" = "sk-ant-secret" ]
+}
+
+@test "prompt_secret returns the default on empty stdin" {
+  run bash -c "ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'; prompt_secret API_KEY 'Key?' '' </dev/null"
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "prompt_secret reads non-interactive stdin (no tty) without echo machinery" {
+  # When stdin is not a tty (piped/CI), prompt_secret falls back to a plain read
+  # so automated runs still work; the no-echo read -rs path is the interactive one.
+  run bash -c "printf 'piped-secret\n' | { ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'; prompt_secret API_KEY 'Key?' ''; }"
+  [ "$status" -eq 0 ]
+  [ "$output" = "piped-secret" ]
+}
+
+@test "prompt_secret uses read -rs (no-echo) for interactive entry" {
+  # Source-level guard: the secret prompt must use the silent read flag so typed
+  # secrets are not echoed to the terminal / scrollback.
+  run grep -A1 'prompt_secret()' "$INSTALL_SH"
+  grep -qE 'read -rs' "$INSTALL_SH"
+}
+
+@test "the API key and OIDC client secret prompts route through prompt_secret" {
+  # No-echo entry must actually be wired to the secret prompts, not just defined.
+  grep -qE 'prompt_secret API_KEY "Paste your Anthropic API key"' "$INSTALL_SH"
+  grep -qE 'prompt_secret OIDC_CLIENT_SECRET' "$INSTALL_SH"
+  # And the old echoing prompt_default must no longer be used for these secrets.
+  ! grep -qE 'prompt_default API_KEY "Paste your Anthropic API key"' "$INSTALL_SH"
+  ! grep -qE 'prompt_default OIDC_CLIENT_SECRET' "$INSTALL_SH"
+}
+
 @test "prompt_yes_no parses yes/no and respects default" {
   run bash -c "printf 'y\n'  | { ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'; prompt_yes_no CONFIRM 'ok?' no; }"
   [ "$status" -eq 0 ]

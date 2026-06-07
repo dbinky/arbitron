@@ -25,8 +25,15 @@ func versionString() string {
 }
 
 // newVersionCmd builds the `version` subcommand. It prints the ldflags-stamped
-// build metadata to the command's output stream so installer scripts can read
-// the installed version for upgrade comparison.
+// build metadata (version, commit, build date) to the command's output stream.
+//
+// NOTE: the installers do NOT currently shell out to this subcommand to compare
+// the installed version against the resolved upgrade target — the upgrade paths
+// resolve the target tag independently and swap unconditionally. This is a plain
+// build-metadata reporter; it intentionally advertises no upgrade-comparison
+// guarantee. (If a future change wires installed-vs-resolved comparison, mind
+// the v-prefix normalization on both sides and tolerate a missing binary on a
+// fresh install — see the dist_naming.bats extraction-pattern tests.)
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

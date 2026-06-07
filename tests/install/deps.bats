@@ -165,6 +165,19 @@ _mock() { install_mock recording-fake "$@"; }
   [ "$status" -ne 0 ]
 }
 
+@test "Homebrew bootstrap pins the installer to a tag (never HEAD) and logs the URL" {
+  # A HEAD-pinned blind pipe-to-bash can change under us; pin to a tag. The
+  # resolved URL must also be surfaced (logged) and the opt-in prompt must name
+  # that it runs a remote third-party script.
+  install_fake curl 'echo "curl $*" >>"$MOCK_LOG"; exit 0'
+  ARBITRON_UNAME_S=Darwin ARBITRON_BOOTSTRAP_BREW=yes run bootstrap_pkg_mgr
+  [ "$status" -eq 0 ]
+  # The fetched installer URL must carry the pinned ref, not HEAD.
+  echo "$output" | grep -qF "Homebrew/install/${ARBITRON_BREW_INSTALL_REF}/install.sh"
+  ! grep -qE 'Homebrew/install/HEAD/install\.sh' "$MOCK_LOG"
+  grep -qF "Homebrew/install/${ARBITRON_BREW_INSTALL_REF}/install.sh" "$MOCK_LOG"
+}
+
 # --- claude via Arbitron-owned npm prefix ------------------------------------
 
 @test "ensure_claude installs via npm into the Arbitron npm prefix" {
