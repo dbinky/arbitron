@@ -199,6 +199,19 @@ Describe 'Set-ArbitronDataAcl' {
         $flat | Should -BeLike "*$($p.Logs)*"
         $flat | Should -BeLike '*arbitron*'
     }
+
+    It 'uses modify (M) rights with OI+CI inheritance -- not full-control (F) or read-only (R)' {
+        # icacls format is account:(OI)(CI)M -- modify rights with object+container
+        # inheritance. (F) would let the account change ACLs; bare (R) would block writes.
+        $env:ProgramData = (Join-Path ([System.IO.Path]::GetTempPath()) 'ArbPD')
+        $p = Get-ArbitronPaths -InstallType Shared
+        $calls = New-Object System.Collections.Generic.List[object]
+        Mock -CommandName Invoke-Icacls -MockWith { $calls.Add($Arguments) }
+        Set-ArbitronDataAcl -Account 'arbitron' -Paths $p
+        $flat = ($calls | ForEach-Object { $_ -join ' ' }) -join ' || '
+        $flat | Should -Match '\(OI\)\(CI\)M'
+        $flat | Should -Not -Match '\(OI\)\(CI\)F'
+    }
 }
 
 Describe 'Get-InstallType routes Shared from the prompt' {
