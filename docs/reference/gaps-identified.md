@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-021: No cross-seam test for cobra --config flag inheritance into configPathFromCmd (FA27)
+**Area**: install.ps1 shared service + Go windows/svc (Paired area 27)
+**Fixed**: This iteration
+**Detail**: The Windows Service BinaryPathName is `"arbitron.exe" serve --config "%ProgramData%\Arbitron\config.yaml"`. The `--config` flag is registered as a PersistentFlag on the root command (`rootCmd.PersistentFlags().String("config", ...)`), and `configPathFromCmd` calls `cmd.Flags().GetString("config")` where `cmd` is the serve subcommand. In cobra, persistent flags ARE inherited by child commands via `cmd.Flags()`, so the code is correct — but no test verified this seam. If someone accidentally moved `--config` to a LocalFlag on root or on serve, the service would silently fall back to `~/.arbitron/config.yaml` (or the OS home) instead of `%ProgramData%\Arbitron\config.yaml`. Added `TestServeCmd_ConfigFlagReachesConfigPathFromCmd` in `main_test.go`: builds the full root command tree, overrides the serve RunE to capture `configPathFromCmd`'s return value, parses `["serve", "--config", "/path"]` via cobra's standard Execute, and asserts the path flows through. The test acts as a regression lock: if flag scope changes break the seam, the test fails before the Windows Service silently misbehaves.
+
 ### INST-020: PS1 shared Windows Service never received secret env vars — master key inaccessible (FA26)
 **Area**: Shared config Q&A + Secrets handling (Paired area 26)
 **Fixed**: This iteration
