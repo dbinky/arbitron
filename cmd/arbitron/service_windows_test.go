@@ -49,6 +49,28 @@ func TestRunUnderServiceManager_ProbeError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
+// Edge: when isWindowsService returns true but the process was NOT started by the
+// Windows SCM (e.g. run from a terminal or a CI runner), svc.Run calls
+// StartServiceCtrlDispatcher which fails deterministically (it is not a race).
+// runUnderServiceManager must propagate the error and report handled=true (the
+// SCM path was entered) without invoking serve. This test is meaningful on a
+// real windows-latest runner because it exercises the actual Windows API call.
+func TestRunUnderServiceManager_SCMPath_FailsOutsideSCM(t *testing.T) {
+	orig := isWindowsService
+	t.Cleanup(func() { isWindowsService = orig })
+	isWindowsService = func() (bool, error) { return true, nil }
+
+	serveCalled := false
+	handled, err := runUnderServiceManager(context.Background(), func(_ context.Context) error {
+		serveCalled = true
+		return nil
+	})
+
+	assert.True(t, handled, "entering the SCM path is 'handled' even if svc.Run fails")
+	assert.Error(t, err, "svc.Run must fail when the process was not started by the Windows SCM")
+	assert.False(t, serveCalled, "serve must not be invoked if svc.Run fails before Execute is dispatched")
+}
+
 // The control handler maps an SCM Stop into ctx cancellation, reports
 // StopPending, and returns once serve has drained — without a live SCM.
 func TestHandleControlLoop_StopCancelsContext(t *testing.T) {

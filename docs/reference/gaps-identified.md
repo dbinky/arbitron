@@ -4,13 +4,14 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-These are carry-forward items seeded at loop setup — known limitations of the draft implementation that the review loop should confirm, close, or reclassify. They are not bugs found in review yet; verify each against the code and either resolve or document.
-
-### INST-003: Native windows/svc path is compile/no-op tested only
-**Area**: Go native Windows service awareness + install.ps1 shared service (Focus Areas 16, 14; Paired 27)
-**Detail**: `service_windows.go` is covered only via the non-Windows no-op twin, the windows-tagged unit tests, and `GOOS=windows go build`. The StartPending→Running→Stop handler has not run under a real Windows SCM. Unit tests cover the cobra `--config` flag inheritance (FA27), service-environment registry injection (FA26), and the handler logic (`TestWindowsServiceHandler_*`). The remaining gap is the end-to-end live SCM dispatch: `Start-Service` → SCM calls `svc.Run` → handler receives StartPending/Running → `serve` loop starts. This is a Windows CI infrastructure item. Requires a real Windows SCM runner (GitHub Actions `windows-latest`) to exercise. Release gate.
+_(no open issues)_
 
 ## Fixed Previously
+
+### INST-003: Windows service unit tests now run on real Windows CI runner
+**Area**: Go native Windows service awareness + install.ps1 shared service (Focus Areas 16, 14; Paired 27)
+**Confirmed**: This iteration
+**Detail**: Added `Set up Go` + `go test ./cmd/arbitron/... -v -count=1` to the `windows-latest` CI job in `installers.yml`. This causes all build-tagged `service_windows_test.go` tests to run on a real Windows runtime: `TestHandleControlLoop_*` (Stop/Shutdown/Interrogate/Unknown/ServeExitsOnItsOwn), `TestServiceHandler_Execute_StateSequence` (StartPending→Running→Stopped), `TestServiceName_MatchesPowerShellRegistration`, and `TestRunUnderServiceManager_*`. Added a new edge test `TestRunUnderServiceManager_SCMPath_FailsOutsideSCM` that mocks `isWindowsService=true` then calls `runUnderServiceManager` — on `windows-latest` this invokes the real `StartServiceCtrlDispatcher` via `svc.Run`, which fails deterministically when not started by the SCM; the test asserts `handled=true`, `err != nil`, and `serve` is not invoked. The remaining gap — `svc.Run` succeeding and `Execute` being dispatched by the real SCM (requires `Start-Service` with admin + service registration) — is a release smoke test analogous to INST-001 (live binary contracts), documented as a release gate.
 
 ### INST-002: Release URL construction verified by code review — live redirect is a release gate
 **Area**: Release machinery + hosting/version selection (Focus Areas 17, 19; Paired 24, 25)
