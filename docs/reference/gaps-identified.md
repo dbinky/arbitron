@@ -24,7 +24,10 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### INST-005: launchd plist launched binary directly, bypassing the secrets-env wrapper
+**Area**: install.sh local service & lifecycle (Focus Area 4 / skeleton review, Focus Area 1)
+**Fixed**: Iteration 1
+**Detail**: `render_launchd_plist` created a wrapper script (`arbitron-service`) that sources `~/.arbitron/arbitron.env` before exec-ing the binary, but the plist's `ProgramArguments` referenced the raw binary (`${bin}`) instead of the wrapper (`${wrapper}`). On macOS, `ARBITRON_MASTER_KEY` and `ANTHROPIC_API_KEY` were never in the service environment. Fixed by changing ProgramArguments to reference only `${wrapper}`; the wrapper already passes `serve --config`. Updated service_macos.bats: removed the stale assertion that `serve`/`--config` appear in the plist, added two new tests asserting (a) ProgramArguments uses the wrapper and (b) the wrapper sources the secrets env and exec's the binary with serve --config.
 
 <!--
 Example of a fixed issue entry:

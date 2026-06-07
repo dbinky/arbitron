@@ -75,6 +75,29 @@ teardown() {
   [ "$output" = "Local" ]
 }
 
+@test "select_install_type ARBITRON_INSTALL_TYPE=shared yields Shared on Linux" {
+  ARBITRON_UNAME_S=Linux ARBITRON_INSTALL_TYPE=shared run select_install_type
+  [ "$status" -eq 0 ]
+  [ "$output" = "Shared" ]
+}
+
+@test "select_install_type ARBITRON_INSTALL_TYPE=local yields Local on Linux" {
+  ARBITRON_UNAME_S=Linux ARBITRON_INSTALL_TYPE=local run select_install_type
+  [ "$status" -eq 0 ]
+  [ "$output" = "Local" ]
+}
+
+@test "select_install_type ARBITRON_INSTALL_TYPE=unknown errors on Linux" {
+  ARBITRON_UNAME_S=Linux ARBITRON_INSTALL_TYPE=unknown run select_install_type
+  [ "$status" -ne 0 ]
+}
+
+@test "select_install_type ignores ARBITRON_INSTALL_TYPE on macOS (always Local)" {
+  ARBITRON_UNAME_S=Darwin ARBITRON_INSTALL_TYPE=shared run select_install_type
+  [ "$status" -eq 0 ]
+  [ "$output" = "Local" ]
+}
+
 # --- existing-install detection & dispatch -----------------------------------
 
 @test "detect_state is Fresh with no config and no service" {

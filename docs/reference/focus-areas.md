@@ -13,7 +13,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | install.sh — skeleton & shared helpers (`install.sh` — OS/arch/elevation detection, install-type select, Fresh/Upgrade/Reconfigure/Uninstall dispatch, logging/prompt/checksum helpers, `ARBITRON_INSTALL_LIB_ONLY` guard, `layout_*` resolvers) | [ ] | [ ] | |
+| 1 | install.sh — skeleton & shared helpers (`install.sh` — OS/arch/elevation detection, install-type select, Fresh/Upgrade/Reconfigure/Uninstall dispatch, logging/prompt/checksum helpers, `ARBITRON_INSTALL_LIB_ONLY` guard, `layout_*` resolvers) | [x] | [ ] | |
 | 2 | install.sh — dependency resolution (`install.sh` — node/claude/git/gh/opencode: presence+version → brew/apt/dnf/pacman/zypper → bootstrap → `download_verified` direct-download; Arbitron-owned npm prefix) | [ ] | [ ] | |
 | 3 | install.sh — local config Q&A + config.yaml + secrets env (`install.sh` — port/LLM/skip-perms/data-location prompts, absolute-path loopback config, `~/.arbitron/arbitron.env` 0600 + generated master key) | [ ] | [ ] | |
 | 4 | install.sh — local service & lifecycle (`install.sh` — launchd plist, systemd `--user` + linger, health-check, upgrade/reconfigure/uninstall keep-data-default) | [ ] | [ ] | |

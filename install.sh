@@ -1490,10 +1490,7 @@ EOF
   <string>${ARBITRON_LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${bin}</string>
-    <string>serve</string>
-    <string>--config</string>
-    <string>${cfg}</string>
+    <string>${wrapper}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
