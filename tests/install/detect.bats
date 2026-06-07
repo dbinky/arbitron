@@ -133,6 +133,22 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "detect_state with existing install on headless stdin defaults to Upgrade" {
+  # Re-running the installer piped (curl | bash) on an existing install must not hang;
+  # it should return the safe default 'upgrade' when stdin is /dev/null.
+  mkdir -p "$(arbitron_home)"
+  : >"$(layout_config)"
+  run detect_state </dev/null
+  [ "$status" -eq 0 ]
+  [ "$output" = "Upgrade" ]
+}
+
+@test "detect_state routes Fresh via ARBITRON_ACTION=fresh" {
+  ARBITRON_ACTION=fresh run detect_state
+  [ "$status" -eq 0 ]
+  [ "$output" = "Fresh" ]
+}
+
 @test "has_existing_config true only when config.yaml present" {
   run has_existing_config
   [ "$status" -ne 0 ]

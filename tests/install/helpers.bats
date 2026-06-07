@@ -91,6 +91,20 @@ teardown() {
   [ "$(layout_runtime)"     = "$HOME/.arbitron/runtime" ]
 }
 
+@test "layout helpers return system paths when ARB_INSTALL_MODE=shared" {
+  ARB_INSTALL_MODE=shared
+  [ "$(layout_bin)"         = "/usr/local/bin" ]
+  [ "$(layout_config)"      = "/etc/arbitron/config.yaml" ]
+  [ "$(layout_data)"        = "/var/lib/arbitron" ]
+  [ "$(layout_db)"          = "/var/lib/arbitron/arbitron.db" ]
+  [ "$(layout_workspaces)"  = "/var/lib/arbitron/workspaces" ]
+  [ "$(layout_logs)"        = "/var/log/arbitron" ]
+  [ "$(layout_secrets_env)" = "/etc/arbitron/arbitron.env" ]
+  # runtime: shared mode reuses ARB_LIB/runtime
+  [ "$(layout_runtime)"     = "/var/lib/arbitron/runtime" ]
+  ARB_INSTALL_MODE=local
+}
+
 # --- checksum ----------------------------------------------------------------
 
 @test "verify_checksum succeeds on match and fails on mismatch" {
