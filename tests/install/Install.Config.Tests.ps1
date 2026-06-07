@@ -90,6 +90,34 @@ Describe 'Write-ArbitronConfig' {
     }
 }
 
+Describe 'Invoke-ConfigQA question order (parity with P1 install.sh)' {
+    # P3 task 3 plan: "ask port, LLM access, skip-permissions (RCE warning),
+    # data location" -- that is the canonical order mirroring run_config_qa in
+    # install.sh. Asserting the order here guards against future swaps that
+    # would break cross-platform parity for operators switching between OSes.
+    BeforeEach { $script:p = New-TestPaths }
+
+    It 'asks port -> LLM access -> skip-permissions -> data location in order' {
+        $seq = New-Object System.Collections.Generic.List[string]
+        Mock -CommandName Read-PromptDefault -MockWith { $seq.Add($Prompt); $Default }
+        Mock -CommandName Read-PromptChoice  -MockWith { $seq.Add($Prompt); $(if ($Default) { $Default } else { $Choices[0] }) }
+        Mock -CommandName Read-PromptYesNo   -MockWith { $seq.Add($Prompt); $Default }
+
+        Invoke-ConfigQA -Paths $script:p | Out-Null
+
+        $idxPort = ($seq.FindIndex({ param($s) $s -like '*port*' }))
+        $idxLlm  = ($seq.FindIndex({ param($s) $s -like '*LLM access*' }))
+        $idxSkip = ($seq.FindIndex({ param($s) $s -like '*unattended agent tools*' }))
+        $idxData = ($seq.FindIndex({ param($s) $s -like '*Data location*' }))
+
+        $idxPort | Should -BeGreaterOrEqual 0
+        $idxLlm  | Should -BeGreaterThan $idxPort
+        # skip-permissions must precede data-location (parity with bash run_config_qa)
+        $idxSkip | Should -BeGreaterThan $idxLlm
+        $idxData | Should -BeGreaterThan $idxSkip
+    }
+}
+
 Describe 'Invoke-ConfigQA' {
     BeforeEach { $script:p = New-TestPaths }
 

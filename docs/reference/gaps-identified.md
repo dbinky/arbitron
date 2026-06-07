@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-016: PS1 Invoke-ConfigQA local Q&A order mismatch (data-location before skip-permissions, FA22)
+**Area**: install.ps1 local config Q&A / cross-platform parity (Paired area 22)
+**Fixed**: This iteration
+**Detail**: `Invoke-ConfigQA` asked data-location (step 3) then skip-permissions (step 4), but bash `run_config_qa` and the P1/P3 task plan both specify the canonical order as port→LLM→skip-permissions→data-location. Operators switching between OS platforms would see different question sequences. Reordered PS1 to match bash. Added a Pester Q&A order test (port→LLM→skip-perms→data-loc, index-based, mirroring the existing shared order test pattern) that fails before the fix and passes after. 214 bats + 190 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
 ### INST-015: ARBITRON_INSTALL_LIB_ONLY and ARBITRON_INSTALL_NOEXEC guards had no explicit tests (FA21 Pass 2)
 **Area**: Test harness integrity (Focus Area 21)
 **Fixed**: This iteration

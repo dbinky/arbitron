@@ -933,14 +933,15 @@ function Invoke-ConfigQA {
         }
     }
 
-    $dataDefault = if ($Defaults.ContainsKey('DataDir')) { $Defaults.DataDir } else { $Paths.Data }
-    $dataDir = Read-PromptDefault -Prompt 'Data location' -Default $dataDefault
-
     # The skip-permissions prompt is always explicit, never silently defaulted,
-    # and is preceded by the RCE-equivalent warning.
+    # and is preceded by the RCE-equivalent warning. Asked before data-location
+    # to mirror the canonical bash run_config_qa order (port->LLM->skip->data).
     Write-ArbitronLog -Level Warn -Message $script:ArbitronRceWarning
     $skipDefault = if ($Defaults.ContainsKey('SkipPermissions')) { [bool]$Defaults.SkipPermissions } else { $false }
     $skip = Read-PromptYesNo -Prompt 'Enable unattended agent tools (--dangerously-skip-permissions)?' -Default $skipDefault
+
+    $dataDefault = if ($Defaults.ContainsKey('DataDir')) { $Defaults.DataDir } else { $Paths.Data }
+    $dataDir = Read-PromptDefault -Prompt 'Data location' -Default $dataDefault
 
     return @{
         Port            = $port

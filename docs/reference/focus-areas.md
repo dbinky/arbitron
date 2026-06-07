@@ -41,7 +41,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 22 | install.sh local + install.ps1 local (cross-platform parity: same Q&A order/semantics, equivalent config + summary output) | [ ] | |
+| 22 | install.sh local + install.ps1 local (cross-platform parity: same Q&A order/semantics, equivalent config + summary output) | [x] | Done |
 | 23 | install.sh shared + install.ps1 shared (parity of the shared auth/TLS/OIDC question set and the P0 invariant guards) | [ ] | |
 | 24 | Fail-closed verification + Release machinery (the `SHA256SUMS`/cosign the workflow produces are exactly what the scripts consume; naming + format match) | [ ] | |
 | 25 | Hosting/version selection + version subcommand (`releases/latest`/`ARBITRON_VERSION` resolution vs the binary's stamped `arbitron version`; upgrade comparison degrades gracefully) | [ ] | |
