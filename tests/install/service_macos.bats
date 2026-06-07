@@ -75,6 +75,18 @@ _plist() { printf '%s/Library/LaunchAgents/dev.arbitron.plist\n' "$HOME"; }
   grep -qF "$(layout_config)" "$p"
 }
 
+@test "plist StandardOutPath and StandardErrorPath are absolute paths" {
+  # launchd requires absolute log paths — relative paths silently produce no
+  # log output, making debugging a failed start impossible.
+  render_launchd_plist
+  local p
+  p="$(_plist)"
+  # Extract the two path strings that follow the Std{Out,Err}Path keys.
+  # Both must begin with '/' (absolute path marker).
+  grep -A1 "StandardOutPath"  "$p" | grep '<string>' | grep -qE '<string>/'
+  grep -A1 "StandardErrorPath" "$p" | grep '<string>' | grep -qE '<string>/'
+}
+
 @test "plist is valid XML via plutil when available" {
   render_launchd_plist
   if command -v plutil >/dev/null 2>&1; then

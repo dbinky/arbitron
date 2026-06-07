@@ -145,6 +145,20 @@ _stage_installed() {
   [ "$key_after" = "$key_before" ]
 }
 
+@test "run_reconfigure on macOS kicks the launchd agent to restart" {
+  # Parity: reconfigure must call launchctl kickstart on macOS, just as it
+  # calls systemctl restart on Linux.
+  export ARBITRON_UNAME_S=Darwin ARBITRON_UNAME_M=arm64
+  install_mock recording-fake launchctl
+  _stage_installed
+  export ARBITRON_PORT=7777
+  install_fake curl 'echo 200'
+  run run_reconfigure
+  [ "$status" -eq 0 ]
+  grep -qE 'port: 7777' "$(layout_config)"
+  grep -q "kickstart" "$MOCK_LOG"
+}
+
 # --- uninstall ---------------------------------------------------------------
 
 @test "run_uninstall removes service+binary+config and KEEPS data by default" {
