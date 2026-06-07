@@ -1404,7 +1404,8 @@ upgrade_shared() {
   log_info "Upgrading Arbitron (config, data and secrets are preserved)"
   install_binary_system || die "binary download failed; the existing install is unchanged"
   systemctl restart arbitron
-  health_check_shared "$(read_existing_config_value server.port || echo 8080)" || true
+  local _up_port; _up_port="$(read_existing_config_value server.port 2>/dev/null)"
+  PORT="${_up_port:-8080}" health_check_shared || true
   log_warn "DB migrations run forward-only on serve start; there is no automatic"
   log_warn "down-migration. Review the release notes before downgrading the binary."
   print_shared_summary

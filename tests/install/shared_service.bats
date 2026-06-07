@@ -156,6 +156,22 @@ _stage_upgrade_curl() {
   ! grep -q "write_shared_config" "$MOCK_LOG"
 }
 
+@test "upgrade health check uses the port from the existing config not the env default" {
+  # upgrade_shared passes server.port to health_check_shared so the health
+  # probe lands on the right port even when PORT env var is set to a stale value.
+  _stage_upgrade_curl
+  cat >"$ARB_ETC/config.yaml" <<EOF
+server:
+  host: "127.0.0.1"
+  port: 9090
+EOF
+  export PORT=8080   # stale default — must NOT be the probe port
+  export ARBITRON_HEALTH_RETRIES=1 ARBITRON_HEALTH_SLEEP=0
+  run upgrade_shared
+  [ "$status" -eq 0 ]
+  grep -qE 'curl .*:9090' "$MOCK_LOG"
+}
+
 @test "upgrade prints the forward-only migration caveat" {
   _stage_upgrade_curl
   export ARBITRON_HEALTH_RETRIES=1 ARBITRON_HEALTH_SLEEP=0

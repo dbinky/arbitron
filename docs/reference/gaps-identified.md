@@ -24,6 +24,16 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-010: upgrade_shared health check probes wrong port (ignored argument)
+**Area**: install.sh shared systemd unit & lifecycle (Focus Area 7)
+**Fixed**: This iteration
+**Detail**: `upgrade_shared` called `health_check_shared "$(read_existing_config_value server.port || echo 8080)"`, passing the
+existing-config port as a positional argument. But `health_check_shared` ignores positional parameters and reads the port only
+from `SCFG_PORT` or `PORT` env vars. On a non-default port (e.g., 9090), the upgrade health check silently probed port 8080,
+giving a false pass (with `|| true`) or a spurious miss. Fixed by setting `PORT` as an env-var prefix:
+`PORT="${_up_port:-8080}" health_check_shared || true` where `_up_port` is read from the existing config.
+Added bats test `upgrade health check uses the port from the existing config not the env default` to lock the invariant.
+
 ### INST-009: prompt_oidc missing empty-client-secret guard (parity with INST-006/INST-008)
 **Area**: install.sh shared config Q&A / prompt_oidc (Focus Area 6)
 **Fixed**: This iteration
