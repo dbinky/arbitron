@@ -181,6 +181,25 @@ EOF
   shopt -u nocasematch
 }
 
+@test "upgrade is fail-closed — a tampered binary aborts without calling install" {
+  # SHA256SUMS is computed over 'BIN', but curl delivers 'TAMPERED'.
+  # verify_download must detect the mismatch and abort upgrade_shared before
+  # recording-install is ever called for the binary — i.e. the existing binary
+  # is never touched.
+  export ARBITRON_VERSION=1.0.0 OS_TOKEN=linux ARCH_TOKEN=amd64
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_1.0.0_linux_amd64\n" "$(printf BIN | shasum -a 256 | cut -d" " -f1)" > "$dest" ;;
+      *releases*)   printf "TAMPERED" > "$dest" ;;
+      *)            echo 200 ;;
+    esac
+  '
+  run upgrade_shared
+  [ "$status" -ne 0 ]
+  ! grep -qE "install .*/arbitron" "$MOCK_LOG"
+}
+
 # --- reconfigure -------------------------------------------------------------
 
 @test "reconfigure rewrites config and restarts, preserving data" {
