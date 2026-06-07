@@ -90,3 +90,19 @@ _plist() { printf '%s/Library/LaunchAgents/dev.arbitron.plist\n' "$HOME"; }
   mock_log_has "launchctl"
   grep -q "bootstrap\|load" "$MOCK_LOG"
 }
+
+@test "service_remove on macOS removes the plist and the secrets-env wrapper" {
+  # After uninstall the plist and the arbitron-service wrapper (which holds the
+  # binary path) must both be gone so no stale service definition remains.
+  render_launchd_plist
+  local plist wrapper
+  plist="$(_plist)"
+  wrapper="$(layout_bin)/arbitron-service"
+  [ -f "$plist" ]
+  [ -f "$wrapper" ]
+  run service_remove
+  [ "$status" -eq 0 ]
+  [ ! -f "$plist" ]
+  [ ! -f "$wrapper" ]
+  grep -q "bootout" "$MOCK_LOG"
+}

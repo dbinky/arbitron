@@ -75,6 +75,52 @@ _stage_installed() {
   [[ "$output" == *"migration"* || "$output" == *"down-migration"* || "$output" == *"forward-only"* ]]
 }
 
+@test "run_upgrade aborts when the download fails and leaves the existing binary unchanged" {
+  # A checksum mismatch (tampered download) or network failure must not leave a
+  # partial upgrade. The original binary must be intact and service untouched.
+  _stage_installed
+  local bin_before
+  bin_before="$(cat "$(layout_bin)/arbitron")"
+
+  # curl always fails for the release binary (simulates network error or
+  # checksum mismatch via download_binary calling verify_download internally).
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "deadbeef  arbitron_9.9.9_linux_amd64\n" > "$dest" ;;  # mismatch
+      *releases*)   printf "TAMPERED" > "$dest" ;;
+      *)            echo 200 ;;
+    esac
+  '
+  export ARBITRON_VERSION=9.9.9
+  run run_upgrade
+  [ "$status" -ne 0 ]
+  # Original binary must be unchanged.
+  [ "$(cat "$(layout_bin)/arbitron")" = "$bin_before" ]
+  # Service must NOT have been restarted (no restart call in mock log).
+  ! grep -q "systemctl --user restart arbitron" "$MOCK_LOG"
+}
+
+@test "run_upgrade on macOS kicks the launchd agent to restart" {
+  # The macOS service_restart path (launchctl kickstart) is separate from the
+  # Linux path; verify the upgrade lifecycle exercises it correctly.
+  export ARBITRON_UNAME_S=Darwin ARBITRON_UNAME_M=arm64
+  install_mock recording-fake launchctl
+  _stage_installed
+  export ARBITRON_VERSION=9.9.9
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_9.9.9_darwin_arm64\n" "$(printf NEW | shasum -a 256 | cut -d" " -f1)" > "$dest" ;;
+      *releases*)   printf "NEW" > "$dest" ;;
+      *)            echo 200 ;;
+    esac
+  '
+  run run_upgrade
+  [ "$status" -eq 0 ]
+  grep -q "kickstart" "$MOCK_LOG"
+}
+
 # --- reconfigure -------------------------------------------------------------
 
 @test "run_reconfigure rewrites config + restarts without touching data or master key" {

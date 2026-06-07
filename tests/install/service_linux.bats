@@ -47,3 +47,23 @@ _unit() { printf '%s/.config/systemd/user/arbitron.service\n' "$HOME"; }
   grep -q "systemctl --user enable --now arbitron" "$MOCK_LOG"
   grep -q "loginctl enable-linger tester" "$MOCK_LOG"
 }
+
+@test "loginctl failure is non-fatal: register_service_linux succeeds even without linger" {
+  # Some minimal Linux environments (containers, WSL, restricted distros) do
+  # not have loginctl or do not permit linger. The install must still succeed
+  # and warn the user rather than aborting.
+  install_fake loginctl 'exit 1'
+  hash -r
+  run register_service_linux
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"linger"* ]]
+}
+
+@test "service_remove on Linux disables the unit, removes the unit file, and daemon-reloads" {
+  render_systemd_unit
+  run service_remove
+  [ "$status" -eq 0 ]
+  [ ! -f "$(_unit)" ]
+  grep -q "systemctl --user disable --now arbitron" "$MOCK_LOG"
+  grep -q "daemon-reload" "$MOCK_LOG"
+}
