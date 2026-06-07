@@ -88,3 +88,26 @@ teardown() {
   run diff "${BATS_TEST_TMPDIR}/SHA256SUMS.first" "${REPO_ROOT}/dist/SHA256SUMS"
   [ "$status" -eq 0 ]
 }
+
+@test "SHA256SUMS can be spot-checked for a single artifact via grep+sha256sum" {
+  # Mirrors the verify-release CI job: only one artifact (linux_amd64) is downloaded
+  # alongside SHA256SUMS, then verified. Running 'sha256sum -c SHA256SUMS' with only
+  # one of six files present exits non-zero for the absent entries — the correct
+  # pattern is to grep the relevant line and pipe it to sha256sum.
+  hostos="$(go env GOOS)"
+  hostarch="$(go env GOARCH)"
+  [ "$hostos" = "windows" ] && skip "windows sha256sum not exercised in this bats suite"
+  bin="arbitron_${TEST_VERSION}_${hostos}_${hostarch}"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  cp "${REPO_ROOT}/dist/${bin}" "${tmpdir}/"
+  cp "${REPO_ROOT}/dist/SHA256SUMS" "${tmpdir}/"
+  cd "$tmpdir" || return 1
+  if command -v sha256sum >/dev/null 2>&1; then
+    run bash -c "grep '${bin}\$' SHA256SUMS | sha256sum -c -"
+  else
+    run bash -c "grep '${bin}\$' SHA256SUMS | shasum -a 256 -c -"
+  fi
+  [ "$status" -eq 0 ]
+  rm -rf "$tmpdir"
+}
