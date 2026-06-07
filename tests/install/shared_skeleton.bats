@@ -110,6 +110,28 @@ teardown() {
   grep -qE "(chmod 0?750|install .*-m 0?750) .*/var/lib/arbitron" "$MOCK_LOG"
 }
 
+@test "create_system_layout falls back to mkdir+chmod+chown when install is absent" {
+  # On minimal systems (Alpine / BusyBox containers) GNU install may be absent.
+  # _make_dir must fall back to mkdir + chmod + chown rather than silently
+  # failing. Redirect system paths into the sandbox so mkdir can actually create
+  # dirs, then remove the install mock to force the fallback.
+  export ARB_ETC="$TEST_SANDBOX/etc/arbitron"
+  export ARB_LIB="$TEST_SANDBOX/var/lib/arbitron"
+  export ARB_LOG="$TEST_SANDBOX/var/log/arbitron"
+  rm -f "$MOCK_BIN/install"
+  hash -r   # clear cached path so require_cmd install re-searches and fails
+  run create_system_layout
+  [ "$status" -eq 0 ]
+  # Directories must actually have been created on disk.
+  [ -d "$ARB_ETC" ]
+  [ -d "$ARB_LIB" ]
+  [ -d "$ARB_LOG" ]
+  [ -d "$ARB_LIB/workspaces" ]
+  # The fallback path calls chown; install was NOT called.
+  grep -q "chown" "$MOCK_LOG"
+  ! grep -q "^install " "$MOCK_LOG"
+}
+
 # --- binary install ----------------------------------------------------------
 
 @test "install_binary_system aborts without calling install when SHA256 verification fails" {
