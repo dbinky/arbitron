@@ -125,6 +125,29 @@ Describe 'Invoke-ConfigQA' {
     }
 }
 
+Describe 'Invoke-ConfigQA api-key empty-key guard' {
+    # Parity with install.sh INST-006: choosing api-key mode and leaving the key
+    # blank must abort immediately. Without the guard, the installer proceeds with
+    # provider: anthropic in config.yaml but no ARBITRON_LLM_APIKEY stored --
+    # a silently broken install.
+    BeforeEach { $script:p = New-TestPaths }
+
+    It 'throws when apikey mode is chosen but the key is left empty' {
+        Mock -CommandName Read-PromptChoice -MockWith {
+            param($Prompt, $Choices, $Default)
+            if ($Prompt -like '*LLM*') { return 'apikey' }
+            return $Default
+        }
+        Mock -CommandName Read-PromptDefault -MockWith {
+            param($Prompt, $Default)
+            if ($Prompt -like '*Anthropic API key*') { return '' }
+            return $Default
+        }
+        Mock -CommandName Read-PromptYesNo -MockWith { param($Prompt, $Default) $Default }
+        { Invoke-ConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*API key*'
+    }
+}
+
 Describe 'Set-ArbitronSecret' {
     It 'env method writes to the User scope' {
         $script:scope = $null

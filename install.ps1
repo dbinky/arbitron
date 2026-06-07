@@ -928,6 +928,9 @@ function Invoke-ConfigQA {
     $apiKey = $null
     if ($llmMode -eq 'apikey') {
         $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default ''
+        if (-not $apiKey) {
+            throw 'An Anthropic API key is required for api-key mode. Re-run the installer and paste your key.'
+        }
     }
 
     $dataDefault = if ($Defaults.ContainsKey('DataDir')) { $Defaults.DataDir } else { $Paths.Data }
