@@ -1066,6 +1066,11 @@ function Invoke-SharedConfigQA {
             $answers.TlsCertFile = Read-PromptDefault -Prompt 'TLS certificate file path' -Default ''
             $answers.TlsKeyFile  = Read-PromptDefault -Prompt 'TLS key file path' -Default ''
             $answers.CookieSecure = $true
+            # P0 guard: cert XOR key is rejected by the loader at startup.
+            # Abort here so the operator gets a clear error at install time.
+            if (-not $answers.TlsCertFile -or -not $answers.TlsKeyFile) {
+                throw 'direct TLS requires BOTH a certificate file and a key file; neither can be empty.'
+            }
         }
         'autocert' {
             $answers.TlsEnabled         = $true

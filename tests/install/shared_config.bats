@@ -176,6 +176,42 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
   grep -qE 'enabled: false' "$(_cfg)"
 }
 
+@test "direct TLS with cert-but-no-key is refused (P0 guard)" {
+  # The binary's loader rejects a certfile without a matching keyfile (and vice
+  # versa). The installer must abort before writing such a config so the server
+  # never starts with a half-configured TLS block.
+  export ARBITRON_AUTH_MODEL=oidc
+  export ARBITRON_OIDC_ISSUER=https://idp.example.com
+  export ARBITRON_OIDC_CLIENT_ID=c
+  export ARBITRON_OIDC_CLIENT_SECRET=s
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_OIDC_BOOTSTRAP_ADMINS="alice@example.com"
+  export ARBITRON_RBAC=no
+  export ARBITRON_TLS_MODEL=direct
+  export ARBITRON_TLS_CERT=/etc/ssl/arb.crt
+  unset ARBITRON_TLS_KEY
+  run run_shared_qa </dev/null
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qiE 'cert|key'
+}
+
+@test "direct TLS with key-but-no-cert is refused (P0 guard)" {
+  # Symmetric to cert-but-no-key: neither half should be allowed alone.
+  export ARBITRON_AUTH_MODEL=oidc
+  export ARBITRON_OIDC_ISSUER=https://idp.example.com
+  export ARBITRON_OIDC_CLIENT_ID=c
+  export ARBITRON_OIDC_CLIENT_SECRET=s
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_OIDC_BOOTSTRAP_ADMINS="alice@example.com"
+  export ARBITRON_RBAC=no
+  export ARBITRON_TLS_MODEL=direct
+  unset ARBITRON_TLS_CERT
+  export ARBITRON_TLS_KEY=/etc/ssl/arb.key
+  run run_shared_qa </dev/null
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qiE 'cert|key'
+}
+
 @test "direct app-TLS sets cert and key, autocertdomain empty" {
   export ARBITRON_AUTH_MODEL=oidc
   export ARBITRON_OIDC_ISSUER=https://idp.example.com

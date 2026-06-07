@@ -243,6 +243,33 @@ Describe 'Invoke-SharedConfigQA TLS models' {
             $a.TlsAllowUnauthenticated | Should -BeTrue
         }
     }
+
+    It 'throws when direct TLS certificate is given without a key (P0 guard)' {
+        # Parity with bash prompt_shared_tls: cert XOR key is rejected by the P0
+        # loader at startup. The installer must abort before writing a half-configured
+        # TLS block so the operator gets a clear error at install time, not at boot.
+        Set-ScriptedSharedAnswers @{
+            'Auth model'       = 'oidc'
+            'Issuer'           = 'https://idp.example.com'; 'Client ID' = 'a'; 'client secret' = 'x'
+            'Redirect'         = 'https://arb.example.com/auth/callback'; 'Bootstrap' = 'a@b.com'; 'RBAC' = $false
+            'TLS model'        = 'direct'
+            'certificate file' = 'C:\certs\arb.crt'
+            'key file'         = ''
+        }
+        { Invoke-SharedConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*key*'
+    }
+
+    It 'throws when direct TLS key is given without a certificate (P0 guard)' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model'       = 'oidc'
+            'Issuer'           = 'https://idp.example.com'; 'Client ID' = 'a'; 'client secret' = 'x'
+            'Redirect'         = 'https://arb.example.com/auth/callback'; 'Bootstrap' = 'a@b.com'; 'RBAC' = $false
+            'TLS model'        = 'direct'
+            'certificate file' = ''
+            'key file'         = 'C:\certs\arb.key'
+        }
+        { Invoke-SharedConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*cert*'
+    }
 }
 
 Describe 'Invoke-SharedConfigQA skip-permissions' {

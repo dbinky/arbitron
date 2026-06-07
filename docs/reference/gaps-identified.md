@@ -24,6 +24,16 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-013: PS1 Invoke-SharedConfigQA missing direct-TLS cert+key both-or-neither guard (parity with bash)
+**Area**: install.ps1 shared config Q&A / TLS models (Focus Area 20 / paired 23, 28)
+**Fixed**: This iteration
+**Detail**: `prompt_shared_tls` in bash (line 1084) aborts if either `TLS_CERT` or `TLS_KEY` is empty when `direct` mode is chosen — parity with the binary's P0 loader requirement that cert and key are both-or-neither. `Invoke-SharedConfigQA` in PS1 had no equivalent guard: an operator who provided a cert path but left the key blank (or vice versa) would get through install and find their Windows Service unable to start with a cryptic TLS-config error. Added the guard: throw if `TlsCertFile` or `TlsKeyFile` is empty after prompting. Added two Pester tests (`throws when direct TLS certificate is given without a key` and `key without cert`). Two bats tests added to lock the documented bash behavior. `tunnels-and-tls.md` already documented "The installer aborts if you give only one" — now both scripts honour this invariant.
+
+### INST-012: PS1 Invoke-SharedConfigQA missing LLM access prompt (parity with bash run_shared_qa)
+**Area**: install.ps1 shared config Q&A (Focus Area 20)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` silently defaulted `LlmMode` to 'subscription' without prompting. Bash `run_shared_qa` asks LLM access as step 8 (after data location). Windows shared operators had no way to configure api-key mode during install. Added the LLM access prompt (step 8) and API key sub-prompt (step 8a) matching the bash order and the same empty-key abort guard. `Get-SharedQuestionOrder` updated. `docs/install/README.md` scenario (e) updated to list LLM access as the final shared Q&A step. Three Pester tests added; question-order test extended; 185 Pester + 211 bats, 0 failures.
+
 ### INST-011: Invoke-SharedConfigQA missing empty-OIDC-client-secret guard (parity with INST-009)
 **Area**: install.ps1 shared config Q&A (Focus Area 13)
 **Fixed**: This iteration
