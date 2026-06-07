@@ -120,6 +120,13 @@ _mock() { install_mock recording-fake "$@"; }
   mock_log_has "brew install node"
 }
 
+@test "ensure_node errors when no package manager is present on Linux and bootstrap unavailable" {
+  # Linux has no bootstrap fallback; ensure_node must fail closed with a clear error.
+  ARBITRON_UNAME_S=Linux run ensure_node
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not install node"* ]]
+}
+
 # --- ensure_git / ensure_gh --------------------------------------------------
 
 @test "ensure_git no-op when git present" {
@@ -128,6 +135,13 @@ _mock() { install_mock recording-fake "$@"; }
   ARBITRON_UNAME_S=Linux run ensure_git
   [ "$status" -eq 0 ]
   ! mock_log_has "apt-get install"
+}
+
+@test "ensure_git installs git via pkg manager when absent" {
+  _mock apt-get
+  ARBITRON_UNAME_S=Linux run ensure_git
+  [ "$status" -eq 0 ]
+  mock_log_has "apt-get install -y git"
 }
 
 @test "ensure_gh installs gh when absent" {
@@ -159,8 +173,18 @@ _mock() { install_mock recording-fake "$@"; }
   ARBITRON_UNAME_S=Darwin run ensure_claude
   [ "$status" -eq 0 ]
   mock_log_has "npm install -g @anthropic-ai/claude-code"
-  # The recorded npm invocation must target the Arbitron-owned prefix.
-  grep -q "npm" "$MOCK_LOG"
+  # The --prefix arg in the recorded npm invocation must target the Arbitron-owned prefix.
+  grep -qF "$(layout_runtime)/npm" "$MOCK_LOG"
+}
+
+@test "ensure_claude npm invocation passes --prefix pointing at the Arbitron runtime" {
+  install_fake node 'echo v20.0.0'
+  install_fake npm 'exit 0'
+  ARBITRON_UNAME_S=Darwin run ensure_claude
+  [ "$status" -eq 0 ]
+  # Explicit: both the package name and the prefix path appear in the same invocation.
+  grep -qF -- "--prefix" "$MOCK_LOG"
+  grep -qF "$(layout_runtime)/npm" "$MOCK_LOG"
 }
 
 @test "ensure_claude records the resolved claude path under the npm prefix" {
@@ -181,6 +205,15 @@ _mock() { install_mock recording-fake "$@"; }
   ! mock_log_has "npm install -g @anthropic-ai/claude-code"
 }
 
+# --- pkg_install error handling -------------------------------------------
+
+@test "pkg_install errors when no package manager is available" {
+  # No package manager on PATH on Linux; pkg_install must return non-zero.
+  ARBITRON_UNAME_S=Linux run pkg_install node
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no supported package manager"* ]]
+}
+
 # --- checksum enforcement on direct download --------------------------------
 
 @test "download_verified succeeds on a matching sha256" {
@@ -199,6 +232,14 @@ _mock() { install_mock recording-fake "$@"; }
   install_fake curl 'for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then printf "tampered" > "$a"; fi; done'
   local dest="$TEST_SANDBOX/out.bin"
   run download_verified "https://example/x" "deadbeef" "$dest"
+  [ "$status" -ne 0 ]
+  [ ! -f "$dest" ]
+}
+
+@test "download_verified aborts when curl exits non-zero (network error) and leaves no artifact" {
+  install_fake curl 'exit 7'   # simulate a curl connection failure
+  local dest="$TEST_SANDBOX/out.bin"
+  run download_verified "https://example/x" "ignored" "$dest"
   [ "$status" -ne 0 ]
   [ ! -f "$dest" ]
 }
