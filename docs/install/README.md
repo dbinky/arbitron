@@ -143,9 +143,9 @@ Scheduled Task** (`Arbitron`) running as the current user.
 1. **Dashboard port** (default `8080`).
 2. **LLM access** — `subscription` (runs `claude /login`) or `apikey` (paste an
    Anthropic key).
-3. **Data location** (default `%LOCALAPPDATA%\Arbitron\data`).
-4. **Enable unattended agent tools (`--dangerously-skip-permissions`)?** — shown
+3. **Enable unattended agent tools (`--dangerously-skip-permissions`)?** — shown
    with its RCE-equivalent warning. Default **No**.
+4. **Data location** (default `%LOCALAPPDATA%\Arbitron\data`).
 
 Secrets are stored as **User-scope environment variables** (`ARBITRON_MASTER_KEY`,
 and `ARBITRON_LLM_APIKEY` in api-key mode), never written into `config.yaml`.
@@ -290,7 +290,7 @@ Service** (`arbitron`) running as **LocalSystem** or a dedicated local account.
 | Data / DB | `%ProgramData%\Arbitron\data\` (`arbitron.db`) |
 | Workspaces | `%ProgramData%\Arbitron\workspaces\` |
 | Logs | `%ProgramData%\Arbitron\logs\` |
-| Secrets | Service environment / **DPAPI (LocalMachine scope)** — `<name>.secret` under the data dir |
+| Secrets | Windows Service registry `Environment` (injected at `Start-Service`) + **DPAPI (LocalMachine scope)** blobs — `<name>.secret` under the data dir |
 | Service | native Windows Service `arbitron` (auto-start) |
 | Run as | LocalSystem **or** dedicated local account |
 | Auth | `edge+local` **or** OIDC `org` mode |
@@ -304,8 +304,11 @@ the same order as Linux shared: bind host/port → auth model → (OIDC sub-ques
 + optional RBAC) → TLS model → skip-permissions (RCE warning) → service account
 name → data location → LLM access (`subscription` or `apikey`).
 
-Secrets (master key, OIDC client secret, API key) are stored with **DPAPI at
-machine scope** so the service can read them; they never enter `config.yaml`.
+Secrets (master key, OIDC client secret, API key) are injected into the
+Windows Service **registry `Environment`** key (read by the SCM at `Start-Service`
+into the service process environment) and also written as **DPAPI LocalMachine**
+encrypted blobs (`<name>.secret` under the data dir) for at-rest backup. They
+never enter `config.yaml`.
 
 **Resulting service & summary**
 

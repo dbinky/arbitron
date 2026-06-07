@@ -65,6 +65,23 @@ PS_URL="https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1"
   grep -qE 'test-release' "${REPO_ROOT}/.github/workflows/installers.yml"
 }
 
+@test "Windows local Q&A documents skip-permissions before data location (parity with Invoke-ConfigQA)" {
+  # Invoke-ConfigQA / run_config_qa canonical order: port -> LLM -> skip-perms -> data.
+  # The README must reflect this in the (b) Windows local section so the docs
+  # match what the operator actually sees when running the installer.
+  local readme="${DOCS}/README.md"
+  local section skip_line data_line
+  section=$(awk '/^## b\) Windows local/,/^## c\) Linux local/' "$readme")
+  skip_line=$(printf '%s\n' "$section" | grep -n 'dangerously-skip-permissions\|dangerously_skip' | head -1 | cut -d: -f1)
+  data_line=$(printf '%s\n' "$section" | grep -n '^[0-9]\+\. \*\*Data location' | head -1 | cut -d: -f1)
+  [ -n "$skip_line" ] || { echo "skip-permissions item not found in Windows local Q&A section"; return 1; }
+  [ -n "$data_line" ] || { echo "Data location item not found in Windows local Q&A section"; return 1; }
+  [ "$skip_line" -lt "$data_line" ] || {
+    echo "skip-permissions (line $skip_line) must appear BEFORE data location (line $data_line) in Windows local Q&A — actual install order: port -> LLM -> skip-perms -> data"
+    return 1
+  }
+}
+
 @test "runnable bash fences in the install docs are shellcheck-clean" {
   if ! command -v shellcheck >/dev/null 2>&1; then
     skip "shellcheck not on PATH"

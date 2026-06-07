@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-023: Windows local Q&A order and Windows shared secrets description wrong in README.md (FA29)
+**Area**: Documentation + scripts (Paired area 29)
+**Fixed**: This iteration
+**Detail**: Two documentation accuracy bugs. (1) README.md scenario (b) Windows local listed Q&A items 3 and 4 in the wrong order: it said `3. Data location` then `4. skip-permissions`, but `Invoke-ConfigQA` (and the parallel `run_config_qa` in bash) ask `3. skip-permissions` then `4. Data location`. This matched the documented macOS/Linux local order but the Windows section was wrong. (2) The Windows shared secrets description (README.md layout table and body + security.md table) described DPAPI LocalMachine as the sole secret store, omitting the registry injection added in FA26 (`Set-ArbitronServiceEnvironment` writes `REG_MULTI_SZ Environment` under the service's registry key; the SCM injects this into the service process environment at `Start-Service` time — DPAPI blobs are backup). Fixed by: (1) swapping items 3 and 4 in the Windows local Q&A list; (2) updating the Windows shared secrets row in both README.md and security.md to describe both mechanisms; (3) adding a new bats test (`docs_commands.bats`) that extracts the Windows local section and asserts skip-permissions appears before Data location. 10/10 docs_commands.bats, 199 Pester, 214+ bats — all green.
+
 ### INST-022: PS1 shared config Q&A P0 TLS guard silently continues when operator declines (FA28)
 **Area**: Shared config Q&A + P0 TLS invariants (Paired area 28)
 **Fixed**: This iteration

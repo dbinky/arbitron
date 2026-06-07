@@ -60,7 +60,7 @@ protected sink that depends on the platform:
 | macOS / Linux local | `~/.arbitron/arbitron.env` | file mode `0600` (created under `umask 077`) |
 | Linux shared | `/etc/arbitron/arbitron.env` | `0600`, owned `root:arbitron`, referenced via systemd `EnvironmentFile=` |
 | Windows local | User-scope environment variables (and DPAPI blobs) | per-user DPAPI / user env |
-| Windows shared | DPAPI **LocalMachine** scope (`<name>.secret` under the data dir) | machine-scoped so the service can read it |
+| Windows shared | Windows Service registry `Environment` (injected at `Start-Service`) + DPAPI **LocalMachine** blobs (`<name>.secret`) | registry injects into process env; DPAPI provides at-rest backup |
 
 On Linux shared, `config.yaml` itself is world-readable (`0644 root:root`) **only
 because it is secret-free** — every secret is in the `0600 root:arbitron` env
