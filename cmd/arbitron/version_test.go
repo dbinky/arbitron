@@ -111,5 +111,24 @@ func TestVersionCommand_And_FlagProduceSameOutput(t *testing.T) {
 		"'version' subcommand and '--version' flag must print identical text")
 }
 
+// Ldflags simulation: stamp the package vars with realistic values (mirroring
+// what the Makefile -ldflags injection would produce) and verify versionString
+// still matches the format contract. This catches any regression where a
+// stamped value (e.g. a semver with dots or a git hash with hex chars) would
+// break the format regexp.
+func TestVersionString_WithStampedValues(t *testing.T) {
+	orig := version
+	origC := commit
+	origD := date
+	t.Cleanup(func() { version = orig; commit = origC; date = origD })
+
+	version = "1.2.3"
+	commit = "abc1234"
+	date = "2026-06-05T00:00:00Z"
+
+	got := versionString()
+	assert.Equal(t, "arbitron 1.2.3 (commit abc1234, built 2026-06-05T00:00:00Z)", got)
+}
+
 // Compile-time guard: newVersionCmd returns a *cobra.Command.
 var _ = func() *cobra.Command { return newVersionCmd() }
