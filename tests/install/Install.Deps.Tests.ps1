@@ -128,6 +128,21 @@ Describe 'Install-ViaDirectDownload checksum gate' {
         Should -Invoke Move-Item -Times 0 -Exactly
     }
 
+    It 'removes the partial download artifact on checksum failure (fail-closed cleanup)' {
+        # Asserting Remove-Item is called verifies the tampered file is not left on
+        # disk after an abort. Invoke-ArbitronDownload is mocked (no real file), but
+        # the code must still call Remove-Item so a real partial write is cleaned up.
+        Mock -CommandName Invoke-ArbitronDownload -MockWith { }
+        Mock -CommandName Test-Sha256 -MockWith { $false }
+        Mock -CommandName Remove-Item -MockWith { } -ParameterFilter { $LiteralPath -like '*git.zip*' }
+        $spec = [pscustomobject]@{
+            Name = 'git'; DownloadUrl = 'https://example/git.zip'; DownloadSha256 = ('a' * 64)
+        }
+        { Install-ViaDirectDownload -Spec $spec -Prefix $script:Paths.Runtime } |
+            Should -Throw -ExpectedMessage '*checksum*'
+        Should -Invoke Remove-Item -Times 1 -Exactly -ParameterFilter { $LiteralPath -like '*git.zip*' }
+    }
+
     It 'downloads then verifies before placing (order)' {
         $script:order = @()
         Mock -CommandName Invoke-ArbitronDownload -MockWith { $script:order += 'download' }
@@ -140,6 +155,17 @@ Describe 'Install-ViaDirectDownload checksum gate' {
         Install-ViaDirectDownload -Spec $spec -Prefix $script:Paths.Runtime | Out-Null
         $script:order[0] | Should -Be 'download'
         $script:order[1] | Should -Be 'verify'
+    }
+}
+
+Describe 'Install-ViaDirectDownload no-URL guard' {
+    It 'throws immediately when the spec has no DownloadUrl configured' {
+        # Most deps (node, git, gh) use winget and have no DownloadUrl; if they
+        # somehow reach Install-ViaDirectDownload the guard must throw clearly
+        # rather than failing with a null-dereference or downloading from a blank URL.
+        $spec = [pscustomobject]@{ Name = 'git' }  # no DownloadUrl property
+        { Install-ViaDirectDownload -Spec $spec -Prefix $script:Paths.Runtime } |
+            Should -Throw -ExpectedMessage '*direct-download URL*'
     }
 }
 
