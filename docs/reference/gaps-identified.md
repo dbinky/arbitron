@@ -2,92 +2,46 @@
 
 Issues found during review iterations. Only the user can move items to the Won't Fix sections.
 
-## 🚩 RELEASE GATES (block any GA / production claim)
-
-These are not code-review gates — the build is green and the failure modes are
-safe (fail-closed). But each MUST be cleared by a real-binary / live-API smoke
-test before the affected path is claimed GA or production-ready. (Promoted to
-named gates per PR #23 review, 10x items 2-3 + security.)
-
-- **RELEASE-GATE BEDROCK-001 — Bedrock `/converse-stream` event-stream decoder.**
-  The streaming Bedrock path uses an NDJSON-style scanner, not the real
-  `application/vnd.amazon.eventstream` binary framing (no signed
-  `Accept: application/vnd.amazon.eventstream`). Streaming Bedrock is
-  NON-FUNCTIONAL until the binary-frame decoder lands. Non-streaming Converse is
-  fine. GATE: no GA/prod claim on **streaming** Bedrock until done. (Detail under
-  Open Issues → BEDROCK-001.)
-- **RELEASE-GATE OPENCODE-001 — opencode flag spellings + `minOpencodeVersion`.**
-  `--allow-all-tools` / `--allowed-tools` / `run` / `minOpencodeVersion="0.4.0"`
-  are placeholders chosen from docs, unverified against an installed modern
-  opencode binary. The version probe is correctly FAIL-CLOSED (a mismatched
-  binary refuses to launch), so the failure mode is safe. GATE: one real-binary
-  smoke test (`opencode run --help`, `opencode --version`) confirming the consts
-  before any GA claim on the agent tier. (Detail under Open Issues → OPENCODE-001.)
-- **RELEASE-GATE OPENCODE-002 — agent-path multi-provider routing is fake-tested
-  only.** The `run -m <provider>/<model>` argv + per-provider auth-env contract
-  is asserted hermetically via a fake `CommandRunner`; no live smoke test
-  exercises a real binary per provider. GATE: a documented manual/build-tagged
-  live smoke test per provider before any GA claim on the agent tier. (Detail
-  under Open Issues → OPENCODE-002.)
-
 ## Open Issues
 
-### OPENCODE-001: Modern-opencode contract details are unverified placeholders 🚩 RELEASE GATE
-**Area**: opencode args + version (`adapter/opencode/args.go`, `adapter/opencode/version.go`)
-**Detail**: The flag spellings `permissionAllowAllFlag="--allow-all-tools"`, `toolScopeFlag="--allowed-tools"`, `runSubcommand="run"`, and `minOpencodeVersion="0.4.0"` are placeholders chosen from documentation, not confirmed against an installed modern opencode binary. They are deliberately localized so a correction is a one-line edit each. Verify against `opencode run --help` and `opencode --version`, correct the consts, and update the unit tests' expected argv accordingly. Until confirmed, agent runs against a real binary may use the wrong flags.
+These are carry-forward items seeded at loop setup — known limitations of the draft implementation that the review loop should confirm, close, or reclassify. They are not bugs found in review yet; verify each against the code and either resolve or document.
 
-### OPENCODE-002: Agent-path multi-provider routing only fake-tested 🚩 RELEASE GATE
-**Area**: opencode env + run (`adapter/opencode/{env,provider}.go`)
-**Detail**: The `opencode run -m <provider>/<model>` argv + per-provider auth-env contract is asserted hermetically via a fake `CommandRunner` only. No live smoke test exercises a real opencode binary per provider (anthropic/openai/openrouter/ollama/amazon-bedrock/azure). Once OPENCODE-001 is confirmed, add a documented manual/integration smoke check (kept out of `make test`) or a build-tagged live test, and note any provider the installed binary cannot actually drive (fail-closed path).
+### INST-001: Live-binary contracts are mock-only
+**Area**: install.sh / install.ps1 dependency resolution + service registration (Focus Areas 2, 4, 7, 9, 11, 14)
+**Detail**: bats and Pester mock every package manager (brew/apt/dnf/pacman/zypper/winget), every download, and all service tooling (systemctl/launchctl/Register-ScheduledTask/New-Service). No test exercises a real dependency install, a real `claude` npm install into the Arbitron-owned prefix, or a real OS service start/stop. A per-scenario live smoke test (CI container/VM) is outstanding. Confirm whether the loop should add one or document it as a release gate.
 
-### BEDROCK-001: Converse + ListFoundationModels shapes not verified against live AWS 🚩 RELEASE GATE (streaming)
-**Area**: bedrock adapter + probe (`adapter/bedrock/{request,response}.go`, `adapter/probe/bedrock.go`)
-**Detail**: The Converse request/response body and the `ListFoundationModels` control-plane shape are validated only against fixture servers. Confirm against live AWS: the `/model/{id}/converse` (and `/converse-stream`) runtime host vs the `bedrock.{region}.amazonaws.com/foundation-models` control-plane host, the `inferenceConfig`/`usage` field names, and the streaming event framing. Adjust fixtures and parsing if reality differs.
+### INST-002: Release workflow unproven on a real tag
+**Area**: Release machinery + hosting/version selection (Focus Areas 17, 19; Paired 24, 25)
+**Detail**: `make dist` is tested for artifact naming, checksum self-consistency, and reproducibility, and `release.yml` passes `actionlint`, but cosign keyless signing, the `releases/latest` redirect, and the in-workflow self-verify have not run end-to-end against GitHub. The scripts' `releases/latest` / `ARBITRON_VERSION` resolution is unit-tested against mocked redirects only. Verify the redirect-parsing and artifact-URL construction match GitHub's real behavior.
 
-### ANTHROPIC-001: Forced-tool structured output + SSE not verified against live API
-**Area**: anthropicapi adapter (`adapter/anthropicapi/{request,response}.go`)
-**Detail**: The structured-output mapping (single forced tool via `tool_choice`, returning the tool-use `input` as a raw pre-parse string) and the SSE event handling (`content_block_delta` text_delta/input_json_delta, usage split across `message_start`/`message_delta`, `message_stop`) are tested only against fixtures. Confirm against the live Anthropic `/v1/messages` API, including the pinned `anthropic-version: 2023-06-01`, and reconcile any divergence.
+### INST-003: Native windows/svc path is compile/no-op tested only
+**Area**: Go native Windows service awareness + install.ps1 shared service (Focus Areas 16, 14; Paired 27)
+**Detail**: `service_windows.go` is covered only via the non-Windows no-op twin, the windows-tagged unit tests, and `GOOS=windows go build`. The StartPending→Running→Stop handler has not run under a real Windows SCM, and the installed service's BinaryPathName + `serve --config` dispatch has not been exercised live. A Windows live-service smoke test is outstanding.
+
+### INST-004: Node direct-download fallback intentionally absent
+**Area**: install.sh / install.ps1 dependency resolution (Focus Areas 2, 9)
+**Detail**: The implementation does package-manager + bootstrap only; the pinned node tarball URL/checksum direct-download fallback from the design's step 6 was deferred (no pinned URL in P1; deferred to P5, which also did not pin it). Confirm whether the bare-machine-with-no-package-manager case actually needs the tarball fallback, or whether package-manager bootstrap (Homebrew / App Installer) is sufficient. If needed, the verified-download primitive already exists — only the pinned source is missing.
 
 ## Fixed Previously
 
-- **BEDROCK-parseConverseEvent-coverage** (Area 4 Pass 1): `parseConverseEvent` was missing direct tests for the blank/whitespace-only input (edge) and malformed JSON (error) paths. Added `TestParseConverseEvent_BlankLine` and `TestParseConverseEvent_MalformedJSON` to `response_test.go`.
-- **BEDROCK-002** (Area 4 Pass 1): Two untested error paths in `provider.go` — `StreamChat` non-2xx status (error delivered via channel) and `signedRequest` RevealKey-returns-error. Fixed by adding `TestStreamChat_NonOKStatusDeliveredViaChannel` and `TestChat_RevealKeyError` to `provider_test.go`.
-- **BEDROCK-scrubControl** (Area 4 Pass 2): `scrubControl` security function had no direct unit test. Added `TestScrubControl` to `provider_test.go` with 13 cases covering empty, printable ASCII, all control-char variants (0x00–0x1F, 0x7F), and valid UTF-8 multibyte preservation.
-- **FACTORY-MaxResponseBytes-threading** (Area 5 Pass 1): `TestFactory_ProviderFor_ThreadsMaxResponseBytes` covered only 3 of 5 credential-bearing backends (openrouter, azurefoundry, opencode) and omitted `anthropic-api` and `bedrock`. Extended the test to include all five and updated the comment accordingly.
-- **FACTORY-ErrUnknownProvider-quoting** (Area 5 Pass 2): `ErrUnknownProvider` uses `%q` to quote the provider string, preventing control-char injection into logs. This property was untested. Added `TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped rather than emitted raw.
-- **OPENCODE-ToolScope-precedence** (Area 6 Pass 1): `mission.ToolScope` wins over `posture.AllowedTools` when both are non-empty, but no test covered the case where both were simultaneously non-empty. Added `TestBuildArgs_MissionToolScopeWinsOverProfileAllowlist` to `args_test.go` — verifies a 3-tool mission scope beats a 1-tool profile allowlist.
-- **OPENCODE-buildArgs-quoting** (Area 6 Pass 2): `buildArgs` error path (`args.go:52`) uses `%q` to quote the provider string but this was untested. Added `TestBuildArgs_UnknownProviderControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped in the error message (same property verified for the factory in Area 5).
-- **OPENCODE-env-error-paths** (Area 7 Pass 1): Three error-path guards in `env.go` were untested: (1) `bedrockEnv` nil RevealKey (line 107–109), (2) keyless ollama with empty BaseURL (line 59–62), (3) non-keyless provider whose RevealKey returns `("", nil)` (line 79–81). Added `TestOpencodeEnv_BedrockNilRevealKey`, `TestOpencodeEnv_KeylessOllamaEmptyBaseURL`, and `TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless`.
-- **OPENCODE-env-quoting** (Area 7 Pass 2): `opencodeEnv` error path (`env.go:39`) uses `%q` to quote the provider string — same property verified for `buildArgs` (Area 6 Pass 2). Added `TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted`.
-- **PROBE-anthropic-coverage** (Area 8 Pass 1): `anthropic_test.go` was missing 5 paths compared with the openai_compat coverage: RevealKey error, transport → `ErrUnreachable`, 5xx → `ErrUpstreamStatus`, empty base URL uses default endpoint, and bounded response. Added corresponding tests.
-- **PROBE-factory-quoting + scrubControl** (Area 8 Pass 2): `factory.go:83` uses `%q` on the provider string in `ErrNoProbeForProvider` — untested with control chars. Added `TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted`. Also added `TestProbeScrubControl` direct unit test for `httpshared.go`'s `scrubControl` (mirrors bedrock/openrouter pattern).
-- **DOMAIN-probe-failure-path** (Area 9 Pass 1): `probe_test.go` had no test for `ConnectionProbe.Probe` returning an error (failure category empty). Added `TestConnectionProbe_ProbeError` using `fakeProbe{err: ...}`.
-- **CLI-connection-ErrUpstreamStatus** (Area 10 Pass 1): `connection_test.go` covered `ErrCredentialsRejected`, `ErrUnreachable`, and `ErrRegionConfig` probe errors but not `ErrUpstreamStatus` (4xx/5xx upstream). Added `TestRunConnectionValidate_UpstreamStatus`.
-- **CLI-connection-RevealKey-error** (Area 10 Pass 2): `bindingFromConnection` creates a `RevealKey` closure but no test verified that `store.Reveal` errors propagate without leaking the stored secret. Added `TestBindingFromConnection_RevealKeyError_SecretFree`.
-- **DOMAIN-bedrock-amazon-bedrock-alias** (Area 11 Pass 1): `ValidateConnection` used `c.Provider == "bedrock"` (exact match) and skipped the region+access-key-id requirement for `"amazon-bedrock"` (the canonical alias used in adapter maps). Fixed by introducing a `bedrockProviders` set (mirrors `azureProviders` pattern) and changing the check to `bedrockProviders[c.Provider]`. Added `TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials`.
-- **DOMAIN-allowany-whitespace-url** (Area 11 Pass 2): `TestAllowAnyURLPolicy_RejectsEmpty` only tested `""` but not whitespace-only strings (`"   "`, `"\t"`). Extended to cover all empty-after-trim variants.
-- **CLI-connection-subcommand-registration** (Area 12 Pass 1): `main_test.go` had tests for the `mcp` and `serve` subcommands but none for `connection`, which is registered at `main.go:89` in the same pattern. Added `TestRootCommand_HasConnectionSubcommand`, `TestConnectionCmd_HasValidateSubcommand`, and `TestConnectionValidateCmd_HasRunE`.
-- **OPENCODE-BedrockCompositeSecretsArgv** (Area 13 Pass 2): `TestRunAgent_KeyAbsentFromLogs` tested the anthropic key path only. The bedrock path carries TWO secrets (AWS_SECRET_ACCESS_KEY + AWS_SESSION_TOKEN from a JSON composite payload) — either in argv would be extractable from os.Args or process listings. Added `TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs` with a composite-secret binding asserting both values are only in `RunSpec.Env`, never in `RunSpec.Args` or logs.
-- **BEDROCK-StreamChat-no-leak** (Area 13 Pass 1): `TestChat_RevealKeyError` and `TestChat_403AuthError_NoSecretLeak` existed only for the `Chat` path. `StreamChat` shares the same `signedRequest` guard but had no tests asserting the RevealKey error returns directly (not via channel) and that a 403 channel error never includes the secret. Added `TestStreamChat_RevealKeyError` and `TestStreamChat_403AuthError_NoSecretLeak`.
-- **CONFIG-agentallowalltools-env-override** (Area 12 Pass 2): `loader_test.go` tested `AgentAllowAllTools` via YAML only; no test verified the `ARBITRON_LLM_AGENTALLOWALLTOOLS=false` env var path (the zero-touch operator restriction path for containerized deployments). Added `TestLoad_AgentAllowAllTools_EnvVarDisables` and `TestLoad_AgentAllowAllTools_EnvVarWinsOverYAMLTrue`.
-- **FACTORY-PerProfileAllowlistNarrows** (Area 14 Pass 1): `factory_test.go` tested `OpencodeAllowAllTools` (knob a) end-to-end through the factory but had no test for per-profile `binding.AllowedTools` (knob b) flowing through `Factory.AgentProviderFor` → `opencode.buildPosture` → `buildArgs` → subprocess argv. Added `TestFactory_AgentProviderFor_PerProfileAllowlistNarrows` which sets `binding.AllowedTools=["Read","Write"]` with `OpencodeAllowAllTools=true` and asserts `--allow-all-tools` is absent and `--allowed-tools Read,Write` is present in the run argv.
-- **OPENCODE-ZeroAllowAllToolsIsClosedPosture** (Area 14 Pass 2): `provider_test.go` had no test for the stated security property that `Config.AllowAllTools` zero value (false) produces a closed posture. All existing passing tests set `AllowAllTools: true` explicitly. Added `TestRunAgent_ZeroAllowAllToolsIsClosedPosture` which constructs a Provider omitting `AllowAllTools` and asserts `--allow-all-tools` is absent from the run argv — verifying the safe-by-zero-value contract.
-- **BEDROCK-CredentialScopeRegionAndService** (Pair 15): `TestChat_HappyPath` only checked that the Authorization header starts with `"AWS4-HMAC-SHA256 "` but did not verify the credential scope contained the correct region or the service name `"bedrock"`. A mis-wiring of either (e.g. wrong service string in `sigService`) would silently pass. Added `TestChat_CredentialScopeContainsRegionAndBedrockService` using a non-default region (`eu-west-2`) and asserting both `/eu-west-2/` and `/bedrock/` appear in the Authorization Credential field.
-- **OPENCODE-BedrockEmptyRevealMissingSecret** (Pair 16): `env_test.go` tested the bedrock path when RevealKey returned an error, but not when RevealKey returned `("", nil)` (empty payload, no error). That path goes through `awssig.ParseCredential("")` → `ErrMissingSecret` → `bedrockEnv` wraps it. No test exercised this awssig↔opencode seam. Added `TestOpencodeEnv_BedrockEmptyRevealPropagatesMissingSecret` which asserts `errors.Is(err, awssig.ErrMissingSecret)` and that no partial env is returned.
-- **FACTORY-AllowlistBothKnobsClosed** (Pair 19): `factory_test.go` tested knob b (`binding.AllowedTools`) with knob a `true` (Area 14 Pass 1), but not the combination where BOTH knobs are set restrictively: `OpencodeAllowAllTools=false` + `AllowedTools=["Read"]`. Knob b must emit `--allowed-tools` independently of knob a. Added `TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled`.
-- **FACTORY-HTTPTimeoutThreading** (Pair 18): `factory_test.go` tested `MaxResponseBytes` and `HTTPClient` threading from `Deps` into the HTTP adapters, but `HTTPTimeout` was untested. Added `TestFactory_ChatProviderFor_ThreadsHTTPTimeout` covering all four HTTP adapters (`openrouter`, `azure-foundry`, `anthropic-api`, `bedrock`) — mirrors the `MaxResponseBytes` test pattern.
-- **ACCEPTANCE-CrossProviderKeyContamination** (Pair 23): `TestAcceptance_08_MixedChatProviders` asserted what IS present on each provider's auth headers (Anthropic key on Anthropic, Bearer on OpenAI, nothing on Ollama) but not the negative cross-contamination properties — that each provider's key is ABSENT from every other provider's request. A mis-wired adapter that accidentally sent x-api-key on all requests (not just Anthropic), or leaked the OpenAI key into the Authorization header on the Anthropic request, would not be caught. Added negative assertions for all three providers: `XAPIKey=empty` on the Ollama and OpenAI requests; `APIKey=empty` on the Anthropic request; and `NotContains` checks verifying each key is absent from all wrong-provider headers.
-- **CLI-BindingBaseURLAndFactoryDispatch** (Pair 22): Two seam gaps in the connection→probe path. (1) `TestBindingFromConnection_MapsFields` used `BaseURL: ""` and made no assertion about `b.BaseURL`, so a regression removing `BaseURL: c.BaseURL` would be invisible. Added `TestBindingFromConnection_BaseURLPassedThrough` with a non-empty URL and explicit assertion. (2) All `runConnectionValidate` tests used `fakeProbeSelector` which ignores the binding — no test ever called `ProbeFactory.ProbeFor` with a connection-built binding (which leaves `Kind` and `Model` zero). Added `TestRunConnectionValidate_ProbeFactoryDispatchesOnProviderOnly` which builds a real `ProbeFactory`, calls `bindingFromConnection` for all canonical provider strings, and asserts dispatch succeeds (confirming the factory's "Kind/Model not read" contract).
-- **ANTHROPICAPI-VersionLockstepCrossPackage** (Pair 21): `adapter/probe/anthropic.go` keeps a local copy of `anthropicVersion = "2023-06-01"` with a comment saying it must stay in lockstep with `adapter/anthropicapi.anthropicVersion`. No test enforced this: both packages' unit tests pinned the value to the same literal, but a developer bumping one and forgetting the other would see all tests pass. Fixed by: (1) exporting `AnthropicVersionHeader` from `adapter/anthropicapi/request.go` with the unexported `anthropicVersion = AnthropicVersionHeader` as an internal alias; (2) adding `TestAnthropicProbe_VersionMatchesChatAdapter` to `adapter/probe/anthropic_test.go`, which imports `adapter/anthropicapi` and asserts `anthropicapi.AnthropicVersionHeader == anthropicVersion` — the first cross-package enforcement of the lockstep invariant.
-- **URLPOLICY-OllamaCloudAliasNoLoopbackCarveout** (Pair 20): `TestValidateConnectionURL_NonOllamaLocalhost_StillRejected` covered `"openrouter"`, `"openai"`, `"litellm"`, `"azure-openai"`, and `""` but NOT `"ollama-cloud"` — the factory alias that routes to the same adapter arm as `"ollama"`. The loopback carve-out is strictly scoped to `provider == "ollama"` (exact string after lowercase+trim), so `"ollama-cloud"` must be rejected for a loopback URL. This is the SSRF scope-narrowing property: factory normalization of provider aliases must never widen the url_policy carve-out. Added `TestValidateConnectionURL_OllamaCloudLocalhost_Rejected`.
-- **PROBE-BedrockCredentialScopeRegionAndService** (Pair 17): `TestBedrockProbe_ListFoundationModels_Signed` only checked the Authorization prefix; no test verified the credential scope contained the correct region or service `"bedrock"` for the probe path (same gap as Pair 15 but for the control-plane probe). Added `TestBedrockProbe_CredentialScopeContainsRegionAndService` using `ap-southeast-2` and asserting both `/ap-southeast-2/` and `/bedrock/` appear in the captured Authorization header.
+_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
 
-- **CONFIG-TimeoutSecondsFloor-EnvVar** (Pair 24): `TestLoad_TimeoutSecondsFloor` (existing) covered only the YAML input path for the `normalize()` floor. An operator setting `ARBITRON_LLM_TIMEOUTSECONDS=0` in a containerized/k8s env — expecting to "disable" timeouts — would silently produce `TimeoutSeconds=0` in the factory Deps if the env-var floor was untested (both `initDomain` and `buildValidateDeps` use `time.Duration(cfg.LLM.TimeoutSeconds) * time.Second`). Added `TestLoad_TimeoutSecondsFloor_EnvVarZeroFloored` (env var = `"0"` → floored to `DefaultTimeoutSeconds`) and `TestLoad_TimeoutSecondsFloor_EnvVarPositivePreserved` (env var = `"120"` → preserved at `120`) to `adapter/config/loader_test.go`.
+<!--
+Example of a fixed issue entry:
+
+### INST-005: Secrets env created world-readable
+**Area**: install.sh local config (`install.sh`)
+**Fixed**: Iteration 3
+**Detail**: arbitron.env was written then chmod'd, leaving a brief 0644 window. Switched to umask 077 around the write so it is never group/world-readable. Added a bats assertion on the resulting mode.
+-->
 
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
 
 <!--
-Candidates the reviewer should NOT implement (log here if tempted): an 8th provider family; Amazon Bedrock ambient AWS credential-chain auth (spec chose stored keys); exposing connection validation as an MCP tool (CLI-only by design); model-name validation at workflow-author time; auto-refresh/caching of model lists.
+Example of a won't-fix entry:
+
+### INST-W01: Air-gapped / fully offline install
+**Detail**: Bundling runtimes and an offline install path is an explicit non-goal in the master design. Out of scope for this review.
 -->
