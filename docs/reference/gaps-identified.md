@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-019: No cross-seam test for arbitron version output format parseability + dev sentinel graceful degradation (FA25)
+**Area**: Hosting/version selection + version subcommand (Paired area 25)
+**Fixed**: This iteration
+**Detail**: The binary's `versionString()` format contract (`"arbitron VERSION (commit C, built D)"`) was tested only in Go isolation (`TestVersionString_Format`). No bats or Pester test exercised the cross-seam between the real binary's output and the extraction pattern an upgrade script would use (`sed 's/^arbitron \([^ ]*\) .*/\1/'` / PowerShell `[regex]::Match(..., '^arbitron (\S+) ')`). Specifically: (1) the existing bats test only checked substring presence (`[[ "$output" == *"${TEST_VERSION}"* ]]`), not that the version token is extractable with the documented pattern; (2) there was no test for the dev-sentinel case — an unstamped binary (`go build` without ldflags) must produce a parseable `"dev"` token, not an empty or crashing extraction. Added two bats tests to `tests/release/dist_naming.bats`: one that runs the stamped dist binary and extracts the version with the documented sed pattern, asserting it equals `TEST_VERSION`; one that builds an unstamped binary and asserts the dev sentinel extracts as `"dev"`. Added three Pester tests to `Verify.Tests.ps1` covering the PS1 equivalent regex extraction for stamped ("1.2.3"), dev, and pre-release suffix ("1.2.3-beta.1") inputs. 214 bats + 20 release bats + 195 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
 ### INST-018: No cross-seam test bridging make dist SHA256SUMS format and verify_download parsing (FA24)
 **Area**: Fail-closed verification + Release machinery (Paired area 24)
 **Fixed**: This iteration

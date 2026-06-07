@@ -81,6 +81,45 @@ teardown() {
   [[ "$output" == *"${TEST_VERSION}"* ]]
 }
 
+@test "arbitron version output format is parseable with the documented extraction pattern (cross-seam)" {
+  # Closes the seam between the binary's format contract and installer-side parsing.
+  # The upgrade path would extract the installed version with:
+  #   sed 's/^arbitron \([^ ]*\) .*/\1/'
+  # This test runs the REAL dist binary and verifies the pattern extracts the
+  # exact stamped version — not just a substring match. If the format changes
+  # (e.g. drops the parenthesised metadata, renames the prefix), this test fails
+  # before any upgrade script silently starts extracting empty/wrong versions.
+  hostos="$(go env GOOS)"
+  hostarch="$(go env GOARCH)"
+  ext=""; [ "$hostos" = "windows" ] && ext=".exe"
+  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  [ -x "$bin" ] || { echo "binary not found: $bin"; return 1; }
+  out="$("$bin" version)"
+  extracted="$(printf '%s' "$out" | sed 's/^arbitron \([^ ]*\) .*/\1/')"
+  [ -n "$extracted" ] || { echo "sed pattern returned empty; output was: $out"; return 1; }
+  [ "$extracted" = "$TEST_VERSION" ] || {
+    echo "extracted='$extracted' expected='$TEST_VERSION'; output was: $out"
+    return 1
+  }
+}
+
+@test "arbitron version dev sentinel is non-empty and parseable (graceful degradation)" {
+  # An unstamped binary (plain go build, no -ldflags) reports 'dev' as the version
+  # sentinel. Upgrade scripts that parse the installed version must not crash or
+  # produce empty output when confronted with a dev build — the extraction pattern
+  # must degrade gracefully to 'dev' rather than to an empty string or error.
+  tmpdir="${BATS_TEST_TMPDIR}/dev-binary"
+  mkdir -p "$tmpdir"
+  tmpbin="$tmpdir/arbitron"
+  cd "$REPO_ROOT" || return 1
+  CGO_ENABLED=0 go build -o "$tmpbin" ./cmd/arbitron >/dev/null 2>&1
+  [ -x "$tmpbin" ] || { echo "go build failed"; return 1; }
+  out="$("$tmpbin" version)"
+  extracted="$(printf '%s' "$out" | sed 's/^arbitron \([^ ]*\) .*/\1/')"
+  [ -n "$extracted" ] || { echo "dev sentinel produced empty version token; output: $out"; return 1; }
+  [ "$extracted" = "dev" ] || { echo "expected 'dev' sentinel, got '$extracted'; output: $out"; return 1; }
+}
+
 @test "two dist runs of the same commit yield byte-identical SHA256SUMS" {
   cp "${REPO_ROOT}/dist/SHA256SUMS" "${BATS_TEST_TMPDIR}/SHA256SUMS.first"
   cd "$REPO_ROOT" || return 1

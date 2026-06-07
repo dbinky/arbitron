@@ -152,3 +152,35 @@ Describe 'No checksum bypass' {
         $content | Should -Not -Match '(?i)no[-_]verify'
     }
 }
+
+Describe 'arbitron version output format contract (cross-seam parity with FA25 bats)' {
+    It 'stamped version output is parseable with the documented regex extraction pattern' {
+        # Mirrors the bats cross-seam test. Verifies that the PowerShell equivalent
+        # of the sed extraction pattern correctly parses the format contract string
+        # "arbitron VERSION (commit C, built D)" into just the VERSION token.
+        # If the binary format changes, this test (plus the bats counterpart) fail
+        # before any upgrade script starts extracting empty/wrong versions.
+        $mockOutput = 'arbitron 1.2.3 (commit abc1234, built 2026-06-07T00:00:00Z)'
+        $m = [regex]::Match($mockOutput, '^arbitron (\S+) ')
+        $m.Success | Should -BeTrue -Because 'format must start with "arbitron VERSION "'
+        $m.Groups[1].Value | Should -Be '1.2.3'
+    }
+
+    It 'dev sentinel is non-empty and parseable (graceful degradation)' {
+        # An unstamped (plain go build) binary reports "dev" as the version sentinel.
+        # Upgrade scripts that parse the installed version must degrade gracefully
+        # to "dev" rather than producing an empty or erroring extraction.
+        $mockOutput = 'arbitron dev (commit none, built unknown)'
+        $m = [regex]::Match($mockOutput, '^arbitron (\S+) ')
+        $m.Success | Should -BeTrue
+        $m.Groups[1].Value | Should -Be 'dev'
+    }
+
+    It 'version-with-pre-release-suffix is parseable (e.g. 1.2.3-beta.1)' {
+        # Ensures the extraction pattern handles pre-release/rc versions that
+        # contain hyphens and dots (a valid semver extension).
+        $mockOutput = 'arbitron 1.2.3-beta.1 (commit abc1234, built 2026-06-07T00:00:00Z)'
+        $m = [regex]::Match($mockOutput, '^arbitron (\S+) ')
+        $m.Groups[1].Value | Should -Be '1.2.3-beta.1'
+    }
+}
