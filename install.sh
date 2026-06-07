@@ -335,10 +335,14 @@ verify_signature() {
     return 0
   fi
   log_info "verifying SHA256SUMS signature with cosign"
+  # contract: must match release.yml (verify-release job, tag-anchored). The
+  # signing identity is pinned to the release workflow on a v-tag ref so that ONLY
+  # release.yml@refs/tags/v* can mint a SHA256SUMS signature this installer trusts
+  # — NOT any in-repo workflow holding id-token:write.
   if ! cosign verify-blob \
       --certificate "$pem" \
       --signature "$sig" \
-      --certificate-identity-regexp "https://github.com/${ARBITRON_REPO}/.*" \
+      --certificate-identity-regexp "https://github.com/${ARBITRON_REPO}/\.github/workflows/release\.yml@refs/tags/v.*" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       "$sums" >/dev/null 2>&1; then
     log_error "cosign signature verification FAILED for SHA256SUMS"

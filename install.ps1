@@ -455,10 +455,13 @@ function Test-Signature {
         return
     }
     Write-ArbitronLog -Level Info -Message 'Verifying SHA256SUMS signature with cosign...'
+    # contract: must match release.yml (verify-release job, tag-anchored). Only
+    # release.yml@refs/tags/v* may mint a SHA256SUMS signature this installer
+    # trusts -- NOT any in-repo workflow holding id-token:write.
     & cosign verify-blob `
         --certificate $PemFile `
         --signature $SigFile `
-        --certificate-identity-regexp "https://github.com/$script:ArbitronRepo/.*" `
+        --certificate-identity-regexp "https://github.com/$script:ArbitronRepo/\.github/workflows/release\.yml@refs/tags/v.*" `
         --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' `
         $SumsFile 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {

@@ -153,6 +153,34 @@ Describe 'No checksum bypass' {
     }
 }
 
+Describe 'cosign identity trust boundary (parity with verify.bats)' {
+    It 'pins the cosign identity to release.yml, not any in-repo workflow' {
+        $content = Get-Content -Raw $script:ScriptPath
+        # Must reference the release workflow path explicitly (dots regex-escaped)...
+        $content | Should -Match 'workflows/release\\\.yml@'
+        # ...and must NOT use the loose repo-wildcard identity.
+        $content | Should -Not -Match 'ArbitronRepo/\.\*"'
+    }
+
+    It 'identity regexp matches the release.yml producer string' {
+        # Conformance: the consumer (install.ps1) identity must equal the producer
+        # (release.yml verify-release, tag-anchored) with the repo literal resolved.
+        $wf = Join-Path $PSScriptRoot '..' '..' '.github' 'workflows' 'release.yml'
+        (Test-Path $wf) | Should -BeTrue
+        $wfContent = Get-Content -Raw $wf
+        $producer = [regex]::Match($wfContent,
+            'https://github\.com/dbinky/arbitron/\.github/workflows/release\.yml@refs/tags/v\.\*').Value
+        $producer | Should -Not -BeNullOrEmpty
+        $content = Get-Content -Raw $script:ScriptPath
+        $consumerRaw = [regex]::Match($content,
+            'https://github\.com/\$script:ArbitronRepo/\\\.github/workflows/release\\\.yml@refs/tags/v\.\*').Value
+        $consumerRaw | Should -Not -BeNullOrEmpty
+        # Normalize: drop regex backslash-escapes, resolve the repo variable.
+        $consumer = $consumerRaw.Replace('\', '').Replace('$script:ArbitronRepo', 'dbinky/arbitron')
+        $consumer | Should -Be $producer
+    }
+}
+
 Describe 'arbitron version output format contract (cross-seam parity with FA25 bats)' {
     It 'stamped version output is parseable with the documented regex extraction pattern' {
         # Mirrors the bats cross-seam test. Verifies that the PowerShell equivalent

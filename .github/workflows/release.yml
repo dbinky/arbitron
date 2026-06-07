@@ -70,6 +70,10 @@ jobs:
           else
             shasum -a 256 -c SHA256SUMS
           fi
+          # contract: must match install.sh/install.ps1 cosign identity. This build
+          # job runs on both tags and workflow_dispatch (branch ref), so it cannot
+          # tag-anchor; the verify-release job below tightens to @refs/tags/v.* and
+          # is the identity the installers pin against.
           cosign verify-blob SHA256SUMS \
             --signature SHA256SUMS.sig \
             --certificate SHA256SUMS.pem \
@@ -111,6 +115,9 @@ jobs:
             --pattern 'SHA256SUMS.pem' \
             --pattern 'arbitron_*_linux_amd64'
           grep 'arbitron_.*_linux_amd64$' SHA256SUMS | sha256sum -c -
+          # contract: must match install.sh/install.ps1 cosign identity
+          # (--certificate-identity-regexp). This tag-anchored identity is the one
+          # the installers pin against; keep all three copies in lock-step.
           cosign verify-blob SHA256SUMS \
             --signature SHA256SUMS.sig \
             --certificate SHA256SUMS.pem \

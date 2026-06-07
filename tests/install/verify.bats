@@ -213,3 +213,37 @@ _make_fixture() {
     run verify_download "$TEST_SANDBOX/$name" "$name" "$TEST_SANDBOX/SHA256SUMS"
   [ "$status" -ne 0 ]
 }
+
+@test "cosign identity is pinned to release.yml, not any in-repo workflow" {
+  # The signing-identity trust boundary the producer asserts is "only release.yml
+  # signs releases". A loose `<repo>/.*` regexp would accept a SHA256SUMS signed by
+  # ANY in-repo workflow holding id-token:write. Pin to the release workflow.
+  run grep -F 'certificate-identity-regexp' "$INSTALL_SH"
+  [ "$status" -eq 0 ]
+  # Must reference the release workflow path explicitly (dots are regex-escaped)...
+  echo "$output" | grep -qF 'workflows/release\.yml@'
+  # ...and must NOT be the loose repo-wildcard form.
+  ! echo "$output" | grep -qE '\$\{ARBITRON_REPO\}/\.\*"'
+}
+
+@test "cosign identity regexp matches the release.yml producer string" {
+  # Conformance: the installer's identity regexp must equal the one the release
+  # workflow verify-release job pins (tag-anchored). A wrong identity fails SILENT
+  # (it just accepts more/fewer signers), so bind the consumer to the producer.
+  local wf="${BATS_TEST_DIRNAME}/../../.github/workflows/release.yml"
+  [ -f "$wf" ] || skip "release.yml not found"
+  # Producer's tightest (tag-anchored) identity, with the repo literal abstracted.
+  local producer
+  producer="$(grep -oE 'https://github.com/dbinky/arbitron/\.github/workflows/release\.yml@refs/tags/v\.\*' "$wf" | head -n1)"
+  [ -n "$producer" ] || { echo "could not find tag-anchored identity in release.yml"; return 1; }
+  # Consumer string in install.sh, with ${ARBITRON_REPO} resolved to the default.
+  local consumer
+  consumer="$(grep -oE 'https://github.com/\$\{ARBITRON_REPO\}/\\\.github/workflows/release\\\.yml@refs/tags/v\.\*' "$INSTALL_SH" | head -n1)"
+  [ -n "$consumer" ] || { echo "could not find tag-anchored identity in install.sh"; return 1; }
+  # Normalize: drop regex escapes and resolve the repo variable, then compare.
+  local pn cn
+  pn="${producer//\\/}"
+  cn="${consumer//\\/}"
+  cn="${cn/\$\{ARBITRON_REPO\}/dbinky/arbitron}"
+  [ "$pn" = "$cn" ] || { echo "consumer='$cn' != producer='$pn'"; return 1; }
+}
