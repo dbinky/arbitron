@@ -75,6 +75,34 @@ _stage_installed() {
   [[ "$output" == *"migration"* || "$output" == *"down-migration"* || "$output" == *"forward-only"* ]]
 }
 
+@test "run_upgrade health-checks port 8080 when config has no explicit server.port" {
+  # read_existing_config_value returns exit 0 + EMPTY stdout when the key is
+  # absent, so a naive `$(... || echo 8080)` never falls back and the health
+  # check would curl http://127.0.0.1:/ (empty port). Capture-then-default must
+  # apply, mirroring the shared path's ${_up_port:-8080}.
+  _stage_installed
+  # Strip any server.port line so the key is genuinely absent.
+  local cfg; cfg="$(layout_config)"
+  grep -v 'port:' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+  ! grep -q 'port:' "$cfg"
+
+  export ARBITRON_VERSION=9.9.9
+  install_fake curl '
+    echo "curl $*" >> "$MOCK_LOG"
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_9.9.9_linux_amd64\n" "$(printf NEW | sha256sum | cut -d" " -f1)" > "$dest" ;;
+      *releases*)   printf "NEW" > "$dest" ;;
+      *)            echo 200 ;;
+    esac
+  '
+  run run_upgrade
+  [ "$status" -eq 0 ]
+  # The health probe must hit :8080, never an empty port (:/).
+  grep -qE 'curl .*127\.0\.0\.1:8080/' "$MOCK_LOG"
+  ! grep -qE 'curl .*127\.0\.0\.1:/' "$MOCK_LOG"
+}
+
 @test "run_upgrade aborts when the download fails and leaves the existing binary unchanged" {
   # A checksum mismatch (tampered download) or network failure must not leave a
   # partial upgrade. The original binary must be intact and service untouched.

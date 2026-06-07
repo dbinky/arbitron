@@ -824,12 +824,17 @@ fetch_binary_to() {
   artifact="$(arbitron_artifact_name "$version" "$ostoken" "$arch")"
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-bin.XXXXXX")" || return 1
+  # Single cleanup covering every exit path, including a SIGINT/SIGTERM mid-curl
+  # (Ctrl-C during a slow download). The RETURN trap fires when this function
+  # returns; it is cleared (trap - RETURN) inside the handler so it cannot fire
+  # again on a CALLER's return — bash RETURN traps are not function-local. The
+  # ${tmpdir:-} guard keeps a stray fire harmless under `set -u`.
+  trap 'rm -rf "${tmpdir:-}"; trap - RETURN' RETURN
 
   # Fetch SHA256SUMS (+ optional signature material) into the temp dir.
   sumsfile="$tmpdir/SHA256SUMS"
   if ! curl -fsSL -o "$sumsfile" "${base}/SHA256SUMS"; then
     log_error "could not fetch SHA256SUMS from ${base}"
-    rm -rf "$tmpdir"
     return 1
   fi
   # Best-effort fetch of the cosign material; verify_signature decides if it is
@@ -843,23 +848,20 @@ fetch_binary_to() {
   tmpbin="$tmpdir/$artifact"
   if ! curl -fsSL -o "$tmpbin" "${base}/${artifact}"; then
     log_error "download failed: ${base}/${artifact}"
-    rm -rf "$tmpdir"
     return 1
   fi
   if ! verify_download "$tmpbin" "$artifact" "$sumsfile"; then
     log_error "binary download/verification failed"
-    rm -rf "$tmpdir"
     return 1
   fi
   if ! verify_signature "$sumsfile"; then
     log_error "signature verification failed; refusing to install"
-    rm -rf "$tmpdir"
     return 1
   fi
 
   mkdir -p "$(dirname "$dest")"
   mv "$tmpbin" "$dest"
-  rm -rf "$tmpdir"
+  # tmpdir cleanup handled by the RETURN trap above.
 }
 
 # download_binary — local install: fetch the verified binary into
@@ -1257,9 +1259,13 @@ write_shared_config() {
     fi
   } >"$cfg"
 
-  # config.yaml is world-readable (no secrets); root-owned.
-  chmod 0644 "$cfg"
-  chown root:root "$cfg" 2>/dev/null || true
+  # config.yaml holds no true secrets (those go to the 0600 arbitron.env), but on
+  # a shared multi-user box it does expose the OIDC issuer/client-id, redirect URL,
+  # bootstrap-admin identities, and the exact bind host/port — useful recon for an
+  # attacker pivoting toward the IdP. Least-privilege: readable only by root and the
+  # service account (0640 root:${ARB_SVC_USER}), not world-readable.
+  chmod 0640 "$cfg"
+  chown "root:${ARB_SVC_USER:-arbitron}" "$cfg" 2>/dev/null || true
 }
 
 # write_shared_env — emit /etc/arbitron/arbitron.env (0600 root:arbitron) with
@@ -1328,12 +1334,19 @@ write_systemd_unit() {
 # enable_systemd_unit — reload systemd then enable + start the unit at boot.
 enable_systemd_unit() {
   systemctl daemon-reload
-  systemctl enable --now arbitron
+  systemctl enable --now "$ARBITRON_SYSTEMD_UNIT"
 }
 
-# health_check_shared — poll the configured scheme/host/port. TLS uses https +
-# -k (the cert may be self-signed or autocert-pending). On failure, point at
-# journalctl and the log dir.
+# health_check_shared — poll the configured scheme/host/port. On failure, point
+# at journalctl and the log dir.
+#
+# TLS posture: the probe ALWAYS targets the loopback address (127.0.0.1) and only
+# the loopback probe uses -k. On 127.0.0.1 a cert-host mismatch (and a pending
+# autocert / self-signed cert) is expected, so -k is correct and scoped to
+# loopback. We deliberately do NOT probe the real public hostname with -k:
+# doing so would normalize "TLS errors are fine" and could mask a misissued or
+# MITM cert on the very first connection. Validating the PUBLIC cert is a
+# separate, validated (no -k) probe an operator can run post-install.
 health_check_shared() {
   local port="${SCFG_PORT:-${PORT:-8080}}"
   local host="${SCFG_HOST:-${BIND_HOST:-127.0.0.1}}"
@@ -1342,8 +1355,8 @@ health_check_shared() {
   local scheme="http" insecure=""
   if [ "$tls" = "true" ]; then
     scheme="https"
-    insecure="-k"
-    host="${SCFG_HOST:-${BIND_HOST:-127.0.0.1}}"   # TLS: keep the real (cert) host
+    insecure="-k"   # loopback only: cert-host mismatch / autocert-pending expected
+    host="127.0.0.1"  # keep the probe on loopback; never -k against the public host
   fi
   local retries="${ARBITRON_HEALTH_RETRIES:-20}"
   local sleep_s="${ARBITRON_HEALTH_SLEEP:-1}"
@@ -1407,7 +1420,7 @@ upgrade_shared() {
   require_root
   log_info "Upgrading Arbitron (config, data and secrets are preserved)"
   install_binary_system || die "binary download failed; the existing install is unchanged"
-  systemctl restart arbitron
+  systemctl restart "$ARBITRON_SYSTEMD_UNIT"
   local _up_port; _up_port="$(read_existing_config_value server.port 2>/dev/null)"
   PORT="${_up_port:-8080}" health_check_shared || true
   log_warn "DB migrations run forward-only on serve start; there is no automatic"
@@ -1424,9 +1437,21 @@ reconfigure_shared() {
   generate_master_key   # detects + reuses the existing key
   write_shared_config
   write_shared_env
-  systemctl restart arbitron
+  systemctl restart "$ARBITRON_SYSTEMD_UNIT"
   health_check_shared || true
   print_shared_summary
+}
+
+# shared_service_remove — the systemd teardown seam for the shared profile:
+# disable --now the unit, remove the unit file, then daemon-reload. This is the
+# single function the bats suite asserts "teardown removed the unit" against, and
+# the symmetric counterpart to the local-profile service_remove(). Layout teardown
+# (binary/config/data rm's) intentionally stays in uninstall_shared so the two
+# uninstall paths remain symmetric.
+shared_service_remove() {
+  systemctl disable --now "$ARBITRON_SYSTEMD_UNIT" >/dev/null 2>&1 || true
+  rm -f "$ARB_SYSTEMD_UNIT_PATH"
+  systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 # uninstall_shared — stop/disable/remove unit + binary + config; prompt before
@@ -1434,9 +1459,7 @@ reconfigure_shared() {
 uninstall_shared() {
   require_root
   log_info "Uninstalling Arbitron (shared)"
-  systemctl disable --now arbitron >/dev/null 2>&1 || true
-  rm -f "$ARB_SYSTEMD_UNIT_PATH"
-  systemctl daemon-reload >/dev/null 2>&1 || true
+  shared_service_remove
   rm -f "$ARB_PREFIX_BIN/arbitron"
   rm -f "$ARB_ETC/config.yaml" "$ARB_ETC/arbitron.env"
   if prompt_yes_no REMOVE_DATA "Also remove all data ($ARB_LIB)? This is irreversible." no; then
@@ -1729,7 +1752,11 @@ run_upgrade() {
   log_info "Upgrading Arbitron (config, data and secrets are preserved)"
   download_binary || die "binary download failed; the existing install is unchanged"
   service_restart
-  health_check "$(read_existing_config_value server.port || echo 8080)"
+  # read_existing_config_value returns exit 0 with EMPTY stdout when the key is
+  # absent, so `|| echo 8080` never fires — capture then parameter-default,
+  # matching the shared path's ${_up_port:-8080}.
+  local _up_port; _up_port="$(read_existing_config_value server.port)"
+  health_check "${_up_port:-8080}"
   log_warn "DB migrations run forward-only on serve start; there is no automatic"
   log_warn "down-migration. Review the release notes before downgrading the binary."
   print_summary
@@ -1766,8 +1793,11 @@ run_uninstall() {
 
 # print_summary — final dashboard URL / service / log pointer + next steps.
 print_summary() {
-  local port os svc
-  port="${CFG_PORT:-$(read_existing_config_value server.port || echo 8080)}"
+  local port os svc _ps_port
+  # Same capture-then-default as run_upgrade: read_existing_config_value yields
+  # exit 0 + empty stdout when server.port is absent, so default after capture.
+  _ps_port="$(read_existing_config_value server.port)"
+  port="${CFG_PORT:-${_ps_port:-8080}}"
   os="$(detect_os 2>/dev/null || echo unknown)"
   case "$os" in
     macos) svc="launchd agent ${ARBITRON_LAUNCHD_LABEL} (launchctl)" ;;

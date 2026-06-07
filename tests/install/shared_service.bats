@@ -271,3 +271,35 @@ EOF
   [ "$status" -eq 0 ]
   ! grep -q "userdel" "$MOCK_LOG"
 }
+
+@test "shared_service_remove disables the unit, removes the unit file, then daemon-reloads in order" {
+  # The extracted teardown seam (mirrors the local service_remove). A single
+  # function the suite can assert "teardown removed the unit" against, so the
+  # local and shared uninstall paths cannot silently drift.
+  : >"$(_unit)"
+  [ -f "$(_unit)" ]
+  run shared_service_remove
+  [ "$status" -eq 0 ]
+  # Unit file is gone (recording-rm operates on real sandbox paths).
+  [ ! -f "$(_unit)" ]
+  # Both systemctl calls happened, against the centralized unit constant.
+  grep -q "systemctl disable --now arbitron" "$MOCK_LOG"
+  grep -q "systemctl daemon-reload" "$MOCK_LOG"
+  # Ordering: disable --now precedes daemon-reload.
+  local dis rel
+  dis="$(grep -n 'systemctl disable --now arbitron' "$MOCK_LOG" | head -n1 | cut -d: -f1)"
+  rel="$(grep -n 'systemctl daemon-reload' "$MOCK_LOG" | head -n1 | cut -d: -f1)"
+  [ "$dis" -lt "$rel" ]
+}
+
+@test "uninstall_shared routes service teardown through shared_service_remove" {
+  # uninstall_shared must delegate the unit teardown to the seam (not inline it),
+  # so the bats suite has one assertable teardown function.
+  : >"$(_unit)"
+  shared_service_remove() { echo "shared_service_remove called" >>"$MOCK_LOG"; }
+  export ARBITRON_REMOVE_DATA=no
+  export ARBITRON_REMOVE_ACCOUNT=no
+  run uninstall_shared
+  [ "$status" -eq 0 ]
+  grep -q "shared_service_remove called" "$MOCK_LOG"
+}

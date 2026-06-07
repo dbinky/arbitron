@@ -350,6 +350,20 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
 
 # --- paths -------------------------------------------------------------------
 
+@test "config.yaml is 0640 root:arbitron (not world-readable) on the shared box" {
+  # config.yaml carries no true secrets, but on a shared multi-user host it
+  # exposes OIDC issuer/client-id, redirect URL, bootstrap admins and the bind
+  # host/port — least-privilege says root + the service account only, not 0644.
+  export ARBITRON_AUTH_MODEL=edge-local
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_TLS_MODEL=tunnel
+  run_shared_qa
+  write_shared_config
+  grep -qE "chmod 0?640 .*$(_cfg)" "$MOCK_LOG"
+  grep -qE "chown root:arbitron .*$(_cfg)" "$MOCK_LOG"
+  ! grep -qE "chmod 0?644 .*$(_cfg)" "$MOCK_LOG"
+}
+
 @test "config.yaml uses absolute /var/lib + /var/log system paths" {
   export ARBITRON_AUTH_MODEL=edge-local
   export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
