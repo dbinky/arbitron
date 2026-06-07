@@ -221,6 +221,20 @@ EOF
   [ -f "$ARB_LIB/arbitron.db" ]
 }
 
+@test "uninstall removes data dir when ARBITRON_REMOVE_DATA=yes" {
+  # The REMOVE_DATA=yes path calls rm -rf $ARB_LIB. This is irreversible and
+  # must actually be exercised — a silent code path for destructive ops is a risk.
+  # recording-rm removes paths within $TEST_SANDBOX, so the assertion is real.
+  : >"$(_unit)"
+  printf 'db' >"$ARB_LIB/arbitron.db"
+  export ARBITRON_REMOVE_DATA=yes
+  export ARBITRON_REMOVE_ACCOUNT=no
+  run uninstall_shared
+  [ "$status" -eq 0 ]
+  grep -qE "rm .*-rf .*$ARB_LIB" "$MOCK_LOG"
+  [ ! -f "$ARB_LIB/arbitron.db" ]
+}
+
 @test "uninstall removes the service account only when confirmed" {
   : >"$(_unit)"
   export ARBITRON_REMOVE_DATA=no
