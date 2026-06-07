@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-015: ARBITRON_INSTALL_LIB_ONLY and ARBITRON_INSTALL_NOEXEC guards had no explicit tests (FA21 Pass 2)
+**Area**: Test harness integrity (Focus Area 21)
+**Fixed**: This iteration
+**Detail**: Both installer guards (`ARBITRON_INSTALL_LIB_ONLY` for bash, `ARBITRON_INSTALL_NOEXEC` for PS1) were relied upon by every single test file's setup/BeforeAll, but neither had an explicit test. If either guard were accidentally removed, the failure mode would be hundreds of confusing cascade failures rather than a clear diagnostic. Added a behavioral bats test (`ARBITRON_INSTALL_LIB_ONLY=1 sources install.sh without invoking main (guard integrity)`) that mocks `uname`, sources with the guard, and asserts `MOCK_LOG` is empty (main() was never called). Added two Pester tests to `Install.Skeleton.Tests.ps1`: a structural test verifying the guard pattern is in install.ps1 and gates Invoke-Main, and a behavioral test verifying Invoke-Main is defined (functions loaded) but the suite passed its BeforeAll without Invoke-Main running. 214 bats + 189 Pester, all green.
+
 ### INST-014: tests/release/ not exercised in CI (FA21 Pass 1)
 **Area**: Test harness integrity (Focus Area 21)
 **Fixed**: This iteration

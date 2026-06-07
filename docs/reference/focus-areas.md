@@ -33,7 +33,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 18 | Fail-closed checksum verification (both scripts — `verify_download` / `Test-Download`: missing/tampered/unlisted SHA256SUMS aborts; no bypass; optional cosign) | [x] | [x] | Done |
 | 19 | Hosting & version selection (both scripts — `releases/latest` redirect default, `ARBITRON_VERSION` pin, `dbinky/arbitron` URL constant flow-through) | [x] | [x] | Done |
 | 20 | Documentation (`docs/install/README.md` + `upgrading.md` + `security.md` + `tunnels-and-tls.md` — all 5 scenarios accurate to scripts, migration/security/cosign notes) | [x] | [x] | Done |
-| 21 | Test harness integrity (`tests/install/` bats + Pester mocks, `tests/release/`, recording fakes, lib/NOEXEC guards, CI in `.github/workflows/installers.yml`) | [x] | [ ] | |
+| 21 | Test harness integrity (`tests/install/` bats + Pester mocks, `tests/release/`, recording fakes, lib/NOEXEC guards, CI in `.github/workflows/installers.yml`) | [x] | [x] | Done |
 
 ---
 

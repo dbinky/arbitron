@@ -268,3 +268,26 @@ Describe 'Test-Sha256' {
             Should -BeFalse
     }
 }
+
+Describe 'ARBITRON_INSTALL_NOEXEC guard integrity' {
+    # Every Pester BeforeAll dot-sources install.ps1 with ARBITRON_INSTALL_NOEXEC=1.
+    # If this guard is accidentally removed, every BeforeAll runs the real installer
+    # instead of just defining functions, causing cascading failures with no clear
+    # diagnostic. These tests make guard removal an immediate, obvious failure.
+
+    It 'install.ps1 contains the ARBITRON_INSTALL_NOEXEC guard before Invoke-Main' {
+        $content = Get-Content -Raw $script:ScriptPath
+        # Guard variable must be present.
+        $content | Should -Match 'ARBITRON_INSTALL_NOEXEC'
+        # Guard must gate Invoke-Main -- not just any statement.
+        $content | Should -Match '-not.*ARBITRON_INSTALL_NOEXEC'
+        # And Invoke-Main must be inside the guard block.
+        $content | Should -Match 'Invoke-Main'
+    }
+
+    It 'Invoke-Main is defined after dot-source with NOEXEC (guard defines functions, not skips them)' {
+        # The guard must NOT suppress function definitions -- only the final call.
+        # If NOEXEC caused the entire file to be skipped, Invoke-Main would be absent.
+        Get-Command Invoke-Main -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+}

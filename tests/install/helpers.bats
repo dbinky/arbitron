@@ -136,3 +136,22 @@ teardown() {
   run require_cmd mytool
   [ "$status" -eq 0 ]
 }
+
+# --- library guard -----------------------------------------------------------
+
+@test "ARBITRON_INSTALL_LIB_ONLY=1 sources install.sh without invoking main (guard integrity)" {
+  # Every test setup() calls 'ARBITRON_INSTALL_LIB_ONLY=1 source install.sh'.
+  # If the guard breaks, main() runs and calls detect_os -> uname, leaving a
+  # trace in MOCK_LOG. This test makes that failure obvious rather than a
+  # cascade of confusing errors across the entire suite.
+  install_mock recording-fake uname
+  run bash -c "
+    unset ARBITRON_UNAME_S ARBITRON_UNAME_M
+    ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'
+    echo sourced-ok
+  " </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sourced-ok"* ]]
+  # main() always calls detect_os which calls uname; empty log = guard fired.
+  [ ! -s "$MOCK_LOG" ]
+}
