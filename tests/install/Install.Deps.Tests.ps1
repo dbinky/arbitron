@@ -87,6 +87,39 @@ Describe 'Install-ViaWinget' {
     }
 }
 
+Describe 'Install-AppInstaller publisher pin (winget MSIX)' {
+    BeforeEach {
+        Mock -CommandName Read-PromptYesNo -MockWith { $true }
+        Mock -CommandName Invoke-ArbitronDownload -MockWith { }
+        Mock -CommandName Add-AppxPackage -MockWith { }
+        Mock -CommandName Remove-Item -MockWith { }
+    }
+
+    It 'accepts an App Installer published by Microsoft' {
+        Mock -CommandName Get-AppxPackage -MockWith {
+            [pscustomobject]@{ Publisher = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' }
+        }
+        { Install-AppInstaller } | Should -Not -Throw
+    }
+
+    It 'rejects an App Installer signed by a non-Microsoft publisher (redirect/MITM)' {
+        Mock -CommandName Get-AppxPackage -MockWith {
+            [pscustomobject]@{ Publisher = 'CN=Totally Legit Co' }
+        }
+        { Install-AppInstaller } | Should -Throw -ExpectedMessage '*publisher*'
+    }
+
+    It 'logs the resolved download URL' {
+        Mock -CommandName Get-AppxPackage -MockWith {
+            [pscustomobject]@{ Publisher = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' }
+        }
+        $script:logged = New-Object System.Collections.Generic.List[string]
+        Mock -CommandName Write-ArbitronLog -MockWith { $script:logged.Add($Message) }
+        Install-AppInstaller | Out-Null
+        ($script:logged -join '|') | Should -BeLike '*aka.ms/getwinget*'
+    }
+}
+
 Describe 'Resolve-Dependency winget-absent ladder' {
     It 'offers App Installer bootstrap then retries winget on accept' {
         Mock -CommandName Test-DependencyPresent -MockWith { $false }

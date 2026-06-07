@@ -78,6 +78,7 @@ $script:ArbitronShimDefs = @{
     'New-ScheduledTaskPrincipal'   = { [CmdletBinding()] param([string]$UserId, [string]$LogonType, [string]$RunLevel) throw 'New-ScheduledTaskPrincipal is only available on Windows.' }
     'New-ScheduledTaskSettingsSet' = { [CmdletBinding()] param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) throw 'New-ScheduledTaskSettingsSet is only available on Windows.' }
     'Add-AppxPackage'              = { [CmdletBinding()] param([string]$Path) throw 'Add-AppxPackage is only available on Windows.' }
+    'Get-AppxPackage'              = { [CmdletBinding()] param([string]$Name) throw 'Get-AppxPackage is only available on Windows.' }
     # Shared (system-level) seams: native Windows Service + LocalAccounts cmdlets.
     'New-Service'                  = { [CmdletBinding()] param([string]$Name, [string]$BinaryPathName, [string]$DisplayName, [string]$Description, [string]$StartupType, [pscredential]$Credential) throw 'New-Service is only available on Windows.' }
     'Set-Service'                  = { [CmdletBinding()] param([string]$Name, [string]$StartupType, [string]$Status) throw 'Set-Service is only available on Windows.' }
@@ -246,9 +247,25 @@ function Read-PromptDefault {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Prompt,
-        [string]$Default = ''
+        [string]$Default = '',
+        # When set, the interactive read uses Read-Host -AsSecureString so the
+        # typed value is NOT echoed to the terminal / scrollback (used for the
+        # Anthropic API key and OIDC client secret). The default suffix is also
+        # suppressed so a secret default is never displayed.
+        [switch]$Secret
     )
     if ($script:ArbitronNonInteractive) { return $Default }
+    if ($Secret) {
+        $secure = Read-Host -Prompt $Prompt -AsSecureString
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            $answer = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+        return $answer
+    }
     $suffix = if ($Default) { " [$Default]" } else { '' }
     $answer = Read-Host -Prompt "$Prompt$suffix"
     if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
@@ -573,12 +590,22 @@ function Install-AppInstaller {
     if (-not $accept) { return $false }
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('AppInstaller_' + [guid]::NewGuid() + '.msixbundle')
     $url = 'https://aka.ms/getwinget'
-    Write-ArbitronLog -Level Info -Message 'Downloading App Installer (winget)...'
+    Write-ArbitronLog -Level Info -Message "Downloading App Installer (winget) from $url ..."
     Invoke-ArbitronDownload -Uri $url -OutFile $tmp
-    # NOTE: aka.ms/getwinget has no pinned checksum; we install the MSIX as-is
-    # (signed bundle). Dependency artifacts with a known hash use Test-Sha256.
+    # aka.ms/getwinget has no pinned checksum; Add-AppxPackage still enforces the
+    # MSIX Authenticode/package signature, but Windows would accept ANY validly
+    # signed package. Pin the trust to Microsoft's publisher ID: after install,
+    # assert the App Installer package publisher matches Microsoft so a redirect
+    # serving a differently-signed (but trusted) package is rejected.
+    $expectedPublisher = 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
     Add-AppxPackage -Path $tmp
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    $pkg = Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller' -ErrorAction SilentlyContinue
+    if ($pkg -and $pkg.Publisher -ne $expectedPublisher) {
+        throw ("Installed App Installer publisher '$($pkg.Publisher)' does not match the expected Microsoft " +
+            "publisher '$expectedPublisher'; refusing to trust it.")
+    }
+    Write-ArbitronLog -Level Info -Message 'App Installer verified (Microsoft publisher).'
     return $true
 }
 
@@ -737,6 +764,10 @@ function Test-ExistingInstall {
 
 # Native Windows Service name (single source of truth for the Shared path).
 $script:ArbitronServiceName = 'arbitron'
+# Credentials captured at account creation, keyed by account name, so the SAME
+# password is reused for New-Service registration (see New-ArbitronServiceAccount /
+# Get-ArbitronServiceCredential). Initialized here so StrictMode reads are safe.
+$script:ArbitronServiceCredentials = @{}
 
 function New-SharedDirectoryTree {
     [CmdletBinding()]
@@ -802,9 +833,15 @@ function New-ArbitronServiceAccount {
     }
     if (-not $exists) {
         Write-ArbitronLog -Level Info -Message "Creating dedicated service account '$Name'..."
+        # Generate the password ONCE and reuse the SAME secure string for both the
+        # account creation and the service registration credential. Previously the
+        # account was created with a thrown-away password and a second, unrelated
+        # random password was handed to New-Service, so the service could never
+        # start. Stash the credential at script scope keyed by account name.
         $pw = ConvertTo-SecureString -String ([Convert]::ToBase64String((New-RandomBytes -Count 24))) -AsPlainText -Force
         New-LocalUser -Name $Name -Password $pw -Description 'Arbitron service account' `
             -PasswordNeverExpires -UserMayNotChangePassword | Out-Null
+        $script:ArbitronServiceCredentials[$Name] = [pscredential]::new(".\$Name", $pw)
     } else {
         Write-ArbitronLog -Level Info -Message "Service account '$Name' already exists; reusing it."
     }
@@ -907,6 +944,38 @@ function Remove-ArbitronSecret {
     if (Test-Path -LiteralPath $blob) { Remove-Item -LiteralPath $blob -Force }
 }
 
+# Protect-ArbitronServiceRegistryAcl -- lock the service registry key down to
+# SYSTEM + Administrators (full control) and REMOVE the inherited read access that
+# the Users / Authenticated Users groups get on HKLM\SYSTEM\...\Services\* by
+# default. Without this, any local user could `reg query` the service Environment
+# value and read ARBITRON_MASTER_KEY / OIDC client secret in plaintext. Mockable
+# seam so the Shared path is testable on non-Windows CI; the real ACL edit only
+# runs on Windows where Get-Acl/Set-Acl on the registry provider are available.
+function Protect-ArbitronServiceRegistryAcl {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RegPath)
+    if (-not $IsWindows) {
+        Write-ArbitronLog -Level Info -Message 'Skipping service-registry ACL hardening (non-Windows host).'
+        return
+    }
+    $acl = New-Object System.Security.AccessControl.RegistrySecurity
+    # Own the DACL explicitly: do NOT inherit, so the default Users-read ACE is gone.
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {  # LocalSystem, BUILTIN\Administrators
+        $id = New-Object System.Security.Principal.SecurityIdentifier($sid)
+        $rule = New-Object System.Security.AccessControl.RegistryAccessRule(
+            $id,
+            [System.Security.AccessControl.RegistryRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+             [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -Path $RegPath -AclObject $acl
+    Write-ArbitronLog -Level Info -Message 'Hardened service-registry ACL to SYSTEM + Administrators only.'
+}
+
 function Set-ArbitronServiceEnvironment {
     # Writes key=value pairs into the Windows Service's registry environment
     # (HKLM:\SYSTEM\CurrentControlSet\Services\<name> Environment REG_MULTI_SZ).
@@ -914,12 +983,30 @@ function Set-ArbitronServiceEnvironment {
     # service process environment -- the Windows-native equivalent of systemd's
     # EnvironmentFile=. Call BEFORE Start-Service so the service boots with its
     # full environment. Secret values are never logged.
+    #
+    # SECURITY: the service Environment value holds ARBITRON_MASTER_KEY and the
+    # OIDC client secret, and HKLM\SYSTEM\...\Services\* is world-readable by
+    # default. We ACL-restrict the key to SYSTEM + Administrators BEFORE writing
+    # the secrets so a local non-admin user cannot read them with `reg query`.
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Secrets)
     $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$script:ArbitronServiceName"
+    Protect-ArbitronServiceRegistryAcl -RegPath $regPath
     $entries = @($Secrets.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
-    Set-ItemProperty -Path $regPath -Name 'Environment' -Value $entries -Type MultiString
+    Set-ArbitronServiceRegistryEnvironment -RegPath $regPath -Entries $entries
     Write-ArbitronLog -Level Info -Message "Service environment configured ($($Secrets.Count) secret(s))."
+}
+
+# Thin mockable seam over the REG_MULTI_SZ write. The registry provider's -Type
+# dynamic parameter is unavailable on non-Windows hosts (no HKLM drive), so the
+# write lives behind this seam to keep Set-ArbitronServiceEnvironment testable.
+function Set-ArbitronServiceRegistryEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RegPath,
+        [Parameter(Mandatory)][string[]]$Entries
+    )
+    Set-ItemProperty -Path $RegPath -Name 'Environment' -Value $Entries -Type MultiString
 }
 
 $script:ArbitronRceWarning = @'
@@ -945,7 +1032,7 @@ function Invoke-ConfigQA {
 
     $apiKey = $null
     if ($llmMode -eq 'apikey') {
-        $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default ''
+        $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default '' -Secret
         if (-not $apiKey) {
             throw 'An Anthropic API key is required for api-key mode. Re-run the installer and paste your key.'
         }
@@ -1049,7 +1136,7 @@ function Invoke-SharedConfigQA {
         #    OIDC redirect URL with derived default).
         $answers.OidcIssuerUrl    = Read-PromptDefault -Prompt 'OIDC issuer URL' -Default ''
         $answers.OidcClientId     = Read-PromptDefault -Prompt 'OIDC client ID' -Default ''
-        $answers.OidcClientSecret = Read-PromptDefault -Prompt 'OIDC client secret' -Default ''
+        $answers.OidcClientSecret = Read-PromptDefault -Prompt 'OIDC client secret' -Default '' -Secret
         if (-not $answers.OidcClientSecret) {
             throw 'An OIDC client secret is required for OIDC mode. Re-run the installer and paste the client secret.'
         }
@@ -1149,7 +1236,7 @@ function Invoke-SharedConfigQA {
         -Choices @('subscription', 'apikey') -Default $llmDefault
     $apiKey = $null
     if ($llmMode -eq 'apikey') {
-        $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default ''
+        $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default '' -Secret
         if (-not $apiKey) {
             throw 'An Anthropic API key is required for api-key mode. Re-run the installer and paste your key.'
         }
@@ -1364,28 +1451,60 @@ function Invoke-ScExe {
     return $LASTEXITCODE
 }
 
-# Grant the "Log on as a service" right to a dedicated account. The real LSA
-# policy edit happens on Windows; this is a thin mockable seam (tests assert the
-# call). On a real host this shells out to a policy tool / secedit.
+# Grant the SeServiceLogonRight ("Log on as a service") to a dedicated account via
+# secedit (the supported LSA policy tool). Returns $true on success, $false if the
+# right could not be granted -- the caller then falls back to LocalSystem rather
+# than registering a service that can never start. Mockable seam: on non-Windows
+# CI it short-circuits to $false (no LSA available).
+#
+# The previous implementation called `Invoke-ScExe 'privs'`, which is NOT a real
+# sc.exe command and silently did nothing -- the dedicated-account service could
+# never start. This grants the right for real and reports whether it worked.
 function Grant-LogonAsService {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Account)
-    Write-ArbitronLog -Level Info -Message "Granting '$Account' the Log-on-as-a-service right..."
-    # Implemented via secedit/LSA on Windows; kept as a seam so the Shared path is
-    # testable cross-platform. Failures here are surfaced by the caller.
-    Invoke-ScExe 'privs' | Out-Null
+    if (-not $IsWindows) {
+        Write-ArbitronLog -Level Warn -Message 'Cannot grant SeServiceLogonRight on a non-Windows host.'
+        return $false
+    }
+    Write-ArbitronLog -Level Info -Message "Granting '$Account' the Log-on-as-a-service right (secedit)..."
+    try {
+        $sid = (New-Object System.Security.Principal.NTAccount($Account)).Translate(
+            [System.Security.Principal.SecurityIdentifier]).Value
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("arb_secpol_" + [guid]::NewGuid())
+        $export = "$tmp.inf"; $db = "$tmp.sdb"
+        & secedit /export /cfg $export /areas USER_RIGHTS | Out-Null
+        $content = Get-Content -Raw $export
+        if ($content -match 'SeServiceLogonRight\s*=\s*(.*)') {
+            $existing = $Matches[1].Trim()
+            if ($existing -notmatch [regex]::Escape($sid)) {
+                $content = $content -replace 'SeServiceLogonRight\s*=.*', "SeServiceLogonRight = $existing,*$sid"
+            }
+        } else {
+            $content = $content -replace '(\[Privilege Rights\])', "`$1`r`nSeServiceLogonRight = *$sid"
+        }
+        Set-Content -Path $export -Value $content -Encoding Unicode
+        & secedit /configure /db $db /cfg $export /areas USER_RIGHTS | Out-Null
+        Remove-Item -Path $export, $db -Force -ErrorAction SilentlyContinue
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        Write-ArbitronLog -Level Warn -Message "SeServiceLogonRight grant failed: $($_.Exception.Message)"
+        return $false
+    }
 }
 
-# Build a PSCredential for the dedicated service account. Seam so tests can inject
-# a deterministic credential without touching the real account store.
+# Return the PSCredential captured when the account was created (same password,
+# not a freshly generated one). Seam so tests can inject a deterministic
+# credential. Throws if no credential was stashed for the account -- that means
+# New-ArbitronServiceAccount did not run (or ran for a different name), which is a
+# caller bug we must not paper over with a mismatched random password.
 function Get-ArbitronServiceCredential {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Name)
-    # The account is created (Task 1) with a random machine-managed password; for
-    # registration we rely on the LSA grant + the SCM. A real implementation reads
-    # the generated password from the protected store; the seam keeps it mockable.
-    $pw = ConvertTo-SecureString -String ([Convert]::ToBase64String((New-RandomBytes -Count 24))) -AsPlainText -Force
-    return [pscredential]::new(".\$Name", $pw)
+    if ($script:ArbitronServiceCredentials -and $script:ArbitronServiceCredentials.ContainsKey($Name)) {
+        return $script:ArbitronServiceCredentials[$Name]
+    }
+    throw "No stored credential for service account '$Name'. New-ArbitronServiceAccount must create the account (and stash its password) before registration."
 }
 
 # Register-ArbitronService is behind an install-type switch: Local keeps the
@@ -1424,8 +1543,19 @@ function Register-ArbitronService {
                 StartupType    = 'Automatic'
             }
             if ($RunAs.Kind -eq 'Account' -and $RunAs.Name) {
-                Grant-LogonAsService -Account $RunAs.Name
-                $newSvc.Credential = Get-ArbitronServiceCredential -Name $RunAs.Name
+                # Only register under the dedicated account if SeServiceLogonRight was
+                # actually granted AND we hold the account's real password. If either
+                # is missing the service would never start, so fall back to LocalSystem
+                # (the safe, functional default) with a clear warning rather than
+                # leaving a broken service + an orphaned never-expiring local account.
+                $granted = Grant-LogonAsService -Account $RunAs.Name
+                if ($granted) {
+                    $newSvc.Credential = Get-ArbitronServiceCredential -Name $RunAs.Name
+                } else {
+                    Write-ArbitronLog -Level Warn -Message ("Could not grant SeServiceLogonRight to '$($RunAs.Name)'; " +
+                        'registering the service as LocalSystem instead. The dedicated-account run-as path is not ' +
+                        'yet functional on this host.')
+                }
             }
             New-Service @newSvc
             # Inject secrets into the service registry environment before starting.
@@ -1575,6 +1705,21 @@ function Invoke-FreshInstall {
     Get-ArbitronBinary -Paths $Paths -Version $Version -Arch $Arch
 
     # 4. Write config + secrets.
+    #
+    # SECRET STORAGE POSTURE (local/per-user Windows install):
+    # The master key and API key are stored as User-scope environment variables
+    # (HKCU:\Environment), NOT DPAPI .secret blobs. This is deliberate, not an
+    # oversight: the local profile runs `arbitron serve` from an at-logon
+    # Scheduled Task as the interactive user, and the Go binary loads
+    # ARBITRON_MASTER_KEY from the process environment ONLY (the OS-keyring path is
+    # a no-op stub in the current build). A DPAPI blob would be encrypted at rest
+    # but the binary could not read it, breaking the install. The shared/system
+    # path uses DPAPI-machine blobs because that posture is wired end-to-end there.
+    #
+    # The protection boundary for local secrets is therefore the USER ACCOUNT:
+    # HKCU:\Environment is only readable by that user (and processes running as
+    # them). The durable fix is to teach the binary to read a DPAPI blob; until
+    # then this documents the env-only reliance rather than silently breaking it.
     Write-ArbitronConfig -Paths $Paths -Answers $answers
     $masterKey = New-MasterKey
     Set-ArbitronSecret -Name 'ARBITRON_MASTER_KEY' -Value $masterKey -Method Env -Paths $Paths

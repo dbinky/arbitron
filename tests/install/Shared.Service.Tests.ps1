@@ -55,12 +55,27 @@ Describe 'Register-ArbitronService -InstallType Shared' {
         Should -Invoke New-Service -Times 1 -Exactly -ParameterFilter { -not $PSBoundParameters.ContainsKey('Credential') }
     }
 
-    It 'registers with the dedicated account credential and grants logon-as-service' {
+    It 'registers with the dedicated account credential when the logon-as-service grant succeeds' {
         $cred = [pscredential]::new('arbitron', (ConvertTo-SecureString 'pw' -AsPlainText -Force))
         Mock -CommandName Get-ArbitronServiceCredential -MockWith { $cred }
+        # Grant must succeed ($true) for the credential to be attached.
+        Mock -CommandName Grant-LogonAsService -MockWith { $true }
         Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 -RunAs @{ Kind = 'Account'; Name = 'arbitron' }
         Should -Invoke New-Service -Times 1 -Exactly -ParameterFilter { $Credential -ne $null }
         Should -Invoke Grant-LogonAsService -Times 1 -Exactly -ParameterFilter { $Account -eq 'arbitron' }
+    }
+
+    It 'falls back to LocalSystem (no credential) when the logon-as-service grant fails' {
+        # If SeServiceLogonRight cannot be granted the dedicated-account service
+        # would never start, so the safe behavior is to register as LocalSystem
+        # rather than create a broken service. The credential must NOT be attached.
+        Mock -CommandName Grant-LogonAsService -MockWith { $false }
+        Mock -CommandName Get-ArbitronServiceCredential -MockWith {
+            throw 'Get-ArbitronServiceCredential must not be called when the grant fails.'
+        }
+        Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 -RunAs @{ Kind = 'Account'; Name = 'arbitron' }
+        Should -Invoke New-Service -Times 1 -Exactly -ParameterFilter { -not $PSBoundParameters.ContainsKey('Credential') }
+        Should -Invoke Get-ArbitronServiceCredential -Times 0 -Exactly
     }
 
     It 'starts the service after registration' {
@@ -122,6 +137,59 @@ Describe 'Register-ArbitronService -InstallType Shared service environment injec
         Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 `
             -RunAs @{ Kind = 'LocalSystem'; Name = $null } -ServiceSecrets @{}
         Should -Invoke Set-ArbitronServiceEnvironment -Times 0 -Exactly
+    }
+}
+
+Describe 'Set-ArbitronServiceEnvironment ACL hardening (secrets not world-readable)' {
+    # HKLM:\SYSTEM\CurrentControlSet\Services\* is world-readable by default, so the
+    # service Environment value (master key, OIDC secret) must be ACL-restricted to
+    # SYSTEM + Administrators BEFORE the secrets are written. Assert the ordering.
+    BeforeEach {
+        $script:order = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName Protect-ArbitronServiceRegistryAcl -MockWith {
+            $script:order.Add('acl'); $script:capturedRegPath = $RegPath
+        }
+        Mock -CommandName Set-ArbitronServiceRegistryEnvironment -MockWith { $script:order.Add('write-secrets') }
+    }
+
+    It 'hardens the service-registry ACL BEFORE writing the secret Environment value' {
+        Set-ArbitronServiceEnvironment -Secrets @{ ARBITRON_MASTER_KEY = 'base64key==' }
+        Should -Invoke Protect-ArbitronServiceRegistryAcl -Times 1 -Exactly
+        $script:order.IndexOf('acl') | Should -BeLessThan ($script:order.IndexOf('write-secrets'))
+    }
+
+    It 'restricts the ACL on the service registry key for the configured service name' {
+        Set-ArbitronServiceEnvironment -Secrets @{ ARBITRON_MASTER_KEY = 'k==' }
+        $script:capturedRegPath | Should -BeLike '*\Services\arbitron'
+    }
+}
+
+Describe 'Service account password lifecycle (single password, reused)' {
+    BeforeEach {
+        $script:p = New-SharedSvcPaths
+        $script:ArbitronServiceCredentials = @{}
+        Mock -CommandName Get-LocalUser -MockWith { throw 'absent' }
+        Mock -CommandName Set-ArbitronDataAcl -MockWith { }
+        $script:newUserPw = $null
+        Mock -CommandName New-LocalUser -MockWith { $script:newUserPw = $Password }
+    }
+
+    It 'creates the account and registration with the SAME password (not two unrelated randoms)' {
+        New-ArbitronServiceAccount -Name 'arbitron' -Paths $script:p
+        # New-LocalUser was given a password...
+        $script:newUserPw | Should -Not -BeNullOrEmpty
+        # ...and Get-ArbitronServiceCredential returns the SAME secure string,
+        # not a freshly generated one.
+        $cred = Get-ArbitronServiceCredential -Name 'arbitron'
+        $a = [System.Net.NetworkCredential]::new('', $script:newUserPw).Password
+        $b = [System.Net.NetworkCredential]::new('', $cred.Password).Password
+        $b | Should -Be $a
+        $cred.UserName | Should -Be '.\arbitron'
+    }
+
+    It 'Get-ArbitronServiceCredential throws when the account was never created (no mismatched random pw)' {
+        $script:ArbitronServiceCredentials = @{}
+        { Get-ArbitronServiceCredential -Name 'never-created' } | Should -Throw
     }
 }
 

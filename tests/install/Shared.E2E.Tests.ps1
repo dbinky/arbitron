@@ -96,7 +96,9 @@ BeforeAll {
         Mock -CommandName Set-Service -MockWith { }
         Mock -CommandName Get-Service -MockWith { $null }
         Mock -CommandName Start-Service -MockWith { }
-        Mock -CommandName Grant-LogonAsService -MockWith { }
+        # Grant succeeds end-to-end so the dedicated-account credential is attached;
+        # the grant-failure -> LocalSystem fallback is covered in Shared.Service.Tests.
+        Mock -CommandName Grant-LogonAsService -MockWith { $true }
         Mock -CommandName Invoke-ScExe -MockWith { 0 }
         Mock -CommandName Test-ArbitronHealth -MockWith { $true }
         Mock -CommandName Invoke-ClaudeLogin -MockWith { }
