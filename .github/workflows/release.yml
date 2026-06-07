@@ -53,16 +53,13 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Resolved version: ${version}"
 
-      - name: Build dashboard
-        run: make ui
-
-      - name: Cross-compile artifacts + SHA256SUMS
-        run: make dist VERSION="${{ steps.version.outputs.version }}"
-
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign SHA256SUMS (cosign keyless)
+      - name: Build dashboard
+        run: make ui
+
+      - name: Cross-compile artifacts, generate SHA256SUMS, and sign
         run: make release VERSION="${{ steps.version.outputs.version }}"
 
       - name: Self-verify checksums and signature

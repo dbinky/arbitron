@@ -89,6 +89,22 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "make release without a prior make dist still produces all artifacts" {
+  # Locks the release: dist Makefile dependency. If that dep is removed, make release
+  # would try to sign an absent/stale SHA256SUMS. CI uses `make release` as the single
+  # build+sign step, so this dependency must remain load-bearing.
+  cd "$REPO_ROOT" || return 1
+  make clean-dist >/dev/null 2>&1 || true
+  make release VERSION="$TEST_VERSION" >/dev/null 2>&1
+  [ -f "${REPO_ROOT}/dist/SHA256SUMS" ]
+  for name in \
+    "arbitron_${TEST_VERSION}_darwin_amd64" \
+    "arbitron_${TEST_VERSION}_linux_amd64" \
+    "arbitron_${TEST_VERSION}_windows_amd64.exe"; do
+    [ -f "${REPO_ROOT}/dist/${name}" ] || { echo "missing: $name"; return 1; }
+  done
+}
+
 @test "SHA256SUMS can be spot-checked for a single artifact via grep+sha256sum" {
   # Mirrors the verify-release CI job: only one artifact (linux_amd64) is downloaded
   # alongside SHA256SUMS, then verified. Running 'sha256sum -c SHA256SUMS' with only
