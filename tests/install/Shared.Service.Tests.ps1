@@ -73,6 +73,18 @@ Describe 'Register-ArbitronService -InstallType Shared' {
         $src | Should -Not -Match '(?i)winsw'
         $src | Should -Not -Match '(?i)nssm'
     }
+
+    It 'BinaryPathName starts with an absolute (rooted) exe path so SCM can find the binary' {
+        # Windows Service Manager resolves BinaryPathName at service start with
+        # no CWD guarantee. A relative path silently breaks on reboot.
+        $script:capturedBpn = $null
+        Mock -CommandName New-Service -MockWith { $script:capturedBpn = $PSBoundParameters['BinaryPathName'] }
+        Register-ArbitronService -InstallType Shared -Paths $script:p -Port 8080 -RunAs @{ Kind = 'LocalSystem'; Name = $null }
+        # The BinaryPathName starts with a quoted or unquoted absolute exe path.
+        # Extract the first token (the exe) and verify it is rooted.
+        $exeToken = ($script:capturedBpn -replace '^"([^"]+)".*', '$1' -replace '^(\S+).*', '$1')
+        [System.IO.Path]::IsPathRooted($exeToken) | Should -BeTrue
+    }
 }
 
 Describe 'Test-ArbitronHealth scheme/host awareness' {
