@@ -57,7 +57,7 @@ AfterAll { Remove-Item Env:\ARBITRON_INSTALL_NOEXEC -ErrorAction SilentlyContinu
 Describe 'Invoke-SharedConfigQA question order (parity with P2)' {
     BeforeEach { $script:p = New-SharedTestPaths }
 
-    It 'asks host/port -> auth model -> TLS model -> skip-permissions -> service account -> data location in order' {
+    It 'asks host/port -> auth model -> TLS model -> skip-permissions -> service account -> data location -> LLM access in order' {
         $seq = New-Object System.Collections.Generic.List[string]
         Mock -CommandName Read-PromptDefault -MockWith { $seq.Add($Prompt); $Default }
         Mock -CommandName Read-PromptChoice  -MockWith { $seq.Add($Prompt); $(if ($Default) { $Default } else { $Choices[0] }) }
@@ -73,6 +73,7 @@ Describe 'Invoke-SharedConfigQA question order (parity with P2)' {
         $idxSkip = ($seq.FindIndex({ param($s) $s -like '*unattended agent tools*' }))
         $idxAcct = ($seq.FindIndex({ param($s) $s -like '*Service account*' }))
         $idxData = ($seq.FindIndex({ param($s) $s -like '*Data location*' }))
+        $idxLlm  = ($seq.FindIndex({ param($s) $s -like '*LLM access*' }))
 
         $idxHost | Should -BeGreaterOrEqual 0
         $idxPort | Should -BeGreaterThan $idxHost
@@ -81,6 +82,7 @@ Describe 'Invoke-SharedConfigQA question order (parity with P2)' {
         $idxSkip | Should -BeGreaterThan $idxTls
         $idxAcct | Should -BeGreaterThan $idxSkip
         $idxData | Should -BeGreaterThan $idxAcct
+        $idxLlm  | Should -BeGreaterThan $idxData
     }
 
     It 'exposes the canonical shared question list for the parity guard' {
@@ -91,6 +93,7 @@ Describe 'Invoke-SharedConfigQA question order (parity with P2)' {
         ($list -join '|') | Should -BeLike '*TLS model*'
         ($list -join '|') | Should -BeLike '*Service account*'
         ($list -join '|') | Should -BeLike '*Data location*'
+        ($list -join '|') | Should -BeLike '*LLM access*'
     }
 }
 
@@ -261,6 +264,52 @@ Describe 'Invoke-SharedConfigQA skip-permissions' {
         }
         $a = Invoke-SharedConfigQA -Paths $script:p
         $a.SkipPermissions | Should -BeFalse
+    }
+}
+
+Describe 'Invoke-SharedConfigQA LLM access' {
+    # Parity with install.sh run_shared_qa: step 8 asks for LLM access so that
+    # shared Windows installs can use api-key mode just like Linux shared.
+    # Without the prompt, LlmMode silently defaults to subscription and there is
+    # no way to configure an Anthropic API key during a shared install.
+    BeforeEach { $script:p = New-SharedTestPaths }
+
+    It 'prompts for LLM access and returns apikey mode with the API key' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model' = 'edge'
+            'TLS model'  = 'tunnel'
+            'Public'     = 'https://arb.example.com'
+            'LLM access' = 'apikey'
+            'API key'    = 'sk-ant-test'
+        }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.LlmMode | Should -Be 'apikey'
+        $a.ApiKey  | Should -Be 'sk-ant-test'
+    }
+
+    It 'returns subscription mode and no ApiKey when subscription is chosen' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model' = 'edge'
+            'TLS model'  = 'tunnel'
+            'Public'     = 'https://arb.example.com'
+            'LLM access' = 'subscription'
+        }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.LlmMode | Should -Be 'subscription'
+        $a.ApiKey  | Should -BeNullOrEmpty
+    }
+
+    It 'throws when apikey mode is chosen but the API key is left empty' {
+        # Parity with install.sh and local Q&A: an empty API key must abort so
+        # mode: anthropic never lands in config.yaml without a usable credential.
+        Set-ScriptedSharedAnswers @{
+            'Auth model' = 'edge'
+            'TLS model'  = 'tunnel'
+            'Public'     = 'https://arb.example.com'
+            'LLM access' = 'apikey'
+            'API key'    = ''
+        }
+        { Invoke-SharedConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*api key*'
     }
 }
 

@@ -979,7 +979,9 @@ function Get-SharedQuestionOrder {
         'Enable unattended agent tools'     # 5. skip-permissions (RCE prompt)
         'Service account name'              # 6. service account
         'Data location'                     # 7. data location
-    )                                       # 8. master key is silent (no prompt)
+        'LLM access'                        # 8. LLM access (subscription / apikey)
+        'Paste your Anthropic API key'      # 8a. API key (api-key only)
+    )                                       # 9. master key is silent (no prompt)
 }
 
 # Invoke-SharedConfigQA drives the system-level config Q&A in the canonical P2
@@ -1008,7 +1010,6 @@ function Invoke-SharedConfigQA {
     $answers = @{
         Port                    = $port
         Host                    = $bindHost
-        LlmMode                 = if ($Defaults.ContainsKey('LlmMode')) { $Defaults.LlmMode } else { 'subscription' }
         TlsEnabled              = $false
         TlsCertFile             = ''
         TlsKeyFile              = ''
@@ -1098,6 +1099,20 @@ function Invoke-SharedConfigQA {
     # 7. Data location.
     $dataDefault = if ($Defaults.ContainsKey('DataDir')) { $Defaults.DataDir } else { $Paths.Data }
     $answers.DataDir = Read-PromptDefault -Prompt 'Data location' -Default $dataDefault
+
+    # 8. LLM access - parity with bash run_shared_qa step 8.
+    $llmDefault = if ($Defaults.ContainsKey('LlmMode')) { $Defaults.LlmMode } else { 'subscription' }
+    $llmMode = Read-PromptChoice -Prompt 'LLM access (subscription = claude /login, apikey = paste Anthropic key)' `
+        -Choices @('subscription', 'apikey') -Default $llmDefault
+    $apiKey = $null
+    if ($llmMode -eq 'apikey') {
+        $apiKey = Read-PromptDefault -Prompt 'Paste your Anthropic API key' -Default ''
+        if (-not $apiKey) {
+            throw 'An Anthropic API key is required for api-key mode. Re-run the installer and paste your key.'
+        }
+    }
+    $answers.LlmMode = $llmMode
+    $answers.ApiKey  = $apiKey
 
     return $answers
 }

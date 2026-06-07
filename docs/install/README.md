@@ -302,7 +302,7 @@ or a dedicated **Account** (default name `arbitron`, created with a random,
 machine-managed, never-expiring password). Then the canonical shared Q&A runs in
 the same order as Linux shared: bind host/port → auth model → (OIDC sub-questions
 + optional RBAC) → TLS model → skip-permissions (RCE warning) → service account
-name → data location.
+name → data location → LLM access (`subscription` or `apikey`).
 
 Secrets (master key, OIDC client secret, API key) are stored with **DPAPI at
 machine scope** so the service can read them; they never enter `config.yaml`.
