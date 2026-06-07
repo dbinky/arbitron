@@ -81,6 +81,8 @@ _make_fixture() {
   run verify_download "$TEST_SANDBOX/$name" "$name" "$TEST_SANDBOX/SHA256SUMS"
   [ "$status" -ne 0 ]
   echo "$output" | grep -qiE 'SHA256SUMS'
+  # Fail-closed: the partial download is deleted so nothing unverified remains.
+  [ ! -e "$TEST_SANDBOX/$name" ]
 }
 
 # --- (4) missing entry (FAIL CLOSED) ---------------------------------------
@@ -94,6 +96,8 @@ _make_fixture() {
   run verify_download "$TEST_SANDBOX/$name" "$name" "$TEST_SANDBOX/SHA256SUMS"
   [ "$status" -ne 0 ]
   echo "$output" | grep -qiE 'no checksum'
+  # Fail-closed: the partial download is deleted so nothing unverified remains.
+  [ ! -e "$TEST_SANDBOX/$name" ]
 }
 
 # --- version selection -----------------------------------------------------

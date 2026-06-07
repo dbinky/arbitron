@@ -63,18 +63,22 @@ Describe 'Test-Download fail-closed checksum contract' {
         Test-Path $script:fx.Artifact | Should -BeFalse
     }
 
-    It '(3) FAILS CLOSED when SHA256SUMS is missing' {
+    It '(3) FAILS CLOSED when SHA256SUMS is missing -- partial download removed' {
         $script:fx = New-VerifyFixture
         Remove-Item -LiteralPath $script:fx.Sums -Force
         { Test-Download -Path $script:fx.Artifact -Name $script:fx.Name -SumsFile $script:fx.Sums } |
             Should -Throw
+        # Fail-closed: the partial download is deleted so nothing unverified remains.
+        Test-Path $script:fx.Artifact | Should -BeFalse
     }
 
-    It '(4) FAILS CLOSED when the artifact is not listed in SHA256SUMS' {
+    It '(4) FAILS CLOSED when the artifact is not listed in SHA256SUMS -- partial download removed' {
         $script:fx = New-VerifyFixture
         Set-Content -Path $script:fx.Sums -Value "$($script:fx.Hash)  some_other_artifact" -NoNewline
         { Test-Download -Path $script:fx.Artifact -Name $script:fx.Name -SumsFile $script:fx.Sums } |
             Should -Throw
+        # Fail-closed: the partial download is deleted so nothing unverified remains.
+        Test-Path $script:fx.Artifact | Should -BeFalse
     }
 }
 
