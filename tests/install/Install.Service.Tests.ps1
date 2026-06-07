@@ -147,6 +147,51 @@ Describe 'Invoke-Upgrade' {
         $out | Should -Match '(?i)migrat'
         $out | Should -Match '(?i)forward'
     }
+
+    It 'downloads and verifies the binary BEFORE stopping the running task (fail-closed)' {
+        # If the order were swapped (stop -> download) a download failure would
+        # leave the service down with no binary upgrade. The binary must be
+        # verified first so the existing service keeps running on failure.
+        $script:order = @()
+        Mock -CommandName Get-ArbitronBinary  -MockWith { $script:order += 'binary' }
+        Mock -CommandName Stop-ScheduledTask  -MockWith { $script:order += 'stop' }
+        Mock -CommandName Start-ScheduledTask -MockWith { $script:order += 'start' }
+        Invoke-Upgrade -Paths $script:p -InstallType Local -Arch amd64 -Version '2.0.0'
+        ($script:order.IndexOf('binary')) | Should -BeLessThan ($script:order.IndexOf('stop'))
+        ($script:order.IndexOf('stop'))   | Should -BeLessThan ($script:order.IndexOf('start'))
+    }
+}
+
+Describe 'Invoke-FreshInstall LLM-mode seams' {
+    BeforeEach {
+        $script:p = New-TestPaths
+        Mock -CommandName Resolve-AllDependencies -MockWith { @() }
+        Mock -CommandName Get-ArbitronBinary -MockWith { }
+        Mock -CommandName Write-ArbitronConfig -MockWith { }
+        Mock -CommandName New-MasterKey -MockWith { 'AAAA' }
+        Mock -CommandName Set-ArbitronSecret -MockWith { }
+        Mock -CommandName Register-ArbitronService -MockWith { }
+        Mock -CommandName Test-ArbitronHealth -MockWith { $true }
+        Mock -CommandName Write-InstallSummary -MockWith { }
+        Mock -CommandName Invoke-ClaudeLogin -MockWith { }
+    }
+
+    It 'subscription mode calls Invoke-ClaudeLogin once' {
+        Mock -CommandName Invoke-ConfigQA -MockWith {
+            @{ Port = 8080; LlmMode = 'subscription'; SkipPermissions = $false; DataDir = $script:p.Data }
+        }
+        Invoke-FreshInstall -Paths $script:p -InstallType Local -Arch amd64 -Version '1.0.0'
+        Should -Invoke Invoke-ClaudeLogin -Times 1 -Exactly
+    }
+
+    It 'api-key mode stores the key and does NOT call Invoke-ClaudeLogin' {
+        Mock -CommandName Invoke-ConfigQA -MockWith {
+            @{ Port = 8080; LlmMode = 'apikey'; ApiKey = 'sk-ant-TEST'; SkipPermissions = $false; DataDir = $script:p.Data }
+        }
+        Invoke-FreshInstall -Paths $script:p -InstallType Local -Arch amd64 -Version '1.0.0'
+        Should -Invoke Set-ArbitronSecret -ParameterFilter { $Name -eq 'ARBITRON_LLM_APIKEY' }
+        Should -Invoke Invoke-ClaudeLogin -Times 0 -Exactly
+    }
 }
 
 Describe 'Invoke-Reconfigure' {

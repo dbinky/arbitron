@@ -23,7 +23,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 8 | install.ps1 — skeleton & shared helpers (`install.ps1` — OS/arch detection, `Get-InstallType`, `%LOCALAPPDATA%` resolver, dispatch, NOEXEC guard, mockable seams) | [x] | [x] | Done |
 | 9 | install.ps1 — dependency resolution (`install.ps1` — winget + App Installer bootstrap + checksum-verified direct download; Arbitron-owned npm prefix) | [x] | [x] | Done |
 | 10 | install.ps1 — local config Q&A + config + secrets (`install.ps1` — same Q&A as P1, absolute-path loopback config, master key + API key via user-env/DPAPI, never logged) | [x] | [x] | Done |
-| 11 | install.ps1 — local Scheduled Task & lifecycle (`install.ps1` — at-logon `Register-ScheduledTask`, health-check, upgrade/reconfigure/uninstall) | [ ] | [ ] | |
+| 11 | install.ps1 — local Scheduled Task & lifecycle (`install.ps1` — at-logon `Register-ScheduledTask`, health-check, upgrade/reconfigure/uninstall) | [x] | [ ] | |
 | 12 | install.ps1 — shared skeleton (`install.ps1` — `Test-IsElevated` fail-fast, `%ProgramFiles%`/`%ProgramData%` layout, LocalSystem vs dedicated account + ACLs) | [ ] | [ ] | |
 | 13 | install.ps1 — shared config Q&A + secrets (`install.ps1` — shared Q&A parallel to P2, `%ProgramData%\Arbitron\config.yaml`, DPAPI machine-scope secrets) | [ ] | [ ] | |
 | 14 | install.ps1 — shared Windows Service & lifecycle (`install.ps1` — `New-Service` auto-start, LocalSystem/dedicated `-Credential` + logon-as-service, no shim, shared upgrade/reconfigure/uninstall) | [ ] | [ ] | |
