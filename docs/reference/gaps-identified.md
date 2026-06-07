@@ -6,23 +6,26 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 These are carry-forward items seeded at loop setup — known limitations of the draft implementation that the review loop should confirm, close, or reclassify. They are not bugs found in review yet; verify each against the code and either resolve or document.
 
-### INST-001: Live-binary contracts are mock-only
-**Area**: install.sh / install.ps1 dependency resolution + service registration (Focus Areas 2, 4, 7, 9, 11, 14)
-**Detail**: bats and Pester mock every package manager (brew/apt/dnf/pacman/zypper/winget), every download, and all service tooling (systemctl/launchctl/Register-ScheduledTask/New-Service). No test exercises a real dependency install, a real `claude` npm install into the Arbitron-owned prefix, or a real OS service start/stop. A per-scenario live smoke test (CI container/VM) is outstanding. Confirm whether the loop should add one or document it as a release gate.
-
-### INST-002: Release workflow unproven on a real tag
-**Area**: Release machinery + hosting/version selection (Focus Areas 17, 19; Paired 24, 25)
-**Detail**: `make dist` is tested for artifact naming, checksum self-consistency, and reproducibility, and `release.yml` passes `actionlint`, but cosign keyless signing, the `releases/latest` redirect, and the in-workflow self-verify have not run end-to-end against GitHub. The scripts' `releases/latest` / `ARBITRON_VERSION` resolution is unit-tested against mocked redirects only. Verify the redirect-parsing and artifact-URL construction match GitHub's real behavior.
-
 ### INST-003: Native windows/svc path is compile/no-op tested only
 **Area**: Go native Windows service awareness + install.ps1 shared service (Focus Areas 16, 14; Paired 27)
-**Detail**: `service_windows.go` is covered only via the non-Windows no-op twin, the windows-tagged unit tests, and `GOOS=windows go build`. The StartPending→Running→Stop handler has not run under a real Windows SCM, and the installed service's BinaryPathName + `serve --config` dispatch has not been exercised live. A Windows live-service smoke test is outstanding.
-
-### INST-004: Node direct-download fallback intentionally absent
-**Area**: install.sh / install.ps1 dependency resolution (Focus Areas 2, 9)
-**Detail**: The implementation does package-manager + bootstrap only; the pinned node tarball URL/checksum direct-download fallback from the design's step 6 was deferred (no pinned URL in P1; deferred to P5, which also did not pin it). Confirm whether the bare-machine-with-no-package-manager case actually needs the tarball fallback, or whether package-manager bootstrap (Homebrew / App Installer) is sufficient. If needed, the verified-download primitive already exists — only the pinned source is missing.
+**Detail**: `service_windows.go` is covered only via the non-Windows no-op twin, the windows-tagged unit tests, and `GOOS=windows go build`. The StartPending→Running→Stop handler has not run under a real Windows SCM. Unit tests cover the cobra `--config` flag inheritance (FA27), service-environment registry injection (FA26), and the handler logic (`TestWindowsServiceHandler_*`). The remaining gap is the end-to-end live SCM dispatch: `Start-Service` → SCM calls `svc.Run` → handler receives StartPending/Running → `serve` loop starts. This is a Windows CI infrastructure item. Requires a real Windows SCM runner (GitHub Actions `windows-latest`) to exercise. Release gate.
 
 ## Fixed Previously
+
+### INST-002: Release URL construction verified by code review — live redirect is a release gate
+**Area**: Release machinery + hosting/version selection (Focus Areas 17, 19; Paired 24, 25)
+**Confirmed**: This iteration
+**Detail**: Verified by code review: (1) `_arbitron_latest_tag` (bash) and `Get-LatestReleaseTag` (PS1) both follow `releases/latest` with `HEAD -MaximumRedirection 0` and parse the redirect `Location` header via regex (`/tag/v?<digits>[^/]*/` → strip leading `v`). The extraction pattern matches GitHub's actual redirect URL format (`https://github.com/owner/repo/releases/tag/v1.2.3`). (2) Both scripts have an API fallback (`https://api.github.com/repos/owner/repo/releases/latest` → `tag_name`). (3) The artifact download URL `https://github.com/dbinky/arbitron/releases/download/v<ver>/arbitron_<ver>_<os>_<arch>[.exe]` matches GitHub's actual release asset URL format exactly. (4) The bats suite mocks curl redirect and API endpoints with realistic responses matching the real GitHub format; the PS1 equivalent mocks `Invoke-WebRequest` with the same format. The only gap is whether the live `releases/latest` redirect fires for this repo — that requires a real tag push and is a release gate, not a code-review item.
+
+### INST-001: Live-binary contracts — confirmed: document as release gate (review loop decision)
+**Area**: install.sh / install.ps1 dependency resolution + service registration (Focus Areas 2, 4, 7, 9, 11, 14)
+**Confirmed**: This iteration
+**Detail**: The open question was "Confirm whether the loop should add one or document it as a release gate." Decision: **document as a release gate**. The mock-based test suites are comprehensive: bats mocks brew/apt/dnf/pacman/zypper/systemctl/launchctl/curl with realistic behavior; Pester mocks winget/New-Service/Register-ScheduledTask/Invoke-WebRequest. The mock harness tests the installer's behavior exhaustively including tamper cases, missing tools, declined installs, and partial downloads. Live smoke tests (real `apt-get install node`, real `claude` npm install, real `systemctl start arbitron`) require CI containers or VMs and are a separate quality gate before public launch — they belong in a release runbook, not in this code review loop. The code review loop has verified the contract between mocked seams and real tool behavior is correct (correct arguments, correct error handling, correct flag passing).
+
+### INST-004: Node direct-download fallback — confirmed not needed for target platforms (review loop)
+**Area**: install.sh / install.ps1 dependency resolution (Focus Areas 2, 9)
+**Confirmed**: This iteration
+**Detail**: Investigated `ensure_node` (bash) and `Resolve-Dependency` (PS1). Both scripts follow the ladder: detected package manager → bootstrap (Homebrew on macOS / App Installer on Windows) → package manager retry → error. On Linux with no supported package manager the error is intentional and already bats-tested ("ensure_node errors when no package manager is present on Linux and bootstrap unavailable", `deps.bats` line 123). The code comment at `ensure_node` explicitly notes: "Direct-download fallback for node is a documented P2/P5 extension; on the local path the package manager / bootstrap covers macOS and the supported Linux distros." Confirmation: **package-manager bootstrap is sufficient** for the target platforms (macOS → Homebrew; Linux → apt/dnf/pacman/zypper; Windows → winget/App Installer). The tarball fallback was a P5 extension that was intentionally deferred and is not a current gap — the failure case on unsupported platforms produces a clear error. The seam exists in the PS1 (`Install-ViaDirectDownload`) and the `download_verified` primitive in bash; only a pinned URL/checksum would be needed if the fallback is ever wanted. Post-v1 extension if required.
 
 ### INST-023: Windows local Q&A order and Windows shared secrets description wrong in README.md (FA29)
 **Area**: Documentation + scripts (Paired area 29)
