@@ -971,8 +971,9 @@ function Get-SharedQuestionOrder {
         'OIDC issuer URL'                   # 3. OIDC sub-questions (when org)
         'OIDC client ID'
         'OIDC client secret'
-        'OIDC redirect URL'
+        'Public base URL'                   # 3d. asked in OIDC block; derives redirect default
         'Bootstrap admins'
+        'OIDC redirect URL'                 # 3f. default = publicbaseurl/auth/callback
         'Enable RBAC'
         'RBAC group claim'
         'RBAC default group'
@@ -1025,20 +1026,30 @@ function Invoke-SharedConfigQA {
 
     if ($authChoice -ieq 'oidc') {
         $answers.AuthMode = 'org'
-        # 3. OIDC sub-questions.
-        $answers.OidcIssuerUrl   = Read-PromptDefault -Prompt 'OIDC issuer URL' -Default ''
-        $answers.OidcClientId    = Read-PromptDefault -Prompt 'OIDC client ID' -Default ''
+        # 3. OIDC sub-questions (matches bash prompt_oidc order:
+        #    issuer -> clientid -> secret -> public base URL -> bootstrap admins ->
+        #    OIDC redirect URL with derived default).
+        $answers.OidcIssuerUrl    = Read-PromptDefault -Prompt 'OIDC issuer URL' -Default ''
+        $answers.OidcClientId     = Read-PromptDefault -Prompt 'OIDC client ID' -Default ''
         $answers.OidcClientSecret = Read-PromptDefault -Prompt 'OIDC client secret' -Default ''
         if (-not $answers.OidcClientSecret) {
             throw 'An OIDC client secret is required for OIDC mode. Re-run the installer and paste the client secret.'
         }
-        $answers.OidcRedirectUrl = Read-PromptDefault -Prompt 'OIDC redirect URL (publicbaseurl + /auth/callback)' -Default ''
+        # Ask public base URL first so the redirect URL default can be derived
+        # automatically (mirrors bash prompt_oidc: derived = publicbaseurl/auth/callback).
+        $pubBase = Read-PromptDefault -Prompt 'Public base URL (https://host)' -Default ''
+        $answers.PublicBaseURL = $pubBase
         $admins = Read-PromptDefault -Prompt 'Bootstrap admins (comma-separated subjects/emails)' -Default ''
         $answers.BootstrapAdmins = @($admins -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $derived = $pubBase.TrimEnd('/') + '/auth/callback'
+        $answers.OidcRedirectUrl = Read-PromptDefault -Prompt 'OIDC redirect URL' -Default $derived
+        if ($answers.OidcRedirectUrl -ne $derived -and $answers.OidcRedirectUrl) {
+            Write-ArbitronLog -Level Warn -Message "OIDC redirect URL '$($answers.OidcRedirectUrl)' differs from the derived '$derived'; ensure it is registered with your IdP."
+        }
         $rbac = Read-PromptYesNo -Prompt 'Enable RBAC (group-claim based roles)?' -Default $false
         if ($rbac) {
-            $answers.RbacEnabled     = $true
-            $answers.RbacGroupClaim  = Read-PromptDefault -Prompt 'RBAC group claim' -Default 'groups'
+            $answers.RbacEnabled      = $true
+            $answers.RbacGroupClaim   = Read-PromptDefault -Prompt 'RBAC group claim' -Default 'groups'
             $answers.RbacDefaultGroup = Read-PromptDefault -Prompt 'RBAC default group' -Default 'default'
         }
     } else {
@@ -1057,7 +1068,12 @@ function Invoke-SharedConfigQA {
         -Choices @('tunnel', 'direct', 'autocert') -Default 'tunnel'
     switch ($tlsChoice) {
         'tunnel' {
-            $answers.PublicBaseURL = Read-PromptDefault -Prompt 'Public base URL (https://...) advertised by the tunnel/proxy' -Default ''
+            # Only ask for public base URL if not already set by the OIDC block.
+            # Mirrors bash prompt_shared_tls which guards with [ -z "$SCFG_PUBLIC_BASE_URL" ]
+            # to avoid asking the operator the same question twice in OIDC+tunnel mode.
+            if (-not $answers.PublicBaseURL) {
+                $answers.PublicBaseURL = Read-PromptDefault -Prompt 'Public base URL (https://...) advertised by the tunnel/proxy' -Default ''
+            }
             $answers.CookieSecure  = $true
             $answers.TlsEnabled    = $false
             Write-ArbitronLog -Level Info -Message 'TLS terminates at your tunnel/proxy. Point it at this host:port; cookies are marked Secure. Arbitron does not provision the tunnel.'

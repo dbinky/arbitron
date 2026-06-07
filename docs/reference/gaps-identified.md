@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-017: PS1 Invoke-SharedConfigQA OIDC sub-questions order mismatch + missing redirect URL derivation (FA23)
+**Area**: install.ps1 shared config Q&A / OIDC parity (Paired area 23)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` in OIDC mode asked redirect URL BEFORE bootstrap admins and never prompted for "Public base URL" inside the OIDC block (it appeared only in the tunnel TLS branch later). Bash `prompt_oidc` asks: public base URL → bootstrap admins → OIDC redirect URL (with default derived as `publicbaseurl + /auth/callback`). Without the derivation, PS1 operators must type the full callback URL manually with no auto-suggest — a common source of misconfiguration that causes the OIDC token exchange to fail silently at runtime. Fixed by: (1) adding a "Public base URL" prompt in the OIDC block before bootstrap admins; (2) deriving the redirect URL default from it; (3) moving the redirect URL prompt after bootstrap admins; (4) skipping the TLS tunnel re-ask when public base URL was already set by the OIDC block (matches bash's `[ -z "$SCFG_PUBLIC_BASE_URL" ]` guard). `Get-SharedQuestionOrder` updated to reflect the corrected canonical order. Two Pester tests added: order test (`Public base URL before Bootstrap admins before OIDC redirect URL in OIDC block`) and derivation test (redirect URL `$Default` = `publicbaseurl/auth/callback`). 214 bats + 192 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
 ### INST-016: PS1 Invoke-ConfigQA local Q&A order mismatch (data-location before skip-permissions, FA22)
 **Area**: install.ps1 local config Q&A / cross-platform parity (Paired area 22)
 **Fixed**: This iteration

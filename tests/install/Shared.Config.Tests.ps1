@@ -425,3 +425,65 @@ Describe 'Invoke-SharedConfigQA reconfigure pre-fill' {
         $seenDefaults[$portPrompt] | Should -Be '9090'
     }
 }
+
+Describe 'Invoke-SharedConfigQA OIDC redirect URL derivation (parity with bash prompt_oidc)' {
+    # bash prompt_oidc order: issuer -> client ID -> client secret ->
+    # Public base URL -> Bootstrap admins -> OIDC redirect URL (default derived
+    # as publicbaseurl + /auth/callback). PS1 must match so operators on both
+    # platforms see the same Q&A. Without the derivation, operators must type the
+    # full callback URL manually -- a common misconfiguration that silently breaks
+    # the OIDC token exchange at runtime.
+    BeforeEach { $script:p = New-SharedTestPaths }
+
+    It 'in OIDC mode asks Public base URL before Bootstrap admins before OIDC redirect URL' {
+        $seq = New-Object System.Collections.Generic.List[string]
+        Mock -CommandName Read-PromptDefault -MockWith {
+            $seq.Add($Prompt)
+            if ($Prompt -like '*client secret*') { return 'secret123' }
+            if ($Prompt -like '*Public base URL*') { return 'https://arb.example.com' }
+            $Default
+        }
+        Mock -CommandName Read-PromptChoice -MockWith {
+            $seq.Add($Prompt)
+            if ($Prompt -like '*Auth model*') { return 'oidc' }
+            if ($Prompt -like '*TLS model*') { return 'tunnel' }
+            $(if ($Default) { $Default } else { $Choices[0] })
+        }
+        Mock -CommandName Read-PromptYesNo -MockWith { $seq.Add($Prompt); $Default }
+
+        Invoke-SharedConfigQA -Paths $script:p | Out-Null
+
+        $idxPub       = ($seq.FindIndex({ param($s) $s -like '*Public base URL*' }))
+        $idxTls       = ($seq.FindIndex({ param($s) $s -like '*TLS model*' }))
+        $idxBootstrap = ($seq.FindIndex({ param($s) $s -like '*Bootstrap admins*' }))
+        $idxRedirect  = ($seq.FindIndex({ param($s) $s -like '*OIDC redirect URL*' }))
+
+        # Public base URL must appear inside the OIDC block (before the TLS model prompt).
+        $idxPub | Should -BeGreaterOrEqual 0
+        $idxPub | Should -BeLessThan $idxTls
+        # Bootstrap admins must follow Public base URL (parity with bash prompt_oidc).
+        $idxBootstrap | Should -BeGreaterThan $idxPub
+        # OIDC redirect URL must follow Bootstrap admins.
+        $idxRedirect | Should -BeGreaterThan $idxBootstrap
+    }
+
+    It 'defaults the OIDC redirect URL to publicbaseurl + /auth/callback' {
+        $script:capturedDefault = $null
+        Mock -CommandName Read-PromptDefault -MockWith {
+            if ($Prompt -like '*client secret*') { return 'secret123' }
+            if ($Prompt -like '*Public base URL*') { return 'https://arb.example.com' }
+            if ($Prompt -like '*OIDC redirect URL*') { $script:capturedDefault = $Default }
+            $Default
+        }
+        Mock -CommandName Read-PromptChoice -MockWith {
+            if ($Prompt -like '*Auth model*') { return 'oidc' }
+            if ($Prompt -like '*TLS model*') { return 'tunnel' }
+            $(if ($Default) { $Default } else { $Choices[0] })
+        }
+        Mock -CommandName Read-PromptYesNo -MockWith { $Default }
+
+        Invoke-SharedConfigQA -Paths $script:p | Out-Null
+
+        $script:capturedDefault | Should -Be 'https://arb.example.com/auth/callback'
+    }
+}
