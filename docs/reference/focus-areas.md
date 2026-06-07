@@ -30,7 +30,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 15 | Go — `arbitron version` subcommand (`cmd/arbitron/version.go` — ldflags-stamped version/commit/date, dev sentinels, root `--version`) | [x] | [x] | Done |
 | 16 | Go — native Windows service awareness (`cmd/arbitron/service_windows.go` + `service_other.go` — build-tagged SCM detect/dispatch + no-op twin, `runUnderServiceManager` wired into serve) | [x] | [x] | Done |
 | 17 | Release machinery (`Makefile` dist/release/clean-dist/test-release + `.github/workflows/release.yml` — artifact naming, `SHA256SUMS`, cosign keyless, reproducibility, self-verify) | [x] | [x] | Done |
-| 18 | Fail-closed checksum verification (both scripts — `verify_download` / `Test-Download`: missing/tampered/unlisted SHA256SUMS aborts; no bypass; optional cosign) | [x] | [ ] | |
+| 18 | Fail-closed checksum verification (both scripts — `verify_download` / `Test-Download`: missing/tampered/unlisted SHA256SUMS aborts; no bypass; optional cosign) | [x] | [x] | Done |
 | 19 | Hosting & version selection (both scripts — `releases/latest` redirect default, `ARBITRON_VERSION` pin, `dbinky/arbitron` URL constant flow-through) | [ ] | [ ] | |
 | 20 | Documentation (`docs/install/README.md` + `upgrading.md` + `security.md` + `tunnels-and-tls.md` — all 5 scenarios accurate to scripts, migration/security/cosign notes) | [ ] | [ ] | |
 | 21 | Test harness integrity (`tests/install/` bats + Pester mocks, `tests/release/`, recording fakes, lib/NOEXEC guards, CI in `.github/workflows/installers.yml`) | [ ] | [ ] | |

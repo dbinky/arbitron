@@ -45,6 +45,17 @@ Describe 'Test-Download fail-closed checksum contract' {
         Test-Path $script:fx.Artifact | Should -BeTrue
     }
 
+    It 'accepts a SHA256SUMS with binary-mode star-prefixed names' {
+        # sha256sum -b and Windows CertUtil emit '<hash> *<name>' (star prefix).
+        # TrimStart("*") in Test-Download must handle this so a Windows-generated
+        # SHA256SUMS verifies without "no checksum found" errors.
+        $script:fx = New-VerifyFixture
+        Set-Content -Path $script:fx.Sums -Value "$($script:fx.Hash)  *$($script:fx.Name)" -NoNewline
+        { Test-Download -Path $script:fx.Artifact -Name $script:fx.Name -SumsFile $script:fx.Sums } |
+            Should -Not -Throw
+        Test-Path $script:fx.Artifact | Should -BeTrue
+    }
+
     It '(1) FAILS CLOSED on a tampered binary and removes the download' {
         $script:fx = New-VerifyFixture
         Add-Content -Path $script:fx.Artifact -Value 'TAMPERED' -NoNewline

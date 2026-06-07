@@ -43,6 +43,22 @@ _make_fixture() {
   [ -f "$TEST_SANDBOX/$name" ]
 }
 
+# --- happy path: binary-mode SHA256SUMS format ----------------------------
+
+@test "verify_download accepts a SHA256SUMS with binary-mode star-prefixed names" {
+  # sha256sum -b and Windows tooling emit '<hash> *<name>' (star prefix).
+  # The awk pattern '$2=="*"a' must match, not the text-mode '$2==a' branch.
+  local name
+  name="$(_make_fixture "$TEST_SANDBOX")"
+  local hash
+  hash="$(sha256_tool <"$TEST_SANDBOX/$name")"
+  # Overwrite with binary-mode format.
+  printf '%s *%s\n' "$hash" "$name" >"$TEST_SANDBOX/SHA256SUMS"
+  run verify_download "$TEST_SANDBOX/$name" "$name" "$TEST_SANDBOX/SHA256SUMS"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_SANDBOX/$name" ]
+}
+
 # --- (1) tampered binary (FAIL CLOSED) -------------------------------------
 
 @test "verify_download FAILS CLOSED on a tampered binary and removes the download" {
