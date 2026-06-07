@@ -131,6 +131,53 @@ func TestHandleControlLoop_ServeExitsOnItsOwn(t *testing.T) {
 	assert.False(t, cancelled, "no control request means no cancellation")
 }
 
+// Contract lock: the service name the binary dispatches under via svc.Run must
+// match the -Name argument used by Register-ArbitronService in install.ps1
+// (currently `New-Service -Name 'arbitron'`). If either side changes, the SCM
+// silently cannot find the service and Stop/Start/Interrogate all fail.
+func TestServiceName_MatchesPowerShellRegistration(t *testing.T) {
+	assert.Equal(t, "arbitron", serviceName,
+		"serviceName must match New-Service -Name arbitron in install.ps1; changing either side breaks SCM dispatch")
+}
+
+// An unrecognized SCM command (e.g. Pause, Continue) must not exit the loop —
+// it re-reports {Running, AcceptStop|AcceptShutdown} and keeps waiting.
+// This exercises the default branch in handleControlLoop.
+func TestHandleControlLoop_UnknownCommandReportsRunning(t *testing.T) {
+	r := make(chan svc.ChangeRequest, 2)
+	s := make(chan svc.Status, 8)
+	done := make(chan struct{})
+	cancel := func() { close(done) }
+
+	// svc.Pause is not in the accepted set → default branch → re-report Running.
+	// Follow immediately with Stop so the loop can exit.
+	r <- svc.ChangeRequest{Cmd: svc.Pause}
+	r <- svc.ChangeRequest{Cmd: svc.Stop}
+
+	loopDone := make(chan struct{})
+	go func() { handleControlLoop(r, s, done, cancel); close(loopDone) }()
+
+	select {
+	case <-loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleControlLoop did not return after Stop")
+	}
+
+	var sawRunning bool
+	for {
+		select {
+		case st := <-s:
+			if st.State == svc.Running {
+				sawRunning = true
+			}
+		default:
+			assert.True(t, sawRunning,
+				"an unhandled SCM command must re-report Running, not silently drop the status update")
+			return
+		}
+	}
+}
+
 // Interrogate echoes the current status back without stopping the loop.
 func TestHandleControlLoop_InterrogateEchoesStatus(t *testing.T) {
 	r := make(chan svc.ChangeRequest, 2)

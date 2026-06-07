@@ -28,7 +28,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 13 | install.ps1 — shared config Q&A + secrets (`install.ps1` — shared Q&A parallel to P2, `%ProgramData%\Arbitron\config.yaml`, DPAPI machine-scope secrets) | [x] | [x] | Done |
 | 14 | install.ps1 — shared Windows Service & lifecycle (`install.ps1` — `New-Service` auto-start, LocalSystem/dedicated `-Credential` + logon-as-service, no shim, shared upgrade/reconfigure/uninstall) | [x] | [x] | Done |
 | 15 | Go — `arbitron version` subcommand (`cmd/arbitron/version.go` — ldflags-stamped version/commit/date, dev sentinels, root `--version`) | [x] | [x] | Done |
-| 16 | Go — native Windows service awareness (`cmd/arbitron/service_windows.go` + `service_other.go` — build-tagged SCM detect/dispatch + no-op twin, `runUnderServiceManager` wired into serve) | [ ] | [ ] | |
+| 16 | Go — native Windows service awareness (`cmd/arbitron/service_windows.go` + `service_other.go` — build-tagged SCM detect/dispatch + no-op twin, `runUnderServiceManager` wired into serve) | [x] | [ ] | |
 | 17 | Release machinery (`Makefile` dist/release/clean-dist/test-release + `.github/workflows/release.yml` — artifact naming, `SHA256SUMS`, cosign keyless, reproducibility, self-verify) | [ ] | [ ] | |
 | 18 | Fail-closed checksum verification (both scripts — `verify_download` / `Test-Download`: missing/tampered/unlisted SHA256SUMS aborts; no bypass; optional cosign) | [ ] | [ ] | |
 | 19 | Hosting & version selection (both scripts — `releases/latest` redirect default, `ARBITRON_VERSION` pin, `dbinky/arbitron` URL constant flow-through) | [ ] | [ ] | |
