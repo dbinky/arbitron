@@ -122,6 +122,14 @@ Describe 'Version selection + artifact URL builders' {
         Get-ArbitronVersion | Should -Be '9.9.9'
         Should -Invoke Get-LatestReleaseTag -Times 1
     }
+
+    It 'Get-ArbitronVersion throws when the latest-tag probe returns nothing' {
+        # Network unavailable + ARBITRON_VERSION unset: must throw rather than silently
+        # constructing a URL with an empty version string.
+        Remove-Item Env:\ARBITRON_VERSION -ErrorAction SilentlyContinue
+        Mock -CommandName Get-LatestReleaseTag -MockWith { $null }
+        { Get-ArbitronVersion } | Should -Throw -ExpectedMessage '*Could not resolve*'
+    }
 }
 
 Describe 'No checksum bypass' {

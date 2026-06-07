@@ -173,6 +173,20 @@ _make_fixture() {
   [ "$output" = "https://github.com/dbinky/arbitron/releases/download/v4.5.6" ]
 }
 
+@test "arbitron_resolve_version fails closed when the latest-tag probe returns nothing" {
+  # If curl and the API fallback both return empty (network unavailable) and
+  # ARBITRON_VERSION is unset, the installer must abort rather than silently
+  # trying to construct a URL with an empty version string.
+  unset ARBITRON_VERSION
+  install_fake curl '
+    # Simulate a network failure: curl exits non-zero and prints nothing.
+    exit 1
+  '
+  run arbitron_resolve_version
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qiE 'could not resolve|ARBITRON_VERSION'
+}
+
 # --- no-bypass -------------------------------------------------------------
 
 @test "there is NO checksum bypass flag/env in install.sh" {
