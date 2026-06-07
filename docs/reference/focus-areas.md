@@ -15,7 +15,7 @@ A review pass is only checked when the checklist produces a passing result for t
 |---|---|---|---|---|
 | 1 | install.sh — skeleton & shared helpers (`install.sh` — OS/arch/elevation detection, install-type select, Fresh/Upgrade/Reconfigure/Uninstall dispatch, logging/prompt/checksum helpers, `ARBITRON_INSTALL_LIB_ONLY` guard, `layout_*` resolvers) | [x] | [x] | Done |
 | 2 | install.sh — dependency resolution (`install.sh` — node/claude/git/gh/opencode: presence+version → brew/apt/dnf/pacman/zypper → bootstrap → `download_verified` direct-download; Arbitron-owned npm prefix) | [x] | [x] | Done |
-| 3 | install.sh — local config Q&A + config.yaml + secrets env (`install.sh` — port/LLM/skip-perms/data-location prompts, absolute-path loopback config, `~/.arbitron/arbitron.env` 0600 + generated master key) | [x] | [ ] | |
+| 3 | install.sh — local config Q&A + config.yaml + secrets env (`install.sh` — port/LLM/skip-perms/data-location prompts, absolute-path loopback config, `~/.arbitron/arbitron.env` 0600 + generated master key) | [x] | [x] | Done |
 | 4 | install.sh — local service & lifecycle (`install.sh` — launchd plist, systemd `--user` + linger, health-check, upgrade/reconfigure/uninstall keep-data-default) | [ ] | [ ] | |
 | 5 | install.sh — shared skeleton (`install.sh` — `require_root`, dedicated `arbitron` account, `/etc` + `/var/lib` + `/var/log` layout + ownership/modes, `/usr/local/bin/arbitron`) | [ ] | [ ] | |
 | 6 | install.sh — shared config Q&A (`install.sh` — bind host/port, edge+local vs OIDC[+RBAC], 3 TLS models w/ P0 guards, service account; `/etc/arbitron/config.yaml` + `/etc/arbitron/arbitron.env` 0600 root:arbitron) | [ ] | [ ] | |

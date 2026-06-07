@@ -176,7 +176,6 @@ EOF
     ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'
     generate_master_key
     write_secrets_env
-    # print the key file path but NOT the key
     echo done
   "
   [ "$status" -eq 0 ]
@@ -184,6 +183,44 @@ EOF
   key="$(grep '^ARBITRON_MASTER_KEY=' "$(layout_secrets_env)" | cut -d= -f2-)"
   [ -n "$key" ]
   [[ "$output" != *"$key"* ]]
+}
+
+@test "the Anthropic API key never appears in stdout/stderr" {
+  # Symmetric to the master-key test: the API key is a real secret and must
+  # never be echoed, even during run_config_qa or write_secrets_env.
+  run bash -c "
+    install_isolate_path() { :; }
+    export ARBITRON_PORT=8080 ARBITRON_LLM_ACCESS=api-key ARBITRON_SKIP_PERMS=no
+    export ARBITRON_DATA_DIR='$HOME/.arbitron/data'
+    export ARBITRON_API_KEY='sk-ant-SUPER-SECRET-XYZ789'
+    ARBITRON_INSTALL_LIB_ONLY=1 source '$INSTALL_SH'
+    generate_master_key
+    run_config_qa
+    write_secrets_env
+    echo done
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"sk-ant-SUPER-SECRET-XYZ789"* ]]
+}
+
+@test "unknown LLM_ACCESS value silently falls back to subscription mode" {
+  # Documents that a typo ('SUBSCRIPTION', 'apikey', etc.) is treated as
+  # subscription, not api-key. This is the safe default — no secret is
+  # required — but operators should know about it.
+  export ARBITRON_LLM_ACCESS=SUBSCRIPTION  # wrong case
+  run_config_qa
+  write_config_yaml
+  grep -qE 'provider: "claude-cli"' "$(layout_config)"
+}
+
+@test "write_config_yaml sets arbitron home to mode 0700" {
+  # The home directory should not be group/world-readable; the binary, config,
+  # and secrets env all live beneath it.
+  run_config_qa
+  write_config_yaml
+  local perms
+  perms="$(stat -f '%Lp' "$(arbitron_home)" 2>/dev/null || stat -c '%a' "$(arbitron_home)")"
+  [ "$perms" = "700" ]
 }
 
 @test "reconfigure preserves the existing master key" {
