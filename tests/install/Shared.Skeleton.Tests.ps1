@@ -97,6 +97,26 @@ Describe 'Invoke-SharedInstall elevation gate' {
         { Invoke-SharedInstall -Paths $script:p -Arch amd64 -Version '1.0.0' } | Should -Not -Throw
         Should -Invoke New-SharedDirectoryTree -Times 1 -Exactly
     }
+
+    It 'provisions the dedicated service account when Kind=Account is chosen' {
+        # When the operator selects a dedicated account (not LocalSystem),
+        # Invoke-SharedInstall must call New-ArbitronServiceAccount before
+        # writing config or starting the service.
+        Mock -CommandName Test-IsElevated -MockWith { $true }
+        Mock -CommandName Get-RunAsChoice -MockWith { @{ Kind = 'Account'; Name = 'arbitron' } }
+        Mock -CommandName New-ArbitronServiceAccount -MockWith { }
+        Mock -CommandName Invoke-SharedConfigQA -MockWith { @{ Port = 8080; Host = '0.0.0.0'; AuthMode = 'local'; TlsKind = 'proxy'; SkipPermissions = $false; DataDir = $script:p.Data; ServiceAccount = 'arbitron' } }
+        Mock -CommandName Write-ArbitronConfig -MockWith { }
+        Mock -CommandName New-MasterKey -MockWith { 'AAAA' }
+        Mock -CommandName Set-ArbitronSecret -MockWith { }
+        Mock -CommandName Register-ArbitronService -MockWith { }
+        Mock -CommandName Test-ArbitronHealth -MockWith { $true }
+        Mock -CommandName Write-InstallSummary -MockWith { }
+        Mock -CommandName Invoke-ClaudeLogin -MockWith { }
+        Invoke-SharedInstall -Paths $script:p -Arch amd64 -Version '1.0.0'
+        Should -Invoke New-ArbitronServiceAccount -Times 1 -Exactly `
+            -ParameterFilter { $Name -eq 'arbitron' }
+    }
 }
 
 Describe 'New-SharedDirectoryTree' {
