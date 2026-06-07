@@ -192,3 +192,45 @@ Describe 'Get-InstallType routes Shared from the prompt' {
         Get-InstallType | Should -Be 'Local'
     }
 }
+
+Describe 'Test-ExistingInstall -InstallType Shared' {
+    # The Shared path consults Get-Service (not Get-ScheduledTask) to determine
+    # whether a Windows Service exists alongside a config.yaml. This gates the
+    # entire Shared lifecycle dispatch: Fresh install vs Upgrade/Reconfigure/Uninstall.
+    BeforeEach {
+        $script:tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("ArbTIS_" + [guid]::NewGuid())
+        New-Item -ItemType Directory -Path $script:tmp -Force | Out-Null
+        $script:p = @{ Config = (Join-Path $script:tmp 'config.yaml') }
+    }
+    AfterEach {
+        Remove-Item -Recurse -Force $script:tmp -ErrorAction SilentlyContinue
+    }
+
+    It 'returns false when config is absent even if the service is registered' {
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Name = $script:ArbitronServiceName } }
+        Test-ExistingInstall -Paths $script:p -InstallType Shared | Should -BeFalse
+        Should -Invoke Get-Service -Times 0 -Exactly  # short-circuits before service check
+    }
+
+    It 'returns false when config present but the service is not registered' {
+        Set-Content -Path $script:p.Config -Value 'x'
+        Mock -CommandName Get-Service -MockWith { throw 'service not found' }
+        Test-ExistingInstall -Paths $script:p -InstallType Shared | Should -BeFalse
+    }
+
+    It 'returns true when config is present AND the Windows Service is registered' {
+        Set-Content -Path $script:p.Config -Value 'x'
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Name = $script:ArbitronServiceName } }
+        Test-ExistingInstall -Paths $script:p -InstallType Shared | Should -BeTrue
+    }
+
+    It 'uses Get-Service (not Get-ScheduledTask) for the Shared detection path' {
+        # Verify the right seam is called so a ScheduledTask-only regression is caught.
+        Set-Content -Path $script:p.Config -Value 'x'
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Name = $script:ArbitronServiceName } }
+        Mock -CommandName Get-ScheduledTask -MockWith { throw 'should not be called for Shared' }
+        Test-ExistingInstall -Paths $script:p -InstallType Shared | Should -BeTrue
+        Should -Invoke Get-Service -Times 1 -Exactly
+        Should -Invoke Get-ScheduledTask -Times 0 -Exactly
+    }
+}

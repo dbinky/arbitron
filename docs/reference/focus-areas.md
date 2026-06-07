@@ -20,7 +20,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 5 | install.sh — shared skeleton (`install.sh` — `require_root`, dedicated `arbitron` account, `/etc` + `/var/lib` + `/var/log` layout + ownership/modes, `/usr/local/bin/arbitron`) | [x] | [x] | Done |
 | 6 | install.sh — shared config Q&A (`install.sh` — bind host/port, edge+local vs OIDC[+RBAC], 3 TLS models w/ P0 guards, service account; `/etc/arbitron/config.yaml` + `/etc/arbitron/arbitron.env` 0600 root:arbitron) | [x] | [x] | Done |
 | 7 | install.sh — shared systemd system unit & lifecycle (`install.sh` — `User=`/`EnvironmentFile=`/`WorkingDirectory=`, hardening, `CAP_NET_BIND_SERVICE`, shared upgrade/reconfigure/uninstall + optional account removal) | [x] | [x] | Done |
-| 8 | install.ps1 — skeleton & shared helpers (`install.ps1` — OS/arch detection, `Get-InstallType`, `%LOCALAPPDATA%` resolver, dispatch, NOEXEC guard, mockable seams) | [ ] | [ ] | |
+| 8 | install.ps1 — skeleton & shared helpers (`install.ps1` — OS/arch detection, `Get-InstallType`, `%LOCALAPPDATA%` resolver, dispatch, NOEXEC guard, mockable seams) | [x] | [ ] | |
 | 9 | install.ps1 — dependency resolution (`install.ps1` — winget + App Installer bootstrap + checksum-verified direct download; Arbitron-owned npm prefix) | [ ] | [ ] | |
 | 10 | install.ps1 — local config Q&A + config + secrets (`install.ps1` — same Q&A as P1, absolute-path loopback config, master key + API key via user-env/DPAPI, never logged) | [ ] | [ ] | |
 | 11 | install.ps1 — local Scheduled Task & lifecycle (`install.ps1` — at-logon `Register-ScheduledTask`, health-check, upgrade/reconfigure/uninstall) | [ ] | [ ] | |
