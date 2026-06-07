@@ -194,6 +194,46 @@ Describe 'secrets never logged' {
     }
 }
 
+Describe 'Get-ExistingConfigDefaults' {
+    # Used by Invoke-Reconfigure to prefill prompt defaults. If it returns wrong
+    # values the reconfigure flow overwrites the running config with fresh defaults.
+    BeforeEach {
+        $script:p = New-TestPaths
+        New-Item -ItemType Directory -Path $script:p.Root -Force | Out-Null
+    }
+    AfterEach { Remove-Item -Recurse -Force $script:p.Root -ErrorAction SilentlyContinue }
+
+    It 'returns an empty hashtable when config is absent' {
+        $d = Get-ExistingConfigDefaults -Paths $script:p
+        $d.Count | Should -Be 0
+    }
+
+    It 'parses the port from an existing config' {
+        Set-Content -Path $script:p.Config -Value "server:`n  port: 9090`n"
+        $d = Get-ExistingConfigDefaults -Paths $script:p
+        $d.Port | Should -Be 9090
+    }
+
+    It 'maps provider: anthropic back to LlmMode: apikey' {
+        Set-Content -Path $script:p.Config -Value "llm:`n  provider: anthropic`n"
+        $d = Get-ExistingConfigDefaults -Paths $script:p
+        $d.LlmMode | Should -Be 'apikey'
+    }
+
+    It 'maps provider: claude-cli back to LlmMode: subscription' {
+        Set-Content -Path $script:p.Config -Value "llm:`n  provider: claude-cli`n"
+        $d = Get-ExistingConfigDefaults -Paths $script:p
+        $d.LlmMode | Should -Be 'subscription'
+    }
+
+    It 'extracts DataDir as the parent of database.path' {
+        $dbPath = Join-Path $script:p.Data 'arbitron.db'
+        Set-Content -Path $script:p.Config -Value "database:`n  path: `"$dbPath`"`n"
+        $d = Get-ExistingConfigDefaults -Paths $script:p
+        $d.DataDir | Should -Be $script:p.Data
+    }
+}
+
 Describe 'Get-ArbitronBinary' {
     BeforeEach {
         $script:p = New-TestPaths
