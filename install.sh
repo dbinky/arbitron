@@ -628,6 +628,9 @@ run_config_qa() {
 
   if [ "$CFG_LLM_ACCESS" = "api-key" ]; then
     CFG_API_KEY="$(prompt_default API_KEY "Paste your Anthropic API key" "")"
+    if [ -z "${CFG_API_KEY:-}" ]; then
+      die "api-key mode requires a non-empty Anthropic API key. Re-run with ARBITRON_API_KEY set or choose 'subscription'."
+    fi
   fi
 
   # The --dangerously-skip-permissions question, asked EXPLICITLY with its

@@ -97,6 +97,36 @@ EOF
   [ "$output" = "9555" ]
 }
 
+@test "config.yaml is mode 0600 (skippermissions kept private)" {
+  run_config_qa
+  write_config_yaml
+  local cfg perms
+  cfg="$(layout_config)"
+  [ -f "$cfg" ]
+  perms="$(stat -f '%Lp' "$cfg" 2>/dev/null || stat -c '%a' "$cfg")"
+  [ "$perms" = "600" ]
+}
+
+@test "api-key mode with empty key errors rather than producing a broken install" {
+  # If a user chooses api-key mode but provides no key (headless / forgot to
+  # set ARBITRON_API_KEY), the installer must abort early instead of silently
+  # writing provider=anthropic without an API key in the env file.
+  export ARBITRON_LLM_ACCESS=api-key
+  unset ARBITRON_API_KEY
+  run run_config_qa </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"api-key"* || "$output" == *"API key"* ]]
+}
+
+@test "custom data directory flows into config.yaml database.path" {
+  local custom="$TEST_SANDBOX/custom-data"
+  export ARBITRON_DATA_DIR="$custom"
+  run_config_qa
+  write_config_yaml
+  local cfg="$(layout_config)"
+  grep -qF "$custom/arbitron.db" "$cfg"
+}
+
 # --- secrets env -------------------------------------------------------------
 
 @test "write_secrets_env creates arbitron.env mode 0600" {
