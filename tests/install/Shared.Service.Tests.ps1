@@ -215,4 +215,13 @@ Describe 'Invoke-SharedUninstall' {
         Invoke-SharedUninstall -Paths $script:p -RunAs @{ Kind = 'LocalSystem'; Name = $null }
         Should -Invoke Remove-LocalUser -Times 0 -Exactly
     }
+
+    It 'clears all three DPAPI secrets including ARBITRON_AUTH_OIDC_CLIENTSECRET' {
+        # Shared install stores 3 secrets: master key, api key, and OIDC client secret.
+        # All must be wiped on uninstall so a re-install starts with a clean DPAPI slate.
+        Mock -CommandName Read-PromptYesNo -MockWith { $false }
+        Invoke-SharedUninstall -Paths $script:p -RunAs @{ Kind = 'LocalSystem'; Name = $null }
+        Should -Invoke Remove-ArbitronSecret -Times 3 -Exactly
+        Should -Invoke Remove-ArbitronSecret -ParameterFilter { $Name -eq 'ARBITRON_AUTH_OIDC_CLIENTSECRET' }
+    }
 }
