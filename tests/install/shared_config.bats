@@ -106,6 +106,24 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
   grep -qF 'alice@example.com' "$cfg"   # bootstrap admins land in config
 }
 
+@test "OIDC mode with empty client secret is refused (parity with empty api-key guard)" {
+  # OIDC mode without a client secret produces a silently broken install:
+  # write_shared_env skips ARBITRON_AUTH_OIDC_CLIENTSECRET and the OIDC IdP
+  # rejects every token exchange at runtime. The installer must die at Q&A time.
+  # Mirrors the api-key empty-key guards (INST-006/INST-008).
+  export ARBITRON_AUTH_MODEL=oidc
+  export ARBITRON_OIDC_ISSUER=https://idp.example.com
+  export ARBITRON_OIDC_CLIENT_ID=arb-client
+  unset ARBITRON_OIDC_CLIENT_SECRET
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_OIDC_BOOTSTRAP_ADMINS=admin@example.com
+  export ARBITRON_RBAC=no
+  export ARBITRON_TLS_MODEL=tunnel
+  run run_shared_qa </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"client secret"* || "$output" == *"OIDC"* ]]
+}
+
 @test "optional RBAC writes groupclaim, defaultgroup and a department lead" {
   export ARBITRON_AUTH_MODEL=oidc
   export ARBITRON_OIDC_ISSUER=https://idp.example.com

@@ -24,6 +24,17 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-009: prompt_oidc missing empty-client-secret guard (parity with INST-006/INST-008)
+**Area**: install.sh shared config Q&A / prompt_oidc (Focus Area 6)
+**Fixed**: This iteration
+**Detail**: `prompt_oidc` accepted an empty OIDC client secret without complaint. A headless
+install (or an operator who pressed Enter at the prompt) would proceed, `write_shared_env`
+would silently omit `ARBITRON_AUTH_OIDC_CLIENTSECRET`, and the OIDC IdP would reject every
+token exchange at runtime — a silently broken shared install. The same class of bug was fixed
+for the API key in INST-006 (P1) and INST-008 (P2). Added the identical guard in `prompt_oidc`:
+`die` if `SCFG_OIDC_CLIENT_SECRET` is empty. Added a bats test
+`OIDC mode with empty client secret is refused` to lock the invariant.
+
 ### INST-008: run_shared_qa missing empty-API-key guard (parity with P1/INST-006)
 **Area**: install.sh shared config Q&A (Focus Area 6)
 **Fixed**: This iteration

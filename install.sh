@@ -1047,6 +1047,9 @@ prompt_oidc() {
   SCFG_OIDC_ISSUER="$(prompt_default OIDC_ISSUER "OIDC issuer URL" "$SCFG_OIDC_ISSUER")"
   SCFG_OIDC_CLIENT_ID="$(prompt_default OIDC_CLIENT_ID "OIDC client ID" "$SCFG_OIDC_CLIENT_ID")"
   SCFG_OIDC_CLIENT_SECRET="$(prompt_default OIDC_CLIENT_SECRET "OIDC client secret (stored in arbitron.env)" "")"
+  if [ -z "${SCFG_OIDC_CLIENT_SECRET:-}" ]; then
+    die "OIDC mode requires a non-empty client secret. Re-run with ARBITRON_OIDC_CLIENT_SECRET set."
+  fi
   SCFG_PUBLIC_BASE_URL="$(prompt_default PUBLIC_BASE_URL "Public base URL (https://host)" "$SCFG_PUBLIC_BASE_URL")"
   SCFG_BOOTSTRAP_ADMINS="$(prompt_default OIDC_BOOTSTRAP_ADMINS "Bootstrap admins (comma-separated subjects/emails)" "")"
   local derived="${SCFG_PUBLIC_BASE_URL%/}/auth/callback"
