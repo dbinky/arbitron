@@ -198,6 +198,19 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
   grep -qE 'port: 443' "$cfg"
 }
 
+@test "autocert without a domain is refused (P0 guard)" {
+  # autocert needs a domain for Let's Encrypt to provision a cert. If the
+  # operator chooses autocert but provides no domain, the installer must abort
+  # rather than writing an empty autocertdomain that causes a server startup failure.
+  export ARBITRON_AUTH_MODEL=edge-local
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_TLS_MODEL=autocert
+  unset ARBITRON_AUTOCERT_DOMAIN
+  run run_shared_qa </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"autocert"* || "$output" == *"domain"* ]]
+}
+
 # --- skip-permissions / RCE prompt ------------------------------------------
 
 @test "skip-permissions prompt carries an RCE warning and is recorded" {
@@ -265,6 +278,20 @@ _env() { printf '%s/arbitron.env\n' "$ARB_ETC"; }
   write_shared_env
   grep -qE '^ANTHROPIC_API_KEY=sk-ant-shared-secret$' "$(_env)"
   ! grep -qF 'sk-ant-shared-secret' "$(_cfg)"
+}
+
+@test "api-key mode with empty key fails in run_shared_qa (parity with local)" {
+  # Mirrors the P1 guard (INST-006): choosing api-key without providing a key
+  # must abort immediately rather than silently writing provider=anthropic with
+  # no ANTHROPIC_API_KEY in the env file, which produces a broken install.
+  export ARBITRON_AUTH_MODEL=edge-local
+  export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
+  export ARBITRON_TLS_MODEL=tunnel
+  export ARBITRON_LLM_ACCESS=api-key
+  unset ARBITRON_API_KEY
+  run run_shared_qa </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"api-key"* || "$output" == *"API key"* ]]
 }
 
 # --- paths -------------------------------------------------------------------

@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-008: run_shared_qa missing empty-API-key guard (parity with P1/INST-006)
+**Area**: install.sh shared config Q&A (Focus Area 6)
+**Fixed**: This iteration
+**Detail**: `run_shared_qa` accepted `LLM_ACCESS=api-key` with an empty `ARBITRON_API_KEY`, silently writing `provider: "anthropic"` to config.yaml without an `ANTHROPIC_API_KEY` in arbitron.env — a broken install with no warning. The same bug was fixed in the local path (INST-006, FA3 Pass 1) but not applied to the shared path. Added the identical guard: `die` if `CFG_LLM_ACCESS=api-key` and `CFG_API_KEY` is empty. Added a bats test `api-key mode with empty key fails in run_shared_qa` to lock the invariant.
+
 ### INST-005: launchd plist launched binary directly, bypassing the secrets-env wrapper
 **Area**: install.sh local service & lifecycle (Focus Area 4 / skeleton review, Focus Area 1)
 **Fixed**: Iteration 1
