@@ -167,6 +167,29 @@ Describe 'Invoke-SharedConfigQA OIDC org mode' {
     }
 }
 
+Describe 'Invoke-SharedConfigQA OIDC empty-secret guard' {
+    # Parity with install.sh INST-009: choosing OIDC mode and pressing Enter on
+    # the client-secret prompt must abort. Without the guard, mode: org is written
+    # to config.yaml but ARBITRON_AUTH_OIDC_CLIENTSECRET is never stored -- every
+    # OIDC token exchange fails silently at runtime.
+    BeforeEach { $script:p = New-SharedTestPaths }
+
+    It 'throws when OIDC mode is chosen but the client secret is left empty' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model'    = 'oidc'
+            'Issuer'        = 'https://idp.example.com'
+            'Client ID'     = 'abc123'
+            'client secret' = ''
+            'Redirect'      = 'https://arb.example.com/auth/callback'
+            'Bootstrap'     = 'admin@example.com'
+            'RBAC'          = $false
+            'TLS model'     = 'tunnel'
+            'Public'        = 'https://arb.example.com'
+        }
+        { Invoke-SharedConfigQA -Paths $script:p } | Should -Throw -ExpectedMessage '*client secret*'
+    }
+}
+
 Describe 'Invoke-SharedConfigQA TLS models' {
     BeforeEach { $script:p = New-SharedTestPaths }
 

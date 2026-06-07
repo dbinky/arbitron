@@ -1027,6 +1027,9 @@ function Invoke-SharedConfigQA {
         $answers.OidcIssuerUrl   = Read-PromptDefault -Prompt 'OIDC issuer URL' -Default ''
         $answers.OidcClientId    = Read-PromptDefault -Prompt 'OIDC client ID' -Default ''
         $answers.OidcClientSecret = Read-PromptDefault -Prompt 'OIDC client secret' -Default ''
+        if (-not $answers.OidcClientSecret) {
+            throw 'An OIDC client secret is required for OIDC mode. Re-run the installer and paste the client secret.'
+        }
         $answers.OidcRedirectUrl = Read-PromptDefault -Prompt 'OIDC redirect URL (publicbaseurl + /auth/callback)' -Default ''
         $admins = Read-PromptDefault -Prompt 'Bootstrap admins (comma-separated subjects/emails)' -Default ''
         $answers.BootstrapAdmins = @($admins -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })

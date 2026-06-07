@@ -24,6 +24,11 @@ These are carry-forward items seeded at loop setup — known limitations of the 
 
 ## Fixed Previously
 
+### INST-011: Invoke-SharedConfigQA missing empty-OIDC-client-secret guard (parity with INST-009)
+**Area**: install.ps1 shared config Q&A (Focus Area 13)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` accepted an empty OIDC client secret without complaint. Pressing Enter at the client-secret prompt would proceed, write `mode: org` with all OIDC URLs to config.yaml, but store no `ARBITRON_AUTH_OIDC_CLIENTSECRET` in DPAPI — every OIDC token exchange would fail at runtime. Exact parity gap with INST-009 (install.sh `prompt_oidc` fix). Added the guard: throw if `OidcClientSecret` is empty after the prompt. Added a Pester test `throws when OIDC mode is chosen but the client secret is left empty` to lock the invariant.
+
 ### INST-010: upgrade_shared health check probes wrong port (ignored argument)
 **Area**: install.sh shared systemd unit & lifecycle (Focus Area 7)
 **Fixed**: This iteration
