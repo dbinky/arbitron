@@ -48,7 +48,7 @@ _assert_artifacts() {
   grep -qF "$HOME/.arbitron/data/arbitron.db" "$(layout_config)"
   # secrets env 0600 + 32-byte base64 master key
   local perms
-  perms="$(stat -f '%Lp' "$(layout_secrets_env)" 2>/dev/null || stat -c '%a' "$(layout_secrets_env)")"
+  perms="$(file_mode "$(layout_secrets_env)")"
   [ "$perms" = "600" ]
   local key nbytes
   key="$(grep '^ARBITRON_MASTER_KEY=' "$(layout_secrets_env)" | cut -d= -f2-)"

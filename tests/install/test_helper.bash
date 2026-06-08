@@ -86,6 +86,16 @@ mock_log_has() {
   grep -qF -- "$1" "$MOCK_LOG"
 }
 
+# file_mode <path> — print the octal permission bits (e.g. 755) portably.
+# GNU coreutils first: `stat -c '%a'`. On BSD/macOS that flag is rejected to
+# stderr (suppressed) and we fall back to `stat -f '%Lp'`. NOTE the order: the
+# reverse (BSD-first) is broken on Linux because GNU `stat -f` means
+# --file-system, which writes the filesystem table to STDOUT and exits non-zero,
+# polluting the captured value rather than cleanly failing over.
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
 # install_isolate_path restricts PATH to ONLY the mock-bin dir plus a curated
 # directory of coreutils symlinks install.sh itself needs. This guarantees any
 # tool NOT explicitly mocked (node, git, brew, ...) is genuinely absent, so deps

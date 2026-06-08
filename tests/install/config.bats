@@ -103,7 +103,7 @@ EOF
   local cfg perms
   cfg="$(layout_config)"
   [ -f "$cfg" ]
-  perms="$(stat -f '%Lp' "$cfg" 2>/dev/null || stat -c '%a' "$cfg")"
+  perms="$(file_mode "$cfg")"
   [ "$perms" = "600" ]
 }
 
@@ -135,7 +135,7 @@ EOF
   local env="$(layout_secrets_env)"
   [ -f "$env" ]
   local perms
-  perms="$(stat -f '%Lp' "$env" 2>/dev/null || stat -c '%a' "$env")"
+  perms="$(file_mode "$env")"
   [ "$perms" = "600" ]
 }
 
@@ -219,7 +219,7 @@ EOF
   run_config_qa
   write_config_yaml
   local perms
-  perms="$(stat -f '%Lp' "$(arbitron_home)" 2>/dev/null || stat -c '%a' "$(arbitron_home)")"
+  perms="$(file_mode "$(arbitron_home)")"
   [ "$perms" = "700" ]
 }
 

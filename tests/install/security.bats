@@ -41,7 +41,7 @@ _good_curl() {
   run run_fresh
   [ "$status" -eq 0 ]
   local perms
-  perms="$(stat -f '%Lp' "$(layout_secrets_env)" 2>/dev/null || stat -c '%a' "$(layout_secrets_env)")"
+  perms="$(file_mode "$(layout_secrets_env)")"
   [ "$perms" = "600" ]
   local key
   key="$(grep '^ARBITRON_MASTER_KEY=' "$(layout_secrets_env)" | cut -d= -f2-)"
