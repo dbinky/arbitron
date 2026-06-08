@@ -8,6 +8,23 @@ Arbitron's goal is to **replace both ralph-o-matic (the refinement engine) and t
 
 ---
 
+## Installation
+
+One command installs Arbitron with a reboot-persistent service on macOS, Linux,
+or Windows (local or shared/multi-user):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash
+```
+
+See **[docs/install/](docs/install/README.md)** for all five scenarios, the
+layout matrix, the config questions, and the
+[upgrade/reconfigure/uninstall](docs/install/upgrading.md),
+[security](docs/install/security.md), and
+[tunnel/TLS](docs/install/tunnels-and-tls.md) guides.
+
+---
+
 ## What Arbitron Is
 
 A self-hostable Go service that:

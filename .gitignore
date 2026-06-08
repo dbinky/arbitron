@@ -1,5 +1,8 @@
 .superpowers/
 /arbitron
+# Built binaries must never be committed — the only binaries users run are the
+# cosign-signed release artifacts (see install.sh/install.ps1 verification gate).
+*.exe
 .env
 node_modules/
 dashboard/.vite/
@@ -13,5 +16,7 @@ arbitron.db-wal
 arbitron.log
 # OTel trace exports
 /traces/
+# Per-run CI / test exhaust
+testResults.xml
 # Per-instance runtime workspaces (clones/worktrees created at execution)
 workspaces/instances/

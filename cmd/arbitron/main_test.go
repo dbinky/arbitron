@@ -176,6 +176,35 @@ func TestRootCommand_HasConfigFlag(t *testing.T) {
 	assert.Equal(t, "", f.DefValue, "--config default must be empty")
 }
 
+// Cross-seam contract lock for FA27: the Windows Service BinaryPathName is
+//   "arbitron.exe" serve --config "%ProgramData%\Arbitron\config.yaml"
+// The --config flag is a PersistentFlag on root (not a LocalFlag on serve), so
+// it must be visible to the serve command's RunE via cmd.Flags(). If it were
+// ever moved to a non-persistent flag or omitted from root, the service would
+// silently fall back to ~/.arbitron/config.yaml, booting from the wrong (or
+// absent) config file with no error.
+func TestServeCmd_ConfigFlagReachesConfigPathFromCmd(t *testing.T) {
+	const want = "/programdata/arbitron/config.yaml"
+	var got string
+	var captureErr error
+
+	root := newRootCmd()
+	serveCmd, _, err := root.Find([]string{"serve"})
+	require.NoError(t, err, "serve subcommand must be findable in the root command tree")
+	serveCmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		got, captureErr = configPathFromCmd(cmd)
+		return captureErr
+	}
+
+	root.SetArgs([]string{"serve", "--config", want})
+	require.NoError(t, root.Execute())
+	require.NoError(t, captureErr)
+	assert.Equal(t, want, got,
+		"--config must flow from 'arbitron serve --config path' "+
+			"through cobra persistent-flag inheritance into configPathFromCmd; "+
+			"the Windows Service BinaryPathName depends on this seam")
+}
+
 // SECURITY (defense-in-depth) — the shared outbound HTTP client threaded into
 // every credential-bearing LLM chat adapter (openrouter/azurefoundry/
 // anthropicapi/bedrock) pins an explicit TLS floor of 1.2. The Go stdlib default

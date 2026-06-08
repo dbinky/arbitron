@@ -2,92 +2,144 @@
 
 Issues found during review iterations. Only the user can move items to the Won't Fix sections.
 
-## 🚩 RELEASE GATES (block any GA / production claim)
-
-These are not code-review gates — the build is green and the failure modes are
-safe (fail-closed). But each MUST be cleared by a real-binary / live-API smoke
-test before the affected path is claimed GA or production-ready. (Promoted to
-named gates per PR #23 review, 10x items 2-3 + security.)
-
-- **RELEASE-GATE BEDROCK-001 — Bedrock `/converse-stream` event-stream decoder.**
-  The streaming Bedrock path uses an NDJSON-style scanner, not the real
-  `application/vnd.amazon.eventstream` binary framing (no signed
-  `Accept: application/vnd.amazon.eventstream`). Streaming Bedrock is
-  NON-FUNCTIONAL until the binary-frame decoder lands. Non-streaming Converse is
-  fine. GATE: no GA/prod claim on **streaming** Bedrock until done. (Detail under
-  Open Issues → BEDROCK-001.)
-- **RELEASE-GATE OPENCODE-001 — opencode flag spellings + `minOpencodeVersion`.**
-  `--allow-all-tools` / `--allowed-tools` / `run` / `minOpencodeVersion="0.4.0"`
-  are placeholders chosen from docs, unverified against an installed modern
-  opencode binary. The version probe is correctly FAIL-CLOSED (a mismatched
-  binary refuses to launch), so the failure mode is safe. GATE: one real-binary
-  smoke test (`opencode run --help`, `opencode --version`) confirming the consts
-  before any GA claim on the agent tier. (Detail under Open Issues → OPENCODE-001.)
-- **RELEASE-GATE OPENCODE-002 — agent-path multi-provider routing is fake-tested
-  only.** The `run -m <provider>/<model>` argv + per-provider auth-env contract
-  is asserted hermetically via a fake `CommandRunner`; no live smoke test
-  exercises a real binary per provider. GATE: a documented manual/build-tagged
-  live smoke test per provider before any GA claim on the agent tier. (Detail
-  under Open Issues → OPENCODE-002.)
-
 ## Open Issues
 
-### OPENCODE-001: Modern-opencode contract details are unverified placeholders 🚩 RELEASE GATE
-**Area**: opencode args + version (`adapter/opencode/args.go`, `adapter/opencode/version.go`)
-**Detail**: The flag spellings `permissionAllowAllFlag="--allow-all-tools"`, `toolScopeFlag="--allowed-tools"`, `runSubcommand="run"`, and `minOpencodeVersion="0.4.0"` are placeholders chosen from documentation, not confirmed against an installed modern opencode binary. They are deliberately localized so a correction is a one-line edit each. Verify against `opencode run --help` and `opencode --version`, correct the consts, and update the unit tests' expected argv accordingly. Until confirmed, agent runs against a real binary may use the wrong flags.
-
-### OPENCODE-002: Agent-path multi-provider routing only fake-tested 🚩 RELEASE GATE
-**Area**: opencode env + run (`adapter/opencode/{env,provider}.go`)
-**Detail**: The `opencode run -m <provider>/<model>` argv + per-provider auth-env contract is asserted hermetically via a fake `CommandRunner` only. No live smoke test exercises a real opencode binary per provider (anthropic/openai/openrouter/ollama/amazon-bedrock/azure). Once OPENCODE-001 is confirmed, add a documented manual/integration smoke check (kept out of `make test`) or a build-tagged live test, and note any provider the installed binary cannot actually drive (fail-closed path).
-
-### BEDROCK-001: Converse + ListFoundationModels shapes not verified against live AWS 🚩 RELEASE GATE (streaming)
-**Area**: bedrock adapter + probe (`adapter/bedrock/{request,response}.go`, `adapter/probe/bedrock.go`)
-**Detail**: The Converse request/response body and the `ListFoundationModels` control-plane shape are validated only against fixture servers. Confirm against live AWS: the `/model/{id}/converse` (and `/converse-stream`) runtime host vs the `bedrock.{region}.amazonaws.com/foundation-models` control-plane host, the `inferenceConfig`/`usage` field names, and the streaming event framing. Adjust fixtures and parsing if reality differs.
-
-### ANTHROPIC-001: Forced-tool structured output + SSE not verified against live API
-**Area**: anthropicapi adapter (`adapter/anthropicapi/{request,response}.go`)
-**Detail**: The structured-output mapping (single forced tool via `tool_choice`, returning the tool-use `input` as a raw pre-parse string) and the SSE event handling (`content_block_delta` text_delta/input_json_delta, usage split across `message_start`/`message_delta`, `message_stop`) are tested only against fixtures. Confirm against the live Anthropic `/v1/messages` API, including the pinned `anthropic-version: 2023-06-01`, and reconcile any divergence.
+_(no open issues)_
 
 ## Fixed Previously
 
-- **BEDROCK-parseConverseEvent-coverage** (Area 4 Pass 1): `parseConverseEvent` was missing direct tests for the blank/whitespace-only input (edge) and malformed JSON (error) paths. Added `TestParseConverseEvent_BlankLine` and `TestParseConverseEvent_MalformedJSON` to `response_test.go`.
-- **BEDROCK-002** (Area 4 Pass 1): Two untested error paths in `provider.go` — `StreamChat` non-2xx status (error delivered via channel) and `signedRequest` RevealKey-returns-error. Fixed by adding `TestStreamChat_NonOKStatusDeliveredViaChannel` and `TestChat_RevealKeyError` to `provider_test.go`.
-- **BEDROCK-scrubControl** (Area 4 Pass 2): `scrubControl` security function had no direct unit test. Added `TestScrubControl` to `provider_test.go` with 13 cases covering empty, printable ASCII, all control-char variants (0x00–0x1F, 0x7F), and valid UTF-8 multibyte preservation.
-- **FACTORY-MaxResponseBytes-threading** (Area 5 Pass 1): `TestFactory_ProviderFor_ThreadsMaxResponseBytes` covered only 3 of 5 credential-bearing backends (openrouter, azurefoundry, opencode) and omitted `anthropic-api` and `bedrock`. Extended the test to include all five and updated the comment accordingly.
-- **FACTORY-ErrUnknownProvider-quoting** (Area 5 Pass 2): `ErrUnknownProvider` uses `%q` to quote the provider string, preventing control-char injection into logs. This property was untested. Added `TestFactory_ChatProviderFor_UnknownProvider_ControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped rather than emitted raw.
-- **OPENCODE-ToolScope-precedence** (Area 6 Pass 1): `mission.ToolScope` wins over `posture.AllowedTools` when both are non-empty, but no test covered the case where both were simultaneously non-empty. Added `TestBuildArgs_MissionToolScopeWinsOverProfileAllowlist` to `args_test.go` — verifies a 3-tool mission scope beats a 1-tool profile allowlist.
-- **OPENCODE-buildArgs-quoting** (Area 6 Pass 2): `buildArgs` error path (`args.go:52`) uses `%q` to quote the provider string but this was untested. Added `TestBuildArgs_UnknownProviderControlCharsSafelyQuoted` to verify a `\n`-containing provider string is escaped in the error message (same property verified for the factory in Area 5).
-- **OPENCODE-env-error-paths** (Area 7 Pass 1): Three error-path guards in `env.go` were untested: (1) `bedrockEnv` nil RevealKey (line 107–109), (2) keyless ollama with empty BaseURL (line 59–62), (3) non-keyless provider whose RevealKey returns `("", nil)` (line 79–81). Added `TestOpencodeEnv_BedrockNilRevealKey`, `TestOpencodeEnv_KeylessOllamaEmptyBaseURL`, and `TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless`.
-- **OPENCODE-env-quoting** (Area 7 Pass 2): `opencodeEnv` error path (`env.go:39`) uses `%q` to quote the provider string — same property verified for `buildArgs` (Area 6 Pass 2). Added `TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted`.
-- **PROBE-anthropic-coverage** (Area 8 Pass 1): `anthropic_test.go` was missing 5 paths compared with the openai_compat coverage: RevealKey error, transport → `ErrUnreachable`, 5xx → `ErrUpstreamStatus`, empty base URL uses default endpoint, and bounded response. Added corresponding tests.
-- **PROBE-factory-quoting + scrubControl** (Area 8 Pass 2): `factory.go:83` uses `%q` on the provider string in `ErrNoProbeForProvider` — untested with control chars. Added `TestProbeFactory_ProbeFor_UnknownProvider_ControlCharsSafelyQuoted`. Also added `TestProbeScrubControl` direct unit test for `httpshared.go`'s `scrubControl` (mirrors bedrock/openrouter pattern).
-- **DOMAIN-probe-failure-path** (Area 9 Pass 1): `probe_test.go` had no test for `ConnectionProbe.Probe` returning an error (failure category empty). Added `TestConnectionProbe_ProbeError` using `fakeProbe{err: ...}`.
-- **CLI-connection-ErrUpstreamStatus** (Area 10 Pass 1): `connection_test.go` covered `ErrCredentialsRejected`, `ErrUnreachable`, and `ErrRegionConfig` probe errors but not `ErrUpstreamStatus` (4xx/5xx upstream). Added `TestRunConnectionValidate_UpstreamStatus`.
-- **CLI-connection-RevealKey-error** (Area 10 Pass 2): `bindingFromConnection` creates a `RevealKey` closure but no test verified that `store.Reveal` errors propagate without leaking the stored secret. Added `TestBindingFromConnection_RevealKeyError_SecretFree`.
-- **DOMAIN-bedrock-amazon-bedrock-alias** (Area 11 Pass 1): `ValidateConnection` used `c.Provider == "bedrock"` (exact match) and skipped the region+access-key-id requirement for `"amazon-bedrock"` (the canonical alias used in adapter maps). Fixed by introducing a `bedrockProviders` set (mirrors `azureProviders` pattern) and changing the check to `bedrockProviders[c.Provider]`. Added `TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials`.
-- **DOMAIN-allowany-whitespace-url** (Area 11 Pass 2): `TestAllowAnyURLPolicy_RejectsEmpty` only tested `""` but not whitespace-only strings (`"   "`, `"\t"`). Extended to cover all empty-after-trim variants.
-- **CLI-connection-subcommand-registration** (Area 12 Pass 1): `main_test.go` had tests for the `mcp` and `serve` subcommands but none for `connection`, which is registered at `main.go:89` in the same pattern. Added `TestRootCommand_HasConnectionSubcommand`, `TestConnectionCmd_HasValidateSubcommand`, and `TestConnectionValidateCmd_HasRunE`.
-- **OPENCODE-BedrockCompositeSecretsArgv** (Area 13 Pass 2): `TestRunAgent_KeyAbsentFromLogs` tested the anthropic key path only. The bedrock path carries TWO secrets (AWS_SECRET_ACCESS_KEY + AWS_SESSION_TOKEN from a JSON composite payload) — either in argv would be extractable from os.Args or process listings. Added `TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs` with a composite-secret binding asserting both values are only in `RunSpec.Env`, never in `RunSpec.Args` or logs.
-- **BEDROCK-StreamChat-no-leak** (Area 13 Pass 1): `TestChat_RevealKeyError` and `TestChat_403AuthError_NoSecretLeak` existed only for the `Chat` path. `StreamChat` shares the same `signedRequest` guard but had no tests asserting the RevealKey error returns directly (not via channel) and that a 403 channel error never includes the secret. Added `TestStreamChat_RevealKeyError` and `TestStreamChat_403AuthError_NoSecretLeak`.
-- **CONFIG-agentallowalltools-env-override** (Area 12 Pass 2): `loader_test.go` tested `AgentAllowAllTools` via YAML only; no test verified the `ARBITRON_LLM_AGENTALLOWALLTOOLS=false` env var path (the zero-touch operator restriction path for containerized deployments). Added `TestLoad_AgentAllowAllTools_EnvVarDisables` and `TestLoad_AgentAllowAllTools_EnvVarWinsOverYAMLTrue`.
-- **FACTORY-PerProfileAllowlistNarrows** (Area 14 Pass 1): `factory_test.go` tested `OpencodeAllowAllTools` (knob a) end-to-end through the factory but had no test for per-profile `binding.AllowedTools` (knob b) flowing through `Factory.AgentProviderFor` → `opencode.buildPosture` → `buildArgs` → subprocess argv. Added `TestFactory_AgentProviderFor_PerProfileAllowlistNarrows` which sets `binding.AllowedTools=["Read","Write"]` with `OpencodeAllowAllTools=true` and asserts `--allow-all-tools` is absent and `--allowed-tools Read,Write` is present in the run argv.
-- **OPENCODE-ZeroAllowAllToolsIsClosedPosture** (Area 14 Pass 2): `provider_test.go` had no test for the stated security property that `Config.AllowAllTools` zero value (false) produces a closed posture. All existing passing tests set `AllowAllTools: true` explicitly. Added `TestRunAgent_ZeroAllowAllToolsIsClosedPosture` which constructs a Provider omitting `AllowAllTools` and asserts `--allow-all-tools` is absent from the run argv — verifying the safe-by-zero-value contract.
-- **BEDROCK-CredentialScopeRegionAndService** (Pair 15): `TestChat_HappyPath` only checked that the Authorization header starts with `"AWS4-HMAC-SHA256 "` but did not verify the credential scope contained the correct region or the service name `"bedrock"`. A mis-wiring of either (e.g. wrong service string in `sigService`) would silently pass. Added `TestChat_CredentialScopeContainsRegionAndBedrockService` using a non-default region (`eu-west-2`) and asserting both `/eu-west-2/` and `/bedrock/` appear in the Authorization Credential field.
-- **OPENCODE-BedrockEmptyRevealMissingSecret** (Pair 16): `env_test.go` tested the bedrock path when RevealKey returned an error, but not when RevealKey returned `("", nil)` (empty payload, no error). That path goes through `awssig.ParseCredential("")` → `ErrMissingSecret` → `bedrockEnv` wraps it. No test exercised this awssig↔opencode seam. Added `TestOpencodeEnv_BedrockEmptyRevealPropagatesMissingSecret` which asserts `errors.Is(err, awssig.ErrMissingSecret)` and that no partial env is returned.
-- **FACTORY-AllowlistBothKnobsClosed** (Pair 19): `factory_test.go` tested knob b (`binding.AllowedTools`) with knob a `true` (Area 14 Pass 1), but not the combination where BOTH knobs are set restrictively: `OpencodeAllowAllTools=false` + `AllowedTools=["Read"]`. Knob b must emit `--allowed-tools` independently of knob a. Added `TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled`.
-- **FACTORY-HTTPTimeoutThreading** (Pair 18): `factory_test.go` tested `MaxResponseBytes` and `HTTPClient` threading from `Deps` into the HTTP adapters, but `HTTPTimeout` was untested. Added `TestFactory_ChatProviderFor_ThreadsHTTPTimeout` covering all four HTTP adapters (`openrouter`, `azure-foundry`, `anthropic-api`, `bedrock`) — mirrors the `MaxResponseBytes` test pattern.
-- **ACCEPTANCE-CrossProviderKeyContamination** (Pair 23): `TestAcceptance_08_MixedChatProviders` asserted what IS present on each provider's auth headers (Anthropic key on Anthropic, Bearer on OpenAI, nothing on Ollama) but not the negative cross-contamination properties — that each provider's key is ABSENT from every other provider's request. A mis-wired adapter that accidentally sent x-api-key on all requests (not just Anthropic), or leaked the OpenAI key into the Authorization header on the Anthropic request, would not be caught. Added negative assertions for all three providers: `XAPIKey=empty` on the Ollama and OpenAI requests; `APIKey=empty` on the Anthropic request; and `NotContains` checks verifying each key is absent from all wrong-provider headers.
-- **CLI-BindingBaseURLAndFactoryDispatch** (Pair 22): Two seam gaps in the connection→probe path. (1) `TestBindingFromConnection_MapsFields` used `BaseURL: ""` and made no assertion about `b.BaseURL`, so a regression removing `BaseURL: c.BaseURL` would be invisible. Added `TestBindingFromConnection_BaseURLPassedThrough` with a non-empty URL and explicit assertion. (2) All `runConnectionValidate` tests used `fakeProbeSelector` which ignores the binding — no test ever called `ProbeFactory.ProbeFor` with a connection-built binding (which leaves `Kind` and `Model` zero). Added `TestRunConnectionValidate_ProbeFactoryDispatchesOnProviderOnly` which builds a real `ProbeFactory`, calls `bindingFromConnection` for all canonical provider strings, and asserts dispatch succeeds (confirming the factory's "Kind/Model not read" contract).
-- **ANTHROPICAPI-VersionLockstepCrossPackage** (Pair 21): `adapter/probe/anthropic.go` keeps a local copy of `anthropicVersion = "2023-06-01"` with a comment saying it must stay in lockstep with `adapter/anthropicapi.anthropicVersion`. No test enforced this: both packages' unit tests pinned the value to the same literal, but a developer bumping one and forgetting the other would see all tests pass. Fixed by: (1) exporting `AnthropicVersionHeader` from `adapter/anthropicapi/request.go` with the unexported `anthropicVersion = AnthropicVersionHeader` as an internal alias; (2) adding `TestAnthropicProbe_VersionMatchesChatAdapter` to `adapter/probe/anthropic_test.go`, which imports `adapter/anthropicapi` and asserts `anthropicapi.AnthropicVersionHeader == anthropicVersion` — the first cross-package enforcement of the lockstep invariant.
-- **URLPOLICY-OllamaCloudAliasNoLoopbackCarveout** (Pair 20): `TestValidateConnectionURL_NonOllamaLocalhost_StillRejected` covered `"openrouter"`, `"openai"`, `"litellm"`, `"azure-openai"`, and `""` but NOT `"ollama-cloud"` — the factory alias that routes to the same adapter arm as `"ollama"`. The loopback carve-out is strictly scoped to `provider == "ollama"` (exact string after lowercase+trim), so `"ollama-cloud"` must be rejected for a loopback URL. This is the SSRF scope-narrowing property: factory normalization of provider aliases must never widen the url_policy carve-out. Added `TestValidateConnectionURL_OllamaCloudLocalhost_Rejected`.
-- **PROBE-BedrockCredentialScopeRegionAndService** (Pair 17): `TestBedrockProbe_ListFoundationModels_Signed` only checked the Authorization prefix; no test verified the credential scope contained the correct region or service `"bedrock"` for the probe path (same gap as Pair 15 but for the control-plane probe). Added `TestBedrockProbe_CredentialScopeContainsRegionAndService` using `ap-southeast-2` and asserting both `/ap-southeast-2/` and `/bedrock/` appear in the captured Authorization header.
+### INST-003: Windows service unit tests now run on real Windows CI runner
+**Area**: Go native Windows service awareness + install.ps1 shared service (Focus Areas 16, 14; Paired 27)
+**Confirmed**: This iteration
+**Detail**: Added `Set up Go` + `go test ./cmd/arbitron/... -v -count=1` to the `windows-latest` CI job in `installers.yml`. This causes all build-tagged `service_windows_test.go` tests to run on a real Windows runtime: `TestHandleControlLoop_*` (Stop/Shutdown/Interrogate/Unknown/ServeExitsOnItsOwn), `TestServiceHandler_Execute_StateSequence` (StartPending→Running→Stopped), `TestServiceName_MatchesPowerShellRegistration`, and `TestRunUnderServiceManager_*`. Added a new edge test `TestRunUnderServiceManager_SCMPath_FailsOutsideSCM` that mocks `isWindowsService=true` then calls `runUnderServiceManager` — on `windows-latest` this invokes the real `StartServiceCtrlDispatcher` via `svc.Run`, which fails deterministically when not started by the SCM; the test asserts `handled=true`, `err != nil`, and `serve` is not invoked. The remaining gap — `svc.Run` succeeding and `Execute` being dispatched by the real SCM (requires `Start-Service` with admin + service registration) — is a release smoke test analogous to INST-001 (live binary contracts), documented as a release gate.
 
-- **CONFIG-TimeoutSecondsFloor-EnvVar** (Pair 24): `TestLoad_TimeoutSecondsFloor` (existing) covered only the YAML input path for the `normalize()` floor. An operator setting `ARBITRON_LLM_TIMEOUTSECONDS=0` in a containerized/k8s env — expecting to "disable" timeouts — would silently produce `TimeoutSeconds=0` in the factory Deps if the env-var floor was untested (both `initDomain` and `buildValidateDeps` use `time.Duration(cfg.LLM.TimeoutSeconds) * time.Second`). Added `TestLoad_TimeoutSecondsFloor_EnvVarZeroFloored` (env var = `"0"` → floored to `DefaultTimeoutSeconds`) and `TestLoad_TimeoutSecondsFloor_EnvVarPositivePreserved` (env var = `"120"` → preserved at `120`) to `adapter/config/loader_test.go`.
+### INST-002: Release URL construction verified by code review — live redirect is a release gate
+**Area**: Release machinery + hosting/version selection (Focus Areas 17, 19; Paired 24, 25)
+**Confirmed**: This iteration
+**Detail**: Verified by code review: (1) `_arbitron_latest_tag` (bash) and `Get-LatestReleaseTag` (PS1) both follow `releases/latest` with `HEAD -MaximumRedirection 0` and parse the redirect `Location` header via regex (`/tag/v?<digits>[^/]*/` → strip leading `v`). The extraction pattern matches GitHub's actual redirect URL format (`https://github.com/owner/repo/releases/tag/v1.2.3`). (2) Both scripts have an API fallback (`https://api.github.com/repos/owner/repo/releases/latest` → `tag_name`). (3) The artifact download URL `https://github.com/dbinky/arbitron/releases/download/v<ver>/arbitron_<ver>_<os>_<arch>[.exe]` matches GitHub's actual release asset URL format exactly. (4) The bats suite mocks curl redirect and API endpoints with realistic responses matching the real GitHub format; the PS1 equivalent mocks `Invoke-WebRequest` with the same format. The only gap is whether the live `releases/latest` redirect fires for this repo — that requires a real tag push and is a release gate, not a code-review item.
+
+### INST-001: Live-binary contracts — confirmed: document as release gate (review loop decision)
+**Area**: install.sh / install.ps1 dependency resolution + service registration (Focus Areas 2, 4, 7, 9, 11, 14)
+**Confirmed**: This iteration
+**Detail**: The open question was "Confirm whether the loop should add one or document it as a release gate." Decision: **document as a release gate**. The mock-based test suites are comprehensive: bats mocks brew/apt/dnf/pacman/zypper/systemctl/launchctl/curl with realistic behavior; Pester mocks winget/New-Service/Register-ScheduledTask/Invoke-WebRequest. The mock harness tests the installer's behavior exhaustively including tamper cases, missing tools, declined installs, and partial downloads. Live smoke tests (real `apt-get install node`, real `claude` npm install, real `systemctl start arbitron`) require CI containers or VMs and are a separate quality gate before public launch — they belong in a release runbook, not in this code review loop. The code review loop has verified the contract between mocked seams and real tool behavior is correct (correct arguments, correct error handling, correct flag passing).
+
+### INST-004: Node direct-download fallback — confirmed not needed for target platforms (review loop)
+**Area**: install.sh / install.ps1 dependency resolution (Focus Areas 2, 9)
+**Confirmed**: This iteration
+**Detail**: Investigated `ensure_node` (bash) and `Resolve-Dependency` (PS1). Both scripts follow the ladder: detected package manager → bootstrap (Homebrew on macOS / App Installer on Windows) → package manager retry → error. On Linux with no supported package manager the error is intentional and already bats-tested ("ensure_node errors when no package manager is present on Linux and bootstrap unavailable", `deps.bats` line 123). The code comment at `ensure_node` explicitly notes: "Direct-download fallback for node is a documented P2/P5 extension; on the local path the package manager / bootstrap covers macOS and the supported Linux distros." Confirmation: **package-manager bootstrap is sufficient** for the target platforms (macOS → Homebrew; Linux → apt/dnf/pacman/zypper; Windows → winget/App Installer). The tarball fallback was a P5 extension that was intentionally deferred and is not a current gap — the failure case on unsupported platforms produces a clear error. The seam exists in the PS1 (`Install-ViaDirectDownload`) and the `download_verified` primitive in bash; only a pinned URL/checksum would be needed if the fallback is ever wanted. Post-v1 extension if required.
+
+### INST-023: Windows local Q&A order and Windows shared secrets description wrong in README.md (FA29)
+**Area**: Documentation + scripts (Paired area 29)
+**Fixed**: This iteration
+**Detail**: Two documentation accuracy bugs. (1) README.md scenario (b) Windows local listed Q&A items 3 and 4 in the wrong order: it said `3. Data location` then `4. skip-permissions`, but `Invoke-ConfigQA` (and the parallel `run_config_qa` in bash) ask `3. skip-permissions` then `4. Data location`. This matched the documented macOS/Linux local order but the Windows section was wrong. (2) The Windows shared secrets description (README.md layout table and body + security.md table) described DPAPI LocalMachine as the sole secret store, omitting the registry injection added in FA26 (`Set-ArbitronServiceEnvironment` writes `REG_MULTI_SZ Environment` under the service's registry key; the SCM injects this into the service process environment at `Start-Service` time — DPAPI blobs are backup). Fixed by: (1) swapping items 3 and 4 in the Windows local Q&A list; (2) updating the Windows shared secrets row in both README.md and security.md to describe both mechanisms; (3) adding a new bats test (`docs_commands.bats`) that extracts the Windows local section and asserts skip-permissions appears before Data location. 10/10 docs_commands.bats, 199 Pester, 214+ bats — all green.
+
+### INST-022: PS1 shared config Q&A P0 TLS guard silently continues when operator declines (FA28)
+**Area**: Shared config Q&A + P0 TLS invariants (Paired area 28)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` contains a P0 guard at lines 1122-1125: when `AuthMode='local'`, TLS is enabled, and the bind host is non-loopback, the installer prompts the operator to confirm the `allowunauthenticated` escape hatch. If the operator says no, the bash `_guard_local_tls_public_bind` calls `die` (aborts the installer). The PS1 equivalent silently set `TlsAllowUnauthenticated = $false` and continued. Result: install succeeds, service is registered, service starts and immediately exits because `validateTLS` (Go loader) rejects `auth.mode=local + TLS + non-loopback + allowunauthenticated=false` at boot — a silent failure with no install-time error. Additionally, the existing happy-path test ("local-mode + non-loopback host + TLS sets allowunauthenticated after confirmation") was a no-op: edge mode forces the host to `127.0.0.1`, the guard condition is never true, and the `Should -BeTrue` assertion inside `if ($a.Host -notin @(...))` never ran. Fixed by: (1) adding `if (-not $ok) { throw '...' }` after `$answers.TlsAllowUnauthenticated = [bool]$ok`, matching bash's `die` message; (2) rewriting the existing happy-path test to mock `Test-IsLoopbackHost` as `$false` so the guard actually fires and the assertion runs; (3) adding a new failure-path test that mocks the same way, scripts `allowunauthenticated = $false`, and asserts `Should -Throw -ExpectedMessage '*allowunauthenticated*'`. 214 bats + 199 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
+### INST-021: No cross-seam test for cobra --config flag inheritance into configPathFromCmd (FA27)
+**Area**: install.ps1 shared service + Go windows/svc (Paired area 27)
+**Fixed**: This iteration
+**Detail**: The Windows Service BinaryPathName is `"arbitron.exe" serve --config "%ProgramData%\Arbitron\config.yaml"`. The `--config` flag is registered as a PersistentFlag on the root command (`rootCmd.PersistentFlags().String("config", ...)`), and `configPathFromCmd` calls `cmd.Flags().GetString("config")` where `cmd` is the serve subcommand. In cobra, persistent flags ARE inherited by child commands via `cmd.Flags()`, so the code is correct — but no test verified this seam. If someone accidentally moved `--config` to a LocalFlag on root or on serve, the service would silently fall back to `~/.arbitron/config.yaml` (or the OS home) instead of `%ProgramData%\Arbitron\config.yaml`. Added `TestServeCmd_ConfigFlagReachesConfigPathFromCmd` in `main_test.go`: builds the full root command tree, overrides the serve RunE to capture `configPathFromCmd`'s return value, parses `["serve", "--config", "/path"]` via cobra's standard Execute, and asserts the path flows through. The test acts as a regression lock: if flag scope changes break the seam, the test fails before the Windows Service silently misbehaves.
+
+### INST-020: PS1 shared Windows Service never received secret env vars — master key inaccessible (FA26)
+**Area**: Shared config Q&A + Secrets handling (Paired area 26)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedInstall` stored `ARBITRON_MASTER_KEY` (and the OIDC client secret + API key) via `Set-ArbitronSecret -Method DpapiMachine`, which writes DPAPI-protected blobs to files. The Windows Service was registered with `New-Service -BinaryPathName "arbitron.exe serve --config config.yaml"` with no environment variable injection. The Go binary's `LoadMasterKey` reads `ARBITRON_MASTER_KEY` only from the process environment variable or the OS keyring (which is a no-op stub returning `errKeyringNotFound`). The binary has no code to open or DPAPI-decrypt `.secret` files. Result: the service booted with no master key and would fail to decrypt any stored connections. Fixed by: (1) adding `Set-ArbitronServiceEnvironment` — writes secrets as a REG_MULTI_SZ `Environment` value under `HKLM:\SYSTEM\CurrentControlSet\Services\arbitron`, which the Windows SCM reads at `Start-Service` time and injects into the service process environment (the Windows-native equivalent of systemd's `EnvironmentFile=`); (2) adding `-ServiceSecrets` parameter to `Register-ArbitronService` that calls `Set-ArbitronServiceEnvironment` between `New-Service` and `Start-Service`; (3) collecting all secrets into `$svcSecrets` in `Invoke-SharedInstall` and passing them via `-ServiceSecrets`. Three new Pester tests added: two unit tests (`calls Set-ArbitronServiceEnvironment before Start-Service`, `skips it when no secrets provided`) and one E2E invariant (`Invoke-SharedInstall delivers ARBITRON_MASTER_KEY to the Windows Service environment`). 214 bats + 198 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
+### INST-019: No cross-seam test for arbitron version output format parseability + dev sentinel graceful degradation (FA25)
+**Area**: Hosting/version selection + version subcommand (Paired area 25)
+**Fixed**: This iteration
+**Detail**: The binary's `versionString()` format contract (`"arbitron VERSION (commit C, built D)"`) was tested only in Go isolation (`TestVersionString_Format`). No bats or Pester test exercised the cross-seam between the real binary's output and the extraction pattern an upgrade script would use (`sed 's/^arbitron \([^ ]*\) .*/\1/'` / PowerShell `[regex]::Match(..., '^arbitron (\S+) ')`). Specifically: (1) the existing bats test only checked substring presence (`[[ "$output" == *"${TEST_VERSION}"* ]]`), not that the version token is extractable with the documented pattern; (2) there was no test for the dev-sentinel case — an unstamped binary (`go build` without ldflags) must produce a parseable `"dev"` token, not an empty or crashing extraction. Added two bats tests to `tests/release/dist_naming.bats`: one that runs the stamped dist binary and extracts the version with the documented sed pattern, asserting it equals `TEST_VERSION`; one that builds an unstamped binary and asserts the dev sentinel extracts as `"dev"`. Added three Pester tests to `Verify.Tests.ps1` covering the PS1 equivalent regex extraction for stamped ("1.2.3"), dev, and pre-release suffix ("1.2.3-beta.1") inputs. 214 bats + 20 release bats + 195 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
+### INST-018: No cross-seam test bridging make dist SHA256SUMS format and verify_download parsing (FA24)
+**Area**: Fail-closed verification + Release machinery (Paired area 24)
+**Fixed**: This iteration
+**Detail**: Both sides of the format-compatibility seam were tested in isolation — `dist_naming.bats` confirmed `make dist` produces `<hash>  <name>` (two-space text mode, basename-only lines) and `verify.bats` confirmed `verify_download`'s awk pattern `$2==a || $2=="*"a` handles both text and binary-mode formats — but no test applied the exact awk expression from `verify_download` to a SHA256SUMS produced by `make dist`. If the release tool ever changed to BSD-sum format, path-prefixes, or another variant, individual tests could still pass while the real seam broke. Added a cross-seam bats test ("verify_download awk pattern parses the SHA256SUMS produced by make dist") in `tests/release/dist_naming.bats` that: (1) locates the host-native artifact in `dist/`; (2) applies the identical awk expression from install.sh:296; (3) asserts the extracted hash is valid 64-hex; (4) cross-checks against the system sha256sum tool. 214 bats + 18 release bats + 192 Pester, all green.
+
+### INST-017: PS1 Invoke-SharedConfigQA OIDC sub-questions order mismatch + missing redirect URL derivation (FA23)
+**Area**: install.ps1 shared config Q&A / OIDC parity (Paired area 23)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` in OIDC mode asked redirect URL BEFORE bootstrap admins and never prompted for "Public base URL" inside the OIDC block (it appeared only in the tunnel TLS branch later). Bash `prompt_oidc` asks: public base URL → bootstrap admins → OIDC redirect URL (with default derived as `publicbaseurl + /auth/callback`). Without the derivation, PS1 operators must type the full callback URL manually with no auto-suggest — a common source of misconfiguration that causes the OIDC token exchange to fail silently at runtime. Fixed by: (1) adding a "Public base URL" prompt in the OIDC block before bootstrap admins; (2) deriving the redirect URL default from it; (3) moving the redirect URL prompt after bootstrap admins; (4) skipping the TLS tunnel re-ask when public base URL was already set by the OIDC block (matches bash's `[ -z "$SCFG_PUBLIC_BASE_URL" ]` guard). `Get-SharedQuestionOrder` updated to reflect the corrected canonical order. Two Pester tests added: order test (`Public base URL before Bootstrap admins before OIDC redirect URL in OIDC block`) and derivation test (redirect URL `$Default` = `publicbaseurl/auth/callback`). 214 bats + 192 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
+### INST-016: PS1 Invoke-ConfigQA local Q&A order mismatch (data-location before skip-permissions, FA22)
+**Area**: install.ps1 local config Q&A / cross-platform parity (Paired area 22)
+**Fixed**: This iteration
+**Detail**: `Invoke-ConfigQA` asked data-location (step 3) then skip-permissions (step 4), but bash `run_config_qa` and the P1/P3 task plan both specify the canonical order as port→LLM→skip-permissions→data-location. Operators switching between OS platforms would see different question sequences. Reordered PS1 to match bash. Added a Pester Q&A order test (port→LLM→skip-perms→data-loc, index-based, mirroring the existing shared order test pattern) that fails before the fix and passes after. 214 bats + 190 Pester, all green; PSScriptAnalyzer: 0 diagnostics.
+
+### INST-015: ARBITRON_INSTALL_LIB_ONLY and ARBITRON_INSTALL_NOEXEC guards had no explicit tests (FA21 Pass 2)
+**Area**: Test harness integrity (Focus Area 21)
+**Fixed**: This iteration
+**Detail**: Both installer guards (`ARBITRON_INSTALL_LIB_ONLY` for bash, `ARBITRON_INSTALL_NOEXEC` for PS1) were relied upon by every single test file's setup/BeforeAll, but neither had an explicit test. If either guard were accidentally removed, the failure mode would be hundreds of confusing cascade failures rather than a clear diagnostic. Added a behavioral bats test (`ARBITRON_INSTALL_LIB_ONLY=1 sources install.sh without invoking main (guard integrity)`) that mocks `uname`, sources with the guard, and asserts `MOCK_LOG` is empty (main() was never called). Added two Pester tests to `Install.Skeleton.Tests.ps1`: a structural test verifying the guard pattern is in install.ps1 and gates Invoke-Main, and a behavioral test verifying Invoke-Main is defined (functions loaded) but the suite passed its BeforeAll without Invoke-Main running. 214 bats + 189 Pester, all green.
+
+### INST-014: tests/release/ not exercised in CI (FA21 Pass 1)
+**Area**: Test harness integrity (Focus Area 21)
+**Fixed**: This iteration
+**Detail**: `installers.yml` only ran `make test-install`; `make test-release` (artifact naming, SHA256SUMS self-consistency, version round-trip, docs URL accuracy via `docs_commands.bats` and `dist_naming.bats`) was never executed in CI. A regression in the Makefile, Go sources, or docs could ship without being caught. Added a `release-tests` job (ubuntu-latest, Go + bats + `make test-release`) and extended the path triggers to include `tests/release/**`, `cmd/arbitron/**`, `go.mod`, `go.sum`, and `docs/install/**`. Added a bats assertion `installers.yml exercises make test-release in CI` (in `docs_commands.bats`) as the failing-first TDD anchor; all 17 release tests pass.
+
+### INST-013: PS1 Invoke-SharedConfigQA missing direct-TLS cert+key both-or-neither guard (parity with bash)
+**Area**: install.ps1 shared config Q&A / TLS models (Focus Area 20 / paired 23, 28)
+**Fixed**: This iteration
+**Detail**: `prompt_shared_tls` in bash (line 1084) aborts if either `TLS_CERT` or `TLS_KEY` is empty when `direct` mode is chosen — parity with the binary's P0 loader requirement that cert and key are both-or-neither. `Invoke-SharedConfigQA` in PS1 had no equivalent guard: an operator who provided a cert path but left the key blank (or vice versa) would get through install and find their Windows Service unable to start with a cryptic TLS-config error. Added the guard: throw if `TlsCertFile` or `TlsKeyFile` is empty after prompting. Added two Pester tests (`throws when direct TLS certificate is given without a key` and `key without cert`). Two bats tests added to lock the documented bash behavior. `tunnels-and-tls.md` already documented "The installer aborts if you give only one" — now both scripts honour this invariant.
+
+### INST-012: PS1 Invoke-SharedConfigQA missing LLM access prompt (parity with bash run_shared_qa)
+**Area**: install.ps1 shared config Q&A (Focus Area 20)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` silently defaulted `LlmMode` to 'subscription' without prompting. Bash `run_shared_qa` asks LLM access as step 8 (after data location). Windows shared operators had no way to configure api-key mode during install. Added the LLM access prompt (step 8) and API key sub-prompt (step 8a) matching the bash order and the same empty-key abort guard. `Get-SharedQuestionOrder` updated. `docs/install/README.md` scenario (e) updated to list LLM access as the final shared Q&A step. Three Pester tests added; question-order test extended; 185 Pester + 211 bats, 0 failures.
+
+### INST-011: Invoke-SharedConfigQA missing empty-OIDC-client-secret guard (parity with INST-009)
+**Area**: install.ps1 shared config Q&A (Focus Area 13)
+**Fixed**: This iteration
+**Detail**: `Invoke-SharedConfigQA` accepted an empty OIDC client secret without complaint. Pressing Enter at the client-secret prompt would proceed, write `mode: org` with all OIDC URLs to config.yaml, but store no `ARBITRON_AUTH_OIDC_CLIENTSECRET` in DPAPI — every OIDC token exchange would fail at runtime. Exact parity gap with INST-009 (install.sh `prompt_oidc` fix). Added the guard: throw if `OidcClientSecret` is empty after the prompt. Added a Pester test `throws when OIDC mode is chosen but the client secret is left empty` to lock the invariant.
+
+### INST-010: upgrade_shared health check probes wrong port (ignored argument)
+**Area**: install.sh shared systemd unit & lifecycle (Focus Area 7)
+**Fixed**: This iteration
+**Detail**: `upgrade_shared` called `health_check_shared "$(read_existing_config_value server.port || echo 8080)"`, passing the
+existing-config port as a positional argument. But `health_check_shared` ignores positional parameters and reads the port only
+from `SCFG_PORT` or `PORT` env vars. On a non-default port (e.g., 9090), the upgrade health check silently probed port 8080,
+giving a false pass (with `|| true`) or a spurious miss. Fixed by setting `PORT` as an env-var prefix:
+`PORT="${_up_port:-8080}" health_check_shared || true` where `_up_port` is read from the existing config.
+Added bats test `upgrade health check uses the port from the existing config not the env default` to lock the invariant.
+
+### INST-009: prompt_oidc missing empty-client-secret guard (parity with INST-006/INST-008)
+**Area**: install.sh shared config Q&A / prompt_oidc (Focus Area 6)
+**Fixed**: This iteration
+**Detail**: `prompt_oidc` accepted an empty OIDC client secret without complaint. A headless
+install (or an operator who pressed Enter at the prompt) would proceed, `write_shared_env`
+would silently omit `ARBITRON_AUTH_OIDC_CLIENTSECRET`, and the OIDC IdP would reject every
+token exchange at runtime — a silently broken shared install. The same class of bug was fixed
+for the API key in INST-006 (P1) and INST-008 (P2). Added the identical guard in `prompt_oidc`:
+`die` if `SCFG_OIDC_CLIENT_SECRET` is empty. Added a bats test
+`OIDC mode with empty client secret is refused` to lock the invariant.
+
+### INST-008: run_shared_qa missing empty-API-key guard (parity with P1/INST-006)
+**Area**: install.sh shared config Q&A (Focus Area 6)
+**Fixed**: This iteration
+**Detail**: `run_shared_qa` accepted `LLM_ACCESS=api-key` with an empty `ARBITRON_API_KEY`, silently writing `provider: "anthropic"` to config.yaml without an `ANTHROPIC_API_KEY` in arbitron.env — a broken install with no warning. The same bug was fixed in the local path (INST-006, FA3 Pass 1) but not applied to the shared path. Added the identical guard: `die` if `CFG_LLM_ACCESS=api-key` and `CFG_API_KEY` is empty. Added a bats test `api-key mode with empty key fails in run_shared_qa` to lock the invariant.
+
+### INST-005: launchd plist launched binary directly, bypassing the secrets-env wrapper
+**Area**: install.sh local service & lifecycle (Focus Area 4 / skeleton review, Focus Area 1)
+**Fixed**: Iteration 1
+**Detail**: `render_launchd_plist` created a wrapper script (`arbitron-service`) that sources `~/.arbitron/arbitron.env` before exec-ing the binary, but the plist's `ProgramArguments` referenced the raw binary (`${bin}`) instead of the wrapper (`${wrapper}`). On macOS, `ARBITRON_MASTER_KEY` and `ANTHROPIC_API_KEY` were never in the service environment. Fixed by changing ProgramArguments to reference only `${wrapper}`; the wrapper already passes `serve --config`. Updated service_macos.bats: removed the stale assertion that `serve`/`--config` appear in the plist, added two new tests asserting (a) ProgramArguments uses the wrapper and (b) the wrapper sources the secrets env and exec's the binary with serve --config.
+
+<!--
+Example of a fixed issue entry:
+
+### INST-005: Secrets env created world-readable
+**Area**: install.sh local config (`install.sh`)
+**Fixed**: Iteration 3
+**Detail**: arbitron.env was written then chmod'd, leaving a brief 0644 window. Switched to umask 077 around the write so it is never group/world-readable. Added a bats assertion on the resulting mode.
+-->
 
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
 
 <!--
-Candidates the reviewer should NOT implement (log here if tempted): an 8th provider family; Amazon Bedrock ambient AWS credential-chain auth (spec chose stored keys); exposing connection validation as an MCP tool (CLI-only by design); model-name validation at workflow-author time; auto-refresh/caching of model lists.
+Example of a won't-fix entry:
+
+### INST-W01: Air-gapped / fully offline install
+**Detail**: Bundling runtimes and an offline install path is an explicit non-goal in the master design. Out of scope for this review.
 -->

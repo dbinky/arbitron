@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/google/uuid"
@@ -127,6 +128,9 @@ func TestMigrateFlatStore_Idempotent(t *testing.T) {
 // --- Isolation/security ---
 
 func TestMigrateFlatStore_PermsAndMarkerMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits (0700/0600) are not honored on Windows filesystems")
+	}
 	base := t.TempDir()
 	flatWorkflow(t, base, "wf")
 

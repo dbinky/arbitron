@@ -1,0 +1,118 @@
+name: installers
+
+# Lint + test the bash installer (install.sh, P1 local path). Runs shellcheck and
+# the mocked bats suite under tests/install on both a Linux container (apt/dnf/
+# systemd code paths) and a macOS runner (launchd/brew path). Everything is
+# mocked — no network, no real package managers, no real services.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - 'tests/install/**'
+      - 'tests/release/**'
+      - 'Makefile'
+      - 'cmd/arbitron/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'docs/install/**'
+      - '.github/workflows/installers.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - 'tests/install/**'
+      - 'tests/release/**'
+      - 'Makefile'
+      - 'cmd/arbitron/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'docs/install/**'
+      - '.github/workflows/installers.yml'
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck + bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats
+
+      - name: make test-install
+        run: make test-install
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck + bats
+        run: brew install shellcheck bats-core
+
+      - name: make test-install
+        run: make test-install
+
+  windows:
+    # Lint + test the PowerShell installer (install.ps1, P3 Windows local path).
+    # Runs Pester (mocked winget / Scheduled Task / downloads — no network, no
+    # real package managers, no real service registration) plus the
+    # PSScriptAnalyzer lint gate. Pinned Pester 5.x + PSScriptAnalyzer.
+    # Also runs the Go windows-tagged unit tests (service_windows_test.go) on a
+    # real Windows runtime — these cover the SCM handler state machine, the
+    # svc.Run error path, and the service-name contract with install.ps1.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go test (windows-tagged service unit tests on real Windows runtime)
+        run: go test ./cmd/arbitron/... -v -count=1
+
+      - name: Install Pester + PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: Invoke-Pester (install suite + lint gate)
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests/install'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.Should.ErrorAction = 'Stop'
+          Invoke-Pester -Configuration $config
+
+  release-tests:
+    # Verify artifact naming, SHA256SUMS self-consistency, version round-trip,
+    # and docs URL accuracy. Requires Go to run `make dist`.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: make test-release
+        run: make test-release

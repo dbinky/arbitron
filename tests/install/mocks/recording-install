@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Recording `install` fake: appends "install <args...>" to $MOCK_LOG AND performs
+# a best-effort real copy/dir-create so file-content assertions still work, while
+# IGNORING the privileged -o/-g (owner/group) flags that need root. This lets the
+# shared-install tests assert BOTH the argv (mode/owner) and the written file.
+{
+  printf 'install'
+  for a in "$@"; do printf ' %s' "$a"; done
+  printf '\n'
+} >>"${MOCK_LOG:-/dev/null}"
+
+mode=""
+dir_mode=0
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -d) dir_mode=1 ;;
+    -m) mode="$2"; shift ;;
+    -o|-g) shift ;;                # drop owner/group (needs root)
+    -m*) mode="${1#-m}" ;;
+    -*) ;;                          # ignore other flags
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+
+if [ "$dir_mode" -eq 1 ]; then
+  for d in "${args[@]}"; do
+    mkdir -p "$d" || exit 1
+    [ -n "$mode" ] && chmod "$mode" "$d" 2>/dev/null || true
+  done
+  exit 0
+fi
+
+# File install: last arg is the dest, the rest are sources.
+n=${#args[@]}
+[ "$n" -ge 2 ] || exit 0
+dest="${args[$((n-1))]}"
+mkdir -p "$(dirname "$dest")" 2>/dev/null || true
+i=0
+while [ "$i" -lt $((n-1)) ]; do
+  cp "${args[$i]}" "$dest" || exit 1
+  i=$((i+1))
+done
+[ -n "$mode" ] && chmod "$mode" "$dest" 2>/dev/null || true
+exit 0

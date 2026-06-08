@@ -1,0 +1,130 @@
+name: release
+
+# Tag-triggered release: build the 6 cross-compiled artifacts, generate
+# SHA256SUMS, cosign-sign it (keyless OIDC), self-verify, and upload to the
+# GitHub Release. A workflow_dispatch with dry_run=true exercises the whole
+# pipeline against a throwaway draft/pre-release without touching `latest`.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build, sign, and upload to a draft/pre-release only (no public release)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # create/upload the GitHub Release
+  id-token: write   # cosign keyless signing via the workflow OIDC identity
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Third-party actions are SHA-pinned (not tag-pinned): this job holds
+      # id-token:write (the cosign signing identity) and contents:write, so a
+      # mutable major tag repointed by a compromised action owner could sign and
+      # publish a malicious release under the legitimate release.yml identity.
+      # Pin to a full commit SHA; the trailing comment records the human version.
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          fetch-depth: 0   # full history + tags for `git describe`
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+        with:
+          go-version: '1.25.x'
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-rc.${GITHUB_RUN_ID}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${version}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3.9.1
+
+      - name: Build dashboard
+        run: make ui
+
+      - name: Cross-compile artifacts, generate SHA256SUMS, and sign
+        run: make release VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Self-verify checksums and signature
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c SHA256SUMS
+          else
+            shasum -a 256 -c SHA256SUMS
+          fi
+          # contract: must match install.sh/install.ps1 cosign identity. This build
+          # job runs on both tags and workflow_dispatch (branch ref), so it cannot
+          # tag-anchor; the verify-release job below tightens to @refs/tags/v.* and
+          # is the identity the installers pin against.
+          cosign verify-blob SHA256SUMS \
+            --signature SHA256SUMS.sig \
+            --certificate SHA256SUMS.pem \
+            --certificate-identity-regexp "https://github.com/dbinky/arbitron/.github/workflows/release.yml@.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+          files: |
+            dist/arbitron_*
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/SHA256SUMS.pem
+
+  # On a real tag, re-download the published artifacts and re-verify them — this
+  # proves the *published* release (not just the build dir) is consumable by the
+  # install scripts. Skipped on dry-run dispatch.
+  verify-release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3.9.1
+
+      - name: Download and verify published artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir verify && cd verify
+          gh release download "$TAG" --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'SHA256SUMS' \
+            --pattern 'SHA256SUMS.sig' \
+            --pattern 'SHA256SUMS.pem' \
+            --pattern 'arbitron_*_linux_amd64'
+          grep 'arbitron_.*_linux_amd64$' SHA256SUMS | sha256sum -c -
+          # contract: must match install.sh/install.ps1 cosign identity
+          # (--certificate-identity-regexp). This tag-anchored identity is the one
+          # the installers pin against; keep all three copies in lock-step.
+          cosign verify-blob SHA256SUMS \
+            --signature SHA256SUMS.sig \
+            --certificate SHA256SUMS.pem \
+            --certificate-identity-regexp "https://github.com/dbinky/arbitron/.github/workflows/release.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
