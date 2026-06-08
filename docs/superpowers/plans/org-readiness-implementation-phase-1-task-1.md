@@ -164,3 +164,29 @@
 | Boundary | unknown/empty mode string → `ModeLocal` | A1 |
 | Boundary | single-element / whitespace audiences CSV | C3 |
 | Integration/state | full `Load` round-trip from env to struct | C3 |
+
+---
+
+## Cross-phase coordination (plan alignment)
+
+These files are edited by multiple phases; **serialize edits — do not run the
+listed tasks concurrently on the same file** (merge-conflict / build-break risk):
+
+- **`cmd/arbitron/main.go`** (composition root): P1-task4 (auth/edge wiring),
+  P2-task1/2/3 (default backend + adapter wiring), P3-task3/4 (evaluator
+  start/stop + management wiring). Apply in phase order; keep each phase's wiring
+  in its own block.
+- **`domain/instance/ports.go` + the SQLite instance/user repo + in-test repo
+  fakes**: P1-task3 (`UserRepository.GetByEmail`) and P3-task3
+  (`HasActiveRun`). Widen the interface once per task and update ALL fakes in the
+  same task to keep the build green.
+- **`domain/config/config.go` + `adapter/config/loader.go`**: P1-task1/2/4
+  (`auth.edge.*`) and P2-task1 (`llm.defaultagentbackend`). Additive fields only;
+  no shared keys, but coordinate the struct edits.
+
+Migration numbering: P3 owns **`013_schedules`** (012 is the latest existing).
+P1 adds only a sqlc query (`GetByEmail`) against the existing `users.email`
+column — **no new migration**. If P1 turns out to need a column, it takes 014.
+
+Recommended implementation order: **Phase 1 → Phase 2 → Phase 3** (the chosen
+phase order). Within a phase, tasks are sequential unless noted.
