@@ -26,9 +26,9 @@ A review pass is only checked when the checklist produces a passing result for t
 | 11 | Schedule evaluator (`domain/schedule/evaluator.go`, `alerter.go` — injected clock, fire-as-creator, collision skip, no-backfill recovery, main.go lifecycle) | [x] | [x] | Done |
 | 12 | Schedule management surface (`domain/schedule/service.go` authz, `adapter/http/schedule_handler.go`, `adapter/mcp/tools_schedule.go` — CRUD/enable-disable, own-vs-admin, can-trigger gate) | [x] | [x] | Done |
 | 13 | Auth mode coherence (`domain/identity` + `adapter/http/auth_middleware.go` — local/org/edge selection; org & local remain unchanged and green) | [x] | [x] | Done |
-| 14 | Vertical slice: edge request → identity (header → verify → provision → enriched identity → authorized request) | [ ] | [ ] | |
-| 15 | Vertical slice: agent node → backend → provider → LiteLLM (node/profile backend → resolver → factory → adapter → endpoint+key) | [ ] | [ ] | |
-| 16 | Vertical slice: schedule due → fire-as-creator → stamped instance → queue (cron tick → evaluator → TriggerWithDepartment → enqueue) | [ ] | [ ] | |
+| 14 | Vertical slice: edge request → identity (header → verify → provision → enriched identity → authorized request) | [x] | [x] | Done |
+| 15 | Vertical slice: agent node → backend → provider → LiteLLM (node/profile backend → resolver → factory → adapter → endpoint+key) | [x] | [x] | Done |
+| 16 | Vertical slice: schedule due → fire-as-creator → stamped instance → queue (cron tick → evaluator → TriggerWithDepartment → enqueue) | [x] | [x] | Done |
 
 ---
 
@@ -36,16 +36,16 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 17 | Edge verifier + Email provisioning (verified email flows correctly into create/admin/default-group; case + normalization) | [ ] | |
-| 18 | Edge config + Middleware/wiring (config drives verifier+middleware construction; fail-fast on missing teamdomain/audiences; nil session/token repos) | [ ] | |
-| 19 | Backend axis + Factory dispatch (Backend field set in executor reaches `AgentProviderFor`; precedence node>profile>default end-to-end; unknown fails closed) | [ ] | |
-| 20 | claude-cli injection + opencode mapping (both backends reach LiteLLM; credential secrecy parity; base-url allowlist vs reject-guard interaction) | [ ] | |
-| 21 | Schedule domain + Persistence (entity ↔ repo round-trip; cron/timezone/LastFiredAt persisted; hand-written repo matches `schedules.sql`) | [ ] | |
-| 22 | Schedule evaluator + Trigger-stamp (fire-as-creator reuses `domain/engine` `resolveStamp`; owner+department correct; department override) | [ ] | |
-| 23 | Schedule evaluator + Persistence/recovery (`LastFiredAt`-driven no-backfill is deterministic across restart; skip/miss alerts persisted) | [ ] | |
-| 24 | Schedule management + Authz (own-vs-admin + can-trigger gate consistent across REST and MCP surfaces) | [ ] | |
-| 25 | Edge identity + Schedule ownership (a scheduled run's creator attribution ties to an edge-provisioned user; department stamping coherent) | [ ] | |
-| 26 | Credential secrecy + Config/logging (provider keys + master key never in logs/argv/allowlist/`config.yaml`; non-secret base-urls only where intended) | [ ] | |
+| 17 | Edge verifier + Email provisioning (verified email flows correctly into create/admin/default-group; case + normalization) | [x] | Done |
+| 18 | Edge config + Middleware/wiring (config drives verifier+middleware construction; fail-fast on missing teamdomain/audiences; nil session/token repos) | [x] | Done |
+| 19 | Backend axis + Factory dispatch (Backend field set in executor reaches `AgentProviderFor`; precedence node>profile>default end-to-end; unknown fails closed) | [x] | Done |
+| 20 | claude-cli injection + opencode mapping (both backends reach LiteLLM; credential secrecy parity; base-url allowlist vs reject-guard interaction) | [x] | Done |
+| 21 | Schedule domain + Persistence (entity ↔ repo round-trip; cron/timezone/LastFiredAt persisted; hand-written repo matches `schedules.sql`) | [x] | Done |
+| 22 | Schedule evaluator + Trigger-stamp (fire-as-creator reuses `domain/engine` `resolveStamp`; owner+department correct; department override) | [x] | Done |
+| 23 | Schedule evaluator + Persistence/recovery (`LastFiredAt`-driven no-backfill is deterministic across restart; skip/miss alerts persisted) | [x] | Done |
+| 24 | Schedule management + Authz (own-vs-admin + can-trigger gate consistent across REST and MCP surfaces) | [x] | Done |
+| 25 | Edge identity + Schedule ownership (a scheduled run's creator attribution ties to an edge-provisioned user; department stamping coherent) | [x] | Done |
+| 26 | Credential secrecy + Config/logging (provider keys + master key never in logs/argv/allowlist/`config.yaml`; non-secret base-urls only where intended) | [x] | Done |
 
 ---
 
