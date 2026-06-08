@@ -257,3 +257,71 @@ func TestNew_UnreachableTeamDomain_FailsFast(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+// TestNew_EmptyAudiences_ReturnsError verifies that New fails fast when the
+// configured audience set is empty (after stripping whitespace). An empty set
+// would produce a Verifier that always rejects — surfacing the misconfiguration
+// at boot is safer than silently blocking every request.
+func TestNew_EmptyAudiences_ReturnsError(t *testing.T) {
+	h := newJWKSHarness(t)
+
+	t.Run("nil audiences slice", func(t *testing.T) {
+		_, err := adaptedge.New(context.Background(), adaptedge.Config{
+			TeamDomain: h.issuer,
+			Audiences:  nil,
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("empty audiences slice", func(t *testing.T) {
+		_, err := adaptedge.New(context.Background(), adaptedge.Config{
+			TeamDomain: h.issuer,
+			Audiences:  []string{},
+		})
+		require.Error(t, err)
+	})
+
+	t.Run("whitespace-only audiences", func(t *testing.T) {
+		_, err := adaptedge.New(context.Background(), adaptedge.Config{
+			TeamDomain: h.issuer,
+			Audiences:  []string{"  ", "\t", ""},
+		})
+		require.Error(t, err)
+	})
+}
+
+// TestVerify_MissingAudClaim verifies that a token whose aud claim is absent or
+// empty is rejected even though go-oidc skips the aud check (SkipClientIDCheck).
+// This is the critical invariant from carry-forward issue #2.
+func TestVerify_MissingAudClaim(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifier(t, h, "app-aud")
+
+	t.Run("no aud field", func(t *testing.T) {
+		c := baseClaims(h.issuer, "app-aud")
+		delete(c, "aud")
+		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		require.Error(t, err)
+		assert.Empty(t, email)
+	})
+
+	t.Run("empty string aud", func(t *testing.T) {
+		c := baseClaims(h.issuer, "") // aud: ""
+		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		require.Error(t, err)
+		assert.Empty(t, email)
+	})
+}
+
+// TestVerify_WhitespaceEmail verifies that a token carrying a whitespace-only
+// email claim is rejected (email normalization happens at the provisioner; the
+// verifier's responsibility is to reject clearly invalid values).
+func TestVerify_WhitespaceEmail(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifier(t, h, "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["email"] = "   "
+	email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+	require.Error(t, err)
+	assert.Empty(t, email)
+}

@@ -13,7 +13,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Edge JWT verifier (`adapter/edge/verifier.go` — go-oidc discovery, signature/iss/aud-set/exp/nbf, email extraction, JWKS cache, fail-fast) | [ ] | [ ] | |
+| 1 | Edge JWT verifier (`adapter/edge/verifier.go` — go-oidc discovery, signature/iss/aud-set/exp/nbf, email extraction, JWKS cache, fail-fast) | [x] | [ ] | |
 | 2 | Edge auth config + validation (`domain/config/config.go`, `adapter/config/loader.go` — `auth.edge.{teamdomain,audiences}`, `validateAuth`, env overlay, YAML example) | [ ] | [ ] | |
 | 3 | Email provisioning (`domain/instance/provisioner.go` `ResolveByEmail`, `UserRepository.GetByEmail`, `adapter/sqlite/user_repo.go` + query — create-on-first-sight, bootstrap admin vs default group, case-insensitivity) | [ ] | [ ] | |
 | 4 | Edge auth middleware + wiring (`adapter/http/auth_middleware.go` edge branch, `NewEdgeAuthMiddleware`, `cmd/arbitron/main.go` — stateless, fail-closed 401 vs 500, no login routes) | [ ] | [ ] | |

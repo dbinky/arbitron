@@ -55,6 +55,9 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 			audiences = append(audiences, a)
 		}
 	}
+	if len(audiences) == 0 {
+		return nil, fmt.Errorf("edge: at least one non-empty audience must be configured")
+	}
 	// SkipClientIDCheck: the go-oidc audience check accepts only a single
 	// ClientID, but edge mode allows a SET of audiences; we verify membership
 	// ourselves below. Signature, issuer, expiry and not-before are still
