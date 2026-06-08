@@ -115,6 +115,17 @@ func TestFactoryBackend_ClaudeCode_NilAdapter(t *testing.T) {
 	assert.Contains(t, err.Error(), "claude-cli")
 }
 
+// boundary — surrounding whitespace on a VALID backend value is trimmed and
+// routed correctly. The workflow validator uses exact-match so a
+// whitespace-padded backend is rejected at load; this factory-level TrimSpace
+// is defense-in-depth for any programmatic path that omits trimming.
+func TestFactoryBackend_PaddedValidBackend_Routed(t *testing.T) {
+	f := newBackendFactory(t, "claude-code")
+	ap, err := f.AgentProviderFor(agentBindingBackend("litellm", " opencode "))
+	require.NoError(t, err)
+	assert.IsType(t, (*opencode.Provider)(nil), ap)
+}
+
 // boundary — case/whitespace is rejected, consistent with Task 1's validator
 // (exact lowercase). The validator already blocked this at load; the factory
 // stays strict and fails closed.
