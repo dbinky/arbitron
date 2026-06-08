@@ -177,6 +177,29 @@ func TestAgentAdapter_BackCompatSubscriptionEnv(t *testing.T) {
 	assert.False(t, ok, "subscription adapter must not inject a key")
 }
 
+// security — when the operator has set ANTHROPIC_BASE_URL in the parent process
+// (it is allowlisted, so procenv.BaseEnv() passes it through) and the binding
+// also provides a BaseURL, the binding's URL must win and exactly ONE
+// ANTHROPIC_BASE_URL entry must appear. A duplicate entry would leave the
+// binding URL's precedence undefined (OS/exec implementation-specific).
+func TestAgentEnv_BindingBaseURLOverridesOperatorEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://operator-default:4000")
+
+	b := gatewayBinding("https://binding-override:9000", "sk-test", nil)
+	env, err := agentEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	var vals []string
+	for _, e := range env {
+		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
+			vals = append(vals, strings.TrimPrefix(e, "ANTHROPIC_BASE_URL="))
+		}
+	}
+	require.Len(t, vals, 1, "exactly one ANTHROPIC_BASE_URL entry; got %v", vals)
+	assert.Equal(t, "https://binding-override:9000", vals[0],
+		"binding URL must override the operator-set parent env URL")
+}
+
 // error — a RevealKey failure aborts RunAgent before the runner is invoked
 // (no partial-env launch).
 func TestAgentAdapter_RevealErrorAbortsBeforeLaunch(t *testing.T) {
