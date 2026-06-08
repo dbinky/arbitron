@@ -22,7 +22,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 7 | claude-cli endpoint/key injection (`adapter/claudecli/env.go`, `agent_adapter.go`, `NewAgentAdapterForBinding`; `adapter/procenv/procenv.go` allowlist) | [x] | [x] | Done |
 | 8 | opencode LiteLLM mapping + CLI install (`adapter/opencode/provider_id.go`, `env.go` guard; `Dockerfile`, `install.sh`, `install.ps1` install both CLIs) | [x] | [x] | Done |
 | 9 | Schedule domain (`domain/schedule/` schedule.go/validation.go/ports.go — entity, cron `NextFire`, timezone normalize, validation) | [x] | [x] | Done |
-| 10 | Schedule persistence (`adapter/sqlite/schedule_repo.go`, `migrations/013_schedules.*`, `queries/schedules.sql`, instance `HasActiveRun`, notifications schema change) | [ ] | [ ] | |
+| 10 | Schedule persistence (`adapter/sqlite/schedule_repo.go`, `migrations/013_schedules.*`, `queries/schedules.sql`, instance `HasActiveRun`, notifications schema change) | [x] | [ ] | |
 | 11 | Schedule evaluator (`domain/schedule/evaluator.go`, `alerter.go` — injected clock, fire-as-creator, collision skip, no-backfill recovery, main.go lifecycle) | [ ] | [ ] | |
 | 12 | Schedule management surface (`domain/schedule/service.go` authz, `adapter/http/schedule_handler.go`, `adapter/mcp/tools_schedule.go` — CRUD/enable-disable, own-vs-admin, can-trigger gate) | [ ] | [ ] | |
 | 13 | Auth mode coherence (`domain/identity` + `adapter/http/auth_middleware.go` — local/org/edge selection; org & local remain unchanged and green) | [ ] | [ ] | |
