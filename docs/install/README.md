@@ -42,6 +42,101 @@ $env:ARBITRON_VERSION='1.2.3'; irm https://raw.githubusercontent.com/dbinky/arbi
 Check what is installed with `arbitron version` (prints version + commit + build
 date).
 
+## Unattended (non-interactive) install
+
+Both installers run without a human at the keyboard, for CI and fleet
+provisioning. The two scripts use **different** override models.
+
+### macOS / Linux (`install.sh`)
+
+Every interactive prompt resolves a matching **`ARBITRON_<VAR>`** environment
+variable *before* it would read from the terminal. Set the variables for the
+answers you want; any you leave unset fall back to the printed default. This
+gives you full control over a Local *or* Shared unattended install.
+
+> **Invoke it as a file, not a pipe.** `curl … | bash` puts the script on
+> stdin, which the prompts would otherwise consume. Download first, then run:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh -o install.sh
+> ARBITRON_INSTALL_TYPE=local \
+> ARBITRON_LLM_ACCESS=api-key ARBITRON_API_KEY=sk-ant-... \
+> ARBITRON_SKIP_PERMS=no ARBITRON_SKIP_CLAUDE_LOGIN=1 \
+>   bash install.sh
+> ```
+
+The interactive `claude /login` step is **auto-skipped** whenever stdin is not a
+TTY (or set `ARBITRON_SKIP_CLAUDE_LOGIN=1` explicitly); authenticate later with
+`claude /login`.
+
+**Common variables (Local and Shared)**
+
+| Variable | Prompt | Default | Notes |
+|---|---|---|---|
+| `ARBITRON_INSTALL_TYPE` | Install type | `shared` if root on Linux, else `local` | `local` \| `shared` (macOS is local-only) |
+| `ARBITRON_ACTION` | Existing-install action | `upgrade` if installed, else `fresh` | `fresh` \| `upgrade` \| `reconfigure` \| `uninstall` |
+| `ARBITRON_VERSION` | — | latest release | Pin a release, e.g. `1.2.3` |
+| `ARBITRON_PORT` | Dashboard / bind port | `8080` | |
+| `ARBITRON_LLM_ACCESS` | LLM access | `subscription` | `subscription` \| `api-key` |
+| `ARBITRON_API_KEY` | Anthropic API key | — | Required in `api-key` mode (secret) |
+| `ARBITRON_SKIP_PERMS` | Skip agent permissions | `no` | `yes` enables `--dangerously-skip-permissions` (see [security.md](security.md#dangerously-skip-permissions)) |
+| `ARBITRON_DATA_DIR` | Data location | `~/.arbitron/data` (local), `/var/lib/arbitron` (shared) | |
+| `ARBITRON_INSTALL_OPENCODE` | Install opencode backend | `no` | `yes` \| `no` |
+| `ARBITRON_BOOTSTRAP_BREW` | Install Homebrew if missing (macOS) | prompt | `yes` \| `no` |
+| `ARBITRON_SKIP_CLAUDE_LOGIN` | — | unset | `1` skips the interactive `claude /login` |
+
+**Shared-server variables (`ARBITRON_INSTALL_TYPE=shared`)**
+
+| Variable | Prompt | Default | Notes |
+|---|---|---|---|
+| `ARBITRON_BIND_HOST` | Bind host | `0.0.0.0` | |
+| `ARBITRON_AUTH_MODEL` | Auth model | `edge-local` | `edge-local` \| `oidc` |
+| `ARBITRON_OIDC_ISSUER` | OIDC issuer URL | — | OIDC mode |
+| `ARBITRON_OIDC_CLIENT_ID` | OIDC client ID | — | OIDC mode |
+| `ARBITRON_OIDC_CLIENT_SECRET` | OIDC client secret | — | OIDC mode (secret → `arbitron.env`) |
+| `ARBITRON_PUBLIC_BASE_URL` | Public base URL | — | OIDC mode; redirect derives as `<url>/auth/callback` |
+| `ARBITRON_OIDC_BOOTSTRAP_ADMINS` | Bootstrap admins | — | OIDC mode |
+| `ARBITRON_OIDC_REDIRECT` | Redirect URL | derived | Override the derived callback |
+| `ARBITRON_RBAC` | Enable RBAC | `no` | `yes` exposes the next three |
+| `ARBITRON_RBAC_GROUP_CLAIM` | Group claim | `groups` | |
+| `ARBITRON_RBAC_DEFAULT_GROUP` | Default group | `default` | |
+| `ARBITRON_RBAC_LEADS` | Department leads | — | `dept=a,b;dept2=c` |
+| `ARBITRON_TLS_MODEL` | TLS model | — | `tunnel` \| `direct` \| `autocert` (see [tunnels-and-tls.md](tunnels-and-tls.md)) |
+| `ARBITRON_TLS_CERT` / `ARBITRON_TLS_KEY` | Cert / key paths | — | `direct` mode |
+| `ARBITRON_AUTOCERT_DOMAIN` / `ARBITRON_AUTOCERT_CACHEDIR` | Autocert domain / cache | — | `autocert` mode (forces port 443) |
+| `ARBITRON_SVC_USER` | Service account name | `arbitron` | |
+| `ARBITRON_MASTER_KEY` | — | generated | Provide to reuse an existing key; otherwise generated silently |
+
+**Uninstall (`ARBITRON_ACTION=uninstall`)**
+
+| Variable | Prompt | Default |
+|---|---|---|
+| `ARBITRON_REMOVE_DATA` | Also remove all data (irreversible) | `no` |
+| `ARBITRON_REMOVE_ACCOUNT` | Also remove the service account (shared) | `no` |
+
+**CI / advanced knobs:** `ARBITRON_REPO` (fork), `ARBITRON_VERIFY_SIGNATURE=1`
+(require a cosign signature), `ARBITRON_HEALTH_RETRIES` / `ARBITRON_HEALTH_SLEEP`
+(post-install health-check tuning), `ARBITRON_CLAUDE_PATH` (pre-resolved `claude`
+binary), `ARBITRON_PKG_SUDO`.
+
+### Windows (`install.ps1`)
+
+The PowerShell installer uses a single non-interactive switch rather than
+per-prompt env overrides. Pass **`-Yes`** (or set `$env:ARBITRON_YES=1`) and
+every prompt takes its **default** — a **Local** install on port `8080`,
+`subscription` LLM access, skip-permissions **off**:
+
+```powershell
+irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 -OutFile install.ps1
+.\install.ps1 -Yes
+```
+
+Only two values are individually overridable: `-Version` / `$env:ARBITRON_VERSION`
+(pin a release) and `-Config` / `$env:ARBITRON_CONFIG` (config path). There are
+**no** per-prompt env overrides, so a non-default unattended install on Windows
+(Shared, OIDC, a non-`8080` port, api-key mode, etc.) is **not** scriptable
+today — run those interactively.
+
 ## Pick your scenario
 
 | | Scenario | OS / class | Script | Privilege |
