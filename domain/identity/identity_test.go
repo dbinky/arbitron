@@ -36,6 +36,7 @@ func TestFromContext_Absent(t *testing.T) {
 
 func TestModeFromString(t *testing.T) {
 	assert.Equal(t, identity.ModeOrg, identity.ModeFromString("org"))
+	assert.Equal(t, identity.ModeEdge, identity.ModeFromString("edge"))
 	assert.Equal(t, identity.ModeLocal, identity.ModeFromString("local"))
 	assert.Equal(t, identity.ModeLocal, identity.ModeFromString(""))
 	assert.Equal(t, identity.ModeLocal, identity.ModeFromString("garbage"))

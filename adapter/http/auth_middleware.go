@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -21,6 +22,22 @@ import (
 // from "we could not check".
 var errNoCredential = errors.New("auth: no credential")
 
+// CfAccessJWTHeader is the request header Cloudflare Access sets with the
+// edge-issued identity JWT, consulted only in edge mode. Exported so the
+// composition root (main.go) wires the same canonical header into the edge
+// middleware constructor.
+const CfAccessJWTHeader = "Cf-Access-Jwt-Assertion"
+
+// emailProvisioner is the tiny provisioning port the edge branch depends on so
+// the middleware does not import the concrete *instance.Provisioner type beyond
+// what it needs. *instance.Provisioner satisfies it.
+type emailProvisioner interface {
+	ResolveByEmail(ctx context.Context, email string) (*instance.User, error)
+}
+
+// Compile-time assertion that the concrete provisioner satisfies the port.
+var _ emailProvisioner = (*instance.Provisioner)(nil)
+
 // AuthMiddleware enforces authentication for every request surface. It is the
 // single authz boundary: REST, WS, and MCP all pass through it, so domain
 // services can trust identity.FromContext unconditionally.
@@ -31,6 +48,12 @@ type AuthMiddleware struct {
 	tokens   identity.TokenRepository   // personal API tokens (org-mode bearer auth)
 	users    instance.UserRepository
 	groups   identity.GroupConfig // RBAC: default group + leads mapping
+
+	// Edge mode (auth.mode == "edge"): stateless per-request verification of a
+	// Cloudflare Access JWT. Both are nil in local/org mode and never consulted.
+	edgeHeader   string
+	edgeVerifier identity.EdgeVerifier
+	provisioner  emailProvisioner
 
 	// toucher coalesces per-request last-used bookkeeping into a single owned,
 	// cancellable flusher goroutine (org-mode bearer path only). Nil disables it.
@@ -52,6 +75,23 @@ func NewAuthMiddleware(mode identity.Mode, cookieName string, sessions identity.
 		m.toucher = newTouchFlusher(tokens, time.NewTicker(touchFlushInterval).C)
 	}
 	return m
+}
+
+// NewEdgeAuthMiddleware builds the middleware for edge mode (auth.mode ==
+// "edge"). Verification is stateless per request: the headerName header (e.g.
+// "Cf-Access-Jwt-Assertion") is verified by verifier, the resulting email is
+// provisioned by prov, and the user is enriched into the request identity. No
+// session or token repository is consulted in edge mode, so they are nil. users
+// powers enrich's ListDepartments; groups supplies the default-group fallback.
+func NewEdgeAuthMiddleware(headerName string, verifier identity.EdgeVerifier, prov emailProvisioner, users instance.UserRepository, groups identity.GroupConfig) *AuthMiddleware {
+	return &AuthMiddleware{
+		mode:         identity.ModeEdge,
+		users:        users,
+		groups:       groups,
+		edgeHeader:   headerName,
+		edgeVerifier: verifier,
+		provisioner:  prov,
+	}
 }
 
 // Stop shuts down the owned last-used flusher goroutine, draining any pending
@@ -86,6 +126,30 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 // (map to 401) when no usable credential is present, or any other error (map to
 // 500) for a server-state failure that prevents establishing identity.
 func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
+	if m.mode == identity.ModeEdge {
+		raw := r.Header.Get(m.edgeHeader)
+		if raw == "" {
+			// No token at all: fail closed (401). Do NOT consult the verifier.
+			return identity.Identity{}, errNoCredential
+		}
+		email, verr := m.edgeVerifier.Verify(r.Context(), raw)
+		if verr != nil {
+			// Invalid/forged/expired token: fail closed. NOT a server error — do
+			// not log the raw token; the verifier already wrapped a safe error.
+			return identity.Identity{}, errNoCredential
+		}
+		user, perr := m.provisioner.ResolveByEmail(r.Context(), email)
+		if perr != nil {
+			// Provisioning/DB failure is a SERVER fault, not an auth denial:
+			// surface a non-errNoCredential error so Handler maps it to 500,
+			// distinguishing "we could not check" from "you are not authenticated".
+			return identity.Identity{}, fmt.Errorf("edge: provisioning %q: %w", email, perr)
+		}
+		// No session cookie or bearer token is consulted in edge mode (the
+		// session/token repos are nil). enrich is mode-agnostic.
+		return m.enrich(r.Context(), user), nil
+	}
+
 	if m.mode == identity.ModeLocal {
 		m.localOnce.Do(func() {
 			uid, err := m.users.GetDefaultUser(r.Context())

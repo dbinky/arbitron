@@ -140,6 +140,56 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 	return u, nil
 }
 
+// ResolveByEmail resolves a VERIFIED edge-token email to a persisted User,
+// creating one on first sight. The email is the identity (subject is nil for
+// edge-created users); it is trusted because the edge verifier already checked
+// the token signature/issuer/audience/expiry, so there is no separate
+// email_verified gate on this path. Admin status is re-evaluated on every call
+// from the live bootstrap list (config authoritative), and the user's
+// departments are snapshotted to the default group (Phase 1 consumes no group
+// claim). A repository error surfaces as a non-ErrInvalidClaims error so the
+// middleware can distinguish a 500 (we could not check) from a 401 (no
+// credential).
+func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, error) {
+	if strings.TrimSpace(email) == "" {
+		return nil, ErrInvalidClaims
+	}
+	wantRole := identity.RoleUser
+	if p.IsBootstrapAdmin("", email) {
+		wantRole = identity.RoleAdmin
+	}
+	u, err := p.users.GetByEmail(ctx, email)
+	switch {
+	case err == nil:
+		if u.Role != wantRole {
+			if err := p.users.UpdateRole(ctx, u.ID, string(wantRole)); err != nil {
+				return nil, fmt.Errorf("re-evaluating role at edge login: %w", err)
+			}
+			u.Role = wantRole
+		}
+	case errors.Is(err, ErrNotFound):
+		e := email
+		nu := &User{
+			ID:       p.newID(),
+			Subject:  nil,
+			Email:    &e,
+			Username: email, // edge tokens carry no username; email is the display name
+			Role:     wantRole,
+		}
+		if err := p.users.Create(ctx, nu); err != nil {
+			return nil, err
+		}
+		u = nu
+	default:
+		return nil, err
+	}
+	depts := identity.ResolveDepartments(nil, p.groups)
+	if err := p.users.ReplaceDepartments(ctx, u.ID, depts); err != nil {
+		return nil, fmt.Errorf("snapshotting departments at edge login: %w", err)
+	}
+	return u, nil
+}
+
 // IsBootstrapAdmin is the SINGLE canonical bootstrap-match predicate, exported
 // so the role service's demotion floor (Task 6) consults the SAME normalized set
 // with the SAME rule. Rule: match email case-insensitively first; if email is

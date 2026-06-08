@@ -37,6 +37,9 @@ func (r *memUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, 
 func (r *memUserRepo) GetBySubject(context.Context, string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }
+func (r *memUserRepo) GetByEmail(context.Context, string) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
 func (r *memUserRepo) Create(_ context.Context, u *instance.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

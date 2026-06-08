@@ -137,6 +137,71 @@ func TestUserRepo_GetBySubject_NullSubjectNotMatched(t *testing.T) {
 	assert.ErrorIs(t, err, instance.ErrNotFound)
 }
 
+// Happy path: an email-keyed lookup returns the matching user (edge-mode
+// provisioning keys on the verified email).
+func TestUserRepo_GetByEmail_Found(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	u := &instance.User{
+		ID:       uuid.New(),
+		Subject:  nil,
+		Email:    ptr("dana@corp.example"),
+		Username: "dana@corp.example",
+		Role:     identity.RoleUser,
+	}
+	require.NoError(t, repo.Create(ctx, u))
+
+	got, err := repo.GetByEmail(ctx, "dana@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, u.ID, got.ID)
+	require.NotNil(t, got.Email)
+	assert.Equal(t, "dana@corp.example", *got.Email)
+	assert.Nil(t, got.Subject, "edge-created users have a nil subject")
+}
+
+// Boundary: email lookup is case-insensitive (COLLATE NOCASE).
+func TestUserRepo_GetByEmail_CaseInsensitive(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	ctx := context.Background()
+
+	u := &instance.User{
+		ID:       uuid.New(),
+		Email:    ptr("dana@corp.example"),
+		Username: "dana@corp.example",
+		Role:     identity.RoleUser,
+	}
+	require.NoError(t, repo.Create(ctx, u))
+
+	got, err := repo.GetByEmail(ctx, "DANA@CORP.EXAMPLE")
+	require.NoError(t, err)
+	assert.Equal(t, u.ID, got.ID)
+}
+
+func TestUserRepo_GetByEmail_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	_, err := repo.GetByEmail(context.Background(), "never-seen@corp.example")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound)
+}
+
+// Isolation/security: an empty email must never match a NULL-email row (mirrors
+// the GetBySubject empty-input guard).
+func TestUserRepo_GetByEmail_EmptyNotMatched(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewUserRepo(db.DB)
+	// Seed a NULL-email user to prove "" can't hijack it.
+	require.NoError(t, repo.Create(context.Background(), &instance.User{
+		ID: uuid.New(), Subject: ptr("nullemail-sub"), Username: "nullemail", Role: identity.RoleUser,
+	}))
+	_, err := repo.GetByEmail(context.Background(), "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound)
+}
+
 func TestUserRepo_UpdateUsername_ChangesDisplayName(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewUserRepo(db.DB)

@@ -1174,3 +1174,136 @@ func TestLoad_CreatedConfigFile_HasRestrictivePermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0600), perm,
 		"default config file must be 0600 (owner-only r/w) to protect future secrets written into it")
 }
+
+// TestValidateAuth_EdgeMode mirrors the org-mode validation tests: edge mode
+// requires BOTH auth.edge.teamdomain and auth.edge.audiences; either missing is
+// a fail-fast load error (an edge deployment missing its team domain cannot
+// verify a single token).
+func TestValidateAuth_EdgeMode(t *testing.T) {
+	t.Run("happy: both fields present validates", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"app-aud"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("missing teamdomain → error names it", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    audiences: ["app-aud"]
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+	})
+
+	t.Run("missing audiences → error names it", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+
+	t.Run("both missing → error names both", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"edge\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+
+	t.Run("unknown mode error lists all three modes", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"cloud\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeLocal)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeOrg)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeEdge)
+	})
+}
+
+// TestLoad_EdgeDefaultsAndEnvOverlay verifies the edge defaults exist (empty,
+// not selected under local mode) and that the env overlay selects edge mode and
+// parses the audiences CSV into a real []string (mirrors the oidc.scopes /
+// bootstrapadmins overlay trick).
+func TestLoad_EdgeDefaultsAndEnvOverlay(t *testing.T) {
+	t.Run("defaults present, edge not selected under local mode", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "", cfg.Auth.Edge.TeamDomain)
+		assert.Len(t, cfg.Auth.Edge.Audiences, 0)
+	})
+
+	t.Run("env overlay selects edge and parses audiences list", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "aud-one,aud-two")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"aud-one", "aud-two"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("boundary: single-element audiences CSV", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "solo")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"solo"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("boundary: whitespace/trailing audiences CSV trimmed", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", " a , b ")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a", "b"}, cfg.Auth.Edge.Audiences)
+	})
+}

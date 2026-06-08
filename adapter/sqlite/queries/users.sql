@@ -7,6 +7,14 @@ SELECT id, subject, email, username, role, created_at FROM users WHERE id = ? LI
 -- name: GetUserBySubject :one
 SELECT id, subject, email, username, role, created_at FROM users WHERE subject = ? LIMIT 1;
 
+-- name: GetUserByEmail :one
+-- Case-insensitive lookup: the column is lower()'d and the caller passes an
+-- ALREADY-lowercased email (see UserRepo.GetByEmail). An empty/NULL email must
+-- never match — the repo short-circuits "" before querying. lower(email)=? is
+-- used rather than lower(?) / COLLATE NOCASE because the sqlc SQLite parser
+-- miscounts tokens for a function-wrapped placeholder and corrupts the query set.
+SELECT id, subject, email, username, role, created_at FROM users WHERE lower(email) = ? LIMIT 1;
+
 -- name: CreateUser :exec
 INSERT INTO users (id, subject, email, username, role) VALUES (?, ?, ?, ?, ?);
 

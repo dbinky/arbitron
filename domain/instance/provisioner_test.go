@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -14,21 +15,23 @@ import (
 
 // fakeProvUserRepo is a fake UserRepository capturing provisioning calls.
 type fakeProvUserRepo struct {
-	bySubject      map[string]*User
-	getErr         error
-	createErr      error
-	created        []*User
-	updatedNames   map[uuid.UUID]string
-	updateNameErr  error
-	createCalls    int
-	depts          map[uuid.UUID][]string
-	replaceDeptErr error
-	updateRoleErr  error
+	bySubject       map[string]*User
+	byEmail         map[string]*User // lower-cased email -> user (edge-mode lookups)
+	getErr          error
+	getEmailErr     error
+	createErr       error
+	created         []*User
+	updatedNames    map[uuid.UUID]string
+	updateNameErr   error
+	createCalls     int
+	depts           map[uuid.UUID][]string
+	replaceDeptErr  error
+	updateRoleErr   error
 	updateRoleCalls int
 }
 
 func newFakeProvUserRepo() *fakeProvUserRepo {
-	return &fakeProvUserRepo{bySubject: map[string]*User{}, updatedNames: map[uuid.UUID]string{}, depts: map[uuid.UUID][]string{}}
+	return &fakeProvUserRepo{bySubject: map[string]*User{}, byEmail: map[string]*User{}, updatedNames: map[uuid.UUID]string{}, depts: map[uuid.UUID][]string{}}
 }
 
 func (r *fakeProvUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) {
@@ -46,6 +49,18 @@ func (r *fakeProvUserRepo) GetBySubject(_ context.Context, subject string) (*Use
 	}
 	return nil, ErrNotFound
 }
+func (r *fakeProvUserRepo) GetByEmail(_ context.Context, email string) (*User, error) {
+	if email == "" {
+		return nil, ErrNotFound
+	}
+	if r.getEmailErr != nil {
+		return nil, r.getEmailErr
+	}
+	if u, ok := r.byEmail[strings.ToLower(email)]; ok {
+		return u, nil
+	}
+	return nil, ErrNotFound
+}
 func (r *fakeProvUserRepo) Create(_ context.Context, u *User) error {
 	r.createCalls++
 	if r.createErr != nil {
@@ -54,6 +69,9 @@ func (r *fakeProvUserRepo) Create(_ context.Context, u *User) error {
 	r.created = append(r.created, u)
 	if u.Subject != nil {
 		r.bySubject[*u.Subject] = u
+	}
+	if u.Email != nil {
+		r.byEmail[strings.ToLower(*u.Email)] = u
 	}
 	return nil
 }
@@ -424,6 +442,121 @@ func TestResolve_DemotionFailurePropagates(t *testing.T) {
 	if !errors.Is(err, dbErr) {
 		t.Errorf("expected wrapped role-store error on failed demotion, got %v", err)
 	}
+}
+
+// ---- ResolveByEmail (edge mode) ----
+
+// Happy: a never-seen email creates a default-group user (RoleUser) with Email
+// set, Subject nil, and a department snapshot of the default group.
+func TestResolveByEmail_NewEmail_DefaultGroupUser(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "eve@corp.example")
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.createCalls)
+	assert.Equal(t, identity.RoleUser, u.Role)
+	require.NotNil(t, u.Email)
+	assert.Equal(t, "eve@corp.example", *u.Email)
+	assert.Nil(t, u.Subject, "edge-created users have a nil subject")
+	assert.Equal(t, []string{"default"}, repo.depts[u.ID])
+}
+
+// Happy: a bootstrap-listed email is created as admin.
+func TestResolveByEmail_BootstrapEmail_Admin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "boss@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role)
+}
+
+// Boundary: bootstrap matching is case-insensitive (reuses IsBootstrapAdmin).
+func TestResolveByEmail_BootstrapMatchCaseInsensitive(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "BOSS@CORP.EXAMPLE")
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role)
+}
+
+// Integration/state: a returning email returns the same user without a duplicate
+// Create, with the role re-evaluated against the live bootstrap list.
+func TestResolveByEmail_ReturningEmail_NoDuplicateCreate(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	id := uuid.New()
+	e := "dana@corp.example"
+	repo.byEmail["dana@corp.example"] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleUser}
+	// Email is now on the bootstrap list → promote at this login (live re-eval).
+	p := NewProvisioner(repo, []string{"dana@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "dana@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, 0, repo.createCalls, "returning email must not be re-created")
+	assert.Equal(t, id, u.ID)
+	assert.Equal(t, identity.RoleAdmin, u.Role, "role re-evaluated from the live bootstrap list")
+}
+
+// Integration/state: a returning admin removed from the bootstrap list is
+// demoted (config authoritative every login, mirroring Resolve).
+func TestResolveByEmail_ReturningEmail_Demotes(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	id := uuid.New()
+	e := "ex@corp.example"
+	repo.byEmail["ex@corp.example"] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
+	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "ex@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleUser, u.Role, "removed-from-bootstrap email demoted at login")
+}
+
+// Input validation: an empty/whitespace email is ErrInvalidClaims, no Create.
+func TestResolveByEmail_EmptyEmail_ErrInvalidClaims(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	_, err := p.ResolveByEmail(context.Background(), "")
+	assert.ErrorIs(t, err, ErrInvalidClaims)
+	assert.Equal(t, 0, repo.createCalls)
+
+	_, err = p.ResolveByEmail(context.Background(), "   ")
+	assert.ErrorIs(t, err, ErrInvalidClaims)
+	assert.Equal(t, 0, repo.createCalls)
+}
+
+// Error/failure: a non-NotFound GetByEmail error surfaces (not swallowed) so the
+// middleware maps it to 500, not 401. Create / ReplaceDepartments errors also surface.
+func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
+	boom := errors.New("db down")
+
+	t.Run("GetByEmail error surfaces (non-ErrInvalidClaims)", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		repo.getEmailErr = boom
+		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+		_, err := p.ResolveByEmail(context.Background(), "x@corp.example")
+		assert.ErrorIs(t, err, boom)
+		assert.NotErrorIs(t, err, ErrInvalidClaims, "a DB error must not be mistaken for invalid claims")
+		assert.Equal(t, 0, repo.createCalls)
+	})
+
+	t.Run("Create error surfaces", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		repo.createErr = boom
+		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+		_, err := p.ResolveByEmail(context.Background(), "y@corp.example")
+		assert.ErrorIs(t, err, boom)
+	})
+
+	t.Run("ReplaceDepartments error surfaces", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		repo.replaceDeptErr = boom
+		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+		_, err := p.ResolveByEmail(context.Background(), "z@corp.example")
+		assert.ErrorIs(t, err, boom)
+	})
 }
 
 // Edge: an existing admin still on the bootstrap list must NOT call UpdateRole

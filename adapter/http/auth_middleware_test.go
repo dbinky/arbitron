@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,12 +23,13 @@ type fakeUserRepo struct {
 	defaultID   uuid.UUID
 	byID        map[uuid.UUID]*instance.User
 	bySubject   map[string]*instance.User
+	byEmail     map[string]*instance.User // lower-cased email -> user (edge mode)
 	depts       map[uuid.UUID][]string
 	listDeptErr error // when non-nil, ListDepartments returns this error
 }
 
 func newFakeUserRepo() *fakeUserRepo {
-	return &fakeUserRepo{defaultID: uuid.New(), byID: map[uuid.UUID]*instance.User{}, depts: map[uuid.UUID][]string{}}
+	return &fakeUserRepo{defaultID: uuid.New(), byID: map[uuid.UUID]*instance.User{}, byEmail: map[string]*instance.User{}, depts: map[uuid.UUID][]string{}}
 }
 
 func (r *fakeUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) { return r.defaultID, nil }
@@ -49,6 +51,16 @@ func (r *fakeUserRepo) GetBySubject(_ context.Context, subject string) (*instanc
 	return nil, instance.ErrNotFound
 }
 
+func (r *fakeUserRepo) GetByEmail(_ context.Context, email string) (*instance.User, error) {
+	if email == "" {
+		return nil, instance.ErrNotFound
+	}
+	if u, ok := r.byEmail[strings.ToLower(email)]; ok {
+		return u, nil
+	}
+	return nil, instance.ErrNotFound
+}
+
 func (r *fakeUserRepo) Create(_ context.Context, u *instance.User) error {
 	r.byID[u.ID] = u
 	if u.Subject != nil {
@@ -56,6 +68,12 @@ func (r *fakeUserRepo) Create(_ context.Context, u *instance.User) error {
 			r.bySubject = map[string]*instance.User{}
 		}
 		r.bySubject[*u.Subject] = u
+	}
+	if u.Email != nil {
+		if r.byEmail == nil {
+			r.byEmail = map[string]*instance.User{}
+		}
+		r.byEmail[strings.ToLower(*u.Email)] = u
 	}
 	return nil
 }

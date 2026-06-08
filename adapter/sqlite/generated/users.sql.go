@@ -71,6 +71,33 @@ func (q *Queries) GetDefaultUser(ctx context.Context) (GetDefaultUserRow, error)
 	return i, err
 }
 
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, subject, email, username, role, created_at FROM users WHERE lower(email) = ? LIMIT 1
+`
+
+type GetUserByEmailRow struct {
+	ID        string
+	Subject   sql.NullString
+	Email     sql.NullString
+	Username  string
+	Role      string
+	CreatedAt string
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email sql.NullString) (GetUserByEmailRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
+	var i GetUserByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.Username,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
 SELECT id, subject, email, username, role, created_at FROM users WHERE id = ? LIMIT 1
 `

@@ -30,6 +30,9 @@ func (m *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, 
 func (m *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }
+func (m *mockUserRepo) GetByEmail(_ context.Context, _ string) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
 func (m *mockUserRepo) Create(_ context.Context, _ *instance.User) error { return nil }
 func (m *mockUserRepo) UpdateUsername(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
@@ -213,6 +216,9 @@ func (e *errUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, e
 	return nil, e.err
 }
 func (e *errUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
+	return nil, e.err
+}
+func (e *errUserRepo) GetByEmail(_ context.Context, _ string) (*instance.User, error) {
 	return nil, e.err
 }
 func (e *errUserRepo) Create(_ context.Context, _ *instance.User) error { return e.err }

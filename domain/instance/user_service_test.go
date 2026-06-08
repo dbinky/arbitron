@@ -43,8 +43,11 @@ func (r *fakeUserSvcRepo) GetByID(_ context.Context, id uuid.UUID) (*User, error
 func (r *fakeUserSvcRepo) GetBySubject(context.Context, string) (*User, error) {
 	return nil, ErrNotFound
 }
-func (r *fakeUserSvcRepo) Create(context.Context, *User) error                       { return nil }
-func (r *fakeUserSvcRepo) UpdateUsername(context.Context, uuid.UUID, string) error   { return nil }
+func (r *fakeUserSvcRepo) GetByEmail(context.Context, string) (*User, error) {
+	return nil, ErrNotFound
+}
+func (r *fakeUserSvcRepo) Create(context.Context, *User) error                     { return nil }
+func (r *fakeUserSvcRepo) UpdateUsername(context.Context, uuid.UUID, string) error { return nil }
 func (r *fakeUserSvcRepo) List(context.Context) ([]User, error) {
 	r.listCalls++
 	if r.listErr != nil {

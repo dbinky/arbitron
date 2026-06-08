@@ -34,6 +34,22 @@ type AuthConfig struct {
 	RBAC    RBACConfig
 	OIDC    OIDCConfig
 	Session SessionConfig
+	// Edge holds the edge-trusted-SSO settings (auth mode `edge` only).
+	Edge EdgeConfig
+}
+
+// EdgeConfig configures edge-trusted SSO (auth.mode == "edge"). Both fields are
+// REQUIRED when Mode == "edge". No secret lives here: verification uses the
+// edge proxy's PUBLIC signing keys discovered from TeamDomain. See the
+// org-readiness Phase 1 design.
+type EdgeConfig struct {
+	// TeamDomain is the Cloudflare Access team domain, e.g.
+	// "https://acme.cloudflareaccess.com". It is BOTH the JWKS source
+	// (/cdn-cgi/access/certs) and the expected token issuer (iss).
+	TeamDomain string
+	// Audiences is the set of application AUD tag(s) to accept. A token whose
+	// aud is not in this set is rejected.
+	Audiences []string
 }
 
 // RBACConfig configures department-based RBAC (auth mode only). It is the
@@ -78,6 +94,7 @@ type SessionConfig struct {
 const (
 	AuthModeLocal = "local"
 	AuthModeOrg   = "org"
+	AuthModeEdge  = "edge"
 )
 
 // ProfileConfig is the config-file shape of one profile-registry entry. It

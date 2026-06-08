@@ -64,13 +64,17 @@ func defaults() map[string]interface{} {
 		"server.tls.autocertcachedir": "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
-		"auth.mode":                 "local",
-		"auth.bootstrapadmins":      []string{},
-		"auth.oidc.issuerurl":       "",
-		"auth.oidc.clientid":        "",
-		"auth.oidc.clientsecret":    "",
-		"auth.oidc.redirecturl":     "",
-		"auth.oidc.scopes":          []string{"openid", "profile", "email"},
+		"auth.mode":              "local",
+		"auth.bootstrapadmins":   []string{},
+		"auth.oidc.issuerurl":    "",
+		"auth.oidc.clientid":     "",
+		"auth.oidc.clientsecret": "",
+		"auth.oidc.redirecturl":  "",
+		"auth.oidc.scopes":       []string{"openid", "profile", "email"},
+		// Edge-trusted SSO (auth mode "edge" only). No secret here: only the
+		// public team domain + AUD tag(s). Validated fail-fast in validateAuth.
+		"auth.edge.teamdomain":      "",
+		"auth.edge.audiences":       []string{},
 		"auth.session.ttlseconds":   43200, // 12h
 		"auth.session.cookiename":   "arbitron_session",
 		"auth.session.cookiesecure": true,
@@ -249,6 +253,15 @@ tracing:
 #     clientsecret: ""       # REQUIRED in org mode; SECURITY: sensitive, never echoed
 #     redirecturl: ""        # REQUIRED in org mode; = publicbaseurl + "/auth/callback"
 #     scopes: ["openid", "profile", "email"]   # ARBITRON_AUTH_OIDC_SCOPES=openid,groups
+#   edge:                      # auth mode "edge" only (Cloudflare Access / edge-trusted SSO)
+#     teamdomain: ""           # Cloudflare team domain, e.g. "https://acme.cloudflareaccess.com"
+#                              #   It is BOTH the JWKS source and the expected issuer.
+#                              #   REQUIRED in edge mode. Override via ARBITRON_AUTH_EDGE_TEAMDOMAIN
+#     audiences: []            # application AUD tag(s) to accept; a token whose aud is not
+#                              #   listed is rejected. REQUIRED in edge mode.
+#                              #   Override via ARBITRON_AUTH_EDGE_AUDIENCES=aud-one,aud-two
+#                              #   NOTE: no secret here — verification uses the edge proxy's
+#                              #   PUBLIC signing keys discovered from teamdomain.
 #   session:
 #     ttlseconds: 43200      # 12h; floored to the default if non-positive
 #     cookiename: "arbitron_session"
@@ -340,6 +353,17 @@ func Load(configPath string) (*domainconfig.Config, error) {
 			"auth.oidc.scopes": splitCSV(raw),
 		}, "."), nil); err != nil {
 			return nil, fmt.Errorf("loading auth.oidc.scopes: %w", err)
+		}
+	}
+
+	// ARBITRON_AUTH_EDGE_AUDIENCES arrives as a comma string via the env
+	// provider; overlay it as a real slice so it unmarshals into []string
+	// (mirrors the auth.oidc.scopes overlay above).
+	if raw := os.Getenv("ARBITRON_AUTH_EDGE_AUDIENCES"); raw != "" {
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.edge.audiences": splitCSV(raw),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.edge.audiences: %w", err)
 		}
 	}
 
@@ -454,8 +478,20 @@ func validateAuth(cfg *domainconfig.Config) error {
 			return fmt.Errorf("org mode requires OIDC config; missing: %s", strings.Join(missing, ", "))
 		}
 		return nil
+	case domainconfig.AuthModeEdge:
+		var missing []string
+		if strings.TrimSpace(cfg.Auth.Edge.TeamDomain) == "" {
+			missing = append(missing, "auth.edge.teamdomain")
+		}
+		if len(cfg.Auth.Edge.Audiences) == 0 {
+			missing = append(missing, "auth.edge.audiences")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("edge mode requires edge config; missing: %s", strings.Join(missing, ", "))
+		}
+		return nil
 	default:
-		return fmt.Errorf("invalid auth.mode %q (want %q or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg)
+		return fmt.Errorf("invalid auth.mode %q (want %q, %q, or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg, domainconfig.AuthModeEdge)
 	}
 }
 

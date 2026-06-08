@@ -22,6 +22,7 @@ import (
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
+	adaptedge "github.com/arbitron/arbitron/adapter/edge"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
@@ -337,7 +338,26 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		}
 		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
 	}
-	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
+	// Edge mode (org-readiness Phase 1): construct the Cloudflare-Access JWT
+	// verifier from the public team domain + audiences (no secret). New makes the
+	// boot-time discovery call and fails fast on an unreachable/non-compliant team
+	// domain. The middleware is stateless (no session/token repos consulted) and
+	// no Arbitron login routes are mounted — sign-in/out happen at the edge.
+	var authMW *adapthttp.AuthMiddleware
+	if authMode == identity.ModeEdge {
+		edgeVerifier, eerr := adaptedge.New(context.Background(), adaptedge.Config{
+			TeamDomain: cfg.Auth.Edge.TeamDomain,
+			Audiences:  cfg.Auth.Edge.Audiences,
+		})
+		if eerr != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("initialising edge verifier: %w", eerr)
+		}
+		authMW = adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, edgeVerifier, provisioner, userRepo, groupCfg)
+	} else {
+		authMW = adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
+	}
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)

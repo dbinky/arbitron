@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/adapter/sqlite/generated"
 	"github.com/arbitron/arbitron/domain/identity"
@@ -81,6 +82,26 @@ func (r *UserRepo) GetBySubject(ctx context.Context, subject string) (*instance.
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting user by subject: %w", err)
+	}
+	return toDomainUser(row.ID, row.Subject, row.Email, row.Username, row.Role)
+}
+
+func (r *UserRepo) GetByEmail(ctx context.Context, email string) (*instance.User, error) {
+	// SECURITY: an empty email must never match a NULL-email row. In SQL
+	// `email = ''` never matches a NULL row, but we short-circuit defensively so
+	// an empty/absent edge email claim can never resolve any user (mirrors the
+	// GetBySubject empty-input guard).
+	if email == "" {
+		return nil, fmt.Errorf("getting user by email: %w", instance.ErrNotFound)
+	}
+	// The query lower()s the column, so pass an already-lowercased value to make
+	// the comparison case-insensitive (lower(email) = ?).
+	row, err := r.queries.GetUserByEmail(ctx, sql.NullString{String: strings.ToLower(email), Valid: true})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("getting user by email: %w", instance.ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting user by email: %w", err)
 	}
 	return toDomainUser(row.ID, row.Subject, row.Email, row.Username, row.Role)
 }
