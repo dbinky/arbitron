@@ -243,6 +243,52 @@ func TestScheduleRepo_PersistsAcrossReopen(t *testing.T) {
 	assert.Equal(t, "eng", got.Department)
 }
 
+// edge — empty Timezone is normalised to "UTC" by Create and by Update, so
+// the stored value is always a valid IANA zone name.
+func TestScheduleRepo_Create_EmptyTimezoneStoredAsUTC(t *testing.T) {
+	repo, _, creator := newScheduleRepo(t)
+	ctx := context.Background()
+	s := newSchedule(creator)
+	s.Timezone = ""
+	require.NoError(t, repo.Create(ctx, s))
+
+	got, err := repo.Get(ctx, s.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "UTC", got.Timezone, "empty Timezone must normalize to UTC on Create")
+}
+
+func TestScheduleRepo_Update_EmptyTimezoneNormalizesToUTC(t *testing.T) {
+	repo, _, creator := newScheduleRepo(t)
+	ctx := context.Background()
+	s := newSchedule(creator)
+	require.NoError(t, repo.Create(ctx, s))
+
+	s.Timezone = ""
+	require.NoError(t, repo.Update(ctx, s))
+	got, err := repo.Get(ctx, s.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "UTC", got.Timezone, "empty Timezone must normalize to UTC on Update")
+}
+
+// edge — SetLastFired stores RFC3339 (second precision); sub-second components
+// are truncated. The evaluator sets LastFiredAt from the clock's second-aligned
+// tick, but this edge pins the round-trip invariant explicitly.
+func TestScheduleRepo_SetLastFired_SubSecondTruncated(t *testing.T) {
+	repo, _, creator := newScheduleRepo(t)
+	ctx := context.Background()
+	s := newSchedule(creator)
+	require.NoError(t, repo.Create(ctx, s))
+
+	at := time.Date(2026, 6, 8, 9, 0, 0, 999999999, time.UTC) // nanosecond component
+	require.NoError(t, repo.SetLastFired(ctx, s.ID, at))
+
+	got, err := repo.Get(ctx, s.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.LastFiredAt)
+	assert.Equal(t, at.Truncate(time.Second), *got.LastFiredAt,
+		"RFC3339 storage truncates sub-second precision")
+}
+
 func TestScheduleRepo_SatisfiesPort(t *testing.T) {
 	repo, _, creator := newScheduleRepo(t)
 	var port schedule.ScheduleRepository = repo
