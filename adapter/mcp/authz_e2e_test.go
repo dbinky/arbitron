@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/google/uuid"
+	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	"github.com/arbitron/arbitron/adapter/eventbus"
+	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -75,14 +75,16 @@ func (r *authzInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ 
 	return nil
 }
 func (r *authzInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
-func (r *authzInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error         { return nil }
+func (r *authzInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error        { return nil }
 func (r *authzInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
 func (r *authzInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error {
 	return nil
 }
-func (r *authzInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error { return nil }
+func (r *authzInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error {
+	return nil
+}
 func (r *authzInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error {
 	return nil
 }

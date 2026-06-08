@@ -21,8 +21,16 @@ func NewNotificationRepo(db *sql.DB) *NotificationRepo {
 }
 
 func (r *NotificationRepo) Create(ctx context.Context, n *notification.Notification) error {
-	query := `INSERT INTO notifications (id, instance_id, type) VALUES (?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, query, uuidToString(n.ID), uuidToString(n.InstanceID), string(n.Type))
+	// Schedule alerts (schedule_skipped/schedule_missed) have no instance, so a
+	// nil InstanceID is persisted as SQL NULL (the FK would reject the zero
+	// UUID) and the workflow name is carried in the denormalized column instead
+	// of via the instance join.
+	query := `INSERT INTO notifications (id, instance_id, type, workflow_name) VALUES (?, ?, ?, ?)`
+	var instanceID any
+	if n.InstanceID != uuid.Nil {
+		instanceID = uuidToString(n.InstanceID)
+	}
+	_, err := r.db.ExecContext(ctx, query, uuidToString(n.ID), instanceID, string(n.Type), n.WorkflowName)
 	if err != nil {
 		return fmt.Errorf("creating notification: %w", err)
 	}
@@ -38,8 +46,11 @@ func (r *NotificationRepo) List(ctx context.Context, filters notification.ListFi
 		limit = 100
 	}
 
+	// COALESCE the joined instance workflow_name first, falling back to the
+	// notification's denormalized workflow_name (set for instance-less schedule
+	// alerts where the join yields no row).
 	query := `
-SELECT n.id, n.instance_id, COALESCE(i.workflow_name, ''), n.type, n.read, n.dismissed, n.created_at, n.updated_at
+SELECT n.id, COALESCE(n.instance_id, ''), COALESCE(NULLIF(i.workflow_name, ''), n.workflow_name, ''), n.type, n.read, n.dismissed, n.created_at, n.updated_at
 FROM notifications n
 LEFT JOIN instances i ON i.id = n.instance_id`
 
@@ -88,9 +99,12 @@ LEFT JOIN instances i ON i.id = n.instance_id`
 		if err != nil {
 			return nil, fmt.Errorf("converting notification row: %w", err)
 		}
-		instanceID, err := parseUUID(instIDStr)
-		if err != nil {
-			return nil, fmt.Errorf("converting notification row: %w", err)
+		var instanceID uuid.UUID
+		if instIDStr != "" {
+			instanceID, err = parseUUID(instIDStr)
+			if err != nil {
+				return nil, fmt.Errorf("converting notification row: %w", err)
+			}
 		}
 		createdAt, err := parseTime(createdStr)
 		if err != nil {

@@ -72,6 +72,12 @@ var expectedTools = []string{
 	// User/role management (2)
 	"user_list",
 	"user_set_role",
+	// Recurring schedules (5)
+	"schedule_create",
+	"schedule_list",
+	"schedule_get",
+	"schedule_update",
+	"schedule_delete",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {

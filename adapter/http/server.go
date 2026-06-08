@@ -69,9 +69,9 @@ type RouterDeps struct {
 	// (GetDefaultUser today). Distinct from Users, which is the admin
 	// role-management UserService.
 	DismissalUsers instance.UserRepository
-	FileReader FileReader
-	EventBus   engine.EventBus
-	Config     *config.Config
+	FileReader     FileReader
+	EventBus       engine.EventBus
+	Config         *config.Config
 	// Settings is the synchronized owner of runtime-mutable Teams settings. When
 	// nil, NewRouterFromDeps seeds one from Config so the HTTP handler stays the
 	// sole writer; production wiring shares one store across HTTP, MCP, and the
@@ -120,6 +120,10 @@ type RouterDeps struct {
 	// requested departments to the caller's effective set (admins exempt). Nil
 	// disables the route (legacy/tests).
 	DashboardStats dashboardStatsService
+	// ScheduleHandler powers the recurring-schedule management endpoints under
+	// /api/v1/schedules (org-readiness Phase 3). Authz lives in the shared
+	// schedule.Service. Nil disables the routes (legacy/tests).
+	ScheduleHandler *ScheduleHandler
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -275,6 +279,21 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Put("/{name}/files/*", wfHandler.WriteFile)
 			r.Delete("/{name}/files/*", wfHandler.DeleteFile)
 		})
+
+		// Schedule endpoints (org-readiness Phase 3). Static /enable & /disable
+		// are registered alongside the {id} wildcard; chi matches the longer
+		// /{id}/enable pattern over GET /{id}, so ordering is unambiguous here.
+		if d.ScheduleHandler != nil {
+			r.Route("/schedules", func(r chi.Router) {
+				r.Get("/", d.ScheduleHandler.List)
+				r.Post("/", d.ScheduleHandler.Create)
+				r.Get("/{id}", d.ScheduleHandler.Get)
+				r.Put("/{id}", d.ScheduleHandler.Update)
+				r.Delete("/{id}", d.ScheduleHandler.Delete)
+				r.Post("/{id}/enable", d.ScheduleHandler.Enable)
+				r.Post("/{id}/disable", d.ScheduleHandler.Disable)
+			})
+		}
 
 		// Notification endpoints
 		if d.NotifHandler != nil {

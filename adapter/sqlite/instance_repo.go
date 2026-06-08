@@ -343,6 +343,26 @@ WHERE workflow_name = ?
 	return &stats, nil
 }
 
+// HasActiveRun reports whether ownerID has a live instance of workflowName.
+// "Active" is any non-terminal state: queued, running, waiting, or paused. It is
+// the schedule evaluator's collision primitive (org-readiness Phase 3): a due
+// schedule is skipped when its creator already has an active run of the same
+// workflow. It is intentionally a method on the concrete repo (not the
+// instance.InstanceRepository port) so the evaluator's narrow ActiveRunChecker
+// port is satisfied at the composition root without widening the shared port.
+func (r *InstanceRepo) HasActiveRun(ctx context.Context, workflowName string, ownerID uuid.UUID) (bool, error) {
+	const q = `SELECT EXISTS(
+  SELECT 1 FROM instances
+  WHERE workflow_name = ? AND owner_id = ?
+    AND state IN ('queued','running','waiting','paused')
+)`
+	var exists int
+	if err := r.db.QueryRowContext(ctx, q, workflowName, uuidToString(ownerID)).Scan(&exists); err != nil {
+		return false, fmt.Errorf("checking active run for workflow %q owner %q: %w", workflowName, ownerID, err)
+	}
+	return exists != 0, nil
+}
+
 // rowToInstance converts a sqlc-generated Instance row into a domain Instance.
 // This is a package-level function so both InstanceRepo and QueueRepo can use
 // it without hidden coupling between the two repos.

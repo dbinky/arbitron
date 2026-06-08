@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -32,7 +32,7 @@ func workflowSvc(srv *Server) *workflow.WorkflowService {
 // ownerBoundChecker adapts a scope-aware engine.FileReader to the owner-blind
 // workflow.FileChecker by binding the caller's owner.
 type ownerBoundChecker struct {
-	fr    interface {
+	fr interface {
 		FileExists(owner uuid.UUID, workflowName, relativePath string) bool
 	}
 	owner uuid.UUID
