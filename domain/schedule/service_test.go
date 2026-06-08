@@ -206,6 +206,36 @@ func TestService_Get_NotFound(t *testing.T) {
 
 // --- Edge-cases / boundary ---
 
+// error — non-owner non-admin cannot enable or disable another user's schedule.
+func TestService_SetEnabled_NonOwner_Forbidden(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(s)
+	svc := newSvc(repo, &fakeCanTrigger{allow: true})
+	_, err := svc.SetEnabled(ctxAs(user()), s.ID, false) // different user
+	assert.ErrorIs(t, err, schedule.ErrForbidden)
+	assert.True(t, repo.schedules[s.ID].Enabled, "enabled flag must not change on forbidden")
+}
+
+// error — SetEnabled on a non-existent schedule propagates ErrNotFound.
+func TestService_SetEnabled_NotFound(t *testing.T) {
+	repo := newSvcRepo()
+	svc := newSvc(repo, &fakeCanTrigger{allow: true})
+	_, err := svc.SetEnabled(ctxAs(admin()), uuid.New(), true)
+	assert.ErrorIs(t, err, schedule.ErrNotFound)
+}
+
+// input-validation — updating to an invalid cron expression returns ErrInvalidCron.
+func TestService_Update_InvalidCron_Rejected(t *testing.T) {
+	caller := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: caller.UserID, WorkflowName: "report", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(s)
+	svc := newSvc(repo, &fakeCanTrigger{allow: true})
+	bad := "not-a-cron"
+	_, err := svc.Update(ctxAs(caller), s.ID, schedule.UpdateInput{CronExpr: &bad})
+	assert.ErrorIs(t, err, schedule.ErrInvalidCron)
+}
+
 func TestService_Update_CannotChangeCreatorOrID(t *testing.T) {
 	caller := user()
 	origID := uuid.New()

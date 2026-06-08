@@ -167,6 +167,25 @@ func TestScheduleHandler_Get_NotFound_404(t *testing.T) {
 
 // --- Edge-cases / boundary ---
 
+// error — GET /{id} for a schedule owned by another user must return 403.
+func TestScheduleHandler_Get_OtherUser_403(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	repo.m[s.ID] = s
+	requester := testUser() // different user
+	router := schedRouter(t, repo, true, requester)
+	w := do(t, router, http.MethodGet, "/schedules/"+s.ID.String(), "")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// error — POST /{id}/enable on a non-existent schedule returns 404.
+func TestScheduleHandler_Enable_NotFound_404(t *testing.T) {
+	router := schedRouter(t, newSchedTestRepo(), true, testUser())
+	w := do(t, router, http.MethodPost, "/schedules/"+uuid.New().String()+"/enable", "")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
 func TestScheduleHandler_Enable_StaticRouteNotShadowedById(t *testing.T) {
 	repo := newSchedTestRepo()
 	u := testUser()
