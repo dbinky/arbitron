@@ -434,6 +434,50 @@ func TestEvaluator_ExactlyDue_Boundary(t *testing.T) {
 	assert.Equal(t, 1, tr.callCount(), "next == now counts as due")
 }
 
+// error — a corrupt cron row must be skipped in Recover too (same guard as Tick).
+func TestEvaluator_Recover_CorruptCron_SkipsWithoutCrash(t *testing.T) {
+	creator := uuid.New()
+	bad := &schedule.Schedule{
+		ID: uuid.New(), WorkflowName: "bad", CronExpr: "not-a-cron",
+		Timezone: "UTC", CreatorID: creator, Enabled: true,
+		CreatedAt: time.Date(2026, 6, 1, 6, 0, 0, 0, time.UTC),
+	}
+	repo := newEvalRepo(bad)
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)}
+	al := &fakeAlerter{}
+	ev := newEval(t, repo, nil, &fakeActive{}, &fakeIdents{}, al, clk)
+
+	require.NoError(t, ev.Recover(context.Background()), "Recover must not error for a corrupt cron")
+	assert.Equal(t, 0, al.total(), "a corrupt row must not raise an alert")
+}
+
+// edge — exactly one occurrence missed (LastFiredAt right before the scheduled
+// time): Recover advances position and raises one schedule_missed alert.
+func TestEvaluator_Recover_ExactlyOneMissed(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "")
+	// Last fired right before the 09:00 tick, so exactly one occurrence was missed.
+	justBefore := time.Date(2026, 6, 8, 8, 59, 0, 0, time.UTC)
+	s.LastFiredAt = &justBefore
+	repo := newEvalRepo(s)
+	tr := &fakeTrigger{}
+	// Clock shortly after 09:00 — one tick was missed.
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	al := &fakeAlerter{}
+	ev := newEval(t, repo, tr, &fakeActive{}, &fakeIdents{}, al, clk)
+
+	require.NoError(t, ev.Recover(context.Background()))
+	assert.Equal(t, 0, tr.callCount(), "no backfill")
+	assert.Equal(t, 1, al.count(notification.TypeScheduleMissed), "one alert for the one missed occurrence")
+
+	// Next future fire (tomorrow 09:00) must now run normally.
+	clk.mu.Lock()
+	clk.t = time.Date(2026, 6, 9, 9, 30, 0, 0, time.UTC)
+	clk.mu.Unlock()
+	require.NoError(t, ev.Tick(context.Background()))
+	assert.Equal(t, 1, tr.callCount())
+}
+
 // --- Integration ---
 
 func TestEvaluator_StartStop_GracefulShutdown(t *testing.T) {
