@@ -10,8 +10,7 @@ This tracks the review/refinement of **Arbitron org-readiness** (edge auth, plug
 
 These carry-forward items were flagged during the draft implementation and should be reviewed/closed by the loop:
 
-1. **[VERIFIED — no change needed] sqlc workaround for case-insensitive email lookup.** `WHERE lower(email) = ?` with Go-side `strings.ToLower` is correct for the intended scope (ASCII email addresses from Cloudflare Access JWTs). SQLite's `lower()` and Go's `strings.ToLower` agree on all ASCII input. Non-ASCII local parts are not used in practice (RFC 5321 permits them but CF Access never emits them). `generated/users.sql.go` is purely additive — `GetUserByEmail` was added without modifying any pre-existing query. Closed: area #3 Pass 2.
-2. **opencode package + version unpinned.** `opencode-ai` is installed via npm in the Dockerfile and both installers with the version intentionally editable in one place each (ties to `TODO(opencode-binary)` in `adapter/opencode/args.go`). Pin once confirmed, consistently across all three; verify the binary name/CLI contract matches `adapter/opencode/args.go`. Area: #8.
+1. **opencode package + version unpinned.** `opencode-ai` is installed via npm in the Dockerfile and both installers with the version intentionally editable in one place each (ties to `TODO(opencode-binary)` in `adapter/opencode/args.go`). Pin once confirmed, consistently across all three; verify the binary name/CLI contract matches `adapter/opencode/args.go`. Area: #8.
 3. **procenv allowlist vs opencode base-url guard.** Adding `ANTHROPIC_BASE_URL` to the procenv allowlist required scoping opencode's `rejectBaseNames` collision guard to the key var only. Verify no provider's base-url is wrongly rejected and no secret can leak via the allowlist. Areas: #7, #8, #20.
 4. **Migration 013 rebuilds the notifications table.** Makes `notifications.instance_id` nullable, widens the type CHECK for `schedule_skipped`/`schedule_missed`, adds denormalized `workflow_name`. Verify existing notification flows (needs_interaction/failed/completed) are unaffected, the dashboard/repo handle a null instance id, and the down migration faithfully restores the prior shape. Area: #10.
 5. **`schedule_repo.go` is hand-written (sqlc unavailable in the build env).** It mirrors `notification_repo.go`; `queries/schedules.sql` exists for a future `sqlc generate`. Verify the hand-written repo and the `.sql` stay in sync and the row mapping (JSON variables, nullable `last_fired_at`, TEXT-uuid FKs) is correct. Area: #10.
@@ -20,6 +19,12 @@ These carry-forward items were flagged during the draft implementation and shoul
 ---
 
 ## Fixed Previously
+
+- **sqlc workaround for case-insensitive email lookup — verified correct.** `WHERE lower(email) = ?` with Go-side `strings.ToLower` is correct for ASCII email addresses (the intended scope for CF Access JWTs); SQLite's `lower()` and Go's `strings.ToLower` agree on all ASCII input. `generated/users.sql.go` is purely additive. Area: #3 Pass 2.
+
+- **`ResolveByEmail` did not trim the email before use.** The guard checked `strings.TrimSpace(email) == ""` but didn't assign the trimmed value, so a whitespace-padded email would be stored with padding in `Email`/`Username` and a subsequent trimmed-form call would create a duplicate user. Fixed by assigning `email = strings.TrimSpace(email)` before the empty check. Area: #3 Pass 2.
+
+- **`reject()` redirected browser navigations to `/auth/login` in edge mode.** In edge mode, `/auth/login` is not mounted (`authHandler` is nil), so the redirect created an infinite redirect loop for any browser GET to a non-API path without a CF token. Fixed: `reject()` now skips the redirect when `m.mode == identity.ModeEdge`, returning 401 directly. Area: #4 Pass 1.
 
 - **Multi-audience edge verification uses `SkipClientIDCheck: true` — confirmed airtight.** Tests added for: missing `aud` claim in token (go-oidc's SkipClientIDCheck does not bypass `audienceMatches`); empty-string `aud` in token; whitespace-only email claim. Root fix: `adapter/edge.New` now returns an error when the configured audience set is empty after whitespace-stripping, surfacing a misconfiguration at boot rather than silently producing a Verifier that always rejects. All rejection paths confirmed: signature/iss/exp/nbf enforced by go-oidc; manual aud-membership check is the only thing `SkipClientIDCheck` bypasses, and it is fail-closed. Area: #1.
 

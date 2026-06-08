@@ -221,8 +221,13 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 // reject writes 401 for API/MCP/WS callers and redirects browser navigations to
 // the login flow. A request is treated as a browser navigation when it is a GET
 // that Accepts text/html and is not under /api or /mcp.
+// In edge mode there is no Arbitron login page (auth happens at the Cloudflare
+// Access edge), so the redirect is suppressed — returning 401 directly instead.
+// A redirect to /auth/login in edge mode would loop: /auth/login is never
+// mounted when authHandler is nil, so the browser would re-hit the middleware
+// and redirect again indefinitely.
 func (m *AuthMiddleware) reject(w http.ResponseWriter, r *http.Request) {
-	if isBrowserNavigation(r) {
+	if m.mode != identity.ModeEdge && isBrowserNavigation(r) {
 		http.Redirect(w, r, "/auth/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 		return
 	}

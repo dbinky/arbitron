@@ -189,6 +189,27 @@ func TestEdge_BootstrapAdminVsDefaultGroup(t *testing.T) {
 	})
 }
 
+// Edge: a browser GET to a non-API path without the CF token must return 401,
+// NOT a redirect to /auth/login. In edge mode, /auth/login is not mounted
+// (authHandler is nil), so redirecting there would cause an infinite redirect
+// loop in the browser. Auth happens entirely at the edge (Cloudflare Access
+// injects the JWT); Arbitron has no interactive login page in this mode.
+func TestEdge_BrowserNavigationNoToken_401NotRedirect(t *testing.T) {
+	users := newFakeUserRepo()
+	verifier := &fakeEdgeVerifier{email: "alice@corp.example"}
+	mw := newEdgeMW(t, users, verifier)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "browser GET without CF token must be 401, not a login redirect")
+	assert.Empty(t, rec.Header().Get("Location"), "must not redirect to /auth/login (not mounted in edge mode)")
+	assert.False(t, probe.called)
+}
+
 func TestEdge_NewUserAutoProvisioned_Idempotent(t *testing.T) {
 	users := newFakeUserRepo()
 	verifier := &fakeEdgeVerifier{email: "newbie@corp.example"}
