@@ -40,9 +40,5 @@ This tracks the review/refinement of **Arbitron org-readiness** (edge auth, plug
 
 These are explicitly deferred by the spec (`docs/specs/org-readiness-spec.md` non-goals). Do NOT implement them in this loop; listed so they aren't re-raised as gaps:
 
-- Mapping SSO group/department claims to RBAC (everyone is in the default group until a claim is available).
-- A scheduling dashboard UI (Phase 3 ships REST + MCP management only).
-- Multi-instance / distributed scheduling and the datastore changes it implies (single in-process evaluator + embedded SQLite).
-- Schedule "run now" / manual fire convenience.
-- Any new provider adapter beyond the existing families (LiteLLM is reached via the `openai`/`litellm` ids).
+- **Deferred scope (future org work).** SSO group/department→RBAC mapping, a scheduling dashboard UI, multi-instance/distributed scheduling, schedule "run now", and additional provider adapters. Documented for follow-up in [`docs/specs/final-org-gaps.md`](../specs/final-org-gaps.md).
 - **Live/integration paths against real cloud endpoints.** Three paths can only be verified against the real work environment (LiteLLM→AIF model routing, `edge` mode against a real Cloudflare Access tenant, scheduler no-backfill across a real container restart). Moved to a dedicated deployment-verification doc: see [`docs/setup/org-setup-gaps.md`](../setup/org-setup-gaps.md). Areas: #14, #15, #16.
