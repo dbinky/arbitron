@@ -500,7 +500,7 @@ func validateAuth(cfg *domainconfig.Config) error {
 		if strings.TrimSpace(cfg.Auth.Edge.TeamDomain) == "" {
 			missing = append(missing, "auth.edge.teamdomain")
 		}
-		if len(cfg.Auth.Edge.Audiences) == 0 {
+		if !hasNonEmptyEntry(cfg.Auth.Edge.Audiences) {
 			missing = append(missing, "auth.edge.audiences")
 		}
 		if len(missing) > 0 {
@@ -565,6 +565,18 @@ func isLoopbackHost(host string) bool {
 	}
 	if ip := net.ParseIP(h); ip != nil {
 		return ip.IsLoopback()
+	}
+	return false
+}
+
+// hasNonEmptyEntry reports whether ss contains at least one non-whitespace
+// string. Used by validateAuth to catch YAML slices like ["  "] that have
+// non-zero length but carry only whitespace entries.
+func hasNonEmptyEntry(ss []string) bool {
+	for _, s := range ss {
+		if strings.TrimSpace(s) != "" {
+			return true
+		}
 	}
 	return false
 }

@@ -1307,3 +1307,83 @@ func TestLoad_EdgeDefaultsAndEnvOverlay(t *testing.T) {
 		assert.Equal(t, []string{"a", "b"}, cfg.Auth.Edge.Audiences)
 	})
 }
+
+// TestValidateAuth_EdgeMode_WhitespaceFields verifies that edge-mode config
+// fields set to whitespace-only in YAML are rejected at load time with the
+// config key name in the error, not silently passed on to edge.New where the
+// error message would be less actionable. Mirrors the org-mode whitespace check
+// in TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField.
+func TestValidateAuth_EdgeMode_WhitespaceFields(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	t.Run("whitespace-only teamdomain is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"   \"\n    audiences: [\"app-aud\"]\n"
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err, "whitespace-only teamdomain must fail edge mode validation")
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+	})
+
+	t.Run("whitespace-only audiences in YAML are rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		// YAML audiences: ["  "] has length 1 so the len==0 check passes —
+		// we must also check that at least one entry is non-whitespace.
+		yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"https://acme.cloudflareaccess.com\"\n    audiences:\n      - \"  \"\n"
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err, "all-whitespace YAML audiences must fail edge mode validation")
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+}
+
+// TestLoad_AuthMode_Edge_Normalized verifies that "EDGE" (uppercase) normalizes
+// to "edge" the same way "ORG" normalizes to "org" (normalize() lowercases the
+// mode string). Mirrors TestLoad_AuthMode_Normalized for the edge case.
+func TestLoad_AuthMode_Edge_Normalized(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "EDGE"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "edge", cfg.Auth.Mode,
+		`mode "EDGE" must normalize to "edge" the same way "ORG" normalizes to "org"`)
+}
+
+// TestLoad_EdgeMode_IgnoresOIDCConfig verifies that edge mode succeeds even
+// when OIDC config is also present (e.g. a shared config file that switches
+// modes via an env var). Mirrors TestLoad_LocalMode_IgnoresOIDCConfig.
+func TestLoad_EdgeMode_IgnoresOIDCConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+  oidc:
+    issuerurl: "https://idp.example.com"
+    clientid: "some-client"
+    clientsecret: "some-secret"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err, "edge mode must not require or validate OIDC config")
+	require.NotNil(t, cfg)
+	assert.Equal(t, "edge", cfg.Auth.Mode)
+}
