@@ -152,3 +152,44 @@ func TestNextFire_DSTFallBack(t *testing.T) {
 func TestNormalizeTimezone_TrimsWhitespace(t *testing.T) {
 	assert.Equal(t, "America/New_York", schedule.NormalizeTimezone("  America/New_York  "))
 }
+
+// edge — all-whitespace collapses to empty after trim, so NormalizeTimezone
+// returns DefaultTimezone rather than forwarding a blank string to LoadLocation.
+func TestNormalizeTimezone_AllWhitespaceIsUTC(t *testing.T) {
+	assert.Equal(t, "UTC", schedule.NormalizeTimezone("   "))
+}
+
+// edge — NextFire with an empty Timezone field normalises to UTC, identical
+// to an explicit "UTC" timezone.
+func TestNextFire_EmptyTimezoneNormalizesToUTC(t *testing.T) {
+	after := time.Date(2026, 6, 8, 8, 0, 0, 0, time.UTC)
+	withUTC, err := schedule.NextFire(schedule.Schedule{
+		CronExpr: "0 9 * * 1-5",
+		Timezone: "UTC",
+	}, after)
+	require.NoError(t, err)
+
+	withEmpty, err := schedule.NextFire(schedule.Schedule{
+		CronExpr: "0 9 * * 1-5",
+		Timezone: "",
+	}, after)
+	require.NoError(t, err)
+	assert.Equal(t, withUTC, withEmpty, "empty timezone must behave identically to UTC")
+}
+
+// edge — NextFire is strictly after the reference instant; passing a reference
+// that falls exactly on a cron tick must advance to the next occurrence, not
+// return the reference itself. This pins the determinism guarantee the evaluator
+// relies on (no double-fire when LastFiredAt == tick instant).
+func TestNextFire_ExactlyAtTick_AdvancesToNext(t *testing.T) {
+	// Tick instant: Monday 2026-06-08 09:00 UTC.
+	tick := time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC)
+	next, err := schedule.NextFire(schedule.Schedule{
+		CronExpr: "0 9 * * 1-5",
+		Timezone: "UTC",
+	}, tick)
+	require.NoError(t, err)
+	assert.True(t, next.After(tick), "NextFire must be strictly after the reference instant")
+	// Verify the exact next occurrence: Tuesday 2026-06-09 09:00 UTC.
+	assert.Equal(t, time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC), next.UTC())
+}
