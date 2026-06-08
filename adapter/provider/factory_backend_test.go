@@ -136,6 +136,17 @@ func TestFactoryBackend_UpperCase_FailsClosed(t *testing.T) {
 	assert.ErrorIs(t, err, adapterprovider.ErrUnknownBackend)
 }
 
+// robustness — Deps.DefaultAgentBackend is trimmed before dispatch, so a
+// deployment config that supplies "claude-code " (trailing space) still routes
+// correctly rather than falling to ErrUnknownBackend. Both the binding Backend
+// and the Deps default are independently trimmed.
+func TestFactoryBackend_PaddedDefault_Routed(t *testing.T) {
+	f := newBackendFactory(t, " claude-code ")
+	ap, err := f.AgentProviderFor(agentBindingBackend("litellm", ""))
+	require.NoError(t, err)
+	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
+}
+
 // regression — ChatProviderFor ignores Backend (backend has no effect on chat).
 func TestFactoryBackend_ChatIgnoresBackend(t *testing.T) {
 	f := newBackendFactory(t, "claude-code")
