@@ -167,6 +167,31 @@ func TestScheduleHandler_Get_NotFound_404(t *testing.T) {
 
 // --- Edge-cases / boundary ---
 
+// error — PUT /{id} for a schedule owned by another user must return 403.
+func TestScheduleHandler_Update_OtherUser_403(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	repo.m[s.ID] = s
+	requester := testUser() // different user
+	router := schedRouter(t, repo, true, requester)
+	w := do(t, router, http.MethodPut, "/schedules/"+s.ID.String(), `{"cronExpr":"0 10 * * *"}`)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// error — DELETE /{id} for a schedule owned by another user must return 403.
+func TestScheduleHandler_Delete_OtherUser_403(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	repo.m[s.ID] = s
+	requester := testUser() // different user
+	router := schedRouter(t, repo, true, requester)
+	w := do(t, router, http.MethodDelete, "/schedules/"+s.ID.String(), "")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Len(t, repo.m, 1, "schedule must not be deleted on forbidden")
+}
+
 // error — GET /{id} for a schedule owned by another user must return 403.
 func TestScheduleHandler_Get_OtherUser_403(t *testing.T) {
 	repo := newSchedTestRepo()

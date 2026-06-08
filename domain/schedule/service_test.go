@@ -263,6 +263,19 @@ func TestService_Update_WorkflowChange_RechecksCanTrigger(t *testing.T) {
 	assert.ErrorIs(t, err, schedule.ErrNotAuthorizedWorkflow)
 }
 
+// boundary — updating a schedule's department to one the caller does not belong
+// to must be rejected, matching the same check in Create.
+func TestService_Update_DepartmentChange_NotMember(t *testing.T) {
+	caller := user("sales")
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: caller.UserID, WorkflowName: "report", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(s)
+	svc := newSvc(repo, &fakeCanTrigger{allow: true})
+	eng := "eng" // caller is not in "eng"
+	_, err := svc.Update(ctxAs(caller), s.ID, schedule.UpdateInput{Department: &eng})
+	require.Error(t, err)
+	assert.Len(t, repo.schedules, 1, "schedule must not be modified on department rejection")
+}
+
 func TestService_Create_CanTriggerError_Propagates(t *testing.T) {
 	repo := newSvcRepo()
 	svc := newSvc(repo, &fakeCanTrigger{err: errors.New("lookup failed")})
