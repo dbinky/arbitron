@@ -306,3 +306,161 @@ func TestEdgeSlice_BootstrapAdmin_GetsAdminRole(t *testing.T) {
 		"bootstrap admin email must propagate to RoleAdmin through the full edge stack")
 	assert.Equal(t, adminEmail, id.Username)
 }
+
+// --- Pass 2: robustness and spec alignment ---
+
+// TestEdgeSlice_NeverRedirects asserts that edge mode NEVER issues a redirect
+// to /auth/login, even for browser navigations (Accept: text/html GET without
+// a JWT). A redirect would loop: /auth/login is not mounted in edge mode.
+func TestEdgeSlice_NeverRedirects(t *testing.T) {
+	env := newSliceEnv(t, nil)
+
+	// Browser-style navigation: GET, Accept: text/html, no JWT.
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*")
+	rec, _ := env.serve(req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code,
+		"edge mode must return 401 for browser navigations, never redirect to /auth/login")
+	assert.Empty(t, rec.Header().Get("Location"),
+		"edge mode must set no Location header — a redirect would loop")
+}
+
+// TestEdgeSlice_EmailCaseInsensitive asserts that a JWT carrying a mixed-case
+// email resolves to the same persisted user as the lower-cased form. The
+// verifier trims; the provisioner lower-cases at the DB query level — so the
+// same logical address always maps to one row.
+func TestEdgeSlice_EmailCaseInsensitive(t *testing.T) {
+	env := newSliceEnv(t, nil)
+
+	// First request with lower-cased email — creates the user.
+	c1 := env.jwks.validClaims("aud")
+	c1["email"] = "carol@corp.example"
+	rec1, id1 := env.serve(requestWithJWT(env.jwks.sign(t, nil, c1)))
+	require.Equal(t, http.StatusOK, rec1.Code)
+
+	// Second request with mixed-case email — must return the SAME user, not a
+	// duplicate, proving the case-insensitive lookup path through the full stack.
+	c2 := env.jwks.validClaims("aud")
+	c2["email"] = "Carol@Corp.Example"
+	rec2, id2 := env.serve(requestWithJWT(env.jwks.sign(t, nil, c2)))
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	assert.Equal(t, id1.UserID, id2.UserID,
+		"mixed-case email must resolve to the same persisted user as the lower-cased form")
+}
+
+// TestEdgeSlice_BootstrapAdmin_DemotedWhenRemovedFromList verifies that the
+// bootstrap list is config-authoritative: a user previously created as admin
+// is demoted on the next login when their email is absent from the new list.
+func TestEdgeSlice_BootstrapAdmin_DemotedWhenRemovedFromList(t *testing.T) {
+	const adminEmail = "boss@corp.example"
+	jwks := newSliceJWKS(t)
+
+	// Shared real DB so both provisioners see the same user row.
+	db, err := sqlite.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, sqlite.RunMigrations(db))
+
+	groups := identity.GroupConfig{DefaultGroup: "default"}
+	userRepo := sqlite.NewUserRepo(db)
+
+	v, err := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: jwks.issuer, Audiences: []string{"aud"},
+	})
+	require.NoError(t, err)
+
+	// First middleware: adminEmail is in the bootstrap list → RoleAdmin on create.
+	prov1 := instance.NewProvisioner(userRepo, []string{adminEmail}, groups)
+	mw1 := adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, v, prov1, userRepo, groups)
+
+	c := jwks.validClaims("aud")
+	c["email"] = adminEmail
+	raw := jwks.sign(t, nil, c)
+
+	var firstID identity.Identity
+	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstID, _ = identity.FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	rec1 := httptest.NewRecorder()
+	mw1.Handler(downstream).ServeHTTP(rec1, httptest.NewRequest(http.MethodGet, "/", nil))
+	// First request goes without a JWT; use the JWT-signed request.
+	rec1 = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(adapthttp.CfAccessJWTHeader, raw)
+	mw1.Handler(downstream).ServeHTTP(rec1, req)
+	require.Equal(t, http.StatusOK, rec1.Code)
+	assert.Equal(t, identity.RoleAdmin, firstID.Role, "first login with bootstrap email must yield admin")
+
+	// Second middleware: bootstrap list is empty → same user must be demoted.
+	prov2 := instance.NewProvisioner(userRepo, nil, groups)
+	mw2 := adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, v, prov2, userRepo, groups)
+
+	var secondID identity.Identity
+	downstream2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondID, _ = identity.FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	raw2 := jwks.sign(t, nil, c)
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set(adapthttp.CfAccessJWTHeader, raw2)
+	rec2 := httptest.NewRecorder()
+	mw2.Handler(downstream2).ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	assert.Equal(t, identity.RoleUser, secondID.Role,
+		"bootstrap admin must be demoted when email is removed from the bootstrap list")
+	assert.Equal(t, firstID.UserID, secondID.UserID,
+		"both logins must resolve to the same persisted user")
+}
+
+// TestEdgeSlice_DownstreamNeverCalledOnRejection asserts that the downstream
+// handler is never invoked when any token-level failure triggers a 401. This is
+// the auth-boundary correctness check: no tool runs if auth fails.
+func TestEdgeSlice_DownstreamNeverCalledOnRejection(t *testing.T) {
+	env := newSliceEnv(t, nil)
+
+	badRequests := []struct {
+		name string
+		req  *http.Request
+	}{
+		{"missing header", httptest.NewRequest(http.MethodGet, "/", nil)},
+		{"malformed JWT", requestWithJWT("bad")},
+		{
+			"expired",
+			func() *http.Request {
+				c := env.jwks.validClaims("aud")
+				c["exp"] = time.Now().Add(-time.Hour).Unix()
+				return requestWithJWT(env.jwks.sign(t, nil, c))
+			}(),
+		},
+	}
+
+	for _, tc := range badRequests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			})
+			rec := httptest.NewRecorder()
+			env.mw.Handler(downstream).ServeHTTP(rec, tc.req)
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.False(t, called, "downstream must not be called when JWT verification fails")
+		})
+	}
+}
+
+// TestEdgeSlice_NBFToken_401 asserts that a not-yet-valid token (nbf in the
+// future) is rejected with 401. This was missing from the Pass 1 failure table.
+func TestEdgeSlice_NBFToken_401(t *testing.T) {
+	env := newSliceEnv(t, nil)
+	c := env.jwks.validClaims("aud")
+	c["nbf"] = time.Now().Add(time.Hour).Unix()
+	c["exp"] = time.Now().Add(2 * time.Hour).Unix()
+	rec, _ := env.serve(requestWithJWT(env.jwks.sign(t, nil, c)))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "not-yet-valid token must be rejected 401")
+}
