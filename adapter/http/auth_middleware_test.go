@@ -466,6 +466,15 @@ func TestAuthMiddleware_Local_IgnoresBearerToken(t *testing.T) {
 		"local mode must inject the local admin regardless of any bearer token")
 }
 
+// Stop is a no-op when the middleware was constructed in local or edge mode
+// (no toucher goroutine is started). Safe to call unconditionally from main.go
+// regardless of the configured auth mode.
+func TestAuthMiddleware_Stop_NoToucher_SafeNoOp(t *testing.T) {
+	users := newFakeUserRepo()
+	local := NewAuthMiddleware(identity.ModeLocal, "s", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
+	assert.NotPanics(t, func() { local.Stop() }, "Stop on local-mode middleware (no toucher) must not panic")
+}
+
 // TestAuthMiddleware_Local_DefaultUserError_ServerError verifies that if
 // GetDefaultUser returns an error (e.g. DB unavailable at startup), local mode
 // fails closed with a 500: this is a server-state failure (we cannot establish
