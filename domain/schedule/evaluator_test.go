@@ -387,6 +387,40 @@ func TestEvaluator_Recover_FutureNextFire_NoAlert(t *testing.T) {
 	assert.False(t, advanced, "future next-fire must not advance position")
 }
 
+// error — a schedule with a corrupt cron expression (could happen if the DB
+// row was written outside the management surface) must be skipped without
+// crashing the loop; the other schedules in the same tick must still fire.
+func TestEvaluator_CorruptCron_SkipsWithoutCrash(t *testing.T) {
+	creator := uuid.New()
+	bad := &schedule.Schedule{
+		ID: uuid.New(), WorkflowName: "bad", CronExpr: "not-a-cron",
+		Timezone: "UTC", CreatorID: creator, Enabled: true,
+		CreatedAt: time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC),
+	}
+	good := dueSchedule(creator, "")
+	repo := newEvalRepo(bad, good)
+	tr := &fakeTrigger{}
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	ev := newEval(t, repo, tr, &fakeActive{}, &fakeIdents{}, &fakeAlerter{}, clk)
+
+	require.NoError(t, ev.Tick(context.Background()), "Tick must not return an error for a corrupt cron")
+	assert.Equal(t, 1, tr.callCount(), "the valid schedule must still fire")
+}
+
+// error — an error from HasActiveRun (e.g. DB failure) logs and skips the
+// occurrence without crashing the loop.
+func TestEvaluator_ActiveRunCheckError_SkipsWithoutCrash(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "")
+	repo := newEvalRepo(s)
+	tr := &fakeTrigger{}
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	ev := newEval(t, repo, tr, &fakeActive{err: errors.New("db down")}, &fakeIdents{}, &fakeAlerter{}, clk)
+
+	require.NoError(t, ev.Tick(context.Background()))
+	assert.Equal(t, 0, tr.callCount(), "active-run error must skip the occurrence, not fire")
+}
+
 func TestEvaluator_ExactlyDue_Boundary(t *testing.T) {
 	creator := uuid.New()
 	s := dueSchedule(creator, "")

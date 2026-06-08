@@ -2,6 +2,7 @@ package schedule_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -72,6 +73,59 @@ func TestScheduleAlerter_NilExternalNotifier_OK(t *testing.T) {
 	s := schedule.Schedule{ID: uuid.New(), WorkflowName: "wf"}
 	require.NoError(t, al.Alert(context.Background(), s, notification.TypeScheduleMissed))
 	require.Len(t, repo.created, 1)
+}
+
+// A nil notification repo is a no-op (mirrors the engine's nil-notifications
+// guard). Alert must return nil without panicking.
+func TestScheduleAlerter_NilRepo_NoOp(t *testing.T) {
+	al := schedule.NewScheduleAlerter(nil, nil, nil)
+	err := al.Alert(context.Background(), schedule.Schedule{ID: uuid.New(), WorkflowName: "wf"}, notification.TypeScheduleSkipped)
+	assert.NoError(t, err)
+}
+
+// External notifier failures are best-effort: Alert must return nil even when
+// the external notifier returns an error.
+func TestScheduleAlerter_ExternalNotifierFailure_NotPropagated(t *testing.T) {
+	repo := &recordingNotifRepo{}
+	ext := &failingExternal{}
+	al := schedule.NewScheduleAlerter(repo, ext, nil)
+	err := al.Alert(context.Background(), schedule.Schedule{ID: uuid.New(), WorkflowName: "wf"}, notification.TypeScheduleSkipped)
+	assert.NoError(t, err, "external notifier failure must not be propagated")
+	assert.Len(t, repo.created, 1, "notification must still be persisted")
+}
+
+// A notification repo failure is fatal: Alert must propagate the error so the
+// evaluator can decide whether to log or retry.
+func TestScheduleAlerter_RepoFailure_Propagated(t *testing.T) {
+	repo := &failingNotifRepo{}
+	al := schedule.NewScheduleAlerter(repo, nil, nil)
+	err := al.Alert(context.Background(), schedule.Schedule{ID: uuid.New(), WorkflowName: "wf"}, notification.TypeScheduleSkipped)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repo error")
+}
+
+// --- helpers for alerter error tests ---
+
+type failingExternal struct{}
+
+func (e *failingExternal) Notify(ctx context.Context, n *notification.Notification) error {
+	return errors.New("external error")
+}
+
+type failingNotifRepo struct{}
+
+func (r *failingNotifRepo) Create(ctx context.Context, n *notification.Notification) error {
+	return errors.New("repo error")
+}
+func (r *failingNotifRepo) List(ctx context.Context, f notification.ListFilters) ([]notification.Notification, error) {
+	return nil, nil
+}
+func (r *failingNotifRepo) CountUnread(ctx context.Context, ownerID *uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (r *failingNotifRepo) MarkAllRead(ctx context.Context, ownerID *uuid.UUID) error { return nil }
+func (r *failingNotifRepo) Dismiss(ctx context.Context, id uuid.UUID, ownerID *uuid.UUID) error {
+	return nil
 }
 
 var _ schedule.Alerter = (*schedule.ScheduleAlerter)(nil)
