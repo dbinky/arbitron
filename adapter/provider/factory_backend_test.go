@@ -94,6 +94,19 @@ func TestFactoryBackend_Unknown_FailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "gpt-cli")
 }
 
+// edge — empty backend + empty deployment default → ErrUnknownBackend.
+// The executor's all-empty chain leaves binding.Backend = ""; if the
+// composition root also wires an empty DefaultAgentBackend the factory must
+// fail closed rather than silently running without a backend. This test
+// exercises the bottom of the precedence chain: all three sources (node,
+// profile, default) are unset.
+func TestFactoryBackend_EmptyBackendEmptyDefault_FailsClosed(t *testing.T) {
+	f := newBackendFactory(t, "")
+	_, err := f.AgentProviderFor(agentBindingBackend("litellm", ""))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnknownBackend)
+}
+
 // error — claude-code arm with no ClaudeAgent configured returns a clear error.
 func TestFactoryBackend_ClaudeCode_NilAdapter(t *testing.T) {
 	f := adapterprovider.NewFactory(adapterprovider.Deps{DefaultAgentBackend: "claude-code"})
