@@ -138,6 +138,13 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 			// not log the raw token; the verifier already wrapped a safe error.
 			return identity.Identity{}, errNoCredential
 		}
+		if email == "" {
+			// Defense-in-depth: a conforming EdgeVerifier never returns ("", nil),
+			// but if a broken implementation does, the empty email is a credential
+			// failure (401) not a server fault (500) — don't let it reach the
+			// provisioner where ErrInvalidClaims would surface as a 500.
+			return identity.Identity{}, errNoCredential
+		}
 		user, perr := m.provisioner.ResolveByEmail(r.Context(), email)
 		if perr != nil {
 			// Provisioning/DB failure is a SERVER fault, not an auth denial:

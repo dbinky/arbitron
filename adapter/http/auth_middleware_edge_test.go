@@ -210,6 +210,67 @@ func TestEdge_BrowserNavigationNoToken_401NotRedirect(t *testing.T) {
 	assert.False(t, probe.called)
 }
 
+// Edge: a broken EdgeVerifier that returns ("", nil) must map to 401, not 500.
+// The EdgeVerifier interface contract says a nil-error return always carries a
+// non-empty email, but this guard prevents a misbehaving implementation from
+// leaking through to ResolveByEmail("") → ErrInvalidClaims → 500. An empty
+// identity claim is always a credential failure (401), never a server fault.
+func TestEdge_EmptyEmailFromVerifier_401(t *testing.T) {
+	users := newFakeUserRepo()
+	// Verifier returns ("", nil) — contract violation but possible with a broken impl.
+	verifier := &fakeEdgeVerifier{email: "", err: nil}
+	mw := newEdgeMW(t, users, verifier) // real provisioner: ResolveByEmail("") → ErrInvalidClaims
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.Header.Set(cfHeader, "token.with.empty.email.claim")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "empty email from verifier must yield 401, not 500")
+	assert.False(t, probe.called)
+}
+
+// Edge: a Bearer-only request (no CF header) must be rejected 401 in edge mode.
+// Edge mode short-circuits before the Bearer branch; the token repos are nil
+// and must never be consulted.
+func TestEdge_BearerOnlyToken_401(t *testing.T) {
+	users := newFakeUserRepo()
+	verifier := &fakeEdgeVerifier{email: "alice@corp.example"}
+	mw := newEdgeMW(t, users, verifier)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.Header.Set("Authorization", "Bearer arb_test_abc123")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "Bearer-only request must be 401 in edge mode (CF header required)")
+	assert.False(t, probe.called)
+	assert.Equal(t, 0, verifier.calls, "verifier must not be called when CF header is absent")
+}
+
+// Edge: a ListDepartments failure during enrich must NOT fail the request — the
+// user is still authenticated with their led departments + default-group fallback.
+// A transient DB read error in enrich must never lock a user out.
+func TestEdge_ListDepartmentsFailure_StillAuthed(t *testing.T) {
+	users := newFakeUserRepo()
+	users.listDeptErr = errors.New("department store down")
+	verifier := &fakeEdgeVerifier{email: "alice@corp.example"}
+	mw := newEdgeMW(t, users, verifier)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.Header.Set(cfHeader, "good.jwt")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "ListDepartments failure must not reject the request")
+	require.True(t, probe.called)
+	assert.Equal(t, "alice@corp.example", probe.id.Username)
+	assert.NotEmpty(t, probe.id.Departments, "fallback to default group when stored departments unavailable")
+}
+
 func TestEdge_NewUserAutoProvisioned_Idempotent(t *testing.T) {
 	users := newFakeUserRepo()
 	verifier := &fakeEdgeVerifier{email: "newbie@corp.example"}
