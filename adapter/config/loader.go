@@ -457,6 +457,9 @@ func normalize(cfg *domainconfig.Config) {
 	}
 	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
 	cfg.Auth.Mode = strings.ToLower(strings.TrimSpace(cfg.Auth.Mode))
+	// Trim the edge teamdomain so a YAML value with surrounding whitespace
+	// reaches edge.New as a clean URL rather than causing a confusing parse error.
+	cfg.Auth.Edge.TeamDomain = strings.TrimSpace(cfg.Auth.Edge.TeamDomain)
 	if cfg.Auth.Mode == "" {
 		cfg.Auth.Mode = domainconfig.AuthModeLocal
 	}

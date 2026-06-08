@@ -1387,3 +1387,52 @@ auth:
 	require.NotNil(t, cfg)
 	assert.Equal(t, "edge", cfg.Auth.Mode)
 }
+
+// TestLoad_EdgeMode_TeamDomainTrimmed verifies that a YAML teamdomain value with
+// surrounding whitespace is normalized by Load so the caller (edge.New) always
+// receives a clean URL. Without normalization, a padded teamdomain would pass
+// validateAuth (non-empty after TrimSpace) but then fail at edge.New with a
+// confusing "invalid URL" error instead of a clear config error.
+func TestLoad_EdgeMode_TeamDomainTrimmed(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Note the spaces around the URL value.
+	yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"  https://acme.cloudflareaccess.com  \"\n    audiences: [\"app-aud\"]\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain,
+		"teamdomain must be trimmed so edge.New receives a clean URL, not a padded one")
+}
+
+// TestLoad_AuthMode_FromEnv_EdgeMode is the edge-mode parallel of the org-mode
+// env tests in TestLoad_AuthMode_FromEnv: it verifies that (a) an env-only edge
+// deployment can boot (complete config), and (b) ARBITRON_AUTH_MODE=edge without
+// the edge config still fails fast at load (not silently degraded).
+func TestLoad_AuthMode_FromEnv_EdgeMode(t *testing.T) {
+	t.Run("env switches to edge with complete edge config", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "app-aud")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"app-aud"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("env switches to edge but missing edge config fails fast", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		// No teamdomain or audiences → must fail at Load, not silently at runtime.
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "edge mode requires edge config")
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+}
