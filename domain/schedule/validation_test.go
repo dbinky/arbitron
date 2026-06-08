@@ -81,10 +81,12 @@ func TestValidate_RejectsInvalidTimezone(t *testing.T) {
 // --- Error-handling ---
 
 func TestNextFire_InvalidCronReturnsError(t *testing.T) {
+	// time.Time{} (zero value): the function errors before reaching the after
+	// parameter so no wall-clock dependency is introduced.
 	next, err := schedule.NextFire(schedule.Schedule{
 		CronExpr: "not a cron",
 		Timezone: "UTC",
-	}, time.Now())
+	}, time.Time{})
 	assert.ErrorIs(t, err, schedule.ErrInvalidCron)
 	assert.True(t, next.IsZero())
 }
@@ -93,7 +95,7 @@ func TestNextFire_InvalidTimezoneReturnsError(t *testing.T) {
 	next, err := schedule.NextFire(schedule.Schedule{
 		CronExpr: "0 9 * * 1-5",
 		Timezone: "Mars/Phobos",
-	}, time.Now())
+	}, time.Time{})
 	assert.ErrorIs(t, err, schedule.ErrInvalidTimezone)
 	assert.True(t, next.IsZero())
 }
