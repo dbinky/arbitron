@@ -559,6 +559,77 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 	})
 }
 
+// Error: UpdateRole failure during live demotion on the EDGE path must abort
+// login. A removed-from-bootstrap admin whose demotion write fails must not
+// complete the login with stale admin privileges (mirrors
+// TestResolve_DemotionFailurePropagates for the OIDC Resolve path).
+func TestResolveByEmail_DemotionFailurePropagates(t *testing.T) {
+	dbErr := errors.New("role store down")
+	repo := newFakeProvUserRepo()
+	id := uuid.New()
+	e := "ex-admin@corp.example"
+	repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
+	repo.updateRoleErr = dbErr
+
+	// Bootstrap list no longer includes this email → demotion required.
+	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+	_, err := p.ResolveByEmail(context.Background(), e)
+	if !errors.Is(err, dbErr) {
+		t.Errorf("expected wrapped role-store error on failed edge demotion, got %v", err)
+	}
+}
+
+// Edge: when the existing user already has the correct role, UpdateRole must NOT
+// be called — no spurious write on every login. Mirrors
+// TestResolve_ExistingAdminStillOnList_NoRoleWrite for the edge path.
+func TestResolveByEmail_ExistingRoleUnchanged_NoRoleWrite(t *testing.T) {
+	t.Run("admin still on bootstrap list — no write", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		id := uuid.New()
+		e := "still-admin@corp.example"
+		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
+		p := NewProvisioner(repo, []string{e}, identity.GroupConfig{DefaultGroup: "default"})
+
+		u, err := p.ResolveByEmail(context.Background(), e)
+		require.NoError(t, err)
+		assert.Equal(t, identity.RoleAdmin, u.Role)
+		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
+	})
+
+	t.Run("non-bootstrap user — no write", func(t *testing.T) {
+		repo := newFakeProvUserRepo()
+		id := uuid.New()
+		e := "plain@corp.example"
+		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleUser}
+		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+		u, err := p.ResolveByEmail(context.Background(), e)
+		require.NoError(t, err)
+		assert.Equal(t, identity.RoleUser, u.Role)
+		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
+	})
+}
+
+// Edge: a mixed-case email is stored with original casing on first create; a
+// second call with a different-casing variant finds the same user (no duplicate
+// create) — the case-insensitive lookup contract at provisioner level.
+func TestResolveByEmail_CaseMixedEmailRoundTrip(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	ctx := context.Background()
+
+	u1, err := p.ResolveByEmail(ctx, "Alice@Corp.Example")
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.createCalls, "first call must create the user")
+	require.NotNil(t, u1.Email)
+	assert.Equal(t, "Alice@Corp.Example", *u1.Email, "stored email must preserve original casing")
+
+	u2, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, 1, repo.createCalls, "second call with different case must NOT create a duplicate")
+	assert.Equal(t, u1.ID, u2.ID, "both calls must resolve to the same user ID")
+}
+
 // Edge: an existing admin still on the bootstrap list must NOT call UpdateRole
 // (the role is unchanged — avoid a spurious write on every login).
 func TestResolve_ExistingAdminStillOnList_NoRoleWrite(t *testing.T) {

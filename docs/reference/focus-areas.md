@@ -15,7 +15,7 @@ A review pass is only checked when the checklist produces a passing result for t
 |---|---|---|---|---|
 | 1 | Edge JWT verifier (`adapter/edge/verifier.go` — go-oidc discovery, signature/iss/aud-set/exp/nbf, email extraction, JWKS cache, fail-fast) | [x] | [x] | Done |
 | 2 | Edge auth config + validation (`domain/config/config.go`, `adapter/config/loader.go` — `auth.edge.{teamdomain,audiences}`, `validateAuth`, env overlay, YAML example) | [x] | [x] | Done |
-| 3 | Email provisioning (`domain/instance/provisioner.go` `ResolveByEmail`, `UserRepository.GetByEmail`, `adapter/sqlite/user_repo.go` + query — create-on-first-sight, bootstrap admin vs default group, case-insensitivity) | [ ] | [ ] | |
+| 3 | Email provisioning (`domain/instance/provisioner.go` `ResolveByEmail`, `UserRepository.GetByEmail`, `adapter/sqlite/user_repo.go` + query — create-on-first-sight, bootstrap admin vs default group, case-insensitivity) | [x] | [ ] | |
 | 4 | Edge auth middleware + wiring (`adapter/http/auth_middleware.go` edge branch, `NewEdgeAuthMiddleware`, `cmd/arbitron/main.go` — stateless, fail-closed 401 vs 500, no login routes) | [ ] | [ ] | |
 | 5 | Backend axis (`domain/workflow/workflow.go` `NodeConfig.Backend` + `validation.go`; `domain/provider/provider.go` Profile/ResolvedBinding; `adapter/provider/static.go`; `domain/engine/executor_agent.go` precedence) | [ ] | [ ] | |
 | 6 | Factory backend dispatch (`adapter/provider/factory.go` `AgentProviderFor`, `Deps.DefaultAgentBackend`, `ErrUnknownBackend`) | [ ] | [ ] | |
