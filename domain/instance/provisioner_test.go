@@ -559,6 +559,35 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 	})
 }
 
+// Edge: a whitespace-padded email is normalized at the provisioner boundary.
+// ResolveByEmail trims before any lookup or storage — the stored Email and
+// Username are clean, and a second call (padded or trimmed) resolves the SAME
+// user without creating a duplicate.
+func TestResolveByEmail_WhitespacePaddedEmail_Normalized(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	ctx := context.Background()
+
+	u1, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.createCalls)
+	require.NotNil(t, u1.Email)
+	assert.Equal(t, "alice@corp.example", *u1.Email, "stored email must be trimmed")
+	assert.Equal(t, "alice@corp.example", u1.Username, "username must also be trimmed")
+
+	// Padded re-call must reuse the same user (no duplicate create).
+	u2, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	require.NoError(t, err)
+	assert.Equal(t, 1, repo.createCalls, "padded re-call must NOT create a duplicate")
+	assert.Equal(t, u1.ID, u2.ID)
+
+	// Trimmed form also resolves to the same user.
+	u3, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	require.NoError(t, err)
+	assert.Equal(t, 1, repo.createCalls, "trimmed form must NOT create a duplicate")
+	assert.Equal(t, u1.ID, u3.ID)
+}
+
 // Error: UpdateRole failure during live demotion on the EDGE path must abort
 // login. A removed-from-bootstrap admin whose demotion write fails must not
 // complete the login with stale admin privileges (mirrors

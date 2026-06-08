@@ -151,7 +151,8 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 // middleware can distinguish a 500 (we could not check) from a 401 (no
 // credential).
 func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, error) {
-	if strings.TrimSpace(email) == "" {
+	email = strings.TrimSpace(email)
+	if email == "" {
 		return nil, ErrInvalidClaims
 	}
 	wantRole := identity.RoleUser
