@@ -44,8 +44,33 @@ teardown() {
   run download_binary
   [ "$status" -eq 0 ]
   local perms
-  perms="$(stat -f '%Lp' "$(layout_bin)/arbitron" 2>/dev/null || stat -c '%a' "$(layout_bin)/arbitron")"
+  perms="$(file_mode "$(layout_bin)/arbitron")"
   [ "$perms" = "755" ]
+}
+
+@test "download_binary works called directly under functrace and leaves no temp dir" {
+  # Regression: fetch_binary_to once used a RETURN trap for temp-dir cleanup.
+  # bats runs tests with functrace (set -T), under which a RETURN trap is
+  # inherited by nested calls (verify_download/verify_signature) and fires
+  # BEFORE mv — deleting the temp dir and breaking the install. Calling
+  # download_binary directly (NOT via `run`) exercises that functrace context.
+  export ARBITRON_VERSION="2.0.0"
+  export ARBITRON_UNAME_S=Linux ARBITRON_UNAME_M=x86_64
+  # Isolate TMPDIR so the leftover-temp-dir assertion only sees what THIS test
+  # creates (fetch_binary_to mktemps under ${TMPDIR:-/tmp}).
+  export TMPDIR="$TEST_SANDBOX/bin-tmp"
+  mkdir -p "$TMPDIR"
+  install_fake curl '
+    for a in "$@"; do prev="$last"; last="$a"; if [ "$prev" = "-o" ]; then dest="$a"; fi; done
+    case "$*" in
+      *SHA256SUMS*) printf "%s  arbitron_2.0.0_linux_amd64\n" "$(printf BIN | shasum -a 256 | cut -d" " -f1)" > "$dest" ;;
+      *)            printf "BIN" > "$dest" ;;
+    esac
+  '
+  download_binary
+  [ -x "$(layout_bin)/arbitron" ]
+  run find "$TMPDIR" -maxdepth 1 -name 'arbitron-bin.*' -type d
+  [ -z "$output" ]
 }
 
 @test "download_binary aborts on checksum mismatch and installs nothing" {

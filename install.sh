@@ -849,8 +849,29 @@ arbitron_release_base() {
 # no artifact at <dest>) on any download or checksum failure. Shared with the
 # system install (install_binary_system) so the verify contract is identical.
 fetch_binary_to() {
-  local dest="$1"
-  local version os arch base artifact tmpdir sumsfile tmpbin
+  local dest="$1" tmpdir rc
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-bin.XXXXXX")" || return 1
+  # Clean the temp dir up on a SIGINT/SIGTERM mid-download (Ctrl-C during a slow
+  # curl). We deliberately do NOT use a RETURN trap: callers (notably bats) may
+  # run under functrace (set -T), where a RETURN trap is inherited by the nested
+  # verify_download/verify_signature calls and fires on THEIR return — deleting
+  # the temp dir before the binary is moved into place. Cleanup is centralised
+  # here on the single path every return in _fetch_binary_to funnels back to.
+  trap 'rm -rf "${tmpdir:-}"' INT TERM
+  _fetch_binary_to "$dest" "$tmpdir"
+  rc=$?
+  trap - INT TERM
+  rm -rf "$tmpdir"
+  return "$rc"
+}
+
+# _fetch_binary_to <dest> <tmpdir> — resolve version/os/arch, download the
+# artifact + SHA256SUMS into <tmpdir>, run the mandatory fail-closed verify gate,
+# and place the verified binary at <dest>. Returns non-zero on any failure;
+# temp-dir cleanup is the caller's (fetch_binary_to) responsibility.
+_fetch_binary_to() {
+  local dest="$1" tmpdir="$2"
+  local version os arch base artifact sumsfile tmpbin
   version="$(arbitron_resolve_version)" || return 1
   os="$(detect_os)"   || return 1
   arch="$(detect_arch)" || return 1
@@ -860,14 +881,6 @@ fetch_binary_to() {
   local ostoken="$os"
   [ "$os" = "macos" ] && ostoken="darwin"
   artifact="$(arbitron_artifact_name "$version" "$ostoken" "$arch")"
-
-  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-bin.XXXXXX")" || return 1
-  # Single cleanup covering every exit path, including a SIGINT/SIGTERM mid-curl
-  # (Ctrl-C during a slow download). The RETURN trap fires when this function
-  # returns; it is cleared (trap - RETURN) inside the handler so it cannot fire
-  # again on a CALLER's return — bash RETURN traps are not function-local. The
-  # ${tmpdir:-} guard keeps a stray fire harmless under `set -u`.
-  trap 'rm -rf "${tmpdir:-}"; trap - RETURN' RETURN
 
   # Fetch SHA256SUMS (+ optional signature material) into the temp dir.
   sumsfile="$tmpdir/SHA256SUMS"
@@ -899,7 +912,6 @@ fetch_binary_to() {
 
   mkdir -p "$(dirname "$dest")"
   mv "$tmpbin" "$dest"
-  # tmpdir cleanup handled by the RETURN trap above.
 }
 
 # download_binary — local install: fetch the verified binary into
