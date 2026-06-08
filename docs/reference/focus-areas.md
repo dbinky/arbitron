@@ -25,7 +25,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 10 | Schedule persistence (`adapter/sqlite/schedule_repo.go`, `migrations/013_schedules.*`, `queries/schedules.sql`, instance `HasActiveRun`, notifications schema change) | [x] | [x] | Done |
 | 11 | Schedule evaluator (`domain/schedule/evaluator.go`, `alerter.go` — injected clock, fire-as-creator, collision skip, no-backfill recovery, main.go lifecycle) | [x] | [x] | Done |
 | 12 | Schedule management surface (`domain/schedule/service.go` authz, `adapter/http/schedule_handler.go`, `adapter/mcp/tools_schedule.go` — CRUD/enable-disable, own-vs-admin, can-trigger gate) | [x] | [x] | Done |
-| 13 | Auth mode coherence (`domain/identity` + `adapter/http/auth_middleware.go` — local/org/edge selection; org & local remain unchanged and green) | [ ] | [ ] | |
+| 13 | Auth mode coherence (`domain/identity` + `adapter/http/auth_middleware.go` — local/org/edge selection; org & local remain unchanged and green) | [x] | [ ] | |
 | 14 | Vertical slice: edge request → identity (header → verify → provision → enriched identity → authorized request) | [ ] | [ ] | |
 | 15 | Vertical slice: agent node → backend → provider → LiteLLM (node/profile backend → resolver → factory → adapter → endpoint+key) | [ ] | [ ] | |
 | 16 | Vertical slice: schedule due → fire-as-creator → stamped instance → queue (cron tick → evaluator → TriggerWithDepartment → enqueue) | [ ] | [ ] | |

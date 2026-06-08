@@ -293,6 +293,10 @@ func TestSurface_ModeWiring(t *testing.T) {
 	users := newFakeUserRepo()
 	assert.Equal(t, identity.ModeLocal, identity.ModeFromString("local"))
 	assert.Equal(t, identity.ModeOrg, identity.ModeFromString("org"))
+	assert.Equal(t, identity.ModeEdge, identity.ModeFromString("edge"),
+		`ModeFromString("edge") must return ModeEdge (used by main.go to select NewEdgeAuthMiddleware)`)
+	assert.Equal(t, identity.ModeLocal, identity.ModeFromString(""),
+		"unknown/empty mode defaults to local (safe default)")
 
 	// A local middleware injects an admin without any session repo.
 	mw := NewAuthMiddleware(identity.ModeFromString("local"), "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})

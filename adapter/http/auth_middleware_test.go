@@ -447,6 +447,25 @@ func TestAuthMiddleware_Local_NeverReadsCookie(t *testing.T) {
 	assert.Equal(t, identity.RoleAdmin, probe.id.Role, "local mode ignores cookies entirely")
 }
 
+// Local mode ignores a bearer token and authenticates as the local admin
+// regardless. The early return in resolve() means the bearer branch is never
+// reached, preventing an accidental auth bypass or token downgrade.
+func TestAuthMiddleware_Local_IgnoresBearerToken(t *testing.T) {
+	users := newFakeUserRepo()
+	mw := NewAuthMiddleware(identity.ModeLocal, "arbitron_session", nil, nil, users, identity.GroupConfig{DefaultGroup: "default"})
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req.Header.Set("Authorization", "Bearer arb_fake_token123")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, probe.called)
+	assert.Equal(t, identity.RoleAdmin, probe.id.Role,
+		"local mode must inject the local admin regardless of any bearer token")
+}
+
 // TestAuthMiddleware_Local_DefaultUserError_ServerError verifies that if
 // GetDefaultUser returns an error (e.g. DB unavailable at startup), local mode
 // fails closed with a 500: this is a server-state failure (we cannot establish
