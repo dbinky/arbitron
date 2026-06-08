@@ -8,13 +8,7 @@ This tracks the review/refinement of **Arbitron org-readiness** (edge auth, plug
 
 ## Open Issues
 
-These carry-forward items were flagged during the draft implementation and should be reviewed/closed by the loop:
-
-1. **opencode package + version unpinned.** `opencode-ai` is installed via npm in the Dockerfile and both installers with the version intentionally editable in one place each (ties to `TODO(opencode-binary)` in `adapter/opencode/args.go`). Pin once confirmed, consistently across all three; verify the binary name/CLI contract matches `adapter/opencode/args.go`. Area: #8.
-3. **procenv allowlist vs opencode base-url guard.** Adding `ANTHROPIC_BASE_URL` to the procenv allowlist required scoping opencode's `rejectBaseNames` collision guard to the key var only. Verify no provider's base-url is wrongly rejected and no secret can leak via the allowlist. Area: #20.
-4. **Migration 013 rebuilds the notifications table — VERIFIED, admin-only schedule alert visibility documented.** Existing flows (needs_interaction/failed/completed) unaffected. Schedule alerts persist with NULL instance_id and denormalized workflow_name. Admin List (nil ownerID) includes schedule alerts; user-scoped List/CountUnread/MarkAllRead/Dismiss exclude them — this is by design (the notifications table has no creator_id for schedule alerts; "operators" per spec). Down migration faithfully restores prior shape (drops schedule-type rows, restores NOT NULL instance_id and 3-value CHECK). Tests in `notification_repo_test.go`. Area: #10.
-5. **`schedule_repo.go` vs `queries/schedules.sql` — VERIFIED IN SYNC.** All six queries match (INSERT/SELECT/UPDATE/DELETE column lists and parameter binding). Row mapping (JSON variables, nullable last_fired_at, TEXT-uuid FKs) correct. Area: #10.
-6. **Live/integration paths unverified.** No automated test exercises: (a) claude-code or opencode against a real LiteLLM endpoint (Anthropic `/v1/messages` + OpenAI `/v1/chat/completions`) → Azure AI Foundry; (b) `edge` mode against a real Cloudflare Access deployment (real JWKS + AUD); (c) the evaluator under real wall-clock and a real container restart. Add a smoke test or CI/VM run, or document the manual verification procedure. Areas: #14, #15, #16.
+*(none — all carry-forward items resolved or deferred below)*
 
 ---
 
@@ -30,8 +24,15 @@ These carry-forward items were flagged during the draft implementation and shoul
 
 - **Both `agentEnv` (claudecli) and `opencodeEnv` produced duplicate base-url entries when operator env set + binding overrides.** `procenv.BaseEnv()` passes through an operator-set allowlisted var (e.g. `ANTHROPIC_BASE_URL`); when the binding also provides a `BaseURL`, the old code appended a second entry — which one wins is implementation-defined. Fixed by moving `RemoveVar` to `procenv` (shared utility) and calling `procenv.RemoveVar(env, baseURLVar)` before the append in both adapters. Test: `TestAgentEnv_BindingBaseURLOverridesOperatorEnv` (claudecli), `TestOpencodeEnv_AnthropicBindingBaseURLDeduplicatesOperatorEnv` (opencode). Areas: #7 Pass 1, #8 Pass 1.
 
-
 - **Multi-audience edge verification uses `SkipClientIDCheck: true` — confirmed airtight.** Tests added for: missing `aud` claim in token (go-oidc's SkipClientIDCheck does not bypass `audienceMatches`); empty-string `aud` in token; whitespace-only email claim. Root fix: `adapter/edge.New` now returns an error when the configured audience set is empty after whitespace-stripping, surfacing a misconfiguration at boot rather than silently producing a Verifier that always rejects. All rejection paths confirmed: signature/iss/exp/nbf enforced by go-oidc; manual aud-membership check is the only thing `SkipClientIDCheck` bypasses, and it is fail-closed. Area: #1.
+
+- **Migration 013 rebuilds the notifications table — verified, admin-only schedule alert visibility documented.** Existing flows (needs_interaction/failed/completed) unaffected. Schedule alerts persist with NULL instance_id and denormalized workflow_name. Admin List (nil ownerID) includes schedule alerts; user-scoped List/CountUnread/MarkAllRead/Dismiss exclude them — this is by design (the notifications table has no creator_id for schedule alerts; "operators" per spec). Down migration faithfully restores prior shape (drops schedule-type rows, restores NOT NULL instance_id and 3-value CHECK). Tests in `notification_repo_test.go`. Area: #10.
+
+- **`schedule_repo.go` vs `queries/schedules.sql` — verified in sync.** All six queries match (INSERT/SELECT/UPDATE/DELETE column lists and parameter binding). Row mapping (JSON variables, nullable last_fired_at, TEXT-uuid FKs) correct. Area: #10.
+
+- **procenv allowlist vs opencode base-url guard — verified correct.** `rejectBaseNames` in `adapter/opencode/env.go` is correctly scoped to key vars only (not base-url vars). The key var (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) must never be on the base allowlist — this is asserted by `TestOpencodeEnv_AnthropicBaseURLNotGuardedKeyIs` and `TestOpencodeEnv_BaseNameCollisionRejected`. The base-url guard uses `RemoveVar` before appending a per-binding override, which correctly strips any operator-inherited allowlisted value before the binding value is set. No secret leaks via the allowlist path. Area: #20.
+
+- **opencode package name and minimum version confirmed.** Package is `npm install -g opencode-ai`; minimum compatible version is `0.4.0` (modern SST `run -m` contract, `--allow-all-tools` / `--allowed-tools` flags). This is the runtime gate in `adapter/opencode/version.go minOpencodeVersion` and now also the installer gate in `install.ps1 MinVersion`. Removed `TODO(opencode-binary)` placeholders from `args.go` and `version.go`. All three install surfaces (Dockerfile, install.sh, install.ps1) use `opencode-ai`; to pin an exact release append `@<version>` (e.g. `opencode-ai@0.4.0`). Area: #8.
 
 ---
 
@@ -44,3 +45,4 @@ These are explicitly deferred by the spec (`docs/specs/org-readiness-spec.md` no
 - Multi-instance / distributed scheduling and the datastore changes it implies (single in-process evaluator + embedded SQLite).
 - Schedule "run now" / manual fire convenience.
 - Any new provider adapter beyond the existing families (LiteLLM is reached via the `openai`/`litellm` ids).
+- **Live/integration paths against real cloud endpoints.** No automated test exercises: (a) claude-code or opencode against a real LiteLLM endpoint (Anthropic `/v1/messages` + OpenAI `/v1/chat/completions`) → Azure AI Foundry; (b) `edge` mode against a real Cloudflare Access deployment (real JWKS + AUD); (c) the evaluator under real wall-clock and a real container restart. These require a live deployment environment and are out of scope for the automated review loop. Manual procedure: deploy to the staging container + CF Access tenant, run an agent workflow on each backend, create and wait for a scheduled run, restart the container and confirm no-backfill. Areas: #14, #15, #16.

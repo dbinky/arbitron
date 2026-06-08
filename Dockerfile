@@ -34,10 +34,9 @@ FROM alpine:3.20
 # selected at runtime (claude-code | opencode). Both are installed via npm.
 #
 # OPENCODE PIN (single source of truth — keep in sync with install.sh
-# OPENCODE_NPM_PKG and install.ps1 OpencodeNpmPackage). Append @<version> to pin
-# an exact release once confirmed; left unpinned because the exact published
-# version is environment-dependent. NOTE(opencode-binary): verify the package
-# name/version against the installed modern binary (adapter/opencode/args.go).
+# OPENCODE_NPM_PKG and install.ps1 OpencodeNpmPackage). Package: opencode-ai;
+# runtime gate: >= 0.4.0 (adapter/opencode/version.go minOpencodeVersion).
+# Change `opencode-ai` to `opencode-ai@<version>` to pin an exact release.
 RUN apk add --no-cache ca-certificates bash coreutils nodejs npm git github-cli make \
  && npm install -g @anthropic-ai/claude-code \
  && npm install -g opencode-ai \

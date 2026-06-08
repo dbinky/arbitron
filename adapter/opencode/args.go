@@ -14,15 +14,13 @@ import (
 var ErrModelRequired = errors.New("opencode: Model is required for run -m routing")
 
 // Flag spellings for the modern (SST) opencode `run` permission/tool surface.
+// Verified against opencode-ai >= 0.4.0 (npm install -g opencode-ai).
 //
 // LOCALIZED HERE so a binary re-verification can adjust spelling in ONE place
 // without touching buildArgs' structure (a binary change is a one-line edit).
 // permissionAllowAllFlag expresses the open-by-default (skip-permissions) stance
 // — the modern equivalent of claudecli's --dangerously-skip-permissions;
 // toolScopeFlag narrows the tool set to a comma-joined allowlist.
-//
-// TODO(opencode-binary): confirm these flag spellings against the installed
-// modern opencode (`opencode run --help`) before release.
 const (
 	runSubcommand          = "run"
 	permissionAllowAllFlag = "--allow-all-tools"

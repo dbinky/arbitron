@@ -590,11 +590,11 @@ function Get-DependencySpec {
         # Dockerfile, install.sh, and this script.
         #
         # OPENCODE PIN (single source of truth - keep in sync with the Dockerfile
-        # and install.sh OPENCODE_NPM_PKG). Append @<version> to NpmPackage to
-        # pin an exact release once confirmed; left unpinned because the exact
-        # published version is environment-dependent.
+        # and install.sh OPENCODE_NPM_PKG). MinVersion mirrors the runtime gate in
+        # adapter/opencode/version.go (minOpencodeVersion = "0.4.0") so the
+        # installer rejects a legacy binary before it reaches the runtime check.
         [pscustomobject]@{
-            Name = 'opencode'; Command = 'opencode'; MinVersion = '0.0.0'
+            Name = 'opencode'; Command = 'opencode'; MinVersion = '0.4.0'
             WingetId = $null; VersionArgs = @('--version'); Optional = $false
             ViaNpm = $true; NpmPackage = 'opencode-ai'
         }

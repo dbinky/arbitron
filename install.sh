@@ -43,11 +43,9 @@ CLAUDE_NPM_PKG="@anthropic-ai/claude-code"
 # ARBITRON_INSTALL_OPENCODE=no to opt out.
 #
 # OPENCODE PIN (single source of truth — keep in sync with the Dockerfile and
-# install.ps1 OpencodeNpmPackage). Append @<version> to pin an exact release once
-# the target version is confirmed; left unpinned here because the exact published
-# version is environment-dependent. NOTE(opencode-binary): verify the package
-# name/version against the installed modern binary (see adapter/opencode/args.go
-# TODO(opencode-binary)).
+# install.ps1 OpencodeNpmPackage). The package name is `opencode-ai`; the runtime
+# gate in adapter/opencode/version.go requires >= 0.4.0. Set
+# OPENCODE_NPM_PKG=opencode-ai@<version> to pin an exact release.
 OPENCODE_NPM_PKG="${OPENCODE_NPM_PKG:-opencode-ai}"
 
 # launchd label / systemd unit name.
