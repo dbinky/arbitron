@@ -277,3 +277,118 @@ func TestBackendSlice_AllEmptyBackend_ExecuteErrors(t *testing.T) {
 	)
 	require.Error(t, execErr, "all-empty backend chain must fail closed")
 }
+
+// --- Pass 2: robustness and spec alignment -----------------------------------
+
+// TestBackendSlice_SubscriptionPath_NoEnvInjection asserts that the subscription
+// path (no ConnectionRef → no endpoint or key) reaches the claude-cli runner
+// without ANTHROPIC_BASE_URL or ANTHROPIC_API_KEY in the subprocess env. The
+// agent runs against the local Claude subscription only.
+func TestBackendSlice_SubscriptionPath_NoEnvInjection(t *testing.T) {
+	// No ConnectionRef, no store needed.
+	resolver := newSliceResolver(t, []provider.Profile{subscriptionProfile("sub")}, nil)
+
+	res, execErr, claudeR, _ := runSlice(
+		t, sliceNode("sub", "claude-code"), resolver, "claude-code",
+	)
+	require.NoError(t, execErr)
+	require.NotNil(t, res)
+	require.True(t, claudeR.called, "subscription path must still reach the claude-cli runner")
+
+	joined := strings.Join(claudeR.spec.Env, "\n")
+	assert.NotContains(t, joined, "ANTHROPIC_BASE_URL",
+		"subscription path must not inject a base URL override")
+	assert.NotContains(t, joined, "ANTHROPIC_API_KEY",
+		"subscription path must not inject a key — the subprocess uses the local subscription")
+}
+
+// TestBackendSlice_RevealKeyFailure_ExecuteErrors asserts that a RevealKey
+// failure propagates as an Execute error and no subprocess is launched. This is
+// the fail-closed credential invariant: a partial-env launch (baseURL injected
+// but key absent or errored) must never happen.
+func TestBackendSlice_RevealKeyFailure_ExecuteErrors(t *testing.T) {
+	store := newFakeConnectionStore()
+	conn := provider.Connection{Name: "conn-fail", Provider: "litellm", BaseURL: "https://litellm.internal:4000"}
+	store.put(conn, "sk")
+	store.revealErr = fmt.Errorf("vault: key unavailable")
+
+	profiles := []provider.Profile{{
+		Alias:         "agent-fail",
+		Kind:          provider.ProfileKindAgent,
+		ConnectionRef: conn.Name,
+		Model:         "gpt-4o",
+		Backend:       "claude-code",
+	}}
+	resolver := newSliceResolver(t, profiles, store)
+
+	_, execErr, claudeR, _ := runSlice(
+		t, sliceNode("agent-fail", ""), resolver, "claude-code",
+	)
+	require.Error(t, execErr, "RevealKey failure must cause Execute to error")
+	assert.False(t, claudeR.called,
+		"no subprocess must be launched after a RevealKey failure (no partial-env launch)")
+}
+
+// TestBackendSlice_OpencodeWithLiteLLM_UsesOpenAIVars asserts that the opencode
+// path with a LiteLLM connection carries OPENAI_BASE_URL + OPENAI_API_KEY in
+// the subprocess env — NOT ANTHROPIC_*. This is the end-to-end verification of
+// opencode's provider-ID mapping (litellm → openai) reaching the real adapter
+// through the full executor + factory chain.
+func TestBackendSlice_OpencodeWithLiteLLM_UsesOpenAIVars(t *testing.T) {
+	profile, store := litellmProfile("agent-opencode-litellm", "opencode")
+	resolver := newSliceResolver(t, []provider.Profile{profile}, store)
+
+	_, execErr, claudeR, opencodeR := runSlice(
+		t, sliceNode("agent-opencode-litellm", ""), resolver, "opencode",
+	)
+	require.NoError(t, execErr)
+	assert.False(t, claudeR.called)
+
+	// The second call to opencodeR is the actual run (calls[1] = run after probe).
+	require.GreaterOrEqual(t, opencodeR.calls, 2,
+		"opencode runner must be called twice: version probe + run")
+	joined := strings.Join(opencodeR.spec.Env, "\n")
+	assert.Contains(t, joined, "OPENAI_BASE_URL=https://litellm.internal:4000",
+		"litellm binding must map to OPENAI_BASE_URL in the opencode subprocess env")
+	assert.Contains(t, joined, "OPENAI_API_KEY=sk-litellm-key",
+		"litellm key must appear as OPENAI_API_KEY (not ANTHROPIC_API_KEY) in opencode env")
+	assert.NotContains(t, joined, "ANTHROPIC_API_KEY",
+		"ANTHROPIC_API_KEY must not appear in the opencode subprocess env for a litellm binding")
+}
+
+// TestBackendSlice_BackendOrthogonal_AnthropicAPI_RoutesViaClaudeCLI asserts
+// that even with provider="anthropic-api" (a chat-tier provider), a claude-code
+// backend routes to the claude-cli agent adapter — never to a native HTTP
+// adapter. Backend and provider are INDEPENDENT axes.
+func TestBackendSlice_BackendOrthogonal_AnthropicAPI_RoutesViaClaudeCLI(t *testing.T) {
+	store := newFakeConnectionStore()
+	conn := provider.Connection{
+		Name:     "conn-anthropic",
+		Provider: "anthropic-api",
+		BaseURL:  "https://api.anthropic.com",
+	}
+	store.put(conn, "sk-anthropic")
+
+	profiles := []provider.Profile{{
+		Alias:         "anthropic-api-agent",
+		Kind:          provider.ProfileKindAgent,
+		ConnectionRef: conn.Name,
+		Model:         "claude-opus-4-8",
+		Backend:       "claude-code",
+	}}
+	resolver := newSliceResolver(t, profiles, store)
+
+	res, execErr, claudeR, opencodeR := runSlice(
+		t, sliceNode("anthropic-api-agent", ""), resolver, "claude-code",
+	)
+	require.NoError(t, execErr)
+	require.NotNil(t, res)
+
+	assert.True(t, claudeR.called,
+		"anthropic-api provider with claude-code backend must route to the claude-cli adapter")
+	assert.Equal(t, 0, opencodeR.calls,
+		"opencode runner must not be invoked regardless of the provider value")
+	joined := strings.Join(claudeR.spec.Env, "\n")
+	assert.Contains(t, joined, "ANTHROPIC_BASE_URL=https://api.anthropic.com",
+		"anthropic-api base URL must be injected via the per-binding claude-cli env")
+}
