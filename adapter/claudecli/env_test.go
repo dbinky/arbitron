@@ -200,6 +200,52 @@ func TestAgentEnv_BindingBaseURLOverridesOperatorEnv(t *testing.T) {
 		"binding URL must override the operator-set parent env URL")
 }
 
+// security — a key-only binding (BaseURL empty, key present) does NOT strip
+// an operator-set ANTHROPIC_BASE_URL from the base env: the operator URL is the
+// intended gateway endpoint when no per-call override is provided. This verifies
+// the removeEnvVar call is correctly scoped to the binding.BaseURL != "" path.
+func TestAgentEnv_KeyOnlyInheritsOperatorBaseURL(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://operator-default:4000")
+
+	b := provider.ResolvedBinding{
+		RevealKey: func(context.Context) (string, error) { return "sk-org-key", nil },
+	}
+	env, err := agentEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	// Operator URL passes through (not stripped).
+	urlVal, ok := envValue(env, "ANTHROPIC_BASE_URL")
+	require.True(t, ok, "operator ANTHROPIC_BASE_URL must pass through for key-only binding")
+	assert.Equal(t, "https://operator-default:4000", urlVal)
+
+	// Per-call key is injected.
+	keyVal, ok := envValue(env, "ANTHROPIC_API_KEY")
+	require.True(t, ok)
+	assert.Equal(t, "sk-org-key", keyVal)
+}
+
+// boundary — removeEnvVar must not strip a var whose name is a prefix of the
+// target name (e.g. ANTHROPIC_BASE_URL_EXTRA must survive removal of
+// ANTHROPIC_BASE_URL because its key is not "ANTHROPIC_BASE_URL").
+func TestRemoveEnvVar_PrefixNotStripped(t *testing.T) {
+	input := []string{
+		"ANTHROPIC_BASE_URL=https://real",
+		"ANTHROPIC_BASE_URL_EXTRA=https://extra",
+		"HOME=/root",
+	}
+	got := removeEnvVar(input, "ANTHROPIC_BASE_URL")
+	// The real URL entry is gone.
+	for _, e := range got {
+		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
+			t.Fatalf("removeEnvVar left %q in the result", e)
+		}
+	}
+	// The prefix-extended entry and HOME survive.
+	joined := strings.Join(got, "\n")
+	assert.Contains(t, joined, "ANTHROPIC_BASE_URL_EXTRA=https://extra")
+	assert.Contains(t, joined, "HOME=/root")
+}
+
 // error — a RevealKey failure aborts RunAgent before the runner is invoked
 // (no partial-env launch).
 func TestAgentAdapter_RevealErrorAbortsBeforeLaunch(t *testing.T) {

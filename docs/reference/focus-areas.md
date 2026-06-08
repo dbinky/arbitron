@@ -19,7 +19,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 4 | Edge auth middleware + wiring (`adapter/http/auth_middleware.go` edge branch, `NewEdgeAuthMiddleware`, `cmd/arbitron/main.go` — stateless, fail-closed 401 vs 500, no login routes) | [x] | [x] | Done |
 | 5 | Backend axis (`domain/workflow/workflow.go` `NodeConfig.Backend` + `validation.go`; `domain/provider/provider.go` Profile/ResolvedBinding; `adapter/provider/static.go`; `domain/engine/executor_agent.go` precedence) | [x] | [x] | Done |
 | 6 | Factory backend dispatch (`adapter/provider/factory.go` `AgentProviderFor`, `Deps.DefaultAgentBackend`, `ErrUnknownBackend`) | [x] | [x] | Done |
-| 7 | claude-cli endpoint/key injection (`adapter/claudecli/env.go`, `agent_adapter.go`, `NewAgentAdapterForBinding`; `adapter/procenv/procenv.go` allowlist) | [x] | [ ] | |
+| 7 | claude-cli endpoint/key injection (`adapter/claudecli/env.go`, `agent_adapter.go`, `NewAgentAdapterForBinding`; `adapter/procenv/procenv.go` allowlist) | [x] | [x] | Done |
 | 8 | opencode LiteLLM mapping + CLI install (`adapter/opencode/provider_id.go`, `env.go` guard; `Dockerfile`, `install.sh`, `install.ps1` install both CLIs) | [ ] | [ ] | |
 | 9 | Schedule domain (`domain/schedule/` schedule.go/validation.go/ports.go — entity, cron `NextFire`, timezone normalize, validation) | [ ] | [ ] | |
 | 10 | Schedule persistence (`adapter/sqlite/schedule_repo.go`, `migrations/013_schedules.*`, `queries/schedules.sql`, instance `HasActiveRun`, notifications schema change) | [ ] | [ ] | |
