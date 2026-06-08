@@ -325,3 +325,17 @@ func TestVerify_WhitespaceEmail(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, email)
 }
+
+// TestVerify_EmailTrimmed verifies that the verifier returns the email claim
+// with leading/trailing whitespace stripped. The provisioner lowercases but does
+// not trim, so a space-padded email returned by the verifier would fail to match
+// an existing DB record and create a duplicate user instead.
+func TestVerify_EmailTrimmed(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifier(t, h, "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["email"] = "  alice@corp.example  "
+	email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+	require.NoError(t, err)
+	assert.Equal(t, "alice@corp.example", email, "email must be returned trimmed")
+}

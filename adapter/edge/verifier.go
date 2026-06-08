@@ -86,10 +86,11 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (string, error) 
 	if err := tok.Claims(&c); err != nil {
 		return "", fmt.Errorf("edge: decoding claims: %w", err)
 	}
-	if strings.TrimSpace(c.Email) == "" {
+	email := strings.TrimSpace(c.Email)
+	if email == "" {
 		return "", fmt.Errorf("edge: missing email claim")
 	}
-	return c.Email, nil
+	return email, nil
 }
 
 // audienceMatches reports whether any value in the token's aud claim is in the
