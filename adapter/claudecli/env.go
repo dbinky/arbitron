@@ -3,7 +3,6 @@ package claudecli
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -67,7 +66,7 @@ func agentEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, 
 		// the binding's URL. Without this, the subprocess would see two entries
 		// and which one wins is implementation-defined. The binding value is
 		// authoritative: it is the per-call gateway the node was configured for.
-		env = removeEnvVar(env, anthropicBaseURLVar)
+		env = procenv.RemoveVar(env, anthropicBaseURLVar)
 		env = append(env, anthropicBaseURLVar+"="+binding.BaseURL)
 	}
 	if key != "" {
@@ -76,15 +75,3 @@ func agentEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, 
 	return env, nil
 }
 
-// removeEnvVar returns a copy of env with all entries whose key matches name
-// removed. Preserves order. Allocates a new slice to avoid mutating the input.
-func removeEnvVar(env []string, name string) []string {
-	prefix := name + "="
-	out := make([]string, 0, len(env))
-	for _, e := range env {
-		if !strings.HasPrefix(e, prefix) {
-			out = append(out, e)
-		}
-	}
-	return out
-}

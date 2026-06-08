@@ -54,6 +54,22 @@ func StandardBinDirs() []string {
 	return dirs
 }
 
+// RemoveVar returns a copy of env with all entries whose key equals name
+// removed. Preserves order. Allocates a new slice to avoid mutating the input.
+// Used by adapters to strip an operator-inherited allowlisted var (e.g.
+// ANTHROPIC_BASE_URL) before appending a per-call binding override, so the
+// subprocess sees exactly one entry rather than two with undefined precedence.
+func RemoveVar(env []string, name string) []string {
+	prefix := name + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // BaseEnv returns the allowlist-filtered copy of the current process
 // environment, with PATH augmented by StandardBinDirs. This is the safe base
 // for subprocesses.

@@ -224,20 +224,20 @@ func TestAgentEnv_KeyOnlyInheritsOperatorBaseURL(t *testing.T) {
 	assert.Equal(t, "sk-org-key", keyVal)
 }
 
-// boundary — removeEnvVar must not strip a var whose name is a prefix of the
-// target name (e.g. ANTHROPIC_BASE_URL_EXTRA must survive removal of
+// boundary — procenv.RemoveVar must not strip a var whose name is a prefix of
+// the target name (e.g. ANTHROPIC_BASE_URL_EXTRA must survive removal of
 // ANTHROPIC_BASE_URL because its key is not "ANTHROPIC_BASE_URL").
-func TestRemoveEnvVar_PrefixNotStripped(t *testing.T) {
+func TestRemoveVar_PrefixNotStripped(t *testing.T) {
 	input := []string{
 		"ANTHROPIC_BASE_URL=https://real",
 		"ANTHROPIC_BASE_URL_EXTRA=https://extra",
 		"HOME=/root",
 	}
-	got := removeEnvVar(input, "ANTHROPIC_BASE_URL")
+	got := procenv.RemoveVar(input, "ANTHROPIC_BASE_URL")
 	// The real URL entry is gone.
 	for _, e := range got {
 		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
-			t.Fatalf("removeEnvVar left %q in the result", e)
+			t.Fatalf("RemoveVar left %q in the result", e)
 		}
 	}
 	// The prefix-extended entry and HOME survive.

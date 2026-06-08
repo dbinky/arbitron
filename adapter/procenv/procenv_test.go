@@ -112,6 +112,35 @@ func TestStandardBinDirs_HomeFirstWhenSet(t *testing.T) {
 	assert.Contains(t, dirs, "/usr/local/bin")
 }
 
+// RemoveVar removes all entries matching the exact key, preserves order, and
+// does not mutate the input slice. Prefix-extended names (e.g.
+// ANTHROPIC_BASE_URL_OTHER) survive removal of ANTHROPIC_BASE_URL.
+func TestRemoveVar(t *testing.T) {
+	t.Run("removes matching entry", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"ANTHROPIC_BASE_URL=https://a", "HOME=/root"}, "ANTHROPIC_BASE_URL")
+		assert.Equal(t, []string{"HOME=/root"}, got)
+	})
+	t.Run("removes all occurrences", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"X=1", "X=2", "Y=3"}, "X")
+		assert.Equal(t, []string{"Y=3"}, got)
+	})
+	t.Run("prefix-extended name survives", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"ANTHROPIC_BASE_URL=a", "ANTHROPIC_BASE_URL_OTHER=b"}, "ANTHROPIC_BASE_URL")
+		assert.Equal(t, []string{"ANTHROPIC_BASE_URL_OTHER=b"}, got)
+	})
+	t.Run("no match returns copy", func(t *testing.T) {
+		in := []string{"HOME=/root"}
+		got := procenv.RemoveVar(in, "MISSING")
+		assert.Equal(t, in, got)
+		// Must not be the same slice.
+		assert.NotSame(t, &in[0], &got[0])
+	})
+	t.Run("empty input", func(t *testing.T) {
+		got := procenv.RemoveVar(nil, "X")
+		assert.Empty(t, got)
+	})
+}
+
 func TestBaseEnv_ReturnedSliceIsIndependent(t *testing.T) {
 	t.Setenv("HOME", "/home/test")
 	env := procenv.BaseEnv()

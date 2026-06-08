@@ -513,6 +513,46 @@ func TestOpencodeEnv_NilRevealKey_Errors(t *testing.T) {
 	assert.Nil(t, env, "no env must be produced when RevealKey is nil")
 }
 
+// security — ANTHROPIC_BASE_URL is allowlisted (non-secret endpoint), so it
+// is NOT guarded by rejectBaseNames. The guard is scoped to the key var only.
+// This test pins that contract: the anthropic keyVar is not a base name (guard
+// would catch it if ever added), and the baseURLVar IS a base name (allowed,
+// not rejected — the binding's per-call value overrides the inherited one).
+func TestOpencodeEnv_AnthropicBaseURLNotGuardedKeyIs(t *testing.T) {
+	keyVar, baseURLVar, ok := providerEnvVars("anthropic")
+	require.True(t, ok)
+	// Key var must NOT be a base name (guard would fire if it were ever allowlisted).
+	assert.False(t, procenv.IsBaseName(keyVar), "ANTHROPIC_API_KEY must not be in base allowlist")
+	// Base-url var IS a base name (allowlisted non-secret endpoint); rejectBaseNames
+	// is never called with it — this verifies that the guard targets only keyVar.
+	assert.True(t, procenv.IsBaseName(baseURLVar), "ANTHROPIC_BASE_URL must be in base allowlist (non-secret)")
+	// Confirm rejectBaseNames(keyVar) passes — if ANTHROPIC_API_KEY were ever
+	// added to the allowlist this would fail, catching the misconfiguration.
+	require.NoError(t, rejectBaseNames(keyVar))
+}
+
+// security — when the operator has ANTHROPIC_BASE_URL set in the parent env
+// (it is allowlisted) and the anthropic binding also provides a BaseURL, the
+// final env must have exactly ONE ANTHROPIC_BASE_URL entry (the binding's value).
+// A duplicate would leave precedence undefined in the subprocess.
+func TestOpencodeEnv_AnthropicBindingBaseURLDeduplicatesOperatorEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://operator-default:4000")
+
+	b := bindingWithKey("anthropic", "https://binding-override:9000", "sk", nil)
+	env, err := opencodeEnv(context.Background(), b)
+	require.NoError(t, err)
+
+	var vals []string
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok && k == "ANTHROPIC_BASE_URL" {
+			vals = append(vals, v)
+		}
+	}
+	require.Len(t, vals, 1, "exactly one ANTHROPIC_BASE_URL entry; got %v", vals)
+	assert.Equal(t, "https://binding-override:9000", vals[0],
+		"binding URL must override the operator-set parent env URL")
+}
+
 // Error — an injected var name that collides with the base allowlist is
 // rejected. Uses a synthetic provider entry registered for the test.
 func TestOpencodeEnv_BaseNameCollisionRejected(t *testing.T) {

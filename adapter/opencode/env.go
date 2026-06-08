@@ -93,8 +93,12 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 		return nil, fmt.Errorf("opencode: provider %q produced an empty key", binding.Provider)
 	}
 	// An empty BaseURL omits the var entirely so opencode falls back to its own
-	// default endpoint rather than seeing an empty override.
+	// default endpoint rather than seeing an empty override. When the base-url
+	// var is allowlisted (ANTHROPIC_BASE_URL), an operator-set parent value may
+	// already be in procenv.BaseEnv(); strip it before appending the per-call
+	// binding override so the subprocess sees exactly one entry.
 	if binding.BaseURL != "" && entry.baseURLVar != "" {
+		env = procenv.RemoveVar(env, entry.baseURLVar)
 		env = append(env, entry.baseURLVar+"="+binding.BaseURL)
 	}
 	if key == "" && binding.BaseURL == "" {
