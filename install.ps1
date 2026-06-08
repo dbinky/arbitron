@@ -68,15 +68,23 @@ $script:ArbitronNonInteractive = [bool]$Yes -or [bool]$env:ARBITRON_YES
 # registered via Set-Item Function: so they survive Pester's dot-source-inside-
 # a-function scoping (a plain `function` keyword would scope to BeforeAll only).
 $script:ArbitronShimDefs = @{
-    'Get-ScheduledTask'            = { [CmdletBinding()] param([string]$TaskName) throw 'Get-ScheduledTask is only available on Windows.' }
-    'Register-ScheduledTask'       = { [CmdletBinding()] param([string]$TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force) throw 'Register-ScheduledTask is only available on Windows.' }
-    'Unregister-ScheduledTask'     = { [CmdletBinding()] param([string]$TaskName, [switch]$Confirm) throw 'Unregister-ScheduledTask is only available on Windows.' }
-    'Start-ScheduledTask'          = { [CmdletBinding()] param([string]$TaskName) throw 'Start-ScheduledTask is only available on Windows.' }
-    'Stop-ScheduledTask'           = { [CmdletBinding()] param([string]$TaskName) throw 'Stop-ScheduledTask is only available on Windows.' }
-    'New-ScheduledTaskAction'      = { [CmdletBinding()] param([string]$Execute, [string]$Argument) throw 'New-ScheduledTaskAction is only available on Windows.' }
-    'New-ScheduledTaskTrigger'     = { [CmdletBinding()] param([switch]$AtLogOn) throw 'New-ScheduledTaskTrigger is only available on Windows.' }
-    'New-ScheduledTaskPrincipal'   = { [CmdletBinding()] param([string]$UserId, [string]$LogonType, [string]$RunLevel) throw 'New-ScheduledTaskPrincipal is only available on Windows.' }
-    'New-ScheduledTaskSettingsSet' = { [CmdletBinding()] param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) throw 'New-ScheduledTaskSettingsSet is only available on Windows.' }
+    # ScheduledTasks cmdlets (see $ArbitronAlwaysWrap below): these are ALWAYS
+    # registered as wrappers, even on Windows where the genuine cmdlets exist.
+    # The real cmdlets type -Action/-Trigger/etc. as [CimInstance[]], so when the
+    # Pester suite mocks them and passes loosely-typed stand-in objects, Windows
+    # parameter binding rejects the argument before the mock body runs. Shadowing
+    # the names with thin functions (loose param contract) keeps them mockable
+    # identically on every platform; the body forwards to the genuine cmdlet on
+    # Windows (resolved as a Cmdlet, so no recursion) and throws elsewhere.
+    'Get-ScheduledTask'            = { [CmdletBinding()] param([string]$TaskName) $r = Get-Command -Name 'Get-ScheduledTask' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'Get-ScheduledTask is only available on Windows.' }; & $r @PSBoundParameters }
+    'Register-ScheduledTask'       = { [CmdletBinding()] param([string]$TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force) $r = Get-Command -Name 'Register-ScheduledTask' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'Register-ScheduledTask is only available on Windows.' }; & $r @PSBoundParameters }
+    'Unregister-ScheduledTask'     = { [CmdletBinding()] param([string]$TaskName, [switch]$Confirm) $r = Get-Command -Name 'Unregister-ScheduledTask' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'Unregister-ScheduledTask is only available on Windows.' }; & $r @PSBoundParameters }
+    'Start-ScheduledTask'          = { [CmdletBinding()] param([string]$TaskName) $r = Get-Command -Name 'Start-ScheduledTask' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'Start-ScheduledTask is only available on Windows.' }; & $r @PSBoundParameters }
+    'Stop-ScheduledTask'           = { [CmdletBinding()] param([string]$TaskName) $r = Get-Command -Name 'Stop-ScheduledTask' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'Stop-ScheduledTask is only available on Windows.' }; & $r @PSBoundParameters }
+    'New-ScheduledTaskAction'      = { [CmdletBinding()] param([string]$Execute, [string]$Argument) $r = Get-Command -Name 'New-ScheduledTaskAction' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'New-ScheduledTaskAction is only available on Windows.' }; & $r @PSBoundParameters }
+    'New-ScheduledTaskTrigger'     = { [CmdletBinding()] param([switch]$AtLogOn) $r = Get-Command -Name 'New-ScheduledTaskTrigger' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'New-ScheduledTaskTrigger is only available on Windows.' }; & $r @PSBoundParameters }
+    'New-ScheduledTaskPrincipal'   = { [CmdletBinding()] param([string]$UserId, [string]$LogonType, [string]$RunLevel) $r = Get-Command -Name 'New-ScheduledTaskPrincipal' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'New-ScheduledTaskPrincipal is only available on Windows.' }; & $r @PSBoundParameters }
+    'New-ScheduledTaskSettingsSet' = { [CmdletBinding()] param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) $r = Get-Command -Name 'New-ScheduledTaskSettingsSet' -CommandType Cmdlet -ErrorAction SilentlyContinue; if (-not $r) { throw 'New-ScheduledTaskSettingsSet is only available on Windows.' }; & $r @PSBoundParameters }
     'Add-AppxPackage'              = { [CmdletBinding()] param([string]$Path) throw 'Add-AppxPackage is only available on Windows.' }
     'Get-AppxPackage'              = { [CmdletBinding()] param([string]$Name) throw 'Get-AppxPackage is only available on Windows.' }
     # Shared (system-level) seams: native Windows Service + LocalAccounts cmdlets.
@@ -91,8 +99,19 @@ $script:ArbitronShimDefs = @{
     'New-LocalUser'                = { [CmdletBinding()] param([string]$Name, [securestring]$Password, [string]$Description, [switch]$PasswordNeverExpires, [switch]$UserMayNotChangePassword) throw 'New-LocalUser is only available on Windows.' }
     'Remove-LocalUser'             = { [CmdletBinding()] param([string]$Name) throw 'Remove-LocalUser is only available on Windows.' }
 }
+# Names whose wrappers are registered UNCONDITIONALLY (even on Windows where the
+# genuine cmdlet exists), because the real cmdlet's strict [CimInstance[]]
+# parameter types break Pester mocking. Their bodies forward to the real cmdlet.
+$script:ArbitronAlwaysWrap = @(
+    'Get-ScheduledTask', 'Register-ScheduledTask', 'Unregister-ScheduledTask',
+    'Start-ScheduledTask', 'Stop-ScheduledTask', 'New-ScheduledTaskAction',
+    'New-ScheduledTaskTrigger', 'New-ScheduledTaskPrincipal', 'New-ScheduledTaskSettingsSet'
+)
 foreach ($shimName in $script:ArbitronShimDefs.Keys) {
-    if (-not (Get-Command -Name $shimName -ErrorAction SilentlyContinue)) {
+    # Always-wrap names shadow the real cmdlet (their body forwards to it on
+    # Windows); everything else only fills in for an absent cmdlet (non-Windows).
+    if (($script:ArbitronAlwaysWrap -contains $shimName) -or
+        -not (Get-Command -Name $shimName -CommandType Cmdlet -ErrorAction SilentlyContinue)) {
         Set-Item -Path "Function:$shimName" -Value $script:ArbitronShimDefs[$shimName]
     }
 }
