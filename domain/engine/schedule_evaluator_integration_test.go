@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +15,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// identErrFn is a function-adapter that implements schedule.IdentityResolver.
+// Used to inject a failing resolver without defining a named struct.
+type identErrFn func(context.Context, uuid.UUID) (identity.Identity, error)
+
+func (f identErrFn) IdentityForUser(ctx context.Context, id uuid.UUID) (identity.Identity, error) {
+	return f(ctx, id)
+}
 
 // --- minimal schedule ports for the integration test ---
 
@@ -251,4 +260,151 @@ func TestEvaluator_Recover_NoBackfill(t *testing.T) {
 	// The latest occurrence at or before 09:30 today is today's 09:00.
 	assert.Equal(t, time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC), *repo.lastFired,
 		"position advanced to the latest missed occurrence (today 09:00), not yesterday")
+}
+
+// --- Pass 2: robustness and spec alignment -----------------------------------
+
+// TestEvaluator_FirePosition_IsCronTickNotNow asserts that the fire position
+// recorded is the computed cron tick (09:00), NOT clock.Now() (09:30). Using
+// "now" instead of the cron tick would cause drift: a schedule that ticks at
+// 09:00 but fires at 09:01 would advance to 09:01, making the next tick 10:01
+// instead of 10:00 — a 1-minute drift per occurrence.
+func TestEvaluator_FirePosition_IsCronTickNotNow(t *testing.T) {
+	h := newTriggerHarness()
+	h.repo.put(workflow.Shared(), sharedWf("report"))
+
+	creator := uuid.New()
+	s := &schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "report",
+		CronExpr:     "0 9 * * *",
+		Timezone:     "UTC",
+		CreatorID:    creator,
+		Enabled:      true,
+		CreatedAt:    time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC),
+	}
+	repo := &integScheduleRepo{s: s}
+	clk := integClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)} // 30 min after the tick
+
+	ev := schedule.NewEvaluator(repo, h.engine, integActive{}, integIdents{}, &integAlerter{},
+		schedule.WithClock(clk))
+
+	require.NoError(t, ev.Tick(context.Background()))
+
+	require.NotNil(t, repo.lastFired, "fire position must be recorded")
+	assert.Equal(t, time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC), *repo.lastFired,
+		"fire position must be the cron tick (09:00), not clock.Now() (09:30)")
+}
+
+// TestEvaluator_NonUTCTimezone_FiresAtCorrectUTC asserts that a schedule in
+// America/New_York fires at the correct UTC time. "0 9 * * *" in New York on
+// 2026-06-08 (EDT = UTC-4) must fire at 13:00 UTC, not 09:00 UTC.
+func TestEvaluator_NonUTCTimezone_FiresAtCorrectUTC(t *testing.T) {
+	h := newTriggerHarness()
+	h.repo.put(workflow.Shared(), sharedWf("ny-report"))
+
+	creator := uuid.New()
+	s := &schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "ny-report",
+		CronExpr:     "0 9 * * *",
+		Timezone:     "America/New_York",
+		CreatorID:    creator,
+		Enabled:      true,
+		CreatedAt:    time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+	}
+	repo := &integScheduleRepo{s: s}
+	// 13:30 UTC on 2026-06-08 = 09:30 New York time (EDT) — 30 min past the 09:00 ET tick
+	clk := integClock{t: time.Date(2026, 6, 8, 13, 30, 0, 0, time.UTC)}
+
+	ev := schedule.NewEvaluator(repo, h.engine, integActive{}, integIdents{}, &integAlerter{},
+		schedule.WithClock(clk))
+
+	require.NoError(t, ev.Tick(context.Background()))
+	require.NotNil(t, repo.lastFired, "schedule must have fired")
+
+	// Fire position should be 13:00 UTC (= 09:00 ET on 2026-06-08 in EDT).
+	assert.Equal(t, time.Date(2026, 6, 8, 13, 0, 0, 0, time.UTC), repo.lastFired.UTC(),
+		"New York 09:00 EDT must fire at 13:00 UTC (UTC-4 in summer)")
+	assert.Equal(t, creator, h.enqueuedOwner,
+		"instance enqueued under the schedule creator")
+}
+
+// TestEvaluator_ScheduleVariables_ForwardedToEngine asserts that the variables
+// configured on the schedule (s.Variables) reach the triggered instance's
+// OriginalVariables. The evaluator must not drop or modify the variable map.
+func TestEvaluator_ScheduleVariables_ForwardedToEngine(t *testing.T) {
+	h := newTriggerHarness()
+	h.repo.put(workflow.Shared(), sharedWf("parametrized"))
+
+	creator := uuid.New()
+	vars := map[string]any{"target": "prod", "dry_run": false}
+	s := &schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "parametrized",
+		CronExpr:     "0 9 * * *",
+		Timezone:     "UTC",
+		CreatorID:    creator,
+		Variables:    vars,
+		Enabled:      true,
+		CreatedAt:    time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC),
+	}
+	repo := &integScheduleRepo{s: s}
+	clk := integClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+
+	ev := schedule.NewEvaluator(repo, h.engine, integActive{}, integIdents{}, &integAlerter{},
+		schedule.WithClock(clk))
+
+	require.NoError(t, ev.Tick(context.Background()))
+	require.Equal(t, creator, h.enqueuedOwner, "instance enqueued")
+
+	h.instances.mu.Lock()
+	var inst *instance.Instance
+	for _, v := range h.instances.instances {
+		inst = v
+		break
+	}
+	h.instances.mu.Unlock()
+	require.NotNil(t, inst, "instance must be created")
+	assert.Equal(t, "prod", inst.OriginalVariables["target"],
+		"schedule variables must reach the triggered instance's OriginalVariables")
+}
+
+// TestEvaluator_CreatorGone_SkipWithoutAdvance asserts that when the
+// IdentityResolver cannot find the creator (e.g. user deleted), the evaluator:
+//  1. Does NOT trigger the workflow.
+//  2. Does NOT advance the fire position (so the occurrence retries if the
+//     creator is restored or the schedule is disabled/deleted).
+//  3. Raises a schedule_missed alert.
+func TestEvaluator_CreatorGone_SkipWithoutAdvance(t *testing.T) {
+	h := newTriggerHarness()
+	h.repo.put(workflow.Shared(), sharedWf("owner-wf"))
+
+	creator := uuid.New()
+	s := &schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "owner-wf",
+		CronExpr:     "0 9 * * *",
+		Timezone:     "UTC",
+		CreatorID:    creator,
+		Enabled:      true,
+		CreatedAt:    time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC),
+	}
+	repo := &integScheduleRepo{s: s}
+	al := &integAlerter{}
+	clk := integClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+
+	// failIdents simulates a deleted creator: IdentityForUser always errors.
+	failIdents := identErrFn(func(_ context.Context, _ uuid.UUID) (identity.Identity, error) {
+		return identity.Identity{}, fmt.Errorf("user not found")
+	})
+
+	ev := schedule.NewEvaluator(repo, h.engine, integActive{}, failIdents, al,
+		schedule.WithClock(clk))
+
+	require.NoError(t, ev.Tick(context.Background()))
+
+	assert.Equal(t, 0, len(h.instances.instances), "no instance must be created when creator is gone")
+	assert.Nil(t, repo.lastFired, "fire position must NOT advance when the creator is unresolvable")
+	assert.Equal(t, 1, al.alerts, "a schedule_missed alert must be raised when creator is gone")
 }
