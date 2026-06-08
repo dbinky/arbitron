@@ -513,8 +513,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
-		HTTPClient:  httpClient,
-		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// org-readiness Phase 2: the claude agent Config so the claude-code arm
+		// builds a PER-BINDING adapter that injects ANTHROPIC_BASE_URL + key from
+		// the binding (the org gateway / a configured provider). An empty binding
+		// degrades to the local subscription env.
+		ClaudeAgentConfig: agentCfg,
+		HTTPClient:        httpClient,
+		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// Runner nil -> opencode uses the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
@@ -527,12 +532,15 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// credential-bearing opencode subprocess fed model-influenced prompts an
 		// allow-all posture is RCE-equivalent (the lethal trifecta).
 		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
+		// Org-readiness Phase 2: the deployment default agent backend (floored to
+		// claude-code at config load) applied when a binding names no backend.
+		DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
 	})
 
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, providerFactory, profileResolver),
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver, cfg.LLM.DefaultAgentBackend),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),

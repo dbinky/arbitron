@@ -53,8 +53,12 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 		return bedrockEnv(ctx, binding)
 	}
 
-	// SECURITY: reject injected names that would shadow the base allowlist.
-	if err := rejectBaseNames(entry.keyVar, entry.baseURLVar); err != nil {
+	// SECURITY: reject an injected KEY var that would shadow the base allowlist
+	// (secrets must never be on the allowlist, so a collision is a misconfig).
+	// The base-url var is NOT guarded here: org-readiness Phase 2 deliberately
+	// allowlists ANTHROPIC_BASE_URL (a non-secret endpoint), and appending a
+	// per-binding base-url to override an inherited one is the intended behavior.
+	if err := rejectBaseNames(entry.keyVar); err != nil {
 		return nil, err
 	}
 

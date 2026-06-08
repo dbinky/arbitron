@@ -82,6 +82,28 @@ func TestIsBaseName(t *testing.T) {
 	assert.False(t, procenv.IsBaseName("LLM_API_KEY"))
 }
 
+// org-readiness Phase 2: ANTHROPIC_BASE_URL is a NON-SECRET endpoint var, so it
+// is on the base allowlist (an operator-set one may be inherited). The KEY var
+// stays off the allowlist — it is injected per call only, never inherited.
+func TestIsBaseName_AnthropicBaseURLAllowedKeyNot(t *testing.T) {
+	assert.True(t, procenv.IsBaseName("ANTHROPIC_BASE_URL"),
+		"ANTHROPIC_BASE_URL (non-secret endpoint) must be allowlisted")
+	assert.False(t, procenv.IsBaseName("ANTHROPIC_API_KEY"),
+		"ANTHROPIC_API_KEY (secret) must NEVER be allowlisted")
+}
+
+// A parent ANTHROPIC_BASE_URL is propagated to the child env; a parent
+// ANTHROPIC_API_KEY is still stripped (per-call injection only).
+func TestBaseEnv_AnthropicBaseURLPassthroughKeyStripped(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://operator.example:4000")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-leak")
+
+	joined := strings.Join(procenv.BaseEnv(), "\n")
+	assert.Contains(t, joined, "ANTHROPIC_BASE_URL=https://operator.example:4000")
+	assert.NotContains(t, joined, "ANTHROPIC_API_KEY")
+	assert.NotContains(t, joined, "sk-leak")
+}
+
 func TestStandardBinDirs_HomeFirstWhenSet(t *testing.T) {
 	t.Setenv("HOME", "/testhome")
 	dirs := procenv.StandardBinDirs()

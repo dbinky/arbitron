@@ -37,6 +37,19 @@ MIN_NODE_MAJOR="${MIN_NODE_MAJOR:-18}"
 # The npm package that provides the `claude` CLI.
 CLAUDE_NPM_PKG="@anthropic-ai/claude-code"
 
+# The npm package that provides the `opencode` CLI (org-readiness Phase 2: both
+# agent backends ship in every deployment). opencode is installed by default in
+# the agent toolchain (no longer prompt-gated/optional); set
+# ARBITRON_INSTALL_OPENCODE=no to opt out.
+#
+# OPENCODE PIN (single source of truth — keep in sync with the Dockerfile and
+# install.ps1 OpencodeNpmPackage). Append @<version> to pin an exact release once
+# the target version is confirmed; left unpinned here because the exact published
+# version is environment-dependent. NOTE(opencode-binary): verify the package
+# name/version against the installed modern binary (see adapter/opencode/args.go
+# TODO(opencode-binary)).
+OPENCODE_NPM_PKG="${OPENCODE_NPM_PKG:-opencode-ai}"
+
 # launchd label / systemd unit name.
 ARBITRON_LAUNCHD_LABEL="dev.arbitron"
 ARBITRON_SYSTEMD_UNIT="arbitron"
@@ -584,18 +597,38 @@ ensure_claude() {
   export ARBITRON_CLAUDE_PATH
 }
 
-# ensure_opencode — OPTIONAL. Prompted; a decline is non-fatal.
+# ensure_opencode — install the opencode agent backend by default (org-readiness
+# Phase 2: BOTH agent backends ship). A satisfying `opencode` is recorded and
+# reused; otherwise it is installed via npm into the SAME Arbitron-owned npm
+# prefix used for claude ($(layout_runtime)/npm), so it never fights a system
+# Node. The install is REQUIRED (fail-loud, return non-zero on failure) so a
+# fresh box is never half-provisioned. Opt out with ARBITRON_INSTALL_OPENCODE=no.
 ensure_opencode() {
   if require_cmd opencode; then
-    log_info "opencode present"
+    ARBITRON_OPENCODE_PATH="$(command -v opencode)"
+    export ARBITRON_OPENCODE_PATH
+    log_info "opencode present at $ARBITRON_OPENCODE_PATH"
     return 0
   fi
-  if ! prompt_yes_no INSTALL_OPENCODE "Install the optional 'opencode' agent backend?" no; then
-    log_info "skipping optional opencode"
+  if [ "${ARBITRON_INSTALL_OPENCODE:-yes}" = "no" ]; then
+    log_info "ARBITRON_INSTALL_OPENCODE=no: skipping opencode (opt-out)"
     return 0
   fi
-  pkg_install opencode || log_warn "opencode install failed (optional); continuing"
-  return 0
+
+  ensure_node || return 1
+  require_cmd npm || { log_error "npm not found after installing node"; return 1; }
+
+  local prefix
+  prefix="$(layout_runtime)/npm"
+  mkdir -p "$prefix"
+  log_info "installing $OPENCODE_NPM_PKG into the Arbitron npm prefix ($prefix)"
+  npm_config_prefix="$prefix" npm install -g "$OPENCODE_NPM_PKG" --prefix "$prefix" || {
+    log_error "opencode install failed"
+    return 1
+  }
+
+  ARBITRON_OPENCODE_PATH="$prefix/bin/opencode"
+  export ARBITRON_OPENCODE_PATH
 }
 
 # resolve_dependencies — orchestrate the agent toolchain in order. Only runs when
@@ -608,11 +641,11 @@ resolve_dependencies() {
     return 0
   fi
   log_info "resolving agent toolchain dependencies"
-  ensure_node   || return 1
-  ensure_git    || return 1
-  ensure_gh     || return 1
-  ensure_claude || return 1
-  ensure_opencode
+  ensure_node     || return 1
+  ensure_git      || return 1
+  ensure_gh       || return 1
+  ensure_claude   || return 1
+  ensure_opencode || return 1
 }
 
 # ---------------------------------------------------------------------------

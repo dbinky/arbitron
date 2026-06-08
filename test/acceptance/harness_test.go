@@ -423,7 +423,7 @@ func claudeBinding(runner *fakeRunner) binding {
 	return binding{
 		name: "claude",
 		profiles: []provider.Profile{
-			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "", Model: "claude-sonnet-4"},
+			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "", Model: "claude-sonnet-4", Backend: "claude-code"},
 			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "", Model: "claude-sonnet-4"},
 		},
 		runner: runner,
@@ -447,7 +447,7 @@ func openWeightBinding(runner *fakeRunner, transport *fakeTransport) binding {
 	return binding{
 		name: "open-weight",
 		profiles: []provider.Profile{
-			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "opencode-openweight", Model: "qwen/qwen3-coder"},
+			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "opencode-openweight", Model: "qwen/qwen3-coder", Backend: "opencode"},
 			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-r1"},
 		},
 		connections: []seedConn{
@@ -583,7 +583,7 @@ func newHarness(t *testing.T, b binding) *harness {
 	// Real executors: agent_call + llm_call over the factory/resolver; real
 	// transform + conditional.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, factory, resolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, factory, resolver, "claude-code"),
 		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, factory, resolver),
 		workflow.NodeTypeTransform:   engine.NewTransformExecutor(),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),

@@ -25,9 +25,9 @@ Describe 'Get-DependencySpec' {
         ($specs | Where-Object Name -eq 'gh').WingetId   | Should -Be 'GitHub.cli'
     }
 
-    It 'marks opencode as optional and others required' {
+    It 'marks opencode as required (org-readiness Phase 2: both backends ship)' {
         $specs = Get-DependencySpec
-        ($specs | Where-Object Name -eq 'opencode').Optional | Should -BeTrue
+        ($specs | Where-Object Name -eq 'opencode').Optional | Should -BeFalse
         ($specs | Where-Object Name -eq 'node').Optional | Should -BeFalse
     }
 }
@@ -236,15 +236,25 @@ Describe 'Install-ClaudeCli' {
     }
 }
 
-Describe 'Resolve-Dependency opencode optional' {
-    It 'logs optional and continues (no throw) when opencode missing' {
+Describe 'Resolve-Dependency opencode required (org-readiness Phase 2)' {
+    BeforeEach {
         Mock -CommandName Test-DependencyPresent -MockWith { $false }
+        Mock -CommandName Install-ViaNpmGlobal -MockWith { }
+        Mock -CommandName Install-ViaWinget -MockWith { }
         Mock -CommandName Test-WingetPresent -MockWith { $false }
         Mock -CommandName Install-AppInstaller -MockWith { $false }
-        Mock -CommandName Install-ViaDirectDownload -MockWith { throw 'should not download optional' }
-        $script:result = $null
-        { $script:result = Resolve-Dependency -Name opencode -Paths $script:Paths } | Should -Not -Throw
-        $script:result.Status | Should -Be 'skipped'
+    }
+
+    It 'installs opencode via npm (the pinned package) when missing, not as optional skip' {
+        $script:result = Resolve-Dependency -Name opencode -Paths $script:Paths
+        Should -Invoke Install-ViaNpmGlobal -Times 1 -Exactly -ParameterFilter { $Package -eq 'opencode-ai' }
+        Should -Invoke Install-ViaWinget -Times 0 -Exactly
+        $script:result.Status | Should -Be 'resolved'
+    }
+
+    It 'a non-zero opencode install throws (required, fail-loud - not skipped)' {
+        Mock -CommandName Install-ViaNpmGlobal -MockWith { throw 'npm failed to install opencode-ai (exit 1).' }
+        { Resolve-Dependency -Name opencode -Paths $script:Paths } | Should -Throw
     }
 }
 
@@ -259,26 +269,33 @@ Describe 'Resolve-AllDependencies' {
     }
 }
 
-Describe 'Resolve-Dependency ViaNpm routing (claude)' {
-    # claude has ViaNpm = $true and WingetId = $null. Resolve-Dependency must
-    # route it to Install-ClaudeCli -- never through the winget ladder.
-    # If this seam breaks, claude falls through to Install-ViaWinget with a null
-    # WingetId and the install silently fails or errors in an uncontrolled way.
+Describe 'Resolve-Dependency ViaNpm routing (claude + opencode)' {
+    # claude and opencode have ViaNpm = $true and WingetId = $null.
+    # Resolve-Dependency must route them to Install-ViaNpmGlobal with their
+    # per-spec NpmPackage -- never through the winget ladder. If this seam breaks,
+    # they fall through to Install-ViaWinget with a null WingetId and the install
+    # silently fails or errors in an uncontrolled way.
     BeforeEach {
         Mock -CommandName Test-DependencyPresent -MockWith { $false }
-        Mock -CommandName Install-ClaudeCli -MockWith { }
+        Mock -CommandName Install-ViaNpmGlobal -MockWith { }
         Mock -CommandName Install-ViaWinget -MockWith { }
         Mock -CommandName Test-WingetPresent -MockWith { $false }
         Mock -CommandName Install-AppInstaller -MockWith { $false }
     }
 
-    It 'routes claude to Install-ClaudeCli (not winget) when missing' {
+    It 'routes claude to Install-ViaNpmGlobal (not winget) with the claude package' {
         Resolve-Dependency -Name claude -Paths $script:Paths | Out-Null
-        Should -Invoke Install-ClaudeCli -Times 1 -Exactly
+        Should -Invoke Install-ViaNpmGlobal -Times 1 -Exactly -ParameterFilter { $Package -eq '@anthropic-ai/claude-code' }
         Should -Invoke Install-ViaWinget -Times 0 -Exactly
     }
 
-    It 'returns resolved status after Install-ClaudeCli' {
+    It 'routes opencode to Install-ViaNpmGlobal (not winget) with the opencode package' {
+        Resolve-Dependency -Name opencode -Paths $script:Paths | Out-Null
+        Should -Invoke Install-ViaNpmGlobal -Times 1 -Exactly -ParameterFilter { $Package -eq 'opencode-ai' }
+        Should -Invoke Install-ViaWinget -Times 0 -Exactly
+    }
+
+    It 'returns resolved status after the npm install' {
         $result = Resolve-Dependency -Name claude -Paths $script:Paths
         $result.Status | Should -Be 'resolved'
     }

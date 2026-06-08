@@ -49,7 +49,11 @@ func defaults() map[string]interface{} {
 		// that is a lethal-trifecta / RCE-equivalent posture, so allow-all is an
 		// explicit operator opt-in, never the shipped default. Per-profile
 		// allowedtools (knob (b)) narrows independently. See PR #23 security HIGH.
-		"llm.agentallowalltools":      false,
+		"llm.agentallowalltools": false,
+		// Org-readiness Phase 2: deployment-wide default agent backend. The org
+		// default is claude-code → LiteLLM. An empty value is floored back to
+		// claude-code in normalize so the policy lives in exactly one place.
+		"llm.defaultagentbackend":     "claude-code",
 		"logging.level":               "info",
 		"logging.file":                "arbitron.log",
 		"tracing.enabled":             false,
@@ -423,6 +427,12 @@ func Load(configPath string) (*domainconfig.Config, error) {
 // Flooring it keeps the whole timeout story from being disabled by misconfig.
 const DefaultTimeoutSeconds = 1800
 
+// DefaultAgentBackend is the deployment default agent backend (org-readiness
+// Phase 2) applied when llm.defaultagentbackend is empty. The org default is
+// claude-code → LiteLLM. Flooring an empty value here keeps the backend
+// fallback policy in exactly one place.
+const DefaultAgentBackend = "claude-code"
+
 // DefaultSessionTTLSeconds is the floor applied to a non-positive
 // auth.session.ttlseconds. A zero/negative TTL would mint never-expiring or
 // instantly-expired sessions, so it is clamped to the sane 12h default
@@ -437,6 +447,13 @@ const DefaultSessionTTLSeconds = 43200
 func normalize(cfg *domainconfig.Config) {
 	if cfg.LLM.TimeoutSeconds <= 0 {
 		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
+	}
+	// Org-readiness Phase 2: floor an empty (or whitespace-only) default agent
+	// backend to claude-code. This is the SINGLE deployment-policy seam for the
+	// backend fallback so a blank value cannot silently leave the deployment
+	// without a default backend; the executor and the factory both read it.
+	if strings.TrimSpace(cfg.LLM.DefaultAgentBackend) == "" {
+		cfg.LLM.DefaultAgentBackend = DefaultAgentBackend
 	}
 	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
 	cfg.Auth.Mode = strings.ToLower(strings.TrimSpace(cfg.Auth.Mode))

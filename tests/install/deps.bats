@@ -267,30 +267,73 @@ _mock() { install_mock recording-fake "$@"; }
   [ ! -f "$dest" ]
 }
 
-# --- opencode (optional) -----------------------------------------------------
+# --- opencode (org-readiness Phase 2: required by default) --------------------
 
-@test "ensure_opencode declined is non-fatal and installs nothing" {
-  _mock brew
-  ARBITRON_UNAME_S=Darwin ARBITRON_INSTALL_OPENCODE=no run ensure_opencode
+@test "ensure_opencode installs via npm into the Arbitron npm prefix by default" {
+  install_fake node 'echo v20.0.0'
+  install_fake npm 'exit 0'
+  ARBITRON_UNAME_S=Darwin run ensure_opencode
   [ "$status" -eq 0 ]
-  ! mock_log_has "brew install opencode"
+  mock_log_has "npm install -g opencode-ai"
+  # The --prefix arg targets the Arbitron-owned npm prefix (same as claude).
+  grep -qF "$(layout_runtime)/npm" "$MOCK_LOG"
 }
 
-@test "ensure_opencode install failure is non-fatal when accepted" {
-  # User accepts opencode but the pkg mgr fails (e.g., package not available).
-  install_fake brew 'exit 1'
-  ARBITRON_UNAME_S=Darwin ARBITRON_INSTALL_OPENCODE=yes run ensure_opencode
-  [ "$status" -eq 0 ]   # non-fatal; install continues
-  [[ "$output" == *"optional"* || "$output" == *"failed"* ]]
+@test "ensure_opencode opt-out (ARBITRON_INSTALL_OPENCODE=no) installs nothing" {
+  install_fake node 'echo v20.0.0'
+  install_fake npm 'exit 0'
+  ARBITRON_UNAME_S=Darwin ARBITRON_INSTALL_OPENCODE=no run ensure_opencode
+  [ "$status" -eq 0 ]
+  ! mock_log_has "npm install -g opencode-ai"
+}
+
+@test "ensure_opencode reuses a satisfying system opencode" {
+  install_fake opencode 'echo 1.0.0'
+  install_fake npm 'exit 0'
+  ARBITRON_UNAME_S=Darwin run ensure_opencode
+  [ "$status" -eq 0 ]
+  ! mock_log_has "npm install -g opencode-ai"
+}
+
+@test "ensure_opencode FAILS LOUD (non-zero) when the npm install fails" {
+  install_fake node 'echo v20.0.0'
+  install_fake npm 'exit 1'   # npm install fails
+  ARBITRON_UNAME_S=Darwin run ensure_opencode
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"opencode install failed"* ]]
 }
 
 # --- resolve_dependencies orchestration -------------------------------------
 
-@test "resolve_dependencies skips the agent toolchain for api-key installs" {
+@test "resolve_dependencies skips the agent toolchain for api-key installs (neither claude nor opencode)" {
   _mock brew
   ARBITRON_UNAME_S=Darwin ARBITRON_LLM_ACCESS=api-key run resolve_dependencies
   [ "$status" -eq 0 ]
   ! mock_log_has "npm install -g @anthropic-ai/claude-code"
+  ! mock_log_has "npm install -g opencode-ai"
+}
+
+@test "resolve_dependencies installs BOTH agent backends on the agent path (subscription)" {
+  # node/git/gh/claude present; opencode ABSENT -> opencode is installed via npm,
+  # proving it is provisioned by default (org-readiness Phase 2 packaging).
+  install_fake node 'echo v20.0.0'
+  install_fake git  'echo git version 2.40.0'
+  install_fake gh   'echo gh version 2.40.0'
+  install_fake claude 'echo 1.2.3'
+  install_fake npm 'exit 0'
+  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription run resolve_dependencies
+  [ "$status" -eq 0 ]
+  mock_log_has "npm install -g opencode-ai"
+}
+
+@test "resolve_dependencies propagates a non-zero opencode install failure (required, not soft)" {
+  install_fake node 'echo v20.0.0'
+  install_fake git  'echo git version 2.40.0'
+  install_fake gh   'echo gh version 2.40.0'
+  install_fake claude 'echo 1.2.3'
+  install_fake npm 'exit 1'   # opencode npm install fails
+  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription run resolve_dependencies
+  [ "$status" -ne 0 ]
 }
 
 @test "resolve_dependencies succeeds when all toolchain tools are present (subscription)" {
@@ -298,10 +341,10 @@ _mock() { install_mock recording-fake "$@"; }
   install_fake git  'echo git version 2.40.0'
   install_fake gh   'echo gh version 2.40.0'
   install_fake claude 'echo 1.2.3'
-  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription \
-    ARBITRON_INSTALL_OPENCODE=no run resolve_dependencies
+  install_fake opencode 'echo 1.0.0'
+  ARBITRON_UNAME_S=Linux ARBITRON_LLM_ACCESS=subscription run resolve_dependencies
   [ "$status" -eq 0 ]
-  ! mock_log_has "npm install"  # claude was already present; no npm needed
+  ! mock_log_has "npm install"  # both already present; no npm needed
 }
 
 @test "resolve_dependencies fails when ensure_node fails (Linux, no pkg mgr)" {

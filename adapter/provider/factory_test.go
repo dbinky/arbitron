@@ -14,8 +14,8 @@ import (
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
 	"github.com/arbitron/arbitron/adapter/bedrock"
 	"github.com/arbitron/arbitron/adapter/claudecli"
-	"github.com/arbitron/arbitron/adapter/openrouter"
 	"github.com/arbitron/arbitron/adapter/opencode"
+	"github.com/arbitron/arbitron/adapter/openrouter"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -31,8 +31,9 @@ func newTestFactory(t *testing.T) *adapterprovider.Factory {
 	chat := claudecli.NewChatAdapter(claudecli.Config{Runner: &noopRunner{}})
 	agent := claudecli.NewAgentAdapter(claudecli.Config{Runner: &noopRunner{}})
 	return adapterprovider.NewFactory(adapterprovider.Deps{
-		ClaudeChat:  chat,
-		ClaudeAgent: agent,
+		ClaudeChat:          chat,
+		ClaudeAgent:         agent,
+		DefaultAgentBackend: "claude-code",
 	})
 }
 
@@ -89,23 +90,28 @@ func TestFactory_ChatProviderFor_ClaudeCLIExplicit(t *testing.T) {
 	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
 }
 
-func TestFactory_AgentProviderFor_NonClaudeIsOpencode(t *testing.T) {
+// Backend dispatch (org-readiness Phase 2): the opencode BACKEND selects the
+// opencode adapter regardless of provider.
+func TestFactory_AgentProviderFor_OpencodeBackendIsOpencode(t *testing.T) {
 	f := newTestFactory(t)
-	ap, err := f.AgentProviderFor(agentBinding("opencode"))
+	ap, err := f.AgentProviderFor(agentBindingBackend("openai", "opencode"))
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap)
 }
 
-func TestFactory_AgentProviderFor_EmptyIsClaudeCLI(t *testing.T) {
+// An unset backend falls back to the deployment default (claude-code in the
+// test factory) and selects the claude-cli adapter.
+func TestFactory_AgentProviderFor_UnsetDefaultsToClaudeCLI(t *testing.T) {
 	f := newTestFactory(t)
 	ap, err := f.AgentProviderFor(agentBinding(""))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
 }
 
-func TestFactory_AgentProviderFor_ClaudeCLIExplicit(t *testing.T) {
+// A claude-code backend selects the claude-cli adapter.
+func TestFactory_AgentProviderFor_ClaudeCodeBackend(t *testing.T) {
 	f := newTestFactory(t)
-	ap, err := f.AgentProviderFor(agentBinding("claude-cli"))
+	ap, err := f.AgentProviderFor(agentBindingBackend("claude-cli", "claude-code"))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
 }
@@ -126,9 +132,9 @@ func TestFactory_ChatProviderFor_AzureFoundry_MapsToAzure(t *testing.T) {
 	assert.IsType(t, (*azurefoundry.Provider)(nil), cp)
 }
 
-func TestFactory_AgentProviderFor_ArbitraryNonClaude_MapsToOpencode(t *testing.T) {
+func TestFactory_AgentProviderFor_OpencodeBackend_AnyProvider(t *testing.T) {
 	f := newTestFactory(t)
-	ap, err := f.AgentProviderFor(agentBinding("openrouter"))
+	ap, err := f.AgentProviderFor(agentBindingBackend("openrouter", "opencode"))
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap)
 }
@@ -188,7 +194,8 @@ func TestFactory_ChatProviderFor_MissingClaudeAdapter(t *testing.T) {
 }
 
 func TestFactory_AgentProviderFor_MissingClaudeAdapter(t *testing.T) {
-	f := adapterprovider.NewFactory(adapterprovider.Deps{}) // no ClaudeAgent
+	// claude-code backend (default) with no ClaudeAgent wired -> clear error.
+	f := adapterprovider.NewFactory(adapterprovider.Deps{DefaultAgentBackend: "claude-code"})
 	_, err := f.AgentProviderFor(agentBinding(""))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "claude-cli")
@@ -203,10 +210,12 @@ func TestFactory_ChatProviderFor_NormalizesCaseAndWhitespace(t *testing.T) {
 	assert.IsType(t, (*openrouter.Provider)(nil), cp)
 }
 
-func TestFactory_AgentProviderFor_NormalizesEmptyWhitespaceToClaude(t *testing.T) {
+func TestFactory_AgentProviderFor_BackendNormalizesWhitespace(t *testing.T) {
 	f := newTestFactory(t)
-	// A whitespace-only provider normalizes to empty -> claude-cli, not opencode.
-	ap, err := f.AgentProviderFor(agentBinding("   "))
+	// A whitespace-only backend normalizes to empty -> deployment default
+	// (claude-code) -> claude-cli adapter. The provider string is irrelevant to
+	// agent dispatch now.
+	ap, err := f.AgentProviderFor(agentBindingBackend("openai", "   "))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
 }
@@ -288,7 +297,7 @@ func TestFactory_ProviderFor_ThreadsMaxResponseBytes(t *testing.T) {
 	assert.IsType(t, (*bedrock.Provider)(nil), cp4,
 		"bedrock provider constructed with MaxResponseBytes from Deps")
 
-	ap, err := f.AgentProviderFor(agentBinding("openrouter"))
+	ap, err := f.AgentProviderFor(agentBindingBackend("openrouter", "opencode"))
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap,
 		"opencode provider constructed with MaxResponseBytes from Deps (subprocess stdout cap)")
@@ -429,9 +438,9 @@ func TestFactory_ChatProviderFor_UnknownProviderStillErrors_NearMiss(t *testing.
 
 // ---- Edge case: the agent path for the new chat providers is unchanged ----
 
-func TestFactory_AgentProviderFor_OpenAI_RoutesToOpencode_NotChanged(t *testing.T) {
+func TestFactory_AgentProviderFor_OpenAI_OpencodeBackendRoutesToOpencode(t *testing.T) {
 	f := newTestFactory(t)
-	ap, err := f.AgentProviderFor(agentBinding("openai"))
+	ap, err := f.AgentProviderFor(agentBindingBackend("openai", "opencode"))
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap)
 }
@@ -485,6 +494,7 @@ func openAgentBinding() provider.ResolvedBinding {
 	return provider.ResolvedBinding{
 		Kind:      provider.ProfileKindAgent,
 		Provider:  "openai",
+		Backend:   "opencode",
 		Model:     "gpt-4o",
 		RevealKey: func(context.Context) (string, error) { return "sk-x", nil },
 	}

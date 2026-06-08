@@ -30,6 +30,11 @@ var baseAllowlist = map[string]bool{
 	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true,
 	"LANG": true, "TERM": true, "TMPDIR": true, "SHELL": true,
 	"CLAUDE_CONFIG_DIR": true,
+	// org-readiness Phase 2: ANTHROPIC_BASE_URL is a NON-SECRET endpoint var, so
+	// an operator-set value may be inherited by subprocesses. The matching KEY
+	// var (ANTHROPIC_API_KEY) is deliberately NOT here — it is injected per call
+	// only (claudecli.agentEnv), never inherited from the engine's own env.
+	"ANTHROPIC_BASE_URL": true,
 }
 
 // IsBaseName reports whether name is part of the base allowlist (including the

@@ -28,6 +28,11 @@ type Profile struct {
 	Kind          ProfileKind // chat | agent (unchanged from P1)
 	ConnectionRef string      // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string      // model-id, Azure deployment name, or provider/model for opencode
+	// Backend selects the agent CLI (claude-code | opencode), INDEPENDENT of the
+	// provider. Empty inherits (node → profile → deployment default). Set only
+	// for agent-kind profiles; ignored for chat. The allowed vocabulary lives in
+	// domain/workflow (Backend* constants).
+	Backend string
 	// AllowedTools is the per-profile tool allowlist for agent-kind profiles
 	// (PR #18 item 1b). It flows into ResolvedBinding.AllowedTools and is the
 	// per-request tool scope the agent adapter prefers over its global scope.
@@ -45,6 +50,12 @@ type ResolvedBinding struct {
 	BaseURL  string            //
 	Extras   map[string]string //
 	Model    string            //
+	// Backend is the resolved agent backend axis (claude-code | opencode |
+	// "" = inherit). The resolver copies Profile.Backend here verbatim; the agent
+	// executor then computes the EFFECTIVE backend (node > profile > deployment
+	// default) and overwrites this field before the factory dispatches on it.
+	// Independent of Provider: a claude-code backend may carry any connection.
+	Backend string
 	// AllowedTools is the resolved per-profile tool allowlist (PR #18 item 1b).
 	// Adapters prefer it over their global scope as the per-request tool scope
 	// for agent-kind bindings. Empty means "use the adapter's global scope".
