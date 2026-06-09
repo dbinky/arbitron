@@ -1,48 +1,27 @@
-import { useState, useEffect } from 'react'
-import { api } from '../api/client'
-import type { Schedule } from '../api/types'
+import { useSchedules } from '../hooks/useSchedules'
+import { relativeTime } from '../utils/time'
 import styles from './SchedulesPanel.module.css'
 
 interface SchedulesPanelProps {
   workflowName: string
 }
 
+/** Formats a schedule's last-fired timestamp as a human-readable relative time
+ * (e.g. "3h ago"), or "never" when it has not fired yet. */
 function formatLastFired(lastFiredAt?: string | null): string {
   if (!lastFiredAt) return 'never'
-  return lastFiredAt
+  return relativeTime(lastFiredAt)
 }
 
 /**
  * READ-ONLY list of a workflow's schedules (cron, timezone, creator, enabled
- * state, last-fired). It fetches its own data and degrades to an empty/error
- * state without breaking the surrounding workflow view. It deliberately renders
- * NO create/edit/enable/disable/delete/run-now control — schedule management
- * stays on REST + MCP.
+ * state, last-fired). It fetches its own data via useSchedules and degrades to an
+ * empty/error state without breaking the surrounding workflow view. It
+ * deliberately renders NO create/edit/enable/disable/delete/run-now control —
+ * schedule management stays on REST + MCP.
  */
 export default function SchedulesPanel({ workflowName }: SchedulesPanelProps) {
-  const [schedules, setSchedules] = useState<Schedule[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    api.schedules
-      .list(workflowName)
-      .then((data) => {
-        if (!cancelled) setSchedules(data)
-      })
-      .catch(() => {
-        if (!cancelled) setError('Failed to load schedules')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workflowName])
+  const { schedules, loading, error } = useSchedules(workflowName)
 
   if (loading) {
     return <div className={styles.empty}>Loading schedules…</div>
@@ -62,7 +41,7 @@ export default function SchedulesPanel({ workflowName }: SchedulesPanelProps) {
           <tr>
             <th>Cron</th>
             <th>Timezone</th>
-            <th>Creator</th>
+            <th>Creator ID</th>
             <th>State</th>
             <th>Last fired</th>
           </tr>
