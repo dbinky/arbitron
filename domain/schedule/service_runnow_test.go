@@ -106,6 +106,9 @@ func TestService_RunNow_HappyPath(t *testing.T) {
 	require.Equal(t, 1, firer.calls)
 	assert.Equal(t, s.ID, firer.gotSchedule.ID)
 	assert.Equal(t, "wf", firer.gotSchedule.WorkflowName)
+	// Spec: run-now reuses the schedule's variables and department.
+	assert.Equal(t, map[string]any{"k": "v"}, firer.gotSchedule.Variables, "variables must be reused from the schedule")
+	assert.Equal(t, "eng", firer.gotSchedule.Department, "department must be reused from the schedule")
 	assert.False(t, firer.gotSkip)
 }
 
