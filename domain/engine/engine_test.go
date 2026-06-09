@@ -799,6 +799,14 @@ func conditionalWorkflow() *workflow.Workflow {
 	}
 }
 
+// originWF creates a minimal single-node workflow for origin-stamping tests.
+func originWF() *workflow.Workflow {
+	return &workflow.Workflow{
+		Name:  "origin-test-wf",
+		Nodes: []workflow.Node{{ID: "A", Type: workflow.NodeTypeScript, Entrypoint: true}},
+	}
+}
+
 // singleNodeWorkflow creates a workflow with a single node.
 func singleNodeWorkflow() *workflow.Workflow {
 	return &workflow.Workflow{
@@ -1206,6 +1214,51 @@ func TestEngine_TriggerWorkflowNotFound(t *testing.T) {
 	_, _, err := f.engine.Trigger(context.Background(), "nonexistent", nil, "normal")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+// Origin stamping: the engine reads instance.OriginFromContext and stamps
+// TriggerSource + ScheduleID on every created instance. Manual triggers default
+// to OriginManual; schedule/run-now triggers carry the injected origin.
+func TestEngine_Trigger_StampsManualOrigin(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(originWF())
+	id, _, err := f.engine.Trigger(context.Background(), "origin-test-wf", nil, "normal")
+	require.NoError(t, err)
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.OriginManual, inst.TriggerSource, "plain trigger defaults to OriginManual")
+	assert.Nil(t, inst.ScheduleID, "manual trigger has no ScheduleID")
+}
+
+func TestEngine_Trigger_StampsScheduleOrigin(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(originWF())
+	schedID := uuid.New()
+	ctx := instance.WithOrigin(context.Background(), instance.Origin{
+		Source:     instance.OriginSchedule,
+		ScheduleID: &schedID,
+	})
+	id, _, err := f.engine.TriggerWithDepartment(ctx, "origin-test-wf", nil, "normal", "")
+	require.NoError(t, err)
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.OriginSchedule, inst.TriggerSource)
+	require.NotNil(t, inst.ScheduleID)
+	assert.Equal(t, schedID, *inst.ScheduleID)
+}
+
+func TestEngine_Trigger_StampsRunNowOrigin(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(originWF())
+	schedID := uuid.New()
+	ctx := instance.WithOrigin(context.Background(), instance.Origin{
+		Source:     instance.OriginRunNow,
+		ScheduleID: &schedID,
+	})
+	id, _, err := f.engine.TriggerWithDepartment(ctx, "origin-test-wf", nil, "normal", "")
+	require.NoError(t, err)
+	inst := waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+	assert.Equal(t, instance.OriginRunNow, inst.TriggerSource)
+	require.NotNil(t, inst.ScheduleID)
+	assert.Equal(t, schedID, *inst.ScheduleID)
 }
 
 // ---------------------------------------------------------------------------
