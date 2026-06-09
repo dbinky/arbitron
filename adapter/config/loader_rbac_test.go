@@ -194,6 +194,50 @@ func TestLoad_RBACMapping_FromEnvOverlay(t *testing.T) {
 	}
 }
 
+// Env overlay wins over YAML for the same mapping key.
+// This is the exact analog of TestLoad_RBAC_EnvOverlay_WinsOverYAML for leads:
+// an operator can fix a misconfigured YAML mapping entry by setting the env var
+// without editing the file. Pins the env-layer-loads-last contract.
+func TestLoad_RBACMapping_EnvOverlay_WinsOverYAML(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-123", "engineering")
+	body := `auth:
+  mode: "local"
+  rbac:
+    mapping:
+      guid-123: sales
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering (env must win over YAML)", got)
+	}
+}
+
+// YAML and env mapping entries with different keys both survive — the overlay
+// is additive, not a full replacement. Operators can define base mappings in
+// YAML and inject secret/dynamic GUIDs via env without removing YAML entries.
+func TestLoad_RBACMapping_EnvAndYAML_DifferentKeys_Coexist(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-ENV", "platform")
+	body := `auth:
+  mode: "local"
+  rbac:
+    mapping:
+      guid-yaml: engineering
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-yaml"]; got != "engineering" {
+		t.Errorf("Mapping[guid-yaml] = %q, want engineering (YAML entry must survive)", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-env"]; got != "platform" {
+		t.Errorf("Mapping[guid-env] = %q, want platform (env entry must survive)", got)
+	}
+}
+
 func TestLoad_NoGroupClaim_BehavesAsToday(t *testing.T) {
 	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
 	if err != nil {
