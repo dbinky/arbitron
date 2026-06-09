@@ -247,3 +247,41 @@ func TestLoad_NoGroupClaim_BehavesAsToday(t *testing.T) {
 		t.Errorf("GroupClaim = %q, want empty (unset GroupClaim => no group extraction)", cfg.Auth.RBAC.GroupClaim)
 	}
 }
+
+// A whitespace-padded YAML GroupClaim (" groups ") must be trimmed at load so
+// both the OIDC provider and the edge verifier receive the clean claim name.
+// Without this, a padded value causes both to look for the wrong claim name,
+// silently yielding nil groups (default group only) for every login.
+func TestLoad_RBAC_GroupClaim_WhitespaceTrimmedAtLoad(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "  groups  "
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "groups" {
+		t.Errorf("GroupClaim = %q, want groups (whitespace must be trimmed by normalize)", cfg.Auth.RBAC.GroupClaim)
+	}
+}
+
+// A whitespace-only GroupClaim must be treated as unset (empty string) so that
+// a deployment that accidentally sets groupclaim: "   " gets the "no group
+// extraction" behavior rather than searching every token for a claim whose name
+// is purely whitespace.
+func TestLoad_RBAC_GroupClaim_WhitespaceOnlyEqualsUnset(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "   "
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "" {
+		t.Errorf("GroupClaim = %q, want empty (whitespace-only GroupClaim must normalize to empty)", cfg.Auth.RBAC.GroupClaim)
+	}
+}
