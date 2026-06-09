@@ -99,9 +99,50 @@ func TestRenameDepartment_MembershipCollision_DropsDuplicate(t *testing.T) {
 	_, err = db.ExecContext(ctx, `INSERT INTO user_departments (user_id, department) VALUES (?, 'engineering')`, userID)
 	require.NoError(t, err)
 
-	_, err = r.RenameDepartment(ctx, "guid-123", "engineering")
+	rows, err := r.RenameDepartment(ctx, "guid-123", "engineering")
 	require.NoError(t, err, "a PK collision must not fail the rename")
+	assert.Equal(t, int64(0), rows,
+		"pure collision: UPDATE OR IGNORE skips the row (0 affected); DELETE is silent cleanup, not counted")
 	assertDeptCount(t, db, "user_departments", "engineering", 1)
+	assertDeptCount(t, db, "user_departments", "guid-123", 0)
+}
+
+// TestRenameDepartment_PartialCollision_CountsNonColliding seeds two users:
+// UserA has both the verbatim and friendly values (collision — UPDATE OR IGNORE
+// skips, DELETE purges the verbatim duplicate); UserB has only the verbatim
+// value (no collision — UPDATE renames, counted). Total RowsAffected must be 1
+// (UserB only). Both users end up with the friendly department; no verbatim remains.
+func TestRenameDepartment_PartialCollision_CountsNonColliding(t *testing.T) {
+	tdb := setupTestDB(t)
+	db := tdb.DB
+	ctx := context.Background()
+	r := NewDepartmentRenamer(db)
+
+	userA := uuid.New().String()
+	userB := uuid.New().String()
+	for _, row := range []struct{ id, name string }{{userA, "alice"}, {userB, "bob"}} {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO users (id, username, role) VALUES (?, ?, 'user')`, row.id, row.name)
+		require.NoError(t, err)
+	}
+
+	// UserA: collision (holds both verbatim AND friendly already).
+	_, err := db.ExecContext(ctx, `INSERT INTO user_departments (user_id, department) VALUES (?, 'guid-123')`, userA)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO user_departments (user_id, department) VALUES (?, 'engineering')`, userA)
+	require.NoError(t, err)
+
+	// UserB: no collision (holds only verbatim).
+	_, err = db.ExecContext(ctx, `INSERT INTO user_departments (user_id, department) VALUES (?, 'guid-123')`, userB)
+	require.NoError(t, err)
+
+	rows, err := r.RenameDepartment(ctx, "guid-123", "engineering")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rows,
+		"only non-colliding userB contributes to RowsAffected; colliding userA is silent cleanup")
+
+	// Both users end up with engineering; no verbatim row remains.
+	assertDeptCount(t, db, "user_departments", "engineering", 2)
 	assertDeptCount(t, db, "user_departments", "guid-123", 0)
 }
 
