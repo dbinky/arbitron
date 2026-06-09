@@ -15,7 +15,15 @@ import (
 // RegisterScheduleTools registers the recurring-schedule management tools
 // (org-readiness Phase 3). They mirror the REST surface and share the same
 // schedule.Service (authz + validation), so REST and MCP never drift.
+//
+// The five tools are registered ONLY when a ScheduleService is wired. With
+// registration conditional, the handlers can assume a non-nil service — there is
+// no per-handler "unavailable" branch to forget, and an unwired deployment
+// simply does not advertise the tools.
 func RegisterScheduleTools(srv *Server) {
+	if srv.deps == nil || srv.deps.ScheduleService == nil {
+		return
+	}
 	srv.AddTool(
 		gomcp.NewTool("schedule_create",
 			gomcp.WithDescription("Create a recurring schedule that starts a workflow on a cron expression. Attributed to you; you may only schedule a workflow you can trigger."),
@@ -75,33 +83,17 @@ func scheduleResultError(err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError(fmt.Sprintf("forbidden: %s", err))
 	case errors.Is(err, schedule.ErrNotFound):
 		return gomcp.NewToolResultError(fmt.Sprintf("not found: %s", err))
+	case errors.Is(err, schedule.ErrExists):
+		return gomcp.NewToolResultError(fmt.Sprintf("conflict: %s", err))
 	case errors.Is(err, schedule.ErrInvalidCron),
 		errors.Is(err, schedule.ErrInvalidTimezone),
 		errors.Is(err, schedule.ErrEmptyWorkflow),
-		errors.Is(err, schedule.ErrDepartmentNotMember):
+		errors.Is(err, schedule.ErrDepartmentNotMember),
+		errors.Is(err, schedule.ErrQuotaExceeded),
+		errors.Is(err, schedule.ErrIntervalTooFrequent):
 		return gomcp.NewToolResultError(fmt.Sprintf("invalid request: %s", err))
 	default:
 		return gomcp.NewToolResultError(fmt.Sprintf("schedule operation failed: %s", err))
-	}
-}
-
-func scheduleToMap(s schedule.Schedule) map[string]any {
-	var lastFired any
-	if s.LastFiredAt != nil {
-		lastFired = s.LastFiredAt.UTC()
-	}
-	return map[string]any{
-		"id":           s.ID.String(),
-		"workflowName": s.WorkflowName,
-		"cronExpr":     s.CronExpr,
-		"timezone":     s.Timezone,
-		"creatorId":    s.CreatorID.String(),
-		"department":   s.Department,
-		"enabled":      s.Enabled,
-		"variables":    s.Variables,
-		"lastFiredAt":  lastFired,
-		"createdAt":    s.CreatedAt.UTC(),
-		"updatedAt":    s.UpdatedAt.UTC(),
 	}
 }
 
@@ -119,9 +111,6 @@ func parseVarsArg(args map[string]any) (map[string]any, error) {
 
 func scheduleCreateHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.ScheduleService == nil {
-			return gomcp.NewToolResultError("schedule service unavailable"), nil
-		}
 		args := request.GetArguments()
 		wfName, _ := args["workflowName"].(string)
 		if wfName == "" {
@@ -153,22 +142,19 @@ func scheduleCreateHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return scheduleResultError(err), nil
 		}
-		return MarshalResult(scheduleToMap(s))
+		return MarshalResult(s.WireMap())
 	}
 }
 
 func scheduleListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.ScheduleService == nil {
-			return gomcp.NewToolResultError("schedule service unavailable"), nil
-		}
 		schedules, err := srv.deps.ScheduleService.List(ctx)
 		if err != nil {
 			return scheduleResultError(err), nil
 		}
 		out := make([]map[string]any, 0, len(schedules))
 		for _, s := range schedules {
-			out = append(out, scheduleToMap(s))
+			out = append(out, s.WireMap())
 		}
 		return MarshalResult(map[string]any{"schedules": out})
 	}
@@ -176,9 +162,6 @@ func scheduleListHandler(srv *Server) server.ToolHandlerFunc {
 
 func scheduleGetHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.ScheduleService == nil {
-			return gomcp.NewToolResultError("schedule service unavailable"), nil
-		}
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
@@ -187,15 +170,12 @@ func scheduleGetHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return scheduleResultError(err), nil
 		}
-		return MarshalResult(scheduleToMap(s))
+		return MarshalResult(s.WireMap())
 	}
 }
 
 func scheduleUpdateHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.ScheduleService == nil {
-			return gomcp.NewToolResultError("schedule service unavailable"), nil
-		}
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil
@@ -228,15 +208,12 @@ func scheduleUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		if err != nil {
 			return scheduleResultError(err), nil
 		}
-		return MarshalResult(scheduleToMap(s))
+		return MarshalResult(s.WireMap())
 	}
 }
 
 func scheduleDeleteHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.ScheduleService == nil {
-			return gomcp.NewToolResultError("schedule service unavailable"), nil
-		}
 		id, err := ParseUUID(request, "id")
 		if err != nil {
 			return gomcp.NewToolResultError(err.Error()), nil

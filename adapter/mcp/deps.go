@@ -95,7 +95,8 @@ type Deps struct {
 	Users *instance.UserService
 	// ScheduleService powers the schedule_* tools (org-readiness Phase 3). Authz
 	// + validation live in the service, shared with the REST surface, so the two
-	// never drift. Optional: when nil, the schedule tools report unavailable.
+	// never drift. Optional: when nil, the schedule tools are not registered (the
+	// handlers therefore always see a non-nil service).
 	ScheduleService *schedule.Service
 	// Logger is the structured logger used by tool handlers. SECURITY: the
 	// connection tools log the connection NAME only, never the api_key. Optional:

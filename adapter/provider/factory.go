@@ -98,12 +98,6 @@ type Deps struct {
 	// model-influenced prompts). Per-profile ResolvedBinding.AllowedTools
 	// (knob (b)) narrows independently of this switch.
 	OpencodeAllowAllTools bool
-	// DefaultAgentBackend is the deployment default agent backend (org-readiness
-	// Phase 2) applied by AgentProviderFor when a binding carries no backend
-	// (claude-code | opencode). It names the fallback ONCE in the composition
-	// root (mirrors the executor's default; both read cfg.LLM.DefaultAgentBackend).
-	// An empty value yields ErrUnknownBackend for an unset binding (fail-closed).
-	DefaultAgentBackend string
 }
 
 // Factory holds the shared construction inputs and selects a concrete backend
@@ -206,18 +200,19 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 //
 //   - claude-code -> the claude-cli AgentAdapter.
 //   - opencode    -> adapter/opencode, with the binding's per-provider env.
-//   - ""  (unset) -> the deployment default (Deps.DefaultAgentBackend), then the
-//     same dispatch on the defaulted value.
-//   - any other value -> ErrUnknownBackend (fail-closed; never a silent fallback).
+//   - "" (unset) / any other value -> ErrUnknownBackend (fail-closed; never a
+//     silent fallback). The deployment default is owned by ONE place — the config
+//     floor (adapter/config loader) — and is applied by the AgentCallExecutor
+//     before it reaches the factory, so a real-path binding is never empty here.
+//     The factory deliberately does NOT re-default: a future non-executor caller
+//     gets a clear ErrUnknownBackend telling it to set a backend, rather than a
+//     second silent default to hunt down when the policy changes.
 func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentProvider, error) {
 	// Trim whitespace only (NOT lowercase): the allowed vocabulary is exact-match
 	// lowercase, identical to the workflow validator. A near-miss case (e.g.
 	// "OPENCODE") was already rejected at load and must stay unknown here so the
 	// factory and validator share one strict vocabulary (fail-closed).
 	backend := strings.TrimSpace(b.Backend)
-	if backend == "" {
-		backend = strings.TrimSpace(f.deps.DefaultAgentBackend)
-	}
 	switch backend {
 	case workflow.BackendClaudeCode:
 		// org-readiness Phase 2: when a claude agent Config is supplied, build a

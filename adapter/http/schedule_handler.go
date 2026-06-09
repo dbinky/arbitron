@@ -46,38 +46,21 @@ type scheduleUpdateRequest struct {
 	Enabled      *bool          `json:"enabled,omitempty"`
 }
 
-// scheduleJSON is the wire shape for a Schedule.
-func scheduleJSON(s schedule.Schedule) map[string]any {
-	var lastFired any
-	if s.LastFiredAt != nil {
-		lastFired = s.LastFiredAt.UTC()
-	}
-	return map[string]any{
-		"id":           s.ID.String(),
-		"workflowName": s.WorkflowName,
-		"cronExpr":     s.CronExpr,
-		"timezone":     s.Timezone,
-		"creatorId":    s.CreatorID.String(),
-		"department":   s.Department,
-		"enabled":      s.Enabled,
-		"variables":    s.Variables,
-		"lastFiredAt":  lastFired,
-		"createdAt":    s.CreatedAt.UTC(),
-		"updatedAt":    s.UpdatedAt.UTC(),
-	}
-}
-
 // writeScheduleError maps schedule sentinels to HTTP status.
 func writeScheduleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, schedule.ErrNotFound):
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+	case errors.Is(err, schedule.ErrExists):
+		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case errors.Is(err, schedule.ErrForbidden), errors.Is(err, schedule.ErrNotAuthorizedWorkflow):
 		WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 	case errors.Is(err, schedule.ErrInvalidCron),
 		errors.Is(err, schedule.ErrInvalidTimezone),
 		errors.Is(err, schedule.ErrEmptyWorkflow),
-		errors.Is(err, schedule.ErrDepartmentNotMember):
+		errors.Is(err, schedule.ErrDepartmentNotMember),
+		errors.Is(err, schedule.ErrQuotaExceeded),
+		errors.Is(err, schedule.ErrIntervalTooFrequent):
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 	default:
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
@@ -124,7 +107,7 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeScheduleError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusCreated, scheduleJSON(s))
+	WriteJSON(w, http.StatusCreated, s.WireMap())
 }
 
 // List handles GET /schedules.
@@ -136,7 +119,7 @@ func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(schedules))
 	for _, s := range schedules {
-		out = append(out, scheduleJSON(s))
+		out = append(out, s.WireMap())
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"schedules": out})
 }
@@ -152,7 +135,7 @@ func (h *ScheduleHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeScheduleError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, scheduleJSON(s))
+	WriteJSON(w, http.StatusOK, s.WireMap())
 }
 
 // Update handles PUT /schedules/{id}.
@@ -177,7 +160,7 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeScheduleError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, scheduleJSON(s))
+	WriteJSON(w, http.StatusOK, s.WireMap())
 }
 
 // Enable handles POST /schedules/{id}/enable.
@@ -200,7 +183,7 @@ func (h *ScheduleHandler) setEnabled(w http.ResponseWriter, r *http.Request, ena
 		writeScheduleError(w, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, scheduleJSON(s))
+	WriteJSON(w, http.StatusOK, s.WireMap())
 }
 
 // Delete handles DELETE /schedules/{id}.

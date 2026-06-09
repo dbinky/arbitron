@@ -35,8 +35,7 @@ func (r *captureRunner) Run(_ context.Context, spec claudecli.RunSpec) (<-chan s
 func TestFactory_ClaudeCodeArm_InjectsBindingEnv(t *testing.T) {
 	rr := &captureRunner{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
-		DefaultAgentBackend: "claude-code",
-		ClaudeAgentConfig:   claudecli.Config{BinaryPath: "claude", Runner: rr},
+		ClaudeAgentConfig: claudecli.Config{BinaryPath: "claude", Runner: rr},
 	})
 
 	b := provider.ResolvedBinding{
@@ -69,8 +68,7 @@ func TestFactory_ClaudeCodeArm_InjectsBindingEnv(t *testing.T) {
 func TestFactory_ClaudeCodeArm_EmptyBindingIsSubscription(t *testing.T) {
 	rr := &captureRunner{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
-		DefaultAgentBackend: "claude-code",
-		ClaudeAgentConfig:   claudecli.Config{BinaryPath: "claude", Runner: rr},
+		ClaudeAgentConfig: claudecli.Config{BinaryPath: "claude", Runner: rr},
 	})
 
 	b := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "m"}

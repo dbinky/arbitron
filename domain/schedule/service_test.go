@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/schedule"
@@ -282,4 +283,105 @@ func TestService_Create_CanTriggerError_Propagates(t *testing.T) {
 	_, err := svc.Create(ctxAs(user()), schedule.CreateInput{WorkflowName: "report", CronExpr: "0 9 * * *"})
 	require.Error(t, err)
 	assert.Len(t, repo.schedules, 0)
+}
+
+// --- Bounds: per-creator quantity cap + minimum interval floor ---
+
+// boundary — a non-admin creator at the count cap is rejected with the quota
+// sentinel and no schedule is persisted.
+func TestService_Create_QuotaCap_RejectsAtLimit(t *testing.T) {
+	caller := user()
+	existing := &schedule.Schedule{ID: uuid.New(), CreatorID: caller.UserID, WorkflowName: "a", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(existing)
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MaxSchedulesPerCreator: 1}))
+
+	_, err := svc.Create(ctxAs(caller), schedule.CreateInput{WorkflowName: "b", CronExpr: "0 10 * * *"})
+	assert.ErrorIs(t, err, schedule.ErrQuotaExceeded)
+	assert.Len(t, repo.schedules, 1, "no schedule persisted when over quota")
+}
+
+// success — a creator below the cap may still create.
+func TestService_Create_QuotaCap_AllowsBelowLimit(t *testing.T) {
+	caller := user()
+	repo := newSvcRepo()
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MaxSchedulesPerCreator: 2}))
+
+	_, err := svc.Create(ctxAs(caller), schedule.CreateInput{WorkflowName: "a", CronExpr: "0 9 * * *"})
+	require.NoError(t, err)
+}
+
+// authz — admins are exempt from the count cap.
+func TestService_Create_QuotaCap_AdminExempt(t *testing.T) {
+	adm := admin()
+	existing := &schedule.Schedule{ID: uuid.New(), CreatorID: adm.UserID, WorkflowName: "a", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(existing)
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MaxSchedulesPerCreator: 1}))
+
+	_, err := svc.Create(ctxAs(adm), schedule.CreateInput{WorkflowName: "b", CronExpr: "0 10 * * *"})
+	require.NoError(t, err, "admins bypass the per-creator quota")
+}
+
+// boundary — a cron that fires more often than the configured minimum interval
+// is rejected with the interval sentinel.
+func TestService_Create_IntervalFloor_RejectsTooFrequent(t *testing.T) {
+	caller := user()
+	repo := newSvcRepo()
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MinInterval: 5 * time.Minute}))
+
+	// "* * * * *" fires every minute, finer than the 5-minute floor.
+	_, err := svc.Create(ctxAs(caller), schedule.CreateInput{WorkflowName: "a", CronExpr: "* * * * *"})
+	assert.ErrorIs(t, err, schedule.ErrIntervalTooFrequent)
+	assert.Len(t, repo.schedules, 0)
+}
+
+// success — a cron at or above the floor is allowed.
+func TestService_Create_IntervalFloor_AllowsAtOrAboveFloor(t *testing.T) {
+	caller := user()
+	repo := newSvcRepo()
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MinInterval: 5 * time.Minute}))
+
+	// "*/5 * * * *" fires every 5 minutes, exactly at the floor.
+	_, err := svc.Create(ctxAs(caller), schedule.CreateInput{WorkflowName: "a", CronExpr: "*/5 * * * *"})
+	require.NoError(t, err)
+}
+
+// authz — admins are exempt from the interval floor.
+func TestService_Create_IntervalFloor_AdminExempt(t *testing.T) {
+	adm := admin()
+	repo := newSvcRepo()
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MinInterval: time.Hour}))
+
+	_, err := svc.Create(ctxAs(adm), schedule.CreateInput{WorkflowName: "a", CronExpr: "* * * * *"})
+	require.NoError(t, err, "admins bypass the interval floor")
+}
+
+// default — the package default permits every valid standard cron (finest is
+// 1/min) without an explicit bound override.
+func TestService_Create_DefaultBounds_AllowPerMinute(t *testing.T) {
+	caller := user()
+	repo := newSvcRepo()
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true})
+
+	_, err := svc.Create(ctxAs(caller), schedule.CreateInput{WorkflowName: "a", CronExpr: "* * * * *"})
+	require.NoError(t, err, "default 1-minute floor allows a per-minute cron")
+}
+
+// boundary — Update that changes the cron to a too-frequent expression is
+// rejected by the interval floor.
+func TestService_Update_IntervalFloor_RejectsTooFrequent(t *testing.T) {
+	caller := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: caller.UserID, WorkflowName: "report", CronExpr: "0 9 * * *", Enabled: true}
+	repo := newSvcRepo(s)
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true},
+		schedule.WithBounds(schedule.Bounds{MinInterval: 5 * time.Minute}))
+
+	tooFrequent := "* * * * *"
+	_, err := svc.Update(ctxAs(caller), s.ID, schedule.UpdateInput{CronExpr: &tooFrequent})
+	assert.ErrorIs(t, err, schedule.ErrIntervalTooFrequent)
 }

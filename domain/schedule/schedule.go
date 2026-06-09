@@ -39,3 +39,27 @@ type Schedule struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
+
+// WireMap is the single canonical wire projection of a Schedule. Both the REST
+// handler and the MCP tools render schedules through it so the two surfaces
+// cannot drift on field names, casing, or time formatting. Timestamps are
+// emitted in UTC; LastFiredAt is nil when the schedule has never fired.
+func (s Schedule) WireMap() map[string]any {
+	var lastFired any
+	if s.LastFiredAt != nil {
+		lastFired = s.LastFiredAt.UTC()
+	}
+	return map[string]any{
+		"id":           s.ID.String(),
+		"workflowName": s.WorkflowName,
+		"cronExpr":     s.CronExpr,
+		"timezone":     s.Timezone,
+		"creatorId":    s.CreatorID.String(),
+		"department":   s.Department,
+		"enabled":      s.Enabled,
+		"variables":    s.Variables,
+		"lastFiredAt":  lastFired,
+		"createdAt":    s.CreatedAt.UTC(),
+		"updatedAt":    s.UpdatedAt.UTC(),
+	}
+}

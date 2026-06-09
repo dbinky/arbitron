@@ -116,7 +116,7 @@ func sliceNode(alias, backend string) workflow.Node {
 func litellmProfile(alias, backend string) (provider.Profile, *fakeConnectionStore) {
 	store := newFakeConnectionStore()
 	conn := provider.Connection{
-		Name:    "conn-litellm",
+		Name:     "conn-litellm",
 		Provider: "litellm",
 		BaseURL:  "https://litellm.internal:4000",
 	}
@@ -165,11 +165,12 @@ func runSlice(
 	claudeR := &captureRunner{}
 	opencodeR := &opencodeCaptureRunner{}
 
+	// NOTE: the deployment default is applied by the executor (NewAgentCallExecutor
+	// below receives defaultBackend); the factory no longer re-defaults (PR #25).
 	f := adapterprovider.NewFactory(adapterprovider.Deps{
-		DefaultAgentBackend: defaultBackend,
-		ClaudeAgentConfig:   claudecli.Config{BinaryPath: "claude", Runner: claudeR},
-		Runner:              opencodeR,
-		OpencodeBinaryPath:  "opencode",
+		ClaudeAgentConfig:  claudecli.Config{BinaryPath: "claude", Runner: claudeR},
+		Runner:             opencodeR,
+		OpencodeBinaryPath: "opencode",
 	})
 	exec := engine.NewAgentCallExecutor(fr, f, resolver, defaultBackend)
 	res, err := exec.Execute(context.Background(), node, sliceWorkspace(), "slice-wf")
@@ -265,10 +266,10 @@ func TestBackendSlice_UnknownBackend_ExecuteErrors(t *testing.T) {
 // --- edge: all-empty backend chain fails closed (policy in composition root) -
 
 // TestBackendSlice_AllEmptyBackend_ExecuteErrors asserts that when every level
-// of the precedence chain is unset (node="", profile="", factory default=""),
+// of the precedence chain is unset (node="", profile="", executor default=""),
 // Execute returns an error. The deployment policy lives in the composition root
-// via Deps.DefaultAgentBackend; an unconfigured deployment must fail closed, not
-// silently fall through to claude-code or any other default.
+// (the config floor + the executor's default arg); an unconfigured deployment
+// must fail closed, not silently fall through to claude-code or any other default.
 func TestBackendSlice_AllEmptyBackend_ExecuteErrors(t *testing.T) {
 	resolver := newSliceResolver(t, []provider.Profile{subscriptionProfile("sub")}, nil)
 

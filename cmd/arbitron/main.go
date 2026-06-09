@@ -547,9 +547,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// credential-bearing opencode subprocess fed model-influenced prompts an
 		// allow-all posture is RCE-equivalent (the lethal trifecta).
 		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
-		// Org-readiness Phase 2: the deployment default agent backend (floored to
-		// claude-code at config load) applied when a binding names no backend.
-		DefaultAgentBackend: cfg.LLM.DefaultAgentBackend,
 	})
 
 	// 9. Create all node executors and build the executor map.

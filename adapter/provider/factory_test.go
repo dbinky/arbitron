@@ -31,9 +31,8 @@ func newTestFactory(t *testing.T) *adapterprovider.Factory {
 	chat := claudecli.NewChatAdapter(claudecli.Config{Runner: &noopRunner{}})
 	agent := claudecli.NewAgentAdapter(claudecli.Config{Runner: &noopRunner{}})
 	return adapterprovider.NewFactory(adapterprovider.Deps{
-		ClaudeChat:          chat,
-		ClaudeAgent:         agent,
-		DefaultAgentBackend: "claude-code",
+		ClaudeChat:  chat,
+		ClaudeAgent: agent,
 	})
 }
 
@@ -99,13 +98,14 @@ func TestFactory_AgentProviderFor_OpencodeBackendIsOpencode(t *testing.T) {
 	assert.IsType(t, (*opencode.Provider)(nil), ap)
 }
 
-// An unset backend falls back to the deployment default (claude-code in the
-// test factory) and selects the claude-cli adapter.
-func TestFactory_AgentProviderFor_UnsetDefaultsToClaudeCLI(t *testing.T) {
+// An unset backend is NOT re-defaulted by the factory (the config floor owns the
+// deployment default and the executor applies it first); it fails closed with
+// ErrUnknownBackend. PR #25 review: deleted the factory re-default.
+func TestFactory_AgentProviderFor_UnsetFailsClosed(t *testing.T) {
 	f := newTestFactory(t)
-	ap, err := f.AgentProviderFor(agentBinding(""))
-	require.NoError(t, err)
-	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
+	_, err := f.AgentProviderFor(agentBinding(""))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnknownBackend)
 }
 
 // A claude-code backend selects the claude-cli adapter.
@@ -145,12 +145,12 @@ func TestFactory_ChatVsAgentSelection(t *testing.T) {
 	f := newTestFactory(t)
 
 	// The empty/claude-cli provider selects the chat adapter through the chat
-	// method and the agent adapter through the agent method.
+	// method; the agent method dispatches on the (explicit) backend axis.
 	cp, err := f.ChatProviderFor(chatBinding(""))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
 
-	ap, err := f.AgentProviderFor(agentBinding(""))
+	ap, err := f.AgentProviderFor(agentBindingBackend("", "claude-code"))
 	require.NoError(t, err)
 	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
 }
@@ -194,9 +194,9 @@ func TestFactory_ChatProviderFor_MissingClaudeAdapter(t *testing.T) {
 }
 
 func TestFactory_AgentProviderFor_MissingClaudeAdapter(t *testing.T) {
-	// claude-code backend (default) with no ClaudeAgent wired -> clear error.
-	f := adapterprovider.NewFactory(adapterprovider.Deps{DefaultAgentBackend: "claude-code"})
-	_, err := f.AgentProviderFor(agentBinding(""))
+	// claude-code backend with no ClaudeAgent wired -> clear error.
+	f := adapterprovider.NewFactory(adapterprovider.Deps{})
+	_, err := f.AgentProviderFor(agentBindingBackend("", "claude-code"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "claude-cli")
 }
@@ -212,12 +212,12 @@ func TestFactory_ChatProviderFor_NormalizesCaseAndWhitespace(t *testing.T) {
 
 func TestFactory_AgentProviderFor_BackendNormalizesWhitespace(t *testing.T) {
 	f := newTestFactory(t)
-	// A whitespace-only backend normalizes to empty -> deployment default
-	// (claude-code) -> claude-cli adapter. The provider string is irrelevant to
-	// agent dispatch now.
-	ap, err := f.AgentProviderFor(agentBindingBackend("openai", "   "))
-	require.NoError(t, err)
-	assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap)
+	// A whitespace-only backend trims to empty. The factory does NOT re-default
+	// (PR #25 review), so it fails closed with ErrUnknownBackend rather than
+	// silently picking a backend.
+	_, err := f.AgentProviderFor(agentBindingBackend("openai", "   "))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnknownBackend)
 }
 
 // Edge case: whitespace-only provider string for ChatProviderFor normalizes to
