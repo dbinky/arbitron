@@ -24,6 +24,10 @@ var (
 	// than the configured minimum interval (a resource/cost-exhaustion floor). It
 	// maps to HTTP 400 at the adapter seam.
 	ErrIntervalTooFrequent = errors.New("schedule: cron interval is finer than the allowed minimum")
+	// ErrRunNowUnavailable is returned when run-now is invoked on a Service that
+	// has no Firer wired. It maps to HTTP 503 / MCP failed at the adapter seam:
+	// the capability is not available in this deployment, not a client error.
+	ErrRunNowUnavailable = errors.New("schedule: run-now is not available")
 )
 
 // Default bounds. They turn the unbounded-schedule abuse vector (unattended,
@@ -87,6 +91,20 @@ type Service struct {
 	canTrigger CanTrigger
 	now        func() time.Time
 	bounds     Bounds
+	firer      Firer // optional; nil => run-now unavailable
+}
+
+// Firer starts a schedule's workflow immediately, out of cron cadence. The
+// schedule.Runner satisfies it. It is OPTIONAL on the Service: nil when unwired,
+// in which case RunNow returns ErrRunNowUnavailable and the adapters do not
+// advertise the run-now surface (HasFirer gates registration).
+type Firer interface {
+	Fire(ctx context.Context, s Schedule, skipWhenBusy bool) (uuid.UUID, bool, error)
+}
+
+// WithFirer wires the run-now fire path. Without it, RunNow is unavailable.
+func WithFirer(f Firer) ServiceOption {
+	return func(s *Service) { s.firer = f }
 }
 
 // ServiceOption configures a Service.
@@ -368,6 +386,52 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 	return s.repo.Delete(ctx, id)
 }
+
+// RunNowInput carries the run-now options. SkipWhenBusy defaults to false: by
+// default run-now fires even if a prior run of the schedule is still active.
+type RunNowInput struct {
+	SkipWhenBusy bool
+}
+
+// RunNowResult reports the outcome of a run-now. Fired is false when the
+// occurrence was skipped because a prior run was active and SkipWhenBusy was set;
+// in that case InstanceID is uuid.Nil.
+type RunNowResult struct {
+	InstanceID uuid.UUID
+	Fired      bool
+}
+
+// RunNow fires an existing schedule immediately, out of cron cadence, reusing the
+// schedule's variables and creator attribution. Authorization is owner-or-admin
+// (the same gate as Get/Update/Delete): the caller must be permitted to MANAGE
+// the schedule; the run itself is attributed to the schedule's creator. It never
+// advances the cron position (the Runner holds no repo).
+func (s *Service) RunNow(ctx context.Context, id uuid.UUID, in RunNowInput) (RunNowResult, error) {
+	c, err := caller(ctx)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	sched, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	if !authorize(c, *sched) {
+		return RunNowResult{}, ErrForbidden
+	}
+	if s.firer == nil {
+		return RunNowResult{}, ErrRunNowUnavailable
+	}
+	instID, fired, err := s.firer.Fire(ctx, *sched, in.SkipWhenBusy)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	return RunNowResult{InstanceID: instID, Fired: fired}, nil
+}
+
+// HasFirer reports whether the run-now path is wired. Adapters use it to gate
+// registration of the run-now surface (consistent with the conditional
+// schedule-tools registration pattern).
+func (s *Service) HasFirer() bool { return s.firer != nil }
 
 // assertCanTrigger maps the can-trigger gate to ErrNotAuthorizedWorkflow.
 func (s *Service) assertCanTrigger(ctx context.Context, c identity.Identity, workflowName string) error {
