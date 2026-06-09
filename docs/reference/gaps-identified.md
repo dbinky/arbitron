@@ -33,7 +33,7 @@ the area/pass, or fix if a real defect).
 
 ## Fixed Previously
 
-*(none yet — this loop is fresh for the final-org-gaps work)*
+- **Sentinel coverage for run-now sentinels.** `ErrCreatorUnresolved` and `ErrRunNowUnavailable` were missing from both the HTTP (`writeScheduleError`) and MCP (`scheduleResultError`) sentinel exhaustiveness tests. `ErrCreatorUnresolved` (→ 409/conflict) was added to the main `scheduleSentinels` slice in both files; `ErrRunNowUnavailable` (→ 503/run-now unavailable) received dedicated tests since it is intentionally a 5xx and requires different assertions. (Area #2 Pass 1)
 
 ---
 
