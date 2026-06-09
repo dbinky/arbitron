@@ -248,6 +248,34 @@ func TestScheduleHandler_ScheduleList_WorkflowFilter(t *testing.T) {
 	})
 }
 
+// Security: a non-admin caller cannot widen their scope by injecting a
+// creatorId query param. The handler only accepts workflowName from request
+// input; CreatorID is always service-set from identity. Passing a different
+// user's ID in the query string must be silently ignored — the response still
+// contains only the caller's own schedules.
+func TestScheduleHandler_List_CreatorIDNotFromInput(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	otherUser := uuid.New()
+
+	own := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "mine", CronExpr: "0 9 * * *"}
+	other := &schedule.Schedule{ID: uuid.New(), CreatorID: otherUser, WorkflowName: "theirs", CronExpr: "0 9 * * *"}
+	repo.m[own.ID] = own
+	repo.m[other.ID] = other
+
+	router := schedRouter(t, repo, true, owner)
+	// Attempt to inject the other user's ID via a query param — must be ignored.
+	w := do(t, router, http.MethodGet, "/schedules?creatorId="+otherUser.String(), "")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Schedules []map[string]any `json:"schedules"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Schedules, 1, "injected creatorId must be ignored; only caller's own schedule is returned")
+	assert.Equal(t, "mine", body.Schedules[0]["workflowName"])
+}
+
 // --- Input-validation ---
 
 func TestScheduleHandler_Create_InvalidCron_400(t *testing.T) {

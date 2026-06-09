@@ -48,6 +48,8 @@ the area/pass, or fix if a real defect).
 
 - **Edge path missing department-replace-on-re-login test.** The OIDC path had `TestResolve_ReplacesDepartmentsOnEachLogin`; the edge `ResolveByEmail` path had no equivalent. Added `TestResolveByEmail_DepartmentsReplacedOnReLogin`: first login snapshots `["sales"]`, re-login with `["engineering"]` must store `["engineering"]` only. (Area #5 Pass 1)
 
+- **`creatorId` injection via query param untested.** HTTP `GET /schedules` accepted `workflowName` from query params but no test verified that passing `?creatorId=<other-uuid>` is silently ignored (the security invariant "CreatorID is service-set, never from request input"). Added `TestScheduleHandler_List_CreatorIDNotFromInput`: two users' schedules seeded; non-admin calling with injected `?creatorId=<otherUser>` still receives only their own schedule. (Area #9 Pass 1)
+
 - **scheduleId omitempty robustness untested.** `summaryDTO.ScheduleID` has `omitempty` but no test verified that a manual run (nil ScheduleID) actually omits the key from JSON vs. emitting `"scheduleId":null`. Added `TestInstanceHandler_List_ManualOrigin_ScheduleIDAbsent` asserting the key is absent for nil ScheduleID and `triggerSource="manual"` is always present. (Area #8 Pass 2)
 
 - **WithOrigin override semantics untested.** No test verified that a second `WithOrigin` call on a context already carrying an origin overwrites the prior value. Documents the context.WithValue layering guarantee so each trigger call's origin cannot bleed into a nested trigger. Added `TestWithOrigin_OverwritesPriorOrigin` in `domain/instance/origin_test.go`. (Area #7 Pass 2)
