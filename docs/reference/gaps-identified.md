@@ -19,7 +19,6 @@ the area/pass, or fix if a real defect).
 
 - **Hand-maintained sqlc for instances.** Migration `014` columns (`trigger_source`, `schedule_id`) were added by hand to `adapter/sqlite/generated/{models.go,instances.sql.go}` and all four Scan sites. Verify positional scans stay aligned, the `queries/instances.sql` source matches the generated code, and a future real `sqlc generate` would be purely additive. (Area #8)
 
-- **Edge group-claim shape.** `extractGroups` accepts a single string OR an array of strings, dropping non-strings/blanks, missing/unconfigured ⇒ nil. Confirm it is airtight against an empty array, a numeric/object claim, and a claim present-but-null — and that none is ever a 401. (Area #3 / #14)
 
 - **Env-overlay precedence for the mapping.** `ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>` overlays `auth.rbac.mapping` (mirrors the `LEADS_` precedent). Verify a value set in both YAML and env resolves with the documented precedence and that keys normalize consistently with the YAML path. (Area #11 / #19)
 
@@ -36,6 +35,8 @@ the area/pass, or fix if a real defect).
 - **Sentinel coverage for run-now sentinels.** `ErrCreatorUnresolved` and `ErrRunNowUnavailable` were missing from both the HTTP (`writeScheduleError`) and MCP (`scheduleResultError`) sentinel exhaustiveness tests. `ErrCreatorUnresolved` (→ 409/conflict) was added to the main `scheduleSentinels` slice in both files; `ErrRunNowUnavailable` (→ 503/run-now unavailable) received dedicated tests since it is intentionally a 5xx and requires different assertions. (Area #2 Pass 1)
 
 - **Missing admin-can-fire tests at adapter level.** Both HTTP (`TestScheduleHandler_RunNow_NonOwner_403`) and MCP (`TestScheduleTools_RunNow_NonOwnerForbidden`) tested only the "non-owner is denied" half of the owner-or-admin authz contract; the "admin CAN fire another user's schedule" complement was absent at the adapter level. Added `TestScheduleHandler_RunNow_Admin_202` and `TestScheduleTools_RunNow_AdminCanFire`, each asserting 202/no-error and `firer.calls == 1`. (Area #2 Pass 2)
+
+- **Edge group-claim shape airtightness.** `extractGroups` was verified correct but lacked tests for empty array, blank-only array, numeric scalar, and JSON-null claim values. Added `TestVerify_GroupClaimEdgeCases` (table test, 4 sub-cases) confirming each yields nil groups and no verification error — none is ever a 401. (Area #3 Pass 1)
 
 ---
 

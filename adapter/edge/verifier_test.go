@@ -200,6 +200,37 @@ func TestVerify_GroupClaimMixedArray_KeepsOnlyStrings(t *testing.T) {
 	assert.Equal(t, []string{"eng", "platform"}, id.Groups)
 }
 
+// TestVerify_GroupClaimEdgeCases covers the claim shapes identified in the
+// carry-forward review: empty array, blank-only array, numeric scalar, and
+// JSON-null. All are valid tokens — none must fail verification; all must yield
+// nil groups so the user falls back to the default group rather than being
+// locked out.
+func TestVerify_GroupClaimEdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		claim any
+	}{
+		{"empty array", []any{}},
+		{"blank-only array", []any{"  ", ""}},
+		{"numeric scalar", float64(42)},
+		{"null claim", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newJWKSHarness(t)
+			v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+			c := baseClaims(h.issuer, "app-aud")
+			c["groups"] = tc.claim
+			raw := h.signToken(t, nil, c)
+
+			id, err := v.Verify(context.Background(), raw)
+			require.NoError(t, err, "claim shape %q must NOT fail verification", tc.name)
+			assert.Equal(t, "alice@corp.example", id.Email)
+			assert.Nil(t, id.Groups, "claim shape %q must yield nil groups, never a 401", tc.name)
+		})
+	}
+}
+
 func TestVerify_ValidToken_ReturnsEmail(t *testing.T) {
 	h := newJWKSHarness(t)
 	v := newVerifier(t, h, "app-aud")
