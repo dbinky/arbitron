@@ -408,6 +408,8 @@ func TestScheduleHandler_RunNow_Skipped_200(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, false, body["fired"])
+	_, hasInstanceID := body["instanceId"]
+	assert.False(t, hasInstanceID, "skipped response must not include instanceId")
 }
 
 // Input validation: malformed UUID in path => 400.
