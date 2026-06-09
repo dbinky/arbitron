@@ -18,10 +18,15 @@ import "github.com/arbitron/arbitron/domain/provider"
 var providerIDMap = map[string]string{
 	provider.CanonicalAnthropicAPI: "anthropic",
 	"openai":                       "openai",
-	"openrouter":                   "openrouter",
-	"ollama":                       "ollama",
-	provider.CanonicalBedrock:      "amazon-bedrock",
-	provider.CanonicalAzure:        "azure",
+	// org-readiness Phase 2: a LiteLLM-family agent binding maps to the opencode
+	// "openai" provider (OPENAI_API_KEY + OPENAI_BASE_URL), so opencode targets
+	// LiteLLM's OpenAI-compatible surface via `-m openai/<model>`. Symmetric with
+	// the chat tier, which already accepts "litellm" through the openai family.
+	"litellm":                 "openai",
+	"openrouter":              "openrouter",
+	"ollama":                  "ollama",
+	provider.CanonicalBedrock: "amazon-bedrock",
+	provider.CanonicalAzure:   "azure",
 }
 
 // mapProviderID canonicalizes an arbitron provider string (via the shared

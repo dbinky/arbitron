@@ -23,16 +23,37 @@ type AgentCallExecutor struct {
 	fileReader FileReader
 	selector   AgentProviderSelector
 	resolver   provider.ProfileResolver
+	// defaultAgentBackend is the deployment-wide fallback agent backend
+	// (org-readiness Phase 2) applied when neither the node nor its profile names
+	// one. It is the LAST step of the precedence chain node > profile > default.
+	// An empty value here is intentional: the executor never invents a backend
+	// itself, leaving the final fallback to the composition root / factory so the
+	// deployment policy lives in exactly one place.
+	defaultAgentBackend string
 }
 
 // NewAgentCallExecutor creates an AgentCallExecutor with the given dependencies.
 // The selector chooses the concrete AgentProvider per resolved binding.
-func NewAgentCallExecutor(fr FileReader, selector AgentProviderSelector, resolver provider.ProfileResolver) *AgentCallExecutor {
+// defaultAgentBackend is the deployment fallback used when neither the node nor
+// its profile selects a backend (precedence node > profile > default).
+func NewAgentCallExecutor(fr FileReader, selector AgentProviderSelector, resolver provider.ProfileResolver, defaultAgentBackend string) *AgentCallExecutor {
 	return &AgentCallExecutor{
-		fileReader: fr,
-		selector:   selector,
-		resolver:   resolver,
+		fileReader:          fr,
+		selector:            selector,
+		resolver:            resolver,
+		defaultAgentBackend: defaultAgentBackend,
 	}
+}
+
+// firstNonEmpty returns the first non-empty string from vals, or "" if all are
+// empty. It encodes the backend precedence chain (node > profile > default).
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // Execute reads the mission template, resolves variable substitutions, resolves
@@ -54,8 +75,15 @@ func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, var
 		return nil, fmt.Errorf("agent_call %q: resolve profile: %w", node.ID, err)
 	}
 
-	// Select the concrete agent backend for this node from binding.Provider
-	// (claude-cli / opencode). No adapter is imported here.
+	// Compute the EFFECTIVE agent backend with precedence node > profile >
+	// deployment default (org-readiness Phase 2). The backend axis is INDEPENDENT
+	// of binding.Provider; set it on the binding so the selector dispatches on it.
+	// An all-empty chain leaves Backend "" — the factory then applies its own
+	// deployment default (single fallback seam).
+	binding.Backend = firstNonEmpty(node.Config.Backend, binding.Backend, e.defaultAgentBackend)
+
+	// Select the concrete agent backend for this node from binding.Backend
+	// (claude-code -> claude-cli adapter / opencode). No adapter is imported here.
 	agentProvider, err := e.selector.AgentProviderFor(binding)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: select provider: %w", node.ID, err)

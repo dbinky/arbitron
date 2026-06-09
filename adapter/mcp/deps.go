@@ -12,6 +12,7 @@ import (
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/schedule"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -51,18 +52,18 @@ type QueueManagerPort interface {
 // Optional fields (nil-safe; handlers guard against nil before use):
 //   - EventBus, QueueManager, QueueRepo, Notifications, ConversationHandler
 type Deps struct {
-	Engine              EngineService
-	Workflows           workflow.WorkflowRepository
+	Engine    EngineService
+	Workflows workflow.WorkflowRepository
 	// WorkflowSvc resolves storage scope/authorization from the calling user's
 	// identity for the workflow_* tools. Optional: when nil, a default service
 	// over Workflows (no publisher lookup) is constructed lazily.
-	WorkflowSvc         *workflow.WorkflowService
-	Instances           instance.InstanceRepository
-	NodeExecs           instance.NodeExecutionRepository
-	Snapshots           instance.VariableSnapshotRepository
-	FileReader          engine.FileReader
-	EventBus            engine.EventBus
-	Config              *config.Config
+	WorkflowSvc *workflow.WorkflowService
+	Instances   instance.InstanceRepository
+	NodeExecs   instance.NodeExecutionRepository
+	Snapshots   instance.VariableSnapshotRepository
+	FileReader  engine.FileReader
+	EventBus    engine.EventBus
+	Config      *config.Config
 	// Settings is the synchronized owner of runtime-mutable Teams settings,
 	// shared with the HTTP adapter and the Teams notifier so all three route
 	// reads/writes through one mutex. Required for the system_config and
@@ -92,6 +93,11 @@ type Deps struct {
 	// Users powers the admin-only user_* tools. The admin gate + demotion floors
 	// live in the service. Optional: when nil, the user tools report unavailable.
 	Users *instance.UserService
+	// ScheduleService powers the schedule_* tools (org-readiness Phase 3). Authz
+	// + validation live in the service, shared with the REST surface, so the two
+	// never drift. Optional: when nil, the schedule tools are not registered (the
+	// handlers therefore always see a non-nil service).
+	ScheduleService *schedule.Service
 	// Logger is the structured logger used by tool handlers. SECURITY: the
 	// connection tools log the connection NAME only, never the api_key. Optional:
 	// a nil logger falls back to slog.Default().

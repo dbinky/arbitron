@@ -539,8 +539,33 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
+		errs = append(errs, validateAgentBackend(n)...)
 	}
 	return errs
+}
+
+// validateAgentBackend rejects an unknown Config.Backend on agent nodes
+// (agent_call / interactive_agent). The backend axis selects which agent CLI
+// runs the loop; an unrecognized value would mis-route (or silently fall back)
+// at run time, so it is a hard, fail-closed ValidationError gated at
+// workflow_validate. The check applies ONLY to agent node types — a backend on
+// a chat (llm_call/interactive_llm) or any other node is an irrelevant field
+// and is ignored so chat authors are not blocked. An empty value inherits and
+// is always valid.
+func validateAgentBackend(n Node) []ValidationError {
+	switch n.Type {
+	case NodeTypeAgentCall, NodeTypeInteractiveAgent:
+	default:
+		return nil
+	}
+	if IsValidAgentBackend(n.Config.Backend) {
+		return nil
+	}
+	return []ValidationError{{
+		Code:    "INVALID_AGENT_BACKEND",
+		Message: "node " + n.ID + " has unknown agent backend " + n.Config.Backend + " (want claude-code or opencode)",
+		NodeID:  n.ID,
+	}}
 }
 
 // countOutgoingEdges counts the number of edges originating from a given node.

@@ -1174,3 +1174,265 @@ func TestLoad_CreatedConfigFile_HasRestrictivePermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0600), perm,
 		"default config file must be 0600 (owner-only r/w) to protect future secrets written into it")
 }
+
+// TestValidateAuth_EdgeMode mirrors the org-mode validation tests: edge mode
+// requires BOTH auth.edge.teamdomain and auth.edge.audiences; either missing is
+// a fail-fast load error (an edge deployment missing its team domain cannot
+// verify a single token).
+func TestValidateAuth_EdgeMode(t *testing.T) {
+	t.Run("happy: both fields present validates", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"app-aud"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("missing teamdomain → error names it", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    audiences: ["app-aud"]
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+	})
+
+	t.Run("missing audiences → error names it", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+`
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+
+	t.Run("both missing → error names both", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"edge\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+
+	t.Run("unknown mode error lists all three modes", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		require.NoError(t, os.WriteFile(configPath, []byte("auth:\n  mode: \"cloud\"\n"), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeLocal)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeOrg)
+		assert.Contains(t, err.Error(), domainconfig.AuthModeEdge)
+	})
+}
+
+// TestLoad_EdgeDefaultsAndEnvOverlay verifies the edge defaults exist (empty,
+// not selected under local mode) and that the env overlay selects edge mode and
+// parses the audiences CSV into a real []string (mirrors the oidc.scopes /
+// bootstrapadmins overlay trick).
+func TestLoad_EdgeDefaultsAndEnvOverlay(t *testing.T) {
+	t.Run("defaults present, edge not selected under local mode", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "", cfg.Auth.Edge.TeamDomain)
+		assert.Len(t, cfg.Auth.Edge.Audiences, 0)
+	})
+
+	t.Run("env overlay selects edge and parses audiences list", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "aud-one,aud-two")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		require.NotNil(t, cfg)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"aud-one", "aud-two"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("boundary: single-element audiences CSV", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "solo")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"solo"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("boundary: whitespace/trailing audiences CSV trimmed", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ANTHROPIC_API_KEY", "")
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", " a , b ")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "config.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a", "b"}, cfg.Auth.Edge.Audiences)
+	})
+}
+
+// TestValidateAuth_EdgeMode_WhitespaceFields verifies that edge-mode config
+// fields set to whitespace-only in YAML are rejected at load time with the
+// config key name in the error, not silently passed on to edge.New where the
+// error message would be less actionable. Mirrors the org-mode whitespace check
+// in TestLoad_AuthOrgMode_WhitespaceOnlyOIDCField.
+func TestValidateAuth_EdgeMode_WhitespaceFields(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	t.Run("whitespace-only teamdomain is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"   \"\n    audiences: [\"app-aud\"]\n"
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err, "whitespace-only teamdomain must fail edge mode validation")
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+	})
+
+	t.Run("whitespace-only audiences in YAML are rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config.yaml")
+		// YAML audiences: ["  "] has length 1 so the len==0 check passes —
+		// we must also check that at least one entry is non-whitespace.
+		yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"https://acme.cloudflareaccess.com\"\n    audiences:\n      - \"  \"\n"
+		require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+		cfg, err := adapterconfig.Load(configPath)
+		require.Error(t, err, "all-whitespace YAML audiences must fail edge mode validation")
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+}
+
+// TestLoad_AuthMode_Edge_Normalized verifies that "EDGE" (uppercase) normalizes
+// to "edge" the same way "ORG" normalizes to "org" (normalize() lowercases the
+// mode string). Mirrors TestLoad_AuthMode_Normalized for the edge case.
+func TestLoad_AuthMode_Edge_Normalized(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "EDGE"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "edge", cfg.Auth.Mode,
+		`mode "EDGE" must normalize to "edge" the same way "ORG" normalizes to "org"`)
+}
+
+// TestLoad_EdgeMode_IgnoresOIDCConfig verifies that edge mode succeeds even
+// when OIDC config is also present (e.g. a shared config file that switches
+// modes via an env var). Mirrors TestLoad_LocalMode_IgnoresOIDCConfig.
+func TestLoad_EdgeMode_IgnoresOIDCConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := `
+auth:
+  mode: "edge"
+  edge:
+    teamdomain: "https://acme.cloudflareaccess.com"
+    audiences: ["app-aud"]
+  oidc:
+    issuerurl: "https://idp.example.com"
+    clientid: "some-client"
+    clientsecret: "some-secret"
+    redirecturl: "https://app.example.com/auth/callback"
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err, "edge mode must not require or validate OIDC config")
+	require.NotNil(t, cfg)
+	assert.Equal(t, "edge", cfg.Auth.Mode)
+}
+
+// TestLoad_EdgeMode_TeamDomainTrimmed verifies that a YAML teamdomain value with
+// surrounding whitespace is normalized by Load so the caller (edge.New) always
+// receives a clean URL. Without normalization, a padded teamdomain would pass
+// validateAuth (non-empty after TrimSpace) but then fail at edge.New with a
+// confusing "invalid URL" error instead of a clear config error.
+func TestLoad_EdgeMode_TeamDomainTrimmed(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Note the spaces around the URL value.
+	yamlContent := "auth:\n  mode: \"edge\"\n  edge:\n    teamdomain: \"  https://acme.cloudflareaccess.com  \"\n    audiences: [\"app-aud\"]\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain,
+		"teamdomain must be trimmed so edge.New receives a clean URL, not a padded one")
+}
+
+// TestLoad_AuthMode_FromEnv_EdgeMode is the edge-mode parallel of the org-mode
+// env tests in TestLoad_AuthMode_FromEnv: it verifies that (a) an env-only edge
+// deployment can boot (complete config), and (b) ARBITRON_AUTH_MODE=edge without
+// the edge config still fails fast at load (not silently degraded).
+func TestLoad_AuthMode_FromEnv_EdgeMode(t *testing.T) {
+	t.Run("env switches to edge with complete edge config", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		t.Setenv("ARBITRON_AUTH_EDGE_TEAMDOMAIN", "https://acme.cloudflareaccess.com")
+		t.Setenv("ARBITRON_AUTH_EDGE_AUDIENCES", "app-aud")
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "edge", cfg.Auth.Mode)
+		assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain)
+		assert.Equal(t, []string{"app-aud"}, cfg.Auth.Edge.Audiences)
+	})
+
+	t.Run("env switches to edge but missing edge config fails fast", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("ARBITRON_AUTH_MODE", "edge")
+		// No teamdomain or audiences → must fail at Load, not silently at runtime.
+		cfg, err := adapterconfig.Load(filepath.Join(dir, "c.yaml"))
+		require.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "edge mode requires edge config")
+		assert.Contains(t, err.Error(), "auth.edge.teamdomain")
+		assert.Contains(t, err.Error(), "auth.edge.audiences")
+	})
+}

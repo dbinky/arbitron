@@ -30,8 +30,16 @@ FROM alpine:3.20
 # probes for a real POSIX shell and refuses to run with busybox-only `sh`
 # ("No suitable shell found"). coreutils gives GNU date/timeout/etc. that the
 # review-persona prompts and gh scripting expect.
+# org-readiness Phase 2: BOTH agent backends ship in the image so either can be
+# selected at runtime (claude-code | opencode). Both are installed via npm.
+#
+# OPENCODE PIN (single source of truth — keep in sync with install.sh
+# OPENCODE_NPM_PKG and install.ps1 OpencodeNpmPackage). Package: opencode-ai;
+# runtime gate: >= 0.4.0 (adapter/opencode/version.go minOpencodeVersion).
+# Change `opencode-ai` to `opencode-ai@<version>` to pin an exact release.
 RUN apk add --no-cache ca-certificates bash coreutils nodejs npm git github-cli make \
  && npm install -g @anthropic-ai/claude-code \
+ && npm install -g opencode-ai \
  && addgroup -S arbitron \
  && adduser -S -h /home/arbitron -s /bin/sh -G arbitron arbitron \
  && mkdir -p /data /workspaces /claude-config \

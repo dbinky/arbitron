@@ -68,7 +68,7 @@ func TestAgentCallExecutor_HappyPath(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestAgentCallExecutor_SuccessWithSchemaAndConfig(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestAgentCallExecutor_TemplateReadError(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -182,7 +182,7 @@ func TestAgentCallExecutor_RunAgentError(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -212,7 +212,7 @@ func TestAgentCallExecutor_ResolverMiss(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -249,7 +249,7 @@ func TestAgentCallExecutor_MissingWorkspace(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -277,7 +277,7 @@ func TestAgentCallExecutor_SelectorError(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, failSel, agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, failSel, agentResolver("claude-opus-4-8"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.Error(t, err)
@@ -312,7 +312,7 @@ func TestAgentCallExecutor_RevealKeyNotCalledByExecutor(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver)
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver, "claude-code")
 	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -346,7 +346,7 @@ func TestAgentCallExecutor_EmptyStepsNonJSONSummary(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
 	result, err := exec.Execute(context.Background(), node, vars, "test-wf")
 
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestAgentCallExecutor_BindingAllowedToolsBecomeMissionScope(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver)
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), resolver, "claude-code")
 	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/ws/inst"), "test-wf")
 	require.NoError(t, err)
 	assert.Equal(t, wantTools, captured.ToolScope,
@@ -423,7 +423,7 @@ func TestAgentCallExecutor_NodeToolScopeFallbackWhenBindingEmpty(t *testing.T) {
 		},
 	}
 
-	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("m"))
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("m"), "claude-code")
 	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/ws/inst"), "test-wf")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Read", "Edit"}, captured.ToolScope,

@@ -16,12 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
+	adaptedge "github.com/arbitron/arbitron/adapter/edge"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
@@ -41,6 +43,7 @@ import (
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
+	"github.com/arbitron/arbitron/domain/schedule"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -151,6 +154,9 @@ type domainStack struct {
 	queueRepo           instance.QueueRepository
 	scheduler           *queue.Scheduler
 	schedulerCancel     context.CancelFunc
+	scheduleEval        *schedule.Evaluator
+	scheduleEvalCancel  context.CancelFunc
+	scheduleSvc         *schedule.Service
 	webhookRegistry     *adapthttp.WebhookRegistry
 	notifRepo           notification.Repository
 	dismissalRepo       instance.DismissalRepository
@@ -179,6 +185,15 @@ type domainStack struct {
 // then the scheduler stops, then tracing flushes, then the database closes,
 // and finally the log sink is closed.
 func (ds *domainStack) Close(ctx context.Context) {
+	// Stop the schedule evaluator FIRST (org-readiness Phase 3): no new scheduled
+	// triggers must be created once shutdown begins, so it stops before the engine
+	// drains in-flight instances.
+	if ds.scheduleEvalCancel != nil {
+		ds.scheduleEvalCancel()
+	}
+	if ds.scheduleEval != nil {
+		ds.scheduleEval.Stop()
+	}
 	ds.eng.Shutdown()
 	if ds.schedulerCancel != nil {
 		ds.schedulerCancel()
@@ -230,6 +245,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Connections:         ds.connStore,
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
+		ScheduleService:     ds.scheduleSvc,
 		Logger:              ds.logger,
 	}
 }
@@ -337,7 +353,26 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		}
 		authHandler = adapthttp.NewAuthHandler(oidcProvider, sessionRepo, userRepo, provisioner, cfg.Auth.Session)
 	}
-	authMW := adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
+	// Edge mode (org-readiness Phase 1): construct the Cloudflare-Access JWT
+	// verifier from the public team domain + audiences (no secret). New makes the
+	// boot-time discovery call and fails fast on an unreachable/non-compliant team
+	// domain. The middleware is stateless (no session/token repos consulted) and
+	// no Arbitron login routes are mounted — sign-in/out happen at the edge.
+	var authMW *adapthttp.AuthMiddleware
+	if authMode == identity.ModeEdge {
+		edgeVerifier, eerr := adaptedge.New(context.Background(), adaptedge.Config{
+			TeamDomain: cfg.Auth.Edge.TeamDomain,
+			Audiences:  cfg.Auth.Edge.Audiences,
+		})
+		if eerr != nil {
+			db.Close()
+			logCloser.Close()
+			return nil, fmt.Errorf("initialising edge verifier: %w", eerr)
+		}
+		authMW = adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, edgeVerifier, provisioner, userRepo, groupCfg)
+	} else {
+		authMW = adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
+	}
 
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
@@ -493,8 +528,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
-		HTTPClient:  httpClient,
-		HTTPTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// org-readiness Phase 2: the claude agent Config so the claude-code arm
+		// builds a PER-BINDING adapter that injects ANTHROPIC_BASE_URL + key from
+		// the binding (the org gateway / a configured provider). An empty binding
+		// degrades to the local subscription env.
+		ClaudeAgentConfig: agentCfg,
+		HTTPClient:        httpClient,
+		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// Runner nil -> opencode uses the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
@@ -512,7 +552,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// 9. Create all node executors and build the executor map.
 	executors := map[workflow.NodeType]engine.NodeExecutor{
 		workflow.NodeTypeLLMCall:     engine.NewLLMCallExecutor(fileReader, providerFactory, profileResolver),
-		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver),
+		workflow.NodeTypeAgentCall:   engine.NewAgentCallExecutor(fileReader, providerFactory, profileResolver, cfg.LLM.DefaultAgentBackend),
 		workflow.NodeTypeScript:      process.NewScriptExecutor(fileReader, cfg.Script.EnvPassthrough),
 		workflow.NodeTypeToolCall:    process.NewToolCallExecutor(cfg.Script.EnvPassthrough),
 		workflow.NodeTypeConditional: engine.NewConditionalExecutor(),
@@ -605,6 +645,23 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	externalNotifier := adaptnotif.NewDefaultExternalNotifier(settings, cfg.Server.PublicBaseURL, logger)
 	eng.SetExternalNotifier(externalNotifier)
 
+	// 12c-sched. Recurring schedules (org-readiness Phase 3): the persistence
+	// repo, the in-process evaluator (fires due schedules as their creator via
+	// the engine), and the management service (shared by REST + MCP). The
+	// evaluator's collision check is the concrete instance repo's HasActiveRun;
+	// the can-trigger gate reuses the engine's publication/visibility predicate.
+	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
+	scheduleAlerter := schedule.NewScheduleAlerter(notifRepo, externalNotifier, logger)
+	scheduleEval := schedule.NewEvaluator(
+		scheduleRepo,
+		eng,
+		instanceRepo, // *adaptsqlite.InstanceRepo satisfies ActiveRunChecker
+		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		scheduleAlerter,
+		schedule.WithLogger(logger),
+	)
+	scheduleSvc := schedule.NewService(scheduleRepo, scheduleCanTrigger{publishers: publishedRepo})
+
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
 	// profiles route to the tool-enabled (YOLO) claude-cli streaming adapter.
@@ -692,6 +749,16 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering webhooks: %w", err)
 	}
 
+	// 14c. Apply the no-backfill misfire policy ONCE (org-readiness Phase 3),
+	// AFTER timer/webhook recovery and BEFORE starting the evaluator loop, then
+	// start the loop. Recover advances schedules whose occurrences elapsed during
+	// downtime (raising a schedule_missed alert) without backfilling them.
+	if err := scheduleEval.Recover(context.Background()); err != nil {
+		logger.Error("recovering schedules", "error", err)
+	}
+	scheduleEvalCtx, scheduleEvalCancel := context.WithCancel(context.Background())
+	scheduleEval.Start(scheduleEvalCtx)
+
 	// 14b. Start the org-mode session-expiry sweep (no-op in local mode), plus a
 	// device-code expiry sweep (device login is org-mode only).
 	var sweepCancel context.CancelFunc
@@ -722,6 +789,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		queueRepo:           queueRepo,
 		scheduler:           scheduler,
 		schedulerCancel:     schedulerCancel,
+		scheduleEval:        scheduleEval,
+		scheduleEvalCancel:  scheduleEvalCancel,
+		scheduleSvc:         scheduleSvc,
 		webhookRegistry:     webhookRegistry,
 		notifRepo:           notifRepo,
 		dismissalRepo:       dismissalRepo,
@@ -798,6 +868,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
 		Users:               ds.userSvc,
 		DashboardStats:      ds.dashboardSvc,
+		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).
@@ -909,4 +980,68 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	// so stdio-MCP identity is deferred.
 	ds.logger.Info("MCP stdio server starting")
 	return mcpSrv.ServeStdio(ctx)
+}
+
+// scheduleCanTrigger adapts the published-workflow lookup into the
+// schedule.CanTrigger port. "Can schedule" == "can trigger": it reuses the
+// EXACT publication/visibility predicate the engine's TriggerWithDepartment
+// applies (cmd parity with engine.go ll. 246-257). An unpublished or
+// private/owned workflow is open (true); a published one is gated by
+// workflow.CanSeePublication.
+type scheduleCanTrigger struct {
+	publishers *adaptsqlite.PublishedWorkflowRepo
+}
+
+func (c scheduleCanTrigger) CanTrigger(ctx context.Context, id identity.Identity, workflowName string) (bool, error) {
+	if c.publishers == nil {
+		return true, nil
+	}
+	pub, found, err := c.publishers.PublicationOf(ctx, workflowName)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		// Unpublished shared folder / private workflow: open, exactly as the
+		// engine treats a not-found publication.
+		return true, nil
+	}
+	return workflow.CanSeePublication(id, pub), nil
+}
+
+// scheduleIdentityResolver builds the creator's identity for context injection
+// at fire time, so resolveStamp's InDepartment(override) check passes for a
+// department-stamped scheduled run. It constructs the Identity via the SAME
+// shared domain builder as AuthMiddleware.enrich (fed by the same UserRepository
+// + GroupConfig ports), so a scheduled fire and the same user's interactive
+// request resolve to identical identities — LedDepartments included.
+type scheduleIdentityResolver struct {
+	users  instance.UserRepository
+	groups identity.GroupConfig
+}
+
+func (r scheduleIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
+	u, err := r.users.GetByID(ctx, userID)
+	if err != nil {
+		return identity.Identity{}, err
+	}
+	depts, err := r.users.ListDepartments(ctx, userID)
+	if err != nil {
+		return identity.Identity{}, err
+	}
+	subject := ""
+	if u.Subject != nil {
+		subject = *u.Subject
+	}
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	return identity.BuildIdentity(identity.UserIdentityInput{
+		UserID:            u.ID,
+		Username:          u.Username,
+		Role:              u.Role,
+		Subject:           subject,
+		Email:             email,
+		StoredDepartments: depts,
+	}, r.groups), nil
 }

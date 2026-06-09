@@ -5,11 +5,31 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// BoundedHTTPClient always returns a client with a positive timeout, falling
+// back to the default for a non-positive input so the unbounded net/http default
+// client is never used on the OIDC/JWKS path.
+func TestBoundedHTTPClient(t *testing.T) {
+	t.Run("explicit timeout honored", func(t *testing.T) {
+		c := procenv.BoundedHTTPClient(3 * time.Second)
+		require.NotNil(t, c)
+		assert.Equal(t, 3*time.Second, c.Timeout)
+	})
+	t.Run("non-positive falls back to default", func(t *testing.T) {
+		for _, d := range []time.Duration{0, -1} {
+			c := procenv.BoundedHTTPClient(d)
+			require.NotNil(t, c)
+			assert.Equal(t, procenv.DefaultOIDCDiscoveryTimeout, c.Timeout)
+			assert.Positive(t, c.Timeout, "must never be the unbounded default client")
+		}
+	})
+}
 
 // BoundedReader returns the body unchanged for a non-positive cap.
 func TestBoundedReader_NoCap(t *testing.T) {

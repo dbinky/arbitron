@@ -34,6 +34,22 @@ type AuthConfig struct {
 	RBAC    RBACConfig
 	OIDC    OIDCConfig
 	Session SessionConfig
+	// Edge holds the edge-trusted-SSO settings (auth mode `edge` only).
+	Edge EdgeConfig
+}
+
+// EdgeConfig configures edge-trusted SSO (auth.mode == "edge"). Both fields are
+// REQUIRED when Mode == "edge". No secret lives here: verification uses the
+// edge proxy's PUBLIC signing keys discovered from TeamDomain. See the
+// org-readiness Phase 1 design.
+type EdgeConfig struct {
+	// TeamDomain is the Cloudflare Access team domain, e.g.
+	// "https://acme.cloudflareaccess.com". It is BOTH the JWKS source
+	// (/cdn-cgi/access/certs) and the expected token issuer (iss).
+	TeamDomain string
+	// Audiences is the set of application AUD tag(s) to accept. A token whose
+	// aud is not in this set is rejected.
+	Audiences []string
 }
 
 // RBACConfig configures department-based RBAC (auth mode only). It is the
@@ -78,6 +94,7 @@ type SessionConfig struct {
 const (
 	AuthModeLocal = "local"
 	AuthModeOrg   = "org"
+	AuthModeEdge  = "edge"
 )
 
 // ProfileConfig is the config-file shape of one profile-registry entry. It
@@ -88,6 +105,10 @@ type ProfileConfig struct {
 	Kind          string // "chat" | "agent"
 	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string
+	// Backend selects the agent CLI for agent-kind profiles (org-readiness
+	// Phase 2): "" (inherit deployment default) | "claude-code" | "opencode".
+	// INDEPENDENT of the provider/connection. Ignored for chat-kind profiles.
+	Backend string
 	// AllowedTools is the per-profile tool allowlist for agent-kind profiles
 	// (PR #18 item 1b). It is forwarded as the per-request tool scope to the
 	// agent adapter and takes precedence over the adapter's global
@@ -232,6 +253,13 @@ type LLMConfig struct {
 	// Per-profile ResolvedBinding.AllowedTools (knob (b)) narrows independently
 	// of this switch.
 	AgentAllowAllTools bool
+	// DefaultAgentBackend is the deployment-wide default agent backend
+	// (org-readiness Phase 2) applied when neither the node nor its profile names
+	// one. Values: "claude-code" | "opencode". The config loader FLOORS an empty
+	// value to "claude-code" so the deployment policy lives in exactly one place;
+	// the agent executor and the adapter factory both read it. INDEPENDENT of the
+	// provider — it only selects which agent CLI runs the loop.
+	DefaultAgentBackend string
 }
 
 // LoggingConfig holds logging settings.

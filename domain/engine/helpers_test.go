@@ -112,6 +112,7 @@ func (r *fakeResolver) Resolve(_ context.Context, alias string) (provider.Resolv
 	return provider.ResolvedBinding{
 		Kind:         p.Kind,
 		Model:        p.Model,
+		Backend:      p.Backend,
 		AllowedTools: p.AllowedTools,
 		RevealKey: func(context.Context) (string, error) {
 			return "", nil

@@ -38,7 +38,7 @@ func (s *stubInstanceRepo) List(ctx context.Context, filters instance.ListFilter
 }
 
 // Implement remaining interface methods as no-ops.
-func (s *stubInstanceRepo) Create(_ context.Context, _ *instance.Instance) error   { return nil }
+func (s *stubInstanceRepo) Create(_ context.Context, _ *instance.Instance) error { return nil }
 func (s *stubInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error {
 	return nil
 }

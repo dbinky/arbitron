@@ -581,11 +581,22 @@ function Get-DependencySpec {
         }
         [pscustomobject]@{
             Name = 'claude'; Command = 'claude'; MinVersion = '0.0.0'
-            WingetId = $null; VersionArgs = @('--version'); Optional = $false; ViaNpm = $true
+            WingetId = $null; VersionArgs = @('--version'); Optional = $false
+            ViaNpm = $true; NpmPackage = '@anthropic-ai/claude-code'
         }
+        # org-readiness Phase 2: BOTH agent backends ship - opencode is REQUIRED
+        # (Optional = $false) and installed via npm into the same Arbitron-owned
+        # prefix as claude, for a single consistent install method across the
+        # Dockerfile, install.sh, and this script.
+        #
+        # OPENCODE PIN (single source of truth - keep in sync with the Dockerfile
+        # and install.sh OPENCODE_NPM_PKG). MinVersion mirrors the runtime gate in
+        # adapter/opencode/version.go (minOpencodeVersion = "0.4.0") so the
+        # installer rejects a legacy binary before it reaches the runtime check.
         [pscustomobject]@{
-            Name = 'opencode'; Command = 'opencode'; MinVersion = '0.0.0'
-            WingetId = $null; VersionArgs = @('--version'); Optional = $true
+            Name = 'opencode'; Command = 'opencode'; MinVersion = '0.4.0'
+            WingetId = $null; VersionArgs = @('--version'); Optional = $false
+            ViaNpm = $true; NpmPackage = 'opencode-ai'
         }
     )
 }
@@ -672,20 +683,37 @@ function Add-PathPrefix {
     }
 }
 
-function Install-ClaudeCli {
+function Install-ViaNpmGlobal {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable]$Paths)
-    # claude requires node; resolve it first.
+    param(
+        [Parameter(Mandatory)][string]$Package,
+        [Parameter(Mandatory)][hashtable]$Paths
+    )
+    # npm-installed agent CLIs require node; resolve it first.
     Resolve-Dependency -Name node -Paths $Paths | Out-Null
     $prefix = $Paths.NpmPrefix
     New-Item -ItemType Directory -Path $prefix -Force | Out-Null
-    Write-ArbitronLog -Level Info -Message "Installing claude CLI into Arbitron npm prefix ($prefix)..."
-    $code = Invoke-Npm 'install' '-g' '--prefix' $prefix '@anthropic-ai/claude-code'
+    Write-ArbitronLog -Level Info -Message "Installing $Package into Arbitron npm prefix ($prefix)..."
+    $code = Invoke-Npm 'install' '-g' '--prefix' $prefix $Package
     if ($code -ne 0) {
-        throw "npm failed to install @anthropic-ai/claude-code (exit $code)."
+        throw "npm failed to install $Package (exit $code)."
     }
     Add-PathPrefix -Prefix $prefix
     Add-PathPrefix -Prefix (Join-Path $prefix 'bin')
+}
+
+function Install-ClaudeCli {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    Install-ViaNpmGlobal -Package '@anthropic-ai/claude-code' -Paths $Paths
+}
+
+# org-readiness Phase 2: install the opencode agent backend via npm (mirrors
+# Install-ClaudeCli) so both backends are provisioned by every install.
+function Install-Opencode {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Paths)
+    Install-ViaNpmGlobal -Package 'opencode-ai' -Paths $Paths
 }
 
 function Resolve-Dependency {
@@ -702,9 +730,13 @@ function Resolve-Dependency {
         return [pscustomobject]@{ Name = $Name; Status = 'present' }
     }
 
-    # claude is special-cased: npm -g into the Arbitron-owned prefix.
+    # npm-backed agent CLIs (claude, opencode) install -g into the Arbitron-owned
+    # prefix. The package name comes from the spec (NpmPackage) so the same arm
+    # provisions both backends (org-readiness Phase 2).
     if ($spec.PSObject.Properties['ViaNpm'] -and $spec.ViaNpm) {
-        Install-ClaudeCli -Paths $Paths
+        $pkg = if ($spec.PSObject.Properties['NpmPackage']) { $spec.NpmPackage } else { $null }
+        if (-not $pkg) { throw "npm-backed dependency $Name has no NpmPackage." }
+        Install-ViaNpmGlobal -Package $pkg -Paths $Paths
         return [pscustomobject]@{ Name = $Name; Status = 'resolved' }
     }
 

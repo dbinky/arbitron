@@ -4,9 +4,21 @@ import (
 	"testing"
 
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/schedule"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fullyWiredServer returns a server whose deps include a non-nil ScheduleService
+// so the conditionally-registered schedule_* tools are advertised. The service
+// is constructed with nil ports because these tests only assert the registered
+// tool SET, never invoke a handler.
+func fullyWiredServer(t *testing.T) *adaptmcp.Server {
+	t.Helper()
+	return adaptmcp.NewServerWithDeps("test", "0.0.0", &adaptmcp.Deps{
+		ScheduleService: schedule.NewService(nil, nil),
+	})
+}
 
 // expectedTools is the complete API surface per the Phase 5 design doc.
 // Any rename, addition, or removal must update both this list and the code.
@@ -72,17 +84,23 @@ var expectedTools = []string{
 	// User/role management (2)
 	"user_list",
 	"user_set_role",
+	// Recurring schedules (5)
+	"schedule_create",
+	"schedule_list",
+	"schedule_get",
+	"schedule_update",
+	"schedule_delete",
 }
 
 func TestRegisterAllTools_Count(t *testing.T) {
-	srv := adaptmcp.NewServer("test", "0.0.0")
+	srv := fullyWiredServer(t)
 	adaptmcp.RegisterAllTools(srv)
 	assert.Len(t, srv.ListTools(), len(expectedTools),
 		"RegisterAllTools must register exactly %d tools", len(expectedTools))
 }
 
 func TestRegisterAllTools_NamesAreUnique(t *testing.T) {
-	srv := adaptmcp.NewServer("test", "0.0.0")
+	srv := fullyWiredServer(t)
 	adaptmcp.RegisterAllTools(srv)
 
 	seen := make(map[string]bool, len(expectedTools))
@@ -94,7 +112,7 @@ func TestRegisterAllTools_NamesAreUnique(t *testing.T) {
 
 func TestRegisterAllTools_APISurface(t *testing.T) {
 	// Verifies that every tool named in the Phase 5 design doc is registered.
-	srv := adaptmcp.NewServer("test", "0.0.0")
+	srv := fullyWiredServer(t)
 	adaptmcp.RegisterAllTools(srv)
 
 	registered := make(map[string]bool, len(expectedTools))
@@ -107,11 +125,23 @@ func TestRegisterAllTools_APISurface(t *testing.T) {
 	}
 }
 
+// Conditional registration: when no ScheduleService is wired, the five
+// schedule_* tools are NOT advertised (the handlers can therefore assume a
+// non-nil service — there is no dead "unavailable" branch).
+func TestRegisterScheduleTools_NotRegisteredWhenUnwired(t *testing.T) {
+	srv := adaptmcp.NewServer("test", "0.0.0") // nil deps, no ScheduleService
+	adaptmcp.RegisterAllTools(srv)
+	for _, tool := range srv.ListTools() {
+		assert.NotContains(t, tool.Name, "schedule_",
+			"schedule tools must not register without a wired ScheduleService")
+	}
+}
+
 func TestRegisterAllTools_Idempotent(t *testing.T) {
 	// Registering twice on the same server doubles the tool count. Callers
 	// must not call RegisterAllTools more than once per server instance.
 	// This test documents the behaviour rather than asserting idempotence.
-	srv := adaptmcp.NewServer("test", "0.0.0")
+	srv := fullyWiredServer(t)
 	adaptmcp.RegisterAllTools(srv)
 	first := len(srv.ListTools())
 	adaptmcp.RegisterAllTools(srv)

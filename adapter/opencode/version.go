@@ -14,10 +14,7 @@ import (
 // minOpencodeVersion is the minimum modern (SST) opencode release with a stable
 // `run -m provider/model` contract and config-driven permissions. Earlier builds
 // (e.g. the legacy v0.0.55 Go variant) lack `run`/`-m` and are rejected.
-//
-// TODO(opencode-binary): confirm this placeholder against the first SST release
-// exposing a stable `run -m` + permission config before shipping; surface it in
-// config/docs as the runtime prerequisite.
+// Package: npm install -g opencode-ai (>= 0.4.0). Binary name: `opencode`.
 const minOpencodeVersion = "0.4.0"
 
 // ErrIncompatibleOpencode is returned when the resolved opencode binary is older

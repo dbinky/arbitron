@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	"github.com/arbitron/arbitron/adapter/eventbus"
+	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 )
 
 func newStreamingServer() *adaptmcp.Server {

@@ -329,6 +329,35 @@ func TestStaticProfileResolver_OneLineBackendSwap(t *testing.T) {
 	assert.Equal(t, "https://new", b2.BaseURL)
 }
 
+// Backend axis: Resolve copies Profile.Backend to ResolvedBinding.Backend on
+// the connection-less path (ConnectionRef == ""). The executor reads
+// binding.Backend to compute the effective backend, so dropping it here would
+// silently break the node>profile>default precedence chain.
+func TestStaticProfileResolver_BackendPropagated_NoConnection(t *testing.T) {
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "coder", Kind: provider.ProfileKindAgent, Model: "m", Backend: "opencode"},
+	}, nil)
+	require.NoError(t, err)
+	b, err := r.Resolve(context.Background(), "coder")
+	require.NoError(t, err)
+	assert.Equal(t, "opencode", b.Backend, "Backend must survive the connection-less resolve path")
+}
+
+// Backend axis: Resolve copies Profile.Backend to ResolvedBinding.Backend on
+// the connection-backed path too. The two Resolve branches are structurally
+// separate, so each must be verified independently.
+func TestStaticProfileResolver_BackendPropagated_WithConnection(t *testing.T) {
+	store := newFakeConnectionStore()
+	store.put(provider.Connection{Name: "litellm", Provider: "litellm", BaseURL: "https://proxy"}, "key")
+	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+		{Alias: "coder", Kind: provider.ProfileKindAgent, ConnectionRef: "litellm", Model: "m", Backend: "claude-code"},
+	}, store)
+	require.NoError(t, err)
+	b, err := r.Resolve(context.Background(), "coder")
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", b.Backend, "Backend must survive the connection-backed resolve path")
+}
+
 // Secrecy: calling RevealKey under a buffer-backed slog.Logger captures no
 // substring of the revealed key — the resolver references the connection name
 // only and never logs key material.

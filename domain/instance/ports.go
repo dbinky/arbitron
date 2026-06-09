@@ -69,9 +69,13 @@ type VariableSnapshotRepository interface {
 // (it is a genuine prerequisite there, and reshaping the package twice is churn).
 // Tracked via PR #20 review (thread r3358274543). Do not relocate piecemeal.
 type UserRepository interface {
-	GetDefaultUser(ctx context.Context) (uuid.UUID, error)             // existing, unchanged
-	GetByID(ctx context.Context, id uuid.UUID) (*User, error)          // ErrNotFound if absent
-	GetBySubject(ctx context.Context, subject string) (*User, error)   // ErrNotFound if new (JIT in Phase 2)
+	GetDefaultUser(ctx context.Context) (uuid.UUID, error)           // existing, unchanged
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error)        // ErrNotFound if absent
+	GetBySubject(ctx context.Context, subject string) (*User, error) // ErrNotFound if new (JIT in Phase 2)
+	// GetByEmail returns the user with the given email (case-insensitive),
+	// ErrNotFound if absent. Empty email never matches. Edge-mode provisioning
+	// keys on the verified email; subject is nil for edge-created users.
+	GetByEmail(ctx context.Context, email string) (*User, error)
 	Create(ctx context.Context, u *User) error
 	// UpdateUsername refreshes a user's display name (used when the IdP changes
 	// it on re-login). The IdP subject, not the username, is the identity.

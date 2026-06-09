@@ -24,6 +24,7 @@ type Mode string
 const (
 	ModeLocal Mode = "local"
 	ModeOrg   Mode = "org"
+	ModeEdge  Mode = "edge"
 )
 
 // Identity is the authenticated caller for one request. It is carried in
@@ -96,14 +97,16 @@ func MustFromContext(ctx context.Context) Identity {
 	return id
 }
 
-// ModeFromString maps a config mode string (config.AuthModeLocal/Org) to the
-// typed Mode. It takes a plain string (not a config type) so domain/identity
+// ModeFromString maps a config mode string (config.AuthModeLocal/Org/Edge) to
+// the typed Mode. It takes a plain string (not a config type) so domain/identity
 // stays import-clean. An unknown/empty value maps to ModeLocal; config
 // validation already rejects genuinely bad values before this is reached.
 func ModeFromString(s string) Mode {
 	switch s {
 	case "org":
 		return ModeOrg
+	case "edge":
+		return ModeEdge
 	default:
 		return ModeLocal
 	}

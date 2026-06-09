@@ -49,7 +49,11 @@ func defaults() map[string]interface{} {
 		// that is a lethal-trifecta / RCE-equivalent posture, so allow-all is an
 		// explicit operator opt-in, never the shipped default. Per-profile
 		// allowedtools (knob (b)) narrows independently. See PR #23 security HIGH.
-		"llm.agentallowalltools":      false,
+		"llm.agentallowalltools": false,
+		// Org-readiness Phase 2: deployment-wide default agent backend. The org
+		// default is claude-code → LiteLLM. An empty value is floored back to
+		// claude-code in normalize so the policy lives in exactly one place.
+		"llm.defaultagentbackend":     "claude-code",
 		"logging.level":               "info",
 		"logging.file":                "arbitron.log",
 		"tracing.enabled":             false,
@@ -64,13 +68,17 @@ func defaults() map[string]interface{} {
 		"server.tls.autocertcachedir": "",
 		// Auth (Phase 6): local mode by default (single auto-admin, no login).
 		// Org-mode OIDC fields are validated fail-fast in validateAuth.
-		"auth.mode":                 "local",
-		"auth.bootstrapadmins":      []string{},
-		"auth.oidc.issuerurl":       "",
-		"auth.oidc.clientid":        "",
-		"auth.oidc.clientsecret":    "",
-		"auth.oidc.redirecturl":     "",
-		"auth.oidc.scopes":          []string{"openid", "profile", "email"},
+		"auth.mode":              "local",
+		"auth.bootstrapadmins":   []string{},
+		"auth.oidc.issuerurl":    "",
+		"auth.oidc.clientid":     "",
+		"auth.oidc.clientsecret": "",
+		"auth.oidc.redirecturl":  "",
+		"auth.oidc.scopes":       []string{"openid", "profile", "email"},
+		// Edge-trusted SSO (auth mode "edge" only). No secret here: only the
+		// public team domain + AUD tag(s). Validated fail-fast in validateAuth.
+		"auth.edge.teamdomain":      "",
+		"auth.edge.audiences":       []string{},
 		"auth.session.ttlseconds":   43200, // 12h
 		"auth.session.cookiename":   "arbitron_session",
 		"auth.session.cookiesecure": true,
@@ -249,6 +257,15 @@ tracing:
 #     clientsecret: ""       # REQUIRED in org mode; SECURITY: sensitive, never echoed
 #     redirecturl: ""        # REQUIRED in org mode; = publicbaseurl + "/auth/callback"
 #     scopes: ["openid", "profile", "email"]   # ARBITRON_AUTH_OIDC_SCOPES=openid,groups
+#   edge:                      # auth mode "edge" only (Cloudflare Access / edge-trusted SSO)
+#     teamdomain: ""           # Cloudflare team domain, e.g. "https://acme.cloudflareaccess.com"
+#                              #   It is BOTH the JWKS source and the expected issuer.
+#                              #   REQUIRED in edge mode. Override via ARBITRON_AUTH_EDGE_TEAMDOMAIN
+#     audiences: []            # application AUD tag(s) to accept; a token whose aud is not
+#                              #   listed is rejected. REQUIRED in edge mode.
+#                              #   Override via ARBITRON_AUTH_EDGE_AUDIENCES=aud-one,aud-two
+#                              #   NOTE: no secret here — verification uses the edge proxy's
+#                              #   PUBLIC signing keys discovered from teamdomain.
 #   session:
 #     ttlseconds: 43200      # 12h; floored to the default if non-positive
 #     cookiename: "arbitron_session"
@@ -343,6 +360,17 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		}
 	}
 
+	// ARBITRON_AUTH_EDGE_AUDIENCES arrives as a comma string via the env
+	// provider; overlay it as a real slice so it unmarshals into []string
+	// (mirrors the auth.oidc.scopes overlay above).
+	if raw := os.Getenv("ARBITRON_AUTH_EDGE_AUDIENCES"); raw != "" {
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.edge.audiences": splitCSV(raw),
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.edge.audiences: %w", err)
+		}
+	}
+
 	// ARBITRON_AUTH_RBAC_LEADS_<DEPT>=id1,id2 overlays one department's lead list
 	// as a real slice (the env provider would otherwise leave it a comma string).
 	// Department names with non-alphanumeric characters are not expressible via
@@ -399,6 +427,12 @@ func Load(configPath string) (*domainconfig.Config, error) {
 // Flooring it keeps the whole timeout story from being disabled by misconfig.
 const DefaultTimeoutSeconds = 1800
 
+// DefaultAgentBackend is the deployment default agent backend (org-readiness
+// Phase 2) applied when llm.defaultagentbackend is empty. The org default is
+// claude-code → LiteLLM. Flooring an empty value here keeps the backend
+// fallback policy in exactly one place.
+const DefaultAgentBackend = "claude-code"
+
 // DefaultSessionTTLSeconds is the floor applied to a non-positive
 // auth.session.ttlseconds. A zero/negative TTL would mint never-expiring or
 // instantly-expired sessions, so it is clamped to the sane 12h default
@@ -414,8 +448,18 @@ func normalize(cfg *domainconfig.Config) {
 	if cfg.LLM.TimeoutSeconds <= 0 {
 		cfg.LLM.TimeoutSeconds = DefaultTimeoutSeconds
 	}
+	// Org-readiness Phase 2: floor an empty (or whitespace-only) default agent
+	// backend to claude-code. This is the SINGLE deployment-policy seam for the
+	// backend fallback so a blank value cannot silently leave the deployment
+	// without a default backend; the executor and the factory both read it.
+	if strings.TrimSpace(cfg.LLM.DefaultAgentBackend) == "" {
+		cfg.LLM.DefaultAgentBackend = DefaultAgentBackend
+	}
 	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
 	cfg.Auth.Mode = strings.ToLower(strings.TrimSpace(cfg.Auth.Mode))
+	// Trim the edge teamdomain so a YAML value with surrounding whitespace
+	// reaches edge.New as a clean URL rather than causing a confusing parse error.
+	cfg.Auth.Edge.TeamDomain = strings.TrimSpace(cfg.Auth.Edge.TeamDomain)
 	if cfg.Auth.Mode == "" {
 		cfg.Auth.Mode = domainconfig.AuthModeLocal
 	}
@@ -454,8 +498,20 @@ func validateAuth(cfg *domainconfig.Config) error {
 			return fmt.Errorf("org mode requires OIDC config; missing: %s", strings.Join(missing, ", "))
 		}
 		return nil
+	case domainconfig.AuthModeEdge:
+		var missing []string
+		if strings.TrimSpace(cfg.Auth.Edge.TeamDomain) == "" {
+			missing = append(missing, "auth.edge.teamdomain")
+		}
+		if !hasNonEmptyEntry(cfg.Auth.Edge.Audiences) {
+			missing = append(missing, "auth.edge.audiences")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("edge mode requires edge config; missing: %s", strings.Join(missing, ", "))
+		}
+		return nil
 	default:
-		return fmt.Errorf("invalid auth.mode %q (want %q or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg)
+		return fmt.Errorf("invalid auth.mode %q (want %q, %q, or %q)", cfg.Auth.Mode, domainconfig.AuthModeLocal, domainconfig.AuthModeOrg, domainconfig.AuthModeEdge)
 	}
 }
 
@@ -512,6 +568,18 @@ func isLoopbackHost(host string) bool {
 	}
 	if ip := net.ParseIP(h); ip != nil {
 		return ip.IsLoopback()
+	}
+	return false
+}
+
+// hasNonEmptyEntry reports whether ss contains at least one non-whitespace
+// string. Used by validateAuth to catch YAML slices like ["  "] that have
+// non-zero length but carry only whitespace entries.
+func hasNonEmptyEntry(ss []string) bool {
+	for _, s := range ss {
+		if strings.TrimSpace(s) != "" {
+			return true
+		}
 	}
 	return false
 }

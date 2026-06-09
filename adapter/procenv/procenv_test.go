@@ -82,12 +82,63 @@ func TestIsBaseName(t *testing.T) {
 	assert.False(t, procenv.IsBaseName("LLM_API_KEY"))
 }
 
+// org-readiness Phase 2: ANTHROPIC_BASE_URL is a NON-SECRET endpoint var, so it
+// is on the base allowlist (an operator-set one may be inherited). The KEY var
+// stays off the allowlist — it is injected per call only, never inherited.
+func TestIsBaseName_AnthropicBaseURLAllowedKeyNot(t *testing.T) {
+	assert.True(t, procenv.IsBaseName("ANTHROPIC_BASE_URL"),
+		"ANTHROPIC_BASE_URL (non-secret endpoint) must be allowlisted")
+	assert.False(t, procenv.IsBaseName("ANTHROPIC_API_KEY"),
+		"ANTHROPIC_API_KEY (secret) must NEVER be allowlisted")
+}
+
+// A parent ANTHROPIC_BASE_URL is propagated to the child env; a parent
+// ANTHROPIC_API_KEY is still stripped (per-call injection only).
+func TestBaseEnv_AnthropicBaseURLPassthroughKeyStripped(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://operator.example:4000")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-leak")
+
+	joined := strings.Join(procenv.BaseEnv(), "\n")
+	assert.Contains(t, joined, "ANTHROPIC_BASE_URL=https://operator.example:4000")
+	assert.NotContains(t, joined, "ANTHROPIC_API_KEY")
+	assert.NotContains(t, joined, "sk-leak")
+}
+
 func TestStandardBinDirs_HomeFirstWhenSet(t *testing.T) {
 	t.Setenv("HOME", "/testhome")
 	dirs := procenv.StandardBinDirs()
 	require.NotEmpty(t, dirs)
 	assert.Equal(t, "/testhome/.local/bin", dirs[0])
 	assert.Contains(t, dirs, "/usr/local/bin")
+}
+
+// RemoveVar removes all entries matching the exact key, preserves order, and
+// does not mutate the input slice. Prefix-extended names (e.g.
+// ANTHROPIC_BASE_URL_OTHER) survive removal of ANTHROPIC_BASE_URL.
+func TestRemoveVar(t *testing.T) {
+	t.Run("removes matching entry", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"ANTHROPIC_BASE_URL=https://a", "HOME=/root"}, "ANTHROPIC_BASE_URL")
+		assert.Equal(t, []string{"HOME=/root"}, got)
+	})
+	t.Run("removes all occurrences", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"X=1", "X=2", "Y=3"}, "X")
+		assert.Equal(t, []string{"Y=3"}, got)
+	})
+	t.Run("prefix-extended name survives", func(t *testing.T) {
+		got := procenv.RemoveVar([]string{"ANTHROPIC_BASE_URL=a", "ANTHROPIC_BASE_URL_OTHER=b"}, "ANTHROPIC_BASE_URL")
+		assert.Equal(t, []string{"ANTHROPIC_BASE_URL_OTHER=b"}, got)
+	})
+	t.Run("no match returns copy", func(t *testing.T) {
+		in := []string{"HOME=/root"}
+		got := procenv.RemoveVar(in, "MISSING")
+		assert.Equal(t, in, got)
+		// Must not be the same slice.
+		assert.NotSame(t, &in[0], &got[0])
+	})
+	t.Run("empty input", func(t *testing.T) {
+		got := procenv.RemoveVar(nil, "X")
+		assert.Empty(t, got)
+	})
 }
 
 func TestBaseEnv_ReturnedSliceIsIndependent(t *testing.T) {

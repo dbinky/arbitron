@@ -12,6 +12,7 @@ import (
 	coreoidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/identity"
 )
 
@@ -44,6 +45,11 @@ type Config struct {
 // oauth2 config. It makes a network call (discovery) and returns an error if the
 // issuer is unreachable or non-compliant -- surfaced fail-fast at boot.
 func New(ctx context.Context, cfg Config) (*Provider, error) {
+	// Bound the HTTP client used for OIDC discovery and the lazy JWKS refresh
+	// (go-oidc captures this client from the context at provider creation), so a
+	// hung/slow issuer fails fast rather than blocking on the unbounded net/http
+	// default client. Mirrors the edge verifier.
+	ctx = coreoidc.ClientContext(ctx, procenv.BoundedHTTPClient(procenv.DefaultOIDCDiscoveryTimeout))
 	prov, err := coreoidc.NewProvider(ctx, cfg.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery for %q: %w", cfg.IssuerURL, err)

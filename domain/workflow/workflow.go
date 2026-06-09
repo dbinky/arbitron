@@ -22,6 +22,35 @@ func IsInteractive(t NodeType) bool {
 	return t == NodeTypeInteractiveLLM || t == NodeTypeInteractiveAgent
 }
 
+// Agent backend axis (org-readiness Phase 2). The backend selects which agent
+// CLI runs an agentic loop, INDEPENDENT of the provider (the connection that
+// supplies endpoint/key/model). It is chosen per agent node (agent_call /
+// interactive_agent); an unset ("") value inherits profile→deployment default.
+// These constants are the single source of truth for the allowed vocabulary,
+// shared by validation (this package) and the adapter factory's backend
+// dispatch. The allowed set is exact-match lowercase.
+const (
+	// BackendUnset inherits the backend (node → profile → deployment default).
+	BackendUnset = ""
+	// BackendClaudeCode selects the claude-cli agent backend.
+	BackendClaudeCode = "claude-code"
+	// BackendOpencode selects the opencode agent backend.
+	BackendOpencode = "opencode"
+)
+
+// IsValidAgentBackend reports whether b is a recognized agent backend value.
+// An empty value (BackendUnset) is valid (it means "inherit"). Any other value
+// must exactly match a known backend; near-misses (wrong case, typos) are
+// rejected so a mis-routed agent fails closed at workflow load.
+func IsValidAgentBackend(b string) bool {
+	switch b {
+	case BackendUnset, BackendClaudeCode, BackendOpencode:
+		return true
+	default:
+		return false
+	}
+}
+
 // Workflow is the top-level definition of a directed graph of processing nodes.
 type Workflow struct {
 	Name                 string        `json:"name"`
@@ -65,6 +94,7 @@ type NodeConfig struct {
 	TemplateFile       string            `json:"templateFile,omitempty"`
 	Model              string            `json:"model,omitempty"`
 	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
+	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" (agent_call/interactive_agent only)
 	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`

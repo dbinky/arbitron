@@ -464,6 +464,10 @@ func (r *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User
 	return nil, instance.ErrNotFound
 }
 
+func (r *mockUserRepo) GetByEmail(_ context.Context, _ string) (*instance.User, error) {
+	return nil, instance.ErrNotFound
+}
+
 func (r *mockUserRepo) Create(_ context.Context, _ *instance.User) error {
 	return nil
 }
@@ -2651,7 +2655,9 @@ func (r *mockNotificationRepo) List(_ context.Context, _ notification.ListFilter
 	return nil, nil
 }
 
-func (r *mockNotificationRepo) CountUnread(_ context.Context, _ *uuid.UUID) (int, error) { return 0, nil }
+func (r *mockNotificationRepo) CountUnread(_ context.Context, _ *uuid.UUID) (int, error) {
+	return 0, nil
+}
 
 func (r *mockNotificationRepo) MarkAllRead(_ context.Context, _ *uuid.UUID) error { return nil }
 
