@@ -49,6 +49,13 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		visibility = instance.VisibilityPrivate
 	}
 
+	// Default an unset trigger source to manual, matching the column default and
+	// the engine's OriginManual default. ScheduleID stays nil (NULL) for manual.
+	triggerSource := inst.TriggerSource
+	if triggerSource == "" {
+		triggerSource = instance.OriginManual
+	}
+
 	row, err := r.queries.CreateInstance(ctx, generated.CreateInstanceParams{
 		ID:                uuidToString(inst.ID),
 		OwnerID:           uuidToString(inst.OwnerID),
@@ -61,6 +68,8 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		QueuedAt:          timeToNullString(inst.QueuedAt),
 		Department:        deptToNullString(inst.Department),
 		Visibility:        string(visibility),
+		TriggerSource:     string(triggerSource),
+		ScheduleID:        scheduleIDToNullString(inst.ScheduleID),
 	})
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -161,6 +170,10 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
+		scheduleID, err := nullStringToScheduleID(row.ScheduleID)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
 		summaries[i] = instance.InstanceSummary{
 			ID:            id,
 			WorkflowName:  row.WorkflowName,
@@ -173,6 +186,8 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 			UpdatedAt:     updatedAt,
 			CompletedAt:   completedAt,
 			QueuedAt:      queuedAt,
+			TriggerSource: instance.TriggerSource(row.TriggerSource),
+			ScheduleID:    scheduleID,
 		}
 	}
 	return summaries, nil
@@ -412,6 +427,10 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
+	scheduleID, err := nullStringToScheduleID(row.ScheduleID)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
 
 	return &instance.Instance{
 		ID:                id,
@@ -434,5 +453,7 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 		WebhookToken:      nullStringToPtr(row.WebhookToken),
 		WebhookSecretHash: nullStringToPtr(row.WebhookSecretHash),
 		WebhookReceivedAt: webhookReceivedAt,
+		TriggerSource:     instance.TriggerSource(row.TriggerSource),
+		ScheduleID:        scheduleID,
 	}, nil
 }
