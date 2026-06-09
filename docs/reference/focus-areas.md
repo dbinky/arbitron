@@ -24,7 +24,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 7 | Run-origin model & stamping (`domain/instance/origin.go` `Origin`/`TriggerSource`/`WithOrigin`/`OriginFromContext`; `domain/engine/engine.go` reads ctx, no `domain/schedule` import; cron `fireOne` + `Runner.Fire` inject origin) | [x] | [x] | done |
 | 8 | Instance origin persistence (`adapter/sqlite` migration `014_instance_trigger_origin`, hand-maintained sqlc, repo read/write, backfill `manual`, deleted-schedule still lists; HTTP summary `triggerSource`/`scheduleId`) | [x] | [x] | done |
 | 9 | Workflow-scoped schedule listing (`domain/schedule/service.go` variadic `List`/`ListOptions{WorkflowName}` — creator scoping service-set, never request input; `adapter/http` `GET /schedules?workflowName=`) | [x] | [x] | done |
-| 10 | Dashboard read-only surfaces (`dashboard/src` `OriginBadge`, `SchedulesPanel`, `api.schedules.list`, TS types) — zero mutation controls; visibility-scoped; graceful empty/error | [x] | [ ] | |
+| 10 | Dashboard read-only surfaces (`dashboard/src` `OriginBadge`, `SchedulesPanel`, `api.schedules.list`, TS types) — zero mutation controls; visibility-scoped; graceful empty/error | [x] | [x] | done |
 | 11 | Config & headless wiring (`cfg.Auth.RBAC` `GroupClaim`/`DefaultGroup`/`Mapping` loading + `ARBITRON_AUTH_RBAC_MAPPING_*` env overlay; edge verifier `GroupClaim` wired; unset claim ⇒ today's behavior) | [ ] | [ ] | |
 | 12 | Test coverage & embedded dist (five-category coverage for new code; injected clock/`httptest`/fakes; `adapter/dashboard/dist` synced with `dashboard/`) | [ ] | [ ] | |
 

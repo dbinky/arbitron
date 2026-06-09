@@ -48,6 +48,8 @@ the area/pass, or fix if a real defect).
 
 - **Edge path missing department-replace-on-re-login test.** The OIDC path had `TestResolve_ReplacesDepartmentsOnEachLogin`; the edge `ResolveByEmail` path had no equivalent. Added `TestResolveByEmail_DepartmentsReplacedOnReLogin`: first login snapshots `["sales"]`, re-login with `["engineering"]` must store `["engineering"]` only. (Area #5 Pass 1)
 
+- **SchedulesPanel workflowName dep change untested.** `SchedulesPanel` uses `useEffect([workflowName])` but no test verified re-fetch on prop change. If the dep array were accidentally emptied, stale data would silently persist. Added "re-fetches when workflowName prop changes" test using `rerender`. (Area #10 Pass 2)
+
 - **`List` extra opts are silently ignored — 0-or-1 contract undocumented.** The variadic `List(ctx, ...opts)` only reads `opts[0]`; passing two opts ignores the second. No test documented this contract. Added `TestService_List_ExtraOptsIgnored` confirming only `opts[0].WorkflowName` is used. (Area #9 Pass 2)
 
 - **`creatorId` injection via query param untested.** HTTP `GET /schedules` accepted `workflowName` from query params but no test verified that passing `?creatorId=<other-uuid>` is silently ignored (the security invariant "CreatorID is service-set, never from request input"). Added `TestScheduleHandler_List_CreatorIDNotFromInput`: two users' schedules seeded; non-admin calling with injected `?creatorId=<otherUser>` still receives only their own schedule. (Area #9 Pass 1)

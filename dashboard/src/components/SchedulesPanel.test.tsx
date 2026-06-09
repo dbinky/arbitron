@@ -66,6 +66,15 @@ describe('SchedulesPanel', () => {
     await waitFor(() => expect(api.schedules.list).toHaveBeenCalledWith('wf-b'))
   })
 
+  it('re-fetches when workflowName prop changes', async () => {
+    vi.mocked(api.schedules.list).mockResolvedValue([])
+    const { rerender } = render(<SchedulesPanel workflowName="wf-a" />)
+    await waitFor(() => expect(api.schedules.list).toHaveBeenCalledWith('wf-a'))
+
+    rerender(<SchedulesPanel workflowName="wf-b" />)
+    await waitFor(() => expect(api.schedules.list).toHaveBeenCalledWith('wf-b'))
+  })
+
   it('exposes NO create/edit/enable/disable/delete/run control (read-only)', async () => {
     vi.mocked(api.schedules.list).mockResolvedValue([sched()])
     render(<SchedulesPanel workflowName="wf-a" />)
