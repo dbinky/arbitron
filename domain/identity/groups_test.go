@@ -3,6 +3,8 @@ package identity
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNormalizeDept(t *testing.T) {
@@ -270,4 +272,69 @@ func TestEffectiveMembership(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+// --- Happy path ---
+
+func TestResolveDepartments_MappedGroup_UsesFriendlyName(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+func TestResolveDepartments_UnmappedGroup_UsesVerbatimNormalized(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"Marketing"}, cfg) // no mapping entry
+	assert.Equal(t, []string{"marketing"}, got, "verbatim fallback is normalized (lower-cased)")
+}
+
+func TestResolveDepartments_MultipleGroups_UnionMappedAndVerbatim(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123", "sales"}, cfg)
+	assert.Equal(t, []string{"engineering", "sales"}, got, "first-seen order preserved")
+}
+
+func TestResolveDepartments_NoGroups_FallsBackToDefault(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments(nil, cfg)
+	assert.Equal(t, []string{"default"}, got)
+}
+
+// --- Input validation ---
+
+func TestResolveDepartments_MappingKeyMatchedCaseInsensitively(t *testing.T) {
+	// Keys are normalized at load (Task 2b). ResolveDepartments normalizes the
+	// incoming claim before lookup, so a differently-cased claim still hits.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"GUID-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+func TestResolveDepartments_BlankAndWhitespaceClaimsDropped(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default"}
+	got := ResolveDepartments([]string{"  ", "", "eng"}, cfg)
+	assert.Equal(t, []string{"eng"}, got)
+}
+
+func TestResolveDepartments_AllBlankClaims_FallsBackToDefault(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default"}
+	got := ResolveDepartments([]string{"  ", ""}, cfg)
+	assert.Equal(t, []string{"default"}, got)
+}
+
+func TestResolveDepartments_DuplicatesAfterMappingCollapsed(t *testing.T) {
+	// Two distinct raw claims mapping to the SAME friendly name dedupe to one.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{
+		"guid-a": "engineering",
+		"guid-b": "engineering",
+	}}
+	got := ResolveDepartments([]string{"guid-a", "guid-b"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+func TestResolveDepartments_MappedFriendlyNameNormalized(t *testing.T) {
+	// Even if a mapping value somehow reaches here un-normalized, output is normalized.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "Engineering "}}
+	got := ResolveDepartments([]string{"guid-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
 }
