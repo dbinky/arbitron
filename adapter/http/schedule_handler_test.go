@@ -414,6 +414,22 @@ func TestScheduleHandler_RunNow_NonOwner_403(t *testing.T) {
 	assert.Equal(t, 0, firer.calls)
 }
 
+// Authorization: admin can run any user's schedule (owner-or-admin gate).
+func TestScheduleHandler_RunNow_Admin_202(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	s := seedSchedule(repo, owner.UserID)
+	inst := uuid.New()
+	firer := &stubHTTPFirer{inst: inst, fired: true}
+	admin := identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin}
+	router := schedRouterWithFirer(t, repo, true, admin, firer)
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Equal(t, 1, firer.calls)
+}
+
 // Not found => 404.
 func TestScheduleHandler_RunNow_NotFound_404(t *testing.T) {
 	router := schedRouterWithFirer(t, newSchedTestRepo(), true, testUser(), &stubHTTPFirer{})

@@ -140,6 +140,10 @@ func userCtx(id uuid.UUID) context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: id, Username: "u", Role: identity.RoleUser})
 }
 
+func adminCtx() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin})
+}
+
 // --- Tests ---
 
 func TestScheduleTools_Create_And_List_MCP(t *testing.T) {
@@ -269,6 +273,21 @@ func TestScheduleTools_RunNow_NonOwnerForbidden(t *testing.T) {
 	assert.True(t, res.IsError)
 	assert.Contains(t, schedTextOf(t, res), "forbidden")
 	assert.Equal(t, 0, firer.calls)
+}
+
+// Authorization: admin can run any user's schedule (owner-or-admin gate).
+func TestScheduleTools_RunNow_AdminCanFire(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	inst := uuid.New()
+	firer := &stubMCPFirer{inst: inst, fired: true}
+	srv := newScheduleServerWithFirer(repo, true, firer)
+
+	res := callSchedule(t, srv, adminCtx(), "schedule_run_now", map[string]any{"id": s.ID.String()})
+
+	require.False(t, res.IsError, schedTextOf(t, res))
+	assert.Equal(t, 1, firer.calls)
 }
 
 // Failure: creator unresolved => MCP error mentioning conflict.
