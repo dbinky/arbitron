@@ -363,6 +363,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		edgeVerifier, eerr := adaptedge.New(context.Background(), adaptedge.Config{
 			TeamDomain: cfg.Auth.Edge.TeamDomain,
 			Audiences:  cfg.Auth.Edge.Audiences,
+			GroupClaim: cfg.Auth.RBAC.GroupClaim,
 		})
 		if eerr != nil {
 			db.Close()

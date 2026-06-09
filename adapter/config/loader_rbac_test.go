@@ -154,3 +154,52 @@ func TestLoad_RBAC_MultipleLeadsEnvOverlays(t *testing.T) {
 		t.Errorf("Leads[sales] = %v, want [bob@corp.example carol-subj]", cfg.Auth.RBAC.Leads["sales"])
 	}
 }
+
+func TestLoad_RBACMapping_FromYAML(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "groups"
+    defaultgroup: "default"
+    mapping:
+      guid-123: engineering
+      guid-b: sales
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-b"]; got != "sales" {
+		t.Errorf("Mapping[guid-b] = %q, want sales", got)
+	}
+}
+
+func TestLoad_RBACMapping_FromEnvOverlay(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-123", "engineering")
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_SALES-GUID", "sales")
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Env names are upper-cased by convention; the overlay lower-cases the suffix
+	// for the raw-claim key. Values pass through; ToGroupConfig normalizes later.
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["sales-guid"]; got != "sales" {
+		t.Errorf("Mapping[sales-guid] = %q, want sales", got)
+	}
+}
+
+func TestLoad_NoGroupClaim_BehavesAsToday(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "" {
+		t.Errorf("GroupClaim = %q, want empty (unset GroupClaim => no group extraction)", cfg.Auth.RBAC.GroupClaim)
+	}
+}
