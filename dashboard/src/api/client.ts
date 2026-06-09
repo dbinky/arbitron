@@ -8,6 +8,7 @@ import type {
   NotificationListResponse,
   Priority,
   QueueConfigUpdate,
+  Schedule,
   SystemConfig,
   TeamsConfigUpdate,
   WorkflowStats,
@@ -218,6 +219,24 @@ export const api = {
      */
     updateTeamsConfig(body: { webhookUrl?: string; enabled?: boolean }): Promise<TeamsConfigUpdate> {
       return put('/api/v1/system/config/teams', body)
+    },
+  },
+  schedules: {
+    /**
+     * List schedules, optionally narrowed to one workflow. READ-ONLY: the
+     * dashboard exposes no schedule mutation — create/edit/enable/disable/
+     * delete/run-now stay on REST + MCP. The backend wraps the array in
+     * { schedules: [...] } and scopes results to the caller's own (or, for an
+     * admin, all) schedules.
+     */
+    async list(workflowName?: string): Promise<Schedule[]> {
+      const q = new URLSearchParams()
+      if (workflowName) q.set('workflowName', workflowName)
+      const qs = q.toString()
+      const res = await request<{ schedules: Schedule[] }>(
+        `/api/v1/schedules${qs ? `?${qs}` : ''}`,
+      )
+      return res.schedules
     },
   },
   notifications: {
