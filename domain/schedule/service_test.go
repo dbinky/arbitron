@@ -457,3 +457,95 @@ func TestService_Update_IntervalFloor_RejectsTooFrequent(t *testing.T) {
 	_, err := svc.Update(ctxAs(caller), s.ID, schedule.UpdateInput{CronExpr: &tooFrequent})
 	assert.ErrorIs(t, err, schedule.ErrIntervalTooFrequent)
 }
+
+// --- Service.RunNow ---
+
+type fakeFirer struct {
+	instID uuid.UUID
+	fired  bool
+	err    error
+}
+
+func (f *fakeFirer) Fire(_ context.Context, _ schedule.Schedule, _ bool) (uuid.UUID, bool, error) {
+	return f.instID, f.fired, f.err
+}
+
+func newSvcWithFirer(repo schedule.ScheduleRepository, firer schedule.Firer) *schedule.Service {
+	return schedule.NewService(repo, &fakeCanTrigger{allow: true}, schedule.WithFirer(firer))
+}
+
+// success — the schedule's owner may fire their own schedule.
+func TestService_RunNow_OwnerFires(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	instID := uuid.New()
+	firer := &fakeFirer{instID: instID, fired: true}
+	svc := newSvcWithFirer(newSvcRepo(s), firer)
+
+	res, err := svc.RunNow(ctxAs(owner), s.ID, schedule.RunNowInput{})
+	require.NoError(t, err)
+	assert.True(t, res.Fired)
+	assert.Equal(t, instID, res.InstanceID)
+}
+
+// authz — an admin may fire any schedule, not only their own.
+func TestService_RunNow_AdminFiresAnotherUser(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	firer := &fakeFirer{instID: uuid.New(), fired: true}
+	svc := newSvcWithFirer(newSvcRepo(s), firer)
+
+	_, err := svc.RunNow(ctxAs(admin()), s.ID, schedule.RunNowInput{})
+	require.NoError(t, err, "admin must be able to fire another user's schedule")
+}
+
+// authz — a non-owner, non-admin user is denied.
+func TestService_RunNow_NonOwner_Forbidden(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	firer := &fakeFirer{instID: uuid.New(), fired: true}
+	svc := newSvcWithFirer(newSvcRepo(s), firer)
+
+	_, err := svc.RunNow(ctxAs(user()), s.ID, schedule.RunNowInput{})
+	assert.ErrorIs(t, err, schedule.ErrForbidden)
+}
+
+// failure — RunNow is unavailable when no firer has been wired.
+func TestService_RunNow_FirerUnavailable(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	svc := newSvc(newSvcRepo(s), &fakeCanTrigger{allow: true}) // no WithFirer
+
+	_, err := svc.RunNow(ctxAs(owner), s.ID, schedule.RunNowInput{})
+	assert.ErrorIs(t, err, schedule.ErrRunNowUnavailable)
+}
+
+// error — no identity in context yields an error.
+func TestService_RunNow_NoIdentity_Error(t *testing.T) {
+	s := &schedule.Schedule{ID: uuid.New(), WorkflowName: "report", CronExpr: "0 9 * * *"}
+	firer := &fakeFirer{instID: uuid.New(), fired: true}
+	svc := newSvcWithFirer(newSvcRepo(s), firer)
+
+	_, err := svc.RunNow(context.Background(), s.ID, schedule.RunNowInput{})
+	require.Error(t, err, "no identity in context must return an error")
+}
+
+// error — schedule not found propagates the repo error.
+func TestService_RunNow_ScheduleNotFound(t *testing.T) {
+	firer := &fakeFirer{instID: uuid.New(), fired: true}
+	svc := newSvcWithFirer(newSvcRepo(), firer) // empty repo
+
+	_, err := svc.RunNow(ctxAs(user()), uuid.New(), schedule.RunNowInput{})
+	require.Error(t, err, "unknown schedule ID must return an error")
+}
+
+// error — Firer.Fire errors propagate from RunNow.
+func TestService_RunNow_FireError_Propagates(t *testing.T) {
+	owner := user()
+	s := &schedule.Schedule{ID: uuid.New(), CreatorID: owner.UserID, WorkflowName: "report", CronExpr: "0 9 * * *"}
+	boom := errors.New("engine exploded")
+	svc := newSvcWithFirer(newSvcRepo(s), &fakeFirer{err: boom})
+
+	_, err := svc.RunNow(ctxAs(owner), s.ID, schedule.RunNowInput{})
+	assert.ErrorIs(t, err, boom)
+}
