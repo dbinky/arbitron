@@ -41,7 +41,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 17 | Origin persistence + dashboard (§8+§10 — summary `triggerSource`/`scheduleId` JSON drives `OriginBadge`; deleted-schedule run still renders) | [x] | done |
 | 18 | Workflow listing + SchedulesPanel (§9+§10 — `GET /schedules?workflowName=` contract matches `api.schedules.list`; owner-or-admin scope honored in UI) | [x] | done |
 | 19 | Config + edge + resolution (§11+§3+§4 — configured `GroupClaim`/`Mapping` are actually consumed end-to-end; env overlay precedence correct) | [x] | done |
-| 20 | Run-now origin slice (§1+§7+§8 — a run-now fire stamps `run_now`+`scheduleId` and reaches the DB + summary; does not advance the cron position) | [ ] | |
+| 20 | Run-now origin slice (§1+§7+§8 — a run-now fire stamps `run_now`+`scheduleId` and reaches the DB + summary; does not advance the cron position) | [x] | done |
 
 ---
 
