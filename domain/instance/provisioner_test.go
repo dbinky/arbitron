@@ -731,6 +731,21 @@ func TestResolveByEmail_BootstrapEmail_IsAdminRegardlessOfGroups(t *testing.T) {
 	assert.Equal(t, identity.RoleAdmin, u.Role, "email allow-list confers admin even with a non-admin group claim")
 }
 
+// Edge: NewProvisioner normalizes bootstrap list entries (trim+lowercase) at
+// construction time so operators can supply "  Admin@Corp.Example  " in config
+// and matching still works. Both subject and email entries are normalized.
+func TestNewProvisioner_BootstrapListNormalized(t *testing.T) {
+	p := NewProvisioner(newFakeProvUserRepo(),
+		[]string{"  ADMIN@CORP.EXAMPLE  ", "\tSUB-ADMIN\t", ""},
+		identity.GroupConfig{DefaultGroup: "default"},
+	)
+	assert.True(t, p.IsBootstrapAdmin("sub-admin", ""), "subject entry must match after trim+lowercase")
+	assert.True(t, p.IsBootstrapAdmin("", "admin@corp.example"), "email entry must match after trim+lowercase")
+	assert.False(t, p.IsBootstrapAdmin("", "unknown@corp.example"), "unlisted identity must not match")
+	// Blank entries after normalization must not create phantom "" matches.
+	assert.False(t, p.IsBootstrapAdmin("", ""), "blank entry must not be added to the set")
+}
+
 // Authorization/role: on the OIDC Resolve path, a group claim NEVER confers
 // admin — admin is determined exclusively by IsBootstrapAdmin (subject+email
 // allow-list). Mirrors TestResolveByEmail_GroupClaimNeverConfersAdmin for the
