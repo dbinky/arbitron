@@ -672,3 +672,61 @@ func TestResolve_ExistingAdminStillOnList_NoRoleWrite(t *testing.T) {
 	assert.Equal(t, identity.RoleAdmin, u.Role)
 	assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when the role is unchanged")
 }
+
+// ---- ResolveByEmail: edge group-claim department snapshot ----
+
+func TestResolveByEmail_MappedGroup_SnapshotsFriendlyDepartment(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	})
+	u, err := p.ResolveByEmail(context.Background(), "alice@corp.example", []string{"guid-123"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_UnmappedGroup_SnapshotsVerbatim(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "bob@corp.example", []string{"Marketing"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"marketing"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_MultipleGroups_SnapshotsUnion(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	})
+	u, err := p.ResolveByEmail(context.Background(), "carol@corp.example", []string{"guid-123", "sales"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering", "sales"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_NoGroups_StillDefaultGroup(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "dan@corp.example", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, repo.depts[u.ID])
+}
+
+// Authorization/role: a group claim NEVER confers admin; admin is email-allow-list only.
+func TestResolveByEmail_GroupClaimNeverConfersAdmin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	// "admins" looks privilege-y but is just a department; bootstrap list is empty.
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "eve@corp.example", []string{"admins", "superuser"})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleUser, u.Role, "a group claim must never grant admin")
+}
+
+func TestResolveByEmail_BootstrapEmail_IsAdminRegardlessOfGroups(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "boss@corp.example", []string{"interns"})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role, "email allow-list confers admin even with a non-admin group claim")
+}

@@ -146,8 +146,10 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 // the token signature/issuer/audience/expiry, so there is no separate
 // email_verified gate on this path. Admin status is re-evaluated on every call
 // from the live bootstrap list (config authoritative), and the user's
-// departments are snapshotted to the default group (Phase 1 consumes no group
-// claim). A repository error surfaces as a non-ErrInvalidClaims error so the
+// departments are snapshotted from the edge-forwarded group claim via the same
+// ResolveDepartments chokepoint the OIDC path uses (mapping ▸ verbatim ▸
+// default); a user with no groups still falls back to the default group. A
+// repository error surfaces as a non-ErrInvalidClaims error so the
 // middleware can distinguish a 500 (we could not check) from a 401 (no
 // credential).
 func (p *Provisioner) ResolveByEmail(ctx context.Context, email string, groups []string) (*User, error) {
@@ -184,7 +186,7 @@ func (p *Provisioner) ResolveByEmail(ctx context.Context, email string, groups [
 	default:
 		return nil, err
 	}
-	depts := identity.ResolveDepartments(nil, p.groups)
+	depts := identity.ResolveDepartments(groups, p.groups)
 	if err := p.users.ReplaceDepartments(ctx, u.ID, depts); err != nil {
 		return nil, fmt.Errorf("snapshotting departments at edge login: %w", err)
 	}
