@@ -80,9 +80,9 @@ func RegisterScheduleTools(srv *Server) {
 	if srv.deps.ScheduleService.HasFirer() {
 		srv.AddTool(
 			gomcp.NewTool("schedule_run_now",
-				gomcp.WithDescription("Fire an existing schedule immediately, out of its cron cadence, reusing its variables and creator attribution. You must be the schedule's owner (admins may run any). By default fires even if a prior run is active; set skipWhenBusy to skip when one is."),
+				gomcp.WithDescription("Fire an existing schedule immediately, out of its cron cadence, reusing its variables and creator attribution. You must be the schedule's owner (admins may run any) AND currently authorized to trigger the workflow. By default it COALESCES against an active run (skips instead of starting a second concurrent run); set force to fire regardless."),
 				gomcp.WithString("id", gomcp.Required(), gomcp.Description("Schedule UUID")),
-				gomcp.WithBoolean("skipWhenBusy", gomcp.Description("If true and a prior run of this schedule is still active, skip instead of starting a new run (default false)")),
+				gomcp.WithBoolean("force", gomcp.Description("If true, fire even when a prior run of this schedule's workflow is still active (a deliberate concurrent run). Default false coalesces against the active run.")),
 			),
 			scheduleRunNowHandler(srv),
 		)
@@ -250,8 +250,8 @@ func scheduleRunNowHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError(err.Error()), nil
 		}
 		args := request.GetArguments()
-		skip, _ := args["skipWhenBusy"].(bool) // default false
-		res, err := srv.deps.ScheduleService.RunNow(ctx, id, schedule.RunNowInput{SkipWhenBusy: skip})
+		force, _ := args["force"].(bool) // default false ⇒ coalesce against an active run
+		res, err := srv.deps.ScheduleService.RunNow(ctx, id, schedule.RunNowInput{Force: force})
 		if err != nil {
 			return scheduleResultError(err), nil
 		}

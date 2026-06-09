@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -91,7 +92,8 @@ type Service struct {
 	canTrigger CanTrigger
 	now        func() time.Time
 	bounds     Bounds
-	firer      Firer // optional; nil => run-now unavailable
+	firer      Firer        // optional; nil => run-now unavailable
+	logger     *slog.Logger // audit seam for run-now (defaults to slog.Default)
 }
 
 // Firer starts a schedule's workflow immediately, out of cron cadence. The
@@ -134,6 +136,17 @@ func WithServiceClock(now func() time.Time) ServiceOption {
 	}
 }
 
+// WithServiceLogger injects the logger used for the run-now audit line (defaults
+// to slog.Default). Named distinctly from the Evaluator's WithLogger to avoid a
+// package-level collision.
+func WithServiceLogger(l *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l
+		}
+	}
+}
+
 // NewService constructs a Service. The clock defaults to time.Now and the bounds
 // to the package defaults unless overridden via options.
 func NewService(repo ScheduleRepository, canTrigger CanTrigger, opts ...ServiceOption) *Service {
@@ -145,9 +158,13 @@ func NewService(repo ScheduleRepository, canTrigger CanTrigger, opts ...ServiceO
 			MaxSchedulesPerCreator: DefaultMaxSchedulesPerCreator,
 			MinInterval:            DefaultMinInterval,
 		},
+		logger: slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.logger == nil {
+		s.logger = slog.Default()
 	}
 	return s
 }
@@ -402,10 +419,14 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
 }
 
-// RunNowInput carries the run-now options. SkipWhenBusy defaults to false: by
-// default run-now fires even if a prior run of the schedule is still active.
+// RunNowInput carries the run-now options. Force defaults to false: by default
+// run-now COALESCES against an active run of the same workflow/creator (it skips
+// rather than starting a second concurrent run). This is the per-identity
+// concurrency cap that contains the token-spend / queue-exhaustion abuse vector,
+// since run-now bypasses the cron COUNT/INTERVAL bounds. Set Force to fire
+// regardless of an active run (a deliberate concurrent run).
 type RunNowInput struct {
-	SkipWhenBusy bool
+	Force bool
 }
 
 // RunNowResult reports the outcome of a run-now. Fired is false when the
@@ -417,10 +438,23 @@ type RunNowResult struct {
 }
 
 // RunNow fires an existing schedule immediately, out of cron cadence, reusing the
-// schedule's variables and creator attribution. Authorization is owner-or-admin
-// (the same gate as Get/Update/Delete): the caller must be permitted to MANAGE
-// the schedule; the run itself is attributed to the schedule's creator. It never
-// advances the cron position (the Runner holds no repo).
+// schedule's variables and creator attribution. It never advances the cron
+// position (the Runner holds no repo).
+//
+// Authorization is a TWO-stage gate. First, owner-or-admin (the same management
+// gate as Get/Update/Delete): the CALLER must be permitted to manage the
+// schedule. Second — and this is the privileged-path defense — the CALLER's
+// CURRENT can-trigger authorization for the workflow is re-checked, the same
+// gate Create/Update enforce. The authoritative authorization for a manual fire
+// is the CALLER's (not the stored creator's): a caller who could trigger the
+// workflow when the schedule was created but has since lost that right (the
+// workflow was unpublished from their department, or their permission revoked)
+// must NOT be able to fire it out of band. The run itself remains attributed to
+// the schedule's creator; only the trigger AUTHORIZATION follows the caller.
+//
+// Throttle: run-now COALESCES against an active run by default (Force=false ⇒
+// skipWhenBusy=true) so a tight loop cannot spawn unbounded concurrent runs;
+// Force=true opts into a deliberate concurrent run.
 func (s *Service) RunNow(ctx context.Context, id uuid.UUID, in RunNowInput) (RunNowResult, error) {
 	c, err := caller(ctx)
 	if err != nil {
@@ -433,13 +467,30 @@ func (s *Service) RunNow(ctx context.Context, id uuid.UUID, in RunNowInput) (Run
 	if !authorize(c, *sched) {
 		return RunNowResult{}, ErrForbidden
 	}
+	// Re-check the caller's CURRENT trigger authorization (privilege-persistence
+	// defense; the authoritative principal for a manual fire is the caller).
+	if err := s.assertCanTrigger(ctx, c, sched.WorkflowName); err != nil {
+		return RunNowResult{}, err
+	}
 	if s.firer == nil {
 		return RunNowResult{}, ErrRunNowUnavailable
 	}
-	instID, fired, err := s.firer.Fire(ctx, *sched, in.SkipWhenBusy)
+	// Coalesce by default; Force opts into a concurrent run.
+	instID, fired, err := s.firer.Fire(ctx, *sched, !in.Force)
 	if err != nil {
 		return RunNowResult{}, err
 	}
+	// Audit the privileged, out-of-cadence fire at the single seam BOTH transports
+	// (REST + MCP) funnel through, mirroring evaluator.fireOne at the cron seam.
+	// Log the caller UserID (NOT email/subject — PII out of logs) and never the
+	// raw Variables (they may carry sensitive inputs).
+	s.logger.Info("schedule run-now",
+		"callerUserID", c.UserID.String(),
+		"scheduleID", sched.ID.String(),
+		"workflow", sched.WorkflowName,
+		"instanceID", instID.String(),
+		"fired", fired,
+	)
 	return RunNowResult{InstanceID: instID, Fired: fired}, nil
 }
 

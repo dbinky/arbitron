@@ -374,16 +374,33 @@ func TestScheduleHandler_RunNow_202(t *testing.T) {
 	inst := uuid.New()
 	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: inst, fired: true})
 
-	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{"skipWhenBusy":false}`)
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{"force":true}`)
 
 	require.Equal(t, http.StatusAccepted, w.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, inst.String(), body["instanceId"])
 	assert.Equal(t, true, body["fired"])
+	// The 202 points at the created instance via a Location header (HTTP-only).
+	assert.Equal(t, "/api/v1/instances/"+inst.String(), w.Header().Get("Location"),
+		"a fired run-now must set Location to the created instance")
 }
 
-// Empty body is allowed (skipWhenBusy defaults to false) => still 202.
+// A skipped (coalesced) run-now returns 200 and must NOT set a Location header
+// (no instance was created).
+func TestScheduleHandler_RunNow_Skipped_NoLocation(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: uuid.Nil, fired: false})
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Location"), "a skipped run-now must not set Location")
+}
+
+// Empty body is allowed (force defaults to false ⇒ coalesce) => still 202.
 func TestScheduleHandler_RunNow_EmptyBody_202(t *testing.T) {
 	repo := newSchedTestRepo()
 	u := testUser()
@@ -395,14 +412,14 @@ func TestScheduleHandler_RunNow_EmptyBody_202(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, w.Code)
 }
 
-// Skipped (busy + skipWhenBusy) => 200 OK, body {fired:false}, no instanceId.
+// Skipped (busy + coalesce default) => 200 OK, body {fired:false}, no instanceId.
 func TestScheduleHandler_RunNow_Skipped_200(t *testing.T) {
 	repo := newSchedTestRepo()
 	u := testUser()
 	s := seedSchedule(repo, u.UserID)
 	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: uuid.Nil, fired: false})
 
-	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{"skipWhenBusy":true}`)
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	var body map[string]any

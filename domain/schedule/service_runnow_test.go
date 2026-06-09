@@ -93,8 +93,8 @@ func enabledSchedule(creator uuid.UUID) *schedule.Schedule {
 	}
 }
 
-// Happy path: owner runs their schedule => firer called with the loaded schedule
-// and the requested skip flag; result mirrors the firer.
+// Happy path: owner runs their schedule with Force => firer called with the
+// loaded schedule and skipWhenBusy=false; result mirrors the firer.
 func TestService_RunNow_HappyPath(t *testing.T) {
 	owner := uuid.New()
 	s := enabledSchedule(owner)
@@ -102,7 +102,7 @@ func TestService_RunNow_HappyPath(t *testing.T) {
 	firer := &stubFirer{retInstance: wantInst, retFired: true}
 	svc := schedule.NewService(newRunNowRepo(s), allowCanTriggerRN{}, schedule.WithFirer(firer))
 
-	res, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{SkipWhenBusy: false})
+	res, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{Force: true})
 
 	require.NoError(t, err)
 	assert.Equal(t, wantInst, res.InstanceID)
@@ -113,31 +113,32 @@ func TestService_RunNow_HappyPath(t *testing.T) {
 	// Spec: run-now reuses the schedule's variables and department.
 	assert.Equal(t, map[string]any{"k": "v"}, firer.gotSchedule.Variables, "variables must be reused from the schedule")
 	assert.Equal(t, "eng", firer.gotSchedule.Department, "department must be reused from the schedule")
-	assert.False(t, firer.gotSkip)
+	assert.False(t, firer.gotSkip, "Force=true must pass skipWhenBusy=false to the firer")
 }
 
-// SkipWhenBusy is passed through to the firer.
-func TestService_RunNow_PassesSkipWhenBusy(t *testing.T) {
+// Coalesce semantics: the default (Force=false) passes skipWhenBusy=true to the
+// firer.
+func TestService_RunNow_ForceControlsSkipWhenBusy(t *testing.T) {
 	owner := uuid.New()
 	s := enabledSchedule(owner)
 	firer := &stubFirer{retInstance: uuid.New(), retFired: true}
 	svc := schedule.NewService(newRunNowRepo(s), allowCanTriggerRN{}, schedule.WithFirer(firer))
 
-	_, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{SkipWhenBusy: true})
+	_, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{Force: false})
 
 	require.NoError(t, err)
-	assert.True(t, firer.gotSkip)
+	assert.True(t, firer.gotSkip, "default (Force=false) must coalesce: skipWhenBusy=true")
 }
 
 // Collision/skipped: firer reports fired=false (busy) => RunNow returns
-// Fired=false, nil instance, no error.
+// Fired=false, nil instance, no error. Uses the coalesce default.
 func TestService_RunNow_Skipped(t *testing.T) {
 	owner := uuid.New()
 	s := enabledSchedule(owner)
 	firer := &stubFirer{retInstance: uuid.Nil, retFired: false}
 	svc := schedule.NewService(newRunNowRepo(s), allowCanTriggerRN{}, schedule.WithFirer(firer))
 
-	res, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{SkipWhenBusy: true})
+	res, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{})
 
 	require.NoError(t, err)
 	assert.False(t, res.Fired)

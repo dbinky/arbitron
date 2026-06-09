@@ -167,7 +167,7 @@ func TestRunNowSlice_HappyPath_202(t *testing.T) {
 	caller := newSliceUser(t, env.userRepo, "alice@slice.test", identity.RoleUser)
 	sched := newSliceSchedule(t, env.svc, caller, "my-workflow", "default")
 
-	body, _ := json.Marshal(map[string]any{"skipWhenBusy": false})
+	body, _ := json.Marshal(map[string]any{"force": true})
 	req := httptest.NewRequest(http.MethodPost, "/"+sched.ID.String()+"/run", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -179,6 +179,8 @@ func TestRunNowSlice_HappyPath_202(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, true, resp["fired"])
 	assert.NotEmpty(t, resp["instanceId"], "instanceId must be present on a fired run")
+	assert.Equal(t, "/api/v1/instances/"+resp["instanceId"].(string), rec.Header().Get("Location"),
+		"a fired run-now must point Location at the created instance")
 
 	require.Len(t, env.trig.calls, 1, "trigger must be called exactly once")
 	call := env.trig.calls[0]
@@ -198,25 +200,24 @@ func TestRunNowSlice_HappyPath_202(t *testing.T) {
 
 // --- success: skip-when-busy with no active run fires normally ---
 
-// TestRunNowSlice_SkipWhenBusy_NoActiveRun_202 verifies that skipWhenBusy=true
-// with no active run in the real SQLite instances table still fires (the real
-// InstanceRepo.HasActiveRun is exercised here — it returns false for an empty
-// DB).
-func TestRunNowSlice_SkipWhenBusy_NoActiveRun_202(t *testing.T) {
+// TestRunNowSlice_Coalesce_NoActiveRun_202 verifies that the coalesce default
+// (force omitted ⇒ skipWhenBusy=true) with no active run in the real SQLite
+// instances table still fires (the real InstanceRepo.HasActiveRun is exercised
+// here — it returns false for an empty DB).
+func TestRunNowSlice_Coalesce_NoActiveRun_202(t *testing.T) {
 	env := newRunNowSliceEnv(t)
 	caller := newSliceUser(t, env.userRepo, "bob@slice.test", identity.RoleUser)
 	sched := newSliceSchedule(t, env.svc, caller, "fire-anyway", "default")
 
-	body, _ := json.Marshal(map[string]any{"skipWhenBusy": true})
-	req := httptest.NewRequest(http.MethodPost, "/"+sched.ID.String()+"/run", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	// Empty body ⇒ force=false ⇒ coalesce; with no active run it still fires.
+	req := httptest.NewRequest(http.MethodPost, "/"+sched.ID.String()+"/run", nil)
 	rec := httptest.NewRecorder()
 	env.router(caller).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 	var resp map[string]any
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
-	assert.Equal(t, true, resp["fired"], "no active run in DB → skipWhenBusy fires normally")
+	assert.Equal(t, true, resp["fired"], "no active run in DB → coalesce default fires normally")
 	assert.Len(t, env.trig.calls, 1)
 }
 

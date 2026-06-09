@@ -236,7 +236,7 @@ func TestScheduleTools_RunNow_HappyPath(t *testing.T) {
 	assert.Equal(t, true, body["fired"])
 }
 
-// skipWhenBusy arg is passed through; skipped result => fired:false, not an error.
+// Coalesce default (force omitted) with a busy workflow => fired:false, not an error.
 func TestScheduleTools_RunNow_Skipped(t *testing.T) {
 	repo := newMCPSchedRepo()
 	owner := uuid.New()
@@ -244,7 +244,7 @@ func TestScheduleTools_RunNow_Skipped(t *testing.T) {
 	srv := newScheduleServerWithFirer(repo, true, &stubMCPFirer{inst: uuid.Nil, fired: false})
 
 	res := callSchedule(t, srv, userCtx(owner), "schedule_run_now", map[string]any{
-		"id": s.ID.String(), "skipWhenBusy": true,
+		"id": s.ID.String(),
 	})
 
 	require.False(t, res.IsError, schedTextOf(t, res))

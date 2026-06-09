@@ -47,9 +47,10 @@ type scheduleUpdateRequest struct {
 }
 
 // scheduleRunNowRequest is the POST /schedules/{id}/run body. The whole body is
-// optional; an empty body leaves skipWhenBusy=false (fire anyway).
+// optional; an empty body leaves force=false, so run-now COALESCES against an
+// active run by default. Set force to fire regardless of an active run.
 type scheduleRunNowRequest struct {
-	SkipWhenBusy bool `json:"skipWhenBusy,omitempty"`
+	Force bool `json:"force,omitempty"`
 }
 
 // writeScheduleError maps schedule sentinels to HTTP status.
@@ -215,10 +216,10 @@ func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RunNow handles POST /schedules/{id}/run. Body {"skipWhenBusy": bool} is
-// optional (default false ⇒ fire even if a prior run is active). On a started
-// run it returns 202 with {instanceId, fired:true}; when skipped-because-busy it
-// returns 200 with {fired:false}.
+// RunNow handles POST /schedules/{id}/run. Body {"force": bool} is optional
+// (default false ⇒ coalesce against an active run). On a started run it returns
+// 202 with {instanceId, fired:true} and a Location header pointing at the
+// created instance; when skipped-because-busy it returns 200 with {fired:false}.
 func (h *ScheduleHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 	id, ok := scheduleIDParam(w, r)
 	if !ok {
@@ -232,7 +233,7 @@ func (h *ScheduleHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := h.svc.RunNow(r.Context(), id, schedule.RunNowInput{SkipWhenBusy: req.SkipWhenBusy})
+	res, err := h.svc.RunNow(r.Context(), id, schedule.RunNowInput{Force: req.Force})
 	if err != nil {
 		writeScheduleError(w, err)
 		return
@@ -241,6 +242,9 @@ func (h *ScheduleHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, map[string]any{"fired": false})
 		return
 	}
+	// Point the caller at the created instance (HTTP-transport detail; the MCP
+	// surface has no equivalent). The path mirrors the instances route group.
+	w.Header().Set("Location", "/api/v1/instances/"+res.InstanceID.String())
 	WriteJSON(w, http.StatusAccepted, map[string]any{
 		"instanceId": res.InstanceID.String(),
 		"fired":      true,
