@@ -15,7 +15,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Run-now domain core (`domain/schedule/runner.go` `Runner.Fire`, shared `resolveCreatorIdentity`, `Service.RunNow`/`WithFirer`/`HasFirer`, `ErrCreatorUnresolved`/`ErrRunNowUnavailable`) — never advances `LastFiredAt`; owner-or-admin authz; run attributed to creator | [x] | [ ] | |
+| 1 | Run-now domain core (`domain/schedule/runner.go` `Runner.Fire`, shared `resolveCreatorIdentity`, `Service.RunNow`/`WithFirer`/`HasFirer`, `ErrCreatorUnresolved`/`ErrRunNowUnavailable`) — never advances `LastFiredAt`; owner-or-admin authz; run attributed to creator | [x] | [x] | done |
 | 2 | Run-now adapters & wiring (`adapter/http/schedule_handler.go` `POST /schedules/{id}/run` 202/200/409/503; `adapter/mcp/tools_schedule.go` conditional `schedule_run_now`; composition-root `NewRunner` from the Evaluator's collaborators) | [ ] | [ ] | |
 | 3 | Edge group extraction (`domain/identity/edge.go` `EdgeIdentity{Email,Groups}`; `adapter/edge/verifier.go` configured `GroupClaim`, string-or-array, missing⇒nil⇒NOT 401, raw token never logged) | [ ] | [ ] | |
 | 4 | Department resolution mapping (`domain/identity/groups.go` `ResolveDepartments` mapping▸verbatim▸default chokepoint + `GroupConfig.Mapping`; `EffectiveMembership`/`Leads` union preserved) | [ ] | [ ] | |

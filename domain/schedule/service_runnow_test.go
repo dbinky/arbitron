@@ -15,7 +15,8 @@ import (
 // --- run-now service fixtures ---
 
 type runNowRepo struct {
-	m map[uuid.UUID]*schedule.Schedule
+	m                 map[uuid.UUID]*schedule.Schedule
+	setLastFiredCalls int
 }
 
 func newRunNowRepo(ss ...*schedule.Schedule) *runNowRepo {
@@ -41,7 +42,10 @@ func (r *runNowRepo) List(context.Context, schedule.ListFilters) ([]schedule.Sch
 func (r *runNowRepo) ListEnabled(context.Context) ([]schedule.Schedule, error) { return nil, nil }
 func (r *runNowRepo) Update(context.Context, *schedule.Schedule) error         { return nil }
 func (r *runNowRepo) Delete(context.Context, uuid.UUID) error                  { return nil }
-func (r *runNowRepo) SetLastFired(context.Context, uuid.UUID, time.Time) error { return nil }
+func (r *runNowRepo) SetLastFired(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	r.setLastFiredCalls++
+	return nil
+}
 
 // allowCanTriggerRN is the can-trigger gate stub (RunNow does NOT call it, but
 // NewService requires a non-nil CanTrigger).
@@ -222,4 +226,36 @@ func TestService_HasFirer(t *testing.T) {
 	unwired := schedule.NewService(newRunNowRepo(), allowCanTriggerRN{})
 	assert.True(t, wired.HasFirer())
 	assert.False(t, unwired.HasFirer())
+}
+
+// Design criterion: run-now NEVER advances the cron position. SetLastFired must
+// not be called on the repo — it is the Evaluator's exclusive responsibility.
+func TestService_RunNow_NeverAdvancesCronPosition(t *testing.T) {
+	owner := uuid.New()
+	s := enabledSchedule(owner)
+	repo := newRunNowRepo(s)
+	firer := &stubFirer{retInstance: uuid.New(), retFired: true}
+	svc := schedule.NewService(repo, allowCanTriggerRN{}, schedule.WithFirer(firer))
+
+	_, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, repo.setLastFiredCalls, "RunNow must never call SetLastFired (cron position is Evaluator-only)")
+}
+
+// Edge: run-now on a disabled schedule still fires immediately. "Disabled" means
+// the cron loop does not pick it up; it does not block a manual on-demand fire.
+func TestService_RunNow_DisabledSchedule_StillFires(t *testing.T) {
+	owner := uuid.New()
+	s := enabledSchedule(owner)
+	s.Enabled = false
+	wantInst := uuid.New()
+	firer := &stubFirer{retInstance: wantInst, retFired: true}
+	svc := schedule.NewService(newRunNowRepo(s), allowCanTriggerRN{}, schedule.WithFirer(firer))
+
+	res, err := svc.RunNow(ctxAs(ownerIdent(owner)), s.ID, schedule.RunNowInput{})
+
+	require.NoError(t, err, "run-now must fire even when the schedule is disabled")
+	assert.True(t, res.Fired)
+	assert.Equal(t, wantInst, res.InstanceID)
+	assert.Equal(t, 1, firer.calls)
 }
