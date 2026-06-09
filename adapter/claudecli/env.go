@@ -2,7 +2,6 @@ package claudecli
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -20,58 +19,26 @@ const (
 
 // agentEnv builds the claude-cli agent subprocess env from a ResolvedBinding,
 // injecting the org-gateway (or any configured provider) endpoint + key PER
-// CALL. It mirrors opencode.opencodeEnv's safety contract:
+// CALL. The fail-closed skeleton (reveal-first, base-name collision rejection,
+// strip-then-append the base-url var, partial-env-NOT-emitted on reveal error)
+// lives once in procenv.CredentialEnv so claudecli and opencode cannot drift;
+// only the claude-cli-specific bits are set here.
 //
-//   - start from procenv.BaseEnv();
-//   - if binding.BaseURL != "" → append ANTHROPIC_BASE_URL=<baseURL>;
-//   - if binding.RevealKey != nil → reveal at call time; on a non-empty key
-//     append ANTHROPIC_API_KEY=<key>; on a RevealKey error return (nil, err) so
-//     the caller never launches with a partial env (fail-closed);
-//   - an empty BaseURL AND an empty/absent key → return procenv.BaseEnv()
-//     unchanged (the subscription path, byte-for-byte identical to before).
+// Empty-key policy is EmptyKeyAllowBaseURLOnly with NO BaseURL requirement: an
+// empty BaseURL AND an empty/absent key yields procenv.BaseEnv() unchanged (the
+// subscription path), and an empty key with a BaseURL is a base-url-only launch.
 //
-// SECURITY: the key is fetched only here, placed ONLY in the returned child env,
-// and never logged or written to argv. ANTHROPIC_API_KEY is not allowlisted, so
-// it cannot be shadowed by an inherited engine value; we defensively reject a
-// base-name collision on the key var (the base-url var is intentionally allowed
-// in the base set, so it is NOT part of the collision guard).
+// SECURITY: the key is fetched only at launch time, placed ONLY in the returned
+// child env, and never logged or written to argv. ANTHROPIC_API_KEY is not
+// allowlisted, so CredentialEnv's collision guard defends against a future
+// allowlist change silently shadowing the per-call key.
 func agentEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
-	// Defensive: the injected KEY var must not collide with the base allowlist
-	// (it is deliberately absent there; this guards against a future allowlist
-	// change silently shadowing the per-call key).
-	if procenv.IsBaseName(anthropicKeyVar) {
-		return nil, fmt.Errorf("claudecli: injected env var %q shadows the base allowlist", anthropicKeyVar)
-	}
-
-	// Reveal the key first (when a connection is present) so a failure aborts
-	// BEFORE any env is assembled — no partial-env launch.
-	var key string
-	if binding.RevealKey != nil {
-		k, err := binding.RevealKey(ctx)
-		if err != nil {
-			return nil, err
-		}
-		key = k
-	}
-
-	// Subscription path: no endpoint and no key → the base env, unchanged.
-	if binding.BaseURL == "" && key == "" {
-		return procenv.BaseEnv(), nil
-	}
-
-	env := procenv.BaseEnv()
-	if binding.BaseURL != "" {
-		// Strip any operator-inherited ANTHROPIC_BASE_URL from the base env
-		// (it is allowlisted so BaseEnv() passes it through) before appending
-		// the binding's URL. Without this, the subprocess would see two entries
-		// and which one wins is implementation-defined. The binding value is
-		// authoritative: it is the per-call gateway the node was configured for.
-		env = procenv.RemoveVar(env, anthropicBaseURLVar)
-		env = append(env, anthropicBaseURLVar+"="+binding.BaseURL)
-	}
-	if key != "" {
-		env = append(env, anthropicKeyVar+"="+key)
-	}
-	return env, nil
+	return procenv.CredentialEnv(ctx, procenv.CredentialSpec{
+		Runner:     "claudecli",
+		KeyVar:     anthropicKeyVar,
+		BaseURLVar: anthropicBaseURLVar,
+		BaseURL:    binding.BaseURL,
+		Reveal:     binding.RevealKey,
+		EmptyKey:   procenv.EmptyKeyAllowBaseURLOnly,
+	})
 }
-

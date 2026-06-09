@@ -194,11 +194,11 @@ func TestOpencodeEnv_KeylessRestrictedToOllama(t *testing.T) {
 // closed at launch because the raw string missed the opencode-keyed table.
 func TestOpencodeEnv_AliasedProvidersResolveEnv(t *testing.T) {
 	cases := []struct {
-		name        string
-		provider    string
-		keyVar      string // expected key var ("" => AWS quartet)
-		baseURLVar  string // expected base-url var ("" => not checked)
-		bedrockAWS  bool
+		name       string
+		provider   string
+		keyVar     string // expected key var ("" => AWS quartet)
+		baseURLVar string // expected base-url var ("" => not checked)
+		bedrockAWS bool
 	}{
 		{name: "anthropic-api alias", provider: "anthropic-api", keyVar: "ANTHROPIC_API_KEY", baseURLVar: "ANTHROPIC_BASE_URL"},
 		{name: "azure-openai alias", provider: "azure-openai", keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
@@ -226,8 +226,8 @@ func TestOpencodeEnv_AliasedProvidersResolveEnv(t *testing.T) {
 // failing closed at launch.
 func TestOpencodeEnv_BedrockAliasResolvesAWSQuartet(t *testing.T) {
 	b := provider.ResolvedBinding{
-		Provider: "bedrock", // alias of the opencode id "amazon-bedrock"
-		Extras:   map[string]string{"region": "us-east-1", "access-key-id": "AKIA-ALIAS"},
+		Provider:  "bedrock", // alias of the opencode id "amazon-bedrock"
+		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKIA-ALIAS"},
 		RevealKey: func(_ context.Context) (string, error) { return "raw-secret", nil },
 	}
 	env, err := opencodeEnv(context.Background(), b)
@@ -272,7 +272,7 @@ func TestOpencodeEnv_NonKeylessEmptyKeyFailsClosed(t *testing.T) {
 			b := bindingWithKey(prov, "https://base", "", nil) // RevealKey returns ("", nil)
 			env, err := opencodeEnv(context.Background(), b)
 			require.Error(t, err, "empty revealed key must fail closed for a non-keyless provider")
-			assert.Contains(t, err.Error(), "empty key")
+			assert.Contains(t, err.Error(), "requires a key")
 			assert.Nil(t, env, "no partial env when the key is empty for a non-keyless provider")
 		})
 	}
@@ -404,8 +404,8 @@ func TestOpencodeEnv_BedrockEmptyRevealPropagatesMissingSecret(t *testing.T) {
 // ERROR — bedrock binding with nil RevealKey fails closed before any reveal.
 func TestOpencodeEnv_BedrockNilRevealKey(t *testing.T) {
 	b := provider.ResolvedBinding{
-		Provider: "amazon-bedrock",
-		Extras:   map[string]string{"region": "us-east-1", "access-key-id": "AKIA"},
+		Provider:  "amazon-bedrock",
+		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKIA"},
 		RevealKey: nil,
 	}
 	env, err := opencodeEnv(context.Background(), b)
@@ -418,8 +418,8 @@ func TestOpencodeEnv_BedrockNilRevealKey(t *testing.T) {
 func TestOpencodeEnv_KeylessOllamaEmptyBaseURL(t *testing.T) {
 	b := provider.ResolvedBinding{
 		Provider:  "ollama",
-		BaseURL:   "",   // no endpoint configured
-		RevealKey: nil,  // keyless path
+		BaseURL:   "",  // no endpoint configured
+		RevealKey: nil, // keyless path
 	}
 	env, err := opencodeEnv(context.Background(), b)
 	require.Error(t, err, "keyless ollama with empty BaseURL must fail")
@@ -433,7 +433,7 @@ func TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless(t *testing.T) {
 	b := bindingWithKey("anthropic", "https://api.anthropic.com", "", nil) // key=""
 	env, err := opencodeEnv(context.Background(), b)
 	require.Error(t, err, "empty key from RevealKey must be rejected for non-keyless provider")
-	assert.Contains(t, err.Error(), "empty key")
+	assert.Contains(t, err.Error(), "requires a key")
 	assert.Nil(t, env)
 }
 

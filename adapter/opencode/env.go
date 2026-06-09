@@ -53,56 +53,30 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 		return bedrockEnv(ctx, binding)
 	}
 
-	// SECURITY: reject an injected KEY var that would shadow the base allowlist
-	// (secrets must never be on the allowlist, so a collision is a misconfig).
-	// The base-url var is NOT guarded here: org-readiness Phase 2 deliberately
-	// allowlists ANTHROPIC_BASE_URL (a non-secret endpoint), and appending a
-	// per-binding base-url to override an inherited one is the intended behavior.
-	if err := rejectBaseNames(entry.keyVar); err != nil {
-		return nil, err
+	// Provider-specific policy: only the keyless allowlist (e.g. local Ollama)
+	// may launch without a key, and then only against an explicit BaseURL. Every
+	// other provider must present a non-empty key (fail closed). The shared
+	// fail-closed skeleton in procenv.CredentialEnv enforces the rest of the
+	// contract (base-name collision rejection, reveal-first, strip-then-append
+	// the base-url var, partial-env-NOT-emitted on reveal error) so opencode and
+	// claudecli cannot drift.
+	keyless := keylessProviders[opencodeID]
+	emptyKey := procenv.EmptyKeyReject
+	if keyless {
+		emptyKey = procenv.EmptyKeyAllowBaseURLOnly
 	}
 
-	// Keyless local path (e.g. local Ollama): no RevealKey => set only base-url.
-	// Restricted to the keyless allowlist so other providers cannot run
-	// unauthenticated.
-	if binding.RevealKey == nil {
-		if !keylessProviders[opencodeID] {
-			return nil, fmt.Errorf("opencode: provider %q requires a key (nil RevealKey)", binding.Provider)
-		}
-		if binding.BaseURL == "" {
-			return nil, fmt.Errorf("opencode: keyless provider %q requires a BaseURL", binding.Provider)
-		}
-		env := procenv.BaseEnv()
-		if entry.baseURLVar != "" {
-			env = append(env, entry.baseURLVar+"="+binding.BaseURL)
-		}
-		return env, nil
-	}
-
-	key, err := binding.RevealKey(ctx)
+	env, err := procenv.CredentialEnv(ctx, procenv.CredentialSpec{
+		Runner:                    fmt.Sprintf("opencode: provider %q", binding.Provider),
+		KeyVar:                    entry.keyVar,
+		BaseURLVar:                entry.baseURLVar,
+		BaseURL:                   binding.BaseURL,
+		Reveal:                    binding.RevealKey,
+		EmptyKey:                  emptyKey,
+		RequireBaseURLWhenKeyless: keyless,
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	env := procenv.BaseEnv()
-	// A non-nil RevealKey may still return an empty key (a keyless connection);
-	// treat empty as base-url-only, but only for keyless-allowed providers.
-	if key != "" {
-		env = append(env, entry.keyVar+"="+key)
-	} else if !keylessProviders[opencodeID] {
-		return nil, fmt.Errorf("opencode: provider %q produced an empty key", binding.Provider)
-	}
-	// An empty BaseURL omits the var entirely so opencode falls back to its own
-	// default endpoint rather than seeing an empty override. When the base-url
-	// var is allowlisted (ANTHROPIC_BASE_URL), an operator-set parent value may
-	// already be in procenv.BaseEnv(); strip it before appending the per-call
-	// binding override so the subprocess sees exactly one entry.
-	if binding.BaseURL != "" && entry.baseURLVar != "" {
-		env = procenv.RemoveVar(env, entry.baseURLVar)
-		env = append(env, entry.baseURLVar+"="+binding.BaseURL)
-	}
-	if key == "" && binding.BaseURL == "" {
-		return nil, fmt.Errorf("opencode: provider %q produced no key and no BaseURL", binding.Provider)
 	}
 	return env, nil
 }
