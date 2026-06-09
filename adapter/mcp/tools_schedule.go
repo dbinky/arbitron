@@ -73,6 +73,20 @@ func RegisterScheduleTools(srv *Server) {
 		),
 		scheduleDeleteHandler(srv),
 	)
+
+	// schedule_run_now is advertised ONLY when a firer is wired (HasFirer). An
+	// unwired deployment does not surface run-now, mirroring the conditional
+	// registration of the schedule_* tools themselves.
+	if srv.deps.ScheduleService.HasFirer() {
+		srv.AddTool(
+			gomcp.NewTool("schedule_run_now",
+				gomcp.WithDescription("Fire an existing schedule immediately, out of its cron cadence, reusing its variables and creator attribution. You must be the schedule's owner (admins may run any). By default fires even if a prior run is active; set skipWhenBusy to skip when one is."),
+				gomcp.WithString("id", gomcp.Required(), gomcp.Description("Schedule UUID")),
+				gomcp.WithBoolean("skipWhenBusy", gomcp.Description("If true and a prior run of this schedule is still active, skip instead of starting a new run (default false)")),
+			),
+			scheduleRunNowHandler(srv),
+		)
+	}
 }
 
 // scheduleResultError maps schedule sentinels to MCP error results (mirrors
@@ -85,6 +99,10 @@ func scheduleResultError(err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError(fmt.Sprintf("not found: %s", err))
 	case errors.Is(err, schedule.ErrExists):
 		return gomcp.NewToolResultError(fmt.Sprintf("conflict: %s", err))
+	case errors.Is(err, schedule.ErrCreatorUnresolved):
+		return gomcp.NewToolResultError(fmt.Sprintf("conflict: %s", err))
+	case errors.Is(err, schedule.ErrRunNowUnavailable):
+		return gomcp.NewToolResultError(fmt.Sprintf("schedule operation failed: run-now unavailable: %s", err))
 	case errors.Is(err, schedule.ErrInvalidCron),
 		errors.Is(err, schedule.ErrInvalidTimezone),
 		errors.Is(err, schedule.ErrEmptyWorkflow),
@@ -222,5 +240,25 @@ func scheduleDeleteHandler(srv *Server) server.ToolHandlerFunc {
 			return scheduleResultError(err), nil
 		}
 		return MarshalResult(map[string]string{"status": "deleted", "id": id.String()})
+	}
+}
+
+func scheduleRunNowHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		id, err := ParseUUID(request, "id")
+		if err != nil {
+			return gomcp.NewToolResultError(err.Error()), nil
+		}
+		args := request.GetArguments()
+		skip, _ := args["skipWhenBusy"].(bool) // default false
+		res, err := srv.deps.ScheduleService.RunNow(ctx, id, schedule.RunNowInput{SkipWhenBusy: skip})
+		if err != nil {
+			return scheduleResultError(err), nil
+		}
+		out := map[string]any{"fired": res.Fired}
+		if res.Fired {
+			out["instanceId"] = res.InstanceID.String()
+		}
+		return MarshalResult(out)
 	}
 }
