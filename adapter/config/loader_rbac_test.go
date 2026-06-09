@@ -133,7 +133,10 @@ func TestLoad_RBAC_EmptyValueEnvOverlay_DropsInToGroupConfig(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	// After normalization, ToGroupConfig must produce no valid leads for engineering.
-	gc := ToGroupConfig(cfg.Auth.RBAC)
+	gc, err := ToGroupConfig(cfg.Auth.RBAC)
+	if err != nil {
+		t.Fatalf("ToGroupConfig: %v", err)
+	}
 	if _, ok := gc.Leads["engineering"]; ok {
 		t.Errorf("ToGroupConfig produced Leads[engineering] = %v, want dept absent (all-blank from empty env)", gc.Leads["engineering"])
 	}

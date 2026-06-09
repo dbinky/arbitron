@@ -329,7 +329,12 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// JIT provisioner (Phase 6, Phase 2). Resolves verified OIDC claims to a
 	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
 	// callback and Task 6's role-management demotion floor (one bootstrap rule).
-	groupCfg := configadapter.ToGroupConfig(cfg.Auth.RBAC)
+	groupCfg, err := configadapter.ToGroupConfig(cfg.Auth.RBAC)
+	if err != nil {
+		// A chained department mapping yields non-deterministic, boot-dependent
+		// RBAC scoping; fail the boot loudly so the operator flattens the config.
+		return nil, fmt.Errorf("invalid RBAC group mapping: %w", err)
+	}
 
 	// Remap reconcile (final-org-gaps Phase 2). Adding/changing a department
 	// mapping must rewrite historical department strings so the friendly name is

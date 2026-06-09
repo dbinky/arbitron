@@ -7,6 +7,7 @@ import (
 	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToGroupConfig(t *testing.T) {
@@ -18,7 +19,10 @@ func TestToGroupConfig(t *testing.T) {
 			"  Sales  ":   {"carol@corp.example"},
 		},
 	}
-	got := ToGroupConfig(in)
+	got, err := ToGroupConfig(in)
+	if err != nil {
+		t.Fatalf("ToGroupConfig returned unexpected error: %v", err)
+	}
 	want := identity.GroupConfig{
 		GroupClaim:   "groups",
 		DefaultGroup: "Default", // DefaultGroupOr normalizes at use; mapping passes through
@@ -39,7 +43,10 @@ func TestToGroupConfig(t *testing.T) {
 }
 
 func TestToGroupConfig_EmptyLeads(t *testing.T) {
-	got := ToGroupConfig(domainconfig.RBACConfig{})
+	got, err := ToGroupConfig(domainconfig.RBACConfig{})
+	if err != nil {
+		t.Fatalf("ToGroupConfig returned unexpected error: %v", err)
+	}
 	if len(got.Leads) != 0 {
 		t.Errorf("Leads = %#v, want empty", got.Leads)
 	}
@@ -55,7 +62,10 @@ func TestToGroupConfig_AllBlankLeadIDs_DeptDropped(t *testing.T) {
 			"sales":       {"carol@corp.example"},
 		},
 	}
-	got := ToGroupConfig(in)
+	got, err := ToGroupConfig(in)
+	if err != nil {
+		t.Fatalf("ToGroupConfig returned unexpected error: %v", err)
+	}
 	if _, ok := got.Leads["engineering"]; ok {
 		t.Errorf("Leads[engineering] = %v, want dept absent (all-blank IDs should drop the dept)", got.Leads["engineering"])
 	}
@@ -68,7 +78,10 @@ func TestToGroupConfig_AllBlankLeadIDs_DeptDropped(t *testing.T) {
 // (GroupConfig.DefaultGroupOr) can apply the sentinel fallback at use time.
 func TestToGroupConfig_PassThroughFields(t *testing.T) {
 	in := domainconfig.RBACConfig{GroupClaim: "memberOf", DefaultGroup: "everyone"}
-	got := ToGroupConfig(in)
+	got, err := ToGroupConfig(in)
+	if err != nil {
+		t.Fatalf("ToGroupConfig returned unexpected error: %v", err)
+	}
 	if got.GroupClaim != "memberOf" {
 		t.Errorf("GroupClaim = %q, want memberOf", got.GroupClaim)
 	}
@@ -86,7 +99,8 @@ func TestToGroupConfig_NormalizesMappingKeysAndValues(t *testing.T) {
 			" guid-b ": " Sales ",
 		},
 	}
-	got := ToGroupConfig(in)
+	got, err := ToGroupConfig(in)
+	require.NoError(t, err)
 	// Keys and values are normalized (trimmed + lower-cased).
 	assert.Equal(t, "engineering", got.Mapping["guid-123"])
 	assert.Equal(t, "sales", got.Mapping["guid-b"])
@@ -98,7 +112,8 @@ func TestToGroupConfig_DropsBlankMappingEntries(t *testing.T) {
 		"guid-123": "   ",         // blank value dropped
 		"guid-ok":  "platform",
 	}}
-	got := ToGroupConfig(in)
+	got, err := ToGroupConfig(in)
+	require.NoError(t, err)
 	_, hasBlankKey := got.Mapping[""]
 	assert.False(t, hasBlankKey, "blank key dropped")
 	_, hasBlankVal := got.Mapping["guid-123"]
@@ -107,6 +122,48 @@ func TestToGroupConfig_DropsBlankMappingEntries(t *testing.T) {
 }
 
 func TestToGroupConfig_NilMapping_YieldsNilMapping(t *testing.T) {
-	got := ToGroupConfig(domainconfig.RBACConfig{})
+	got, err := ToGroupConfig(domainconfig.RBACConfig{})
+	assert.NoError(t, err)
 	assert.Nil(t, got.Mapping)
+}
+
+// A chained mapping — a normalized VALUE that is also a normalized KEY — makes
+// identity.ReconcileMappings non-deterministic over Go's randomized map range
+// (the final stored department depends on iteration order, an authorization
+// outcome decided by chance). ToGroupConfig is the single normalization
+// chokepoint, so it must REJECT the chain at load rather than forbid it later.
+func TestToGroupConfig_RejectsChainedMapping(t *testing.T) {
+	in := domainconfig.RBACConfig{Mapping: map[string]string{
+		"eng":         "engineering",
+		"engineering": "r-and-d", // "engineering" is both a value (above) and a key
+	}}
+	_, err := ToGroupConfig(in)
+	require.Error(t, err, "a chained mapping must be rejected at load")
+	assert.Contains(t, err.Error(), "engineering",
+		"the error must name the offending department that is both a value and a key")
+}
+
+// The chain check runs against NORMALIZED keys and values: a value whose
+// case/whitespace differs from a key still collides once normalized.
+func TestToGroupConfig_RejectsChainedMapping_AfterNormalization(t *testing.T) {
+	in := domainconfig.RBACConfig{Mapping: map[string]string{
+		"eng":           " Engineering ", // normalizes to "engineering" (a value)
+		"  ENGINEERING": "r-and-d",       // normalizes to "engineering" (a key)
+	}}
+	_, err := ToGroupConfig(in)
+	require.Error(t, err, "a chain that only collides after normalization must still be rejected")
+}
+
+// A flat mapping (no value is also a key) is accepted unchanged. A self-mapping
+// (key == value) is NOT a chain and must not trip the guard.
+func TestToGroupConfig_FlatMapping_Accepted(t *testing.T) {
+	in := domainconfig.RBACConfig{Mapping: map[string]string{
+		"guid-123": "engineering",
+		"guid-b":   "sales",
+		"platform": "platform", // self-map: key==value, harmless, not a chain
+	}}
+	got, err := ToGroupConfig(in)
+	require.NoError(t, err, "a flat (non-chained) mapping must be accepted")
+	assert.Equal(t, "engineering", got.Mapping["guid-123"])
+	assert.Equal(t, "sales", got.Mapping["guid-b"])
 }
