@@ -503,3 +503,74 @@ func TestEvaluator_StartStop_GracefulShutdown(t *testing.T) {
 		t.Fatal("Stop did not return promptly (goroutine leak)")
 	}
 }
+
+// Stop must be idempotent: a second Stop (or a Stop after the loop already
+// exited via ctx cancellation) must not panic on a close-of-closed channel.
+func TestEvaluator_Stop_Idempotent(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "")
+	repo := newEvalRepo(s)
+	tr := &fakeTrigger{}
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	ev := newEval(t, repo, tr, &fakeActive{}, &fakeIdents{}, &fakeAlerter{}, clk)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ev.Start(ctx)
+
+	require.Eventually(t, func() bool { return tr.callCount() >= 1 }, 2*time.Second, 5*time.Millisecond,
+		"the real ticker must fire Tick against the due schedule")
+
+	done := make(chan struct{})
+	go func() {
+		ev.Stop()
+		ev.Stop() // second Stop must be a no-op, not a panic.
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("repeated Stop did not return promptly")
+	}
+}
+
+// Stop after the loop exited via ctx cancellation must also be safe.
+func TestEvaluator_Stop_AfterContextCancel(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "")
+	repo := newEvalRepo(s)
+	ev := newEval(t, repo, &fakeTrigger{}, &fakeActive{}, &fakeIdents{}, &fakeAlerter{},
+		&fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ev.Start(ctx)
+	cancel() // loop exits via ctx.Done().
+
+	done := make(chan struct{})
+	go func() { ev.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop after ctx-cancel did not return promptly")
+	}
+}
+
+// Recovery must never stamp LastFiredAt with `now` (a non-occurrence instant):
+// the advanced position must be an actual cron occurrence at or before now, so
+// the next NextFire computes from a real schedule slot.
+func TestEvaluator_Recover_StampsRealOccurrenceNotNow(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "") // "0 9 * * *" daily at 09:00 UTC, created 06:00.
+	repo := newEvalRepo(s)
+	now := time.Date(2026, 6, 10, 9, 30, 0, 0, time.UTC) // two missed occurrences.
+	clk := &fakeClock{t: now}
+	ev := newEval(t, repo, &fakeTrigger{}, &fakeActive{}, &fakeIdents{}, &fakeAlerter{}, clk)
+
+	require.NoError(t, ev.Recover(context.Background()))
+
+	last, ok := repo.lastFiredFor(s.ID)
+	require.True(t, ok, "recovery must advance the position")
+	assert.NotEqual(t, now, last, "must not stamp `now` (a non-occurrence)")
+	// The latest occurrence at/before 2026-06-10 09:30 is 2026-06-10 09:00.
+	assert.Equal(t, time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC), last)
+}

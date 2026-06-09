@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -63,8 +64,13 @@ type Evaluator struct {
 	interval time.Duration
 	logger   *slog.Logger
 
-	stopCh chan struct{}
-	doneCh chan struct{}
+	// Shutdown is a single context-based path. Start derives a cancellable
+	// context whose cancel is stored in cancel; Stop calls it (guarded by
+	// stopOnce so a double-Stop or a Stop after the loop already exited via the
+	// parent ctx cannot close anything twice) and waits on doneCh.
+	stopOnce sync.Once
+	cancel   context.CancelFunc
+	doneCh   chan struct{}
 }
 
 // Option configures an Evaluator.
@@ -91,7 +97,6 @@ func NewEvaluator(repo ScheduleRepository, trigger Trigger, active ActiveRunChec
 		clock:    realClock{},
 		interval: DefaultInterval,
 		logger:   slog.Default(),
-		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -245,18 +250,43 @@ func (e *Evaluator) Recover(ctx context.Context) error {
 	return nil
 }
 
+// maxOccurrenceWalk caps the forward NextFire walk in lastOccurrenceBefore. It
+// is a guard against an unbounded walk when a schedule has been disabled/down
+// for a very long time: a per-minute cron tolerates an outage of roughly
+// maxOccurrenceWalk minutes (~11.5 days) before the walk is capped. The start
+// anchor is additionally bounded to now-occurrenceLookback (see below) so the
+// walk length is governed by the lookback window, not by how stale the
+// persisted position is.
+const maxOccurrenceWalk = 100000
+
+// occurrenceLookback bounds how far back the walk begins. A schedule that has
+// been disabled or whose process was down far longer than this still resolves
+// in a bounded number of NextFire calls: the start anchor is max(prevAnchor,
+// now-occurrenceLookback). It is sized to comfortably exceed any realistic
+// single outage at minute granularity.
+const occurrenceLookback = 60 * 24 * time.Hour // 60 days
+
 // lastOccurrenceBefore returns the latest scheduled occurrence at or before now,
-// by iterating NextFire from the schedule's position. It falls back to now if
-// iteration cannot find an occurrence (defensive; should not happen for a valid
-// cron whose next fire is already in the past).
+// by iterating NextFire from the schedule's (lookback-bounded) position. It
+// NEVER returns now: now is almost never an actual cron occurrence, and
+// persisting it as LastFiredAt would shift every subsequent fire off the
+// intended schedule. If the walk hits its cap it returns the LAST occurrence
+// found so far; if iteration cannot find any occurrence it returns the start
+// anchor (a real prior instant) rather than now.
 func lastOccurrenceBefore(s Schedule, now time.Time) time.Time {
-	prev := prevAnchor(s)
-	last := now
-	cur := prev
-	for i := 0; i < 100000; i++ {
+	// Bound the start anchor so a long-disabled schedule cannot burn the full
+	// cap walking from a stale position; we only need the LATEST occurrence
+	// before now, so starting at most occurrenceLookback back is sufficient.
+	start := prevAnchor(s)
+	if floor := now.Add(-occurrenceLookback); floor.After(start) {
+		start = floor
+	}
+	last := start
+	cur := start
+	for i := 0; i < maxOccurrenceWalk; i++ {
 		next, err := NextFire(s, cur)
 		if err != nil {
-			return now
+			return last
 		}
 		if next.After(now) {
 			return last
@@ -268,17 +298,28 @@ func lastOccurrenceBefore(s Schedule, now time.Time) time.Time {
 }
 
 // Start launches the loop goroutine: a ticker at the configured interval, each
-// beat calling Tick, also selecting on ctx.Done()/stopCh. Mirrors
-// queue.Scheduler's lifecycle.
+// beat calling Tick. Shutdown flows through a single context: Start derives a
+// cancellable child of ctx so the loop exits on EITHER the parent ctx being
+// cancelled OR Stop calling the stored cancel. Mirrors queue.Scheduler's
+// lifecycle.
 func (e *Evaluator) Start(ctx context.Context) {
-	go e.loop(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	e.cancel = cancel
+	go e.loop(runCtx)
 }
 
-// Stop closes stopCh and waits for the loop to exit. Mirrors
-// queue.Scheduler.Stop().
+// Stop signals the loop to exit (via the context cancel stored by Start) and
+// waits for it to drain. It is idempotent: a second Stop, or a Stop after the
+// loop already exited because the parent context was cancelled, is a safe no-op
+// — there is no close-of-closed-channel panic. Mirrors queue.Scheduler.Stop().
 func (e *Evaluator) Stop() {
-	close(e.stopCh)
-	<-e.doneCh
+	e.stopOnce.Do(func() {
+		if e.cancel == nil {
+			return // Start was never called; nothing to wait on.
+		}
+		e.cancel()
+		<-e.doneCh
+	})
 }
 
 func (e *Evaluator) loop(ctx context.Context) {
@@ -288,8 +329,6 @@ func (e *Evaluator) loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-e.stopCh:
 			return
 		case <-ticker.C:
 			if err := e.Tick(ctx); err != nil {

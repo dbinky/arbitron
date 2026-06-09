@@ -262,25 +262,17 @@ func (m *AuthMiddleware) enrich(ctx context.Context, u *instance.User) identity.
 		slog.Error("auth: could not load user departments", "user", u.ID, "error", err)
 		stored = nil
 	}
-	led := identity.LedDepartments(subject, email, m.groups)
-	// stored ∪ led, order-preserving (stored first), via the shared RBAC dedup
-	// primitive (PR #21). A fresh slice is built so neither input is mutated.
-	union := make([]string, 0, len(stored)+len(led))
-	union = append(union, stored...)
-	union = append(union, led...)
-	departments := identity.DedupeDepts(union)
-	if len(departments) == 0 {
-		// Defensive: a user with no stored departments and no led departments
-		// still belongs to the default group (matches the provisioner snapshot).
-		departments = []string{m.groups.DefaultGroupOr()}
-	}
-	return identity.Identity{
-		UserID:         u.ID,
-		Username:       u.Username,
-		Role:           u.Role,
-		Departments:    departments,
-		LedDepartments: led,
-	}
+	// Build the runtime Identity via the single shared domain builder so the
+	// request path and the scheduler path (scheduleIdentityResolver) can never
+	// diverge on the field set — in particular LedDepartments, an authz input.
+	return identity.BuildIdentity(identity.UserIdentityInput{
+		UserID:            u.ID,
+		Username:          u.Username,
+		Role:              u.Role,
+		Subject:           subject,
+		Email:             email,
+		StoredDepartments: stored,
+	}, m.groups)
 }
 
 func isBrowserNavigation(r *http.Request) bool {

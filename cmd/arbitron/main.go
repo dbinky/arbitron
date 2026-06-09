@@ -659,7 +659,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleRepo,
 		eng,
 		instanceRepo, // *adaptsqlite.InstanceRepo satisfies ActiveRunChecker
-		scheduleIdentityResolver{users: userRepo},
+		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
 		scheduleAlerter,
 		schedule.WithLogger(logger),
 	)
@@ -1011,11 +1011,15 @@ func (c scheduleCanTrigger) CanTrigger(ctx context.Context, id identity.Identity
 	return workflow.CanSeePublication(id, pub), nil
 }
 
-// scheduleIdentityResolver builds the creator's identity (with persisted
-// departments) for context injection at fire time, so resolveStamp's
-// InDepartment(override) check passes for a department-stamped scheduled run.
+// scheduleIdentityResolver builds the creator's identity for context injection
+// at fire time, so resolveStamp's InDepartment(override) check passes for a
+// department-stamped scheduled run. It constructs the Identity via the SAME
+// shared domain builder as AuthMiddleware.enrich (fed by the same UserRepository
+// + GroupConfig ports), so a scheduled fire and the same user's interactive
+// request resolve to identical identities — LedDepartments included.
 type scheduleIdentityResolver struct {
-	users instance.UserRepository
+	users  instance.UserRepository
+	groups identity.GroupConfig
 }
 
 func (r scheduleIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
@@ -1027,10 +1031,20 @@ func (r scheduleIdentityResolver) IdentityForUser(ctx context.Context, userID uu
 	if err != nil {
 		return identity.Identity{}, err
 	}
-	return identity.Identity{
-		UserID:      u.ID,
-		Username:    u.Username,
-		Role:        u.Role,
-		Departments: depts,
-	}, nil
+	subject := ""
+	if u.Subject != nil {
+		subject = *u.Subject
+	}
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	return identity.BuildIdentity(identity.UserIdentityInput{
+		UserID:            u.ID,
+		Username:          u.Username,
+		Role:              u.Role,
+		Subject:           subject,
+		Email:             email,
+		StoredDepartments: depts,
+	}, r.groups), nil
 }
