@@ -452,7 +452,7 @@ func TestResolveByEmail_NewEmail_DefaultGroupUser(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "eve@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "eve@corp.example", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls)
 	assert.Equal(t, identity.RoleUser, u.Role)
@@ -467,7 +467,7 @@ func TestResolveByEmail_BootstrapEmail_Admin(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "boss@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "boss@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role)
 }
@@ -477,7 +477,7 @@ func TestResolveByEmail_BootstrapMatchCaseInsensitive(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "BOSS@CORP.EXAMPLE")
+	u, err := p.ResolveByEmail(context.Background(), "BOSS@CORP.EXAMPLE", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role)
 }
@@ -492,7 +492,7 @@ func TestResolveByEmail_ReturningEmail_NoDuplicateCreate(t *testing.T) {
 	// Email is now on the bootstrap list → promote at this login (live re-eval).
 	p := NewProvisioner(repo, []string{"dana@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "dana@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "dana@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, repo.createCalls, "returning email must not be re-created")
 	assert.Equal(t, id, u.ID)
@@ -508,7 +508,7 @@ func TestResolveByEmail_ReturningEmail_Demotes(t *testing.T) {
 	repo.byEmail["ex@corp.example"] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
 	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "ex@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "ex@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleUser, u.Role, "removed-from-bootstrap email demoted at login")
 }
@@ -518,11 +518,11 @@ func TestResolveByEmail_EmptyEmail_ErrInvalidClaims(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-	_, err := p.ResolveByEmail(context.Background(), "")
+	_, err := p.ResolveByEmail(context.Background(), "", nil)
 	assert.ErrorIs(t, err, ErrInvalidClaims)
 	assert.Equal(t, 0, repo.createCalls)
 
-	_, err = p.ResolveByEmail(context.Background(), "   ")
+	_, err = p.ResolveByEmail(context.Background(), "   ", nil)
 	assert.ErrorIs(t, err, ErrInvalidClaims)
 	assert.Equal(t, 0, repo.createCalls)
 }
@@ -536,7 +536,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.getEmailErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "x@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "x@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 		assert.NotErrorIs(t, err, ErrInvalidClaims, "a DB error must not be mistaken for invalid claims")
 		assert.Equal(t, 0, repo.createCalls)
@@ -546,7 +546,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.createErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "y@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "y@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 	})
 
@@ -554,7 +554,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.replaceDeptErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "z@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "z@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 	})
 }
@@ -568,7 +568,7 @@ func TestResolveByEmail_WhitespacePaddedEmail_Normalized(t *testing.T) {
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 	ctx := context.Background()
 
-	u1, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	u1, err := p.ResolveByEmail(ctx, "  alice@corp.example  ", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls)
 	require.NotNil(t, u1.Email)
@@ -576,13 +576,13 @@ func TestResolveByEmail_WhitespacePaddedEmail_Normalized(t *testing.T) {
 	assert.Equal(t, "alice@corp.example", u1.Username, "username must also be trimmed")
 
 	// Padded re-call must reuse the same user (no duplicate create).
-	u2, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	u2, err := p.ResolveByEmail(ctx, "  alice@corp.example  ", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "padded re-call must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u2.ID)
 
 	// Trimmed form also resolves to the same user.
-	u3, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	u3, err := p.ResolveByEmail(ctx, "alice@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "trimmed form must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u3.ID)
@@ -602,7 +602,7 @@ func TestResolveByEmail_DemotionFailurePropagates(t *testing.T) {
 
 	// Bootstrap list no longer includes this email → demotion required.
 	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
-	_, err := p.ResolveByEmail(context.Background(), e)
+	_, err := p.ResolveByEmail(context.Background(), e, nil)
 	if !errors.Is(err, dbErr) {
 		t.Errorf("expected wrapped role-store error on failed edge demotion, got %v", err)
 	}
@@ -619,7 +619,7 @@ func TestResolveByEmail_ExistingRoleUnchanged_NoRoleWrite(t *testing.T) {
 		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
 		p := NewProvisioner(repo, []string{e}, identity.GroupConfig{DefaultGroup: "default"})
 
-		u, err := p.ResolveByEmail(context.Background(), e)
+		u, err := p.ResolveByEmail(context.Background(), e, nil)
 		require.NoError(t, err)
 		assert.Equal(t, identity.RoleAdmin, u.Role)
 		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
@@ -632,7 +632,7 @@ func TestResolveByEmail_ExistingRoleUnchanged_NoRoleWrite(t *testing.T) {
 		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleUser}
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-		u, err := p.ResolveByEmail(context.Background(), e)
+		u, err := p.ResolveByEmail(context.Background(), e, nil)
 		require.NoError(t, err)
 		assert.Equal(t, identity.RoleUser, u.Role)
 		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
@@ -647,13 +647,13 @@ func TestResolveByEmail_CaseMixedEmailRoundTrip(t *testing.T) {
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 	ctx := context.Background()
 
-	u1, err := p.ResolveByEmail(ctx, "Alice@Corp.Example")
+	u1, err := p.ResolveByEmail(ctx, "Alice@Corp.Example", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls, "first call must create the user")
 	require.NotNil(t, u1.Email)
 	assert.Equal(t, "Alice@Corp.Example", *u1.Email, "stored email must preserve original casing")
 
-	u2, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	u2, err := p.ResolveByEmail(ctx, "alice@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "second call with different case must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u2.ID, "both calls must resolve to the same user ID")

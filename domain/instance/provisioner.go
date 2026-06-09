@@ -150,7 +150,7 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 // claim). A repository error surfaces as a non-ErrInvalidClaims error so the
 // middleware can distinguish a 500 (we could not check) from a 401 (no
 // credential).
-func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, error) {
+func (p *Provisioner) ResolveByEmail(ctx context.Context, email string, groups []string) (*User, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return nil, ErrInvalidClaims

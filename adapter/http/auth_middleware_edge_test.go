@@ -16,25 +16,33 @@ import (
 
 // fakeEdgeVerifier is a configurable identity.EdgeVerifier that records call count.
 type fakeEdgeVerifier struct {
-	email string
-	err   error
-	calls int
+	email  string
+	groups []string
+	err    error
+	calls  int
 }
 
-func (f *fakeEdgeVerifier) Verify(_ context.Context, _ string) (string, error) {
+func (f *fakeEdgeVerifier) Verify(_ context.Context, _ string) (identity.EdgeIdentity, error) {
 	f.calls++
-	return f.email, f.err
+	if f.err != nil {
+		return identity.EdgeIdentity{}, f.err
+	}
+	return identity.EdgeIdentity{Email: f.email, Groups: f.groups}, nil
 }
 
 // fakeEmailProvisioner is a configurable emailProvisioner for the forced-error case.
 type fakeEmailProvisioner struct {
-	user  *instance.User
-	err   error
-	calls int
+	user      *instance.User
+	err       error
+	calls     int
+	gotEmail  string
+	gotGroups []string
 }
 
-func (f *fakeEmailProvisioner) ResolveByEmail(_ context.Context, _ string) (*instance.User, error) {
+func (f *fakeEmailProvisioner) ResolveByEmail(_ context.Context, email string, groups []string) (*instance.User, error) {
 	f.calls++
+	f.gotEmail = email
+	f.gotGroups = groups
 	return f.user, f.err
 }
 
@@ -291,4 +299,26 @@ func TestEdge_NewUserAutoProvisioned_Idempotent(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, first.UserID)
 	second := serve()
 	assert.Equal(t, first.UserID, second.UserID, "returning email must resolve to the same user")
+}
+
+// Edge: the verified group claim must be threaded through to the provisioner so a
+// user is scoped to the department(s) their SSO group resolves to. A nil/empty
+// Groups (no claim) preserves the default-group fallback (asserted elsewhere).
+func TestEdgeMiddleware_ThreadsVerifiedGroupsToProvisioner(t *testing.T) {
+	users := newFakeUserRepo()
+	uid := uuid.New()
+	prov := &fakeEmailProvisioner{user: &instance.User{ID: uid, Username: "alice", Role: identity.RoleUser}}
+	verifier := &fakeEdgeVerifier{email: "alice@corp.example", groups: []string{"eng", "platform"}}
+	groups := identity.GroupConfig{DefaultGroup: "default"}
+	mw := NewEdgeAuthMiddleware(cfHeader, verifier, prov, users, groups)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anything", nil)
+	req.Header.Set(cfHeader, "any-non-empty-token")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "alice@corp.example", prov.gotEmail)
+	assert.Equal(t, []string{"eng", "platform"}, prov.gotGroups, "verified groups must reach the provisioner")
 }
