@@ -32,7 +32,7 @@ const CfAccessJWTHeader = "Cf-Access-Jwt-Assertion"
 // the middleware does not import the concrete *instance.Provisioner type beyond
 // what it needs. *instance.Provisioner satisfies it.
 type emailProvisioner interface {
-	ResolveByEmail(ctx context.Context, email string, groups []string) (*instance.User, error)
+	ResolveByEmail(ctx context.Context, subject, email string, groups []string) (*instance.User, error)
 }
 
 // Compile-time assertion that the concrete provisioner satisfies the port.
@@ -205,10 +205,11 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 			// credential failure (401), not a server fault (500).
 			return identity.Identity{}, errNoCredential
 		}
-		// Thread the verified group claim into provisioning so the user is scoped to
-		// the department(s) their SSO group resolves to. A nil/empty Groups (no claim)
-		// preserves the default-group fallback.
-		user, perr := m.edge.provisioner.ResolveByEmail(r.Context(), edgeID.Email, edgeID.Groups)
+		// Thread the verified subject + group claim into provisioning so the user is
+		// scoped to the department(s) their SSO group resolves to and bootstrap-admin
+		// matching prefers the stable verified subject. A nil/empty Groups (no claim)
+		// preserves the default-group fallback; an empty Subject falls back to email.
+		user, perr := m.edge.provisioner.ResolveByEmail(r.Context(), edgeID.Subject, edgeID.Email, edgeID.Groups)
 		if perr != nil {
 			// Provisioning/DB failure is a SERVER fault, not an auth denial: surface a
 			// non-errNoCredential error so Handler maps it to 500.

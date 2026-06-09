@@ -244,6 +244,23 @@ func TestVerify_ValidToken_ReturnsEmail(t *testing.T) {
 	assert.Equal(t, "alice@corp.example", id.Email)
 }
 
+// The verified "sub" claim is surfaced as EdgeIdentity.Subject so downstream
+// provisioning can prefer it over the free-text email for bootstrap-admin
+// matching (Must Fix #4).
+func TestVerify_ValidToken_ReturnsSubject(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifier(t, h, "app-aud")
+
+	c := baseClaims(h.issuer, "app-aud")
+	c["sub"] = "oid-stable-789"
+	c["email"] = "alice@corp.example"
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, "oid-stable-789", id.Subject, "the verified sub claim must be surfaced as Subject")
+}
+
 func TestVerify_Rejections(t *testing.T) {
 	t.Run("expired token", func(t *testing.T) {
 		h := newJWKSHarness(t)

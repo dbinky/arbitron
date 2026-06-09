@@ -32,15 +32,17 @@ func (f *fakeEdgeVerifier) Verify(_ context.Context, _ string) (identity.EdgeIde
 
 // fakeEmailProvisioner is a configurable emailProvisioner for the forced-error case.
 type fakeEmailProvisioner struct {
-	user      *instance.User
-	err       error
-	calls     int
-	gotEmail  string
-	gotGroups []string
+	user       *instance.User
+	err        error
+	calls      int
+	gotSubject string
+	gotEmail   string
+	gotGroups  []string
 }
 
-func (f *fakeEmailProvisioner) ResolveByEmail(_ context.Context, email string, groups []string) (*instance.User, error) {
+func (f *fakeEmailProvisioner) ResolveByEmail(_ context.Context, subject, email string, groups []string) (*instance.User, error) {
 	f.calls++
+	f.gotSubject = subject
 	f.gotEmail = email
 	f.gotGroups = groups
 	return f.user, f.err

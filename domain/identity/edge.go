@@ -4,14 +4,19 @@ import "context"
 
 // EdgeIdentity is the verified identity an EdgeVerifier extracts from a single
 // edge-issued token. Email is the verified email claim (never empty on success).
-// Groups carries the RAW, un-normalized values of the configured group claim used
-// downstream to derive department membership; it is nil when no group claim is
-// configured or the token omits the claim (=> the user falls back to the default
-// group, NOT a 401). Department normalization/mapping happens later in
+// Subject is the token's stable IdP-verified subject claim ("sub"); it is ""
+// when the token omits it. Subject is the trustworthy admin-matching key (an
+// email may be unverified at a misconfigured IdP), so downstream provisioning
+// PREFERS it over email for bootstrap-admin matching when present. Groups carries
+// the RAW, un-normalized values of the configured group claim used downstream to
+// derive department membership; it is nil when no group claim is configured or
+// the token omits the claim (=> the user falls back to the default group, NOT a
+// 401). Department normalization/mapping happens later in
 // identity.ResolveDepartments — the verifier returns claim values verbatim.
 type EdgeIdentity struct {
-	Email  string
-	Groups []string
+	Subject string
+	Email   string
+	Groups  []string
 }
 
 // EdgeVerifier verifies a single edge-issued identity token (e.g. a Cloudflare

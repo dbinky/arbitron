@@ -110,7 +110,15 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (identity.EdgeId
 	if email == "" {
 		return identity.EdgeIdentity{}, fmt.Errorf("edge: missing email claim")
 	}
-	return identity.EdgeIdentity{Email: email, Groups: v.extractGroups(tok)}, nil
+	// tok.Subject is the verifier-checked "sub" claim. When the Access IdP exposes
+	// a stable subject it is the trustworthy admin-matching key (an email may be
+	// unverified at the IdP); downstream provisioning prefers it over email. It is
+	// "" when the token omits a subject — provisioning then falls back to email.
+	return identity.EdgeIdentity{
+		Subject: strings.TrimSpace(tok.Subject),
+		Email:   email,
+		Groups:  v.extractGroups(tok),
+	}, nil
 }
 
 // extractGroups decodes the configured group claim from the already-verified
