@@ -109,7 +109,8 @@ at startup, after config load, before serving:
 // domain/identity/remap.go (port) + adapter/sqlite implementation
 type DepartmentRenamer interface {
     // RenameDepartment rewrites every stored occurrence of `from` to `to`
-    // across user memberships, schedules, and instances. Idempotent.
+    // across ALL tables that persist a department string (see below).
+    // Idempotent.
     RenameDepartment(ctx context.Context, from, to string) (rows int64, err error)
 }
 
@@ -119,12 +120,25 @@ type DepartmentRenamer interface {
 func ReconcileMappings(ctx context.Context, cfg GroupConfig, r DepartmentRenamer, log *slog.Logger) error
 ```
 
-The SQLite implementation issues `UPDATE ... SET department = ? WHERE department
-= ?` against the three tables (user-department rows, schedules, instances) inside
-one transaction per mapping entry. Memberships additionally self-heal on each
-user's next login (the `ReplaceDepartments` snapshot already re-derives from the
-mapped resolution), so the reconcile is belt-and-suspenders for historical rows
-and currently-logged-out users.
+**Department strings are persisted in FOUR tables** (verified against the
+migrations): `user_departments.department` (migration 009, membership snapshot),
+`instances.department` (012, run stamp), `schedules.department` (013), and
+`published_workflows.department` (010, department-visibility publication). The
+SQLite renamer issues `UPDATE ... SET department = ? WHERE department = ?`
+against **all four** inside one transaction per mapping entry. Omitting
+`published_workflows` would orphan a department-visibility published workflow:
+its members (now under the friendly name) could no longer see content stamped
+with the old verbatim value. Memberships additionally self-heal on each user's
+next login (the `ReplaceDepartments` snapshot re-derives from the mapped
+resolution), so the reconcile is belt-and-suspenders for historical rows and
+currently-logged-out users.
+
+> **Config note (not data).** `GroupConfig.Leads` keys on department NAMES. When
+> an operator adds a mapping that renames a department, they must express `Leads`
+> against the friendly name. This is operator-owned config, not stored data, so
+> it is outside the renamer's scope; the loader normalizes `Leads` keys the same
+> way it normalizes mapping values, so a consistently-configured operator is
+> coherent by construction.
 
 > **Scope guard.** The reconcile rewrites only the exact `from` value named by a
 > mapping key. It never collapses or invents departments beyond the configured
@@ -181,10 +195,12 @@ identity.Identity{Departments}             ── drives visibility/stamping eve
 - **Authorization/role:** a group claim never confers admin; an admin (email
   allow-list) keeps full visibility regardless of groups; a non-admin with groups
   loses see-everything and is scoped.
-- **Remap consistency:** seed instances/schedules/membership under verbatim
-  `guid-123`; add mapping `guid-123→engineering`; run reconcile → all three
-  stores now read `engineering`; running reconcile twice is a no-op; a user's
-  next login also yields `engineering`.
+- **Remap consistency:** seed instances, schedules, user memberships, AND a
+  department-visibility published workflow under verbatim `guid-123`; add mapping
+  `guid-123→engineering`; run reconcile → all four stores now read `engineering`
+  (the published workflow stays visible to its now-`engineering` members);
+  running reconcile twice is a no-op; a user's next login also yields
+  `engineering`.
 - **Failure modes:** malformed group claim → default group (not 401); repo error
   during snapshot → 500; reconcile DB error → boot fails loudly.
 - **Verifier unit tests:** forged/absent token still 401 with the new return
