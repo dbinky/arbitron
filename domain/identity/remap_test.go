@@ -71,6 +71,19 @@ func TestReconcileMappings_RenamerError_FailsLoudly(t *testing.T) {
 	assert.ErrorIs(t, err, boom)
 }
 
+// Robustness: a nil *slog.Logger must not panic even when rows > 0. The code
+// guards log != nil before calling log.Info, but this is only effective if
+// the guard stays in place — this test enforces the contract.
+func TestReconcileMappings_NilLogger_DoesNotPanic(t *testing.T) {
+	r := &fakeRenamer{} // returns rows=1 for every call
+	cfg := GroupConfig{Mapping: map[string]string{"guid-123": "engineering"}}
+	require.NotPanics(t, func() {
+		err := ReconcileMappings(context.Background(), cfg, r, nil)
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 1, len(r.calls), "rename still executed with nil logger")
+}
+
 func TestReconcileMappings_DropsBlankEntries(t *testing.T) {
 	r := &fakeRenamer{}
 	cfg := GroupConfig{Mapping: map[string]string{

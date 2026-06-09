@@ -48,6 +48,8 @@ the area/pass, or fix if a real defect).
 
 - **Edge path missing department-replace-on-re-login test.** The OIDC path had `TestResolve_ReplacesDepartmentsOnEachLogin`; the edge `ResolveByEmail` path had no equivalent. Added `TestResolveByEmail_DepartmentsReplacedOnReLogin`: first login snapshots `["sales"]`, re-login with `["engineering"]` must store `["engineering"]` only. (Area #5 Pass 1)
 
+- **Nil logger in ReconcileMappings panics if guard removed.** `ReconcileMappings` has `if rows > 0 && log != nil` but all existing tests passed `discardLog()`. A nil logger with rows>0 would panic if the guard were inadvertently removed. Added `TestReconcileMappings_NilLogger_DoesNotPanic` using `nil` logger with a mapping entry that returns rows=1; confirms no panic and that the rename still executes. (Area #6 Pass 2)
+
 - **Bootstrap list construction-time normalization untested.** `NewProvisioner` normalizes bootstrap list entries (trim+lowercase) at construction but all matching tests supplied pre-normalized entries. A misconfigured "  Admin@Corp.Example  " would silently not match. Added `TestNewProvisioner_BootstrapListNormalized` covering whitespace-padded subject + email + blank-after-trim entry (blank must not produce phantom `""` match). (Area #5 Pass 2)
 
 ---
