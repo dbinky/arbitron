@@ -120,9 +120,15 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, s.WireMap())
 }
 
-// List handles GET /schedules.
+// List handles GET /schedules. An optional ?workflowName= query narrows the
+// result to one workflow (read-only dashboard surface). The creator scoping is
+// applied by the service from the request identity; the workflow filter only
+// shrinks that already-scoped set, so it is safe to take from the query.
 func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
-	schedules, err := h.svc.List(r.Context())
+	opts := schedule.ListOptions{
+		WorkflowName: r.URL.Query().Get("workflowName"),
+	}
+	schedules, err := h.svc.List(r.Context(), opts)
 	if err != nil {
 		writeScheduleError(w, err)
 		return

@@ -44,6 +44,9 @@ func (r *schedTestRepo) List(_ context.Context, f schedule.ListFilters) ([]sched
 		if f.CreatorID != nil && s.CreatorID != *f.CreatorID {
 			continue
 		}
+		if f.WorkflowName != nil && s.WorkflowName != *f.WorkflowName {
+			continue
+		}
 		out = append(out, *s)
 	}
 	return out, nil
@@ -180,6 +183,69 @@ func TestScheduleHandler_List_200(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Len(t, body["schedules"], 1)
+}
+
+// TestScheduleHandler_ScheduleList_WorkflowFilter covers the optional
+// ?workflowName= narrowing on GET /schedules. Creator scoping stays service-set
+// from the request identity; the workflow filter only shrinks that scoped set.
+func TestScheduleHandler_ScheduleList_WorkflowFilter(t *testing.T) {
+	newRepo := func(owner uuid.UUID) *schedTestRepo {
+		repo := newSchedTestRepo()
+		a := &schedule.Schedule{ID: uuid.New(), CreatorID: owner, WorkflowName: "wf-a", CronExpr: "0 9 * * *"}
+		b := &schedule.Schedule{ID: uuid.New(), CreatorID: owner, WorkflowName: "wf-b", CronExpr: "0 9 * * *"}
+		repo.m[a.ID] = a
+		repo.m[b.ID] = b
+		return repo
+	}
+
+	t.Run("workflowName filters to that workflow only", func(t *testing.T) {
+		u := testUser()
+		router := schedRouter(t, newRepo(u.UserID), true, u)
+		w := do(t, router, http.MethodGet, "/schedules?workflowName=wf-a", "")
+		require.Equal(t, http.StatusOK, w.Code)
+		var body struct {
+			Schedules []map[string]any `json:"schedules"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		require.Len(t, body.Schedules, 1)
+		assert.Equal(t, "wf-a", body.Schedules[0]["workflowName"])
+	})
+
+	t.Run("no query returns the full owner-scoped list", func(t *testing.T) {
+		u := testUser()
+		router := schedRouter(t, newRepo(u.UserID), true, u)
+		w := do(t, router, http.MethodGet, "/schedules", "")
+		require.Equal(t, http.StatusOK, w.Code)
+		var body struct {
+			Schedules []map[string]any `json:"schedules"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Len(t, body.Schedules, 2)
+	})
+
+	t.Run("empty workflowName is treated as no filter", func(t *testing.T) {
+		u := testUser()
+		router := schedRouter(t, newRepo(u.UserID), true, u)
+		w := do(t, router, http.MethodGet, "/schedules?workflowName=", "")
+		require.Equal(t, http.StatusOK, w.Code)
+		var body struct {
+			Schedules []map[string]any `json:"schedules"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Len(t, body.Schedules, 2)
+	})
+
+	t.Run("unknown workflow is an empty list, not an error", func(t *testing.T) {
+		u := testUser()
+		router := schedRouter(t, newRepo(u.UserID), true, u)
+		w := do(t, router, http.MethodGet, "/schedules?workflowName=does-not-exist", "")
+		require.Equal(t, http.StatusOK, w.Code)
+		var body struct {
+			Schedules []map[string]any `json:"schedules"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Empty(t, body.Schedules)
+	})
 }
 
 // --- Input-validation ---
