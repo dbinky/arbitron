@@ -36,11 +36,11 @@ A review pass is only checked when the checklist produces a passing result for t
 |---|---|---|---|
 | 13 | Run-now core + adapters (§1+§2 — `RunNowResult{InstanceID,Fired}` fired-vs-skipped contract; sentinel→HTTP/MCP mapping; REST/MCP parity over one `Service`) | [x] | done |
 | 14 | Edge groups + department resolution (§3+§4 — `Groups []string` flows verifier→`ResolveDepartments`; missing/malformed claim ⇒ default group, not 401) | [x] | done |
-| 15 | Resolution + remap reconciler (§4+§6 — a verbatim department later mapped renames consistently across user_departments/instances/schedules/published_workflows with no orphan/dupe) | [ ] | |
-| 16 | Origin model + persistence (§7+§8 — in-memory `Origin` fields round-trip the migration columns; `manual`/`schedule`/`run_now` survive write→read→summary) | [ ] | |
-| 17 | Origin persistence + dashboard (§8+§10 — summary `triggerSource`/`scheduleId` JSON drives `OriginBadge`; deleted-schedule run still renders) | [ ] | |
-| 18 | Workflow listing + SchedulesPanel (§9+§10 — `GET /schedules?workflowName=` contract matches `api.schedules.list`; owner-or-admin scope honored in UI) | [ ] | |
-| 19 | Config + edge + resolution (§11+§3+§4 — configured `GroupClaim`/`Mapping` are actually consumed end-to-end; env overlay precedence correct) | [ ] | |
+| 15 | Resolution + remap reconciler (§4+§6 — a verbatim department later mapped renames consistently across user_departments/instances/schedules/published_workflows with no orphan/dupe) | [x] | done |
+| 16 | Origin model + persistence (§7+§8 — in-memory `Origin` fields round-trip the migration columns; `manual`/`schedule`/`run_now` survive write→read→summary) | [x] | done |
+| 17 | Origin persistence + dashboard (§8+§10 — summary `triggerSource`/`scheduleId` JSON drives `OriginBadge`; deleted-schedule run still renders) | [x] | done |
+| 18 | Workflow listing + SchedulesPanel (§9+§10 — `GET /schedules?workflowName=` contract matches `api.schedules.list`; owner-or-admin scope honored in UI) | [x] | done |
+| 19 | Config + edge + resolution (§11+§3+§4 — configured `GroupClaim`/`Mapping` are actually consumed end-to-end; env overlay precedence correct) | [x] | done |
 | 20 | Run-now origin slice (§1+§7+§8 — a run-now fire stamps `run_now`+`scheduleId` and reaches the DB + summary; does not advance the cron position) | [ ] | |
 
 ---

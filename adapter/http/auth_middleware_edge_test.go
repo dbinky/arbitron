@@ -301,6 +301,33 @@ func TestEdge_NewUserAutoProvisioned_Idempotent(t *testing.T) {
 	assert.Equal(t, first.UserID, second.UserID, "returning email must resolve to the same user")
 }
 
+// Config+edge+resolution (Area #19): a configured Mapping is applied end-to-end —
+// the verifier returns the raw claim value ("guid-123"), the provisioner resolves
+// it via ResolveDepartments+Mapping, and the authenticated identity carries the
+// friendly department ("engineering"). This bridges loader→GroupConfig→edge middleware.
+func TestEdgeMiddleware_ConfiguredMapping_ResolvesToFriendlyDept(t *testing.T) {
+	users := newFakeUserRepo()
+	// Real provisioner with a mapping: guid-123 → engineering.
+	groupCfg := identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	}
+	prov := instance.NewProvisioner(users, nil, groupCfg)
+	// Verifier returns the raw GUID as the group claim value.
+	verifier := &fakeEdgeVerifier{email: "alice@corp.example", groups: []string{"guid-123"}}
+	mw := NewEdgeAuthMiddleware(cfHeader, verifier, prov, users, groupCfg)
+	probe := &identityProbe{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/anything", nil)
+	req.Header.Set(cfHeader, "any-non-empty-token")
+	rec := httptest.NewRecorder()
+	mw.Handler(probe.handler()).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"engineering"}, probe.id.Departments,
+		"raw GUID group claim must map to friendly department via GroupConfig.Mapping")
+}
+
 // Edge: the verified group claim must be threaded through to the provisioner so a
 // user is scoped to the department(s) their SSO group resolves to. A nil/empty
 // Groups (no claim) preserves the default-group fallback (asserted elsewhere).
