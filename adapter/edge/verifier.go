@@ -17,6 +17,7 @@ import (
 
 	coreoidc "github.com/coreos/go-oidc/v3/oidc"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/identity"
 )
 
@@ -45,6 +46,12 @@ var _ identity.EdgeVerifier = (*Verifier)(nil)
 // configured set) rather than via the single-valued go-oidc ClientID check, so a
 // token whose aud matches ANY configured audience is accepted.
 func New(ctx context.Context, cfg Config) (*Verifier, error) {
+	// Bound the HTTP client used for OIDC discovery AND the lazy JWKS refresh that
+	// go-oidc's RemoteKeySet performs during Verify (it captures this client from
+	// the context at provider creation). Without a timeout, a hung Cloudflare JWKS
+	// endpoint would stall the per-request auth hot path; a bounded client makes
+	// that a fast fail-closed 401 instead of a goroutine pile-up.
+	ctx = coreoidc.ClientContext(ctx, procenv.BoundedHTTPClient(procenv.DefaultOIDCDiscoveryTimeout))
 	prov, err := coreoidc.NewProvider(ctx, cfg.TeamDomain)
 	if err != nil {
 		return nil, fmt.Errorf("edge: discovery for %q: %w", cfg.TeamDomain, err)

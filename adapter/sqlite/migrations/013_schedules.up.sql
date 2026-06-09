@@ -25,6 +25,15 @@ CREATE INDEX IF NOT EXISTS idx_schedules_enabled       ON schedules(enabled, las
 -- not happen), so instance_id must be nullable, and the type CHECK constraint
 -- must admit the two new schedule types. SQLite cannot ALTER a CHECK constraint
 -- or a column's NOT NULL in place, so the table is rebuilt (data preserved).
+--
+-- WARNING (SQLite safe-rebuild assumption): this DROP/RENAME runs INSIDE the
+-- migration transaction with PRAGMA foreign_keys=ON (see db.go). That is safe
+-- TODAY only because nothing FK-references notifications. SQLite's documented
+-- safe table-rebuild requires PRAGMA foreign_keys=OFF set OUTSIDE the
+-- transaction (the pragma is a no-op mid-transaction). The day any table adds a
+-- foreign key TO notifications, this pattern will silently corrupt or fail —
+-- rebuild it per the SQLite "making other kinds of table schema changes"
+-- procedure (foreign_keys=OFF outside the txn) instead of copying this block.
 CREATE TABLE notifications_new (
     id          TEXT PRIMARY KEY,
     instance_id TEXT REFERENCES instances(id),   -- NULL for schedule alerts

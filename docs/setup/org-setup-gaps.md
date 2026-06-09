@@ -49,6 +49,12 @@ company IdP (Entra).
    lands in the **default group** (sees all).
 4. Confirm a request that reaches the container **without** a valid token (e.g.
    bypassing the proxy) is rejected with **401**.
+5. Confirm the **origin is network-restricted to Cloudflare** (see Security
+   assumption A below): a direct-to-origin request from off the allowlisted
+   Cloudflare ingress should not reach the container at all.
+6. Confirm the **bootstrap-admin email matches the verified IdP identity** (see
+   Security assumption B below): the email used for admin promotion is the one
+   the upstream IdP actually verifies, not a self-asserted alias.
 
 ## 3. Scheduler no-backfill across a real container restart
 
@@ -68,8 +74,45 @@ elapsed wall-clock time spanning one or more scheduled occurrences.
 4. While one run is still active at the next tick, confirm the overlapping
    occurrence is **skipped** with a `schedule_skipped` alert.
 
+## Security assumptions to pin (edge mode)
+
+These are not code defects — they are deployment-time trust assumptions the edge
+auth design relies on. Pin them during setup and re-check after any
+infrastructure change.
+
+### A. The origin must stay network-restricted to Cloudflare
+
+Edge mode independently verifies the `Cf-Access-Jwt-Assertion` JWT (signature,
+issuer, audience, expiry), so a **forged** header on a direct-to-origin / SSRF
+request is rejected — that is the primary control and it does not depend on
+network restriction. **However**, the edge-only controls (Cloudflare WAF, rate
+limiting, bot protection) live at the edge, not in the application. If the origin
+is directly reachable, an attacker can bypass those edge-applied controls even
+though the JWT check still holds. **Therefore keep the origin (the Azure
+Container App ingress) network-restricted to Cloudflare's IP ranges / tunnel** so
+all traffic transits Cloudflare Access and the edge controls cannot be bypassed.
+This is defense-in-depth layered on top of the JWT verification, not a substitute
+for it.
+
+### B. Bootstrap-admin promotion is only as strong as the IdP email guarantee
+
+Edge bootstrap-admin matching promotes a user to admin by comparing the **email
+claim** from the verified Cloudflare Access token against the configured
+`auth.edge` admin list. The signature/issuer/audience checks guarantee the token
+is genuinely from your Cloudflare Access tenant, but the **email claim is only as
+trustworthy as the upstream IdP's email verification**. If the IdP allows
+unverified or self-asserted email addresses, an attacker who can register an
+account with a bootstrap-admin email at the IdP could be promoted to admin.
+
+Mitigations:
+- Ensure the upstream IdP (e.g. Entra) **verifies** the email it asserts and does
+  not permit users to set arbitrary email aliases.
+- Where the IdP exposes a stable, verified **subject (`sub`)**, prefer
+  subject-based matching over email matching for admin promotion.
+- Keep the bootstrap-admin list minimal and review it after any IdP/tenant change.
+
 ---
 
 These were tracked during the review loop as the only items that could not be
 closed in CI. They are not code defects — they are environment-dependent
-acceptance checks for the deployment.
+acceptance checks (and trust assumptions) for the deployment.

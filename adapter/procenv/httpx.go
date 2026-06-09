@@ -3,8 +3,28 @@ package procenv
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"time"
 )
+
+// DefaultOIDCDiscoveryTimeout bounds the OIDC discovery / JWKS HTTP client used
+// by the edge and org-mode auth adapters. A hung or slow issuer/JWKS endpoint
+// must convert into a fast fail-closed error rather than a pile-up of blocked
+// request goroutines on the auth hot path.
+const DefaultOIDCDiscoveryTimeout = 10 * time.Second
+
+// BoundedHTTPClient returns an *http.Client with a total per-request timeout. A
+// non-positive timeout falls back to DefaultOIDCDiscoveryTimeout so callers
+// never accidentally use the unbounded net/http default client. It is the single
+// shared bounded client for OIDC discovery / JWKS fetch (wired via
+// coreoidc.ClientContext) so the edge and org adapters share one timeout policy.
+func BoundedHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultOIDCDiscoveryTimeout
+	}
+	return &http.Client{Timeout: timeout}
+}
 
 // ErrResponseTooLarge guards the bounded read: it is returned (instead of EOF)
 // when a response body exceeds the configured cap, so an over-large body is a
