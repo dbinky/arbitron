@@ -10,15 +10,15 @@ import (
 
 // Sentinel errors for instance operations.
 var (
-	ErrNotFound             = errors.New("not found")
-	ErrNotRunning           = errors.New("instance is not running")
-	ErrNotPaused            = errors.New("instance is not paused")
-	ErrNotFailed            = errors.New("instance is not failed")
-	ErrNotQueued            = errors.New("instance is not queued")
-	ErrNotWaiting           = errors.New("instance is not waiting")
-	ErrNotInteractiveWait   = errors.New("instance is not in interactive wait state")
-	ErrCannotCancel         = errors.New("instance cannot be cancelled")
-	ErrCannotRerun          = errors.New("instance cannot be rerun")
+	ErrNotFound           = errors.New("not found")
+	ErrNotRunning         = errors.New("instance is not running")
+	ErrNotPaused          = errors.New("instance is not paused")
+	ErrNotFailed          = errors.New("instance is not failed")
+	ErrNotQueued          = errors.New("instance is not queued")
+	ErrNotWaiting         = errors.New("instance is not waiting")
+	ErrNotInteractiveWait = errors.New("instance is not in interactive wait state")
+	ErrCannotCancel       = errors.New("instance cannot be cancelled")
+	ErrCannotRerun        = errors.New("instance cannot be rerun")
 )
 
 // State represents the lifecycle state of a workflow instance.
@@ -85,15 +85,23 @@ func VisibilityFromWorkflow(workflowVisibility string) Visibility {
 
 // Instance is a single execution of a workflow definition.
 type Instance struct {
-	ID                uuid.UUID
-	OwnerID           uuid.UUID
-	WorkflowName      string
-	WorkflowSnapshot  map[string]any
+	ID               uuid.UUID
+	OwnerID          uuid.UUID
+	WorkflowName     string
+	WorkflowSnapshot map[string]any
 	// Department is the department this run was stamped under at trigger time
 	// (a snapshot; "" => default group / private). Visibility is the run's
 	// audience. Both are set by the engine Trigger path (Phase 3 Task 2).
-	Department        string
-	Visibility        Visibility
+	Department string
+	Visibility Visibility
+	// TriggerSource records how the run was started (manual / schedule /
+	// run_now). It defaults to OriginManual; the engine stamps it from
+	// OriginFromContext at trigger time (Phase 3). ScheduleID is the originating
+	// schedule for schedule/run_now runs, nil otherwise. There is intentionally
+	// NO foreign key on schedule_id: a schedule may be deleted while its
+	// historical runs remain.
+	TriggerSource     TriggerSource
+	ScheduleID        *uuid.UUID
 	State             State
 	Priority          Priority
 	Variables         map[string]any
@@ -112,17 +120,19 @@ type Instance struct {
 
 // InstanceSummary is a lightweight representation for listing instances.
 type InstanceSummary struct {
-	ID            uuid.UUID  `json:"id"`
-	WorkflowName  string     `json:"workflowName"`
-	State         State      `json:"state"`
-	Priority      Priority   `json:"priority"`
-	Department    string     `json:"department,omitempty"`
-	Visibility    Visibility `json:"visibility,omitempty"`
-	CurrentNodeID *string    `json:"currentNodeId,omitempty"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
-	CompletedAt   *time.Time `json:"completedAt,omitempty"`
-	QueuedAt      *time.Time `json:"queuedAt,omitempty"`
+	ID            uuid.UUID     `json:"id"`
+	WorkflowName  string        `json:"workflowName"`
+	State         State         `json:"state"`
+	Priority      Priority      `json:"priority"`
+	Department    string        `json:"department,omitempty"`
+	Visibility    Visibility    `json:"visibility,omitempty"`
+	TriggerSource TriggerSource `json:"triggerSource"`
+	ScheduleID    *uuid.UUID    `json:"scheduleId,omitempty"`
+	CurrentNodeID *string       `json:"currentNodeId,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt"`
+	CompletedAt   *time.Time    `json:"completedAt,omitempty"`
+	QueuedAt      *time.Time    `json:"queuedAt,omitempty"`
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.

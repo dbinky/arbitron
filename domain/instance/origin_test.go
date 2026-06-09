@@ -45,3 +45,25 @@ func TestTriggerSourceConstants(t *testing.T) {
 		t.Fatalf("unexpected source string values: %q %q %q", OriginManual, OriginSchedule, OriginRunNow)
 	}
 }
+
+func TestInstanceCarriesOriginFields(t *testing.T) {
+	id := uuid.New()
+	inst := Instance{TriggerSource: OriginSchedule, ScheduleID: &id}
+	if inst.TriggerSource != OriginSchedule {
+		t.Fatalf("Instance.TriggerSource not stored")
+	}
+	if inst.ScheduleID == nil || *inst.ScheduleID != id {
+		t.Fatalf("Instance.ScheduleID not stored")
+	}
+}
+
+func TestInstanceSummaryCarriesOriginFields(t *testing.T) {
+	id := uuid.New()
+	s := InstanceSummary{TriggerSource: OriginRunNow, ScheduleID: &id}
+	if s.TriggerSource != OriginRunNow {
+		t.Fatalf("InstanceSummary.TriggerSource not stored")
+	}
+	if s.ScheduleID == nil || *s.ScheduleID != id {
+		t.Fatalf("InstanceSummary.ScheduleID not stored")
+	}
+}
