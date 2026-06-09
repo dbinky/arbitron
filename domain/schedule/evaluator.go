@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -185,7 +186,11 @@ func (e *Evaluator) fireOne(ctx context.Context, s Schedule, fireTime time.Time)
 		}
 		return
 	}
-	fireCtx := identity.WithIdentity(ctx, id)
+	scheduleID := s.ID
+	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, id), instance.Origin{
+		Source:     instance.OriginSchedule,
+		ScheduleID: &scheduleID,
+	})
 	_, _, err = e.trigger.TriggerWithDepartment(fireCtx, s.WorkflowName, s.Variables, "normal", s.Department)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
