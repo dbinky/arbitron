@@ -1,0 +1,25 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  line-height: 1.4;
+}
+
+.manual {
+  background: #2a2f3a;
+  color: #9aa4b2;
+}
+
+.schedule {
+  background: #1e3a5f;
+  color: #7fb2ff;
+}
+
+.runNow {
+  background: #3a2f1e;
+  color: #ffcf7f;
+}
