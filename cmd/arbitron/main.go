@@ -660,7 +660,20 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleAlerter,
 		schedule.WithLogger(logger),
 	)
-	scheduleSvc := schedule.NewService(scheduleRepo, scheduleCanTrigger{publishers: publishedRepo})
+	// Build the shared run-now fire core from the SAME collaborators the
+	// evaluator uses (engine Trigger, instance-repo ActiveRunChecker, identity
+	// resolver), and wire it into the management service so REST + MCP expose
+	// run-now. The Runner never advances LastFiredAt (run-now is out of cadence).
+	scheduleRunner := schedule.NewRunner(
+		eng,
+		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		instanceRepo,
+	)
+	scheduleSvc := schedule.NewService(
+		scheduleRepo,
+		scheduleCanTrigger{publishers: publishedRepo},
+		schedule.WithFirer(scheduleRunner),
+	)
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
