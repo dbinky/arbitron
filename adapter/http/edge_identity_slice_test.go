@@ -464,3 +464,90 @@ func TestEdgeSlice_NBFToken_401(t *testing.T) {
 	rec, _ := env.serve(requestWithJWT(env.jwks.sign(t, nil, c)))
 	assert.Equal(t, http.StatusUnauthorized, rec.Code, "not-yet-valid token must be rejected 401")
 }
+
+// TestEdgeSlice_GroupClaim_MappedToDepartment exercises the full SSO group
+// → department mapping end-to-end with a real RSA-signed JWT:
+//
+//	real JWT (RSA-signed, "groups" claim) → real adaptedge.Verifier (GroupClaim wired)
+//	→ real instance.Provisioner (GroupConfig.Mapping) → ResolveDepartments
+//	→ persisted department → real enrich → identity.Departments in context.
+//
+// This is the "edge mode with a real group claim → department scoping" path
+// (live/integration paths sub-item (b)). The locally-generated RSA key exercises
+// the same cryptographic verification code path as a real Cloudflare Access token.
+func TestEdgeSlice_GroupClaim_MappedToDepartment(t *testing.T) {
+	jwks := newSliceJWKS(t)
+
+	db, err := sqlite.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, sqlite.RunMigrations(db))
+
+	groupCfg := identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	}
+	userRepo := sqlite.NewUserRepo(db)
+	prov := instance.NewProvisioner(userRepo, nil, groupCfg)
+
+	// Verifier is configured with the group claim name so extractGroups fires.
+	v, verr := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: jwks.issuer,
+		Audiences:  []string{"aud"},
+		GroupClaim: "groups",
+	})
+	require.NoError(t, verr)
+	mw := adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, v, prov, userRepo, groupCfg)
+	env := &sliceEnv{jwks: jwks, db: db, mw: mw}
+
+	// JWT carries the raw GUID as an array-valued group claim.
+	c := jwks.validClaims("aud")
+	c["groups"] = []string{"guid-123"}
+	raw := jwks.sign(t, nil, c)
+
+	rec, id := env.serve(requestWithJWT(raw))
+
+	require.Equal(t, http.StatusOK, rec.Code, "valid JWT with group claim must authenticate")
+	assert.Equal(t, []string{"engineering"}, id.Departments,
+		"GUID group claim must be mapped to friendly department end-to-end through the full stack")
+	assert.Equal(t, identity.RoleUser, id.Role,
+		"a group claim must never confer admin — admin is bootstrap email-list only")
+}
+
+// TestEdgeSlice_MissingGroupClaim_FallsBackToDefault verifies that a JWT with
+// no group claim at all (GroupClaim configured but claim absent) degrades to the
+// default group — it is NOT a 401.
+func TestEdgeSlice_MissingGroupClaim_FallsBackToDefault(t *testing.T) {
+	jwks := newSliceJWKS(t)
+
+	db, err := sqlite.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, sqlite.RunMigrations(db))
+
+	groupCfg := identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	}
+	userRepo := sqlite.NewUserRepo(db)
+	prov := instance.NewProvisioner(userRepo, nil, groupCfg)
+	v, verr := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: jwks.issuer,
+		Audiences:  []string{"aud"},
+		GroupClaim: "groups",
+	})
+	require.NoError(t, verr)
+	mw := adapthttp.NewEdgeAuthMiddleware(adapthttp.CfAccessJWTHeader, v, prov, userRepo, groupCfg)
+	env := &sliceEnv{jwks: jwks, db: db, mw: mw}
+
+	// JWT has no "groups" claim at all.
+	c := jwks.validClaims("aud")
+	raw := jwks.sign(t, nil, c)
+
+	rec, id := env.serve(requestWithJWT(raw))
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"absent group claim must NOT produce 401 — it degrades to default group")
+	assert.Contains(t, id.Departments, "default",
+		"user with no group claim must fall back to the default group")
+}

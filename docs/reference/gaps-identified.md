@@ -11,26 +11,26 @@ genuinely out-of-scope ideas under `## Won't Fix (Beyond Current Scope)`.
 
 ## Open Issues
 
-These are seeded carry-forward items to VERIFY during review (each may turn out
-fine — confirm with a test or reading, then move to `## Fixed Previously` noting
-the area/pass, or fix if a real defect).
-
-- **Membership-collision rename in the renamer.** `adapter/sqlite/department_renamer.go` does `UPDATE OR IGNORE user_departments` then `DELETE FROM user_departments WHERE department = from`, because `OR IGNORE` alone leaves the verbatim `(user_id, from)` row when the user already holds the target department. Verify the `DELETE` purges exactly those orphans, loses no membership, preserves the RowsAffected/idempotence contract, and that `instances`/`schedules`/`published_workflows` (plain `UPDATE`) are correct. → **FIXED** (Area #6 Pass 1): existing collision test discarded `rows`; added assertion that pure collision returns `int64(0)` (UPDATE OR IGNORE skips, DELETE is uncounted cleanup). Added `TestRenameDepartment_PartialCollision_CountsNonColliding` — two users, one colliding and one not; asserts total = 1 (non-colliding user only) and both users end up with the friendly department with no verbatim remnants. (Area #6 Pass 1)
-
-- **Hand-maintained sqlc for instances.** Migration `014` columns (`trigger_source`, `schedule_id`) were added by hand to `adapter/sqlite/generated/{models.go,instances.sql.go}` and all four Scan sites. Verify positional scans stay aligned, the `queries/instances.sql` source matches the generated code, and a future real `sqlc generate` would be purely additive. → **VERIFIED** (Area #8 Pass 1): All four scan sites (CreateInstance/GetInstance/ListInstances/ListRunningInstances) counted and confirmed aligned. `queries/instances.sql` source matches the generated column lists. Added `TestInstanceHandler_List_OriginFields` to verify `triggerSource`/`scheduleId` appear in the HTTP List JSON response with correct string values. (Area #8 Pass 1)
-
-
-- **Env-overlay precedence for the mapping.** `ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>` overlays `auth.rbac.mapping` (mirrors the `LEADS_` precedent). Verify a value set in both YAML and env resolves with the documented precedence and that keys normalize consistently with the YAML path. (Area #11 / #19) → **FIXED** (Area #11 Pass 1+2): Added `TestLoad_RBACMapping_EnvOverlay_WinsOverYAML` (same key in YAML `sales` + env `engineering`; env wins) and `TestLoad_RBACMapping_EnvAndYAML_DifferentKeys_Coexist` (additive: different keys coexist). Added `GroupClaim` whitespace normalization in `normalize()` (consistent with existing Mode/TeamDomain trimming) + tests `TestLoad_RBAC_GroupClaim_WhitespaceTrimmedAtLoad` and `TestLoad_RBAC_GroupClaim_WhitespaceOnlyEqualsUnset`. OIDC provider stores GroupClaim verbatim (no trim) while edge verifier trims — normalization at load makes both paths consistent.
-
-- **SchedulesPanel placement & read-only.** The panel renders in `WorkflowReview` (design-sanctioned, not a gap). Confirm it is workflow-scoped, exposes no `button` role, and degrades to empty/error without breaking the view. → **VERIFIED** (Area #10 Pass 1): all invariants confirmed by existing tests (workflow-scoped, no button, empty/error states). Added `renders run_now label without a schedule reference when scheduleId is absent (deleted-schedule run)` to `OriginBadge.test.tsx` — `run_now` with no `scheduleId` renders the label without a broken "From schedule" title attribute. (Area #10 Pass 1)
-
-- **Run-now origin reaches the DB.** `Runner.Fire` injects `OriginRunNow`. Confirm a run-now fire persists `trigger_source='run_now'` + `schedule_id` (not only in memory), surfaces on the instance summary, and still does NOT advance `LastFiredAt`. (Area #20) → **VERIFIED** (Area #20): All three unit-level layers confirmed: `TestRunner_Fire_RunNowOrigin_StampsRunNowOrigin` (origin injected into trigger context), `TestEngine_Trigger_StampsRunNowOrigin` (engine stamps on instance), `TestInstanceRepoOrigin_RunNow_RoundTrip` (persisted + surfaces in summary), `TestService_RunNow_NeverAdvancesCronPosition` (SetLastFired never called). Full Runner→Engine→DB integration not exercised — see Live/integration paths item.
-
-- **Live/integration paths unverified.** No test exercises (a) run-now over a real REST/MCP round-trip into a live engine, (b) `edge` mode with a real Cloudflare Access token carrying a real group claim → department scoping, or (c) the startup reconciler against a populated, production-shaped DB. → **CLOSED** (a) + (c): (a) is now tested — `TestRunNowSlice_HappyPath_202` / `_SkipWhenBusy_NoActiveRun_202` / `_NonOwner_403` / `_NotFound_404` in `adapter/http/schedule_runnow_slice_test.go` exercise the full HTTP→Service→Runner→SQLite chain with real repos, real schedule lookup, real creator-identity resolution via SQLite, real authz gate, and verified `OriginRunNow` in the trigger context; (c) was closed in the previous pass (`adapter/sqlite/reconcile_integration_test.go`). (b) requires a real Cloudflare Access environment (live JWKS, valid CF-issued JWT) and is an infrastructure-only gap beyond the unit-test review loop.
+*(none)*
 
 ---
 
 ## Fixed Previously
+
+- **Membership-collision rename in the renamer.** `adapter/sqlite/department_renamer.go` does `UPDATE OR IGNORE user_departments` then `DELETE FROM user_departments WHERE department = from`. Verified `DELETE` purges exactly the orphans, RowsAffected/idempotence contract holds, and the other three tables (plain `UPDATE`) are correct. Added `TestRenameDepartment_PartialCollision_CountsNonColliding`. (Area #6 Pass 1)
+
+- **Hand-maintained sqlc for instances.** All four scan sites aligned; `queries/instances.sql` matches generated code; a future real `sqlc generate` is purely additive. Added `TestInstanceHandler_List_OriginFields`. (Area #8 Pass 1)
+
+- **Env-overlay precedence for the mapping.** `ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>` correctly overrides YAML for the same key; different keys coexist. Added `TestLoad_RBACMapping_EnvOverlay_WinsOverYAML`, `_DifferentKeys_Coexist`, plus `GroupClaim` whitespace normalization + two tests. (Area #11 Pass 1+2)
+
+- **SchedulesPanel placement & read-only.** Panel is workflow-scoped, has no `button` role, degrades to empty/error gracefully. Added deleted-schedule run test to `OriginBadge.test.tsx`. (Area #10 Pass 1)
+
+- **Run-now origin reaches the DB.** `Runner.Fire` injects `OriginRunNow`; confirmed `trigger_source='run_now'` + `schedule_id` persists; `LastFiredAt` is never advanced. All three unit layers verified. (Area #20)
+
+- **Live/integration paths.** All three sub-items closed:
+  - **(a)** `TestRunNowSlice_*` in `adapter/http/schedule_runnow_slice_test.go` — full HTTP→Service→Runner→SQLite chain, real authz gate, verified `OriginRunNow` in trigger context.
+  - **(b)** `TestEdgeSlice_GroupClaim_MappedToDepartment` + `TestEdgeSlice_MissingGroupClaim_FallsBackToDefault` in `adapter/http/edge_identity_slice_test.go` — real RSA-signed JWT with group claim → real verifier (GroupClaim configured) → real provisioner (GroupConfig.Mapping) → mapped department in identity; absent claim → default group, not 401.
+  - **(c)** `TestReconcileMappings_Integration_*` in `adapter/sqlite/reconcile_integration_test.go` — full `domain.ReconcileMappings` + real `DepartmentRenamer` + SQLite against all four tables.
 
 - **Sentinel coverage for run-now sentinels.** `ErrCreatorUnresolved` and `ErrRunNowUnavailable` were missing from both the HTTP (`writeScheduleError`) and MCP (`scheduleResultError`) sentinel exhaustiveness tests. `ErrCreatorUnresolved` (→ 409/conflict) was added to the main `scheduleSentinels` slice in both files; `ErrRunNowUnavailable` (→ 503/run-now unavailable) received dedicated tests since it is intentionally a 5xx and requires different assertions. (Area #2 Pass 1)
 
