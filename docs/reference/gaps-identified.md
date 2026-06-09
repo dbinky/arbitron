@@ -48,6 +48,8 @@ the area/pass, or fix if a real defect).
 
 - **Edge path missing department-replace-on-re-login test.** The OIDC path had `TestResolve_ReplacesDepartmentsOnEachLogin`; the edge `ResolveByEmail` path had no equivalent. Added `TestResolveByEmail_DepartmentsReplacedOnReLogin`: first login snapshots `["sales"]`, re-login with `["engineering"]` must store `["engineering"]` only. (Area #5 Pass 1)
 
+- **`List` extra opts are silently ignored — 0-or-1 contract undocumented.** The variadic `List(ctx, ...opts)` only reads `opts[0]`; passing two opts ignores the second. No test documented this contract. Added `TestService_List_ExtraOptsIgnored` confirming only `opts[0].WorkflowName` is used. (Area #9 Pass 2)
+
 - **`creatorId` injection via query param untested.** HTTP `GET /schedules` accepted `workflowName` from query params but no test verified that passing `?creatorId=<other-uuid>` is silently ignored (the security invariant "CreatorID is service-set, never from request input"). Added `TestScheduleHandler_List_CreatorIDNotFromInput`: two users' schedules seeded; non-admin calling with injected `?creatorId=<otherUser>` still receives only their own schedule. (Area #9 Pass 1)
 
 - **scheduleId omitempty robustness untested.** `summaryDTO.ScheduleID` has `omitempty` but no test verified that a manual run (nil ScheduleID) actually omits the key from JSON vs. emitting `"scheduleId":null`. Added `TestInstanceHandler_List_ManualOrigin_ScheduleIDAbsent` asserting the key is absent for nil ScheduleID and `triggerSource="manual"` is always present. (Area #8 Pass 2)

@@ -156,6 +156,22 @@ func TestService_ListForWorkflow(t *testing.T) {
 	})
 }
 
+// Edge: List accepts a variadic for 0-or-1 opts; only opts[0] is ever
+// consulted. Passing two opts must silently ignore the second — documents the
+// 0-or-1 contract so callers know extra opts are not additive.
+func TestService_List_ExtraOptsIgnored(t *testing.T) {
+	repo := newSvcRepo()
+	svc := newSvc(repo, &fakeCanTrigger{allow: true})
+	caller := user()
+	_, err := svc.List(ctxAs(caller),
+		schedule.ListOptions{WorkflowName: "wf-a"},
+		schedule.ListOptions{WorkflowName: "wf-b"}, // must be ignored
+	)
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastListFilter.WorkflowName)
+	assert.Equal(t, "wf-a", *repo.lastListFilter.WorkflowName, "only first opts element is used")
+}
+
 func TestService_SetEnabled_Toggles(t *testing.T) {
 	caller := user()
 	s := &schedule.Schedule{ID: uuid.New(), WorkflowName: "report", CronExpr: "0 9 * * *", CreatorID: caller.UserID, Enabled: true}
