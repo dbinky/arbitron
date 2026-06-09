@@ -46,6 +46,26 @@ func TestTriggerSourceConstants(t *testing.T) {
 	}
 }
 
+// Edge: a second WithOrigin on a context that already carries an origin
+// overwrites the prior value (context.WithValue semantics). Documents that each
+// trigger call gets its own origin and earlier origins cannot bleed through.
+func TestWithOrigin_OverwritesPriorOrigin(t *testing.T) {
+	id1 := uuid.New()
+	id2 := uuid.New()
+	ctx := WithOrigin(context.Background(), Origin{Source: OriginSchedule, ScheduleID: &id1})
+	ctx = WithOrigin(ctx, Origin{Source: OriginRunNow, ScheduleID: &id2})
+	got, ok := OriginFromContext(ctx)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got.Source != OriginRunNow {
+		t.Errorf("source = %q, want run_now (second WithOrigin must win)", got.Source)
+	}
+	if got.ScheduleID == nil || *got.ScheduleID != id2 {
+		t.Errorf("scheduleID = %v, want %v", got.ScheduleID, id2)
+	}
+}
+
 func TestInstanceCarriesOriginFields(t *testing.T) {
 	id := uuid.New()
 	inst := Instance{TriggerSource: OriginSchedule, ScheduleID: &id}
