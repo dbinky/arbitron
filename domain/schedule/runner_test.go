@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/schedule"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -24,11 +25,13 @@ type runnerTrigger struct {
 	gotPrio  string
 	gotDept  string
 	gotIdent identity.Identity // identity read from the injected context
+	gotCtx   context.Context   // the trigger context captured for origin assertions
 }
 
 func (t *runnerTrigger) TriggerWithDepartment(ctx context.Context, wf string, vars map[string]any, prio, dept string) (uuid.UUID, bool, error) {
 	t.calls++
 	t.gotWF, t.gotVars, t.gotPrio, t.gotDept = wf, vars, prio, dept
+	t.gotCtx = ctx
 	t.gotIdent, _ = identity.FromContext(ctx)
 	return t.id, t.created, t.err
 }
@@ -83,6 +86,26 @@ func TestRunner_Fire_HappyPath(t *testing.T) {
 	assert.Equal(t, "normal", trig.gotPrio)
 	assert.Equal(t, "eng", trig.gotDept)
 	assert.Equal(t, creator, trig.gotIdent.UserID, "trigger must run as the resolved creator identity")
+}
+
+// RunnerFireOrigin: a run-now fire must carry an Origin with Source=run_now and
+// the originating schedule's id on the captured trigger context.
+func TestRunner_Fire_RunNowOrigin_StampsRunNowOrigin(t *testing.T) {
+	creator := uuid.New()
+	trig := &runnerTrigger{id: uuid.New(), created: true}
+	idents := runnerIdents{id: identity.Identity{UserID: creator, Username: "creator", Role: identity.RoleUser}}
+	r := schedule.NewRunner(trig, idents, runnerActive{})
+
+	s := runnerSchedule(creator)
+	_, _, err := r.Fire(context.Background(), s, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, trig.calls)
+
+	o, ok := instance.OriginFromContext(trig.gotCtx)
+	require.True(t, ok, "run-now fire must carry an origin on the trigger context")
+	assert.Equal(t, instance.OriginRunNow, o.Source)
+	require.NotNil(t, o.ScheduleID)
+	assert.Equal(t, s.ID, *o.ScheduleID)
 }
 
 // Collision, skip-when-busy=true + active run => skipped: fired=false, no

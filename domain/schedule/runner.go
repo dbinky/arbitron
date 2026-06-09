@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
 
@@ -59,15 +60,11 @@ func (r *Runner) Fire(ctx context.Context, s Schedule, skipWhenBusy bool) (uuid.
 	if err != nil {
 		return uuid.Nil, false, err
 	}
-	fireCtx := identity.WithIdentity(ctx, ident)
-	// Phase 3 seam (do NOT implement / import domain/instance in Phase 1):
-	// Phase 3 (final-org-gaps-implementation-phase-3-task-1.md, Step 25) replaces
-	// this comment by wrapping fireCtx with instance.WithOrigin, taking the address
-	// of a LOCAL copy of s.ID (not &s.ID inline). The identity var here is `ident`.
-	//   scheduleID := s.ID
-	//   fireCtx = instance.WithOrigin(fireCtx, instance.Origin{
-	//       Source: instance.OriginRunNow, ScheduleID: &scheduleID,
-	//   })
+	scheduleID := s.ID
+	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, ident), instance.Origin{
+		Source:     instance.OriginRunNow,
+		ScheduleID: &scheduleID,
+	})
 	instID, _, err := r.trigger.TriggerWithDepartment(fireCtx, s.WorkflowName, s.Variables, "normal", s.Department)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("schedule: triggering run-now: %w", err)
