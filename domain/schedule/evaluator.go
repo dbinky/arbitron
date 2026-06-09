@@ -173,7 +173,7 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 // position. A missing creator or workflow alerts and is skipped; the position is
 // still advanced on a deleted-workflow failure so the schedule does not hot-loop.
 func (e *Evaluator) fireOne(ctx context.Context, s Schedule, fireTime time.Time) {
-	id, err := e.idents.IdentityForUser(ctx, s.CreatorID)
+	id, err := resolveCreatorIdentity(ctx, e.idents, s)
 	if err != nil {
 		// Creator gone: cannot attribute the run. Skip without advancing so the
 		// occurrence is retried if the creator is restored shortly; alert so the
