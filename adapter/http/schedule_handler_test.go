@@ -71,6 +71,51 @@ func (a allowCanTrigger) CanTrigger(context.Context, identity.Identity, string) 
 	return a.allow, nil
 }
 
+// stubHTTPFirer is an in-test schedule.Firer for the REST run-now tests.
+type stubHTTPFirer struct {
+	inst  uuid.UUID
+	fired bool
+	err   error
+	calls int
+}
+
+func (f *stubHTTPFirer) Fire(_ context.Context, _ schedule.Schedule, _ bool) (uuid.UUID, bool, error) {
+	f.calls++
+	return f.inst, f.fired, f.err
+}
+
+// schedRouterWithFirer mirrors schedRouter but wires a Firer so the run-now
+// route is exercised. It registers the /{id}/run route.
+func schedRouterWithFirer(t *testing.T, repo schedule.ScheduleRepository, allow bool, id identity.Identity, firer schedule.Firer) http.Handler {
+	t.Helper()
+	svc := schedule.NewService(repo, allowCanTrigger{allow: allow}, schedule.WithFirer(firer))
+	h := adapthttp.NewScheduleHandler(svc)
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(identity.WithIdentity(req.Context(), id)))
+		})
+	})
+	r.Route("/schedules", func(r chi.Router) {
+		r.Post("/{id}/run", h.RunNow)
+		r.Get("/{id}", h.Get)
+	})
+	return r
+}
+
+// seedSchedule inserts an enabled schedule owned by owner into repo and returns it.
+func seedSchedule(repo *schedTestRepo, owner uuid.UUID) schedule.Schedule {
+	s := schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "report",
+		CronExpr:     "0 9 * * *",
+		CreatorID:    owner,
+		Enabled:      true,
+	}
+	repo.m[s.ID] = &s
+	return s
+}
+
 // schedRouter builds a chi router with the schedule routes and an identity
 // middleware that injects the given identity, mirroring production wiring.
 func schedRouter(t *testing.T, repo schedule.ScheduleRepository, allow bool, id identity.Identity) http.Handler {
@@ -223,6 +268,124 @@ func TestScheduleHandler_Enable_StaticRouteNotShadowedById(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, true, body["enabled"], "POST /{id}/enable must resolve to SetEnabled, not GET /{id}")
+}
+
+// --- run-now (Capability A) ---
+
+// Happy path: owner fires => 202 Accepted, body {instanceId, fired:true}.
+func TestScheduleHandler_RunNow_202(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	inst := uuid.New()
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: inst, fired: true})
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{"skipWhenBusy":false}`)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, inst.String(), body["instanceId"])
+	assert.Equal(t, true, body["fired"])
+}
+
+// Empty body is allowed (skipWhenBusy defaults to false) => still 202.
+func TestScheduleHandler_RunNow_EmptyBody_202(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: uuid.New(), fired: true})
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", "")
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+}
+
+// Skipped (busy + skipWhenBusy) => 200 OK, body {fired:false}, no instanceId.
+func TestScheduleHandler_RunNow_Skipped_200(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: uuid.Nil, fired: false})
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{"skipWhenBusy":true}`)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, false, body["fired"])
+}
+
+// Input validation: malformed UUID in path => 400.
+func TestScheduleHandler_RunNow_BadID_400(t *testing.T) {
+	router := schedRouterWithFirer(t, newSchedTestRepo(), true, testUser(), &stubHTTPFirer{})
+	w := do(t, router, http.MethodPost, "/schedules/not-a-uuid/run", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// Input validation: malformed JSON body => 400.
+func TestScheduleHandler_RunNow_BadBody_400(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{inst: uuid.New(), fired: true})
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{not json`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// Authorization: a non-owner non-admin => 403, firer never called.
+func TestScheduleHandler_RunNow_NonOwner_403(t *testing.T) {
+	repo := newSchedTestRepo()
+	owner := testUser()
+	s := seedSchedule(repo, owner.UserID)
+	firer := &stubHTTPFirer{inst: uuid.New(), fired: true}
+	stranger := testUser() // different UserID, RoleUser
+	router := schedRouterWithFirer(t, repo, true, stranger, firer)
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, 0, firer.calls)
+}
+
+// Not found => 404.
+func TestScheduleHandler_RunNow_NotFound_404(t *testing.T) {
+	router := schedRouterWithFirer(t, newSchedTestRepo(), true, testUser(), &stubHTTPFirer{})
+	w := do(t, router, http.MethodPost, "/schedules/"+uuid.New().String()+"/run", `{}`)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// Failure: creator unresolved => 409 Conflict.
+func TestScheduleHandler_RunNow_CreatorUnresolved_409(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	router := schedRouterWithFirer(t, repo, true, u, &stubHTTPFirer{err: schedule.ErrCreatorUnresolved})
+
+	w := do(t, router, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// Failure: firer unwired => 503 Service Unavailable. Build a router WITHOUT a
+// firer but WITH the /run route.
+func TestScheduleHandler_RunNow_Unwired_503(t *testing.T) {
+	repo := newSchedTestRepo()
+	u := testUser()
+	s := seedSchedule(repo, u.UserID)
+	svc := schedule.NewService(repo, allowCanTrigger{allow: true}) // no WithFirer
+	h := adapthttp.NewScheduleHandler(svc)
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(identity.WithIdentity(req.Context(), u)))
+		})
+	})
+	r.Route("/schedules", func(r chi.Router) { r.Post("/{id}/run", h.RunNow) })
+
+	w := do(t, r, http.MethodPost, "/schedules/"+s.ID.String()+"/run", `{}`)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // --- Integration (full lifecycle over chi) ---

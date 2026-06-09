@@ -46,6 +46,12 @@ type scheduleUpdateRequest struct {
 	Enabled      *bool          `json:"enabled,omitempty"`
 }
 
+// scheduleRunNowRequest is the POST /schedules/{id}/run body. The whole body is
+// optional; an empty body leaves skipWhenBusy=false (fire anyway).
+type scheduleRunNowRequest struct {
+	SkipWhenBusy bool `json:"skipWhenBusy,omitempty"`
+}
+
 // writeScheduleError maps schedule sentinels to HTTP status.
 func writeScheduleError(w http.ResponseWriter, err error) {
 	switch {
@@ -53,6 +59,10 @@ func writeScheduleError(w http.ResponseWriter, err error) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 	case errors.Is(err, schedule.ErrExists):
 		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, schedule.ErrCreatorUnresolved):
+		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, schedule.ErrRunNowUnavailable):
+		WriteError(w, http.StatusServiceUnavailable, "UNAVAILABLE", err.Error())
 	case errors.Is(err, schedule.ErrForbidden), errors.Is(err, schedule.ErrNotAuthorizedWorkflow):
 		WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 	case errors.Is(err, schedule.ErrInvalidCron),
@@ -197,4 +207,36 @@ func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RunNow handles POST /schedules/{id}/run. Body {"skipWhenBusy": bool} is
+// optional (default false ⇒ fire even if a prior run is active). On a started
+// run it returns 202 with {instanceId, fired:true}; when skipped-because-busy it
+// returns 200 with {fired:false}.
+func (h *ScheduleHandler) RunNow(w http.ResponseWriter, r *http.Request) {
+	id, ok := scheduleIDParam(w, r)
+	if !ok {
+		return
+	}
+	var req scheduleRunNowRequest
+	// The body is optional. An empty body must not be a 400, so decode only when
+	// there is content; reuse decodeScheduleBody (which 400s on malformed JSON).
+	if r.ContentLength != 0 {
+		if !decodeScheduleBody(w, r, &req) {
+			return
+		}
+	}
+	res, err := h.svc.RunNow(r.Context(), id, schedule.RunNowInput{SkipWhenBusy: req.SkipWhenBusy})
+	if err != nil {
+		writeScheduleError(w, err)
+		return
+	}
+	if !res.Fired {
+		WriteJSON(w, http.StatusOK, map[string]any{"fired": false})
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, map[string]any{
+		"instanceId": res.InstanceID.String(),
+		"fired":      true,
+	})
 }
