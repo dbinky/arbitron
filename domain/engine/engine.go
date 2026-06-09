@@ -338,6 +338,18 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		origVars[k] = v
 	}
 
+	// Stamp run provenance from the trigger context. Manual REST/MCP triggers
+	// carry no origin and default to OriginManual; the two schedule trigger sites
+	// (cron fireOne, run-now Runner.Fire) set it via instance.WithOrigin. The
+	// engine reads it WITHOUT importing the schedule package, the same
+	// one-directional edge identity uses.
+	triggerSource := instance.OriginManual
+	var scheduleID *uuid.UUID
+	if o, ok := instance.OriginFromContext(ctx); ok {
+		triggerSource = o.Source
+		scheduleID = o.ScheduleID
+	}
+
 	inst := &instance.Instance{
 		ID:                uuid.New(),
 		OwnerID:           ownerID,
@@ -345,6 +357,8 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		WorkflowSnapshot:  wfSnapshot,
 		Department:        st.Department,
 		Visibility:        st.Visibility,
+		TriggerSource:     triggerSource,
+		ScheduleID:        scheduleID,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
