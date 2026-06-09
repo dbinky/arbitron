@@ -40,6 +40,8 @@ the area/pass, or fix if a real defect).
 
 - **GroupClaim config normalization and case-sensitivity.** No tests verified that a whitespace-padded `GroupClaim` (common YAML operator mistake) is normalized at construction time, nor that case-mismatched claim names fail open to nil groups instead of a 401. Added `TestNew_GroupClaimWhitespaceTrimmed` (tests `strings.TrimSpace` in `New()`) and `TestVerify_GroupClaimCaseSensitive` (documents fail-open behavior on case mismatch). (Area #3 Pass 2)
 
+- **Blank mapping value in `ResolveDepartments`.** When a `Mapping` entry exists but maps to `""` or whitespace, the code correctly falls through to verbatim (preventing an empty department), but this subtle `mapping▸verbatim` priority chain edge was untested. Added `TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim` (2 sub-cases). (Area #4 Pass 1)
+
 ---
 
 ## Won't Fix (Beyond Current Scope)

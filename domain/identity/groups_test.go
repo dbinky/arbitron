@@ -338,3 +338,26 @@ func TestResolveDepartments_MappedFriendlyNameNormalized(t *testing.T) {
 	got := ResolveDepartments([]string{"guid-123"}, cfg)
 	assert.Equal(t, []string{"engineering"}, got)
 }
+
+// TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim covers the subtle
+// case where a Mapping entry EXISTS but its value is empty or whitespace. The code
+// treats this as "no mapping" and falls through to the verbatim normalized claim.
+// A misconfigured mapping entry must not produce an empty department — the user
+// ends up in their raw-claim department, not nowhere.
+func TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"empty string value", ""},
+		{"whitespace-only value", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": tc.value}}
+			got := ResolveDepartments([]string{"guid-123"}, cfg)
+			assert.Equal(t, []string{"guid-123"}, got,
+				"blank mapping value must fall back to verbatim normalized claim, not an empty department")
+		})
+	}
+}
