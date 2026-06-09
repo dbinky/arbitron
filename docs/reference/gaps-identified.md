@@ -38,6 +38,8 @@ the area/pass, or fix if a real defect).
 
 - **Edge group-claim shape airtightness.** `extractGroups` was verified correct but lacked tests for empty array, blank-only array, numeric scalar, and JSON-null claim values. Added `TestVerify_GroupClaimEdgeCases` (table test, 4 sub-cases) confirming each yields nil groups and no verification error — none is ever a 401. (Area #3 Pass 1)
 
+- **GroupClaim config normalization and case-sensitivity.** No tests verified that a whitespace-padded `GroupClaim` (common YAML operator mistake) is normalized at construction time, nor that case-mismatched claim names fail open to nil groups instead of a 401. Added `TestNew_GroupClaimWhitespaceTrimmed` (tests `strings.TrimSpace` in `New()`) and `TestVerify_GroupClaimCaseSensitive` (documents fail-open behavior on case mismatch). (Area #3 Pass 2)
+
 ---
 
 ## Won't Fix (Beyond Current Scope)

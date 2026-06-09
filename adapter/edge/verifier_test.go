@@ -459,3 +459,47 @@ func TestVerify_EmailTrimmed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "alice@corp.example", id.Email, "email must be returned trimmed")
 }
+
+// TestNew_GroupClaimWhitespaceTrimmed verifies that a GroupClaim value with
+// surrounding whitespace (common in YAML configs) is normalized at construction
+// time. Without this, a config like `groupclaim: " groups "` would store the
+// padded name and silently fail to find the claim — degrading every user to the
+// default group rather than their actual department.
+func TestNew_GroupClaimWhitespaceTrimmed(t *testing.T) {
+	h := newJWKSHarness(t)
+	v, err := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: h.issuer,
+		Audiences:  []string{"app-aud"},
+		GroupClaim: "  groups  ", // padded — must be trimmed at New(), not per-Verify
+	})
+	require.NoError(t, err)
+
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = []any{"eng", "platform"}
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"eng", "platform"}, id.Groups,
+		"whitespace-padded GroupClaim config must still extract groups correctly")
+}
+
+// TestVerify_GroupClaimCaseSensitive documents that claim name lookup is
+// case-sensitive (exact match against the configured GroupClaim). A token
+// carrying "Groups" (capital G) does NOT match a verifier configured for
+// "groups" (lowercase). This is correct JWT behavior — operators must match
+// the claim name exactly. A mismatch fails open to nil groups (default group),
+// never a 401, so a misconfiguration cannot lock out users.
+func TestVerify_GroupClaimCaseSensitive(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud") // lowercase
+	c := baseClaims(h.issuer, "app-aud")
+	c["Groups"] = []any{"eng"} // capital G — distinct claim from "groups"
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err, "claim-name case mismatch must NOT fail verification")
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Nil(t, id.Groups,
+		"case-mismatched claim name must yield nil groups (fall back to default group), not a 401")
+}
