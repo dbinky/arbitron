@@ -332,6 +332,18 @@ func TestResolveDepartments_DuplicatesAfterMappingCollapsed(t *testing.T) {
 	assert.Equal(t, []string{"engineering"}, got)
 }
 
+// TestResolveDepartments_MappedAndVerbatimSameDept_Deduped covers the real-world
+// interim migration scenario: a user's token carries both the old GUID claim (which
+// maps to "engineering") AND the new verbatim claim "Engineering" (which also
+// resolves to "engineering" via normalization). Both paths resolve to the same
+// department — the dedup must still produce exactly one occurrence.
+func TestResolveDepartments_MappedAndVerbatimSameDept_Deduped(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123", "Engineering"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got,
+		"mapped+verbatim claims resolving to the same dept must dedup to one occurrence")
+}
+
 func TestResolveDepartments_MappedFriendlyNameNormalized(t *testing.T) {
 	// Even if a mapping value somehow reaches here un-normalized, output is normalized.
 	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "Engineering "}}

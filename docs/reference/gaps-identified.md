@@ -42,6 +42,8 @@ the area/pass, or fix if a real defect).
 
 - **Blank mapping value in `ResolveDepartments`.** When a `Mapping` entry exists but maps to `""` or whitespace, the code correctly falls through to verbatim (preventing an empty department), but this subtle `mapping▸verbatim` priority chain edge was untested. Added `TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim` (2 sub-cases). (Area #4 Pass 1)
 
+- **Mapped+verbatim same department dedup.** During interim migration a user's token can carry both the old GUID claim (mapped to "engineering") and the new verbatim claim "Engineering" (normalizes to "engineering"). No test verified these dedup to one occurrence. Added `TestResolveDepartments_MappedAndVerbatimSameDept_Deduped`. (Area #4 Pass 2)
+
 ---
 
 ## Won't Fix (Beyond Current Scope)
