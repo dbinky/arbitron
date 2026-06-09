@@ -409,17 +409,17 @@ Expected: FAIL — origin absent or `OriginManual`.
 
 - [ ] **Step 25: Set the origin in `Runner.Fire`**
 
-In `domain/schedule/runner.go`, find where `Fire` builds the trigger context (it wraps `identity.WithIdentity(ctx, id)` exactly like `fireOne`). Wrap it with `instance.WithOrigin` using `OriginRunNow`:
+In `domain/schedule/runner.go`, find where `Fire` builds the trigger context. Phase 1's `Runner.Fire` resolves the creator into a variable named `ident` (via `resolveCreatorIdentity`) and builds `fireCtx := identity.WithIdentity(ctx, ident)` — NOTE the variable is `ident` here, not `id` as in the cron `fireOne` (Step 20). This is exactly the clearly-marked Phase-1 seam (the commented `instance.WithOrigin(...)` block in `runner.go`); replace that comment by wrapping the context with `instance.WithOrigin` using `OriginRunNow`:
 
 ```go
 	scheduleID := s.ID
-	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, id), instance.Origin{
+	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, ident), instance.Origin{
 		Source:     instance.OriginRunNow,
 		ScheduleID: &scheduleID,
 	})
 ```
 
-Add the `"github.com/arbitron/arbitron/domain/instance"` import if not already present.
+Match the identity variable name to whatever Phase 1's `Runner.Fire` actually uses (`ident` per Phase-1 Task-1); if Phase 1 named it differently, use that name. Add the `"github.com/arbitron/arbitron/domain/instance"` import if not already present.
 
 - [ ] **Step 26: Run to verify it passes**
 
