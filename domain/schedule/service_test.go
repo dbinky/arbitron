@@ -100,6 +100,62 @@ func TestService_List_Admin_All(t *testing.T) {
 	assert.Nil(t, repo.lastListFilter.CreatorID, "admin list is unrestricted")
 }
 
+// TestService_ListForWorkflow covers the optional workflow-name narrowing on
+// List. The creator scoping stays service-set from identity; WorkflowName is a
+// non-security narrowing filter only.
+func TestService_ListForWorkflow(t *testing.T) {
+	t.Run("admin with workflow narrows to workflow, no creator scope", func(t *testing.T) {
+		repo := newSvcRepo()
+		svc := newSvc(repo, &fakeCanTrigger{allow: true})
+		_, err := svc.List(ctxAs(admin()), schedule.ListOptions{WorkflowName: "wf-a"})
+		require.NoError(t, err)
+		assert.Nil(t, repo.lastListFilter.CreatorID, "admin list is unrestricted")
+		require.NotNil(t, repo.lastListFilter.WorkflowName)
+		assert.Equal(t, "wf-a", *repo.lastListFilter.WorkflowName)
+	})
+
+	t.Run("non-admin with workflow keeps creator scope and adds workflow", func(t *testing.T) {
+		repo := newSvcRepo()
+		svc := newSvc(repo, &fakeCanTrigger{allow: true})
+		caller := user()
+		_, err := svc.List(ctxAs(caller), schedule.ListOptions{WorkflowName: "wf-a"})
+		require.NoError(t, err)
+		require.NotNil(t, repo.lastListFilter.CreatorID)
+		assert.Equal(t, caller.UserID, *repo.lastListFilter.CreatorID, "creator scope still service-set")
+		require.NotNil(t, repo.lastListFilter.WorkflowName)
+		assert.Equal(t, "wf-a", *repo.lastListFilter.WorkflowName)
+	})
+
+	t.Run("no options is back-compatible: creator scope only, no workflow", func(t *testing.T) {
+		repo := newSvcRepo()
+		svc := newSvc(repo, &fakeCanTrigger{allow: true})
+		caller := user()
+		_, err := svc.List(ctxAs(caller))
+		require.NoError(t, err)
+		require.NotNil(t, repo.lastListFilter.CreatorID)
+		assert.Equal(t, caller.UserID, *repo.lastListFilter.CreatorID)
+		assert.Nil(t, repo.lastListFilter.WorkflowName)
+	})
+
+	t.Run("empty workflow name means no workflow filter", func(t *testing.T) {
+		repo := newSvcRepo()
+		svc := newSvc(repo, &fakeCanTrigger{allow: true})
+		caller := user()
+		_, err := svc.List(ctxAs(caller), schedule.ListOptions{WorkflowName: ""})
+		require.NoError(t, err)
+		require.NotNil(t, repo.lastListFilter.CreatorID)
+		assert.Equal(t, caller.UserID, *repo.lastListFilter.CreatorID)
+		assert.Nil(t, repo.lastListFilter.WorkflowName, "empty == no filter")
+	})
+
+	t.Run("no identity is forbidden and never leaks", func(t *testing.T) {
+		repo := newSvcRepo()
+		svc := newSvc(repo, &fakeCanTrigger{allow: true})
+		_, err := svc.List(context.Background(), schedule.ListOptions{WorkflowName: "wf-a"})
+		assert.ErrorIs(t, err, schedule.ErrForbidden)
+	})
+}
+
 func TestService_SetEnabled_Toggles(t *testing.T) {
 	caller := user()
 	s := &schedule.Schedule{ID: uuid.New(), WorkflowName: "report", CronExpr: "0 9 * * *", CreatorID: caller.UserID, Enabled: true}

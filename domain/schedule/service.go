@@ -272,9 +272,20 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Schedule, error) {
 	return *sched, nil
 }
 
-// List returns the caller's own schedules (non-admin) or all (admin). The
-// creator filter is SERVICE-set from the identity, never from request input.
-func (s *Service) List(ctx context.Context) ([]Schedule, error) {
+// ListOptions are optional, NON-security narrowing filters for List. They only
+// ever shrink the already-creator-scoped result set, so they are safe to take
+// from request input (unlike CreatorID, which is service-set from identity).
+type ListOptions struct {
+	// WorkflowName, when non-empty, restricts the result to schedules for that
+	// workflow. Empty means no workflow narrowing (the caller's full scoped list).
+	WorkflowName string
+}
+
+// List returns the caller's own schedules (non-admin) or all (admin), optionally
+// narrowed to one workflow. The creator filter is SERVICE-set from the identity,
+// never from request input; the workflow filter (when provided) only shrinks
+// that already-scoped set, so a non-admin still sees only THEIR schedules.
+func (s *Service) List(ctx context.Context, opts ...ListOptions) ([]Schedule, error) {
 	c, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -283,6 +294,10 @@ func (s *Service) List(ctx context.Context) ([]Schedule, error) {
 	if !c.IsAdmin() {
 		uid := c.UserID
 		filters.CreatorID = &uid
+	}
+	if len(opts) > 0 && opts[0].WorkflowName != "" {
+		wf := opts[0].WorkflowName
+		filters.WorkflowName = &wf
 	}
 	return s.repo.List(ctx, filters)
 }
