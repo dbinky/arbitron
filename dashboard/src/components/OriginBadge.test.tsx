@@ -38,4 +38,12 @@ describe('OriginBadge', () => {
     render(<OriginBadge triggerSource="schedule" scheduleId="s1" />)
     expect(screen.queryByRole('button')).toBeNull()
   })
+
+  it('renders run_now label without a schedule reference when scheduleId is absent (deleted-schedule run)', () => {
+    // A run_now fire whose originating schedule was later deleted: the badge
+    // must still render "run now" without a broken schedule reference.
+    render(<OriginBadge triggerSource="run_now" />)
+    expect(screen.getByText(/run.?now/i)).toBeInTheDocument()
+    expect(screen.queryByTitle(/From schedule/)).toBeNull()
+  })
 })

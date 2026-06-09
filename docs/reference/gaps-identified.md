@@ -22,7 +22,7 @@ the area/pass, or fix if a real defect).
 
 - **Env-overlay precedence for the mapping.** `ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>` overlays `auth.rbac.mapping` (mirrors the `LEADS_` precedent). Verify a value set in both YAML and env resolves with the documented precedence and that keys normalize consistently with the YAML path. (Area #11 / #19)
 
-- **SchedulesPanel placement & read-only.** The panel renders in `WorkflowReview` (design-sanctioned, not a gap). Confirm it is workflow-scoped, exposes no `button` role, and degrades to empty/error without breaking the view. (Area #10 / #18)
+- **SchedulesPanel placement & read-only.** The panel renders in `WorkflowReview` (design-sanctioned, not a gap). Confirm it is workflow-scoped, exposes no `button` role, and degrades to empty/error without breaking the view. → **VERIFIED** (Area #10 Pass 1): all invariants confirmed by existing tests (workflow-scoped, no button, empty/error states). Added `renders run_now label without a schedule reference when scheduleId is absent (deleted-schedule run)` to `OriginBadge.test.tsx` — `run_now` with no `scheduleId` renders the label without a broken "From schedule" title attribute. (Area #10 Pass 1)
 
 - **Run-now origin reaches the DB.** `Runner.Fire` injects `OriginRunNow`. Confirm a run-now fire persists `trigger_source='run_now'` + `schedule_id` (not only in memory), surfaces on the instance summary, and still does NOT advance `LastFiredAt`. (Area #20)
 
