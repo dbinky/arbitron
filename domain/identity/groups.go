@@ -1,6 +1,9 @@
 package identity
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // GroupConfig is the resolution-time RBAC configuration the group-resolution
 // helpers consume. It is defined HERE (the dependency floor) rather than in
@@ -124,19 +127,8 @@ func LedDepartments(subject, email string, cfg GroupConfig) []string {
 			}
 		}
 	}
-	sortStrings(matched)
+	slices.Sort(matched)
 	return matched
-}
-
-// sortStrings is an in-package insertion sort kept here so groups.go stays
-// import-light (no sort import alongside strings); the lists are tiny (number of
-// led departments), so the simple sort is fine.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
 }
 
 // EffectiveMembership is the caller's full department set: the claim-derived

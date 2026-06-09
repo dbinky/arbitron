@@ -25,6 +25,15 @@ func (realClock) Now() time.Time { return time.Now() }
 
 // Trigger fires a workflow as the (context-injected) creator. The engine's
 // TriggerWithDepartment satisfies it.
+//
+// Run ORIGIN (TriggerSource/ScheduleID) is an OPTIONAL context input, NOT a
+// parameter: the two fire sites stamp it via instance.WithOrigin on the ctx
+// (evaluator.fireOne stamps OriginSchedule, runner.Fire stamps OriginRunNow) and
+// instance.OriginFromContext is the SINGLE reader. A caller that forgets
+// WithOrigin silently degrades to the documented "manual" default — benign,
+// because origin is a non-authz provenance stamp. The moment anything
+// authz-bearing needs to ride this channel it MUST become an explicit parameter
+// instead; do not add more readers of the origin context value.
 type Trigger interface {
 	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority, department string) (uuid.UUID, bool, error)
 }
