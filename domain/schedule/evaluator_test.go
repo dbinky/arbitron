@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/schedule"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -104,6 +105,7 @@ type fakeTrigger struct {
 	lastPrio  string
 	lastIdent identity.Identity
 	identOK   bool
+	lastCtx   context.Context // the trigger context captured for origin assertions
 	err       error
 }
 
@@ -115,6 +117,7 @@ func (f *fakeTrigger) TriggerWithDepartment(ctx context.Context, workflowName st
 	f.lastVars = variables
 	f.lastDept = department
 	f.lastPrio = priority
+	f.lastCtx = ctx
 	f.lastIdent, f.identOK = identity.FromContext(ctx)
 	if f.err != nil {
 		return uuid.Nil, false, f.err
@@ -122,6 +125,11 @@ func (f *fakeTrigger) TriggerWithDepartment(ctx context.Context, workflowName st
 	return uuid.New(), true, nil
 }
 func (f *fakeTrigger) callCount() int { f.mu.Lock(); defer f.mu.Unlock(); return f.calls }
+func (f *fakeTrigger) capturedCtx() context.Context {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastCtx
+}
 
 type fakeActive struct {
 	active bool
@@ -216,6 +224,27 @@ func TestEvaluator_DueSchedule_FiresAsCreator(t *testing.T) {
 	require.True(t, tr.identOK, "trigger must run with creator identity in context")
 	assert.Equal(t, creator, tr.lastIdent.UserID)
 	assert.Equal(t, 0, al.total())
+}
+
+// FireOneOrigin: after a due cron fire, the captured trigger context must carry
+// an Origin with Source=schedule and the originating schedule's id.
+func TestEvaluator_FireOneOrigin_StampsScheduleOrigin(t *testing.T) {
+	creator := uuid.New()
+	s := dueSchedule(creator, "eng")
+	repo := newEvalRepo(s)
+	tr := &fakeTrigger{}
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	idn := &fakeIdents{id: identity.Identity{Departments: []string{"eng"}}}
+	ev := newEval(t, repo, tr, &fakeActive{}, idn, &fakeAlerter{}, clk)
+
+	require.NoError(t, ev.Tick(context.Background()))
+	require.Equal(t, 1, tr.callCount())
+
+	o, ok := instance.OriginFromContext(tr.capturedCtx())
+	require.True(t, ok, "cron fire must carry an origin on the trigger context")
+	assert.Equal(t, instance.OriginSchedule, o.Source)
+	require.NotNil(t, o.ScheduleID)
+	assert.Equal(t, s.ID, *o.ScheduleID)
 }
 
 func TestEvaluator_AfterFire_SetsLastFired(t *testing.T) {

@@ -70,6 +70,40 @@ func newScheduleServer(repo schedule.ScheduleRepository, allow bool) *adaptmcp.S
 	return srv
 }
 
+// stubMCPFirer is an in-test schedule.Firer for the MCP run-now tests.
+type stubMCPFirer struct {
+	inst  uuid.UUID
+	fired bool
+	err   error
+	calls int
+}
+
+func (f *stubMCPFirer) Fire(_ context.Context, _ schedule.Schedule, _ bool) (uuid.UUID, bool, error) {
+	f.calls++
+	return f.inst, f.fired, f.err
+}
+
+// newScheduleServerWithFirer wires a Firer so schedule_run_now is registered.
+func newScheduleServerWithFirer(repo schedule.ScheduleRepository, allow bool, firer schedule.Firer) *adaptmcp.Server {
+	svc := schedule.NewService(repo, mcpCanTrigger{allow: allow}, schedule.WithFirer(firer))
+	deps := &adaptmcp.Deps{ScheduleService: svc}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterScheduleTools(srv)
+	return srv
+}
+
+func seedMCPSchedule(repo *mcpSchedRepo, owner uuid.UUID) schedule.Schedule {
+	s := schedule.Schedule{
+		ID:           uuid.New(),
+		WorkflowName: "report",
+		CronExpr:     "0 9 * * *",
+		CreatorID:    owner,
+		Enabled:      true,
+	}
+	repo.m[s.ID] = &s
+	return s
+}
+
 func callSchedule(t *testing.T, srv *adaptmcp.Server, ctx context.Context, name string, args map[string]any) *gomcp.CallToolResult {
 	t.Helper()
 	req := gomcp.CallToolRequest{}
@@ -104,6 +138,10 @@ func schedTextOf(t *testing.T, r *gomcp.CallToolResult) string {
 
 func userCtx(id uuid.UUID) context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: id, Username: "u", Role: identity.RoleUser})
+}
+
+func adminCtx() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin})
 }
 
 // --- Tests ---
@@ -148,4 +186,119 @@ func TestScheduleTools_Create_InvalidCron_MCP(t *testing.T) {
 		"workflowName": "report", "cronExpr": "nope",
 	})
 	assert.True(t, res.IsError)
+}
+
+// --- run_now (Capability A) ---
+
+// Conditional registration: with a Firer wired, schedule_run_now is advertised.
+func TestScheduleTools_RunNow_Registered(t *testing.T) {
+	srv := newScheduleServerWithFirer(newMCPSchedRepo(), true, &stubMCPFirer{})
+	var found bool
+	for _, tool := range srv.ListTools() {
+		if tool.Name == "schedule_run_now" {
+			found = true
+		}
+	}
+	assert.True(t, found, "schedule_run_now must register when a firer is wired")
+}
+
+// Conditional registration: WITHOUT a firer, schedule_run_now is NOT advertised
+// (the other schedule_* tools still are).
+func TestScheduleTools_RunNow_NotRegisteredWhenUnwired(t *testing.T) {
+	srv := newScheduleServer(newMCPSchedRepo(), true) // no firer
+	var foundRunNow, foundList bool
+	for _, tool := range srv.ListTools() {
+		switch tool.Name {
+		case "schedule_run_now":
+			foundRunNow = true
+		case "schedule_list":
+			foundList = true
+		}
+	}
+	assert.False(t, foundRunNow, "schedule_run_now must NOT register without a firer")
+	assert.True(t, foundList, "the other schedule tools still register")
+}
+
+// Happy path: owner fires => not an error; result carries instanceId + fired:true.
+func TestScheduleTools_RunNow_HappyPath(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	inst := uuid.New()
+	srv := newScheduleServerWithFirer(repo, true, &stubMCPFirer{inst: inst, fired: true})
+
+	res := callSchedule(t, srv, userCtx(owner), "schedule_run_now", map[string]any{"id": s.ID.String()})
+
+	require.False(t, res.IsError, schedTextOf(t, res))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(schedTextOf(t, res)), &body))
+	assert.Equal(t, inst.String(), body["instanceId"])
+	assert.Equal(t, true, body["fired"])
+}
+
+// Coalesce default (force omitted) with a busy workflow => fired:false, not an error.
+func TestScheduleTools_RunNow_Skipped(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	srv := newScheduleServerWithFirer(repo, true, &stubMCPFirer{inst: uuid.Nil, fired: false})
+
+	res := callSchedule(t, srv, userCtx(owner), "schedule_run_now", map[string]any{
+		"id": s.ID.String(),
+	})
+
+	require.False(t, res.IsError, schedTextOf(t, res))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(schedTextOf(t, res)), &body))
+	assert.Equal(t, false, body["fired"])
+}
+
+// Input validation: missing/blank id => MCP error.
+func TestScheduleTools_RunNow_BadID(t *testing.T) {
+	srv := newScheduleServerWithFirer(newMCPSchedRepo(), true, &stubMCPFirer{})
+	res := callSchedule(t, srv, userCtx(uuid.New()), "schedule_run_now", map[string]any{"id": "not-a-uuid"})
+	assert.True(t, res.IsError)
+}
+
+// Authorization: non-owner non-admin => MCP error (forbidden), firer not called.
+func TestScheduleTools_RunNow_NonOwnerForbidden(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	firer := &stubMCPFirer{inst: uuid.New(), fired: true}
+	srv := newScheduleServerWithFirer(repo, true, firer)
+
+	res := callSchedule(t, srv, userCtx(uuid.New()), "schedule_run_now", map[string]any{"id": s.ID.String()})
+
+	assert.True(t, res.IsError)
+	assert.Contains(t, schedTextOf(t, res), "forbidden")
+	assert.Equal(t, 0, firer.calls)
+}
+
+// Authorization: admin can run any user's schedule (owner-or-admin gate).
+func TestScheduleTools_RunNow_AdminCanFire(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	inst := uuid.New()
+	firer := &stubMCPFirer{inst: inst, fired: true}
+	srv := newScheduleServerWithFirer(repo, true, firer)
+
+	res := callSchedule(t, srv, adminCtx(), "schedule_run_now", map[string]any{"id": s.ID.String()})
+
+	require.False(t, res.IsError, schedTextOf(t, res))
+	assert.Equal(t, 1, firer.calls)
+}
+
+// Failure: creator unresolved => MCP error mentioning conflict.
+func TestScheduleTools_RunNow_CreatorUnresolved(t *testing.T) {
+	repo := newMCPSchedRepo()
+	owner := uuid.New()
+	s := seedMCPSchedule(repo, owner)
+	srv := newScheduleServerWithFirer(repo, true, &stubMCPFirer{err: schedule.ErrCreatorUnresolved})
+
+	res := callSchedule(t, srv, userCtx(owner), "schedule_run_now", map[string]any{"id": s.ID.String()})
+
+	assert.True(t, res.IsError)
+	assert.Contains(t, schedTextOf(t, res), "conflict")
 }

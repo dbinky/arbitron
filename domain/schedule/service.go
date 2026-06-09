@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -24,6 +25,10 @@ var (
 	// than the configured minimum interval (a resource/cost-exhaustion floor). It
 	// maps to HTTP 400 at the adapter seam.
 	ErrIntervalTooFrequent = errors.New("schedule: cron interval is finer than the allowed minimum")
+	// ErrRunNowUnavailable is returned when run-now is invoked on a Service that
+	// has no Firer wired. It maps to HTTP 503 / MCP failed at the adapter seam:
+	// the capability is not available in this deployment, not a client error.
+	ErrRunNowUnavailable = errors.New("schedule: run-now is not available")
 )
 
 // Default bounds. They turn the unbounded-schedule abuse vector (unattended,
@@ -87,6 +92,21 @@ type Service struct {
 	canTrigger CanTrigger
 	now        func() time.Time
 	bounds     Bounds
+	firer      Firer        // optional; nil => run-now unavailable
+	logger     *slog.Logger // audit seam for run-now (defaults to slog.Default)
+}
+
+// Firer starts a schedule's workflow immediately, out of cron cadence. The
+// schedule.Runner satisfies it. It is OPTIONAL on the Service: nil when unwired,
+// in which case RunNow returns ErrRunNowUnavailable and the adapters do not
+// advertise the run-now surface (HasFirer gates registration).
+type Firer interface {
+	Fire(ctx context.Context, s Schedule, skipWhenBusy bool) (uuid.UUID, bool, error)
+}
+
+// WithFirer wires the run-now fire path. Without it, RunNow is unavailable.
+func WithFirer(f Firer) ServiceOption {
+	return func(s *Service) { s.firer = f }
 }
 
 // ServiceOption configures a Service.
@@ -116,6 +136,17 @@ func WithServiceClock(now func() time.Time) ServiceOption {
 	}
 }
 
+// WithServiceLogger injects the logger used for the run-now audit line (defaults
+// to slog.Default). Named distinctly from the Evaluator's WithLogger to avoid a
+// package-level collision.
+func WithServiceLogger(l *slog.Logger) ServiceOption {
+	return func(s *Service) {
+		if l != nil {
+			s.logger = l
+		}
+	}
+}
+
 // NewService constructs a Service. The clock defaults to time.Now and the bounds
 // to the package defaults unless overridden via options.
 func NewService(repo ScheduleRepository, canTrigger CanTrigger, opts ...ServiceOption) *Service {
@@ -127,9 +158,13 @@ func NewService(repo ScheduleRepository, canTrigger CanTrigger, opts ...ServiceO
 			MaxSchedulesPerCreator: DefaultMaxSchedulesPerCreator,
 			MinInterval:            DefaultMinInterval,
 		},
+		logger: slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.logger == nil {
+		s.logger = slog.Default()
 	}
 	return s
 }
@@ -254,9 +289,20 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (Schedule, error) {
 	return *sched, nil
 }
 
-// List returns the caller's own schedules (non-admin) or all (admin). The
-// creator filter is SERVICE-set from the identity, never from request input.
-func (s *Service) List(ctx context.Context) ([]Schedule, error) {
+// ListOptions are optional, NON-security narrowing filters for List. They only
+// ever shrink the already-creator-scoped result set, so they are safe to take
+// from request input (unlike CreatorID, which is service-set from identity).
+type ListOptions struct {
+	// WorkflowName, when non-empty, restricts the result to schedules for that
+	// workflow. Empty means no workflow narrowing (the caller's full scoped list).
+	WorkflowName string
+}
+
+// List returns the caller's own schedules (non-admin) or all (admin), optionally
+// narrowed to one workflow. The creator filter is SERVICE-set from the identity,
+// never from request input; the workflow filter (when provided) only shrinks
+// that already-scoped set, so a non-admin still sees only THEIR schedules.
+func (s *Service) List(ctx context.Context, opts ...ListOptions) ([]Schedule, error) {
 	c, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -265,6 +311,10 @@ func (s *Service) List(ctx context.Context) ([]Schedule, error) {
 	if !c.IsAdmin() {
 		uid := c.UserID
 		filters.CreatorID = &uid
+	}
+	if len(opts) > 0 && opts[0].WorkflowName != "" {
+		wf := opts[0].WorkflowName
+		filters.WorkflowName = &wf
 	}
 	return s.repo.List(ctx, filters)
 }
@@ -368,6 +418,86 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 	return s.repo.Delete(ctx, id)
 }
+
+// RunNowInput carries the run-now options. Force defaults to false: by default
+// run-now COALESCES against an active run of the same workflow/creator (it skips
+// rather than starting a second concurrent run). This is the per-identity
+// concurrency cap that contains the token-spend / queue-exhaustion abuse vector,
+// since run-now bypasses the cron COUNT/INTERVAL bounds. Set Force to fire
+// regardless of an active run (a deliberate concurrent run).
+type RunNowInput struct {
+	Force bool
+}
+
+// RunNowResult reports the outcome of a run-now. Fired is false when the
+// occurrence was skipped because a prior run was active and SkipWhenBusy was set;
+// in that case InstanceID is uuid.Nil.
+type RunNowResult struct {
+	InstanceID uuid.UUID
+	Fired      bool
+}
+
+// RunNow fires an existing schedule immediately, out of cron cadence, reusing the
+// schedule's variables and creator attribution. It never advances the cron
+// position (the Runner holds no repo).
+//
+// Authorization is a TWO-stage gate. First, owner-or-admin (the same management
+// gate as Get/Update/Delete): the CALLER must be permitted to manage the
+// schedule. Second — and this is the privileged-path defense — the CALLER's
+// CURRENT can-trigger authorization for the workflow is re-checked, the same
+// gate Create/Update enforce. The authoritative authorization for a manual fire
+// is the CALLER's (not the stored creator's): a caller who could trigger the
+// workflow when the schedule was created but has since lost that right (the
+// workflow was unpublished from their department, or their permission revoked)
+// must NOT be able to fire it out of band. The run itself remains attributed to
+// the schedule's creator; only the trigger AUTHORIZATION follows the caller.
+//
+// Throttle: run-now COALESCES against an active run by default (Force=false ⇒
+// skipWhenBusy=true) so a tight loop cannot spawn unbounded concurrent runs;
+// Force=true opts into a deliberate concurrent run.
+func (s *Service) RunNow(ctx context.Context, id uuid.UUID, in RunNowInput) (RunNowResult, error) {
+	c, err := caller(ctx)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	sched, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	if !authorize(c, *sched) {
+		return RunNowResult{}, ErrForbidden
+	}
+	// Re-check the caller's CURRENT trigger authorization (privilege-persistence
+	// defense; the authoritative principal for a manual fire is the caller).
+	if err := s.assertCanTrigger(ctx, c, sched.WorkflowName); err != nil {
+		return RunNowResult{}, err
+	}
+	if s.firer == nil {
+		return RunNowResult{}, ErrRunNowUnavailable
+	}
+	// Coalesce by default; Force opts into a concurrent run.
+	instID, fired, err := s.firer.Fire(ctx, *sched, !in.Force)
+	if err != nil {
+		return RunNowResult{}, err
+	}
+	// Audit the privileged, out-of-cadence fire at the single seam BOTH transports
+	// (REST + MCP) funnel through, mirroring evaluator.fireOne at the cron seam.
+	// Log the caller UserID (NOT email/subject — PII out of logs) and never the
+	// raw Variables (they may carry sensitive inputs).
+	s.logger.Info("schedule run-now",
+		"callerUserID", c.UserID.String(),
+		"scheduleID", sched.ID.String(),
+		"workflow", sched.WorkflowName,
+		"instanceID", instID.String(),
+		"fired", fired,
+	)
+	return RunNowResult{InstanceID: instID, Fired: fired}, nil
+}
+
+// HasFirer reports whether the run-now path is wired. Adapters use it to gate
+// registration of the run-now surface (consistent with the conditional
+// schedule-tools registration pattern).
+func (s *Service) HasFirer() bool { return s.firer != nil }
 
 // assertCanTrigger maps the can-trigger gate to ErrNotAuthorizedWorkflow.
 func (s *Service) assertCanTrigger(ctx context.Context, c identity.Identity, workflowName string) error {

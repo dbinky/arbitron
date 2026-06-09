@@ -71,3 +71,24 @@ describe('InstanceRow dismissal controls', () => {
     expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
   })
 })
+
+describe('InstanceRow origin annotation', () => {
+  it('shows a scheduled badge with the schedule reference for schedule runs', () => {
+    renderRow({
+      instance: summary({ triggerSource: 'schedule', scheduleId: 'sched-7' }),
+    })
+    expect(screen.getByText(/scheduled/i)).toBeInTheDocument()
+    expect(screen.getByTitle(/sched-7/)).toBeInTheDocument()
+  })
+
+  it('shows a manual badge (and no schedule ref) for manual runs', () => {
+    renderRow({ instance: summary({ triggerSource: 'manual' }) })
+    expect(screen.getByText(/manual/i)).toBeInTheDocument()
+    expect(screen.queryByTitle(/sched/)).toBeNull()
+  })
+
+  it('defaults a row with no triggerSource to a manual badge', () => {
+    renderRow({ instance: summary() })
+    expect(screen.getByText(/manual/i)).toBeInTheDocument()
+  })
+})

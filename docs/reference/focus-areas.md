@@ -1,6 +1,8 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of **Arbitron org-readiness** (edge-trusted SSO, pluggable agent backends + universal provider routing, scheduled/recurring triggers) for correctness, fail-closed auth, credential secrecy, backend/provider routing, and scheduling integrity.
+This document tracks the systematic review of the **final org-readiness gaps**
+implementation (schedule "run now", SSO group→department mapping, schedule & run
+visibility) for correctness, security, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -13,22 +15,18 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Edge JWT verifier (`adapter/edge/verifier.go` — go-oidc discovery, signature/iss/aud-set/exp/nbf, email extraction, JWKS cache, fail-fast) | [x] | [x] | Done |
-| 2 | Edge auth config + validation (`domain/config/config.go`, `adapter/config/loader.go` — `auth.edge.{teamdomain,audiences}`, `validateAuth`, env overlay, YAML example) | [x] | [x] | Done |
-| 3 | Email provisioning (`domain/instance/provisioner.go` `ResolveByEmail`, `UserRepository.GetByEmail`, `adapter/sqlite/user_repo.go` + query — create-on-first-sight, bootstrap admin vs default group, case-insensitivity) | [x] | [x] | Done |
-| 4 | Edge auth middleware + wiring (`adapter/http/auth_middleware.go` edge branch, `NewEdgeAuthMiddleware`, `cmd/arbitron/main.go` — stateless, fail-closed 401 vs 500, no login routes) | [x] | [x] | Done |
-| 5 | Backend axis (`domain/workflow/workflow.go` `NodeConfig.Backend` + `validation.go`; `domain/provider/provider.go` Profile/ResolvedBinding; `adapter/provider/static.go`; `domain/engine/executor_agent.go` precedence) | [x] | [x] | Done |
-| 6 | Factory backend dispatch (`adapter/provider/factory.go` `AgentProviderFor`, `Deps.DefaultAgentBackend`, `ErrUnknownBackend`) | [x] | [x] | Done |
-| 7 | claude-cli endpoint/key injection (`adapter/claudecli/env.go`, `agent_adapter.go`, `NewAgentAdapterForBinding`; `adapter/procenv/procenv.go` allowlist) | [x] | [x] | Done |
-| 8 | opencode LiteLLM mapping + CLI install (`adapter/opencode/provider_id.go`, `env.go` guard; `Dockerfile`, `install.sh`, `install.ps1` install both CLIs) | [x] | [x] | Done |
-| 9 | Schedule domain (`domain/schedule/` schedule.go/validation.go/ports.go — entity, cron `NextFire`, timezone normalize, validation) | [x] | [x] | Done |
-| 10 | Schedule persistence (`adapter/sqlite/schedule_repo.go`, `migrations/013_schedules.*`, `queries/schedules.sql`, instance `HasActiveRun`, notifications schema change) | [x] | [x] | Done |
-| 11 | Schedule evaluator (`domain/schedule/evaluator.go`, `alerter.go` — injected clock, fire-as-creator, collision skip, no-backfill recovery, main.go lifecycle) | [x] | [x] | Done |
-| 12 | Schedule management surface (`domain/schedule/service.go` authz, `adapter/http/schedule_handler.go`, `adapter/mcp/tools_schedule.go` — CRUD/enable-disable, own-vs-admin, can-trigger gate) | [x] | [x] | Done |
-| 13 | Auth mode coherence (`domain/identity` + `adapter/http/auth_middleware.go` — local/org/edge selection; org & local remain unchanged and green) | [x] | [x] | Done |
-| 14 | Vertical slice: edge request → identity (header → verify → provision → enriched identity → authorized request) | [x] | [x] | Done |
-| 15 | Vertical slice: agent node → backend → provider → LiteLLM (node/profile backend → resolver → factory → adapter → endpoint+key) | [x] | [x] | Done |
-| 16 | Vertical slice: schedule due → fire-as-creator → stamped instance → queue (cron tick → evaluator → TriggerWithDepartment → enqueue) | [x] | [x] | Done |
+| 1 | Run-now domain core (`domain/schedule/runner.go` `Runner.Fire`, shared `resolveCreatorIdentity`, `Service.RunNow`/`WithFirer`/`HasFirer`, `ErrCreatorUnresolved`/`ErrRunNowUnavailable`) — never advances `LastFiredAt`; owner-or-admin authz; run attributed to creator | [x] | [x] | done |
+| 2 | Run-now adapters & wiring (`adapter/http/schedule_handler.go` `POST /schedules/{id}/run` 202/200/409/503; `adapter/mcp/tools_schedule.go` conditional `schedule_run_now`; composition-root `NewRunner` from the Evaluator's collaborators) | [x] | [x] | done |
+| 3 | Edge group extraction (`domain/identity/edge.go` `EdgeIdentity{Email,Groups}`; `adapter/edge/verifier.go` configured `GroupClaim`, string-or-array, missing⇒nil⇒NOT 401, raw token never logged) | [x] | [x] | done |
+| 4 | Department resolution mapping (`domain/identity/groups.go` `ResolveDepartments` mapping▸verbatim▸default chokepoint + `GroupConfig.Mapping`; `EffectiveMembership`/`Leads` union preserved) | [x] | [x] | done |
+| 5 | Provisioner edge scoping (`domain/instance/provisioner.go` `ResolveByEmail(ctx,email,groups)` threads groups; group claim NEVER confers admin; email allow-list authoritative; OIDC path unchanged) | [x] | [x] | done |
+| 6 | Department remap reconciler (`domain/identity/remap.go` `ReconcileMappings`/`DepartmentRenamer`; `adapter/sqlite/department_renamer.go` four-table rewrite, `UPDATE OR IGNORE`+`DELETE` membership-collision; idempotent; fail-fast boot wiring) | [x] | [x] | done |
+| 7 | Run-origin model & stamping (`domain/instance/origin.go` `Origin`/`TriggerSource`/`WithOrigin`/`OriginFromContext`; `domain/engine/engine.go` reads ctx, no `domain/schedule` import; cron `fireOne` + `Runner.Fire` inject origin) | [x] | [x] | done |
+| 8 | Instance origin persistence (`adapter/sqlite` migration `014_instance_trigger_origin`, hand-maintained sqlc, repo read/write, backfill `manual`, deleted-schedule still lists; HTTP summary `triggerSource`/`scheduleId`) | [x] | [x] | done |
+| 9 | Workflow-scoped schedule listing (`domain/schedule/service.go` variadic `List`/`ListOptions{WorkflowName}` — creator scoping service-set, never request input; `adapter/http` `GET /schedules?workflowName=`) | [x] | [x] | done |
+| 10 | Dashboard read-only surfaces (`dashboard/src` `OriginBadge`, `SchedulesPanel`, `api.schedules.list`, TS types) — zero mutation controls; visibility-scoped; graceful empty/error | [x] | [x] | done |
+| 11 | Config & headless wiring (`cfg.Auth.RBAC` `GroupClaim`/`DefaultGroup`/`Mapping` loading + `ARBITRON_AUTH_RBAC_MAPPING_*` env overlay; edge verifier `GroupClaim` wired; unset claim ⇒ today's behavior) | [x] | [x] | done |
+| 12 | Test coverage & embedded dist (five-category coverage for new code; injected clock/`httptest`/fakes; `adapter/dashboard/dist` synced with `dashboard/`) | [x] | [x] | done |
 
 ---
 
@@ -36,16 +34,14 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 17 | Edge verifier + Email provisioning (verified email flows correctly into create/admin/default-group; case + normalization) | [x] | Done |
-| 18 | Edge config + Middleware/wiring (config drives verifier+middleware construction; fail-fast on missing teamdomain/audiences; nil session/token repos) | [x] | Done |
-| 19 | Backend axis + Factory dispatch (Backend field set in executor reaches `AgentProviderFor`; precedence node>profile>default end-to-end; unknown fails closed) | [x] | Done |
-| 20 | claude-cli injection + opencode mapping (both backends reach LiteLLM; credential secrecy parity; base-url allowlist vs reject-guard interaction) | [x] | Done |
-| 21 | Schedule domain + Persistence (entity ↔ repo round-trip; cron/timezone/LastFiredAt persisted; hand-written repo matches `schedules.sql`) | [x] | Done |
-| 22 | Schedule evaluator + Trigger-stamp (fire-as-creator reuses `domain/engine` `resolveStamp`; owner+department correct; department override) | [x] | Done |
-| 23 | Schedule evaluator + Persistence/recovery (`LastFiredAt`-driven no-backfill is deterministic across restart; skip/miss alerts persisted) | [x] | Done |
-| 24 | Schedule management + Authz (own-vs-admin + can-trigger gate consistent across REST and MCP surfaces) | [x] | Done |
-| 25 | Edge identity + Schedule ownership (a scheduled run's creator attribution ties to an edge-provisioned user; department stamping coherent) | [x] | Done |
-| 26 | Credential secrecy + Config/logging (provider keys + master key never in logs/argv/allowlist/`config.yaml`; non-secret base-urls only where intended) | [x] | Done |
+| 13 | Run-now core + adapters (§1+§2 — `RunNowResult{InstanceID,Fired}` fired-vs-skipped contract; sentinel→HTTP/MCP mapping; REST/MCP parity over one `Service`) | [x] | done |
+| 14 | Edge groups + department resolution (§3+§4 — `Groups []string` flows verifier→`ResolveDepartments`; missing/malformed claim ⇒ default group, not 401) | [x] | done |
+| 15 | Resolution + remap reconciler (§4+§6 — a verbatim department later mapped renames consistently across user_departments/instances/schedules/published_workflows with no orphan/dupe) | [x] | done |
+| 16 | Origin model + persistence (§7+§8 — in-memory `Origin` fields round-trip the migration columns; `manual`/`schedule`/`run_now` survive write→read→summary) | [x] | done |
+| 17 | Origin persistence + dashboard (§8+§10 — summary `triggerSource`/`scheduleId` JSON drives `OriginBadge`; deleted-schedule run still renders) | [x] | done |
+| 18 | Workflow listing + SchedulesPanel (§9+§10 — `GET /schedules?workflowName=` contract matches `api.schedules.list`; owner-or-admin scope honored in UI) | [x] | done |
+| 19 | Config + edge + resolution (§11+§3+§4 — configured `GroupClaim`/`Mapping` are actually consumed end-to-end; env overlay precedence correct) | [x] | done |
+| 20 | Run-now origin slice (§1+§7+§8 — a run-now fire stamps `run_now`+`scheduleId` and reaches the DB + summary; does not advance the cron position) | [x] | done |
 
 ---
 
@@ -54,21 +50,20 @@ A review pass is only checked when the checklist produces a passing result for t
 ### Single Area Reviews — What To Check
 
 **Pass 1 (Correctness & Coverage):**
-- All behaviors have test coverage across the five scenario categories (happy / success / failure / error / edge).
-- The code does what the design doc says it should (in spirit).
-- Error handling is thorough — no silent failures; fail-closed where the constraint demands it.
-- Module boundaries are clean (domain ports vs adapters; no leaking concrete types across seams).
+- All public functions have test coverage (happy / success / failure / error / edge)
+- The code does what the spec and phase design doc say it should
+- Error handling is thorough — no silent failures; fail-closed where security-relevant
+- Module boundaries are clean (hexagonal: domain has no infra import; engine never imports schedule; origin flows via `domain/instance` context)
 
 **Pass 2 (Robustness & Extensibility):**
-- Aligns to the spirit of the spec/design, not just surface conformance.
-- Time/network/subprocess dependencies are injected/mocked; tests are deterministic (injected clock; httptest JWKS; mock runners).
-- Assertions test real risks (auth bypass, key leakage, mis-routing, backfill storms, DST), not happy-path ceremony.
-- Edge cases handled (empty/missing claims, unknown backend, invalid cron/tz, restart, collision, DB error).
+- Code aligns to the spirit of the design, not just surface conformance
+- Authz is owner-or-admin and service-set from identity (never request input); group claims never confer admin
+- Test assertions test real risks (remap consistency across all four tables; missing group claim ⇒ default group; run-now skip-vs-fire), not happy-path ceremony
+- Edge cases handled (empty inputs, deleted schedule/workflow, membership collision, unset config)
 
 ### Paired Area Reviews — What To Check
 
-Paired reviews verify that two components integrate correctly:
-- Data flows cleanly across the boundary (claims → identity; node → binding → adapter; schedule → trigger → instance).
-- Error propagation works end-to-end (verify failure → 401; provision DB error → 500; unknown backend → fail closed).
-- No assumptions in one component the other doesn't satisfy (e.g. the evaluator's creator context is what trigger-stamp expects).
-- Integration tests cover the seams between the pair, not just unit-level happy paths.
+- Data flows cleanly across the boundary (the cross-task contracts the plan-alignment review verified: `Runner.Fire`, `ResolveByEmail` signature, `Origin`/summary field names, `Service.List` variadic, sentinel mappings)
+- Error propagation works end-to-end (401 vs 500 on edge; 409/503 on run-now; graceful UI degradation)
+- No assumptions in one component the other doesn't satisfy
+- Integration tests cover the seams between the pair, not just unit happy paths

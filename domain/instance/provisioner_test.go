@@ -452,7 +452,7 @@ func TestResolveByEmail_NewEmail_DefaultGroupUser(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "eve@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "", "eve@corp.example", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls)
 	assert.Equal(t, identity.RoleUser, u.Role)
@@ -467,9 +467,51 @@ func TestResolveByEmail_BootstrapEmail_Admin(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "boss@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "", "boss@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role)
+}
+
+// SECURITY (Must Fix #4): when the edge token carries a stable IdP-verified
+// subject, bootstrap-admin matching PREFERS it over the free-text email. A
+// subject on the allow-list promotes to admin even though the email is not
+// listed — the verified subject is the trustworthy admin key.
+func TestResolveByEmail_BootstrapSubject_Admin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	// Only the subject is on the bootstrap list; the email is NOT.
+	p := NewProvisioner(repo, []string{"oid-stable-123"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "oid-stable-123", "boss@corp.example", nil)
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role, "a bootstrap-listed verified subject must promote to admin")
+	require.NotNil(t, u.Subject)
+	assert.Equal(t, "oid-stable-123", *u.Subject, "the verified subject must be persisted as the stable identity key")
+}
+
+// When a subject is present it is persisted; the email is still stored for
+// display/lead-matching but the user is keyed on the verified subject.
+func TestResolveByEmail_WithSubject_PersistsSubject(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "oid-abc", "ivy@corp.example", nil)
+	require.NoError(t, err)
+	require.NotNil(t, u.Subject)
+	assert.Equal(t, "oid-abc", *u.Subject)
+	require.NotNil(t, u.Email)
+	assert.Equal(t, "ivy@corp.example", *u.Email)
+}
+
+// Degrade gracefully: with NO subject (token carries only email), behavior is the
+// prior email-keyed path — a bootstrap-listed email still promotes to admin.
+func TestResolveByEmail_NoSubject_FallsBackToEmail(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+
+	u, err := p.ResolveByEmail(context.Background(), "", "boss@corp.example", nil)
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role)
+	assert.Nil(t, u.Subject, "with no subject the edge user remains subject-nil")
 }
 
 // Boundary: bootstrap matching is case-insensitive (reuses IsBootstrapAdmin).
@@ -477,7 +519,7 @@ func TestResolveByEmail_BootstrapMatchCaseInsensitive(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "BOSS@CORP.EXAMPLE")
+	u, err := p.ResolveByEmail(context.Background(), "", "BOSS@CORP.EXAMPLE", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role)
 }
@@ -492,7 +534,7 @@ func TestResolveByEmail_ReturningEmail_NoDuplicateCreate(t *testing.T) {
 	// Email is now on the bootstrap list → promote at this login (live re-eval).
 	p := NewProvisioner(repo, []string{"dana@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "dana@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "", "dana@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, repo.createCalls, "returning email must not be re-created")
 	assert.Equal(t, id, u.ID)
@@ -508,7 +550,7 @@ func TestResolveByEmail_ReturningEmail_Demotes(t *testing.T) {
 	repo.byEmail["ex@corp.example"] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
 	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
 
-	u, err := p.ResolveByEmail(context.Background(), "ex@corp.example")
+	u, err := p.ResolveByEmail(context.Background(), "", "ex@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleUser, u.Role, "removed-from-bootstrap email demoted at login")
 }
@@ -518,11 +560,11 @@ func TestResolveByEmail_EmptyEmail_ErrInvalidClaims(t *testing.T) {
 	repo := newFakeProvUserRepo()
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-	_, err := p.ResolveByEmail(context.Background(), "")
+	_, err := p.ResolveByEmail(context.Background(), "", "", nil)
 	assert.ErrorIs(t, err, ErrInvalidClaims)
 	assert.Equal(t, 0, repo.createCalls)
 
-	_, err = p.ResolveByEmail(context.Background(), "   ")
+	_, err = p.ResolveByEmail(context.Background(), "", "   ", nil)
 	assert.ErrorIs(t, err, ErrInvalidClaims)
 	assert.Equal(t, 0, repo.createCalls)
 }
@@ -536,7 +578,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.getEmailErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "x@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "", "x@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 		assert.NotErrorIs(t, err, ErrInvalidClaims, "a DB error must not be mistaken for invalid claims")
 		assert.Equal(t, 0, repo.createCalls)
@@ -546,7 +588,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.createErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "y@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "", "y@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 	})
 
@@ -554,7 +596,7 @@ func TestResolveByEmail_DBErrorsSurface(t *testing.T) {
 		repo := newFakeProvUserRepo()
 		repo.replaceDeptErr = boom
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
-		_, err := p.ResolveByEmail(context.Background(), "z@corp.example")
+		_, err := p.ResolveByEmail(context.Background(), "", "z@corp.example", nil)
 		assert.ErrorIs(t, err, boom)
 	})
 }
@@ -568,7 +610,7 @@ func TestResolveByEmail_WhitespacePaddedEmail_Normalized(t *testing.T) {
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 	ctx := context.Background()
 
-	u1, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	u1, err := p.ResolveByEmail(ctx, "", "  alice@corp.example  ", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls)
 	require.NotNil(t, u1.Email)
@@ -576,13 +618,13 @@ func TestResolveByEmail_WhitespacePaddedEmail_Normalized(t *testing.T) {
 	assert.Equal(t, "alice@corp.example", u1.Username, "username must also be trimmed")
 
 	// Padded re-call must reuse the same user (no duplicate create).
-	u2, err := p.ResolveByEmail(ctx, "  alice@corp.example  ")
+	u2, err := p.ResolveByEmail(ctx, "", "  alice@corp.example  ", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "padded re-call must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u2.ID)
 
 	// Trimmed form also resolves to the same user.
-	u3, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	u3, err := p.ResolveByEmail(ctx, "", "alice@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "trimmed form must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u3.ID)
@@ -602,7 +644,7 @@ func TestResolveByEmail_DemotionFailurePropagates(t *testing.T) {
 
 	// Bootstrap list no longer includes this email → demotion required.
 	p := NewProvisioner(repo, []string{"someone-else@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
-	_, err := p.ResolveByEmail(context.Background(), e)
+	_, err := p.ResolveByEmail(context.Background(), "", e, nil)
 	if !errors.Is(err, dbErr) {
 		t.Errorf("expected wrapped role-store error on failed edge demotion, got %v", err)
 	}
@@ -619,7 +661,7 @@ func TestResolveByEmail_ExistingRoleUnchanged_NoRoleWrite(t *testing.T) {
 		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleAdmin}
 		p := NewProvisioner(repo, []string{e}, identity.GroupConfig{DefaultGroup: "default"})
 
-		u, err := p.ResolveByEmail(context.Background(), e)
+		u, err := p.ResolveByEmail(context.Background(), "", e, nil)
 		require.NoError(t, err)
 		assert.Equal(t, identity.RoleAdmin, u.Role)
 		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
@@ -632,7 +674,7 @@ func TestResolveByEmail_ExistingRoleUnchanged_NoRoleWrite(t *testing.T) {
 		repo.byEmail[e] = &User{ID: id, Email: &e, Username: e, Role: identity.RoleUser}
 		p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 
-		u, err := p.ResolveByEmail(context.Background(), e)
+		u, err := p.ResolveByEmail(context.Background(), "", e, nil)
 		require.NoError(t, err)
 		assert.Equal(t, identity.RoleUser, u.Role)
 		assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when role is unchanged")
@@ -647,13 +689,13 @@ func TestResolveByEmail_CaseMixedEmailRoundTrip(t *testing.T) {
 	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
 	ctx := context.Background()
 
-	u1, err := p.ResolveByEmail(ctx, "Alice@Corp.Example")
+	u1, err := p.ResolveByEmail(ctx, "", "Alice@Corp.Example", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.createCalls, "first call must create the user")
 	require.NotNil(t, u1.Email)
 	assert.Equal(t, "Alice@Corp.Example", *u1.Email, "stored email must preserve original casing")
 
-	u2, err := p.ResolveByEmail(ctx, "alice@corp.example")
+	u2, err := p.ResolveByEmail(ctx, "", "alice@corp.example", nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, repo.createCalls, "second call with different case must NOT create a duplicate")
 	assert.Equal(t, u1.ID, u2.ID, "both calls must resolve to the same user ID")
@@ -671,4 +713,114 @@ func TestResolve_ExistingAdminStillOnList_NoRoleWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role)
 	assert.Equal(t, 0, repo.updateRoleCalls, "UpdateRole must not be called when the role is unchanged")
+}
+
+// ---- ResolveByEmail: edge group-claim department snapshot ----
+
+func TestResolveByEmail_MappedGroup_SnapshotsFriendlyDepartment(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	})
+	u, err := p.ResolveByEmail(context.Background(), "", "alice@corp.example", []string{"guid-123"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_UnmappedGroup_SnapshotsVerbatim(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "", "bob@corp.example", []string{"Marketing"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"marketing"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_MultipleGroups_SnapshotsUnion(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{
+		DefaultGroup: "default",
+		Mapping:      map[string]string{"guid-123": "engineering"},
+	})
+	u, err := p.ResolveByEmail(context.Background(), "", "carol@corp.example", []string{"guid-123", "sales"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering", "sales"}, repo.depts[u.ID])
+}
+
+func TestResolveByEmail_NoGroups_StillDefaultGroup(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "", "dan@corp.example", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, repo.depts[u.ID])
+}
+
+// Authorization/role: a group claim NEVER confers admin; admin is email-allow-list only.
+func TestResolveByEmail_GroupClaimNeverConfersAdmin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	// "admins" looks privilege-y but is just a department; bootstrap list is empty.
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "", "eve@corp.example", []string{"admins", "superuser"})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleUser, u.Role, "a group claim must never grant admin")
+}
+
+func TestResolveByEmail_BootstrapEmail_IsAdminRegardlessOfGroups(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, []string{"boss@corp.example"}, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.ResolveByEmail(context.Background(), "", "boss@corp.example", []string{"interns"})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleAdmin, u.Role, "email allow-list confers admin even with a non-admin group claim")
+}
+
+// Edge: NewProvisioner normalizes bootstrap list entries (trim+lowercase) at
+// construction time so operators can supply "  Admin@Corp.Example  " in config
+// and matching still works. Both subject and email entries are normalized.
+func TestNewProvisioner_BootstrapListNormalized(t *testing.T) {
+	p := NewProvisioner(newFakeProvUserRepo(),
+		[]string{"  ADMIN@CORP.EXAMPLE  ", "\tSUB-ADMIN\t", ""},
+		identity.GroupConfig{DefaultGroup: "default"},
+	)
+	assert.True(t, p.IsBootstrapAdmin("sub-admin", ""), "subject entry must match after trim+lowercase")
+	assert.True(t, p.IsBootstrapAdmin("", "admin@corp.example"), "email entry must match after trim+lowercase")
+	assert.False(t, p.IsBootstrapAdmin("", "unknown@corp.example"), "unlisted identity must not match")
+	// Blank entries after normalization must not create phantom "" matches.
+	assert.False(t, p.IsBootstrapAdmin("", ""), "blank entry must not be added to the set")
+}
+
+// Authorization/role: on the OIDC Resolve path, a group claim NEVER confers
+// admin — admin is determined exclusively by IsBootstrapAdmin (subject+email
+// allow-list). Mirrors TestResolveByEmail_GroupClaimNeverConfersAdmin for the
+// edge path; the invariant must hold on both login paths.
+func TestResolve_GroupClaimNeverConfersAdmin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	// Bootstrap list empty; "admins"/"superuser" are department names, not roles.
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.Resolve(context.Background(), Claims{
+		Subject: "attacker-sub", Username: "attacker",
+		Email: "attacker@corp.example", EmailVerified: true,
+		Groups: []string{"admins", "superuser"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleUser, u.Role, "group claim must never grant admin on the OIDC path")
+	// Sanity: the groups did drive department scoping (not silently discarded).
+	assert.Equal(t, []string{"admins", "superuser"}, repo.depts[u.ID])
+}
+
+// Edge/state: a returning edge user's departments are REPLACED (not accumulated)
+// on re-login with a different group set. Mirrors TestResolve_ReplacesDepartmentsOnEachLogin
+// for the OIDC path.
+func TestResolveByEmail_DepartmentsReplacedOnReLogin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	ctx := context.Background()
+
+	u1, err := p.ResolveByEmail(ctx, "", "alice@corp.example", []string{"sales"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sales"}, repo.depts[u1.ID], "first edge login snapshots first group claim")
+
+	// Second edge login with a different group set must REPLACE the snapshot.
+	_, err = p.ResolveByEmail(ctx, "", "alice@corp.example", []string{"engineering"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering"}, repo.depts[u1.ID], "re-login must replace departments, not accumulate")
 }

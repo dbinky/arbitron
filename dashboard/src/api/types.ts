@@ -11,12 +11,19 @@ export type InstanceState =
 /** Scheduling priority of a workflow instance. */
 export type Priority = 'high' | 'normal' | 'low'
 
+/** How a run was started. Mirrors the backend instance.TriggerSource. */
+export type TriggerSource = 'manual' | 'schedule' | 'run_now'
+
 /** Lightweight instance representation returned by the list endpoint. */
 export interface InstanceSummary {
   id: string
   workflowName: string
   state: InstanceState
   priority: Priority
+  /** How this run was started. Backend defaults legacy rows to 'manual'. */
+  triggerSource?: TriggerSource
+  /** Originating schedule id for schedule/run_now runs; absent for manual. */
+  scheduleId?: string
   currentNodeId?: string
   createdAt: string
   updatedAt: string
@@ -49,6 +56,24 @@ export interface Instance {
   interactiveActive: boolean
   /** The node ID of the interactive node waiting for input, or null. */
   interactiveNodeId: string | null
+}
+
+/**
+ * Read-only schedule projection, matching the backend Schedule.WireMap. The
+ * dashboard never mutates schedules — management stays on REST + MCP.
+ */
+export interface Schedule {
+  id: string
+  workflowName: string
+  cronExpr: string
+  timezone: string
+  creatorId: string
+  department: string
+  enabled: boolean
+  /** ISO timestamp of the last fire, or null/absent if never fired. */
+  lastFiredAt?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 /** Node execution record within an instance trace. */

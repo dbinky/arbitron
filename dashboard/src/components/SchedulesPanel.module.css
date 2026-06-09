@@ -1,0 +1,47 @@
+.container {
+  padding: 0.5rem 0;
+}
+
+.heading {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: #9aa4b2;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #2a2f3a;
+}
+
+.table th {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.enabled {
+  color: #7fd17f;
+}
+
+.disabled {
+  color: #9aa4b2;
+}
+
+.empty,
+.error {
+  font-size: 0.8rem;
+  color: #9aa4b2;
+  padding: 0.5rem 0;
+}
+
+.error {
+  color: #ff9a9a;
+}

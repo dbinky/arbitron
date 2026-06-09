@@ -88,6 +88,29 @@ func deptToNullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
+// scheduleIDToNullString maps a nilable schedule UUID to a nullable SQL string:
+// nil (manual run) => SQL NULL; a value => its canonical UUID string.
+func scheduleIDToNullString(id *uuid.UUID) sql.NullString {
+	if id == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: id.String(), Valid: true}
+}
+
+// nullStringToScheduleID maps a nullable SQL string back to *uuid.UUID; NULL =>
+// nil. A deleted schedule's id is still a valid UUID string, so this round-trips
+// it.
+func nullStringToScheduleID(ns sql.NullString) (*uuid.UUID, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	id, err := uuid.Parse(ns.String)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 func intPtrToNullInt64(i *int) sql.NullInt64 {
 	if i == nil {
 		return sql.NullInt64{}

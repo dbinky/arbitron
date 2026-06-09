@@ -29,12 +29,19 @@ type Config struct {
 	// Audiences is the set of application AUD tag(s) to accept. A token whose aud
 	// claim contains none of these is rejected.
 	Audiences []string
+	// GroupClaim is the token claim name carrying group membership. "" disables
+	// group extraction entirely (every user falls back to the default group). The
+	// claim value may be a JSON string or an array of strings; both normalize to
+	// []string. A missing or malformed claim yields nil groups — it is NEVER a
+	// verification failure, so a user without group info is not locked out.
+	GroupClaim string
 }
 
 // Verifier implements identity.EdgeVerifier for a Cloudflare-Access-style issuer.
 type Verifier struct {
-	verifier  *coreoidc.IDTokenVerifier
-	audiences []string
+	verifier   *coreoidc.IDTokenVerifier
+	audiences  []string
+	groupClaim string
 }
 
 var _ identity.EdgeVerifier = (*Verifier)(nil)
@@ -70,34 +77,95 @@ func New(ctx context.Context, cfg Config) (*Verifier, error) {
 	// ourselves below. Signature, issuer, expiry and not-before are still
 	// enforced by the verifier.
 	verifier := prov.Verifier(&coreoidc.Config{SkipClientIDCheck: true})
-	return &Verifier{verifier: verifier, audiences: audiences}, nil
+	return &Verifier{
+		verifier:   verifier,
+		audiences:  audiences,
+		groupClaim: strings.TrimSpace(cfg.GroupClaim),
+	}, nil
 }
 
 // Verify checks the token signature, issuer, expiry/not-before, and audience
-// membership, then returns the verified email. On ANY failure it returns
-// ("", err) so the caller fails closed (401). The raw token is never logged.
-func (v *Verifier) Verify(ctx context.Context, rawToken string) (string, error) {
+// membership, then returns the verified EdgeIdentity. On ANY of those failures
+// (or a missing email claim) it returns (EdgeIdentity{}, err) so the caller fails
+// closed (401). A missing/malformed GROUP claim is NOT a failure: it yields
+// Groups: nil. The raw token is never logged.
+func (v *Verifier) Verify(ctx context.Context, rawToken string) (identity.EdgeIdentity, error) {
 	if strings.TrimSpace(rawToken) == "" {
-		return "", fmt.Errorf("edge: empty token")
+		return identity.EdgeIdentity{}, fmt.Errorf("edge: empty token")
 	}
 	tok, err := v.verifier.Verify(ctx, rawToken)
 	if err != nil {
-		return "", fmt.Errorf("edge: token verification: %w", err)
+		return identity.EdgeIdentity{}, fmt.Errorf("edge: token verification: %w", err)
 	}
 	if !audienceMatches(tok.Audience, v.audiences) {
-		return "", fmt.Errorf("edge: token audience %v not in configured audiences", tok.Audience)
+		return identity.EdgeIdentity{}, fmt.Errorf("edge: token audience %v not in configured audiences", tok.Audience)
 	}
 	var c struct {
 		Email string `json:"email"`
 	}
 	if err := tok.Claims(&c); err != nil {
-		return "", fmt.Errorf("edge: decoding claims: %w", err)
+		return identity.EdgeIdentity{}, fmt.Errorf("edge: decoding claims: %w", err)
 	}
 	email := strings.TrimSpace(c.Email)
 	if email == "" {
-		return "", fmt.Errorf("edge: missing email claim")
+		return identity.EdgeIdentity{}, fmt.Errorf("edge: missing email claim")
 	}
-	return email, nil
+	// tok.Subject is the verifier-checked "sub" claim. When the Access IdP exposes
+	// a stable subject it is the trustworthy admin-matching key (an email may be
+	// unverified at the IdP); downstream provisioning prefers it over email. It is
+	// "" when the token omits a subject — provisioning then falls back to email.
+	return identity.EdgeIdentity{
+		Subject: strings.TrimSpace(tok.Subject),
+		Email:   email,
+		Groups:  v.extractGroups(tok),
+	}, nil
+}
+
+// extractGroups decodes the configured group claim from the already-verified
+// token. It tolerates the claim being a single JSON string OR an array of
+// strings; any other shape (object, number, absent) yields nil. Non-string array
+// elements and blank strings are dropped. Returns nil when no group claim is
+// configured. The raw token is never logged.
+func (v *Verifier) extractGroups(tok *coreoidc.IDToken) []string {
+	if v.groupClaim == "" {
+		return nil
+	}
+	// Decode all claims into a generic map so an arbitrary claim name can be read.
+	// tok.Claims into a map cannot error here for a well-formed JWT body; on the
+	// off chance it does, treat it as "no groups" (fail open to default group, not
+	// a lockout — a missing group must never 401 a valid user).
+	var all map[string]any
+	if err := tok.Claims(&all); err != nil {
+		return nil
+	}
+	raw, ok := all[v.groupClaim]
+	if !ok {
+		return nil
+	}
+	switch val := raw.(type) {
+	case string:
+		if s := strings.TrimSpace(val); s != "" {
+			return []string{s}
+		}
+		return nil
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			s, isStr := item.(string)
+			if !isStr {
+				continue
+			}
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // audienceMatches reports whether any value in the token's aud claim is in the

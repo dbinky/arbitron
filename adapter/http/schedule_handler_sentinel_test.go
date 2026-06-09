@@ -20,6 +20,7 @@ var scheduleSentinels = []struct {
 }{
 	{"ErrNotFound", schedule.ErrNotFound},
 	{"ErrExists", schedule.ErrExists},
+	{"ErrCreatorUnresolved", schedule.ErrCreatorUnresolved},
 	{"ErrInvalidCron", schedule.ErrInvalidCron},
 	{"ErrInvalidTimezone", schedule.ErrInvalidTimezone},
 	{"ErrEmptyWorkflow", schedule.ErrEmptyWorkflow},
@@ -44,4 +45,14 @@ func TestWriteScheduleError_AllSentinelsNonDefault(t *testing.T) {
 			require.Less(t, rec.Code, 500, "an error sentinel must not map to a 5xx")
 		})
 	}
+}
+
+// ErrRunNowUnavailable is intentionally a 5xx (503 Service Unavailable) — it
+// maps to a specific non-500 5xx, not the catch-all 500. Checked separately
+// because the main sentinel test only validates 4xx sentinels.
+func TestWriteScheduleError_RunNowUnavailable_503(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeScheduleError(rec, schedule.ErrRunNowUnavailable)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"ErrRunNowUnavailable must map to 503, not the catch-all 500")
 }

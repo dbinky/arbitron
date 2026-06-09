@@ -46,6 +46,13 @@ type scheduleUpdateRequest struct {
 	Enabled      *bool          `json:"enabled,omitempty"`
 }
 
+// scheduleRunNowRequest is the POST /schedules/{id}/run body. The whole body is
+// optional; an empty body leaves force=false, so run-now COALESCES against an
+// active run by default. Set force to fire regardless of an active run.
+type scheduleRunNowRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
 // writeScheduleError maps schedule sentinels to HTTP status.
 func writeScheduleError(w http.ResponseWriter, err error) {
 	switch {
@@ -53,6 +60,10 @@ func writeScheduleError(w http.ResponseWriter, err error) {
 		WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 	case errors.Is(err, schedule.ErrExists):
 		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, schedule.ErrCreatorUnresolved):
+		WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, schedule.ErrRunNowUnavailable):
+		WriteError(w, http.StatusServiceUnavailable, "UNAVAILABLE", err.Error())
 	case errors.Is(err, schedule.ErrForbidden), errors.Is(err, schedule.ErrNotAuthorizedWorkflow):
 		WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 	case errors.Is(err, schedule.ErrInvalidCron),
@@ -110,9 +121,15 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, s.WireMap())
 }
 
-// List handles GET /schedules.
+// List handles GET /schedules. An optional ?workflowName= query narrows the
+// result to one workflow (read-only dashboard surface). The creator scoping is
+// applied by the service from the request identity; the workflow filter only
+// shrinks that already-scoped set, so it is safe to take from the query.
 func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
-	schedules, err := h.svc.List(r.Context())
+	opts := schedule.ListOptions{
+		WorkflowName: r.URL.Query().Get("workflowName"),
+	}
+	schedules, err := h.svc.List(r.Context(), opts)
 	if err != nil {
 		writeScheduleError(w, err)
 		return
@@ -197,4 +214,39 @@ func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RunNow handles POST /schedules/{id}/run. Body {"force": bool} is optional
+// (default false ⇒ coalesce against an active run). On a started run it returns
+// 202 with {instanceId, fired:true} and a Location header pointing at the
+// created instance; when skipped-because-busy it returns 200 with {fired:false}.
+func (h *ScheduleHandler) RunNow(w http.ResponseWriter, r *http.Request) {
+	id, ok := scheduleIDParam(w, r)
+	if !ok {
+		return
+	}
+	var req scheduleRunNowRequest
+	// The body is optional. An empty body must not be a 400, so decode only when
+	// there is content; reuse decodeScheduleBody (which 400s on malformed JSON).
+	if r.ContentLength != 0 {
+		if !decodeScheduleBody(w, r, &req) {
+			return
+		}
+	}
+	res, err := h.svc.RunNow(r.Context(), id, schedule.RunNowInput{Force: req.Force})
+	if err != nil {
+		writeScheduleError(w, err)
+		return
+	}
+	if !res.Fired {
+		WriteJSON(w, http.StatusOK, map[string]any{"fired": false})
+		return
+	}
+	// Point the caller at the created instance (HTTP-transport detail; the MCP
+	// surface has no equivalent). The path mirrors the instances route group.
+	w.Header().Set("Location", "/api/v1/instances/"+res.InstanceID.String())
+	WriteJSON(w, http.StatusAccepted, map[string]any{
+		"instanceId": res.InstanceID.String(),
+		"fired":      true,
+	})
 }

@@ -20,6 +20,7 @@ var scheduleSentinels = []struct {
 }{
 	{"ErrNotFound", schedule.ErrNotFound},
 	{"ErrExists", schedule.ErrExists},
+	{"ErrCreatorUnresolved", schedule.ErrCreatorUnresolved},
 	{"ErrInvalidCron", schedule.ErrInvalidCron},
 	{"ErrInvalidTimezone", schedule.ErrInvalidTimezone},
 	{"ErrEmptyWorkflow", schedule.ErrEmptyWorkflow},
@@ -53,4 +54,14 @@ func TestScheduleResultError_AllSentinelsNonDefault(t *testing.T) {
 				"sentinel %s fell through to the default MCP category: %q", s.name, text)
 		})
 	}
+}
+
+// ErrRunNowUnavailable maps to a distinct "run-now unavailable" message. It is
+// checked separately because it intentionally shares the "schedule operation
+// failed" prefix (it IS a service-level failure, not a client error) but must
+// still be an explicit, specific mapping — not just the catch-all default.
+func TestScheduleResultError_RunNowUnavailable_Explicit(t *testing.T) {
+	text := resultText(t, scheduleResultError(schedule.ErrRunNowUnavailable))
+	require.Contains(t, text, "run-now unavailable",
+		"ErrRunNowUnavailable must carry an explicit 'run-now unavailable' message, not just the catch-all")
 }

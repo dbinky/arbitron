@@ -292,6 +292,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 				r.Delete("/{id}", d.ScheduleHandler.Delete)
 				r.Post("/{id}/enable", d.ScheduleHandler.Enable)
 				r.Post("/{id}/disable", d.ScheduleHandler.Disable)
+				r.Post("/{id}/run", d.ScheduleHandler.RunNow)
 			})
 		}
 

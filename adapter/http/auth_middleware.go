@@ -32,7 +32,7 @@ const CfAccessJWTHeader = "Cf-Access-Jwt-Assertion"
 // the middleware does not import the concrete *instance.Provisioner type beyond
 // what it needs. *instance.Provisioner satisfies it.
 type emailProvisioner interface {
-	ResolveByEmail(ctx context.Context, email string) (*instance.User, error)
+	ResolveByEmail(ctx context.Context, subject, email string, groups []string) (*instance.User, error)
 }
 
 // Compile-time assertion that the concrete provisioner satisfies the port.
@@ -193,25 +193,27 @@ func (m *AuthMiddleware) resolve(r *http.Request) (identity.Identity, error) {
 			// No token at all: fail closed (401). Do NOT consult the verifier.
 			return identity.Identity{}, errNoCredential
 		}
-		email, verr := m.edge.verifier.Verify(r.Context(), raw)
+		edgeID, verr := m.edge.verifier.Verify(r.Context(), raw)
 		if verr != nil {
 			// Invalid/forged/expired token: fail closed. NOT a server error — do
 			// not log the raw token; the verifier already wrapped a safe error.
 			return identity.Identity{}, errNoCredential
 		}
-		if email == "" {
-			// Defense-in-depth: a conforming EdgeVerifier never returns ("", nil),
-			// but if a broken implementation does, the empty email is a credential
-			// failure (401) not a server fault (500) — don't let it reach the
-			// provisioner where ErrInvalidClaims would surface as a 500.
+		if edgeID.Email == "" {
+			// Defense-in-depth: a conforming EdgeVerifier never returns an empty
+			// email with a nil error, but if a broken one does, the empty email is a
+			// credential failure (401), not a server fault (500).
 			return identity.Identity{}, errNoCredential
 		}
-		user, perr := m.edge.provisioner.ResolveByEmail(r.Context(), email)
+		// Thread the verified subject + group claim into provisioning so the user is
+		// scoped to the department(s) their SSO group resolves to and bootstrap-admin
+		// matching prefers the stable verified subject. A nil/empty Groups (no claim)
+		// preserves the default-group fallback; an empty Subject falls back to email.
+		user, perr := m.edge.provisioner.ResolveByEmail(r.Context(), edgeID.Subject, edgeID.Email, edgeID.Groups)
 		if perr != nil {
-			// Provisioning/DB failure is a SERVER fault, not an auth denial:
-			// surface a non-errNoCredential error so Handler maps it to 500,
-			// distinguishing "we could not check" from "you are not authenticated".
-			return identity.Identity{}, fmt.Errorf("edge: provisioning %q: %w", email, perr)
+			// Provisioning/DB failure is a SERVER fault, not an auth denial: surface a
+			// non-errNoCredential error so Handler maps it to 500.
+			return identity.Identity{}, fmt.Errorf("edge: provisioning %q: %w", edgeID.Email, perr)
 		}
 		// No session cookie or bearer token is consulted in edge mode (the
 		// session/token repos are nil). enrich is mode-agnostic.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -24,6 +25,15 @@ func (realClock) Now() time.Time { return time.Now() }
 
 // Trigger fires a workflow as the (context-injected) creator. The engine's
 // TriggerWithDepartment satisfies it.
+//
+// Run ORIGIN (TriggerSource/ScheduleID) is an OPTIONAL context input, NOT a
+// parameter: the two fire sites stamp it via instance.WithOrigin on the ctx
+// (evaluator.fireOne stamps OriginSchedule, runner.Fire stamps OriginRunNow) and
+// instance.OriginFromContext is the SINGLE reader. A caller that forgets
+// WithOrigin silently degrades to the documented "manual" default — benign,
+// because origin is a non-authz provenance stamp. The moment anything
+// authz-bearing needs to ride this channel it MUST become an explicit parameter
+// instead; do not add more readers of the origin context value.
 type Trigger interface {
 	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority, department string) (uuid.UUID, bool, error)
 }
@@ -173,7 +183,7 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 // position. A missing creator or workflow alerts and is skipped; the position is
 // still advanced on a deleted-workflow failure so the schedule does not hot-loop.
 func (e *Evaluator) fireOne(ctx context.Context, s Schedule, fireTime time.Time) {
-	id, err := e.idents.IdentityForUser(ctx, s.CreatorID)
+	id, err := resolveCreatorIdentity(ctx, e.idents, s)
 	if err != nil {
 		// Creator gone: cannot attribute the run. Skip without advancing so the
 		// occurrence is retried if the creator is restored shortly; alert so the
@@ -185,7 +195,11 @@ func (e *Evaluator) fireOne(ctx context.Context, s Schedule, fireTime time.Time)
 		}
 		return
 	}
-	fireCtx := identity.WithIdentity(ctx, id)
+	scheduleID := s.ID
+	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, id), instance.Origin{
+		Source:     instance.OriginSchedule,
+		ScheduleID: &scheduleID,
+	})
 	_, _, err = e.trigger.TriggerWithDepartment(fireCtx, s.WorkflowName, s.Variables, "normal", s.Department)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {

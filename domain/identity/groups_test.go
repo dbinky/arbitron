@@ -3,6 +3,8 @@ package identity
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNormalizeDept(t *testing.T) {
@@ -270,4 +272,104 @@ func TestEffectiveMembership(t *testing.T) {
 			t.Errorf("got %v, want %v", got, want)
 		}
 	})
+}
+
+// --- Happy path ---
+
+func TestResolveDepartments_MappedGroup_UsesFriendlyName(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+func TestResolveDepartments_UnmappedGroup_UsesVerbatimNormalized(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"Marketing"}, cfg) // no mapping entry
+	assert.Equal(t, []string{"marketing"}, got, "verbatim fallback is normalized (lower-cased)")
+}
+
+func TestResolveDepartments_MultipleGroups_UnionMappedAndVerbatim(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123", "sales"}, cfg)
+	assert.Equal(t, []string{"engineering", "sales"}, got, "first-seen order preserved")
+}
+
+func TestResolveDepartments_NoGroups_FallsBackToDefault(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments(nil, cfg)
+	assert.Equal(t, []string{"default"}, got)
+}
+
+// --- Input validation ---
+
+func TestResolveDepartments_MappingKeyMatchedCaseInsensitively(t *testing.T) {
+	// Keys are normalized at load (Task 2b). ResolveDepartments normalizes the
+	// incoming claim before lookup, so a differently-cased claim still hits.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"GUID-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+func TestResolveDepartments_BlankAndWhitespaceClaimsDropped(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default"}
+	got := ResolveDepartments([]string{"  ", "", "eng"}, cfg)
+	assert.Equal(t, []string{"eng"}, got)
+}
+
+func TestResolveDepartments_AllBlankClaims_FallsBackToDefault(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default"}
+	got := ResolveDepartments([]string{"  ", ""}, cfg)
+	assert.Equal(t, []string{"default"}, got)
+}
+
+func TestResolveDepartments_DuplicatesAfterMappingCollapsed(t *testing.T) {
+	// Two distinct raw claims mapping to the SAME friendly name dedupe to one.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{
+		"guid-a": "engineering",
+		"guid-b": "engineering",
+	}}
+	got := ResolveDepartments([]string{"guid-a", "guid-b"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+// TestResolveDepartments_MappedAndVerbatimSameDept_Deduped covers the real-world
+// interim migration scenario: a user's token carries both the old GUID claim (which
+// maps to "engineering") AND the new verbatim claim "Engineering" (which also
+// resolves to "engineering" via normalization). Both paths resolve to the same
+// department — the dedup must still produce exactly one occurrence.
+func TestResolveDepartments_MappedAndVerbatimSameDept_Deduped(t *testing.T) {
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "engineering"}}
+	got := ResolveDepartments([]string{"guid-123", "Engineering"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got,
+		"mapped+verbatim claims resolving to the same dept must dedup to one occurrence")
+}
+
+func TestResolveDepartments_MappedFriendlyNameNormalized(t *testing.T) {
+	// Even if a mapping value somehow reaches here un-normalized, output is normalized.
+	cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": "Engineering "}}
+	got := ResolveDepartments([]string{"guid-123"}, cfg)
+	assert.Equal(t, []string{"engineering"}, got)
+}
+
+// TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim covers the subtle
+// case where a Mapping entry EXISTS but its value is empty or whitespace. The code
+// treats this as "no mapping" and falls through to the verbatim normalized claim.
+// A misconfigured mapping entry must not produce an empty department — the user
+// ends up in their raw-claim department, not nowhere.
+func TestResolveDepartments_BlankMappingValue_FallsBackToVerbatim(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"empty string value", ""},
+		{"whitespace-only value", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := GroupConfig{DefaultGroup: "default", Mapping: map[string]string{"guid-123": tc.value}}
+			got := ResolveDepartments([]string{"guid-123"}, cfg)
+			assert.Equal(t, []string{"guid-123"}, got,
+				"blank mapping value must fall back to verbatim normalized claim, not an empty department")
+		})
+	}
 }

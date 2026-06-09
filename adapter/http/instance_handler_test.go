@@ -670,6 +670,69 @@ func TestInstanceHandler_List(t *testing.T) {
 	})
 }
 
+// Manual run: triggerSource="manual" is always present; scheduleId is ABSENT
+// (omitempty) when ScheduleID is nil. Tests that the omitempty tag works and
+// that the zero-value TriggerSource is never silently dropped.
+func TestInstanceHandler_List_ManualOrigin_ScheduleIDAbsent(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	svc.listFn = func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+		now := time.Now()
+		return []instance.InstanceSummary{{
+			ID:            uuid.New(),
+			WorkflowName:  "wf",
+			State:         instance.StateQueued,
+			Priority:      instance.PriorityNormal,
+			TriggerSource: instance.OriginManual,
+			ScheduleID:    nil,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "manual", resp[0]["triggerSource"])
+	_, hasScheduleID := resp[0]["scheduleId"]
+	assert.False(t, hasScheduleID, "scheduleId must be absent (omitempty) for manual runs")
+}
+
+// Origin fields: triggerSource + scheduleId appear in the List JSON response.
+// The summaryDTO maps OriginRunNow -> "run_now" and ScheduleID -> scheduleId.
+func TestInstanceHandler_List_OriginFields(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	sid := uuid.New()
+	svc.listFn = func(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
+		now := time.Now()
+		return []instance.InstanceSummary{{
+			ID:            uuid.New(),
+			WorkflowName:  "wf",
+			State:         instance.StateQueued,
+			Priority:      instance.PriorityNormal,
+			TriggerSource: instance.OriginRunNow,
+			ScheduleID:    &sid,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "run_now", resp[0]["triggerSource"], "triggerSource must be in JSON")
+	assert.Equal(t, sid.String(), resp[0]["scheduleId"], "scheduleId must be in JSON")
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Get instance
 // ---------------------------------------------------------------------------

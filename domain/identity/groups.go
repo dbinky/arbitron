@@ -1,6 +1,9 @@
 package identity
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // GroupConfig is the resolution-time RBAC configuration the group-resolution
 // helpers consume. It is defined HERE (the dependency floor) rather than in
@@ -18,6 +21,12 @@ type GroupConfig struct {
 	// Leads maps a normalized department name to the lead identifiers (subjects
 	// and/or emails, lower-cased) that lead it.
 	Leads map[string][]string
+	// Mapping maps a NORMALIZED raw-claim value to a friendly department name. The
+	// loader normalizes both keys and values (NormalizeDept) so lookups here are
+	// case-insensitive. A raw claim with a mapping entry resolves to the friendly
+	// name; a claim with no entry resolves to its own normalized value (verbatim
+	// fallback). Nil/empty => every claim is verbatim.
+	Mapping map[string]string
 }
 
 // defaultGroupSentinel is the hard fallback when GroupConfig.DefaultGroup is
@@ -62,20 +71,28 @@ func DedupeDepts(in []string) []string {
 	return out
 }
 
-// ResolveDepartments normalizes the raw claim values, drops blanks, and
-// de-duplicates while preserving first-seen order. If the result is empty (no
-// claim configured, claim absent, or all values blank), it returns the single
-// default-group sentinel so a caller is never in zero departments.
+// ResolveDepartments is the single department-resolution chokepoint. For each raw
+// claim value, in first-seen order: normalize it; drop blanks; if cfg.Mapping has
+// an entry, use the normalized friendly name; otherwise use the normalized
+// verbatim value. The result is de-duplicated (order-preserving). If the result
+// is empty (no claim configured, claim absent, or all values blank), it returns
+// the single default-group sentinel so a caller is never in zero departments.
 func ResolveDepartments(claimValues []string, cfg GroupConfig) []string {
-	// Normalize + drop blanks (this function's own policy), then dedupe via the
-	// shared primitive (the operation both this and EffectiveMembership share).
-	normalized := make([]string, 0, len(claimValues))
+	resolved := make([]string, 0, len(claimValues))
 	for _, v := range claimValues {
-		if d := NormalizeDept(v); d != "" {
-			normalized = append(normalized, d)
+		k := NormalizeDept(v)
+		if k == "" {
+			continue
 		}
+		if mapped, ok := cfg.Mapping[k]; ok {
+			if m := NormalizeDept(mapped); m != "" {
+				resolved = append(resolved, m)
+				continue
+			}
+		}
+		resolved = append(resolved, k) // verbatim fallback
 	}
-	out := DedupeDepts(normalized)
+	out := DedupeDepts(resolved)
 	if len(out) == 0 {
 		return []string{cfg.DefaultGroupOr()}
 	}
@@ -110,19 +127,8 @@ func LedDepartments(subject, email string, cfg GroupConfig) []string {
 			}
 		}
 	}
-	sortStrings(matched)
+	slices.Sort(matched)
 	return matched
-}
-
-// sortStrings is an in-package insertion sort kept here so groups.go stays
-// import-light (no sort import alongside strings); the lists are tiny (number of
-// led departments), so the simple sort is fine.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j-1] > s[j]; j-- {
-			s[j-1], s[j] = s[j], s[j-1]
-		}
-	}
 }
 
 // EffectiveMembership is the caller's full department set: the claim-derived

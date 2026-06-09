@@ -89,6 +89,9 @@ func defaults() map[string]interface{} {
 		// auth.rbac.leads is a map[string][]string; it has no flat default (an
 		// absent key unmarshals to a nil map). Configured via YAML or the
 		// ARBITRON_AUTH_RBAC_LEADS_<DEPT> env overlay below.
+		// auth.rbac.mapping is a map[string]string (raw-claim -> friendly dept); like
+		// leads it has no flat default and is supplied via YAML or the
+		// ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE> env overlay below.
 		// Profile registry: alias -> capability kind + model-id. A fresh
 		// install ships a chat/agent pair so a basic workflow validates; empty
 		// model means "use the claude-cli default model" (cfg.LLM.Model).
@@ -397,6 +400,32 @@ func Load(configPath string) (*domainconfig.Config, error) {
 		}
 	}
 
+	// ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>=friendly overlays one raw-claim ->
+	// friendly-department entry. The suffix after the prefix is the raw claim value
+	// (lower-cased; raw values with characters not expressible as env names must use
+	// the YAML file). Example:
+	//   ARBITRON_AUTH_RBAC_MAPPING_GUID-123=engineering
+	const mappingEnvPrefix = "ARBITRON_AUTH_RBAC_MAPPING_"
+	for _, kv := range os.Environ() {
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			continue
+		}
+		name, val := kv[:eq], kv[eq+1:]
+		if !strings.HasPrefix(name, mappingEnvPrefix) || val == "" {
+			continue
+		}
+		rawKey := strings.ToLower(strings.TrimPrefix(name, mappingEnvPrefix))
+		if rawKey == "" {
+			continue
+		}
+		if err := k.Load(confmap.Provider(map[string]interface{}{
+			"auth.rbac.mapping." + rawKey: val,
+		}, "."), nil); err != nil {
+			return nil, fmt.Errorf("loading auth.rbac.mapping.%s: %w", rawKey, err)
+		}
+	}
+
 	// Unmarshal into the domain config struct.
 	var cfg domainconfig.Config
 	if err := k.Unmarshal("", &cfg); err != nil {
@@ -460,6 +489,11 @@ func normalize(cfg *domainconfig.Config) {
 	// Trim the edge teamdomain so a YAML value with surrounding whitespace
 	// reaches edge.New as a clean URL rather than causing a confusing parse error.
 	cfg.Auth.Edge.TeamDomain = strings.TrimSpace(cfg.Auth.Edge.TeamDomain)
+	// Trim GroupClaim so a padded YAML value (" groups ") does not cause the OIDC
+	// provider or edge verifier to look for the wrong claim name. The edge verifier
+	// also trims at construction; this makes both paths consistent and the config
+	// struct self-consistent (whitespace-only GroupClaim → "" → no group extraction).
+	cfg.Auth.RBAC.GroupClaim = strings.TrimSpace(cfg.Auth.RBAC.GroupClaim)
 	if cfg.Auth.Mode == "" {
 		cfg.Auth.Mode = domainconfig.AuthModeLocal
 	}

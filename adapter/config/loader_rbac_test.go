@@ -133,7 +133,10 @@ func TestLoad_RBAC_EmptyValueEnvOverlay_DropsInToGroupConfig(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	// After normalization, ToGroupConfig must produce no valid leads for engineering.
-	gc := ToGroupConfig(cfg.Auth.RBAC)
+	gc, err := ToGroupConfig(cfg.Auth.RBAC)
+	if err != nil {
+		t.Fatalf("ToGroupConfig: %v", err)
+	}
 	if _, ok := gc.Leads["engineering"]; ok {
 		t.Errorf("ToGroupConfig produced Leads[engineering] = %v, want dept absent (all-blank from empty env)", gc.Leads["engineering"])
 	}
@@ -152,5 +155,136 @@ func TestLoad_RBAC_MultipleLeadsEnvOverlays(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Auth.RBAC.Leads["sales"], []string{"bob@corp.example", "carol-subj"}) {
 		t.Errorf("Leads[sales] = %v, want [bob@corp.example carol-subj]", cfg.Auth.RBAC.Leads["sales"])
+	}
+}
+
+func TestLoad_RBACMapping_FromYAML(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "groups"
+    defaultgroup: "default"
+    mapping:
+      guid-123: engineering
+      guid-b: sales
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-b"]; got != "sales" {
+		t.Errorf("Mapping[guid-b] = %q, want sales", got)
+	}
+}
+
+func TestLoad_RBACMapping_FromEnvOverlay(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-123", "engineering")
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_SALES-GUID", "sales")
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Env names are upper-cased by convention; the overlay lower-cases the suffix
+	// for the raw-claim key. Values pass through; ToGroupConfig normalizes later.
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["sales-guid"]; got != "sales" {
+		t.Errorf("Mapping[sales-guid] = %q, want sales", got)
+	}
+}
+
+// Env overlay wins over YAML for the same mapping key.
+// This is the exact analog of TestLoad_RBAC_EnvOverlay_WinsOverYAML for leads:
+// an operator can fix a misconfigured YAML mapping entry by setting the env var
+// without editing the file. Pins the env-layer-loads-last contract.
+func TestLoad_RBACMapping_EnvOverlay_WinsOverYAML(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-123", "engineering")
+	body := `auth:
+  mode: "local"
+  rbac:
+    mapping:
+      guid-123: sales
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-123"]; got != "engineering" {
+		t.Errorf("Mapping[guid-123] = %q, want engineering (env must win over YAML)", got)
+	}
+}
+
+// YAML and env mapping entries with different keys both survive — the overlay
+// is additive, not a full replacement. Operators can define base mappings in
+// YAML and inject secret/dynamic GUIDs via env without removing YAML entries.
+func TestLoad_RBACMapping_EnvAndYAML_DifferentKeys_Coexist(t *testing.T) {
+	t.Setenv("ARBITRON_AUTH_RBAC_MAPPING_GUID-ENV", "platform")
+	body := `auth:
+  mode: "local"
+  rbac:
+    mapping:
+      guid-yaml: engineering
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-yaml"]; got != "engineering" {
+		t.Errorf("Mapping[guid-yaml] = %q, want engineering (YAML entry must survive)", got)
+	}
+	if got := cfg.Auth.RBAC.Mapping["guid-env"]; got != "platform" {
+		t.Errorf("Mapping[guid-env] = %q, want platform (env entry must survive)", got)
+	}
+}
+
+func TestLoad_NoGroupClaim_BehavesAsToday(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "auth:\n  mode: \"local\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "" {
+		t.Errorf("GroupClaim = %q, want empty (unset GroupClaim => no group extraction)", cfg.Auth.RBAC.GroupClaim)
+	}
+}
+
+// A whitespace-padded YAML GroupClaim (" groups ") must be trimmed at load so
+// both the OIDC provider and the edge verifier receive the clean claim name.
+// Without this, a padded value causes both to look for the wrong claim name,
+// silently yielding nil groups (default group only) for every login.
+func TestLoad_RBAC_GroupClaim_WhitespaceTrimmedAtLoad(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "  groups  "
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "groups" {
+		t.Errorf("GroupClaim = %q, want groups (whitespace must be trimmed by normalize)", cfg.Auth.RBAC.GroupClaim)
+	}
+}
+
+// A whitespace-only GroupClaim must be treated as unset (empty string) so that
+// a deployment that accidentally sets groupclaim: "   " gets the "no group
+// extraction" behavior rather than searching every token for a claim whose name
+// is purely whitespace.
+func TestLoad_RBAC_GroupClaim_WhitespaceOnlyEqualsUnset(t *testing.T) {
+	body := `auth:
+  mode: "local"
+  rbac:
+    groupclaim: "   "
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.RBAC.GroupClaim != "" {
+		t.Errorf("GroupClaim = %q, want empty (whitespace-only GroupClaim must normalize to empty)", cfg.Auth.RBAC.GroupClaim)
 	}
 }

@@ -111,6 +111,126 @@ func newVerifier(t *testing.T, h *jwksHarness, audiences ...string) *adaptedge.V
 	return v
 }
 
+// newVerifierWithGroupClaim builds a verifier that also extracts the named group
+// claim. Mirrors newVerifier but threads GroupClaim through Config.
+func newVerifierWithGroupClaim(t *testing.T, h *jwksHarness, groupClaim string, audiences ...string) *adaptedge.Verifier {
+	t.Helper()
+	v, err := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: h.issuer,
+		Audiences:  audiences,
+		GroupClaim: groupClaim,
+	})
+	require.NoError(t, err)
+	return v
+}
+
+func TestVerify_GroupClaimArray_ReturnsGroups(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = []any{"eng", "platform"}
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Equal(t, []string{"eng", "platform"}, id.Groups)
+}
+
+func TestVerify_GroupClaimSingleString_ReturnsOneGroup(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = "eng" // a single JSON string, not an array
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Equal(t, []string{"eng"}, id.Groups)
+}
+
+func TestVerify_GroupClaimAbsent_ReturnsNilGroupsNot401(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+	c := baseClaims(h.issuer, "app-aud") // no "groups" key
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err, "a missing group claim must NOT fail verification")
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Nil(t, id.Groups)
+}
+
+func TestVerify_NoGroupClaimConfigured_IgnoresClaim(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "", "app-aud") // GroupClaim == "" => no extraction
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = []any{"eng"} // present, but not configured to be read
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Nil(t, id.Groups, "no configured claim => groups not extracted")
+}
+
+func TestVerify_GroupClaimMalformedType_DefaultsToNilGroups(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = map[string]any{"unexpected": "object"} // neither string nor array-of-strings
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err, "a malformed group claim must NOT lock out a valid user")
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Nil(t, id.Groups)
+}
+
+func TestVerify_GroupClaimMixedArray_KeepsOnlyStrings(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = []any{"eng", 42, "platform", ""} // non-strings and blanks dropped
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"eng", "platform"}, id.Groups)
+}
+
+// TestVerify_GroupClaimEdgeCases covers the claim shapes identified in the
+// carry-forward review: empty array, blank-only array, numeric scalar, and
+// JSON-null. All are valid tokens — none must fail verification; all must yield
+// nil groups so the user falls back to the default group rather than being
+// locked out.
+func TestVerify_GroupClaimEdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		claim any
+	}{
+		{"empty array", []any{}},
+		{"blank-only array", []any{"  ", ""}},
+		{"numeric scalar", float64(42)},
+		{"null claim", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newJWKSHarness(t)
+			v := newVerifierWithGroupClaim(t, h, "groups", "app-aud")
+			c := baseClaims(h.issuer, "app-aud")
+			c["groups"] = tc.claim
+			raw := h.signToken(t, nil, c)
+
+			id, err := v.Verify(context.Background(), raw)
+			require.NoError(t, err, "claim shape %q must NOT fail verification", tc.name)
+			assert.Equal(t, "alice@corp.example", id.Email)
+			assert.Nil(t, id.Groups, "claim shape %q must yield nil groups, never a 401", tc.name)
+		})
+	}
+}
+
 func TestVerify_ValidToken_ReturnsEmail(t *testing.T) {
 	h := newJWKSHarness(t)
 	v := newVerifier(t, h, "app-aud")
@@ -119,9 +239,26 @@ func TestVerify_ValidToken_ReturnsEmail(t *testing.T) {
 	c["email"] = "alice@corp.example"
 	raw := h.signToken(t, nil, c)
 
-	email, err := v.Verify(context.Background(), raw)
+	id, err := v.Verify(context.Background(), raw)
 	require.NoError(t, err)
-	assert.Equal(t, "alice@corp.example", email)
+	assert.Equal(t, "alice@corp.example", id.Email)
+}
+
+// The verified "sub" claim is surfaced as EdgeIdentity.Subject so downstream
+// provisioning can prefer it over the free-text email for bootstrap-admin
+// matching (Must Fix #4).
+func TestVerify_ValidToken_ReturnsSubject(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifier(t, h, "app-aud")
+
+	c := baseClaims(h.issuer, "app-aud")
+	c["sub"] = "oid-stable-789"
+	c["email"] = "alice@corp.example"
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, "oid-stable-789", id.Subject, "the verified sub claim must be surfaced as Subject")
 }
 
 func TestVerify_Rejections(t *testing.T) {
@@ -131,9 +268,9 @@ func TestVerify_Rejections(t *testing.T) {
 		c := baseClaims(h.issuer, "app-aud")
 		c["exp"] = time.Now().Add(-time.Hour).Unix()
 		c["iat"] = time.Now().Add(-2 * time.Hour).Unix()
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("not-yet-valid (nbf)", func(t *testing.T) {
@@ -142,18 +279,18 @@ func TestVerify_Rejections(t *testing.T) {
 		c := baseClaims(h.issuer, "app-aud")
 		c["nbf"] = time.Now().Add(time.Hour).Unix()
 		c["exp"] = time.Now().Add(2 * time.Hour).Unix()
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("wrong audience", func(t *testing.T) {
 		h := newJWKSHarness(t)
 		v := newVerifier(t, h, "app-aud")
 		c := baseClaims(h.issuer, "someone-else")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("wrong issuer", func(t *testing.T) {
@@ -161,9 +298,9 @@ func TestVerify_Rejections(t *testing.T) {
 		v := newVerifier(t, h, "app-aud")
 		c := baseClaims(h.issuer, "app-aud")
 		c["iss"] = "https://evil.example"
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("bad signature", func(t *testing.T) {
@@ -172,9 +309,9 @@ func TestVerify_Rejections(t *testing.T) {
 		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		require.NoError(t, err)
 		c := baseClaims(h.issuer, "app-aud")
-		email, verr := v.Verify(context.Background(), h.signToken(t, otherKey, c))
+		id, verr := v.Verify(context.Background(), h.signToken(t, otherKey, c))
 		require.Error(t, verr)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("missing email claim", func(t *testing.T) {
@@ -182,9 +319,9 @@ func TestVerify_Rejections(t *testing.T) {
 		v := newVerifier(t, h, "app-aud")
 		c := baseClaims(h.issuer, "app-aud")
 		delete(c, "email")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("empty email claim", func(t *testing.T) {
@@ -192,25 +329,25 @@ func TestVerify_Rejections(t *testing.T) {
 		v := newVerifier(t, h, "app-aud")
 		c := baseClaims(h.issuer, "app-aud")
 		c["email"] = ""
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("malformed jwt", func(t *testing.T) {
 		h := newJWKSHarness(t)
 		v := newVerifier(t, h, "app-aud")
-		email, err := v.Verify(context.Background(), "not.a.jwt")
+		id, err := v.Verify(context.Background(), "not.a.jwt")
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("empty token", func(t *testing.T) {
 		h := newJWKSHarness(t)
 		v := newVerifier(t, h, "app-aud")
-		email, err := v.Verify(context.Background(), "")
+		id, err := v.Verify(context.Background(), "")
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 }
 
@@ -220,16 +357,16 @@ func TestVerify_MultipleAudiences(t *testing.T) {
 
 	t.Run("token with a listed aud is accepted", func(t *testing.T) {
 		c := baseClaims(h.issuer, "aud-b")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.NoError(t, err)
-		assert.Equal(t, "alice@corp.example", email)
+		assert.Equal(t, "alice@corp.example", id.Email)
 	})
 
 	t.Run("token with an unlisted aud is rejected", func(t *testing.T) {
 		c := baseClaims(h.issuer, "aud-c")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 }
 
@@ -240,9 +377,9 @@ func TestVerify_JWKSCachedAcrossCalls(t *testing.T) {
 	before := atomic.LoadInt32(&h.jwksHits)
 	for i := 0; i < 2; i++ {
 		c := baseClaims(h.issuer, "app-aud")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.NoError(t, err)
-		assert.Equal(t, "alice@corp.example", email)
+		assert.Equal(t, "alice@corp.example", id.Email)
 	}
 	after := atomic.LoadInt32(&h.jwksHits)
 	// go-oidc caches the remote key set: two sequential Verify calls must not
@@ -300,16 +437,16 @@ func TestVerify_MissingAudClaim(t *testing.T) {
 	t.Run("no aud field", func(t *testing.T) {
 		c := baseClaims(h.issuer, "app-aud")
 		delete(c, "aud")
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 
 	t.Run("empty string aud", func(t *testing.T) {
 		c := baseClaims(h.issuer, "") // aud: ""
-		email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+		id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 		require.Error(t, err)
-		assert.Empty(t, email)
+		assert.Empty(t, id.Email)
 	})
 }
 
@@ -321,9 +458,9 @@ func TestVerify_WhitespaceEmail(t *testing.T) {
 	v := newVerifier(t, h, "app-aud")
 	c := baseClaims(h.issuer, "app-aud")
 	c["email"] = "   "
-	email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+	id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 	require.Error(t, err)
-	assert.Empty(t, email)
+	assert.Empty(t, id.Email)
 }
 
 // TestVerify_EmailTrimmed verifies that the verifier returns the email claim
@@ -335,7 +472,51 @@ func TestVerify_EmailTrimmed(t *testing.T) {
 	v := newVerifier(t, h, "app-aud")
 	c := baseClaims(h.issuer, "app-aud")
 	c["email"] = "  alice@corp.example  "
-	email, err := v.Verify(context.Background(), h.signToken(t, nil, c))
+	id, err := v.Verify(context.Background(), h.signToken(t, nil, c))
 	require.NoError(t, err)
-	assert.Equal(t, "alice@corp.example", email, "email must be returned trimmed")
+	assert.Equal(t, "alice@corp.example", id.Email, "email must be returned trimmed")
+}
+
+// TestNew_GroupClaimWhitespaceTrimmed verifies that a GroupClaim value with
+// surrounding whitespace (common in YAML configs) is normalized at construction
+// time. Without this, a config like `groupclaim: " groups "` would store the
+// padded name and silently fail to find the claim — degrading every user to the
+// default group rather than their actual department.
+func TestNew_GroupClaimWhitespaceTrimmed(t *testing.T) {
+	h := newJWKSHarness(t)
+	v, err := adaptedge.New(context.Background(), adaptedge.Config{
+		TeamDomain: h.issuer,
+		Audiences:  []string{"app-aud"},
+		GroupClaim: "  groups  ", // padded — must be trimmed at New(), not per-Verify
+	})
+	require.NoError(t, err)
+
+	c := baseClaims(h.issuer, "app-aud")
+	c["groups"] = []any{"eng", "platform"}
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"eng", "platform"}, id.Groups,
+		"whitespace-padded GroupClaim config must still extract groups correctly")
+}
+
+// TestVerify_GroupClaimCaseSensitive documents that claim name lookup is
+// case-sensitive (exact match against the configured GroupClaim). A token
+// carrying "Groups" (capital G) does NOT match a verifier configured for
+// "groups" (lowercase). This is correct JWT behavior — operators must match
+// the claim name exactly. A mismatch fails open to nil groups (default group),
+// never a 401, so a misconfiguration cannot lock out users.
+func TestVerify_GroupClaimCaseSensitive(t *testing.T) {
+	h := newJWKSHarness(t)
+	v := newVerifierWithGroupClaim(t, h, "groups", "app-aud") // lowercase
+	c := baseClaims(h.issuer, "app-aud")
+	c["Groups"] = []any{"eng"} // capital G — distinct claim from "groups"
+	raw := h.signToken(t, nil, c)
+
+	id, err := v.Verify(context.Background(), raw)
+	require.NoError(t, err, "claim-name case mismatch must NOT fail verification")
+	assert.Equal(t, "alice@corp.example", id.Email)
+	assert.Nil(t, id.Groups,
+		"case-mismatched claim name must yield nil groups (fall back to default group), not a 401")
 }

@@ -140,23 +140,41 @@ func (p *Provisioner) Resolve(ctx context.Context, c Claims) (*User, error) {
 	return u, nil
 }
 
-// ResolveByEmail resolves a VERIFIED edge-token email to a persisted User,
-// creating one on first sight. The email is the identity (subject is nil for
-// edge-created users); it is trusted because the edge verifier already checked
-// the token signature/issuer/audience/expiry, so there is no separate
-// email_verified gate on this path. Admin status is re-evaluated on every call
-// from the live bootstrap list (config authoritative), and the user's
-// departments are snapshotted to the default group (Phase 1 consumes no group
-// claim). A repository error surfaces as a non-ErrInvalidClaims error so the
-// middleware can distinguish a 500 (we could not check) from a 401 (no
-// credential).
-func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, error) {
+// ResolveByEmail resolves a VERIFIED edge token to a persisted User, creating
+// one on first sight. subject is the edge token's stable IdP-verified subject
+// claim ("sub"/"oid"); it is "" when the token carries none. email is the
+// verified email claim.
+//
+// SECURITY — DEPLOYMENT TRUST CONTRACT: edge mode trusts the email claim because
+// the edge verifier checked the token signature/issuer/audience/expiry, which
+// proves the token was MINTED by your Cloudflare Access tenant — but NOT that
+// Access validated the underlying email ADDRESS. The bootstrap-admin allow-list
+// is identity-keyed, so EDGE MODE REQUIRES the Cloudflare Access application to
+// be backed by an IdP that verifies email ownership; otherwise an attacker who
+// can self-assert an allow-listed email at a non-verifying IdP would be promoted
+// to admin (vertical privilege escalation). To narrow that exposure, this method
+// PREFERS the stable verified subject for bootstrap-admin matching when the token
+// carries one (IsBootstrapAdmin checks subject AND email): operators SHOULD
+// allow-list the subject/oid claim rather than the free-text email where their
+// IdP exposes one. When no subject is present it falls back to email matching
+// (the documented contract above then applies in full).
+//
+// Admin status is re-evaluated on every call from the live bootstrap list (config
+// authoritative). The verified subject is persisted (so it becomes the stable
+// identity key); the user is looked up by email for idempotency with the prior
+// edge contract. Departments are snapshotted from the edge-forwarded group claim
+// via the same ResolveDepartments chokepoint the OIDC path uses. A repository
+// error surfaces as a non-ErrInvalidClaims error so the middleware can
+// distinguish a 500 (we could not check) from a 401 (no credential).
+func (p *Provisioner) ResolveByEmail(ctx context.Context, subject, email string, groups []string) (*User, error) {
+	subject = strings.TrimSpace(subject)
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return nil, ErrInvalidClaims
 	}
+	// Prefer the verified subject for admin matching; fall back to email.
 	wantRole := identity.RoleUser
-	if p.IsBootstrapAdmin("", email) {
+	if p.IsBootstrapAdmin(subject, email) {
 		wantRole = identity.RoleAdmin
 	}
 	u, err := p.users.GetByEmail(ctx, email)
@@ -170,9 +188,16 @@ func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, 
 		}
 	case errors.Is(err, ErrNotFound):
 		e := email
+		// Persist the verified subject when present so the user is keyed on the
+		// stable IdP identifier rather than the free-text email alone.
+		var subjPtr *string
+		if subject != "" {
+			s := subject
+			subjPtr = &s
+		}
 		nu := &User{
 			ID:       p.newID(),
-			Subject:  nil,
+			Subject:  subjPtr,
 			Email:    &e,
 			Username: email, // edge tokens carry no username; email is the display name
 			Role:     wantRole,
@@ -184,7 +209,7 @@ func (p *Provisioner) ResolveByEmail(ctx context.Context, email string) (*User, 
 	default:
 		return nil, err
 	}
-	depts := identity.ResolveDepartments(nil, p.groups)
+	depts := identity.ResolveDepartments(groups, p.groups)
 	if err := p.users.ReplaceDepartments(ctx, u.ID, depts); err != nil {
 		return nil, fmt.Errorf("snapshotting departments at edge login: %w", err)
 	}

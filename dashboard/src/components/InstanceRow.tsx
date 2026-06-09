@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import type { InstanceSummary } from '../api/types'
 import { relativeTime, elapsed } from '../utils/time'
 import StateBadge from './StateBadge'
+import OriginBadge from './OriginBadge'
 import styles from './InstanceRow.module.css'
 
 interface InstanceRowProps {
@@ -52,6 +53,7 @@ export default function InstanceRow({ instance, timeMode, dimmed, onDismiss, onR
     >
       <span className={styles.workflowName}>{instance.workflowName}</span>
       <StateBadge state={instance.state} />
+      <OriginBadge triggerSource={instance.triggerSource} scheduleId={instance.scheduleId} />
       <span className={styles.currentNode}>
         {instance.currentNodeId ?? '—'}
       </span>

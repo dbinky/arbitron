@@ -1,6 +1,6 @@
 -- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
@@ -16,7 +16,7 @@ SELECT * FROM instances WHERE id = ?;
 -- departments is a JSON array string (e.g. '["engineering","platform"]'); the
 -- json_each subquery turns it into a membership test. Portable to Postgres as
 -- `instances.department = ANY($departments)`.
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))

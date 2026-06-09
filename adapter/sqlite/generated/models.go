@@ -68,6 +68,8 @@ type Instance struct {
 	WebhookReceivedAt sql.NullString
 	Department        sql.NullString
 	Visibility        string
+	TriggerSource     string
+	ScheduleID        sql.NullString
 }
 
 type InstanceDismissal struct {

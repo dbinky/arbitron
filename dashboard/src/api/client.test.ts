@@ -89,3 +89,26 @@ describe('api.instances dismissal', () => {
     expect(url).not.toContain('includeDismissed')
   })
 })
+
+describe('api.schedules.list', () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ schedules: [{ id: 's1', workflowName: 'wf-a' }] }),
+    } as Response)
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('GETs /schedules?workflowName= and unwraps the schedules array', async () => {
+    const out = await api.schedules.list('wf-a')
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(url).toBe('/api/v1/schedules?workflowName=wf-a')
+    expect(out).toEqual([{ id: 's1', workflowName: 'wf-a' }])
+  })
+
+  it('omits the query when no workflow name is given', async () => {
+    await api.schedules.list()
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(url).toBe('/api/v1/schedules')
+  })
+})
