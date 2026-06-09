@@ -330,6 +330,22 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// persisted user, creating bootstrap identities as admins. Shared by the OIDC
 	// callback and Task 6's role-management demotion floor (one bootstrap rule).
 	groupCfg := configadapter.ToGroupConfig(cfg.Auth.RBAC)
+
+	// Remap reconcile (final-org-gaps Phase 2). Adding/changing a department
+	// mapping must rewrite historical department strings so the friendly name is
+	// seen everywhere (memberships, runs, schedules, department-visibility
+	// publications). This runs ONCE at boot, after migrations + config load and
+	// before serving; it is idempotent, so a clean boot with no new mappings is a
+	// cheap no-op. A DB error here fails the boot loudly (fail-fast) rather than
+	// serving a mis-scoped/duplicated department.
+	deptRenamer := adaptsqlite.NewDepartmentRenamer(db)
+	if err := identity.ReconcileMappings(context.Background(), groupCfg, deptRenamer, logger); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("reconciling department mappings: %w", err)
+	}
+	logger.Info("department mapping reconcile complete")
+
 	provisioner := instance.NewProvisioner(userRepo, cfg.Auth.BootstrapAdmins, groupCfg)
 	// Admin-only role management (Phase 6, Phase 2). The demotion floor shares the
 	// provisioner's bootstrap rule so a bootstrap (incl. by-email) admin is
