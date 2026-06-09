@@ -27,9 +27,9 @@ func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilPa
 }
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id
 `
 
 type CreateInstanceParams struct {
@@ -44,6 +44,8 @@ type CreateInstanceParams struct {
 	QueuedAt          sql.NullString
 	Department        sql.NullString
 	Visibility        string
+	TriggerSource     string
+	ScheduleID        sql.NullString
 }
 
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
@@ -59,6 +61,8 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.QueuedAt,
 		arg.Department,
 		arg.Visibility,
+		arg.TriggerSource,
+		arg.ScheduleID,
 	)
 	var i Instance
 	err := row.Scan(
@@ -82,12 +86,14 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.WebhookReceivedAt,
 		&i.Department,
 		&i.Visibility,
+		&i.TriggerSource,
+		&i.ScheduleID,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE id = ?
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id FROM instances WHERE id = ?
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) {
@@ -114,12 +120,14 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 		&i.WebhookReceivedAt,
 		&i.Department,
 		&i.Visibility,
+		&i.TriggerSource,
+		&i.ScheduleID,
 	)
 	return i, err
 }
 
 const listInstances = `-- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility
+SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
 FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
@@ -160,6 +168,8 @@ type ListInstancesRow struct {
 	QueuedAt      sql.NullString
 	Department    sql.NullString
 	Visibility    string
+	TriggerSource string
+	ScheduleID    sql.NullString
 }
 
 // Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
@@ -202,6 +212,8 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 			&i.QueuedAt,
 			&i.Department,
 			&i.Visibility,
+			&i.TriggerSource,
+			&i.ScheduleID,
 		); err != nil {
 			return nil, err
 		}
@@ -217,7 +229,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -250,6 +262,8 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.WebhookReceivedAt,
 			&i.Department,
 			&i.Visibility,
+			&i.TriggerSource,
+			&i.ScheduleID,
 		); err != nil {
 			return nil, err
 		}
