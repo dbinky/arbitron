@@ -69,6 +69,12 @@ type RBACConfig struct {
 	// at load. A lead of a department always sees and can publish-to-public that
 	// department even if their token omits it.
 	Leads map[string][]string
+	// Mapping maps a raw group-claim VALUE to a friendly department NAME, so opaque
+	// claim values (e.g. directory GUIDs) become readable department names. Keys
+	// and values are normalized to lower-case + trimmed at load. A claim value with
+	// no entry falls back to its own normalized value (verbatim). Suppliable via
+	// env/secrets (ARBITRON_AUTH_RBAC_MAPPING_<RAWVALUE>=friendly) or YAML.
+	Mapping map[string]string
 }
 
 // OIDCConfig configures the self-hosted OIDC authorization-code login flow.

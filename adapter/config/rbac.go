@@ -34,9 +34,25 @@ func ToGroupConfig(in domainconfig.RBACConfig) identity.GroupConfig {
 			}
 		}
 	}
+	var mapping map[string]string
+	if len(in.Mapping) > 0 {
+		mapping = make(map[string]string, len(in.Mapping))
+		for raw, friendly := range in.Mapping {
+			k := identity.NormalizeDept(raw)
+			v := identity.NormalizeDept(friendly)
+			if k == "" || v == "" {
+				continue // drop blank key or blank value
+			}
+			mapping[k] = v
+		}
+		if len(mapping) == 0 {
+			mapping = nil
+		}
+	}
 	return identity.GroupConfig{
 		GroupClaim:   in.GroupClaim,
 		DefaultGroup: in.DefaultGroup,
 		Leads:        leads,
+		Mapping:      mapping,
 	}
 }
