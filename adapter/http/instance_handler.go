@@ -175,6 +175,8 @@ type summaryDTO struct {
 	UpdatedAt     string  `json:"updatedAt"`
 	CompletedAt   *string `json:"completedAt,omitempty"`
 	QueuedAt      *string `json:"queuedAt,omitempty"`
+	TriggerSource string  `json:"triggerSource"`
+	ScheduleID    *string `json:"scheduleId,omitempty"`
 }
 
 func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
@@ -188,6 +190,7 @@ func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
 		UpdatedAt:     s.UpdatedAt.Format(APITimeFormat),
 		Department:    s.Department,
 		Visibility:    string(s.Visibility),
+		TriggerSource: string(s.TriggerSource),
 	}
 	if s.CompletedAt != nil {
 		v := s.CompletedAt.Format(APITimeFormat)
@@ -196,6 +199,10 @@ func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
 	if s.QueuedAt != nil {
 		v := s.QueuedAt.Format(APITimeFormat)
 		dto.QueuedAt = &v
+	}
+	if s.ScheduleID != nil {
+		v := s.ScheduleID.String()
+		dto.ScheduleID = &v
 	}
 	return dto
 }
