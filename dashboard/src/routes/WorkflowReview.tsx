@@ -16,6 +16,7 @@ import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import ResizablePanel from '../components/ResizablePanel'
 import UsageStats from '../components/UsageStats'
+import SchedulesPanel from '../components/SchedulesPanel'
 import TriggerModal from '../components/TriggerModal'
 import styles from './WorkflowReview.module.css'
 
@@ -123,6 +124,11 @@ function ReviewSidePanel({
       {/* Usage Stats */}
       <div className={styles.section}>
         <UsageStats workflowName={workflowDef.name} />
+      </div>
+
+      {/* Schedules (read-only) */}
+      <div className={styles.section}>
+        <SchedulesPanel workflowName={workflowDef.name} />
       </div>
 
       {/* Input Schema */}
