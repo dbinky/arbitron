@@ -730,3 +730,40 @@ func TestResolveByEmail_BootstrapEmail_IsAdminRegardlessOfGroups(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, identity.RoleAdmin, u.Role, "email allow-list confers admin even with a non-admin group claim")
 }
+
+// Authorization/role: on the OIDC Resolve path, a group claim NEVER confers
+// admin — admin is determined exclusively by IsBootstrapAdmin (subject+email
+// allow-list). Mirrors TestResolveByEmail_GroupClaimNeverConfersAdmin for the
+// edge path; the invariant must hold on both login paths.
+func TestResolve_GroupClaimNeverConfersAdmin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	// Bootstrap list empty; "admins"/"superuser" are department names, not roles.
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	u, err := p.Resolve(context.Background(), Claims{
+		Subject: "attacker-sub", Username: "attacker",
+		Email: "attacker@corp.example", EmailVerified: true,
+		Groups: []string{"admins", "superuser"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, identity.RoleUser, u.Role, "group claim must never grant admin on the OIDC path")
+	// Sanity: the groups did drive department scoping (not silently discarded).
+	assert.Equal(t, []string{"admins", "superuser"}, repo.depts[u.ID])
+}
+
+// Edge/state: a returning edge user's departments are REPLACED (not accumulated)
+// on re-login with a different group set. Mirrors TestResolve_ReplacesDepartmentsOnEachLogin
+// for the OIDC path.
+func TestResolveByEmail_DepartmentsReplacedOnReLogin(t *testing.T) {
+	repo := newFakeProvUserRepo()
+	p := NewProvisioner(repo, nil, identity.GroupConfig{DefaultGroup: "default"})
+	ctx := context.Background()
+
+	u1, err := p.ResolveByEmail(ctx, "alice@corp.example", []string{"sales"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sales"}, repo.depts[u1.ID], "first edge login snapshots first group claim")
+
+	// Second edge login with a different group set must REPLACE the snapshot.
+	_, err = p.ResolveByEmail(ctx, "alice@corp.example", []string{"engineering"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering"}, repo.depts[u1.ID], "re-login must replace departments, not accumulate")
+}

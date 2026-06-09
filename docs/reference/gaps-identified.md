@@ -44,6 +44,10 @@ the area/pass, or fix if a real defect).
 
 - **Mapped+verbatim same department dedup.** During interim migration a user's token can carry both the old GUID claim (mapped to "engineering") and the new verbatim claim "Engineering" (normalizes to "engineering"). No test verified these dedup to one occurrence. Added `TestResolveDepartments_MappedAndVerbatimSameDept_Deduped`. (Area #4 Pass 2)
 
+- **OIDC path missing group-claim-never-confers-admin test.** `TestResolveByEmail_GroupClaimNeverConfersAdmin` documented the invariant for the edge path but no symmetric test existed for the OIDC `Resolve()` path. Added `TestResolve_GroupClaimNeverConfersAdmin` asserting `RoleUser` even when `Groups: ["admins","superuser"]` with an empty bootstrap list, plus a sanity assertion that groups still drove department scoping. (Area #5 Pass 1)
+
+- **Edge path missing department-replace-on-re-login test.** The OIDC path had `TestResolve_ReplacesDepartmentsOnEachLogin`; the edge `ResolveByEmail` path had no equivalent. Added `TestResolveByEmail_DepartmentsReplacedOnReLogin`: first login snapshots `["sales"]`, re-login with `["engineering"]` must store `["engineering"]` only. (Area #5 Pass 1)
+
 ---
 
 ## Won't Fix (Beyond Current Scope)
