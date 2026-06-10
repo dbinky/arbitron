@@ -47,6 +47,19 @@ Considered and rejected:
 - **Server-side filtering** — materially more work (handler + query + tests) for no
   benefit at this scale, and breaks from the in-memory name-search pattern.
 
+### Security boundary (NOT optional)
+
+Client-side scope/visibility/department filtering is **presentation-only**. It
+narrows what is already on screen; it is never an access-control mechanism. Every
+read path that surfaces another scope's data MUST go through a domain service
+method that enforces `CanSeePublication` (e.g. `WorkflowService.List`, `Get`/`Load`,
+and `Stats`) — the service layer is the authorization boundary, not the client and
+not the repository. A repository/adapter that filters only by `workflow_name`
+(or any other non-caller-scoped predicate) without first passing the name through
+the service gate is an IDOR; the `GET /workflows/{name}/stats` path was hardened to
+route through `WorkflowService.Stats` for exactly this reason (returning 404 — not
+403 — on denial to avoid an existence oracle).
+
 ## Backend Changes
 
 Two small touches; the list endpoint is unchanged.
