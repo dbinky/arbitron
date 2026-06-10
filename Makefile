@@ -1,4 +1,4 @@
-.PHONY: ui build test test-ui test-all dist release clean-dist test-release test-install
+.PHONY: ui build test test-ui test-all dist samples-tarball release clean-dist test-release test-install
 
 # Release version/build metadata. VERSION defaults to the current git tag with a
 # leading "v" stripped (tag v1.2.3 -> 1.2.3), falling back to the short SHA when
@@ -47,12 +47,19 @@ test-ui:
 # test suite green" means this target passes, not just `test`.
 test-all: test test-ui
 
+# Package the bundled sample workflows into a release tarball alongside the
+# binaries, so the installer can fetch + verify + extract them.
+samples-tarball:
+	@mkdir -p dist
+	tar -czf dist/arbitron_samples_$(VERSION).tar.gz -C samples --exclude='*_test.go' .
+	@echo "wrote dist/arbitron_samples_$(VERSION).tar.gz"
+
 # Cross-compile the 6 release binaries named arbitron_<version>_<os>_<arch>[.exe]
 # into dist/, then emit dist/SHA256SUMS with basename-only entries (so
 # `sha256sum -c SHA256SUMS` works from inside dist/). The artifact is the raw
 # binary (no tar/zip). This target builds from the CURRENT adapter/dashboard/dist
 # — CI runs `make ui` first to rebuild the SPA from source before calling it.
-dist: clean-dist
+dist: clean-dist samples-tarball
 	@mkdir -p dist
 	@for platform in $(DIST_PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
