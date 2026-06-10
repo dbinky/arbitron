@@ -1,9 +1,13 @@
-import { getBezierPath, Position } from '@xyflow/react'
-
 /**
- * Shared routing logic for loop-back edges. Lives outside the LoopBackEdge
- * component so the layout hook (which picks the side and wires the node handles)
- * and the edge component (which draws the curve) share one implementation.
+ * Routing logic for loop-back edges. Kept out of the LoopBackEdge component so
+ * the geometry is pure and unit-testable.
+ *
+ * Approach: floating geometry. The nodes carry ONLY their default top/bottom
+ * handles (so forward edges route cleanly bottom→top). A loop-back edge receives
+ * those default handle coords from React Flow — source = the tail's bottom-center,
+ * target = the head's top-center — and derives its own SIDE attachment points and
+ * the channel it bows out to. No extra node handles, so forward edges are never
+ * pulled to a side.
  */
 
 export const GUTTER_OFFSET = 60
@@ -15,9 +19,9 @@ export interface SideRoute {
 }
 
 /**
- * Choose the gutter side based on the loop body bounding box relative to the
- * edge endpoints. Bow out on the side of the body box that has more room,
- * defaulting to 'right' on a tie. This keeps the curve outside the body box.
+ * Choose the side based on the loop body bounding box relative to the edge
+ * endpoints. Bow out on the side of the body box that has more room, defaulting
+ * to 'right' on a tie. Keeps the curve outside the body box.
  */
 export function chooseSide(args: {
   sourceX: number
@@ -27,65 +31,59 @@ export function chooseSide(args: {
 }): SideRoute {
   const center = args.boxX + args.boxWidth / 2
   const endpoints = (args.sourceX + args.targetX) / 2
-  // Endpoints left-of or AT center bow out right (default-right on a tie);
-  // endpoints right-of center bow out left. Keeps the curve outside the box.
   if (endpoints <= center) {
     return { side: 'right', gutterX: args.boxX + args.boxWidth + GUTTER_OFFSET }
   }
   return { side: 'left', gutterX: args.boxX - GUTTER_OFFSET }
 }
 
-/**
- * Map a chosen side to the ArbitronNode side-handle ids a loop-back edge should
- * attach to: it leaves the tail node's source handle on that side and enters the
- * head node's target handle on the same side.
- */
-export function loopHandleIds(side: 'left' | 'right'): {
-  sourceHandle: string
-  targetHandle: string
-} {
-  return side === 'right'
-    ? { sourceHandle: 'loop-s-right', targetHandle: 'loop-t-right' }
-    : { sourceHandle: 'loop-s-left', targetHandle: 'loop-t-left' }
+export interface LoopBackGeometry {
+  /** Tail (source) attachment: vertical center of the chosen side. */
+  tailX: number
+  tailY: number
+  /** Head (target) attachment: vertical center of the chosen side. */
+  headX: number
+  headY: number
+  /** x of the channel the curve bows out to, clear of the node column. */
+  channelX: number
 }
 
 /**
- * Build the loop-back curve: it leaves the tail node's chosen side, bows out to
- * the gutter, and re-enters the head node on the same side. Both node-ends are
- * horizontal (the side), so the edge reads as a side-to-side return rather than
- * diving through the top-to-bottom forward lanes.
+ * Derive the side attachment points and bow channel from React Flow's default
+ * handle coords. `sourceX/sourceY` is the tail's bottom-center; `targetX/targetY`
+ * is the head's top-center. Both attachment points sit at the vertical center of
+ * the chosen side, and the channel sits one gutter beyond the outer side.
  */
-export function buildLoopBackPath(args: {
+export function loopBackGeometry(args: {
   sourceX: number
   sourceY: number
   targetX: number
   targetY: number
   side: 'left' | 'right'
-  gutterX: number
-}): { path: string; labelX: number; labelY: number } {
-  const sidePos = args.side === 'right' ? Position.Right : Position.Left
-  const midY = (args.sourceY + args.targetY) / 2
+  nodeWidth: number
+  nodeHeight: number
+}): LoopBackGeometry {
+  const dir = args.side === 'right' ? 1 : -1
+  const tailX = args.sourceX + dir * (args.nodeWidth / 2)
+  const tailY = args.sourceY - args.nodeHeight / 2 // bottom-center → side-center
+  const headX = args.targetX + dir * (args.nodeWidth / 2)
+  const headY = args.targetY + args.nodeHeight / 2 // top-center → side-center
+  const outerX = args.side === 'right' ? Math.max(tailX, headX) : Math.min(tailX, headX)
+  const channelX = outerX + dir * GUTTER_OFFSET
+  return { tailX, tailY, headX, headY, channelX }
+}
 
-  // Segment 1: from the tail's side out to the gutter midpoint.
-  const [outPath] = getBezierPath({
-    sourceX: args.sourceX,
-    sourceY: args.sourceY,
-    sourcePosition: sidePos,
-    targetX: args.gutterX,
-    targetY: midY,
-    targetPosition: sidePos,
-    curvature: 0.6,
-  })
-  // Segment 2: from the gutter midpoint back to the head's side.
-  const [inPath, labelX, labelY] = getBezierPath({
-    sourceX: args.gutterX,
-    sourceY: midY,
-    sourcePosition: sidePos,
-    targetX: args.targetX,
-    targetY: args.targetY,
-    targetPosition: sidePos,
-    curvature: 0.6,
-  })
-
-  return { path: `${outPath} ${inPath}`, labelX, labelY }
+/**
+ * Build the out-and-back return curve: it leaves the tail's side horizontally,
+ * bows out through the channel (clear of the node column), and re-enters the
+ * head on the same side. A single cubic whose control points sit out at the
+ * channel — so it visibly "goes out" rather than running flush up the column.
+ */
+export function buildLoopBackPath(g: LoopBackGeometry): {
+  path: string
+  labelX: number
+  labelY: number
+} {
+  const path = `M ${g.tailX},${g.tailY} C ${g.channelX},${g.tailY} ${g.channelX},${g.headY} ${g.headX},${g.headY}`
+  return { path, labelX: g.channelX, labelY: (g.tailY + g.headY) / 2 }
 }

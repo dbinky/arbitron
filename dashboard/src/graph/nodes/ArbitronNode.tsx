@@ -54,13 +54,6 @@ function ArbitronNode({ data, selected }: NodeProps<ArbitronNodeType>) {
   return (
     <div className={nodeClasses}>
       <Handle type="target" position={Position.Top} />
-      {/* Invisible side handles: anchor points for loop-back edges, which leave
-          the tail's side and enter the head's side. Not interactive (read-only
-          viewer); the chosen side is wired by useGraphLayout. */}
-      <Handle type="source" position={Position.Left} id="loop-s-left" className={styles.loopHandle} />
-      <Handle type="source" position={Position.Right} id="loop-s-right" className={styles.loopHandle} />
-      <Handle type="target" position={Position.Left} id="loop-t-left" className={styles.loopHandle} />
-      <Handle type="target" position={Position.Right} id="loop-t-right" className={styles.loopHandle} />
       <div className={styles.typeBar} style={{ background: accentColor }} />
       <div className={styles.content}>
         <div className={styles.typeLabel} style={{ color: accentColor }}>

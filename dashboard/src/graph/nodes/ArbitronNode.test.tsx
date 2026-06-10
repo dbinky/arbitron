@@ -20,28 +20,20 @@ const props = {
   selected: false,
 } as unknown as Parameters<typeof ArbitronNode>[0]
 
-describe('ArbitronNode — loop-back side handles', () => {
-  it('exposes source and target handles on both the left and right sides', () => {
-    const { container } = render(<ArbitronNode {...props} />)
-    const ids = [...container.querySelectorAll('[data-testid="handle"]')].map((h) =>
-      h.getAttribute('data-handle-id'),
-    )
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        'loop-s-left',
-        'loop-s-right',
-        'loop-t-left',
-        'loop-t-right',
-      ]),
-    )
-  })
-
-  it('keeps the original top (target) and bottom (source) handles for forward edges', () => {
+describe('ArbitronNode — handles', () => {
+  it('exposes ONLY the default top (target) and bottom (source) handles', () => {
+    // No side handles: extra source/target handles make React Flow pull forward
+    // edges to a node side instead of routing them cleanly bottom→top.
     const { container } = render(<ArbitronNode {...props} />)
     const handles = [...container.querySelectorAll('[data-testid="handle"]')]
+    expect(handles).toHaveLength(2)
+
     const top = handles.find((h) => h.getAttribute('data-position') === 'top')
     const bottom = handles.find((h) => h.getAttribute('data-position') === 'bottom')
     expect(top?.getAttribute('data-handle-type')).toBe('target')
     expect(bottom?.getAttribute('data-handle-type')).toBe('source')
+
+    const sides = handles.filter((h) => ['left', 'right'].includes(h.getAttribute('data-position') ?? ''))
+    expect(sides).toHaveLength(0)
   })
 })

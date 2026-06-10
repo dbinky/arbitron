@@ -14,6 +14,7 @@ import type { WorkflowDefinition, WorkflowNode } from '../graph/types'
 import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
+import { edgeTypes } from '../graph/edges/edgeTypes'
 import ResizablePanel from '../components/ResizablePanel'
 import UsageStats from '../components/UsageStats'
 import SchedulesPanel from '../components/SchedulesPanel'
@@ -96,6 +97,7 @@ function ReviewGraph({
         nodes={nodesWithSelection}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeClick={(_event, node) => onNodeClick(node.id)}
         onNodeDragStop={onNodeDragStop}
         fitView
