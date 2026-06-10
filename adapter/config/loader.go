@@ -22,14 +22,16 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":    "127.0.0.1",
-		"server.port":    8080,
-		"database.path":  "./arbitron.db",
-		"workspace.path": "./workspaces",
-		"llm.provider":   "anthropic",
-		"llm.apikey":     "",
-		"llm.binarypath": "",
-		"llm.model":      "",
+		"server.host":       "127.0.0.1",
+		"server.port":       8080,
+		"database.path":     "./arbitron.db",
+		"workspace.path":    "./workspaces",
+		"samples.seed":      true,
+		"samples.sourcedir": "",
+		"llm.provider":      "anthropic",
+		"llm.apikey":        "",
+		"llm.binarypath":    "",
+		"llm.model":         "",
 		// SECURITY: 30 minutes upper bound on a single provider call.
 		// Default 0 (unbounded) is a queue-pinning DoS — see PR #8 security
 		// thread 3291944120.
@@ -98,7 +100,7 @@ func defaults() map[string]interface{} {
 		//
 		// The reviewer/coder/planner/interviewer/assessor aliases are the
 		// in-repo default registry for the workflows shipped in this repo
-		// (workspaces/pr-review, workspaces/feature-pipeline). Shipping them as
+		// (samples/pr-review, samples/feature-pipeline). Shipping them as
 		// defaults (overridable by the deployment config.yaml) lets a fresh
 		// clone validate those workflows honestly instead of passing
 		// workflow_validate and then dying mid-run with "unknown profile alias"
@@ -206,7 +208,7 @@ profiles:
     kind: "agent"
     model: ""
   # In-repo default registry for the workflows shipped in this repo
-  # (workspaces/pr-review, workspaces/feature-pipeline). Override the model-id
+  # (samples/pr-review, samples/feature-pipeline). Override the model-id
   # per alias to repoint a persona at a specific backend; remove an alias only
   # if you are not running its workflow.
   #
@@ -250,6 +252,18 @@ notifications:
 tracing:
   enabled: false
   exportdir: "./traces"
+# samples:
+#   seed: true
+#     When true (default), the server seeds the built-in sample workflows into
+#     the workspace on first boot. Set false to skip seeding (e.g. in a
+#     production deployment that manages workflows externally).
+#     Override via ARBITRON_SAMPLES_SEED=false.
+#   sourcedir: ""
+#     Directory from which sample workflows are read during seeding. Empty
+#     string (default) means no-op: the server will not seed even if seed is
+#     true. Shared installs populate this with the absolute path to the
+#     extracted samples tarball (e.g. /var/lib/arbitron/samples).
+#     Override via ARBITRON_SAMPLES_SOURCEDIR=/path/to/samples.
 # auth:
 #   mode: "local"            # "local" (default, single auto-admin) or "org"
 #   bootstrapadmins: []      # subjects/emails provisioned as admin on first login (Phase 2)

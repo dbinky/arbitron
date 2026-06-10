@@ -419,6 +419,27 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
 	// WorkflowService uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
+	// One-time, marker-guarded seeding of bundled sample workflows into the
+	// shared scope (public, owned by the default user). Runs after the published
+	// repo exists so the publication records can be written.
+	//
+	// Seeding is a non-essential convenience subsystem, so a seeding error is
+	// logged and tolerated rather than fatal — it must never wedge server boot.
+	// Combined with the seeder's re-entrancy, a crash-interrupted seed self-heals
+	// on the next boot instead of permanently failing with ErrAlreadyExists.
+	switch {
+	case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
+		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, flatMigrateUser, logger); err != nil {
+			logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
+		} else {
+			logger.Info("sample workflow seeding complete")
+		}
+	case cfg.Samples.Seed:
+		// seed=true but no source dir resolved: the stock default. Make the
+		// silent no-op observable so an operator expecting samples knows why
+		// none appeared and how to fix it (set samples.sourcedir).
+		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
+	}
 	// WorkflowService resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)

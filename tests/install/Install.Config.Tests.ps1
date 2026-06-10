@@ -307,3 +307,151 @@ Describe 'Get-ArbitronBinary' {
         $script:seenUri | Should -BeLike '*arbitron_1.2.3_windows_amd64.exe*'
     }
 }
+
+Describe 'Get-ArbitronPaths Samples key' {
+    # Task 10: samples dir is a first-class path entry so Write-ArbitronConfig
+    # and Get-ArbitronSamples have a stable key without string arithmetic.
+    BeforeAll { $env:LOCALAPPDATA = Join-Path ([System.IO.Path]::GetTempPath()) 'ArbTestLAD_Samples' }
+
+    It 'Local paths include a Samples key under the root' {
+        $p = Get-ArbitronPaths -InstallType Local
+        $p.ContainsKey('Samples') | Should -BeTrue
+        $p.Samples | Should -BeLike "*$($p.Root)*"
+        $p.Samples | Should -BeLike '*samples'
+    }
+}
+
+Describe 'Write-ArbitronConfig samples: block' {
+    # Task 10: the config writer emits a valid samples: block so the binary seeds
+    # workflows on first boot.
+    BeforeEach {
+        $script:p = New-TestPaths
+        $script:p['Samples'] = Join-Path $script:p.Root 'samples'
+        New-Item -ItemType Directory -Path $script:p.Root -Force | Out-Null
+    }
+    AfterEach { Remove-Item -Recurse -Force $script:p.Root -ErrorAction SilentlyContinue }
+
+    It 'writes samples: seed: true and sourcedir when SeedSamples is true' {
+        $answers = @{
+            Port = 8080; LlmMode = 'subscription'; SkipPermissions = $false
+            DataDir = $script:p.Data; SeedSamples = $true
+        }
+        Write-ArbitronConfig -Paths $script:p -Answers $answers
+        $yaml = Get-Content -Raw $script:p.Config
+        $yaml | Should -Match 'samples:'
+        $yaml | Should -Match 'seed:\s*true'
+        $yaml | Should -BeLike "*$($script:p.Samples)*"
+    }
+
+    It 'writes samples: seed: false when SeedSamples is false' {
+        $answers = @{
+            Port = 8080; LlmMode = 'subscription'; SkipPermissions = $false
+            DataDir = $script:p.Data; SeedSamples = $false
+        }
+        Write-ArbitronConfig -Paths $script:p -Answers $answers
+        $yaml = Get-Content -Raw $script:p.Config
+        $yaml | Should -Match 'seed:\s*false'
+    }
+
+    It 'defaults to seed: true when SeedSamples is absent from answers' {
+        $answers = @{
+            Port = 8080; LlmMode = 'subscription'; SkipPermissions = $false
+            DataDir = $script:p.Data
+            # SeedSamples deliberately omitted to exercise default path
+        }
+        Write-ArbitronConfig -Paths $script:p -Answers $answers
+        $yaml = Get-Content -Raw $script:p.Config
+        $yaml | Should -Match 'seed:\s*true'
+    }
+}
+
+Describe 'Invoke-ConfigQA SeedSamples' {
+    # Task 10: local installs default samples on; env ARBITRON_INSTALL_SAMPLE_WORKFLOWS=no opts out.
+    BeforeEach {
+        $script:p = New-TestPaths
+        Remove-Item Env:\ARBITRON_INSTALL_SAMPLE_WORKFLOWS -ErrorAction SilentlyContinue
+    }
+    AfterEach { Remove-Item Env:\ARBITRON_INSTALL_SAMPLE_WORKFLOWS -ErrorAction SilentlyContinue }
+
+    It 'sets SeedSamples=true by default for a local install' {
+        Mock -CommandName Read-PromptDefault -MockWith { param($Prompt, $Default) $Default }
+        Mock -CommandName Read-PromptChoice  -MockWith { param($Prompt, $Choices, $Default) $Default }
+        Mock -CommandName Read-PromptYesNo   -MockWith { param($Prompt, $Default) $Default }
+        $a = Invoke-ConfigQA -Paths $script:p
+        $a.ContainsKey('SeedSamples') | Should -BeTrue
+        $a.SeedSamples | Should -BeTrue
+    }
+
+    It 'respects env ARBITRON_INSTALL_SAMPLE_WORKFLOWS=no to opt out' {
+        $env:ARBITRON_INSTALL_SAMPLE_WORKFLOWS = 'no'
+        Mock -CommandName Read-PromptDefault -MockWith { param($Prompt, $Default) $Default }
+        Mock -CommandName Read-PromptChoice  -MockWith { param($Prompt, $Choices, $Default) $Default }
+        Mock -CommandName Read-PromptYesNo   -MockWith { param($Prompt, $Default) $Default }
+        $a = Invoke-ConfigQA -Paths $script:p
+        $a.SeedSamples | Should -BeFalse
+    }
+}
+
+Describe 'Get-ArbitronSamples' {
+    # Task 10: mirrors Get-ArbitronBinary -- verify-before-extract, non-fatal on failure.
+    BeforeEach {
+        $script:p = New-TestPaths
+        $script:p['Samples'] = Join-Path $script:p.Root 'samples'
+        New-Item -ItemType Directory -Path $script:p.Root -Force | Out-Null
+    }
+    AfterEach { Remove-Item -Recurse -Force $script:p.Root -ErrorAction SilentlyContinue }
+
+    It 'downloads SHA256SUMS first, then the tarball, then verifies before extracting' {
+        $script:callOrder = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName Get-ArbitronVersion -MockWith { '1.2.3' }
+        Mock -CommandName Invoke-ArbitronDownload -MockWith {
+            param($Uri, $OutFile)
+            $script:callOrder.Add($(if ($Uri -like '*SHA256SUMS') { 'sums' } else { 'tarball' }))
+            Set-Content -Path $OutFile -Value 'fake' -NoNewline
+        }
+        Mock -CommandName Test-Download -MockWith { $script:callOrder.Add('verify') }
+        # Patch tar via Get-Command redirection is not possible in Pester; instead
+        # assert verify was invoked before any extraction attempt (even though
+        # tar will fail non-fatally, the order invariant has already been recorded).
+        Get-ArbitronSamples -Paths $script:p -Version '1.2.3' | Out-Null
+        # Verify must come after both downloads.
+        $idxSums   = $script:callOrder.IndexOf('sums')
+        $idxTar    = $script:callOrder.IndexOf('tarball')
+        $idxVerify = $script:callOrder.IndexOf('verify')
+        $idxSums   | Should -BeGreaterOrEqual 0
+        $idxTar    | Should -BeGreaterOrEqual 0
+        $idxVerify | Should -BeGreaterThan $idxSums
+        $idxVerify | Should -BeGreaterThan $idxTar
+    }
+
+    It 'returns false (non-fatal) when the download fails' {
+        Mock -CommandName Get-ArbitronVersion -MockWith { '1.2.3' }
+        Mock -CommandName Invoke-ArbitronDownload -MockWith { throw 'network error' }
+        $result = Get-ArbitronSamples -Paths $script:p -Version '1.2.3'
+        $result | Should -BeFalse
+    }
+
+    It 'returns false (non-fatal) when checksum verification fails' {
+        Mock -CommandName Get-ArbitronVersion -MockWith { '1.2.3' }
+        Mock -CommandName Invoke-ArbitronDownload -MockWith {
+            param($Uri, $OutFile) Set-Content -Path $OutFile -Value 'fake' -NoNewline
+        }
+        Mock -CommandName Test-Download -MockWith { throw 'Checksum verification failed.' }
+        $result = Get-ArbitronSamples -Paths $script:p -Version '1.2.3'
+        $result | Should -BeFalse
+    }
+
+    It 'builds the tarball URL from $ArbitronRepo and the resolved version' {
+        $script:seenUri = $null
+        Mock -CommandName Get-ArbitronVersion -MockWith { '2.5.0' }
+        Mock -CommandName Invoke-ArbitronDownload -MockWith {
+            param($Uri, $OutFile)
+            if ($Uri -like '*samples*') { $script:seenUri = $Uri }
+            Set-Content -Path $OutFile -Value 'x' -NoNewline
+        }
+        Mock -CommandName Test-Download -MockWith { throw 'stop' }
+        Get-ArbitronSamples -Paths $script:p -Version '2.5.0' | Out-Null
+        $script:seenUri | Should -BeLike '*arbitron_samples_2.5.0.tar.gz*'
+        $script:seenUri | Should -BeLike '*dbinky/arbitron*'
+    }
+}

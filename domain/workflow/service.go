@@ -313,39 +313,23 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		return fmt.Errorf("%w: %s", ErrNotFound, privateName)
 	}
 
-	// Publisher-only-overwrite check.
-	pubID, published, err := s.published.PublisherOf(ctx, publishedName)
+	// The write-tree + record-publication + rollback + idempotency invariant lives
+	// in WriteAndRecord; Publish supplies the private-source copy as its write step.
+	err = WriteAndRecord(ctx, s.published, PublishRequest{
+		PublishedName: publishedName,
+		Publisher:     id.UserID,
+		SourceName:    privateName,
+		Visibility:    visibility,
+		Department:    department,
+		WriteTree: func(ctx context.Context, overwrite bool) error {
+			return s.repo.CopyTree(ctx, Private(id.UserID), privateName, Shared(), publishedName, overwrite)
+		},
+		Rollback: func(ctx context.Context) error {
+			return s.repo.Delete(ctx, Shared(), publishedName)
+		},
+	})
 	if err != nil {
 		return err
-	}
-	overwrite := false
-	if published {
-		if pubID != id.UserID {
-			return fmt.Errorf("%w: published name %q owned by another user", ErrUnauthorized, publishedName)
-		}
-		overwrite = true // re-publish by the same publisher
-	}
-
-	if err := s.repo.CopyTree(ctx, Private(id.UserID), privateName, Shared(), publishedName, overwrite); err != nil {
-		return err
-	}
-	// Record the publication after the folder is in place (copy-then-record).
-	if err := s.published.Upsert(ctx, publishedName, id.UserID, privateName, visibility, department); err != nil {
-		if !overwrite {
-			// FRESH path: compensate by deleting the just-copied tree. The
-			// destination was empty before, so this restores the prior state. The
-			// rollback is best-effort; if it also fails, surface the original Upsert
-			// error joined with the rollback error so neither is lost.
-			if delErr := s.repo.Delete(ctx, Shared(), publishedName); delErr != nil {
-				return errors.Join(
-					fmt.Errorf("recording publication for %q: %w", publishedName, err),
-					fmt.Errorf("rolling back copied shared tree: %w", delErr),
-				)
-			}
-		}
-		// OVERWRITE path (or after a successful fresh rollback): surface the error
-		// loudly; on overwrite we deliberately do NOT delete the shared copy.
-		return fmt.Errorf("recording publication for %q: %w", publishedName, err)
 	}
 	// Best-effort audit of the successful publish (nil-safe per audit.Service).
 	s.audit.Record(ctx, audit.ActionWorkflowPublish, publishedName, auditDetail(map[string]string{

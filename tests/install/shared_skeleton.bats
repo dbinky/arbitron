@@ -83,14 +83,23 @@ teardown() {
 
 # --- system layout -----------------------------------------------------------
 
-@test "create_system_layout creates etc/lib/log/workspaces dirs" {
+@test "create_system_layout creates etc/lib/log/workspaces/samples dirs" {
   run create_system_layout
   [ "$status" -eq 0 ]
   # install -d (or mkdir) was called for each system dir.
   grep -qF "/etc/arbitron" "$MOCK_LOG"
   grep -qF "/var/lib/arbitron" "$MOCK_LOG"
   grep -qF "/var/lib/arbitron/workspaces" "$MOCK_LOG"
+  grep -qF "/var/lib/arbitron/samples" "$MOCK_LOG"
   grep -qF "/var/log/arbitron" "$MOCK_LOG"
+}
+
+@test "create_system_layout places samples under SCFG_DATA_DIR when overridden" {
+  export SCFG_DATA_DIR="$TEST_SANDBOX/data/custom"
+  run create_system_layout
+  [ "$status" -eq 0 ]
+  grep -qF "$TEST_SANDBOX/data/custom/samples" "$MOCK_LOG"
+  grep -qF "$TEST_SANDBOX/data/custom/workspaces" "$MOCK_LOG"
 }
 
 @test "create_system_layout makes data + log dirs service-account owned, etc root" {
@@ -127,6 +136,7 @@ teardown() {
   [ -d "$ARB_LIB" ]
   [ -d "$ARB_LOG" ]
   [ -d "$ARB_LIB/workspaces" ]
+  [ -d "$ARB_LIB/samples" ]
   # The fallback path calls chown; install was NOT called.
   grep -q "chown" "$MOCK_LOG"
   ! grep -q "^install " "$MOCK_LOG"

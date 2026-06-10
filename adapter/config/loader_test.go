@@ -609,8 +609,8 @@ func TestLoad_Teams_DefaultsDisabledEmpty(t *testing.T) {
 // TestLoad_DefaultProfileRegistry_IncludesCommittedWorkflowAliases verifies the
 // in-repo default profile registry satisfies the contracts of the workflows
 // shipped in this repo (PR #18 Must Fix item 4, comment 4614860006). A fresh
-// install with no deployment config.yaml must validate workspaces/pr-review and
-// workspaces/feature-pipeline honestly — those reference reviewer/coder/planner
+// install with no deployment config.yaml must validate samples/pr-review and
+// samples/feature-pipeline honestly — those reference reviewer/coder/planner
 // (agent), interviewer (agent), and assessor (chat). Without these defaults a
 // clean clone passes workflow_validate and then dies mid-run with "unknown
 // profile alias".
@@ -1405,6 +1405,42 @@ func TestLoad_EdgeMode_TeamDomainTrimmed(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.Equal(t, "https://acme.cloudflareaccess.com", cfg.Auth.Edge.TeamDomain,
 		"teamdomain must be trimmed so edge.New receives a clean URL, not a padded one")
+}
+
+// TestLoad_SamplesBlock verifies that the samples block in YAML is read into
+// cfg.Samples correctly: seed=true and sourcedir="/opt/arbitron/samples".
+func TestLoad_SamplesBlock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := "samples:\n  seed: true\n  sourcedir: \"/opt/arbitron/samples\"\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, true, cfg.Samples.Seed, "samples.seed")
+	assert.Equal(t, "/opt/arbitron/samples", cfg.Samples.SourceDir, "samples.sourcedir")
+}
+
+// TestLoad_SamplesDefaults verifies that the samples block has safe defaults
+// when not configured: seed=true (seeding is a no-op when sourcedir is empty)
+// and sourcedir="" (disables seeding by default).
+func TestLoad_SamplesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Minimal config — no samples block.
+	yamlContent := "server:\n  port: 9999\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, true, cfg.Samples.Seed, "default samples.seed")
+	assert.Equal(t, "", cfg.Samples.SourceDir, "default samples.sourcedir")
 }
 
 // TestLoad_AuthMode_FromEnv_EdgeMode is the edge-mode parallel of the org-mode

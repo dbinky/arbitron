@@ -247,7 +247,7 @@ The brainstorming process is copied **native** into the interactive nodes' orche
 - **Claude-subscription configuration** — `claude -p` chat and agent nodes, for real work on local projects.
 - **Open-weight configuration** — non-Anthropic / open-weight models (served via OpenRouter or Azure AI Foundry, agentic work via opencode), for lower-cost end-to-end testing of the full pipeline.
 
-A separate multi-persona **PR review** workflow (Architect → 10x Engineer → Security → Manager, with optional auto-implement) already exists under `workspaces/pr-review/`.
+A separate multi-persona **PR review** workflow (Architect → 10x Engineer → Security → Manager, with optional auto-implement) already exists under `samples/pr-review/`.
 
 ---
 
@@ -258,7 +258,7 @@ Hexagonal (ports & adapters):
 - **`domain/`** — pure business logic: `engine` (graph walker + node executors), `workflow` (definitions + validation), `instance` (lifecycle + repositories), `queue` (manager, scheduler, caps, priority), `variable` (store + `{{substitution}}`), `config`, `notification`. Ports (e.g. `ChatProvider`, `AgentProvider`, repositories) are defined here.
 - **`adapter/`** — implementations: `claudecli` & `anthropic` & (Azure/OpenRouter) LLM backends, `opencode` agent harness, `mcp` (MCP server + tools), `http` (REST + dashboard host), `filesystem` (workflow/file storage), `sqlite` (instance/exec/snapshot/queue repos via sqlc), `eventbus`, `notification`, `observability` (logging + OTel), `process`/`procenv` (script & tool execution + environment), `config`, `dashboard`.
 - **`cmd/arbitron/`** — CLI entry point (cobra) that wires domain + adapters.
-- **`workspaces/`** — example workflow folders. **`plugin/skills/`** — Claude Code skills wrapping the MCP tools. **`docs/specs/`** — design specs, including `feature-pipeline-replacement-mvp.md`.
+- **`samples/`** — bundled sample workflows. **`plugin/skills/`** — Claude Code skills wrapping the MCP tools. **`docs/specs/`** — design specs, including `feature-pipeline-replacement-mvp.md`.
 
 ---
 
