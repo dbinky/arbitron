@@ -8,11 +8,17 @@ services:
       - ./workspaces:/workspaces
       - claude-config:/claude-config
       - gh-config:/home/arbitron/.config/gh
-      # Bind-mount host ~/Repos so the in-container path matches the host's
-      # tilde-expanded path. Required by the pr-review workflow so cloned
-      # repos are reachable at the same ~/Repos/<owner>/<name> path the host
-      # uses.
-      - ${HOME}/Repos:/home/arbitron/Repos
+      # SECURITY: the sample workflows are seeded public-by-default now, so a
+      # broad host mount is exposed to every run. We do NOT bind-mount the host's
+      # entire ~/Repos by default — a prompt-injected or malicious-input run could
+      # read/modify every repo under it. Repos cloned by the pr-review workflow
+      # live in the container-managed workspace instead.
+      #
+      # OPT-IN: to make a specific host repo reachable at the same
+      # ~/Repos/<owner>/<name> path the host uses, uncomment and narrow to the one
+      # repo you need (add :ro where the workflow only reads it). Mounting all of
+      # ${HOME}/Repos is an explicit, deliberate choice, not the default.
+      # - ${HOME}/Repos/<owner>/<name>:/home/arbitron/Repos/<owner>/<name>
     environment:
       - ARBITRON_DATABASE_PATH=/data/arbitron.db
       - ARBITRON_WORKSPACE_PATH=/workspaces
@@ -23,10 +29,13 @@ services:
       - ARBITRON_LLM_PROVIDER=claude-cli
       - ARBITRON_LLM_BINARYPATH=/usr/local/bin/claude
       # SECURITY: skip-permissions is a CRITICAL knob (see PR #8 security
-      # thread 3291940088). Enabled here because the container is the security
-      # boundary in this test setup and the agent needs unattended tool
-      # execution. Do NOT carry this default to a multi-tenant production.
-      - ARBITRON_LLM_SKIPPERMISSIONS=true
+      # thread 3291940088) — it grants the agent permission-free, unattended tool
+      # execution (RCE-equivalent under hostile prompts). It defaults to FALSE
+      # now that the sample workflows are seeded public-by-default: every
+      # authenticated user could otherwise trigger service-account-privileged
+      # execution out of the box. Set it to true ONLY for a single-tenant dev box
+      # where you accept that posture; never in a multi-tenant deployment.
+      - ARBITRON_LLM_SKIPPERMISSIONS=false
       # Persist claude's OAuth credentials in the claude-config named volume so
       # `claude /login` only has to be run once. CLAUDE_CONFIG_DIR is on the
       # subprocess env allowlist.
