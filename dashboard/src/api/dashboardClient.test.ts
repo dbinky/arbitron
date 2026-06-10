@@ -16,7 +16,7 @@ describe('api.me', () => {
   it('GETs /api/v1/me and returns the projection', async () => {
     const me: Me = {
       userId: 'u1', username: 'alice', role: 'user',
-      departments: ['engineering'], ledDepartments: [], isAdmin: false,
+      departments: ['engineering'], ledDepartments: [], isAdmin: false, authMode: 'local' as const,
     }
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(me))
     const result = await api.me()

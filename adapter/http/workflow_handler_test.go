@@ -948,12 +948,14 @@ func TestWorkflowHandler_Stats(t *testing.T) {
 				}, nil
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(newMockWorkflowRepo(), &mockWorkflowService{}, newMockFileReader(), instRepo)
+		repo := newMockWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), instRepo)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/stats", nil)
 		req = withChiURLParam(req, "name", "test-wf")
 		w := httptest.NewRecorder()
-		h.Stats(w, req)
+		h.Stats(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp instance.WorkflowStats
@@ -975,12 +977,14 @@ func TestWorkflowHandler_Stats(t *testing.T) {
 				return &instance.WorkflowStats{TotalRuns: 5}, nil
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(newMockWorkflowRepo(), &mockWorkflowService{}, newMockFileReader(), instRepo)
+		repo := newMockWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), instRepo)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/stats?from=2025-01-01T00:00:00Z&to=2025-02-01T00:00:00Z", nil)
 		req = withChiURLParam(req, "name", "test-wf")
 		w := httptest.NewRecorder()
-		h.Stats(w, req)
+		h.Stats(w, withTestIdentity(req))
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp instance.WorkflowStats
@@ -1033,7 +1037,9 @@ func TestWorkflowHandler_Stats(t *testing.T) {
 				return nil, fmt.Errorf("db timeout")
 			},
 		}
-		h := adapthttp.NewWorkflowHandler(newMockWorkflowRepo(), &mockWorkflowService{}, newMockFileReader(), instRepo)
+		repo := newMockWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), instRepo)
 
 		req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/stats", nil)
 		req = withChiURLParam(req, "name", "test-wf")
@@ -1041,6 +1047,69 @@ func TestWorkflowHandler_Stats(t *testing.T) {
 		h.Stats(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	// IDOR / broken-access-control regression: a caller requesting stats for a
+	// workflow they cannot see (not their private, not a shared publication they
+	// pass CanSeePublication for) must get 404 — never 200, and never reach the
+	// stats reader (no run-count / cadence / existence oracle leak).
+	t.Run("returns 404 and skips the reader when the workflow is not visible", func(t *testing.T) {
+		readerCalled := false
+		instRepo := &statsInstanceRepo{
+			mockInstanceRepo: *newMockInstanceRepo(),
+			statsFn: func(_ context.Context, _ string, _, _ time.Time) (*instance.WorkflowStats, error) {
+				readerCalled = true
+				return &instance.WorkflowStats{TotalRuns: 99}, nil
+			},
+		}
+		// Empty repo: the workflow exists nowhere the caller can see.
+		h := adapthttp.NewWorkflowHandler(newMockWorkflowRepo(), &mockWorkflowService{}, newMockFileReader(), instRepo)
+
+		req := httptest.NewRequest(http.MethodGet, "/workflows/someone-elses-wf/stats", nil)
+		req = withChiURLParam(req, "name", "someone-elses-wf")
+		w := httptest.NewRecorder()
+		h.Stats(w, withTestIdentity(req))
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.False(t, readerCalled, "stats reader must not run for a denied caller")
+	})
+
+	t.Run("returns 200 for a workflow the caller owns privately", func(t *testing.T) {
+		repo := newMockWorkflowRepo()
+		repo.workflows["mine"] = &workflow.Workflow{Name: "mine"}
+		instRepo := &statsInstanceRepo{
+			mockInstanceRepo: *newMockInstanceRepo(),
+			statsFn: func(_ context.Context, name string, _, _ time.Time) (*instance.WorkflowStats, error) {
+				assert.Equal(t, "mine", name)
+				return &instance.WorkflowStats{TotalRuns: 4}, nil
+			},
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), instRepo)
+
+		req := httptest.NewRequest(http.MethodGet, "/workflows/mine/stats", nil)
+		req = withChiURLParam(req, "name", "mine")
+		w := httptest.NewRecorder()
+		h.Stats(w, withTestIdentity(req))
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp instance.WorkflowStats
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, 4, resp.TotalRuns)
+	})
+
+	t.Run("returns 400 for an inverted from/to range", func(t *testing.T) {
+		repo := newMockWorkflowRepo()
+		repo.workflows["mine"] = &workflow.Workflow{Name: "mine"}
+		instRepo := &statsInstanceRepo{mockInstanceRepo: *newMockInstanceRepo()}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), instRepo)
+
+		req := httptest.NewRequest(http.MethodGet,
+			"/workflows/mine/stats?from=2025-02-01T00:00:00Z&to=2025-01-01T00:00:00Z", nil)
+		req = withChiURLParam(req, "name", "mine")
+		w := httptest.NewRecorder()
+		h.Stats(w, withTestIdentity(req))
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
 

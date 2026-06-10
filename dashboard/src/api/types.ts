@@ -112,6 +112,14 @@ export interface WorkflowSummary {
   description: string
   author: string
   nodeCount?: number
+  /** "private" (caller's own) or "shared" (published). */
+  scope?: 'private' | 'shared'
+  /** Publishing user's id for shared entries; empty for private. */
+  publisher?: string
+  /** "public" or "department" for shared entries; empty for private. */
+  visibility?: 'public' | 'department'
+  /** Owning department for department-visibility shared entries. */
+  department?: string
 }
 
 /** System configuration returned by /system/config. */
@@ -163,6 +171,8 @@ export interface Me {
   /** Subset of departments the caller leads. */
   ledDepartments: string[]
   isAdmin: boolean
+  /** Server operating mode; drives the workflows-catalog default view. */
+  authMode: 'local' | 'org' | 'edge'
 }
 
 /** Current point-in-time queue counts for the department dashboard. */

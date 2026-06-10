@@ -35,4 +35,12 @@ var (
 	// unstorable level, or omitted the required department for a department-level
 	// publication.
 	ErrInvalidVisibility = errors.New("invalid visibility request")
+
+	// ErrInvalidStatsRange indicates a workflow-stats query specified a
+	// from/to window that is inverted (from > to) or wider than MaxStatsWindow.
+	ErrInvalidStatsRange = errors.New("invalid stats range")
+
+	// ErrStatsUnavailable indicates the stats read port was not configured on the
+	// WorkflowService (a composition/wiring error, not a caller error).
+	ErrStatsUnavailable = errors.New("stats not available")
 )

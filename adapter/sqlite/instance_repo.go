@@ -331,12 +331,34 @@ func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, rec
 	return nil
 }
 
+// Stats aggregates execution metrics for a single workflow over [from, to].
+//
+// AUTHORIZATION: this method performs NO caller/owner/visibility scoping — it is
+// a dumb data accessor. The access decision (CanSeePublication / ownership) lives
+// in workflow.WorkflowService.Stats, which gates the name before delegating here.
+// Do NOT add a per-caller predicate to this query; keep the boundary in the
+// domain service (hexagonal architecture).
+//
+// RAW (not sqlc): this query is hand-written rather than generated because every
+// aggregate must be COALESCE-wrapped to survive the empty-result-set case. Over
+// zero matching rows SQLite's SUM/AVG return NULL (not 0), which would Scan into
+// the int/float fields as a NULL error; COALESCE(..., 0) collapses that NULL to a
+// clean zero. COUNT(*) is the lone exception (it is 0, never NULL, on an empty
+// set). Regenerating this via sqlc would relocate — not remove — the NULL footgun
+// into the generated layer, so it is intentionally kept raw here.
+//
+// TIMESTAMP COMPARISON: created_at is stored as a fixed-width UTC RFC3339-style
+// string (see timeToString); because the width and layout are fixed and UTC,
+// lexical (string) >=/<= comparison is equivalent to chronological comparison, so
+// the range predicate is correct without a date() conversion. An inverted range
+// is rejected upstream in the service (ErrInvalidStatsRange), so it never reaches
+// this query.
 func (r *InstanceRepo) Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*instance.WorkflowStats, error) {
 	query := `
 SELECT
   COUNT(*) AS total_runs,
-  SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS success_count,
-  SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failure_count,
+  COALESCE(SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END), 0) AS success_count,
+  COALESCE(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END), 0) AS failure_count,
   COALESCE(AVG(CASE WHEN state = 'completed' AND completed_at IS NOT NULL
     THEN (julianday(completed_at) - julianday(created_at)) * 86400.0
     ELSE NULL END), 0) AS avg_duration_secs
