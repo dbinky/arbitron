@@ -105,9 +105,15 @@ func NewWorkflowHandler(repo workflow.WorkflowRepository, service TriggerService
 	if len(profileChecker) > 0 {
 		pc = profileChecker[0]
 	}
+	wfSvc := workflow.NewWorkflowService(repo, nil)
+	if stats != nil {
+		// The stats read path is gated by the service (CanSeePublication); wire the
+		// raw reader behind that boundary so the handler never queries it directly.
+		wfSvc.SetStatsReader(stats)
+	}
 	return &WorkflowHandler{
 		repo:           repo,
-		wfSvc:          workflow.NewWorkflowService(repo, nil),
+		wfSvc:          wfSvc,
 		service:        service,
 		fileReader:     fileReader,
 		stats:          stats,
@@ -116,9 +122,14 @@ func NewWorkflowHandler(repo workflow.WorkflowRepository, service TriggerService
 }
 
 // SetWorkflowService overrides the internally-constructed WorkflowService, e.g.
-// to wire a real PublisherLookup once the published_workflows repo exists.
+// to wire a real PublisherLookup once the published_workflows repo exists. The
+// stats read port is re-applied to the injected service so the gated Stats path
+// keeps working through the production (publisher-aware) service.
 func (h *WorkflowHandler) SetWorkflowService(svc *workflow.WorkflowService) {
 	if svc != nil {
+		if h.stats != nil {
+			svc.SetStatsReader(h.stats)
+		}
 		h.wfSvc = svc
 	}
 }
@@ -203,8 +214,8 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const maxTriggerBodyBytes = 1 << 20  // 1 MiB
-const maxWriteFileBytes = 10 << 20   // 10 MiB
+const maxTriggerBodyBytes = 1 << 20 // 1 MiB
+const maxWriteFileBytes = 10 << 20  // 10 MiB
 
 // Trigger handles POST /workflows/{name}/trigger and creates a new workflow instance.
 func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
@@ -453,9 +464,20 @@ func (h *WorkflowHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		to = parsed
 	}
 
-	stats, err := h.stats.Stats(r.Context(), name, from, to)
+	// Route through the service so the access decision (CanSeePublication /
+	// ownership) is enforced at the authorization boundary, not the repo. A name
+	// the caller cannot see comes back as ErrNotFound → 404 (NOT 403), so the
+	// endpoint is not a cross-scope existence oracle.
+	stats, err := h.wfSvc.Stats(r.Context(), name, from, to)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch stats")
+		switch {
+		case errors.Is(err, workflow.ErrNotFound):
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		case errors.Is(err, workflow.ErrInvalidStatsRange):
+			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch stats")
+		}
 		return
 	}
 

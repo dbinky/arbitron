@@ -5,11 +5,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
+
+// MaxStatsWindow caps the from/to span a single workflow-stats query may scan.
+// It is defense-in-depth against accidental or abusive unbounded aggregations
+// (an inverted or enormous window otherwise produces a silent full-table scan).
+const MaxStatsWindow = 366 * 24 * time.Hour
+
+// StatsReader reads execution statistics for a single workflow over a time
+// range. It is the narrow read port the WorkflowService delegates to AFTER the
+// visibility gate has approved the caller; the reader itself performs no
+// authorization (the service layer is the authorization boundary, not the repo).
+type StatsReader interface {
+	Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*instance.WorkflowStats, error)
+}
 
 // PublisherLookup resolves the publication record for a shared workflow name,
 // including its visibility level. Backed by the published_workflows repo. A nil
@@ -45,12 +60,21 @@ type WorkflowService struct {
 	// PublishedStore; nil disables Publish.
 	published PublishedStore
 	audit     *audit.Service // optional; nil-safe best-effort audit emitter
+	// stats is the optional execution-statistics read port. When unset (nil),
+	// Stats reports the feature is unavailable rather than panicking.
+	stats StatsReader
 }
 
 // SetAudit wires the best-effort audit emitter. When unset (nil), no audit
 // events are recorded (local/unconfigured deployments behave as today).
 func (s *WorkflowService) SetAudit(a *audit.Service) {
 	s.audit = a
+}
+
+// SetStatsReader wires the execution-statistics read port consulted by Stats.
+// When unset (nil), Stats returns ErrStatsUnavailable.
+func (s *WorkflowService) SetStatsReader(r StatsReader) {
+	s.stats = r
 }
 
 // auditDetail marshals a small map to compact JSON for an audit event's detail,
@@ -274,6 +298,42 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 	}
 
 	return out, nil
+}
+
+// Stats returns execution statistics for a workflow the caller is allowed to
+// see. It is the authorization boundary for the stats read path: the caller is
+// resolved from the context, the name is gated through the SAME visibility
+// predicate as Load/List (private scope first, then shared via CanSeePublication
+// in auditingFilter), and only an authorized caller's request reaches the stats
+// reader. A name the caller cannot see returns ErrNotFound — NOT ErrUnauthorized
+// — so the endpoint is not an existence oracle across user/department boundaries.
+//
+// The from/to window is validated (rejecting an inverted range or one wider than
+// MaxStatsWindow) before any aggregation runs, as defense-in-depth against
+// unbounded scans.
+func (s *WorkflowService) Stats(ctx context.Context, name string, from, to time.Time) (*instance.WorkflowStats, error) {
+	id, err := caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.stats == nil {
+		return nil, ErrStatsUnavailable
+	}
+	if from.After(to) {
+		return nil, fmt.Errorf("%w: from %s is after to %s", ErrInvalidStatsRange, from, to)
+	}
+	if to.Sub(from) > MaxStatsWindow {
+		return nil, fmt.Errorf("%w: window exceeds the %s maximum", ErrInvalidStatsRange, MaxStatsWindow)
+	}
+
+	// Gate: resolve the name through the caller's visible scopes (private first,
+	// then shared subject to CanSeePublication). A name the caller cannot see
+	// yields ErrNotFound and never reaches the stats reader.
+	if _, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id)); err != nil {
+		return nil, err
+	}
+
+	return s.stats.Stats(ctx, name, from, to)
 }
 
 // Publish copies the caller's private workflow into the shared scope under

@@ -443,6 +443,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// WorkflowService resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
+	// The workflow-stats read path is gated by the service's visibility predicate
+	// (CanSeePublication / ownership); wire the instance repo behind that boundary
+	// so GET /workflows/{name}/stats cannot read across user/department scopes.
+	workflowSvc.SetStatsReader(instanceRepo)
 	// Best-effort audit emitter for publish/visibility/admin-override events. The
 	// engine is wired to this same auditSvc below (Phase 3 task 5) via
 	// eng.SetAuditRecorder(auditSvc), once eng exists — a single engine seam.
