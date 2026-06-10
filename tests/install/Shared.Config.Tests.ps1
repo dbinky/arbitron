@@ -504,3 +504,108 @@ Describe 'Invoke-SharedConfigQA OIDC redirect URL derivation (parity with bash p
         $script:capturedDefault | Should -Be 'https://arb.example.com/auth/callback'
     }
 }
+
+Describe 'Get-ArbitronPaths Samples key (Shared)' {
+    # Task 10: Shared install puts samples under %ProgramData%\Arbitron\samples.
+    BeforeAll {
+        $env:ProgramData  = Join-Path ([System.IO.Path]::GetTempPath()) ("ArbPD_Samples_" + [guid]::NewGuid())
+        $env:ProgramFiles = Join-Path ([System.IO.Path]::GetTempPath()) ("ArbPF_Samples_" + [guid]::NewGuid())
+    }
+
+    It 'Shared paths include a Samples key under the data root' {
+        $p = Get-ArbitronPaths -InstallType Shared
+        $p.ContainsKey('Samples') | Should -BeTrue
+        $p.Samples | Should -BeLike "*$($p.Root)*"
+        $p.Samples | Should -BeLike '*samples'
+    }
+}
+
+Describe 'Invoke-SharedConfigQA sample workflows prompt' {
+    # Task 10: org/shared installs prompt the operator (default yes); env override wins.
+    BeforeEach {
+        $script:p = New-SharedTestPaths
+        Remove-Item Env:\ARBITRON_INSTALL_SAMPLE_WORKFLOWS -ErrorAction SilentlyContinue
+    }
+    AfterEach { Remove-Item Env:\ARBITRON_INSTALL_SAMPLE_WORKFLOWS -ErrorAction SilentlyContinue }
+
+    It 'prompts for sample workflows and returns SeedSamples=true when accepted' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model'              = 'edge'
+            'TLS model'               = 'tunnel'
+            'Public'                  = 'https://arb.example.com'
+            'sample workflows'        = $true
+        }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.ContainsKey('SeedSamples') | Should -BeTrue
+        $a.SeedSamples | Should -BeTrue
+    }
+
+    It 'returns SeedSamples=false when the operator declines' {
+        Set-ScriptedSharedAnswers @{
+            'Auth model'       = 'edge'
+            'TLS model'        = 'tunnel'
+            'Public'           = 'https://arb.example.com'
+            'sample workflows' = $false
+        }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.SeedSamples | Should -BeFalse
+    }
+
+    It 'env ARBITRON_INSTALL_SAMPLE_WORKFLOWS=no overrides the prompt (no prompt shown)' {
+        $env:ARBITRON_INSTALL_SAMPLE_WORKFLOWS = 'no'
+        $script:samplesPromptCalled = $false
+        Mock -CommandName Read-PromptYesNo -MockWith {
+            param($Prompt, $Default)
+            if ($Prompt -like '*sample*') { $script:samplesPromptCalled = $true }
+            $Default
+        }
+        Mock -CommandName Read-PromptDefault -MockWith { param($Prompt, $Default) $Default }
+        Mock -CommandName Read-PromptChoice  -MockWith { param($Prompt, $Choices, $Default) $Default }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.SeedSamples                | Should -BeFalse
+        $script:samplesPromptCalled   | Should -BeFalse
+    }
+
+    It 'env ARBITRON_INSTALL_SAMPLE_WORKFLOWS=yes overrides the prompt (no prompt shown)' {
+        $env:ARBITRON_INSTALL_SAMPLE_WORKFLOWS = 'yes'
+        $script:samplesPromptCalled = $false
+        Mock -CommandName Read-PromptYesNo -MockWith {
+            param($Prompt, $Default)
+            if ($Prompt -like '*sample*') { $script:samplesPromptCalled = $true }
+            $Default
+        }
+        Mock -CommandName Read-PromptDefault -MockWith { param($Prompt, $Default) $Default }
+        Mock -CommandName Read-PromptChoice  -MockWith { param($Prompt, $Choices, $Default) $Default }
+        $a = Invoke-SharedConfigQA -Paths $script:p
+        $a.SeedSamples                | Should -BeTrue
+        $script:samplesPromptCalled   | Should -BeFalse
+    }
+
+    It 'sample workflows appears after LLM access in the canonical question order' {
+        $list = Get-SharedQuestionOrder
+        $idxLlm     = [array]::IndexOf($list, 'LLM access')
+        $idxSamples = [array]::IndexOf($list, 'Install sample workflows')
+        $idxLlm     | Should -BeGreaterOrEqual 0
+        $idxSamples | Should -BeGreaterThan $idxLlm
+    }
+}
+
+Describe 'Write-ArbitronConfig samples: block (Shared)' {
+    # Task 10: Shared config writer uses Paths.Samples for the sourcedir.
+    BeforeEach { $script:p = New-SharedTestPaths }
+    AfterEach  { if (Test-Path $script:p.Root) { Remove-Item -Recurse -Force $script:p.Root -ErrorAction SilentlyContinue } }
+
+    It 'writes samples: block with seed: true and the Shared Samples path' {
+        $answers = @{
+            Port = 8080; Host = '127.0.0.1'; AuthMode = 'local'
+            PublicBaseURL = 'https://arb.example.com'; CookieSecure = $true
+            TlsEnabled = $false; SkipPermissions = $false
+            DataDir = $script:p.Data; LlmMode = 'subscription'; SeedSamples = $true
+        }
+        Write-ArbitronConfig -Paths $script:p -Answers $answers
+        $yaml = Get-Content -Raw -LiteralPath $script:p.Config
+        $yaml | Should -Match 'samples:'
+        $yaml | Should -Match 'seed:\s*true'
+        $yaml | Should -BeLike "*$($script:p.Samples)*"
+    }
+}
