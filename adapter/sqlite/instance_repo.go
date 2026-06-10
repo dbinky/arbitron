@@ -335,8 +335,8 @@ func (r *InstanceRepo) Stats(ctx context.Context, workflowName string, from time
 	query := `
 SELECT
   COUNT(*) AS total_runs,
-  SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) AS success_count,
-  SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failure_count,
+  COALESCE(SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END), 0) AS success_count,
+  COALESCE(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END), 0) AS failure_count,
   COALESCE(AVG(CASE WHEN state = 'completed' AND completed_at IS NOT NULL
     THEN (julianday(completed_at) - julianday(created_at)) * 86400.0
     ELSE NULL END), 0) AS avg_duration_secs
