@@ -23,7 +23,7 @@ vi.mock('../api/client', () => ({
 import DashboardView from './DashboardView'
 
 function me(overrides: Partial<Me> = {}): Me {
-  return { userId: 'u1', username: 'a', role: 'user', departments: ['engineering'], ledDepartments: [], isAdmin: false, ...overrides }
+  return { userId: 'u1', username: 'a', role: 'user', departments: ['engineering'], ledDepartments: [], isAdmin: false, authMode: 'local', ...overrides }
 }
 
 function stats(overrides: Partial<DashboardStats> = {}): DashboardStats {
