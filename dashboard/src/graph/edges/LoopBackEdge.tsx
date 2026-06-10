@@ -2,15 +2,12 @@ import { memo } from 'react'
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react'
 import type { Loop } from '../loops'
 import type { Box } from '../loopLayout'
-import { chooseSide, buildLoopBackPath } from '../loopEdgeRouting'
+import { chooseSide, loopBackGeometry, buildLoopBackPath } from '../loopEdgeRouting'
+import { NODE_WIDTH, NODE_HEIGHT } from '../useGraphLayout'
 
 interface LoopBackEdgeData {
   loop: Loop
   box?: Box
-  /** Side chosen at layout time; falls back to chooseSide when absent. */
-  side?: 'left' | 'right'
-  /** Gutter x chosen at layout time; falls back to chooseSide when absent. */
-  gutterX?: number
   [key: string]: unknown
 }
 
@@ -18,7 +15,9 @@ function LoopBackEdge(props: EdgeProps) {
   const { id, sourceX, sourceY, targetX, targetY, markerEnd, style } = props
   const data = props.data as LoopBackEdgeData | undefined
 
-  // Fall back to a box derived from the endpoints when none is supplied.
+  // React Flow hands us the default handle coords: source = tail bottom-center,
+  // target = head top-center (sourceX/targetX are therefore the node centers).
+  // Fall back to an endpoint-derived box when the loop body box is absent.
   const box: Box =
     data?.box ?? {
       x: Math.min(sourceX, targetX) - 20,
@@ -27,25 +26,23 @@ function LoopBackEdge(props: EdgeProps) {
       height: Math.abs(sourceY - targetY),
     }
 
-  // useGraphLayout normally picks the side and gutter (so the node handles match);
-  // standalone renders (e.g. unit tests with no node graph) fall back to chooseSide.
-  const fallback = chooseSide({
+  const { side } = chooseSide({
     sourceX,
     targetX,
     boxX: box.x,
     boxWidth: box.width,
   })
-  const side = data?.side ?? fallback.side
-  const gutterX = data?.gutterX ?? fallback.gutterX
 
-  const { path, labelX, labelY } = buildLoopBackPath({
+  const geometry = loopBackGeometry({
     sourceX,
     sourceY,
     targetX,
     targetY,
     side,
-    gutterX,
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
   })
+  const { path, labelX, labelY } = buildLoopBackPath(geometry)
 
   const label =
     typeof data?.loop.backEdge.label === 'string'

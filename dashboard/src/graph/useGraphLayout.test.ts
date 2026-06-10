@@ -248,7 +248,7 @@ describe('useGraphLayout — back-edge carries the container box', () => {
   })
 })
 
-describe('useGraphLayout — loop-back edges attach to node sides', () => {
+describe('useGraphLayout — loop-back edge routing data', () => {
   const nodes = [node('a'), node('b'), node('c'), node('d')]
   const edges: WorkflowEdge[] = [
     { source: 'a', target: 'b' },
@@ -257,20 +257,18 @@ describe('useGraphLayout — loop-back edges attach to node sides', () => {
     { source: 'c', target: 'b', label: 'tests pass' },
   ]
 
-  it('wires the back-edge to consistent left/right loop side-handles and records the side', () => {
+  it('tags the back-edge with its loop body box and leaves no explicit handles (the edge routes itself)', () => {
     const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
     const back = result.current.rfEdges.find((e) => e.type === 'loopBackEdge')!
     expect(back).toBeDefined()
-    expect(back.sourceHandle).toMatch(/^loop-s-(left|right)$/)
-    expect(back.targetHandle).toMatch(/^loop-t-(left|right)$/)
-
-    // Source exit and head entry must be on the SAME side.
-    const side = back.sourceHandle!.endsWith('right') ? 'right' : 'left'
-    expect(back.targetHandle).toBe(`loop-t-${side}`)
-    expect((back.data as { side?: string }).side).toBe(side)
+    // Routing is computed inside LoopBackEdge from the default handle coords, so
+    // no side-handle is wired here (which would otherwise capture forward edges).
+    expect(back.sourceHandle).toBeUndefined()
+    expect(back.targetHandle).toBeUndefined()
+    expect((back.data as { box?: unknown }).box).toBeDefined()
   })
 
-  it('leaves forward edges on the default top/bottom handles (no loop side-handles)', () => {
+  it('leaves forward edges on the default top/bottom handles', () => {
     const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
     const fwd = result.current.rfEdges.find((e) => e.type === 'smoothstep')!
     expect(fwd.sourceHandle).toBeUndefined()

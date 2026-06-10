@@ -1,8 +1,30 @@
 # Loop-back edge side routing — design
 
 **Date:** 2026-06-10
-**Status:** Approved (design)
+**Status:** Implemented (revised — see Revision note)
 **Scope:** Dashboard graph rendering only. No backend/API changes.
+
+## Revision (2026-06-10): switched B → A (floating geometry)
+
+The first implementation used **Approach B (explicit side handles)**. Adding four
+extra handles per node broke *forward* edges: once a node has multiple source/
+target handles, React Flow stops defaulting an unhandled edge to bottom/top and
+pulls it to a side handle — so every forward edge hooked out the node side. We
+reverted to **Approach A (floating geometry)**:
+
+- Nodes keep ONLY their default top/bottom handles → forward edges are untouched.
+- `LoopBackEdge` derives its own side attachment points from the default handle
+  coords + node dimensions and draws an out-and-back arc that bows into a side
+  channel (so it visibly leaves the node, rather than running flush up the column).
+- Handle dots are hidden via CSS (read-only viewer; they were visual noise).
+
+Also fixed a latent bug found here: **`WorkflowReview` never passed `edgeTypes`**
+to its `<ReactFlow>`, so the custom `LoopBackEdge` was never used in that view —
+loop-back edges silently fell back to the default bezier. `ExecutionView` already
+wired it; `WorkflowReview` now does too.
+
+The component descriptions below are the original Approach-B plan, kept for
+history; the shipped code follows Approach A as described in this note.
 
 ## Problem
 

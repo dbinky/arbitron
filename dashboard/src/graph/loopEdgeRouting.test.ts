@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   chooseSide,
   GUTTER_OFFSET,
-  loopHandleIds,
+  loopBackGeometry,
   buildLoopBackPath,
 } from './loopEdgeRouting'
 
@@ -38,46 +38,44 @@ describe('chooseSide', () => {
   })
 })
 
-describe('loopHandleIds', () => {
-  it('maps the right side to the right source/target loop handles', () => {
-    expect(loopHandleIds('right')).toEqual({
-      sourceHandle: 'loop-s-right',
-      targetHandle: 'loop-t-right',
-    })
+describe('loopBackGeometry', () => {
+  // ReactFlow hands the edge the DEFAULT handle coords: source = the tail node's
+  // bottom-center, target = the head node's top-center. Floating geometry derives
+  // the SIDE attachment points (vertical center of the chosen side) plus the
+  // channel the edge bows out to — no node handles required.
+  const base = { sourceX: 200, sourceY: 400, targetX: 200, targetY: 100, nodeWidth: 200, nodeHeight: 80 }
+
+  it('attaches at the LEFT side-center of both nodes and channels further left', () => {
+    const g = loopBackGeometry({ ...base, side: 'left' })
+    expect(g.tailX).toBe(100) // 200 - 200/2
+    expect(g.tailY).toBe(360) // bottom 400 - 80/2
+    expect(g.headX).toBe(100)
+    expect(g.headY).toBe(140) // top 100 + 80/2
+    expect(g.channelX).toBe(100 - GUTTER_OFFSET) // bows out past the side
+    expect(g.channelX).toBeLessThan(g.tailX)
   })
 
-  it('maps the left side to the left source/target loop handles', () => {
-    expect(loopHandleIds('left')).toEqual({
-      sourceHandle: 'loop-s-left',
-      targetHandle: 'loop-t-left',
-    })
+  it('attaches at the RIGHT side-center of both nodes and channels further right', () => {
+    const g = loopBackGeometry({ ...base, side: 'right' })
+    expect(g.tailX).toBe(300) // 200 + 200/2
+    expect(g.headX).toBe(300)
+    expect(g.channelX).toBe(300 + GUTTER_OFFSET)
+    expect(g.channelX).toBeGreaterThan(g.tailX)
   })
 })
 
 describe('buildLoopBackPath', () => {
-  it('starts at the source side-point and bows out to the chosen gutter', () => {
-    const { path } = buildLoopBackPath({
-      sourceX: 300,
-      sourceY: 250,
-      targetX: 300,
-      targetY: 150,
-      side: 'right',
-      gutterX: 360,
-    })
-    // The curve begins at the tail's side attachment point...
-    expect(path.startsWith('M300,250')).toBe(true)
-    // ...and bows out through the right-side gutter.
-    expect(path).toContain('360')
+  it('starts at the tail side-point, bows through the channel, ends at the head side-point', () => {
+    const { path } = buildLoopBackPath({ tailX: 100, tailY: 360, headX: 100, headY: 140, channelX: 40 })
+    expect(path.startsWith('M 100,360')).toBe(true)
+    expect(path).toContain('40,360') // control reaching out to the channel
+    expect(path).toContain('40,140')
+    expect(path.trimEnd().endsWith('100,140')).toBe(true)
   })
 
-  it('routes through a different gutter when the side flips', () => {
-    const right = buildLoopBackPath({
-      sourceX: 300, sourceY: 250, targetX: 300, targetY: 150, side: 'right', gutterX: 360,
-    }).path
-    const left = buildLoopBackPath({
-      sourceX: 300, sourceY: 250, targetX: 300, targetY: 150, side: 'left', gutterX: 40,
-    }).path
-    expect(right).not.toEqual(left)
-    expect(left).toContain('40')
+  it('places the label out in the channel, between the two nodes', () => {
+    const { labelX, labelY } = buildLoopBackPath({ tailX: 100, tailY: 360, headX: 100, headY: 140, channelX: 40 })
+    expect(labelX).toBe(40)
+    expect(labelY).toBe(250)
   })
 })

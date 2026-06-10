@@ -8,11 +8,15 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-/* Loop-back side handles are connection anchors only — keep them invisible and
-   non-interactive so node appearance is unchanged in this read-only viewer. */
-.loopHandle {
+/* Read-only viewer: the connection handles are anchor points only, never used
+   for interactive wiring. Hide their dots so they don't clutter the node edges
+   (edges still attach to them). */
+.node :global(.react-flow__handle) {
   opacity: 0;
   pointer-events: none;
+  border: none;
+  min-width: 0;
+  min-height: 0;
 }
 
 .node:hover {
