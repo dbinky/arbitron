@@ -18,6 +18,8 @@ services:
       - ARBITRON_WORKSPACE_PATH=/workspaces
       - ARBITRON_LOGGING_FILE=/data/arbitron.log
       - ARBITRON_SERVER_HOST=0.0.0.0
+      - ARBITRON_SAMPLES_SEED=true
+      - ARBITRON_SAMPLES_SOURCEDIR=/samples
       - ARBITRON_LLM_PROVIDER=claude-cli
       - ARBITRON_LLM_BINARYPATH=/usr/local/bin/claude
       # SECURITY: skip-permissions is a CRITICAL knob (see PR #8 security

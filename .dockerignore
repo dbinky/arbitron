@@ -10,3 +10,4 @@ dashboard/.vite
 .env
 *.db
 docs/
+samples/*_test.go

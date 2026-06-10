@@ -42,10 +42,12 @@ RUN apk add --no-cache ca-certificates bash coreutils nodejs npm git github-cli 
  && npm install -g opencode-ai \
  && addgroup -S arbitron \
  && adduser -S -h /home/arbitron -s /bin/sh -G arbitron arbitron \
- && mkdir -p /data /workspaces /claude-config \
+ && mkdir -p /data /workspaces /claude-config /samples \
             /home/arbitron/.config/gh /home/arbitron/Repos /home/arbitron/go \
- && chown -R arbitron:arbitron /data /workspaces /claude-config /home/arbitron
+ && chown -R arbitron:arbitron /data /workspaces /claude-config /samples /home/arbitron
 COPY --from=builder /arbitron /usr/local/bin/arbitron
+# Bundled sample workflows, seeded into the shared scope on first boot.
+COPY --chown=arbitron:arbitron samples/ /samples/
 # Copy the same Go toolchain the builder used so senior-engineer node can
 # run `go build`, `go test`, `go vet` to verify Go-project fixes. For
 # polyglot use, add more toolchains (node already present; add python/cargo
@@ -56,6 +58,11 @@ ENV GOPATH=/home/arbitron/go
 # SHELL is on the claude-cli env allowlist; set it so the agent harness selects
 # bash deterministically rather than probing.
 ENV SHELL=/bin/bash
+# Sample workflows are bundled in /samples and seeded into the shared scope on
+# boot.  These defaults are explicit so the image self-seeds regardless of how
+# it is run; operators may override either var to disable or redirect.
+ENV ARBITRON_SAMPLES_SEED=true \
+    ARBITRON_SAMPLES_SOURCEDIR=/samples
 VOLUME /data
 USER arbitron
 EXPOSE 8080
