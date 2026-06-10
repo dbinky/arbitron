@@ -1384,10 +1384,19 @@ run_shared_qa() {
 
   if [ -n "${ARBITRON_INSTALL_SAMPLE_WORKFLOWS:-}" ]; then
     SCFG_SEED_SAMPLES="$ARBITRON_INSTALL_SAMPLE_WORKFLOWS"
-  elif prompt_yes_no SAMPLE_WORKFLOWS "Install sample workflows (pr-review, feature-pipeline)?" yes; then
-    SCFG_SEED_SAMPLES="yes"
   else
-    SCFG_SEED_SAMPLES="no"
+    # SECURITY: in a shared/org install the samples are published public, so
+    # every authenticated user can RUN them — and these workflows contain script
+    # nodes that execute (unsandboxed) as the Arbitron service account. Make that
+    # implication explicit before prompting; it is not just docs.
+    log_warn "sample workflows (pr-review, feature-pipeline) contain runnable scripts;"
+    log_warn "in this shared install they are published public — every authenticated user"
+    log_warn "can run them, executing scripts as the Arbitron service account (no sandbox)."
+    if prompt_yes_no SAMPLE_WORKFLOWS "Publish sample workflows org-wide (pr-review, feature-pipeline; includes runnable scripts)?" yes; then
+      SCFG_SEED_SAMPLES="yes"
+    else
+      SCFG_SEED_SAMPLES="no"
+    fi
   fi
 }
 

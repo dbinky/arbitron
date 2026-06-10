@@ -55,6 +55,24 @@ install** must *ask* the operator whether to install the samples; a
    `arbitron_samples_<version>.tar.gz`; installers download + checksum-verify +
    extract into `sourcedir`.
 
+### Threat-model acknowledgement (shared/org installs)
+
+The seeded `pr-review` and `feature-pipeline` workflows contain script nodes
+(`scripts/init-workspace.sh`, `notify.sh`, `push-and-pr.sh`). Per the standing
+threat model (`adapter/process/executor_script.go`), script nodes execute with
+the Arbitron service account's privileges and **are not sandboxed**. Because
+samples are seeded `Visibility = public` in the `shared/` scope, in a
+shared/org install **every authenticated user — not just admins — can run a
+workflow whose script nodes execute as the service account** (with whatever
+`repo_url`/inputs they supply). This is consistent with the existing
+"workflow authors are trusted administrators" model, but seeding-by-default
+widens its blast radius from admins to every authenticated user. The seeded
+shared workflows are read-only (`ErrSharedReadOnly`) so the scripts themselves
+cannot be tampered with, and subprocess env is allowlisted (`buildEnv`).
+Operators who do not want runnable scripts publicly available should decline the
+org-install samples prompt (which states this explicitly) or disable seeding
+(`samples.seed=false`).
+
 ## Architecture
 
 Boot-time, one-directional data flow:

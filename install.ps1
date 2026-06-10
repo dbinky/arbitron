@@ -1309,7 +1309,14 @@ function Invoke-SharedConfigQA {
     } elseif ($env:ARBITRON_INSTALL_SAMPLE_WORKFLOWS -eq 'yes') {
         $answers.SeedSamples = $true
     } else {
-        $answers.SeedSamples = Read-PromptYesNo -Prompt 'Install sample workflows (pr-review, feature-pipeline)?' -Default $true
+        # SECURITY: in a shared/org install the samples are published public, so
+        # every authenticated user can RUN them — and these workflows contain
+        # script nodes that execute (unsandboxed) as the Arbitron service account.
+        # Make that implication explicit before prompting; it is not just docs.
+        Write-ArbitronLog -Level Warn -Message 'Sample workflows (pr-review, feature-pipeline) contain runnable scripts;'
+        Write-ArbitronLog -Level Warn -Message 'in this shared install they are published public — every authenticated user'
+        Write-ArbitronLog -Level Warn -Message 'can run them, executing scripts as the Arbitron service account (no sandbox).'
+        $answers.SeedSamples = Read-PromptYesNo -Prompt 'Publish sample workflows org-wide (pr-review, feature-pipeline; includes runnable scripts)?' -Default $true
     }
 
     return $answers
