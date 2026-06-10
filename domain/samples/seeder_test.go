@@ -159,3 +159,65 @@ func TestSeed_HappyPath(t *testing.T) {
 		t.Errorf("recorded = %v", led.recorded)
 	}
 }
+
+func TestSeed_SkipsAlreadySeeded(t *testing.T) {
+	src := &fakeSource{names: []string{"pr-review"}, wf: map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}}}
+	repo := &fakeRepo{}
+	pub := &fakePublished{}
+	led := &fakeLedger{seeded: map[string]bool{"pr-review": true}}
+	s := samples.NewSeeder(src, repo, pub, led, uuid.New(), discardLogger())
+	if err := s.Seed(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.created) != 0 || len(pub.calls) != 0 || len(led.recorded) != 0 {
+		t.Errorf("expected no writes; created=%v pub=%d recorded=%v", repo.created, len(pub.calls), led.recorded)
+	}
+}
+
+func TestSeed_EmptySourceIsNoOp(t *testing.T) {
+	s := samples.NewSeeder(&fakeSource{}, &fakeRepo{}, &fakePublished{}, &fakeLedger{}, uuid.New(), discardLogger())
+	if err := s.Seed(context.Background()); err != nil {
+		t.Fatalf("Seed on empty source: %v", err)
+	}
+}
+
+func TestSeed_MalformedIsSkippedNotRecorded(t *testing.T) {
+	src := &fakeSource{
+		names:   []string{"bad", "pr-review"},
+		wf:      map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}},
+		readErr: map[string]error{"bad": context.DeadlineExceeded},
+	}
+	repo := &fakeRepo{}
+	pub := &fakePublished{}
+	led := &fakeLedger{}
+	s := samples.NewSeeder(src, repo, pub, led, uuid.New(), discardLogger())
+	if err := s.Seed(context.Background()); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	// "bad" skipped (not created, not recorded); "pr-review" still seeded.
+	if len(repo.created) != 1 || repo.created[0] != "pr-review" {
+		t.Errorf("created = %v", repo.created)
+	}
+	for _, n := range led.recorded {
+		if n == "bad" {
+			t.Errorf("malformed sample was recorded as seeded")
+		}
+	}
+}
+
+func TestSeed_PublishFailureRollsBackAndAborts(t *testing.T) {
+	src := &fakeSource{names: []string{"pr-review"}, wf: map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}}}
+	repo := &fakeRepo{}
+	pub := &fakePublished{upErr: map[string]error{"pr-review": context.Canceled}}
+	led := &fakeLedger{}
+	s := samples.NewSeeder(src, repo, pub, led, uuid.New(), discardLogger())
+	if err := s.Seed(context.Background()); err == nil {
+		t.Fatal("expected error from publish failure")
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "pr-review" {
+		t.Errorf("expected rollback delete of pr-review; deleted=%v", repo.deleted)
+	}
+	if len(led.recorded) != 0 {
+		t.Errorf("must not record a sample whose publication failed; recorded=%v", led.recorded)
+	}
+}
