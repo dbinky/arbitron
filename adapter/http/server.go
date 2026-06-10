@@ -246,7 +246,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		// Whoami: returns the caller's identity projection (RBAC Phase 1). Behind
 		// the auth middleware (when enabled); in local mode it returns the
 		// default-group admin. No secrets (subject/email) are serialized.
-		meHandler := NewMeHandler()
+		meHandler := NewMeHandler(d.Config.Auth.Mode)
 		r.Get("/me", meHandler.Me)
 
 		r.Get("/system/config", sysHandler.GetConfig)

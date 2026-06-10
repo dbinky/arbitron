@@ -24,7 +24,7 @@ func TestMeHandler_ReturnsProjection(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
 
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -71,7 +71,7 @@ func TestMeHandler_AdminFlag(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
 
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	var got struct {
 		IsAdmin bool   `json:"isAdmin"`
@@ -91,7 +91,7 @@ func TestMeHandler_EmptyDepartmentsSerializeAsEmptyArray(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
 
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	body := rec.Body.String()
 	if !meContains(body, `"departments":[]`) || !meContains(body, `"ledDepartments":[]`) {
@@ -102,7 +102,7 @@ func TestMeHandler_EmptyDepartmentsSerializeAsEmptyArray(t *testing.T) {
 func TestMeHandler_NoIdentityReturns401(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil) // no identity in context
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 when no identity", rec.Code)
 	}
@@ -123,7 +123,7 @@ func TestMeHandler_NoPersonalIdentifiersInJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	body := rec.Body.String()
 	piiKeys := []string{`"subject"`, `"email"`, `"sub"`, `"emailVerified"`, `"emailAddress"`}
@@ -142,7 +142,7 @@ func TestMeHandler_AllowedKeysOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(rec.Body.Bytes(), &rawMap); err != nil {
@@ -155,6 +155,7 @@ func TestMeHandler_AllowedKeysOnly(t *testing.T) {
 		"departments":    true,
 		"ledDepartments": true,
 		"isAdmin":        true,
+		"authMode":       true,
 	}
 	for key := range rawMap {
 		if !allowed[key] {
@@ -186,7 +187,7 @@ func TestMeHandler_LocalModeIdentity(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	req = req.WithContext(identity.WithIdentity(req.Context(), id))
-	NewMeHandler().Me(rec, req)
+	NewMeHandler("local").Me(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -213,6 +214,49 @@ func TestMeHandler_LocalModeIdentity(t *testing.T) {
 	}
 	if len(got.LedDepartments) != 0 {
 		t.Errorf("LedDepartments = %v, want empty in local mode", got.LedDepartments)
+	}
+}
+
+// TestMeHandler_AuthMode verifies the handler serializes the configured operating
+// mode so the client can pick a mode-aware default view. An unknown/empty mode
+// normalizes to "local".
+func TestMeHandler_AuthMode(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		want string
+	}{
+		{"local", "local", "local"},
+		{"org", "org", "org"},
+		{"edge", "edge", "edge"},
+		{"empty normalizes to local", "", "local"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := identity.Identity{
+				UserID:      uuid.New(),
+				Username:    "u",
+				Role:        identity.RoleAdmin,
+				Departments: []string{"default"},
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+			req = req.WithContext(identity.WithIdentity(req.Context(), id))
+			NewMeHandler(tc.mode).Me(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var got struct {
+				AuthMode string `json:"authMode"`
+			}
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got.AuthMode != tc.want {
+				t.Errorf("authMode = %q, want %q", got.AuthMode, tc.want)
+			}
+		})
 	}
 }
 
