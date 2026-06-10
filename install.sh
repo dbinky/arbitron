@@ -278,6 +278,11 @@ layout_runtime() {
   if _is_shared; then printf '%s/runtime\n' "$ARB_LIB"; else printf '%s/runtime\n' "$(arbitron_home)"; fi
 }
 
+# layout_samples — on-disk sample-workflow source dir (mode-aware).
+layout_samples() {
+  if _is_shared; then printf '%s/samples\n' "$ARB_LIB"; else printf '%s/samples\n' "$(arbitron_home)"; fi
+}
+
 # ---------------------------------------------------------------------------
 # Checksum helpers
 # ---------------------------------------------------------------------------
@@ -661,6 +666,7 @@ CFG_LLM_ACCESS=""
 CFG_SKIP_PERMS=""
 CFG_DATA_DIR=""
 CFG_API_KEY=""
+CFG_SEED_SAMPLES=""
 # MASTER_KEY holds the (sensitive) base64 master key in memory; never echoed.
 MASTER_KEY=""
 
@@ -718,6 +724,7 @@ run_config_qa() {
   fi
 
   CFG_DATA_DIR="$(prompt_default DATA_DIR "Data location" "$(layout_data)")"
+  CFG_SEED_SAMPLES="${ARBITRON_INSTALL_SAMPLE_WORKFLOWS:-yes}"
 }
 
 # generate_master_key — reuse an existing master key on reconfigure; otherwise
@@ -800,6 +807,15 @@ logging:
 auth:
   mode: "local"
 EOF
+
+  local seed_samples="false"
+  [ "${CFG_SEED_SAMPLES:-yes}" = "yes" ] && seed_samples="true"
+  cat >>"$cfg" <<EOF
+samples:
+  seed: ${seed_samples}
+  sourcedir: "$(layout_samples)"
+EOF
+
   chmod 600 "$cfg"
 }
 
@@ -945,6 +961,44 @@ _fetch_binary_to() {
   mv "$tmpbin" "$dest"
 }
 
+# fetch_samples_to <destdir> — download + checksum-verify the samples tarball for
+# the resolved version and extract it into <destdir>. Aborts (non-zero) on any
+# download/verify failure; safe to skip (caller treats failure as non-fatal).
+fetch_samples_to() {
+  local destdir="$1" version base tarball tmpdir rc
+  version="$(arbitron_resolve_version)" || return 1
+  base="$(arbitron_release_base "$version")"
+  tarball="arbitron_samples_${version}.tar.gz"
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/arbitron-samples.XXXXXX")" || return 1
+  trap 'rm -rf "${tmpdir:-}"' INT TERM
+  _fetch_samples_to "$destdir" "$tmpdir" "$base" "$tarball"
+  rc=$?
+  trap - INT TERM
+  rm -rf "$tmpdir"
+  return "$rc"
+}
+
+# _fetch_samples_to <destdir> <tmpdir> <base> <tarball> — inner body;
+# temp-dir cleanup is fetch_samples_to's responsibility (mirrors _fetch_binary_to).
+_fetch_samples_to() {
+  local destdir="$1" tmpdir="$2" base="$3" tarball="$4"
+  local sumsfile="$tmpdir/SHA256SUMS"
+  if ! curl -fsSL -o "$sumsfile" "${base}/SHA256SUMS"; then
+    log_error "could not fetch SHA256SUMS from ${base}"
+    return 1
+  fi
+  if ! curl -fsSL -o "$tmpdir/$tarball" "${base}/${tarball}"; then
+    log_error "samples download failed: ${base}/${tarball}"
+    return 1
+  fi
+  if ! verify_download "$tmpdir/$tarball" "$tarball" "$sumsfile"; then
+    log_error "samples tarball verification failed"
+    return 1
+  fi
+  mkdir -p "$destdir"
+  tar -xzf "$tmpdir/$tarball" -C "$destdir"
+}
+
 # download_binary — local install: fetch the verified binary into
 # $(layout_bin)/arbitron mode 0755. Aborts on a mismatch leaving no binary.
 download_binary() {
@@ -1076,6 +1130,7 @@ SCFG_AUTOCERT_CACHEDIR=""
 SCFG_ALLOW_UNAUTH="false"
 SCFG_SKIP_PERMS="false"
 SCFG_DATA_DIR=""
+SCFG_SEED_SAMPLES=""
 
 # _is_loopback_host <host> -> 0 for a loopback bind.
 _is_loopback_host() {
@@ -1264,6 +1319,14 @@ run_shared_qa() {
       die "api-key mode requires a non-empty Anthropic API key. Re-run with ARBITRON_API_KEY set or choose 'subscription'."
     fi
   fi
+
+  if [ -n "${ARBITRON_INSTALL_SAMPLE_WORKFLOWS:-}" ]; then
+    SCFG_SEED_SAMPLES="$ARBITRON_INSTALL_SAMPLE_WORKFLOWS"
+  elif prompt_yes_no SAMPLE_WORKFLOWS "Install sample workflows (pr-review, feature-pipeline)?" yes; then
+    SCFG_SEED_SAMPLES="yes"
+  else
+    SCFG_SEED_SAMPLES="no"
+  fi
 }
 
 # write_shared_config — emit /etc/arbitron/config.yaml using the exact koanf keys
@@ -1338,6 +1401,11 @@ write_shared_config() {
         IFS="$_ifs"
       fi
     fi
+    local shared_seed_samples="false"
+    [ "${SCFG_SEED_SAMPLES:-yes}" = "yes" ] && shared_seed_samples="true"
+    printf 'samples:\n'
+    printf '  seed: %s\n' "$shared_seed_samples"
+    printf '  sourcedir: "%s"\n' "$(layout_samples)"
   } >"$cfg"
 
   # config.yaml holds no true secrets (those go to the 0600 arbitron.env), but on
@@ -1489,6 +1557,10 @@ run_shared_install() {
   generate_master_key
   write_shared_config
   write_shared_env
+  if [ "${SCFG_SEED_SAMPLES:-yes}" = "yes" ]; then
+    log_info "installing sample workflows"
+    fetch_samples_to "$(layout_samples)" || log_warn "sample install failed; continuing without samples"
+  fi
 
   write_systemd_unit
   enable_systemd_unit
@@ -1821,6 +1893,10 @@ run_fresh() {
   download_binary || die "binary download failed; nothing was installed"
   write_config_yaml
   write_secrets_env
+  if [ "${CFG_SEED_SAMPLES:-yes}" = "yes" ]; then
+    log_info "installing sample workflows"
+    fetch_samples_to "$(layout_samples)" || log_warn "sample install failed; continuing without samples"
+  fi
   claude_login
   register_service || die "service registration failed"
   health_check "${CFG_PORT:-8080}" || die "service did not become healthy"
