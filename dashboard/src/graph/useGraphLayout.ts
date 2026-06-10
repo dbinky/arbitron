@@ -6,9 +6,19 @@ import type { WorkflowNode, WorkflowEdge, NodeExecutionState } from './types'
 import type { ArbitronNodeData } from './nodes/ArbitronNode'
 import { detectLoops, type Loop } from './loops'
 import { loopContainerBox, loopContainerLabel } from './loopLayout'
+import { chooseSide, loopHandleIds } from './loopEdgeRouting'
 
 export const NODE_WIDTH = 200
 export const NODE_HEIGHT = 80
+
+// Stable empty-states reference. Used as the default so that callers which omit
+// executionStates (e.g. the static WorkflowReview view) don't pass a fresh `{}`
+// each render, which would be a new dependency every time and defeat the useMemo
+// below — recomputing the layout on every render and making rfNodes/rfEdges
+// referentially unstable. That instability drives WorkflowReview's
+// setNodes(rfNodes) sync-effect into an infinite loop (React error #185) on the
+// first node selection. Must never be mutated.
+const EMPTY_EXECUTION_STATES: Record<string, NodeExecutionState> = {}
 
 interface UseGraphLayoutInput {
   nodes: WorkflowNode[]
@@ -25,7 +35,7 @@ interface UseGraphLayoutOutput {
 export function useGraphLayout({
   nodes,
   edges,
-  executionStates = {},
+  executionStates = EMPTY_EXECUTION_STATES,
 }: UseGraphLayoutInput): UseGraphLayoutOutput {
   return useMemo(() => {
     if (nodes.length === 0) {
@@ -137,17 +147,44 @@ export function useGraphLayout({
       const key = `${e.source} ${e.target}`
       const loop = loopByBackEdge.get(key)
       const isBack = detection.backEdgeKeys.has(key)
+
+      // Loop-back edges leave/enter the node SIDES, not bottom/top. Pick the side
+      // here (positions are known) and wire the edge to that side's node handles;
+      // LoopBackEdge then draws a side-to-side return curve via data.side/gutterX.
+      let sourceHandle: string | undefined
+      let targetHandle: string | undefined
+      let data: Record<string, unknown> | undefined = loop
+        ? { loop, box: boxByLoopId.get(loop.id) ?? undefined }
+        : undefined
+      if (isBack && loop) {
+        const box = boxByLoopId.get(loop.id)
+        if (box) {
+          const route = chooseSide({
+            sourceX: (positionMap[e.source]?.x ?? 0) + NODE_WIDTH / 2,
+            targetX: (positionMap[e.target]?.x ?? 0) + NODE_WIDTH / 2,
+            boxX: box.x,
+            boxWidth: box.width,
+          })
+          const ids = loopHandleIds(route.side)
+          sourceHandle = ids.sourceHandle
+          targetHandle = ids.targetHandle
+          data = { loop, box, side: route.side, gutterX: route.gutterX }
+        }
+      }
+
       return {
         id: `e-${e.source}-${e.target}-${i}`,
         source: e.source,
         target: e.target,
+        sourceHandle,
+        targetHandle,
         label: e.label ?? e.output ?? undefined,
         type: isBack ? 'loopBackEdge' : 'smoothstep',
         animated: executionStates[e.source] === 'running',
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         style: { stroke: isBack ? '#7c8cf5' : '#444466' },
         labelStyle: { fill: '#888888', fontSize: 11 },
-        data: loop ? { loop, box: boxByLoopId.get(loop.id) ?? undefined } : undefined,
+        data,
         zIndex: isBack ? 5 : undefined,
       }
     })

@@ -247,3 +247,56 @@ describe('useGraphLayout — back-edge carries the container box', () => {
     expect(box!.height).toBe(container.height)
   })
 })
+
+describe('useGraphLayout — loop-back edges attach to node sides', () => {
+  const nodes = [node('a'), node('b'), node('c'), node('d')]
+  const edges: WorkflowEdge[] = [
+    { source: 'a', target: 'b' },
+    { source: 'b', target: 'c' },
+    { source: 'c', target: 'd' },
+    { source: 'c', target: 'b', label: 'tests pass' },
+  ]
+
+  it('wires the back-edge to consistent left/right loop side-handles and records the side', () => {
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const back = result.current.rfEdges.find((e) => e.type === 'loopBackEdge')!
+    expect(back).toBeDefined()
+    expect(back.sourceHandle).toMatch(/^loop-s-(left|right)$/)
+    expect(back.targetHandle).toMatch(/^loop-t-(left|right)$/)
+
+    // Source exit and head entry must be on the SAME side.
+    const side = back.sourceHandle!.endsWith('right') ? 'right' : 'left'
+    expect(back.targetHandle).toBe(`loop-t-${side}`)
+    expect((back.data as { side?: string }).side).toBe(side)
+  })
+
+  it('leaves forward edges on the default top/bottom handles (no loop side-handles)', () => {
+    const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const fwd = result.current.rfEdges.find((e) => e.type === 'smoothstep')!
+    expect(fwd.sourceHandle).toBeUndefined()
+    expect(fwd.targetHandle).toBeUndefined()
+  })
+})
+
+describe('useGraphLayout — referential stability (regression: WorkflowReview blank-screen loop)', () => {
+  // When executionStates is omitted, the memo MUST return the same rfNodes/rfEdges
+  // references across re-renders. A fresh `{}` default each call defeats the useMemo,
+  // so WorkflowReview's `setNodes(rfNodes)` sync-effect chases a new array every
+  // render and loops forever (React error #185, "Maximum update depth exceeded") the
+  // instant a node is selected — blanking the whole app.
+  it('keeps rfNodes/rfEdges referentially stable across re-renders when executionStates is omitted', () => {
+    const nodes = [node('a'), node('b'), node('c')]
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ]
+    const { result, rerender } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const firstNodes = result.current.rfNodes
+    const firstEdges = result.current.rfEdges
+
+    rerender()
+
+    expect(result.current.rfNodes).toBe(firstNodes)
+    expect(result.current.rfEdges).toBe(firstEdges)
+  })
+})

@@ -8,6 +8,13 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* Loop-back side handles are connection anchors only — keep them invisible and
+   non-interactive so node appearance is unchanged in this read-only viewer. */
+.loopHandle {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .node:hover {
   border-color: var(--border-subtle);
 }

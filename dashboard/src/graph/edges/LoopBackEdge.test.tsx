@@ -15,7 +15,7 @@ vi.mock('@xyflow/react', async () => {
   }
 })
 
-import LoopBackEdge, { chooseSide, GUTTER_OFFSET } from './LoopBackEdge'
+import LoopBackEdge from './LoopBackEdge'
 
 const baseProps = {
   id: 'e-c-b-3',
@@ -39,41 +39,6 @@ const baseProps = {
     box: { x: 100, y: 80, width: 200, height: 360 },
   },
 } as unknown as Parameters<typeof LoopBackEdge>[0]
-
-describe('chooseSide', () => {
-  it('routes right when endpoints are left of the box center', () => {
-    const r = chooseSide({ sourceX: 120, targetX: 120, boxX: 100, boxWidth: 200 })
-    expect(r.side).toBe('right')
-    expect(r.gutterX).toBe(100 + 200 + GUTTER_OFFSET)
-  })
-
-  it('routes left when endpoints are right of the box center', () => {
-    const r = chooseSide({ sourceX: 280, targetX: 280, boxX: 100, boxWidth: 200 })
-    expect(r.side).toBe('left')
-    expect(r.gutterX).toBe(100 - GUTTER_OFFSET)
-  })
-
-  it('defaults to right on a centered tie', () => {
-    const r = chooseSide({ sourceX: 200, targetX: 200, boxX: 100, boxWidth: 200 })
-    expect(r.side).toBe('right')
-  })
-
-  it('averages asymmetric sourceX/targetX to determine side (diamond loops)', () => {
-    // source (tail) at x=50, target (head) at x=350 → midpoint=200 = box center → right (tie rule)
-    const tie = chooseSide({ sourceX: 50, targetX: 350, boxX: 100, boxWidth: 200 })
-    expect(tie.side).toBe('right')
-
-    // source at x=100, target at x=400 → midpoint=250 > box center=200 → left
-    const left = chooseSide({ sourceX: 100, targetX: 400, boxX: 100, boxWidth: 200 })
-    expect(left.side).toBe('left')
-    expect(left.gutterX).toBe(100 - GUTTER_OFFSET)
-
-    // source at x=0, target at x=200 → midpoint=100 < box center=200 → right
-    const right = chooseSide({ sourceX: 0, targetX: 200, boxX: 100, boxWidth: 200 })
-    expect(right.side).toBe('right')
-    expect(right.gutterX).toBe(100 + 200 + GUTTER_OFFSET)
-  })
-})
 
 describe('LoopBackEdge — fallback: endpoint-derived box when box is absent', () => {
   it('renders a path without crashing when data is entirely absent', () => {
