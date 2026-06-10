@@ -112,6 +112,9 @@ _shared_qa_defaults() {
   export ARBITRON_AUTH_MODEL=edge-local
   export ARBITRON_PUBLIC_BASE_URL=https://arbitron.example.com
   export ARBITRON_TLS_MODEL=tunnel
+  # Clear the local-mode data-dir override so shared tests see ARB_LIB as the
+  # default data root (prompt_default DATA_DIR reads ARBITRON_DATA_DIR).
+  unset ARBITRON_DATA_DIR
   install_mock recording-fake chown chmod install
   hash -r
 }
@@ -137,6 +140,20 @@ _shared_qa_defaults() {
   local cfg="$ARB_ETC/config.yaml"
   grep -qE '^\s+seed: false' "$cfg"
   ! grep -qE '^\s+seed: true' "$cfg"
+}
+
+@test "write_shared_config sourcedir honors SCFG_DATA_DIR override" {
+  _sandbox_system_paths
+  _shared_qa_defaults
+  export ARBITRON_INSTALL_SAMPLE_WORKFLOWS=yes
+  run_shared_qa
+  # Simulate operator choosing a custom data location.
+  SCFG_DATA_DIR="$TEST_SANDBOX/data/custom"
+  write_shared_config
+  local cfg="$ARB_ETC/config.yaml"
+  grep -qF "sourcedir: \"$TEST_SANDBOX/data/custom/samples\"" "$cfg"
+  # Must NOT still point at ARB_LIB.
+  ! grep -qF "sourcedir: \"$ARB_LIB/samples\"" "$cfg"
 }
 
 @test "shared install defaults to prompting for samples (yes default)" {

@@ -1065,13 +1065,17 @@ _make_dir() {
 }
 
 # create_system_layout — lay down /etc/arbitron (0755 root:root),
-# /var/lib/arbitron + workspaces (0750 svc-account) and /var/log/arbitron (0750
-# svc-account). Data dirs are NOT world-readable.
+# /var/lib/arbitron + workspaces + samples (0750 svc-account) and
+# /var/log/arbitron (0750 svc-account). Data dirs are NOT world-readable.
+# Honors the operator's SCFG_DATA_DIR override so workspaces and samples land
+# under the chosen data root, consistent with write_shared_config.
 create_system_layout() {
   local user="${ARB_SVC_USER:-arbitron}"
+  local data="${SCFG_DATA_DIR:-$ARB_LIB}"
   _make_dir "$ARB_ETC" 0755 "root:root"
   _make_dir "$ARB_LIB" 0750 "${user}:${user}"
-  _make_dir "$ARB_LIB/workspaces" 0750 "${user}:${user}"
+  _make_dir "$data/workspaces" 0750 "${user}:${user}"
+  _make_dir "$data/samples" 0750 "${user}:${user}"
   _make_dir "$ARB_LOG" 0750 "${user}:${user}"
 }
 
@@ -1405,7 +1409,7 @@ write_shared_config() {
     [ "${SCFG_SEED_SAMPLES:-yes}" = "yes" ] && shared_seed_samples="true"
     printf 'samples:\n'
     printf '  seed: %s\n' "$shared_seed_samples"
-    printf '  sourcedir: "%s"\n' "$(layout_samples)"
+    printf '  sourcedir: "%s"\n' "$data/samples"
   } >"$cfg"
 
   # config.yaml holds no true secrets (those go to the 0600 arbitron.env), but on
@@ -1559,7 +1563,7 @@ run_shared_install() {
   write_shared_env
   if [ "${SCFG_SEED_SAMPLES:-yes}" = "yes" ]; then
     log_info "installing sample workflows"
-    fetch_samples_to "$(layout_samples)" || log_warn "sample install failed; continuing without samples"
+    fetch_samples_to "${SCFG_DATA_DIR:-$ARB_LIB}/samples" || log_warn "sample install failed; continuing without samples"
   fi
 
   write_systemd_unit

@@ -252,6 +252,18 @@ notifications:
 tracing:
   enabled: false
   exportdir: "./traces"
+# samples:
+#   seed: true
+#     When true (default), the server seeds the built-in sample workflows into
+#     the workspace on first boot. Set false to skip seeding (e.g. in a
+#     production deployment that manages workflows externally).
+#     Override via ARBITRON_SAMPLES_SEED=false.
+#   sourcedir: ""
+#     Directory from which sample workflows are read during seeding. Empty
+#     string (default) means no-op: the server will not seed even if seed is
+#     true. Shared installs populate this with the absolute path to the
+#     extracted samples tarball (e.g. /var/lib/arbitron/samples).
+#     Override via ARBITRON_SAMPLES_SOURCEDIR=/path/to/samples.
 # auth:
 #   mode: "local"            # "local" (default, single auto-admin) or "org"
 #   bootstrapadmins: []      # subjects/emails provisioned as admin on first login (Phase 2)
