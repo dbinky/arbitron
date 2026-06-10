@@ -1,4 +1,4 @@
-.PHONY: ui build test test-ui test-all dist samples-tarball release clean-dist test-release test-install
+.PHONY: ui build test test-ui test-all dist samples-tarball install-samples release clean-dist test-release test-install
 
 # Release version/build metadata. VERSION defaults to the current git tag with a
 # leading "v" stripped (tag v1.2.3 -> 1.2.3), falling back to the short SHA when
@@ -53,6 +53,16 @@ samples-tarball:
 	@mkdir -p dist
 	tar -czf dist/arbitron_samples_$(VERSION).tar.gz -C samples --exclude='*_test.go' .
 	@echo "wrote dist/arbitron_samples_$(VERSION).tar.gz"
+
+# Copy the bundled sample workflows into a local sample source dir for a manual
+# or dev install. Override DEST to target a different samples dir (e.g. a shared
+# install's <data>/samples). The binary seeds from this dir on boot when
+# samples.sourcedir points at it.
+DEST ?= $(HOME)/.arbitron/samples
+install-samples:
+	@mkdir -p $(DEST)
+	cp -R samples/pr-review samples/feature-pipeline $(DEST)/
+	@echo "installed samples into $(DEST)"
 
 # Cross-compile the 6 release binaries named arbitron_<version>_<os>_<arch>[.exe]
 # into dist/, then emit dist/SHA256SUMS with basename-only entries (so
