@@ -1,59 +1,36 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import type { WorkflowSummary, Me } from '../api/types'
-import { api } from '../api/client'
+import { useWorkflowsCatalog } from '../hooks/useWorkflowsCatalog'
+import { defaultScope, filterWorkflows, parseFilterParams, type Scope } from './workflowsFilter'
 import styles from './WorkflowsCatalog.module.css'
-
-type Scope = 'mine' | 'shared' | 'all'
-type VisFilter = 'all' | 'public' | 'department'
-
-/** Mode-aware default scope: local mode shows everything, org/edge default to the
- * shared catalog. Used when no explicit ?scope= URL param is present. */
-function defaultScope(me: Me | null): Scope {
-  return me && me.authMode !== 'local' ? 'shared' : 'all'
-}
 
 const SCOPE_LABELS: Record<Scope, string> = { mine: 'Mine', shared: 'Shared', all: 'All' }
 
 export default function WorkflowsCatalog() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
-  const [me, setMe] = useState<Me | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { workflows, me, loading, error } = useWorkflowsCatalog()
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      try {
-        const [wf, meResp] = await Promise.all([api.workflows.list(), api.me()])
-        if (!cancelled) {
-          setWorkflows(wf)
-          setMe(meResp)
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load workflows')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  // Adaptive chrome is driven by what the loaded data actually contains.
+  const anyShared = useMemo(() => workflows.some((w) => w.scope === 'shared'), [workflows])
+  const departments = useMemo(
+    () =>
+      Array.from(
+        new Set(workflows.map((w) => w.department).filter((d): d is string => !!d)),
+      ).sort(),
+    [workflows],
+  )
+  const showVisibility = anyShared
+  const showDepartment = departments.length > 0
 
-  // URL-backed filter state. An unrecognized value falls back to the default.
-  const search = searchParams.get('q') ?? ''
-  const scopeParam = searchParams.get('scope')
-  const scope: Scope =
-    scopeParam === 'mine' || scopeParam === 'shared' || scopeParam === 'all'
-      ? scopeParam
-      : defaultScope(me)
-  const visParam = searchParams.get('vis')
-  const vis: VisFilter = visParam === 'public' || visParam === 'department' ? visParam : 'all'
-  const dept = searchParams.get('dept') ?? ''
+  // Validate URL params at the boundary. A stale/unknown value neutralizes to its
+  // safe default here (notably: a ?dept= not in the derived set → '') so the
+  // predicate matrix downstream never has to defend against bad input.
+  const { scope, vis, dept, search } = parseFilterParams(searchParams, me, departments)
+
+  // Single source of truth for the mode-aware default, reused by the segmented
+  // buttons and the "has active filters" check.
+  const resolvedDefault = defaultScope(me)
 
   // Update one query param; omit it when it equals its default to keep URLs clean.
   const setParam = useCallback(
@@ -71,29 +48,11 @@ export default function WorkflowsCatalog() {
     [setSearchParams],
   )
 
-  // Adaptive chrome is driven by what the loaded data actually contains.
-  const anyShared = useMemo(() => workflows.some((w) => w.scope === 'shared'), [workflows])
-  const departments = useMemo(
+  const filtered = useMemo(
     () =>
-      Array.from(
-        new Set(workflows.map((w) => w.department).filter((d): d is string => !!d)),
-      ).sort(),
-    [workflows],
+      filterWorkflows(workflows, { scope, vis, dept, search, showVisibility, showDepartment }),
+    [workflows, scope, vis, dept, search, showVisibility, showDepartment],
   )
-  const showVisibility = anyShared
-  const showDepartment = departments.length > 0
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return workflows.filter((w) => {
-      if (scope === 'mine' && w.scope !== 'private') return false
-      if (scope === 'shared' && w.scope !== 'shared') return false
-      if (showVisibility && vis !== 'all' && w.visibility !== vis) return false
-      if (showDepartment && dept && w.department !== dept) return false
-      if (q && !w.name.toLowerCase().includes(q)) return false
-      return true
-    })
-  }, [workflows, scope, vis, dept, search, showVisibility, showDepartment])
 
   const handleRowClick = useCallback((name: string) => navigate(`/workflows/${name}`), [navigate])
 
@@ -102,7 +61,7 @@ export default function WorkflowsCatalog() {
 
   const hasFilters =
     !!search ||
-    scope !== defaultScope(me) ||
+    scope !== resolvedDefault ||
     (showVisibility && vis !== 'all') ||
     (showDepartment && !!dept)
 
@@ -118,7 +77,7 @@ export default function WorkflowsCatalog() {
                 type="button"
                 aria-pressed={scope === s}
                 className={scope === s ? styles.segmentActive : styles.segment}
-                onClick={() => setParam('scope', s, defaultScope(me))}
+                onClick={() => setParam('scope', s, resolvedDefault)}
               >
                 {SCOPE_LABELS[s]}
               </button>
@@ -181,7 +140,7 @@ export default function WorkflowsCatalog() {
           <tbody>
             {filtered.map((w) => (
               <tr
-                key={`${w.scope ?? ''}:${w.name}`}
+                key={`${w.scope ?? 'private'}:${w.visibility ?? ''}:${w.name}`}
                 className={styles.row}
                 onClick={() => handleRowClick(w.name)}
               >
