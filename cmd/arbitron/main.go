@@ -419,6 +419,18 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
 	// WorkflowService uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
+	// One-time, marker-guarded seeding of bundled sample workflows into the
+	// shared scope (public, owned by the default user). No-op when disabled or
+	// when no source dir is configured. Runs after the published repo exists so
+	// the publication records can be written.
+	if err := seedSampleWorkflows(context.Background(), cfg.Samples.Seed, cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, flatMigrateUser, logger); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("sample workflow seeding: %w", err)
+	}
+	if cfg.Samples.Seed && cfg.Samples.SourceDir != "" {
+		logger.Info("sample workflow seeding complete")
+	}
 	// WorkflowService resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
