@@ -996,7 +996,65 @@ _fetch_samples_to() {
     return 1
   fi
   mkdir -p "$destdir"
+  # SECURITY (zip-slip / link-traversal): the samples tarball is fetched over the
+  # network, so a malicious or tampered archive must not be able to write outside
+  # $destdir or plant links. Reject any entry that is absolute, contains a ".."
+  # path component, or is a symlink/hardlink BEFORE extracting; only then extract.
+  if ! verify_tar_entries_safe "$tmpdir/$tarball"; then
+    log_error "samples tarball contains unsafe paths or links; refusing to extract"
+    return 1
+  fi
   tar -xzf "$tmpdir/$tarball" -C "$destdir"
+}
+
+# verify_tar_entries_safe <tarball> — returns 0 only if every entry in the gzip
+# tarball is a safe relative path (no leading "/", no ".." component) and is not
+# a symlink or hardlink. Defends against zip-slip and link-traversal on the
+# network-fetched samples archive.
+verify_tar_entries_safe() {
+  local tarball="$1" names typ name
+
+  # Path validation uses the names-only listing ("tar -tf") so there are no
+  # mode/owner columns to parse across BSD vs GNU tar: one entry name per line.
+  if ! names="$(tar -tzf "$tarball" 2>/dev/null)"; then
+    log_error "could not read tarball listing for verification"
+    return 1
+  fi
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    case "$name" in
+      /*)
+        log_error "rejecting absolute path in tarball: $name"
+        return 1
+        ;;
+      ../*|*/../*|*/..|..)
+        log_error "rejecting parent-traversal path in tarball: $name"
+        return 1
+        ;;
+    esac
+  done <<EOF
+$names
+EOF
+
+  # Link detection uses the verbose listing: the first character of each line is
+  # the entry type ('l' symlink, 'h' hardlink) — reliably column 1 on both tars.
+  local verbose
+  if ! verbose="$(tar -tzvf "$tarball" 2>/dev/null)"; then
+    log_error "could not read tarball listing for verification"
+    return 1
+  fi
+  while IFS= read -r typ; do
+    [ -z "$typ" ] && continue
+    case "${typ:0:1}" in
+      l|h)
+        log_error "rejecting link entry in tarball: $typ"
+        return 1
+        ;;
+    esac
+  done <<EOF
+$verbose
+EOF
+  return 0
 }
 
 # download_binary — local install: fetch the verified binary into

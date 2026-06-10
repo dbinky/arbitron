@@ -1522,6 +1522,46 @@ function Get-ArbitronBinary {
 # $false on any network/verify failure so the caller can treat it as non-fatal.
 # Security contract: identical to Get-ArbitronBinary -- SHA256SUMS is fetched FIRST,
 # the tarball is verified against it BEFORE extraction. Never extracts unverified data.
+# Test-TarEntriesSafe — throws if any entry in the gzip tarball is an absolute
+# path, contains a ".." path component, or is a symlink/hardlink. Defends the
+# network-fetched samples archive against zip-slip and link-traversal. Mirrors
+# install.sh's verify_tar_entries_safe.
+function Test-TarEntriesSafe {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$TarPath)
+
+    # Path validation: names-only listing (no mode/owner columns to parse).
+    $names = & tar -tzf $TarPath 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not read tarball listing for verification: $TarPath"
+    }
+    foreach ($name in $names) {
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $n = $name -replace '\\', '/'
+        if ($n -match '^([A-Za-z]:)?/' ) {
+            throw "rejecting absolute path in tarball: $name"
+        }
+        $parts = $n.TrimEnd('/').Split('/')
+        if ($parts -contains '..') {
+            throw "rejecting parent-traversal path in tarball: $name"
+        }
+    }
+
+    # Link detection: verbose listing's first character is the entry type
+    # ('l' symlink, 'h' hardlink).
+    $verbose = & tar -tzvf $TarPath 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "could not read tarball listing for verification: $TarPath"
+    }
+    foreach ($line in $verbose) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $type = $line.Substring(0, 1)
+        if ($type -eq 'l' -or $type -eq 'h') {
+            throw "rejecting link entry in tarball: $line"
+        }
+    }
+}
+
 function Get-ArbitronSamples {
     [CmdletBinding()]
     param(
@@ -1552,6 +1592,12 @@ function Get-ArbitronSamples {
         if (-not (Test-Path -LiteralPath $Paths.Samples)) {
             New-Item -ItemType Directory -Path $Paths.Samples -Force | Out-Null
         }
+        # SECURITY (zip-slip / link-traversal): the samples tarball is fetched
+        # over the network, so a malicious or tampered archive must not be able to
+        # write outside $Paths.Samples or plant links. Reject any entry that is
+        # absolute, contains a ".." component, or is a symlink/hardlink BEFORE
+        # extracting.
+        Test-TarEntriesSafe -TarPath $tmpTar
         # tar is available on Windows 10 1803+ and on every modern macOS/Linux host.
         & tar -xzf $tmpTar -C $Paths.Samples
         if ($LASTEXITCODE -ne 0) {
