@@ -88,32 +88,35 @@ export default function WorkflowsCatalog() {
     return workflows.filter((w) => {
       if (scope === 'mine' && w.scope !== 'private') return false
       if (scope === 'shared' && w.scope !== 'shared') return false
-      if (vis !== 'all' && w.visibility !== vis) return false
-      if (dept && w.department !== dept) return false
+      if (showVisibility && vis !== 'all' && w.visibility !== vis) return false
+      if (showDepartment && dept && w.department !== dept) return false
       if (q && !w.name.toLowerCase().includes(q)) return false
       return true
     })
-  }, [workflows, scope, vis, dept, search])
+  }, [workflows, scope, vis, dept, search, showVisibility, showDepartment])
 
   const handleRowClick = useCallback((name: string) => navigate(`/workflows/${name}`), [navigate])
 
   if (loading) return <div className={styles.loading}>Loading workflows...</div>
   if (error) return <div className={styles.error}>{error}</div>
 
-  const hasFilters = !!search || scope !== defaultScope(me) || vis !== 'all' || !!dept
+  const hasFilters =
+    !!search ||
+    scope !== defaultScope(me) ||
+    (showVisibility && vis !== 'all') ||
+    (showDepartment && !!dept)
 
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>Workflows</h1>
         <div className={styles.controls}>
-          <div className={styles.segmented} role="radiogroup" aria-label="Scope">
+          <div className={styles.segmented} role="group" aria-label="Scope">
             {(['mine', 'shared', 'all'] as Scope[]).map((s) => (
               <button
                 key={s}
                 type="button"
-                role="radio"
-                aria-checked={scope === s}
+                aria-pressed={scope === s}
                 className={scope === s ? styles.segmentActive : styles.segment}
                 onClick={() => setParam('scope', s, defaultScope(me))}
               >
@@ -188,9 +191,9 @@ export default function WorkflowsCatalog() {
                   <span className={styles.badge}>{w.scope ?? '--'}</span>
                 </td>
                 {showVisibility && (
-                  <td>{w.visibility ? <span className={styles.badge}>{w.visibility}</span> : '—'}</td>
+                  <td>{w.visibility ? <span className={styles.badge}>{w.visibility}</span> : '--'}</td>
                 )}
-                {showDepartment && <td>{w.department || '—'}</td>}
+                {showDepartment && <td>{w.department || '--'}</td>}
                 <td>{w.author || '--'}</td>
                 <td className={styles.nodeCountCell}>{w.nodeCount ?? '--'}</td>
               </tr>

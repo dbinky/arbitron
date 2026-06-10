@@ -60,7 +60,7 @@ describe('WorkflowsCatalog scope filtering', () => {
   it('clicking a scope tab filters and writes the URL param', async () => {
     renderAt()
     await screen.findByText('my-draft')
-    fireEvent.click(screen.getByRole('radio', { name: 'Shared' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Shared' }))
     await waitFor(() => expect(screen.queryByText('my-draft')).not.toBeInTheDocument())
     expect(screen.getByText('feature-pipeline')).toBeInTheDocument()
   })
@@ -122,5 +122,13 @@ describe('WorkflowsCatalog adaptive visibility + department', () => {
     const select = screen.getByLabelText('Department') as HTMLSelectElement
     const opts = Array.from(select.options).map((o) => o.value)
     expect(opts).toEqual(['', 'finance', 'people'])
+  })
+
+  it('ignores a stale dept param when the data has no departments', async () => {
+    listFn.mockResolvedValue(WF) // no departments in data -> dept chrome hidden
+    render(<MemoryRouter initialEntries={['/workflows?scope=all&dept=finance']}><WorkflowsCatalog /></MemoryRouter>)
+    // dept=finance must NOT filter everything out, since no department facet exists.
+    expect(await screen.findByText('feature-pipeline')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Department')).not.toBeInTheDocument()
   })
 })
