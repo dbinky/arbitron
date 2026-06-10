@@ -261,11 +261,13 @@ describe('useGraphLayout — loop-back edge routing data', () => {
     const { result } = renderHook(() => useGraphLayout({ nodes, edges }))
     const back = result.current.rfEdges.find((e) => e.type === 'loopBackEdge')!
     expect(back).toBeDefined()
-    // Routing is computed inside LoopBackEdge from the default handle coords, so
-    // no side-handle is wired here (which would otherwise capture forward edges).
+    // Routing is drawn inside LoopBackEdge, so no side-handle is wired here (which
+    // would otherwise capture forward edges) — but the open side is chosen here
+    // from the body-node positions and passed through.
     expect(back.sourceHandle).toBeUndefined()
     expect(back.targetHandle).toBeUndefined()
     expect((back.data as { box?: unknown }).box).toBeDefined()
+    expect((back.data as { side?: string }).side).toMatch(/^(left|right)$/)
   })
 
   it('leaves forward edges on the default top/bottom handles', () => {

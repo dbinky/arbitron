@@ -6,6 +6,7 @@ import type { WorkflowNode, WorkflowEdge, NodeExecutionState } from './types'
 import type { ArbitronNodeData } from './nodes/ArbitronNode'
 import { detectLoops, type Loop } from './loops'
 import { loopContainerBox, loopContainerLabel } from './loopLayout'
+import { chooseLoopSide } from './loopEdgeRouting'
 
 export const NODE_WIDTH = 200
 export const NODE_HEIGHT = 80
@@ -146,6 +147,29 @@ export function useGraphLayout({
       const key = `${e.source} ${e.target}`
       const loop = loopByBackEdge.get(key)
       const isBack = detection.backEdgeKeys.has(key)
+
+      // For a back-edge, pick the side to route on from where the loop body nodes
+      // actually sit (they often bulge to one side; route on the open side so the
+      // edge doesn't cut through them). Positions are known here.
+      let data: Record<string, unknown> | undefined = loop
+        ? { loop, box: boxByLoopId.get(loop.id) ?? undefined }
+        : undefined
+      if (isBack && loop) {
+        const spineX = (positionMap[loop.tailId]?.x ?? 0) + NODE_WIDTH / 2
+        const bodyLefts: number[] = []
+        const bodyRights: number[] = []
+        for (const id of loop.bodyNodeIds) {
+          const px = positionMap[id]?.x
+          if (px == null) continue
+          bodyLefts.push(px)
+          bodyRights.push(px + NODE_WIDTH)
+        }
+        if (bodyLefts.length > 0) {
+          const side = chooseLoopSide({ spineX, bodyLefts, bodyRights })
+          data = { loop, box: boxByLoopId.get(loop.id) ?? undefined, side }
+        }
+      }
+
       return {
         id: `e-${e.source}-${e.target}-${i}`,
         source: e.source,
@@ -156,7 +180,7 @@ export function useGraphLayout({
         markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
         style: { stroke: isBack ? '#7c8cf5' : '#444466' },
         labelStyle: { fill: '#888888', fontSize: 11 },
-        data: loop ? { loop, box: boxByLoopId.get(loop.id) ?? undefined } : undefined,
+        data,
         zIndex: isBack ? 5 : undefined,
       }
     })

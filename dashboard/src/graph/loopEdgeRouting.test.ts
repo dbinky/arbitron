@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   chooseSide,
+  chooseLoopSide,
   GUTTER_OFFSET,
   loopBackGeometry,
   buildLoopBackPath,
@@ -35,6 +36,35 @@ describe('chooseSide', () => {
     const right = chooseSide({ sourceX: 0, targetX: 200, boxX: 100, boxWidth: 200 })
     expect(right.side).toBe('right')
     expect(right.gutterX).toBe(100 + 200 + GUTTER_OFFSET)
+  })
+})
+
+describe('chooseLoopSide', () => {
+  // The back-edge connects two spine nodes (tail/head). The loop's intermediate
+  // body nodes usually bulge to one side; routing must go to the OTHER side so it
+  // doesn't cut through them. Mirrors the real feature-pipeline impl loop where
+  // the spine is at x=160 and impl-assess/impl-inc bulge left to x≈-132.
+  it('routes to the right when body nodes bulge left of the spine', () => {
+    const side = chooseLoopSide({
+      spineX: 160,
+      bodyLefts: [70, -132, 0, 70], // impl-task, impl-assess, impl-inc, impl-gate
+      bodyRights: [250, 48, 180, 250],
+    })
+    expect(side).toBe('right')
+  })
+
+  it('routes to the left when body nodes bulge right of the spine', () => {
+    const side = chooseLoopSide({
+      spineX: 160,
+      bodyLefts: [70, 70],
+      bodyRights: [250, 470], // a node reaching far right
+    })
+    expect(side).toBe('left')
+  })
+
+  it('defaults to right on a symmetric tie', () => {
+    const side = chooseLoopSide({ spineX: 160, bodyLefts: [60], bodyRights: [260] })
+    expect(side).toBe('right')
   })
 })
 
