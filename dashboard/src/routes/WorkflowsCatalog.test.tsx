@@ -20,6 +20,13 @@ const WF: WorkflowSummary[] = [
   { name: 'pr-review', description: '', author: 'arbitron', nodeCount: 9, scope: 'shared', visibility: 'public' },
 ]
 
+const WF_ORG: WorkflowSummary[] = [
+  { name: 'my-draft', description: '', author: 'dbinky', nodeCount: 2, scope: 'private' },
+  { name: 'feature-pipeline', description: '', author: 'arbitron', nodeCount: 23, scope: 'shared', visibility: 'public' },
+  { name: 'billing-close', description: '', author: 'fin', nodeCount: 5, scope: 'shared', visibility: 'department', department: 'finance' },
+  { name: 'hr-onboard', description: '', author: 'hr', nodeCount: 4, scope: 'shared', visibility: 'department', department: 'people' },
+]
+
 function renderAt(path = '/workflows') {
   return render(<MemoryRouter initialEntries={[path]}><WorkflowsCatalog /></MemoryRouter>)
 }
@@ -53,7 +60,7 @@ describe('WorkflowsCatalog scope filtering', () => {
   it('clicking a scope tab filters and writes the URL param', async () => {
     renderAt()
     await screen.findByText('my-draft')
-    fireEvent.click(screen.getByRole('tab', { name: 'Shared' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Shared' }))
     await waitFor(() => expect(screen.queryByText('my-draft')).not.toBeInTheDocument())
     expect(screen.getByText('feature-pipeline')).toBeInTheDocument()
   })
@@ -64,5 +71,56 @@ describe('WorkflowsCatalog scope filtering', () => {
     fireEvent.change(screen.getByPlaceholderText('Search workflows...'), { target: { value: 'pr-' } })
     await waitFor(() => expect(screen.queryByText('feature-pipeline')).not.toBeInTheDocument())
     expect(screen.getByText('pr-review')).toBeInTheDocument()
+  })
+})
+
+describe('WorkflowsCatalog adaptive visibility + department', () => {
+  beforeEach(() => {
+    listFn.mockReset(); meFn.mockReset()
+    meFn.mockResolvedValue(makeMe({ authMode: 'org', departments: ['finance', 'people'] }))
+  })
+
+  it('hides department chrome when data has no departments (visibility still shows for shared)', async () => {
+    listFn.mockResolvedValue(WF) // all shared entries are public, no department
+    render(<MemoryRouter initialEntries={['/workflows?scope=all']}><WorkflowsCatalog /></MemoryRouter>)
+    await screen.findByText('feature-pipeline')
+    // Visibility shows (there are shared rows); department must not (no dept in data).
+    expect(screen.getByLabelText('Visibility')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Department')).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Department' })).not.toBeInTheDocument()
+  })
+
+  it('shows visibility + department chrome when data has departments', async () => {
+    listFn.mockResolvedValue(WF_ORG)
+    render(<MemoryRouter initialEntries={['/workflows?scope=all']}><WorkflowsCatalog /></MemoryRouter>)
+    await screen.findByText('billing-close')
+    expect(screen.getByLabelText('Visibility')).toBeInTheDocument()
+    expect(screen.getByLabelText('Department')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Department' })).toBeInTheDocument()
+  })
+
+  it('filters by visibility=department', async () => {
+    listFn.mockResolvedValue(WF_ORG)
+    render(<MemoryRouter initialEntries={['/workflows?scope=all&vis=department']}><WorkflowsCatalog /></MemoryRouter>)
+    await screen.findByText('billing-close')
+    expect(screen.queryByText('feature-pipeline')).not.toBeInTheDocument()
+    expect(screen.getByText('hr-onboard')).toBeInTheDocument()
+  })
+
+  it('filters by a selected department', async () => {
+    listFn.mockResolvedValue(WF_ORG)
+    render(<MemoryRouter initialEntries={['/workflows?scope=all&dept=finance']}><WorkflowsCatalog /></MemoryRouter>)
+    await screen.findByText('billing-close')
+    expect(screen.queryByText('hr-onboard')).not.toBeInTheDocument()
+    expect(screen.queryByText('feature-pipeline')).not.toBeInTheDocument()
+  })
+
+  it('populates the department dropdown from distinct departments in the data', async () => {
+    listFn.mockResolvedValue(WF_ORG)
+    render(<MemoryRouter initialEntries={['/workflows?scope=all']}><WorkflowsCatalog /></MemoryRouter>)
+    await screen.findByText('billing-close')
+    const select = screen.getByLabelText('Department') as HTMLSelectElement
+    const opts = Array.from(select.options).map((o) => o.value)
+    expect(opts).toEqual(['', 'finance', 'people'])
   })
 })

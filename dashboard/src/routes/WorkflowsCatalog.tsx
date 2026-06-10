@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import styles from './WorkflowsCatalog.module.css'
 
 type Scope = 'mine' | 'shared' | 'all'
+type VisFilter = 'all' | 'public' | 'department'
 
 /** Mode-aware default scope: local mode shows everything, org/edge default to the
  * shared catalog. Used when no explicit ?scope= URL param is present. */
@@ -50,6 +51,9 @@ export default function WorkflowsCatalog() {
     scopeParam === 'mine' || scopeParam === 'shared' || scopeParam === 'all'
       ? scopeParam
       : defaultScope(me)
+  const visParam = searchParams.get('vis')
+  const vis: VisFilter = visParam === 'public' || visParam === 'department' ? visParam : 'all'
+  const dept = searchParams.get('dept') ?? ''
 
   // Update one query param; omit it when it equals its default to keep URLs clean.
   const setParam = useCallback(
@@ -67,35 +71,49 @@ export default function WorkflowsCatalog() {
     [setSearchParams],
   )
 
+  // Adaptive chrome is driven by what the loaded data actually contains.
+  const anyShared = useMemo(() => workflows.some((w) => w.scope === 'shared'), [workflows])
+  const departments = useMemo(
+    () =>
+      Array.from(
+        new Set(workflows.map((w) => w.department).filter((d): d is string => !!d)),
+      ).sort(),
+    [workflows],
+  )
+  const showVisibility = anyShared
+  const showDepartment = departments.length > 0
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return workflows.filter((w) => {
       if (scope === 'mine' && w.scope !== 'private') return false
       if (scope === 'shared' && w.scope !== 'shared') return false
+      if (vis !== 'all' && w.visibility !== vis) return false
+      if (dept && w.department !== dept) return false
       if (q && !w.name.toLowerCase().includes(q)) return false
       return true
     })
-  }, [workflows, scope, search])
+  }, [workflows, scope, vis, dept, search])
 
   const handleRowClick = useCallback((name: string) => navigate(`/workflows/${name}`), [navigate])
 
   if (loading) return <div className={styles.loading}>Loading workflows...</div>
   if (error) return <div className={styles.error}>{error}</div>
 
-  const hasFilters = !!search || scope !== defaultScope(me)
+  const hasFilters = !!search || scope !== defaultScope(me) || vis !== 'all' || !!dept
 
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>Workflows</h1>
         <div className={styles.controls}>
-          <div className={styles.segmented} role="tablist" aria-label="Scope">
+          <div className={styles.segmented} role="radiogroup" aria-label="Scope">
             {(['mine', 'shared', 'all'] as Scope[]).map((s) => (
               <button
                 key={s}
                 type="button"
-                role="tab"
-                aria-selected={scope === s}
+                role="radio"
+                aria-checked={scope === s}
                 className={scope === s ? styles.segmentActive : styles.segment}
                 onClick={() => setParam('scope', s, defaultScope(me))}
               >
@@ -103,6 +121,33 @@ export default function WorkflowsCatalog() {
               </button>
             ))}
           </div>
+          {showVisibility && (
+            <select
+              className={styles.select}
+              aria-label="Visibility"
+              value={vis}
+              onChange={(e) => setParam('vis', e.target.value, 'all')}
+            >
+              <option value="all">All visibility</option>
+              <option value="public">Public</option>
+              <option value="department">Department</option>
+            </select>
+          )}
+          {showDepartment && (
+            <select
+              className={styles.select}
+              aria-label="Department"
+              value={dept}
+              onChange={(e) => setParam('dept', e.target.value, '')}
+            >
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             className={styles.searchInput}
             type="text"
@@ -124,6 +169,8 @@ export default function WorkflowsCatalog() {
               <th>Name</th>
               <th>Description</th>
               <th>Scope</th>
+              {showVisibility && <th>Visibility</th>}
+              {showDepartment && <th>Department</th>}
               <th>Author</th>
               <th style={{ textAlign: 'center' }}>Nodes</th>
             </tr>
@@ -140,6 +187,10 @@ export default function WorkflowsCatalog() {
                 <td>
                   <span className={styles.badge}>{w.scope ?? '--'}</span>
                 </td>
+                {showVisibility && (
+                  <td>{w.visibility ? <span className={styles.badge}>{w.visibility}</span> : '—'}</td>
+                )}
+                {showDepartment && <td>{w.department || '—'}</td>}
                 <td>{w.author || '--'}</td>
                 <td className={styles.nodeCountCell}>{w.nodeCount ?? '--'}</td>
               </tr>
