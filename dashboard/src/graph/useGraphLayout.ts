@@ -10,6 +10,15 @@ import { loopContainerBox, loopContainerLabel } from './loopLayout'
 export const NODE_WIDTH = 200
 export const NODE_HEIGHT = 80
 
+// Stable empty-states reference. Used as the default so that callers which omit
+// executionStates (e.g. the static WorkflowReview view) don't pass a fresh `{}`
+// each render, which would be a new dependency every time and defeat the useMemo
+// below — recomputing the layout on every render and making rfNodes/rfEdges
+// referentially unstable. That instability drives WorkflowReview's
+// setNodes(rfNodes) sync-effect into an infinite loop (React error #185) on the
+// first node selection. Must never be mutated.
+const EMPTY_EXECUTION_STATES: Record<string, NodeExecutionState> = {}
+
 interface UseGraphLayoutInput {
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
@@ -25,7 +34,7 @@ interface UseGraphLayoutOutput {
 export function useGraphLayout({
   nodes,
   edges,
-  executionStates = {},
+  executionStates = EMPTY_EXECUTION_STATES,
 }: UseGraphLayoutInput): UseGraphLayoutOutput {
   return useMemo(() => {
     if (nodes.length === 0) {

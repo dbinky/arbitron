@@ -247,3 +247,26 @@ describe('useGraphLayout — back-edge carries the container box', () => {
     expect(box!.height).toBe(container.height)
   })
 })
+
+describe('useGraphLayout — referential stability (regression: WorkflowReview blank-screen loop)', () => {
+  // When executionStates is omitted, the memo MUST return the same rfNodes/rfEdges
+  // references across re-renders. A fresh `{}` default each call defeats the useMemo,
+  // so WorkflowReview's `setNodes(rfNodes)` sync-effect chases a new array every
+  // render and loops forever (React error #185, "Maximum update depth exceeded") the
+  // instant a node is selected — blanking the whole app.
+  it('keeps rfNodes/rfEdges referentially stable across re-renders when executionStates is omitted', () => {
+    const nodes = [node('a'), node('b'), node('c')]
+    const edges: WorkflowEdge[] = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ]
+    const { result, rerender } = renderHook(() => useGraphLayout({ nodes, edges }))
+    const firstNodes = result.current.rfNodes
+    const firstEdges = result.current.rfEdges
+
+    rerender()
+
+    expect(result.current.rfNodes).toBe(firstNodes)
+    expect(result.current.rfEdges).toBe(firstEdges)
+  })
+})
