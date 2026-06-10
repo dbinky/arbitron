@@ -21,6 +21,14 @@ type SampleSource struct {
 // NewSampleSource roots a SampleSource at dir (the install's samples/ path).
 func NewSampleSource(dir string) *SampleSource { return &SampleSource{root: dir} }
 
+// isTestFile reports whether base is a test file by the conventional
+// "<stem>_test.<ext>" (or "<stem>_test") naming, covering non-Go test scripts
+// such as init-workspace_test.sh that the Makefile's *_test.go exclude misses.
+func isTestFile(base string) bool {
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	return strings.HasSuffix(stem, "_test")
+}
+
 // resolve validates name (no traversal/separators) and returns its abs dir.
 func (s *SampleSource) resolve(name string) (string, error) {
 	if name == "" || name == "." || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
@@ -66,12 +74,33 @@ func (s *SampleSource) Read(_ context.Context, name string) (*workflow.Workflow,
 	if err := json.Unmarshal(manifest, &wf); err != nil {
 		return nil, nil, fmt.Errorf("parsing manifest for %q: %w", name, err)
 	}
+	// The on-disk directory name is authoritative; a manifest whose name diverges
+	// is malformed (skip-as-malformed) so identity can never silently disagree.
+	if wf.Name != name {
+		return nil, nil, fmt.Errorf("manifest name %q does not match sample directory %q", wf.Name, name)
+	}
 	files := map[string][]byte{}
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		// Skip dot-prefixed entries entirely (e.g. .DS_Store, .swp, .git). When a
+		// directory is a dotdir, skip its whole subtree.
+		if base := d.Name(); base != "." && strings.HasPrefix(base, ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
+			return nil
+		}
+		// Defensive: only publish regular files. d.Type() comes from an Lstat-based
+		// DirEntry, so a symlink reports ModeSymlink WITHOUT being followed — this
+		// closes the file-disclosure vector where a symlink points at a secret
+		// (e.g. the master key) outside the sample dir. Devices/sockets/pipes are
+		// likewise excluded.
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -79,6 +108,12 @@ func (s *SampleSource) Read(_ context.Context, name string) (*workflow.Workflow,
 			return err
 		}
 		if rel == "workflow.json" {
+			return nil
+		}
+		// Skip test files (e.g. scripts/init-workspace_test.sh): the Makefile
+		// tarball only excludes *_test.go, so non-Go test files would otherwise
+		// ship verbatim into the public shared workflow.
+		if isTestFile(d.Name()) {
 			return nil
 		}
 		content, err := os.ReadFile(path)
