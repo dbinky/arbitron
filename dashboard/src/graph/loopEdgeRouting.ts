@@ -37,6 +37,24 @@ export function chooseSide(args: {
   return { side: 'left', gutterX: args.boxX - GUTTER_OFFSET }
 }
 
+/**
+ * Choose which side a loop-back edge should route on by looking at where the
+ * loop's body nodes actually sit. The edge connects two spine nodes (tail/head);
+ * the intermediate body nodes typically bulge to one side. Route on the side the
+ * body reaches LESS into (the open side) so the edge doesn't cut through them.
+ * Ties default to right. This is more reliable than the loop-body bounding box,
+ * which is widened by the very nodes we need to avoid.
+ */
+export function chooseLoopSide(args: {
+  spineX: number
+  bodyLefts: number[]
+  bodyRights: number[]
+}): 'left' | 'right' {
+  const leftReach = args.spineX - Math.min(...args.bodyLefts)
+  const rightReach = Math.max(...args.bodyRights) - args.spineX
+  return rightReach <= leftReach ? 'right' : 'left'
+}
+
 export interface LoopBackGeometry {
   /** Tail (source) attachment: vertical center of the chosen side. */
   tailX: number

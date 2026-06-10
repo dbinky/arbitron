@@ -8,6 +8,8 @@ import { NODE_WIDTH, NODE_HEIGHT } from '../useGraphLayout'
 interface LoopBackEdgeData {
   loop: Loop
   box?: Box
+  /** Side chosen at layout time from the body-node positions. */
+  side?: 'left' | 'right'
   [key: string]: unknown
 }
 
@@ -26,12 +28,11 @@ function LoopBackEdge(props: EdgeProps) {
       height: Math.abs(sourceY - targetY),
     }
 
-  const { side } = chooseSide({
-    sourceX,
-    targetX,
-    boxX: box.x,
-    boxWidth: box.width,
-  })
+  // Prefer the side chosen at layout time from the body-node positions; fall back
+  // to the box heuristic for standalone renders (e.g. unit tests with no layout).
+  const side =
+    data?.side ??
+    chooseSide({ sourceX, targetX, boxX: box.x, boxWidth: box.width }).side
 
   const geometry = loopBackGeometry({
     sourceX,
