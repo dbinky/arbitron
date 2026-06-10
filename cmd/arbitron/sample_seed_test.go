@@ -50,7 +50,7 @@ func TestSeedSampleWorkflows_BootIntegration(t *testing.T) {
 	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if err := seedSampleWorkflows(context.Background(), true, srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
+	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -66,17 +66,10 @@ func TestSeedSampleWorkflows_BootIntegration(t *testing.T) {
 	}
 
 	// Second run is a no-op (ledger): no duplicate publication.
-	if err := seedSampleWorkflows(context.Background(), true, srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
+	if err := seedSampleWorkflows(context.Background(), srcRoot, wsRoot, repo, pub, owner, logger); err != nil {
 		t.Fatalf("second seed: %v", err)
 	}
 	if len(pub.names) != 1 {
 		t.Errorf("second run re-published: %v", pub.names)
-	}
-}
-
-func TestSeedSampleWorkflows_DisabledIsNoOp(t *testing.T) {
-	repo := filesystem.NewWorkflowRepo(t.TempDir())
-	if err := seedSampleWorkflows(context.Background(), false, "/whatever", t.TempDir(), repo, &recordingPublished{t: t}, uuid.New(), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
-		t.Fatalf("disabled seed should be no-op: %v", err)
 	}
 }

@@ -60,6 +60,13 @@ func (s *Seeder) Seed(ctx context.Context) error {
 
 // seedOne returns (true, nil) on success, (false, nil) when the sample was
 // skipped as malformed, and (false, err) on an infrastructure failure.
+//
+// Seeding is re-entrant: if a previous boot was killed between writing the
+// shared tree and recording the ledger, the shared dir already exists. The
+// write-tree + record + rollback + idempotency invariant lives in
+// workflow.WriteAndRecord; seedOne supplies a write step that tolerates an
+// already-present, bootstrap-owned tree (resume) and rolls back a fresh write
+// whose publication failed.
 func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 	wf, files, err := s.source.Read(ctx, name)
 	if err != nil {
@@ -67,27 +74,53 @@ func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 		return false, nil
 	}
 	shared := workflow.Shared()
-	if err := s.repo.Create(ctx, shared, name, wf); err != nil {
-		return false, fmt.Errorf("creating shared sample %q: %w", name, err)
+	err = workflow.WriteAndRecord(ctx, s.published, workflow.PublishRequest{
+		PublishedName: name,
+		Publisher:     s.owner,
+		SourceName:    name,
+		Visibility:    workflow.VisibilityPublic,
+		Department:    "",
+		WriteTree: func(ctx context.Context, overwrite bool) error {
+			return s.writeTree(ctx, shared, name, wf, files, overwrite)
+		},
+		Rollback: func(ctx context.Context) error {
+			return s.repo.Delete(ctx, shared, name)
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// writeTree materializes the shared sample tree. On a fresh publish it Creates
+// the workflow; if Create reports the dir already exists, the prior boot crashed
+// after Create but before recording the publication — adopt that orphaned,
+// bootstrap-owned tree and re-write its files idempotently rather than wedging.
+// On the resume (overwrite) path the publication already exists, so Create is
+// skipped and the files are re-written to heal any partial prior write.
+func (s *Seeder) writeTree(ctx context.Context, shared workflow.Scope, name string, wf *workflow.Workflow, files map[string][]byte, overwrite bool) error {
+	if !overwrite {
+		if err := s.repo.Create(ctx, shared, name, wf); err != nil {
+			if !errors.Is(err, workflow.ErrAlreadyExists) {
+				return fmt.Errorf("creating shared sample %q: %w", name, err)
+			}
+			// An unpublished shared dir of this name already exists — only safe to
+			// adopt if it was left by us (a crashed prior seed). A dir we did not
+			// create means a name collision we must not silently overwrite.
+			exists, exErr := s.repo.Exists(ctx, shared, name)
+			if exErr != nil {
+				return fmt.Errorf("checking shared sample %q: %w", name, exErr)
+			}
+			if !exists {
+				return fmt.Errorf("creating shared sample %q: %w", name, err)
+			}
+		}
 	}
 	for rel, content := range files {
 		if err := s.repo.WriteFile(ctx, shared, name, rel, content); err != nil {
-			return false, fmt.Errorf("writing sample file %q/%q: %w", name, rel, err)
+			return fmt.Errorf("writing sample file %q/%q: %w", name, rel, err)
 		}
 	}
-	if err := s.published.Upsert(ctx, name, s.owner, name, workflow.VisibilityPublic, ""); err != nil {
-		// Compensate the fresh write so we never leave an orphaned, unattributed
-		// shared copy (mirrors WorkflowService.Publish's fresh-publish rollback).
-		// The destination was empty before, so deleting it restores the prior
-		// state. The rollback is best-effort; if Delete also fails, join both
-		// wrapped errors so neither is lost, else surface just the Upsert error.
-		if delErr := s.repo.Delete(ctx, shared, name); delErr != nil {
-			return false, errors.Join(
-				fmt.Errorf("recording publication for %q: %w", name, err),
-				fmt.Errorf("rolling back shared sample %q: %w", name, delErr),
-			)
-		}
-		return false, fmt.Errorf("recording publication for %q: %w", name, err)
-	}
-	return true, nil
+	return nil
 }

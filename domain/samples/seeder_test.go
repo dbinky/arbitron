@@ -36,10 +36,12 @@ type createdFile struct {
 }
 
 type fakeRepo struct {
-	created   []string
-	files     []createdFile
-	deleted   []string
-	createErr map[string]error
+	created      []string
+	files        []createdFile
+	deleted      []string
+	createErr    map[string]error
+	writeFileErr map[string]error
+	exists       map[string]bool
 }
 
 func (r *fakeRepo) Create(_ context.Context, s workflow.Scope, name string, _ *workflow.Workflow) error {
@@ -50,6 +52,9 @@ func (r *fakeRepo) Create(_ context.Context, s workflow.Scope, name string, _ *w
 	return nil
 }
 func (r *fakeRepo) WriteFile(_ context.Context, s workflow.Scope, name, rel string, c []byte) error {
+	if err := r.writeFileErr[name]; err != nil {
+		return err
+	}
 	r.files = append(r.files, createdFile{s, name, rel, c})
 	return nil
 }
@@ -70,7 +75,9 @@ func (r *fakeRepo) DeleteFile(context.Context, workflow.Scope, string, string) e
 func (r *fakeRepo) ListFiles(context.Context, workflow.Scope, string) ([]string, error) {
 	return nil, nil
 }
-func (r *fakeRepo) Exists(context.Context, workflow.Scope, string) (bool, error) { return false, nil }
+func (r *fakeRepo) Exists(_ context.Context, _ workflow.Scope, name string) (bool, error) {
+	return r.exists[name], nil
+}
 func (r *fakeRepo) SaveNodePositions(context.Context, workflow.Scope, string, map[string]workflow.NodePosition) error {
 	return nil
 }
@@ -88,6 +95,9 @@ type pubCall struct {
 type fakePublished struct {
 	calls []pubCall
 	upErr map[string]error
+	// publisherOf maps a published name to its current publisher, simulating an
+	// existing publication (used to drive the re-entrant/resume path).
+	publisherOf map[string]uuid.UUID
 }
 
 func (p *fakePublished) Upsert(_ context.Context, name string, pub uuid.UUID, source string, vis workflow.Visibility, dept string) error {
@@ -98,7 +108,10 @@ func (p *fakePublished) Upsert(_ context.Context, name string, pub uuid.UUID, so
 	return nil
 }
 func (p *fakePublished) Delete(context.Context, string) error { return nil }
-func (p *fakePublished) PublisherOf(context.Context, string) (uuid.UUID, bool, error) {
+func (p *fakePublished) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	if id, ok := p.publisherOf[name]; ok {
+		return id, true, nil
+	}
 	return uuid.Nil, false, nil
 }
 func (p *fakePublished) PublicationOf(context.Context, string) (workflow.Publication, bool, error) {
@@ -202,6 +215,96 @@ func TestSeed_MalformedIsSkippedNotRecorded(t *testing.T) {
 		if n == "bad" {
 			t.Errorf("malformed sample was recorded as seeded")
 		}
+	}
+}
+
+// Crash-then-rerun: a prior boot created the shared dir and published it, then
+// was killed before recording the ledger. On rerun Create returns
+// ErrAlreadyExists; because the sample already exists in shared AND is published
+// by the bootstrap owner, seedOne treats it as a resume (success), re-writes the
+// file tree idempotently, and the ledger is recorded so the next boot skips it.
+func TestSeed_CrashThenRerun_ResumesWhenOwnedByBootstrap(t *testing.T) {
+	owner := uuid.New()
+	src := &fakeSource{
+		names: []string{"pr-review"},
+		wf:    map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}},
+		files: map[string]map[string][]byte{"pr-review": {"manager.md": []byte("x")}},
+	}
+	repo := &fakeRepo{
+		createErr: map[string]error{"pr-review": workflow.ErrAlreadyExists},
+		exists:    map[string]bool{"pr-review": true},
+	}
+	pub := &fakePublished{publisherOf: map[string]uuid.UUID{"pr-review": owner}}
+	led := &fakeLedger{}
+	s := samples.NewSeeder(src, repo, pub, led, owner, discardLogger())
+
+	if err := s.Seed(context.Background()); err != nil {
+		t.Fatalf("Seed (resume): %v", err)
+	}
+	// The file tree is re-written idempotently to heal any partial prior write.
+	if len(repo.files) != 1 || repo.files[0].rel != "manager.md" {
+		t.Errorf("files (resume) = %+v, want manager.md re-written", repo.files)
+	}
+	// The sample is recorded as seeded so subsequent boots skip it.
+	if len(led.recorded) != 1 || led.recorded[0] != "pr-review" {
+		t.Errorf("recorded = %v, want [pr-review]", led.recorded)
+	}
+}
+
+// Crash-then-rerun where the prior boot's partial WriteFile left an orphaned
+// shared dir owned by the bootstrap user: the resume path re-writes the files
+// successfully and completes. (Drives the previously-untestable WriteFile path
+// via writeFileErr being unset on the resume run.)
+func TestSeed_CrashThenRerun_HealsPartialWrite(t *testing.T) {
+	owner := uuid.New()
+	src := &fakeSource{
+		names: []string{"pr-review"},
+		wf:    map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}},
+		files: map[string]map[string][]byte{"pr-review": {"a.md": []byte("a"), "b.md": []byte("b")}},
+	}
+	repo := &fakeRepo{
+		createErr: map[string]error{"pr-review": workflow.ErrAlreadyExists},
+		exists:    map[string]bool{"pr-review": true},
+	}
+	pub := &fakePublished{publisherOf: map[string]uuid.UUID{"pr-review": owner}}
+	led := &fakeLedger{}
+	s := samples.NewSeeder(src, repo, pub, led, owner, discardLogger())
+
+	if err := s.Seed(context.Background()); err != nil {
+		t.Fatalf("Seed (heal): %v", err)
+	}
+	if len(repo.files) != 2 {
+		t.Errorf("files (heal) = %d, want 2 re-written", len(repo.files))
+	}
+	if len(led.recorded) != 1 {
+		t.Errorf("recorded = %v, want [pr-review]", led.recorded)
+	}
+}
+
+// An existing shared workflow NOT owned by the bootstrap user (a human published
+// their own workflow of the same name) must NOT be treated as a resume: Create's
+// ErrAlreadyExists surfaces and aborts rather than silently overwriting.
+func TestSeed_AlreadyExistsButForeignOwner_Aborts(t *testing.T) {
+	owner := uuid.New()
+	other := uuid.New()
+	src := &fakeSource{
+		names: []string{"pr-review"},
+		wf:    map[string]*workflow.Workflow{"pr-review": {Name: "pr-review"}},
+		files: map[string]map[string][]byte{"pr-review": {"manager.md": []byte("x")}},
+	}
+	repo := &fakeRepo{
+		createErr: map[string]error{"pr-review": workflow.ErrAlreadyExists},
+		exists:    map[string]bool{"pr-review": true},
+	}
+	pub := &fakePublished{publisherOf: map[string]uuid.UUID{"pr-review": other}}
+	led := &fakeLedger{}
+	s := samples.NewSeeder(src, repo, pub, led, owner, discardLogger())
+
+	if err := s.Seed(context.Background()); err == nil {
+		t.Fatal("expected error when shared name is owned by another user")
+	}
+	if len(led.recorded) != 0 {
+		t.Errorf("must not record a sample owned by another user; recorded=%v", led.recorded)
 	}
 }
 
