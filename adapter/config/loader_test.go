@@ -1407,6 +1407,42 @@ func TestLoad_EdgeMode_TeamDomainTrimmed(t *testing.T) {
 		"teamdomain must be trimmed so edge.New receives a clean URL, not a padded one")
 }
 
+// TestLoad_SamplesBlock verifies that the samples block in YAML is read into
+// cfg.Samples correctly: seed=true and sourcedir="/opt/arbitron/samples".
+func TestLoad_SamplesBlock(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	yamlContent := "samples:\n  seed: true\n  sourcedir: \"/opt/arbitron/samples\"\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, true, cfg.Samples.Seed, "samples.seed")
+	assert.Equal(t, "/opt/arbitron/samples", cfg.Samples.SourceDir, "samples.sourcedir")
+}
+
+// TestLoad_SamplesDefaults verifies that the samples block has safe defaults
+// when not configured: seed=true (seeding is a no-op when sourcedir is empty)
+// and sourcedir="" (disables seeding by default).
+func TestLoad_SamplesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	// Minimal config — no samples block.
+	yamlContent := "server:\n  port: 9999\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(yamlContent), 0o600))
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	assert.Equal(t, true, cfg.Samples.Seed, "default samples.seed")
+	assert.Equal(t, "", cfg.Samples.SourceDir, "default samples.sourcedir")
+}
+
 // TestLoad_AuthMode_FromEnv_EdgeMode is the edge-mode parallel of the org-mode
 // env tests in TestLoad_AuthMode_FromEnv: it verifies that (a) an env-only edge
 // deployment can boot (complete config), and (b) ARBITRON_AUTH_MODE=edge without

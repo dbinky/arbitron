@@ -22,14 +22,16 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":    "127.0.0.1",
-		"server.port":    8080,
-		"database.path":  "./arbitron.db",
-		"workspace.path": "./workspaces",
-		"llm.provider":   "anthropic",
-		"llm.apikey":     "",
-		"llm.binarypath": "",
-		"llm.model":      "",
+		"server.host":       "127.0.0.1",
+		"server.port":       8080,
+		"database.path":     "./arbitron.db",
+		"workspace.path":    "./workspaces",
+		"samples.seed":      true,
+		"samples.sourcedir": "",
+		"llm.provider":      "anthropic",
+		"llm.apikey":        "",
+		"llm.binarypath":    "",
+		"llm.model":         "",
 		// SECURITY: 30 minutes upper bound on a single provider call.
 		// Default 0 (unbounded) is a queue-pinning DoS — see PR #8 security
 		// thread 3291944120.

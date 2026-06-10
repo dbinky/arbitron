@@ -14,6 +14,7 @@ type Config struct {
 	Notifications NotificationsConfig
 	Profiles      []ProfileConfig
 	Auth          AuthConfig
+	Samples       SamplesConfig
 }
 
 // AuthConfig selects the operating mode and holds the org-mode auth settings.
@@ -203,6 +204,16 @@ type DatabaseConfig struct {
 // WorkspaceConfig holds workspace directory settings.
 type WorkspaceConfig struct {
 	Path string
+}
+
+// SamplesConfig controls boot-time seeding of bundled sample workflows.
+type SamplesConfig struct {
+	// Seed enables seeding sample workflows from SourceDir into the shared
+	// scope at boot. Default true; a no-op when SourceDir is empty/missing.
+	Seed bool
+	// SourceDir is the absolute path to the on-disk sample source (the install
+	// hierarchy's samples/ dir). Empty disables seeding.
+	SourceDir string
 }
 
 // LLMConfig holds LLM provider settings.
