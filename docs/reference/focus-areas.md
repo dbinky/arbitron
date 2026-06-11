@@ -15,7 +15,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Backend vocabulary (`domain/workflow/workflow.go` `BackendCodex` + `IsValidAgentBackend`; exact-match lowercase, fail-closed near-miss rejection; allowed-set / `NodeConfig.Backend` / validator-message doc accuracy) | [ ] | [ ] | pending |
+| 1 | Backend vocabulary (`domain/workflow/workflow.go` `BackendCodex` + `IsValidAgentBackend`; exact-match lowercase, fail-closed near-miss rejection; allowed-set / `NodeConfig.Backend` / validator-message doc accuracy) | [x] | [ ] | in progress |
 | 2 | Codex argv builder (`adapter/codex/args.go` — `exec --dangerously-bypass-approvals-and-sandbox -m <model> --cd <WorkDir> --json`; prompt via stdin, NEVER argv; `ErrModelRequired` on empty/whitespace model; flag spellings pinned in one const block, version-recorded) | [ ] | [ ] | pending |
 | 3 | Codex subscription env (`adapter/codex/env.go` — `procenv.BaseEnv()` + `HOME` preserved, `CODEX_HOME` forwarded only when set; NO `OPENAI_API_KEY`; never calls `binding.RevealKey`; cannot fail) | [ ] | [ ] | pending |
 | 4 | Codex event decoder (`adapter/codex/parse.go` — shared `decodeLine`/`foldEvent`; `thread.started`/`turn.started`/`item.completed`/`turn.completed`/`error`/`turn.failed`; unknown event/item kinds tolerated; `ErrParse` on malformed JSON; Summary/Steps/tokens/thread fold) | [ ] | [ ] | pending |
