@@ -163,6 +163,26 @@ func TestInteractiveStreamSelector_AgentKind_UnknownBackend(t *testing.T) {
 	}
 }
 
+// TestInteractiveStreamSelector_AgentKind_PaddedBackend verifies that a
+// whitespace-padded valid backend is trimmed and dispatched correctly, matching
+// TestFactoryBackend_PaddedValidBackend_Routed on the agent batch path.
+// agentStreamFor calls strings.TrimSpace before the map lookup, so " codex "
+// must reach the codex stream adapter, not fail closed as an unknown backend.
+func TestInteractiveStreamSelector_AgentKind_PaddedBackend(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, codexSentinel, m := streamsByBackend()
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: " codex ", // whitespace-padded valid backend
+		Model:   "gpt-5-codex",
+	})
+	require.NoError(t, err, "whitespace-padded codex backend must be trimmed and routed")
+	assert.Same(t, codexSentinel, got, "trimmed codex backend must reach the codex stream adapter")
+}
+
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an
 // unknown/empty kind returns an error (unchanged).
 func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
