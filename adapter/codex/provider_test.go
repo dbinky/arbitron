@@ -267,6 +267,61 @@ func TestRunAgent_UnknownEventsTolerated(t *testing.T) {
 	require.Len(t, res.Steps, 1, "only the known agent_message folds; unknown item dropped")
 }
 
+// FA13 PAIRED (§2+§3+§6) — the argv builder (args.go), the subscription env
+// builder (env.go), and the batch provider (provider.go) all compose onto the
+// SAME claudecli.RunSpec in a single RunAgent call. This test verifies:
+//   - --cd <WorkDir> appears in runSpec.Args (from args.go, bridging §2 and §6)
+//   - OPENAI_API_KEY is absent from runSpec.Env (from env.go, bridging §3 and §6)
+//   - HOME is present in runSpec.Env (subscription env must preserve HOME for
+//     codex to locate its on-disk auth.json)
+//   - The prompt appears in runSpec.Stdin and NOT in any arg (§2 and §6 agree
+//     on the stdin-vs-argv boundary)
+//
+// These three units share one vocabulary: if any breaks the shared contract
+// (e.g. args.go drops --cd, env.go forwards OPENAI_API_KEY) the composed
+// RunSpec reaching the runner will be wrong even if each unit alone looks clean.
+func TestRunAgent_ArgvEnvSubscriptionContract(t *testing.T) {
+	t.Setenv("HOME", "/home/testuser")
+	t.Setenv("OPENAI_API_KEY", "sk-poison")
+
+	const workDir = "/tmp/test-ws"
+	const prompt = "do the task"
+	const model = "gpt-5-codex"
+
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	p := New(Config{Binding: codexBinding(model, nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  prompt,
+		WorkDir: workDir,
+		Model:   model,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(mr.calls), 2, "probe + run calls expected")
+
+	runSpec := mr.calls[1] // second call is the actual exec run
+
+	// §2 + §6: args.go must place --cd <WorkDir> in argv.
+	cdVal, cdOK := argValue(runSpec.Args, cdFlag)
+	require.True(t, cdOK, "--cd flag must be present in run argv (args.go contribution)")
+	assert.Equal(t, workDir, cdVal, "--cd value must equal mission.WorkDir")
+
+	// §2 + §6: prompt via stdin, never in argv.
+	assert.Equal(t, prompt, runSpec.Stdin, "prompt must be delivered via stdin")
+	for _, a := range runSpec.Args {
+		assert.NotContains(t, a, prompt, "prompt must never appear in argv (§2 boundary)")
+	}
+
+	// §3 + §6: subscription env must carry no OPENAI_API_KEY even when the parent env has one.
+	_, hasKey := envValue(runSpec.Env, "OPENAI_API_KEY")
+	assert.False(t, hasKey, "OPENAI_API_KEY must be absent from the launched env (§3 boundary)")
+
+	// §3 + §6: HOME must be preserved so codex can locate ~/.codex/auth.json.
+	homeVal, hasHome := envValue(runSpec.Env, "HOME")
+	assert.True(t, hasHome, "HOME must be forwarded into the launched env (§3 boundary)")
+	assert.Equal(t, "/home/testuser", homeVal, "HOME must carry the parent HOME value")
+}
+
 // SECURITY / log-capture — no secret leaks: the codex path reveals no key, and a
 // failed run never surfaces a credential. (codex carries no injected secret, but
 // the property is pinned to mirror opencode's secrecy assertion.)
