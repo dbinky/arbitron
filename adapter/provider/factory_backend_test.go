@@ -81,6 +81,17 @@ func TestFactoryBackend_Codex_SelectsCodex(t *testing.T) {
 	assert.IsType(t, (*codex.Provider)(nil), ap)
 }
 
+// happy — codex backend with a non-openai provider (e.g. claude-cli) STILL
+// selects the codex adapter (backend, not provider, drives the choice — same
+// decoupling as TestFactoryBackend_Opencode_WithClaudeProvider). Codex is
+// subscription-only, so the provider field on the binding is irrelevant.
+func TestFactoryBackend_Codex_WithClaudeProvider(t *testing.T) {
+	f := newBackendFactory(t)
+	ap, err := f.AgentProviderFor(agentBindingBackend("claude-cli", "codex"))
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.Provider)(nil), ap)
+}
+
 // boundary — a near-miss case on the codex backend ("Codex") is rejected by the
 // factory's exact-match vocabulary (consistent with the workflow validator).
 func TestFactoryBackend_Codex_UpperCaseFailsClosed(t *testing.T) {
