@@ -86,6 +86,15 @@ func TestCodexEnv_CodexHomeWhitespaceOnlyNotForwarded(t *testing.T) {
 	assert.False(t, ok, "whitespace-only CODEX_HOME must not be forwarded (treated as unset)")
 }
 
+// SECURITY — the env var name codex uses internally for auth-dir relocation is
+// pinned here as a string literal, mirroring TestBuildArgs_PinnedFlagSpellings
+// in args.go. If a codex-cli update renames CODEX_HOME (e.g. to
+// CODEX_CONFIG_DIR), this test localizes the break to the single codexHomeVar
+// const — the one-line fix, not a silent forward of the wrong var.
+func TestCodexEnv_CodexHomeVarNamePinned(t *testing.T) {
+	assert.Equal(t, "CODEX_HOME", codexHomeVar, "env var name must match codex CLI's internal auth-dir lookup")
+}
+
 // SECURITY — the base allowlist PATH augmentation is preserved (StandardBinDirs
 // reachable), so codex can find git/gh inside the workspace.
 func TestCodexEnv_PreservesBaseEnvPATH(t *testing.T) {
