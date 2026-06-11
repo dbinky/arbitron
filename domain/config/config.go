@@ -113,7 +113,7 @@ type ProfileConfig struct {
 	ConnectionRef string // -> Connection.Name; empty = claude-cli no-key (subscription)
 	Model         string
 	// Backend selects the agent CLI for agent-kind profiles (org-readiness
-	// Phase 2): "" (inherit deployment default) | "claude-code" | "opencode".
+	// Phase 2): "" (inherit deployment default) | "claude-code" | "opencode" | "codex".
 	// INDEPENDENT of the provider/connection. Ignored for chat-kind profiles.
 	Backend string
 	// AllowedTools is the per-profile tool allowlist for agent-kind profiles
@@ -272,10 +272,10 @@ type LLMConfig struct {
 	AgentAllowAllTools bool
 	// DefaultAgentBackend is the deployment-wide default agent backend
 	// (org-readiness Phase 2) applied when neither the node nor its profile names
-	// one. Values: "claude-code" | "opencode". The config loader FLOORS an empty
-	// value to "claude-code" so the deployment policy lives in exactly one place;
-	// the agent executor and the adapter factory both read it. INDEPENDENT of the
-	// provider — it only selects which agent CLI runs the loop.
+	// one. Values: "claude-code" | "opencode" | "codex". The config loader FLOORS
+	// an empty value to "claude-code" so the deployment policy lives in exactly one
+	// place; the agent executor and the adapter factory both read it. INDEPENDENT
+	// of the provider — it only selects which agent CLI runs the loop.
 	DefaultAgentBackend string
 }
 
