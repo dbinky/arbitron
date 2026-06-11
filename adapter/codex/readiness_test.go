@@ -130,6 +130,17 @@ func TestReadinessStateValues(t *testing.T) {
 	assert.Equal(t, "not-logged-in", string(NotLoggedIn))
 }
 
+// CLI-COUPLING PIN — the `codex login status` subcommand spellings are pinned
+// here as string literals, mirroring TestBuildArgs_PinnedFlagSpellings (args.go)
+// and TestCodexEnv_CodexHomeVarNamePinned (env.go). TestReadiness_Ready already
+// verifies them functionally via assert.Contains(args, "login"), but an explicit
+// pin makes the coupling searchable and ensures a codex-cli subcommand rename is
+// caught as a one-line, test-caught change rather than a behavioral regression.
+func TestReadiness_LoginSubcommandPinned(t *testing.T) {
+	assert.Equal(t, "login", loginSubcommand, "codex login subcommand spelling must match codex-cli 0.137.0")
+	assert.Equal(t, "status", loginStatusSubcommand, "codex login status subcommand spelling must match codex-cli 0.137.0")
+}
+
 // guard — a nil Runner falls back to the production exec runner (so a real
 // host with no codex installed reports NotInstalled, not a panic). This does
 // NOT shell out in CI beyond a `codex --version` that is expected to fail.
