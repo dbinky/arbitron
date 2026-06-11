@@ -201,7 +201,7 @@ func TestRunAgent_ContextCancel(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-// ERROR — timeout → returns a context deadline error.
+// ERROR — mission-level timeout → context deadline error.
 func TestRunAgent_Timeout(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
 	p := New(Config{Binding: codexBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
@@ -214,6 +214,27 @@ func TestRunAgent_Timeout(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// EDGE — the provider-level Config.Timeout is the fallback when the mission
+// carries no timeout (mission.Timeout <= 0). Without this test, an operator
+// who sets Config.Timeout to bound long-running missions would have no coverage
+// that the fallback applies (only the mission-level path is verified above).
+func TestRunAgent_ProviderTimeoutApplies(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	p := New(Config{
+		Binding:    codexBinding("gpt-5-codex", nil),
+		BinaryPath: "codex",
+		Runner:     mr,
+		Timeout:    10 * time.Millisecond, // provider-level default; no mission timeout
+	})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex",
+		// no Timeout field — must fall back to Config.Timeout
+	})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "Config.Timeout must apply when mission carries no timeout")
 }
 
 // EDGE — empty output is parsed tolerantly (no panic, empty result).
