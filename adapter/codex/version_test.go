@@ -17,7 +17,21 @@ func TestProbeVersion_Compatible(t *testing.T) {
 	err := probeVersion(context.Background(), fr, "codex")
 	require.NoError(t, err)
 	require.True(t, fr.runCalled)
+	assert.Equal(t, "codex", fr.gotSpec.Bin, "bin name must be forwarded to the runner as-is")
 	assert.Contains(t, fr.gotSpec.Args, "--version")
+}
+
+// HAPPY — a binary strictly above the minimum is also accepted (the check is
+// < 0, not <= 0). This catches a potential comparison inversion where only
+// versions at or above the min pass rather than strictly below it failing.
+func TestProbeVersion_AboveMinimumAccepted(t *testing.T) {
+	for _, ver := range []string{"0.200.0", "1.0.0"} {
+		t.Run(ver, func(t *testing.T) {
+			fr := &fakeRunner{lines: []string{"codex-cli " + ver}}
+			err := probeVersion(context.Background(), fr, "codex")
+			require.NoError(t, err, "version %s is above the minimum and must be accepted", ver)
+		})
+	}
 }
 
 // ERROR — an older binary is rejected with ErrIncompatibleCodex.
