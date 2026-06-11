@@ -71,6 +71,40 @@ func TestInterviewerProfile_ResolvesToCodexBinding(t *testing.T) {
 	assert.Empty(t, key, "codex interviewer must never carry an API key")
 }
 
+// TestPlannerCoderProfiles_ResolveToClaudeCodeBindings complements
+// TestInterviewerProfile_ResolvesToCodexBinding by verifying the full resolver
+// chain for the planner and coder profiles: both must resolve to
+// Backend="claude-code", Kind="agent", Model="opus-4.8" with an empty key
+// (subscription-only path). This confirms the mixed-model split in the default
+// registry: interviewer→codex, planner/coder→claude-code. The stream selector
+// dispatches on binding.Backend, so an incorrect backend value here would
+// silently route planner/coder to the wrong stream adapter.
+func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(filepath.Join(tmpDir, "config.yaml"))
+	require.NoError(t, err)
+
+	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
+	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
+	require.NoError(t, err)
+
+	for _, alias := range []string{"planner", "coder"} {
+		alias := alias
+		t.Run(alias, func(t *testing.T) {
+			binding, err := resolver.Resolve(context.Background(), alias)
+			require.NoError(t, err, "%s alias must resolve", alias)
+			assert.Equal(t, provider.ProfileKindAgent, binding.Kind, "%s must be agent-kind", alias)
+			assert.Equal(t, "claude-code", binding.Backend, "%s must resolve to claude-code backend", alias)
+			assert.Equal(t, "opus-4.8", binding.Model, "%s must resolve to opus-4.8", alias)
+			key, keyErr := binding.RevealKey(context.Background())
+			require.NoError(t, keyErr, "%s RevealKey must not error (subscription path)", alias)
+			assert.Empty(t, key, "%s must not carry an API key (subscription-only)", alias)
+		})
+	}
+}
+
 // TestSampleFeaturePipeline_ValidatesWithDefaultProfiles is the Phase 3 Task 2
 // acceptance: the committed samples/feature-pipeline/workflow.json still passes
 // workflow.Validate against the default profile registry AFTER the mixed-model
