@@ -90,6 +90,58 @@ func TestRunAgent_ExecContract(t *testing.T) {
 	assert.False(t, revealed, "codex (subscription) must NEVER call binding.RevealKey")
 }
 
+// CORRECTNESS — single model source. argv is built from p.binding.Model, so the
+// result AND every error string must label the SAME model that fed argv — never
+// mission.Model, which can diverge. This test pins that: when the binding model
+// and the mission model differ, the AgentResult.Model carries the BINDING model
+// (the one codex actually ran), so an operator is never sent chasing a phantom
+// model the run never used.
+func TestRunAgent_ResultModelMatchesArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	// Binding drives argv (buildArgs uses binding.Model); the mission carries a
+	// DIFFERENT model id to expose any args/label skew.
+	p := New(Config{Binding: codexBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "go",
+		WorkDir: "/tmp/ws",
+		Model:   "mission-model-DIVERGENT",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// argv must carry the binding model (buildExecArgs emits `-m <model>`).
+	runSpec := mr.calls[1]
+	assert.Contains(t, runSpec.Args, "binding-model", "argv must use the binding model")
+	assert.NotContains(t, runSpec.Args, "mission-model-DIVERGENT")
+
+	// The result must label the model that actually ran (the binding model), NOT
+	// the divergent mission model.
+	assert.Equal(t, "binding-model", res.Model,
+		"AgentResult.Model must be the model that fed argv (binding), never mission.Model")
+}
+
+// CORRECTNESS — single model source on the FAILURE path. A non-zero exit must
+// produce an error labeled with the model that fed argv (binding model), not the
+// divergent mission model — so a failing run's error names the model codex ran.
+func TestRunAgent_ErrorLabelsArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: []string{`{"type":"thread.started","thread_id":"t"}`}, waitErr: errors.New("exit status 7")},
+	}}
+	p := New(Config{Binding: codexBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "go",
+		WorkDir: "/tmp/ws",
+		Model:   "mission-model-DIVERGENT",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binding-model", "error must name the model that fed argv")
+	assert.NotContains(t, err.Error(), "mission-model-DIVERGENT",
+		"error must never name the divergent mission model")
+}
+
 // INPUT-VALIDATION — empty WorkDir rejected before env build and before any
 // launch (not even the version probe).
 func TestRunAgent_EmptyWorkDir(t *testing.T) {

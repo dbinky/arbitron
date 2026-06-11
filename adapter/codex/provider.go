@@ -49,6 +49,59 @@ type Config struct {
 	MaxResponseBytes int64
 }
 
+// core holds the construction inputs and version-probe memo shared by the batch
+// Provider and the streaming StreamProvider: the resolved binding/binary, the
+// runner seam, the per-call timeout, the stdout cap, and the once-only
+// compatibility probe. Both adapters share ONE Config, one launch prelude, and
+// one probe seam, so they embed this rather than hand-syncing seven identical
+// fields plus a byte-for-byte ensureCompatible.
+//
+// This mirrors the claudecli precedent (adapter/claudecli/chat_adapter.go's
+// adapterCore, embedded in ChatAdapter/AgentAdapter/StreamAgentAdapter): the
+// shared lifecycle lives in one struct + constructor, not in parallel copies.
+type core struct {
+	binding          provider.ResolvedBinding
+	binPath          string
+	runner           claudecli.CommandRunner
+	timeout          time.Duration
+	maxResponseBytes int64
+
+	// probeOnce memoizes the binary version probe across calls; probeErr retains
+	// the verdict so a failure fails closed without re-probing.
+	probeOnce sync.Once
+	probeErr  error
+}
+
+// newCore builds the shared core from cfg. An empty BinaryPath is resolved from
+// PATH and common install directories. A nil Runner uses the shared production
+// os/exec runner. It is the SINGLE construction seam for both adapters.
+func newCore(cfg Config) core {
+	runner := cfg.Runner
+	if runner == nil {
+		runner = claudecli.NewExecRunner()
+	}
+	return core{
+		binding:          cfg.Binding,
+		binPath:          resolveBinary(cfg.BinaryPath),
+		runner:           runner,
+		timeout:          cfg.Timeout,
+		maxResponseBytes: cfg.MaxResponseBytes,
+	}
+}
+
+// ensureCompatible runs the version probe at most once per core. A failure is
+// memoized so every subsequent call fails closed without re-probing.
+//
+// SECURITY: it passes the subscription env (no API key) so the bare `codex
+// --version` probe never inherits the engine's full parent env — the SAME no-key
+// env codexEnv() builds for the real exec launch.
+func (c *core) ensureCompatible(ctx context.Context) error {
+	c.probeOnce.Do(func() {
+		c.probeErr = probeVersion(ctx, c.runner, c.binPath, codexEnv())
+	})
+	return c.probeErr
+}
+
 // Provider implements engine.AgentProvider by driving `codex exec
 // --dangerously-bypass-approvals-and-sandbox -m <model> --cd <WorkDir> --json`
 // on the ChatGPT subscription: the mission prompt is delivered via stdin (never
@@ -58,15 +111,7 @@ type Config struct {
 // invocation (no session resume), so AgentMission.SessionID is unused. See
 // args.go, env.go, parse.go, and version.go.
 type Provider struct {
-	binding          provider.ResolvedBinding
-	binPath          string
-	runner           claudecli.CommandRunner
-	timeout          time.Duration
-	maxResponseBytes int64
-
-	// probeOnce memoizes the binary version probe across missions.
-	probeOnce sync.Once
-	probeErr  error
+	core
 }
 
 var _ engine.AgentProvider = (*Provider)(nil)
@@ -75,17 +120,7 @@ var _ engine.AgentProvider = (*Provider)(nil)
 // PATH and common install directories. A nil Runner uses the shared production
 // os/exec runner.
 func New(cfg Config) *Provider {
-	runner := cfg.Runner
-	if runner == nil {
-		runner = claudecli.NewExecRunner()
-	}
-	return &Provider{
-		binding:          cfg.Binding,
-		binPath:          resolveBinary(cfg.BinaryPath),
-		runner:           runner,
-		timeout:          cfg.Timeout,
-		maxResponseBytes: cfg.MaxResponseBytes,
-	}
+	return &Provider{core: newCore(cfg)}
 }
 
 // RunAgent runs a `codex exec` mission and folds its JSON event stream into an
@@ -105,12 +140,19 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, ErrWorkDirRequired
 	}
 
+	// Single model source: argv is built from p.binding.Model (via buildArgs), so
+	// bind that ONE value here and use it for argv, every error string, AND the
+	// result. mission.Model is deliberately NOT used for labels — if it ever
+	// diverged from the binding, the result/errors would name a model codex never
+	// ran, sending an operator chasing a phantom.
+	model := p.binding.Model
+
 	// Build args FIRST so an empty model fails closed with NO launch (never a
 	// silent default-model run). buildArgs names the failure; we add the model
 	// context here.
 	args, err := buildArgs(mission, p.binding)
 	if err != nil {
-		return nil, fmt.Errorf("codex agent (model %q): %w", p.binding.Model, err)
+		return nil, fmt.Errorf("codex agent (model %q): %w", model, err)
 	}
 
 	// Build the subscription env BEFORE any subprocess. There is no key to reveal
@@ -142,7 +184,7 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 
 	lines, wait, err := p.runner.Run(runCtx, spec)
 	if err != nil {
-		return nil, fmt.Errorf("codex: run (model %q): %w", mission.Model, err)
+		return nil, fmt.Errorf("codex: run (model %q): %w", model, err)
 	}
 
 	// Drain stdout fully BEFORE calling wait (CommandRunner contract).
@@ -156,12 +198,12 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("codex: mission failed (model %q): %w", mission.Model, waitErr)
+		return nil, fmt.Errorf("codex: mission failed (model %q): %w", model, waitErr)
 	}
 
 	res, err := parseOutput(collected)
 	if err != nil {
-		return nil, fmt.Errorf("codex: parse output (model %q): %w", mission.Model, err)
+		return nil, fmt.Errorf("codex: parse output (model %q): %w", model, err)
 	}
 	engineSteps := make([]engine.AgentStep, 0, len(res.steps))
 	for _, s := range res.steps {
@@ -171,20 +213,11 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	return &engine.AgentResult{
 		Summary:   res.summary,
 		Steps:     engineSteps,
-		Model:     mission.Model,
+		Model:     model,
 		TokensIn:  res.tokensIn,
 		TokensOut: res.tokensOut,
 		SessionID: res.sessionID, // codex thread id (surfaced for the trace)
 	}, nil
-}
-
-// ensureCompatible runs the version probe at most once per Provider. A failure
-// is memoized so every subsequent mission fails closed without re-probing.
-func (p *Provider) ensureCompatible(ctx context.Context) error {
-	p.probeOnce.Do(func() {
-		p.probeErr = probeVersion(ctx, p.runner, p.binPath)
-	})
-	return p.probeErr
 }
 
 // resolveBinary returns the codex binary path. An explicit path is returned

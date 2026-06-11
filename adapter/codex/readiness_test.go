@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/arbitron/arbitron/adapter/claudecli"
 )
 
 // loggedInProbe is the canned `codex login status` reply that reports an active
@@ -69,6 +67,37 @@ func TestReadiness_NotLoggedIn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, NotLoggedIn, state)
 	require.Len(t, mr.calls, 2)
+}
+
+// CONTRACT PIN (UNVERIFIED exit-code assumption) — this pins the CURRENT
+// login-status exit-code mapping so it cannot drift silently: a NON-ZERO exit
+// from `codex login status` maps to NotLoggedIn, and a ZERO exit maps to Ready.
+//
+// The logged-out exit code was NOT confirmed on a real logged-out host (only the
+// flag/JSON surface was verified against codex-cli 0.137.0). If a maintainer
+// confirms codex prints "Not logged in" yet exits 0 when logged out, THIS TEST
+// must be revised together with probeLogin to branch on stdout content — the
+// failing assertion here is the intended tripwire for that change. See the
+// EXIT-CODE CONTRACT note on probeLogin and the NotLoggedIn doc.
+func TestReadiness_LoginExitCodeMapping_Pinned(t *testing.T) {
+	t.Run("non-zero exit ⇒ NotLoggedIn", func(t *testing.T) {
+		mr := &multiRunner{scripts: []runScript{
+			compatibleProbe(),
+			{lines: []string{"Not logged in"}, waitErr: errors.New("exit status 1")},
+		}}
+		state, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: mr})
+		require.NoError(t, err)
+		assert.Equal(t, NotLoggedIn, state,
+			"a non-zero `codex login status` exit must map to NotLoggedIn (current, defensive assumption)")
+	})
+
+	t.Run("zero exit ⇒ Ready", func(t *testing.T) {
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), loggedInProbe()}}
+		state, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: mr})
+		require.NoError(t, err)
+		assert.Equal(t, Ready, state,
+			"only a zero `codex login status` exit may map to Ready — never a false green on a non-zero exit")
+	})
 }
 
 // ERROR — a genuine probe fault on the LOGIN check (the subprocess fails to
@@ -132,6 +161,32 @@ func TestReadinessStateValues(t *testing.T) {
 	assert.Equal(t, "not-logged-in", string(NotLoggedIn))
 }
 
+// WIRE-STRING CONTRACT — the three ReadinessState values are serialized VERBATIM
+// onto GET /system/config and the MCP system_config surface (via
+// config.RedactedBackend.State). They are a public API contract: a dashboard
+// keys off these exact strings, and the type doc itself calls a rename "a
+// breaking API change". This table pins each (constant → wire string) pair so a
+// future tidy-up rename fails CI here instead of silently breaking a consumer.
+// It is the readiness-side half of the contract guard; the backend NAME ("codex")
+// is pinned in backendhealth.TestCodexBackendName_Pinned.
+func TestReadinessState_WireStringContract(t *testing.T) {
+	cases := []struct {
+		state ReadinessState
+		wire  string
+	}{
+		{Ready, "ready"},
+		{NotInstalled, "not-installed"},
+		{NotLoggedIn, "not-logged-in"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.wire, func(t *testing.T) {
+			assert.Equal(t, tc.wire, string(tc.state),
+				"ReadinessState %q is a public wire-string contract; a rename is a breaking API change", tc.wire)
+		})
+	}
+}
+
 // CLI-COUPLING PIN — the `codex login status` subcommand spellings are pinned
 // here as string literals, mirroring TestBuildArgs_PinnedFlagSpellings (args.go)
 // and TestCodexEnv_CodexHomeVarNamePinned (env.go). TestReadiness_Ready already
@@ -154,24 +209,38 @@ func TestReadiness_NilRunnerDoesNotPanic(t *testing.T) {
 	assert.Equal(t, NotInstalled, state)
 }
 
-// envRunner unit test — the adapter must REPLACE spec.Env with the injected
-// env on every forwarded RunSpec. Without this, a future refactor that changes
-// how the env is set (e.g., to "merge" instead of "replace") could silently
-// pass OPENAI_API_KEY through on the version probe before we detected it via
-// the integration-style security test.
-func TestEnvRunner_InjectsEnvOntoForwardedSpec(t *testing.T) {
-	fr := &fakeRunner{lines: []string{"ignored"}}
-	injected := []string{"FOO=bar", "BAZ=qux"}
+// SECURITY — the readiness VERSION probe must carry the subscription env on its
+// RunSpec (NOT a nil Env that would inherit the engine's parent environment).
+// envRunner/probeVersionEnv were removed in favor of threading env directly into
+// probeVersion; this pins that the version probe's child env is non-empty AND
+// matches the same subscription base the login probe uses, so a future refactor
+// cannot silently let the `--version` call inherit the parent env again.
+func TestReadiness_VersionProbeCarriesSubscriptionEnv(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), loggedInProbe()}}
+	_, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: mr})
+	require.NoError(t, err)
+	require.Len(t, mr.calls, 2, "both the version and login probes must run on a ready host")
 
-	er := envRunner{inner: fr, env: injected}
-	_, _, _ = er.Run(context.Background(), claudecli.RunSpec{
-		Bin:  "codex",
-		Args: []string{"--version"},
-		Env:  []string{"SHOULD_BE_REPLACED=yes"}, // envRunner must override, not merge
-	})
+	// Call 0 is `--version`, call 1 is `login status`: both must carry the SAME
+	// non-empty subscription env (no inheritance of the parent env).
+	require.Contains(t, mr.calls[0].Args, "--version")
+	assert.NotEmpty(t, mr.calls[0].Env, "version probe env must be the subscription base, never nil/inherited")
+	assert.Equal(t, mr.calls[1].Env, mr.calls[0].Env,
+		"version and login probes must run under the identical subscription env")
+}
 
-	require.True(t, fr.runCalled)
-	assert.Equal(t, injected, fr.gotSpec.Env, "envRunner must set spec.Env to the injected env, replacing any prior value")
+// SECURITY/DoS — both readiness probes (version + login status) must bound their
+// stdout with the shared probe byte cap so a wedged/hostile codex cannot grow
+// memory unbounded on a health-surface poll.
+func TestReadiness_ProbesBoundStdout(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), loggedInProbe()}}
+	_, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: mr})
+	require.NoError(t, err)
+	require.Len(t, mr.calls, 2)
+	for i, call := range mr.calls {
+		assert.Equal(t, probeMaxResponseBytes, call.MaxResponseBytes,
+			"probe %d must set the shared MaxResponseBytes cap", i)
+	}
 }
 
 // FA16 PAIRED (§5+§10) — the version probe (version.go) and the readiness check

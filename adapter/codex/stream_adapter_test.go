@@ -17,6 +17,23 @@ func TestStreamProviderImplementsPort(t *testing.T) {
 	var _ engine.ChatProvider = (*StreamProvider)(nil)
 }
 
+// STRUCTURE — both adapters embed the shared core (fields + constructor +
+// ensureCompatible + probe memo), mirroring the claudecli adapterCore precedent.
+// This pins the shared seam: a Config-built core resolves the same binary for
+// both adapters, and the embedded probe memo is reachable on each. A future
+// refactor that splits the two back into hand-synced parallel structs is caught
+// here.
+func TestProviderAndStreamProvider_ShareEmbeddedCore(t *testing.T) {
+	cfg := Config{Binding: codexBinding("m", nil), BinaryPath: "codex"}
+	p := New(cfg)
+	sp := NewStreamProvider(cfg)
+
+	// Both expose the embedded core fields via promotion, set from the same Config.
+	assert.Equal(t, p.core.binPath, sp.core.binPath, "both adapters must resolve the same binary via the shared core")
+	assert.Equal(t, "codex", p.core.binPath)
+	assert.Equal(t, p.binding.Model, sp.binding.Model, "both adapters carry the same binding model via the shared core")
+}
+
 // collectChunks drains a ChatChunk channel into a slice. Mirrors the claudecli
 // stream-test helper.
 func collectChunks(t *testing.T, ch <-chan engine.ChatChunk) []engine.ChatChunk {
@@ -245,6 +262,46 @@ func TestStreamProviderChat_HappyPath(t *testing.T) {
 	assert.Equal(t, "thr-stream-1", resp.SessionID)
 	assert.Equal(t, 11, resp.TokensIn)
 	assert.Equal(t, 5, resp.TokensOut)
+}
+
+// CORRECTNESS — single model source in Chat. The EFFECTIVE model is the same one
+// launch() feeds to argv: req.Model when non-empty, else the binding model. Chat
+// must label ChatResponse.Model with that effective model, NOT the raw req.Model
+// — otherwise an empty-request-model call (which runs on the binding model)
+// reports an empty model, contradicting the model codex actually ran.
+func TestStreamProviderChat_ResponseModelMatchesArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	// Empty request model ⇒ argv uses the binding model; the response must report
+	// the binding model, not the empty req.Model.
+	p := NewStreamProvider(Config{Binding: streamBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: ""})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// argv carries the binding model (the effective model).
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok)
+	assert.Equal(t, "binding-model", m, "argv must use the effective (binding) model")
+
+	assert.Equal(t, "binding-model", resp.Model,
+		"ChatResponse.Model must be the effective model that fed argv, never the raw req.Model")
+}
+
+// CORRECTNESS — single model source on Chat's FAILURE path. A failed turn must
+// produce an error labeled with the effective model (binding model when
+// req.Model is empty), not the empty raw req.Model.
+func TestStreamProviderChat_ErrorLabelsArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"t1"}`,
+		`{"type":"turn.failed","error":{"message":"boom"}}`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: ""})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binding-model",
+		"error must name the effective model that fed argv (binding), not the empty req.Model")
 }
 
 // ERROR (Chat) — a turn.failed / error event returns a hard error from Chat,

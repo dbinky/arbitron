@@ -14,11 +14,37 @@ import (
 // HAPPY — a compatible `codex --version` line passes the probe.
 func TestProbeVersion_Compatible(t *testing.T) {
 	fr := &fakeRunner{lines: []string{"codex-cli " + minCodexVersion}}
-	err := probeVersion(context.Background(), fr, "codex")
+	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.NoError(t, err)
 	require.True(t, fr.runCalled)
 	assert.Equal(t, "codex", fr.gotSpec.Bin, "bin name must be forwarded to the runner as-is")
 	assert.Contains(t, fr.gotSpec.Args, "--version")
+}
+
+// SECURITY — probeVersion must thread the caller's explicit env ONTO the RunSpec
+// (and never substitute nil, which would make os/exec inherit the engine's full
+// parent environment — master key, ANTHROPIC_API_KEY, DSNs — into the
+// user-installed codex binary). This pins the env-inheritance fix at the probe
+// seam itself, independent of any caller.
+func TestProbeVersion_ThreadsEnvOntoSpec(t *testing.T) {
+	fr := &fakeRunner{lines: []string{"codex-cli " + minCodexVersion}}
+	env := []string{"PATH=/usr/bin", "HOME=/home/x"}
+
+	err := probeVersion(context.Background(), fr, "codex", env)
+	require.NoError(t, err)
+	assert.Equal(t, env, fr.gotSpec.Env,
+		"probeVersion must set the child env from its env param (never inherit the parent env)")
+}
+
+// SECURITY/DoS — probeVersion must bound stdout with a byte cap so a wedged or
+// hostile codex that streams unbounded output on `--version` cannot grow memory
+// without limit (the exec/stream paths already cap; the probes must too).
+func TestProbeVersion_BoundsStdoutWithByteCap(t *testing.T) {
+	fr := &fakeRunner{lines: []string{"codex-cli " + minCodexVersion}}
+	err := probeVersion(context.Background(), fr, "codex", nil)
+	require.NoError(t, err)
+	assert.Equal(t, probeMaxResponseBytes, fr.gotSpec.MaxResponseBytes,
+		"version probe must set a MaxResponseBytes cap on its RunSpec")
 }
 
 // HAPPY — a binary strictly above the minimum is also accepted (the check is
@@ -28,7 +54,7 @@ func TestProbeVersion_AboveMinimumAccepted(t *testing.T) {
 	for _, ver := range []string{"0.200.0", "1.0.0"} {
 		t.Run(ver, func(t *testing.T) {
 			fr := &fakeRunner{lines: []string{"codex-cli " + ver}}
-			err := probeVersion(context.Background(), fr, "codex")
+			err := probeVersion(context.Background(), fr, "codex", nil)
 			require.NoError(t, err, "version %s is above the minimum and must be accepted", ver)
 		})
 	}
@@ -37,7 +63,7 @@ func TestProbeVersion_AboveMinimumAccepted(t *testing.T) {
 // ERROR — an older binary is rejected with ErrIncompatibleCodex.
 func TestProbeVersion_TooOld(t *testing.T) {
 	fr := &fakeRunner{lines: []string{"codex-cli 0.0.1"}}
-	err := probeVersion(context.Background(), fr, "codex")
+	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrIncompatibleCodex)
 }
@@ -45,7 +71,7 @@ func TestProbeVersion_TooOld(t *testing.T) {
 // ERROR — an unparseable version line is rejected (fail-closed), not assumed OK.
 func TestProbeVersion_Unparseable(t *testing.T) {
 	fr := &fakeRunner{lines: []string{"codex of unknown vintage"}}
-	err := probeVersion(context.Background(), fr, "codex")
+	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrIncompatibleCodex)
 }
@@ -54,7 +80,7 @@ func TestProbeVersion_Unparseable(t *testing.T) {
 // error before any mission can run.
 func TestProbeVersion_StartError(t *testing.T) {
 	fr := &fakeRunner{startErr: errors.New(`exec: "codex": not found`)}
-	err := probeVersion(context.Background(), fr, "codex")
+	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -62,7 +88,7 @@ func TestProbeVersion_StartError(t *testing.T) {
 // ERROR — a nonzero exit from the probe (wait error) surfaces as an error.
 func TestProbeVersion_WaitError(t *testing.T) {
 	fr := &fakeRunner{lines: []string{"codex-cli " + minCodexVersion}, waitErr: errors.New("exit status 1")}
-	err := probeVersion(context.Background(), fr, "codex")
+	err := probeVersion(context.Background(), fr, "codex", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exit status 1")
 }

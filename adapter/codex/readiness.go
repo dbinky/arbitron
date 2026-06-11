@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/procenv"
 )
 
 // ReadinessState is a backend-scoped health verdict for the codex backend. It
@@ -29,6 +30,16 @@ const (
 	// NotLoggedIn: the binary is present and compatible, but `codex login
 	// status` exits non-zero — there is no usable subscription session in
 	// ~/.codex (the operator must run `codex login`).
+	//
+	// UNVERIFIED EXIT-CODE ASSUMPTION (see probeLogin): this verdict rests on the
+	// premise that `codex login status` exits NON-ZERO when logged out. The flag
+	// spellings and JSON event shapes were verified against codex-cli 0.137.0, but
+	// the LOGGED-OUT exit code was NOT confirmed on a real logged-out host. If
+	// codex instead prints "Not logged in" to stdout and exits 0 (a common CLI
+	// pattern), Readiness would report Ready on a logged-out host — a false green.
+	// A human MUST confirm the logged-out exit code before relying on this verdict
+	// (`codex login logout && codex login status; echo $?`); the mapping below is
+	// the deliberate, fail-toward-Ready-only-on-exit-0 assumption.
 	NotLoggedIn ReadinessState = "not-logged-in"
 )
 
@@ -83,7 +94,11 @@ func Readiness(ctx context.Context, cfg Config) (ReadinessState, error) {
 	// runner START fault from a version mismatch, but for the backend-scoped
 	// health verdict both collapse to NotInstalled (present-but-unusable ==
 	// must-install). We do NOT attempt the login probe in either case.
-	if err := probeVersionEnv(ctx, runner, bin, env); err != nil {
+	//
+	// The subscription env (no API key) is threaded directly into probeVersion so
+	// the bare `--version` call never inherits the engine's parent env — the SAME
+	// no-key env the exec/stream paths now pass (defense in depth, one call shape).
+	if err := probeVersion(ctx, runner, bin, env); err != nil {
 		return NotInstalled, nil //nolint:nilerr // a not-installed host is a STATE, not an error
 	}
 
@@ -106,31 +121,39 @@ func Readiness(ctx context.Context, cfg Config) (ReadinessState, error) {
 	return Ready, nil
 }
 
-// probeVersionEnv runs the version probe with an explicit env. It reuses the
-// shared probeVersion logic; the env is set on the RunSpec via the runner so
-// the subscription base (no API key) is enforced on the readiness path too.
-//
-// (probeVersion in version.go does not thread an env because its callers run it
-// immediately before a full exec that builds its own env; on the readiness path
-// we want the SAME no-key env on the bare `--version` call for defense in depth,
-// so this wrapper sets it.)
-func probeVersionEnv(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) error {
-	return probeVersion(ctx, envRunner{inner: runner, env: env}, bin)
-}
-
 // probeLogin runs `codex login status` and reports whether a usable session
 // exists. It returns (loggedIn, startErr): a START failure is returned as the
 // error (a genuine probe fault); a non-zero EXIT is reported as loggedIn=false
 // (a clean NotLoggedIn state), and a zero EXIT as loggedIn=true.
 //
+// EXIT-CODE CONTRACT (UNVERIFIED for the logged-out case — DEFENSIVE BY DESIGN):
+// this maps zero exit ⇒ logged in, any non-zero exit ⇒ logged out. The codex-cli
+// 0.137.0 flag/JSON surface was verified, but the LOGGED-OUT exit code was NOT
+// confirmed on a real logged-out host. We deliberately treat ONLY a clean exit 0
+// as "logged in" so the failure mode is conservative: a codex that exits non-zero
+// for any reason reports NotLoggedIn (operator re-runs `codex login`), never a
+// false Ready. The dangerous case the maintainer must rule out before merge is a
+// codex that prints "Not logged in" yet still exits 0 — that would surface Ready
+// on a logged-out host. Confirm with `codex login logout && codex login status;
+// echo $?`; if it is 0 when logged out, this mapping (and probeLogin) must branch
+// on stdout content instead of the exit code.
+//
 // SECURITY: the subprocess stdout is drained but NEVER inspected for content —
 // only the exit status drives the verdict, so no account identifier or token
 // fragment from the output can reach the caller or a log line.
+//
+// The probe is bounded by probeMaxResponseBytes (a small stdout cap) and a
+// derived probeTimeout so a wedged/hostile codex that never EOFs cannot grow
+// memory or pin the probe goroutine.
 func probeLogin(ctx context.Context, runner claudecli.CommandRunner, bin string, env []string) (bool, error) {
-	lines, wait, err := runner.Run(ctx, claudecli.RunSpec{
-		Bin:  bin,
-		Args: []string{loginSubcommand, loginStatusSubcommand},
-		Env:  env,
+	probeCtx, cancel := procenv.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	lines, wait, err := runner.Run(probeCtx, claudecli.RunSpec{
+		Bin:              bin,
+		Args:             []string{loginSubcommand, loginStatusSubcommand},
+		Env:              env,
+		MaxResponseBytes: probeMaxResponseBytes,
 	})
 	if err != nil {
 		// Start fault after version succeeded — a genuine probe error.
@@ -143,21 +166,9 @@ func probeLogin(ctx context.Context, runner claudecli.CommandRunner, bin string,
 	if waitErr := wait(); waitErr != nil {
 		// Non-zero exit ⇒ no usable session ⇒ NotLoggedIn (a clean state). We do
 		// NOT surface waitErr's text (it may carry diagnostic account detail).
+		// See the EXIT-CODE CONTRACT note above: this branch is the load-bearing,
+		// unverified-for-logged-out assumption.
 		return false, nil
 	}
 	return true, nil
-}
-
-// envRunner decorates a CommandRunner to force an Env onto every RunSpec it
-// forwards (the shared probeVersion does not set one). It is an adapter over the
-// SAME seam — not a redefinition — so the fake runner still records the spec
-// (including the injected Env) for the security assertions.
-type envRunner struct {
-	inner claudecli.CommandRunner
-	env   []string
-}
-
-func (e envRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
-	spec.Env = e.env
-	return e.inner.Run(ctx, spec)
 }

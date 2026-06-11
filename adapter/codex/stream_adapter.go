@@ -3,13 +3,10 @@ package codex
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
-	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // StreamProvider implements engine.ChatProvider (Chat + StreamChat) by driving
@@ -35,15 +32,7 @@ import (
 // consulted. `codex exec` runs under the fixed v1 fully-open bypass posture
 // (--dangerously-bypass-approvals-and-sandbox, see args.go).
 type StreamProvider struct {
-	binding          provider.ResolvedBinding
-	binPath          string
-	runner           claudecli.CommandRunner
-	timeout          time.Duration
-	maxResponseBytes int64
-
-	// probeOnce memoizes the binary version probe across requests.
-	probeOnce sync.Once
-	probeErr  error
+	core
 }
 
 var _ engine.ChatProvider = (*StreamProvider)(nil)
@@ -51,18 +40,12 @@ var _ engine.ChatProvider = (*StreamProvider)(nil)
 // NewStreamProvider constructs a codex StreamProvider from cfg (the SAME Config
 // as the batch Provider). An empty BinaryPath is resolved from PATH and common
 // install directories. A nil Runner uses the shared production os/exec runner.
+//
+// It shares the embedded core (fields + constructor + ensureCompatible + probe
+// memo) with the batch Provider, so the two cannot drift on construction or the
+// compatibility probe.
 func NewStreamProvider(cfg Config) *StreamProvider {
-	runner := cfg.Runner
-	if runner == nil {
-		runner = claudecli.NewExecRunner()
-	}
-	return &StreamProvider{
-		binding:          cfg.Binding,
-		binPath:          resolveBinary(cfg.BinaryPath),
-		runner:           runner,
-		timeout:          cfg.Timeout,
-		maxResponseBytes: cfg.MaxResponseBytes,
-	}
+	return &StreamProvider{core: newCore(cfg)}
 }
 
 // launch performs the shared fail-closed prelude for both Chat and StreamChat:
@@ -78,20 +61,24 @@ func NewStreamProvider(cfg Config) *StreamProvider {
 // resolveModel: a non-empty ChatRequest.Model overrides the binding's model so an
 // interactive_agent node can target its profile's model per request; an empty
 // request model falls back to the adapter's configured binding model.
-func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (<-chan string, func() error, context.Context, context.CancelFunc, error) {
+// launch returns the resolved effective model alongside the run handles so Chat
+// and StreamChat label their results/errors with the SAME model that fed argv —
+// never the raw req.Model (which may be empty while the run uses the binding
+// model). One model source per turn, sourced from whatever feeds argv.
+func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (lines <-chan string, wait func() error, runCtx context.Context, cancel context.CancelFunc, model string, err error) {
 	if req.WorkDir == "" {
-		return nil, nil, nil, nil, ErrWorkDirRequired
+		return nil, nil, nil, nil, "", ErrWorkDirRequired
 	}
 
 	// Build args FIRST so an empty model fails closed with NO launch (never a
 	// silent default-model run). A non-empty request model wins over the binding.
-	model := req.Model
+	model = req.Model
 	if model == "" {
 		model = p.binding.Model
 	}
 	args, err := buildExecArgs(model, req.WorkDir)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("codex stream (model %q): %w", model, err)
+		return nil, nil, nil, nil, model, fmt.Errorf("codex stream (model %q): %w", model, err)
 	}
 
 	// Subscription env: NO key revealed, HOME preserved (env.go). Built before the
@@ -100,13 +87,13 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (<-
 
 	// Version probe (memoized): an incompatible/missing binary fails closed here,
 	// before any run launches.
-	if err := p.ensureCompatible(ctx); err != nil {
-		return nil, nil, nil, nil, err
+	if perr := p.ensureCompatible(ctx); perr != nil {
+		return nil, nil, nil, nil, model, perr
 	}
 
 	// ChatRequest carries no per-request timeout (unlike AgentMission); the
 	// adapter's configured default is the only floor. <=0 means no default.
-	runCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
+	runCtx, cancel = procenv.WithTimeout(ctx, p.timeout)
 
 	spec := claudecli.RunSpec{
 		Bin:              p.binPath,
@@ -117,12 +104,12 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (<-
 		MaxResponseBytes: p.maxResponseBytes,
 	}
 
-	lines, wait, err := p.runner.Run(runCtx, spec)
+	lines, wait, err = p.runner.Run(runCtx, spec)
 	if err != nil {
 		cancel()
-		return nil, nil, nil, nil, fmt.Errorf("codex: stream call (model %q): %w", model, err)
+		return nil, nil, nil, nil, model, fmt.Errorf("codex: stream call (model %q): %w", model, err)
 	}
-	return lines, wait, runCtx, cancel, nil
+	return lines, wait, runCtx, cancel, model, nil
 }
 
 // Chat runs `codex exec` to completion and returns the terminal result, folding
@@ -130,7 +117,7 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (<-
 // same fold the batch Provider and StreamChat use). A malformed line, a failed
 // turn, or a non-zero exit is a hard error (no silent empty result).
 func (p *StreamProvider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
-	lines, wait, runCtx, cancel, err := p.launch(ctx, req)
+	lines, wait, runCtx, cancel, model, err := p.launch(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -157,19 +144,19 @@ func (p *StreamProvider) Chat(ctx context.Context, req engine.ChatRequest) (*eng
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("codex: stream mission failed (model %q): %w", req.Model, waitErr)
+		return nil, fmt.Errorf("codex: stream mission failed (model %q): %w", model, waitErr)
 	}
 	if parseErr != nil {
-		return nil, fmt.Errorf("codex: parse stream output (model %q): %w", req.Model, parseErr)
+		return nil, fmt.Errorf("codex: parse stream output (model %q): %w", model, parseErr)
 	}
 	if out.failed {
-		return nil, fmt.Errorf("codex: turn failed (model %q): %s", req.Model, out.summary)
+		return nil, fmt.Errorf("codex: turn failed (model %q): %s", model, out.summary)
 	}
 
 	return &engine.ChatResponse{
 		Output:    out.summary,
 		SessionID: out.sessionID,
-		Model:     req.Model,
+		Model:     model,
 		TokensIn:  out.tokensIn,
 		TokensOut: out.tokensOut,
 	}, nil
@@ -182,7 +169,10 @@ func (p *StreamProvider) Chat(ctx context.Context, req engine.ChatRequest) (*eng
 // carrying a non-nil Error and NO Done. The internal goroutine ALWAYS drains the
 // runner's lines channel and calls wait() so the subprocess is reaped.
 func (p *StreamProvider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
-	lines, wait, runCtx, cancel, err := p.launch(ctx, req)
+	// StreamChat emits text-token + terminal Done chunks (no Model field on a
+	// ChatChunk), so the resolved model is not stamped here; it is consumed by the
+	// Chat path. The blank identifier keeps the single-source launch signature.
+	lines, wait, runCtx, cancel, _, err := p.launch(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -249,16 +239,6 @@ func (p *StreamProvider) StreamChat(ctx context.Context, req engine.ChatRequest)
 	}()
 
 	return out, nil
-}
-
-// ensureCompatible runs the version probe at most once per StreamProvider. A
-// failure is memoized so every subsequent request fails closed without
-// re-probing.
-func (p *StreamProvider) ensureCompatible(ctx context.Context) error {
-	p.probeOnce.Do(func() {
-		p.probeErr = probeVersion(ctx, p.runner, p.binPath)
-	})
-	return p.probeErr
 }
 
 // makeSendChunk returns the non-blocking send closure used by StreamChat: it
