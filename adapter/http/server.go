@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/httprate"
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/adapter/backendhealth"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
@@ -470,6 +471,10 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	resp.Queue.RunningCount = running
 	resp.Queue.QueuedCount = queued
 	resp.Queue.WaitingCount = waiting
+	// Attach backend-scoped health (codex install/login readiness) so the UI can
+	// pre-flight a run. Best-effort: a probe fault drops the entry rather than
+	// failing the read. nil runner ⇒ production os/exec probe.
+	resp.Backends = backendhealth.Backends(r.Context(), nil)
 	WriteJSON(w, http.StatusOK, resp)
 }
 

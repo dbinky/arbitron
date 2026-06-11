@@ -9,6 +9,7 @@ import (
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/adapter/backendhealth"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/notification"
@@ -109,6 +110,10 @@ func systemConfigHandler(srv *Server) server.ToolHandlerFunc {
 		redacted.Queue.RunningCount = running
 		redacted.Queue.QueuedCount = queued
 		redacted.Queue.WaitingCount = waiting
+		// Attach backend-scoped health (codex install/login readiness) so a run
+		// can be pre-flighted. Best-effort: a probe fault drops the entry rather
+		// than failing the whole read. nil runner ⇒ production os/exec probe.
+		redacted.Backends = backendhealth.Backends(ctx, nil)
 		return MarshalResult(redacted)
 	}
 }

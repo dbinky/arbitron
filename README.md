@@ -128,7 +128,7 @@ The MVP makes Arbitron **fully abstracted from any single LLM vendor** while sti
 ### Two provider ports
 
 - **`ChatProvider`** — reasoning/chat. Prompt (or conversation) + model + params + optional output schema → text or structured output + token usage. Streaming variant for `interactive`. No tools, no file side effects. Implementations: **tool-suppressed `claude -p`**, **native Azure AI Foundry**, **native OpenRouter**.
-- **`AgentProvider`** — agentic editing. Mission (prompt + workdir + model) → file mutations in the workspace + result summary + step events. The tool-use loop runs inside the harness. Implementations: **`claude -p`** (tools on) and **`opencode`** (`run`/`serve`), which routes the mission to any provider/model. Non-Claude agentic editing (Azure, OpenRouter, open-weight) goes through opencode; Arbitron does not build its own API-level tool-use loop.
+- **`AgentProvider`** — agentic editing. Mission (prompt + workdir + model) → file mutations in the workspace + result summary + step events. The tool-use loop runs inside the harness. Implementations: **`claude -p`** (tools on), **`opencode`** (`run`/`serve`), which routes the mission to any provider/model, and **`codex`** (`codex exec` on a ChatGPT subscription — a user-provided prerequisite, no API key; see [docs/install/README.md](docs/install/README.md#codex-backend-optional-user-provided) and [the agent security model](docs/agent-security-model.md)). Non-Claude API-key agentic editing (Azure, OpenRouter, open-weight) goes through opencode; codex is subscription-only and agent-tier only; Arbitron does not build its own API-level tool-use loop.
 
 ### Models, Connections & Profiles
 

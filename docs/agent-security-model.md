@@ -3,10 +3,10 @@
 ## TL;DR
 
 Arbitron's agent nodes (`interactive_agent`, `agent_call`) run the underlying CLI
-(claude-cli / opencode) with **full, unconfirmed tool access**. The per-profile
-`AllowedTools` allowlists are **defense-in-depth / intent documentation only —
-they are NOT a security boundary.** The actual isolation boundary is the
-**OS/container** the agent runs in.
+(claude-cli / opencode / codex) with **full, unconfirmed tool access**. The
+per-profile `AllowedTools` allowlists are **defense-in-depth / intent
+documentation only — they are NOT a security boundary.** The actual isolation
+boundary is the **OS/container** the agent runs in.
 
 ## Why the allowlist is not a boundary (verified, PR #18)
 
@@ -27,6 +27,24 @@ disallowed tool is cleanly *denied*, not prompted, in headless `-p` mode).
 **opencode** (installed v0.0.55 Go build) exposes **no per-tool permission
 mechanism at all** (see `adapter/opencode/args.go`), so there is nothing to
 scope; opencode agents run with whatever tools that build grants.
+
+**codex** (codex-cli 0.137.0) runs `codex exec
+--dangerously-bypass-approvals-and-sandbox` (see `adapter/codex/args.go`). As the
+flag name states, this **bypasses BOTH approvals AND codex's own sandbox** — the
+same fully-open v1 posture as claude-cli's `--dangerously-skip-permissions` and
+opencode's allow-all. codex `exec` exposes **no per-tool allowlist flag**, so the
+`AllowedTools` scope is intent-only here too (it cannot be emitted to the CLI).
+Running model-influenced prompts under this posture is **RCE-equivalent**; it is
+accepted for **local, single-user, unattended** use where every prompt input is
+trusted, and is contained *only* by the OS/container boundary below — never by a
+CLI flag. Unlike the credential-bearing providers, codex carries **no Arbitron
+connection or API key**: it authenticates via the host's ChatGPT subscription
+session in `~/.codex` (see `adapter/codex/env.go`; the engine sets **no
+`OPENAI_API_KEY`**), and a backend-scoped readiness check
+(`adapter/codex/readiness.go`, surfaced on `system_config`) reports
+`ready` / `not-installed` / `not-logged-in` so an unusable backend is caught
+before a run rather than mid-mission. codex is **subscription-only and
+agent-tier only**; API-key OpenAI access stays on the **opencode** backend.
 
 ## The boundary that IS real: the container
 

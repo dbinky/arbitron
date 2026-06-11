@@ -20,6 +20,27 @@ type RedactedConfig struct {
 	Queue     RedactedQueue     `json:"queue"`
 	Teams     RedactedTeams     `json:"teams"`
 	Auth      RedactedAuth      `json:"auth"`
+	// Backends carries backend-scoped health verdicts (e.g. the codex backend's
+	// install/login readiness). It is NOT projected from Config — backends have
+	// no static config field — so callers populate it AFTER Redact, the same way
+	// the live Queue counts are filled in (the domain config package must not
+	// import the adapter that runs the probe). Omitted when empty so the surface
+	// is unchanged for deployments with no probed backends.
+	Backends []RedactedBackend `json:"backends,omitempty"`
+}
+
+// RedactedBackend is a backend-scoped health entry surfaced on the
+// system/health read surface (HTTP GET /system/config and the MCP system_config
+// tool). It lets the UI/CLI show "codex not logged in" with a specific cause
+// before a run, rather than failing mid-mission.
+//
+// SECURITY: it carries ONLY a backend name and an opaque state string — never
+// raw subprocess output, credentials, or account identifiers. The probe that
+// produces State (e.g. adapter/codex.Readiness) returns an enum, not text, so
+// no token fragment can reach this surface.
+type RedactedBackend struct {
+	Name  string `json:"name"`  // backend id, e.g. "codex"
+	State string `json:"state"` // readiness verdict, e.g. "ready" | "not-installed" | "not-logged-in"
 }
 
 // RedactedAuth surfaces the operating mode and whether OIDC is configured.

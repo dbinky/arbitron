@@ -670,6 +670,46 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
 }
 
+// TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel verifies the
+// feature-pipeline sample's intended mixed-model split ships in the default
+// registry (Phase 3 Task 2): the interviewer runs on the codex backend
+// (gpt-5.5, ChatGPT subscription) while planner/coder run on claude-code
+// (opus-4.8). The backend axis is independent of the connection, so this is a
+// pure profile-definition change — workflow.json is untouched.
+func TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	byAlias := make(map[string]domainconfig.ProfileConfig, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		byAlias[p.Alias] = p
+	}
+
+	// interviewer → codex / gpt-5.5 / agent (the codex-backed interactive node).
+	interviewer := byAlias["interviewer"]
+	assert.Equal(t, "agent", interviewer.Kind)
+	assert.Equal(t, "codex", interviewer.Backend, "interviewer must run on the codex backend")
+	assert.Equal(t, "gpt-5.5", interviewer.Model)
+
+	// planner + coder → claude-code / opus-4.8 / agent.
+	for _, alias := range []string{"planner", "coder"} {
+		p := byAlias[alias]
+		assert.Equal(t, "agent", p.Kind, "%s must be agent kind", alias)
+		assert.Equal(t, "claude-code", p.Backend, "%s must run on claude-code", alias)
+		assert.Equal(t, "opus-4.8", p.Model, "%s must run on opus-4.8", alias)
+	}
+
+	// assessor stays chat-kind (it backs the feature-pipeline llm_call node, so
+	// it MUST remain a chat profile or the sample workflow fails kind-matching
+	// validation). Backend is ignored on chat profiles.
+	assert.Equal(t, "chat", byAlias["assessor"].Kind)
+}
+
 // ---- Phase 6 Task 1: AuthConfig loading & validation ----
 
 func TestLoad_AuthDefaults(t *testing.T) {
