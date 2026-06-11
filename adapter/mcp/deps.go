@@ -43,6 +43,15 @@ type QueueManagerPort interface {
 	Evaluate(ctx context.Context) error
 }
 
+// BackendHealthChecker probes backend-scoped health (codex install/login
+// readiness) and projects it into the transport-neutral RedactedBackend list.
+// It is the injected, TTL-cached component (adapter/backendhealth.Checker) shared
+// with the HTTP surface; the system_config tool depends on this seam so a
+// frequently-called probe forks at most once per TTL across both transports.
+type BackendHealthChecker interface {
+	Backends(ctx context.Context) []config.RedactedBackend
+}
+
 // Deps holds the domain dependencies injected into MCP tool handlers.
 // Each field corresponds to a port from the hexagonal architecture.
 //
@@ -102,4 +111,10 @@ type Deps struct {
 	// connection tools log the connection NAME only, never the api_key. Optional:
 	// a nil logger falls back to slog.Default().
 	Logger *slog.Logger
+	// BackendHealth is the shared, TTL-cached backend-health component (codex
+	// install/login readiness) constructed once in the composition root and
+	// injected into BOTH the MCP server and the HTTP SystemHandler, so the cache
+	// outlives any single call and the probe forks at most once per TTL. Nil omits
+	// the backends list (legacy/tests).
+	BackendHealth BackendHealthChecker
 }

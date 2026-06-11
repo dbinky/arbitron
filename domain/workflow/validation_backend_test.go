@@ -58,6 +58,82 @@ func TestValidateBackend_OpencodeValid(t *testing.T) {
 	}
 }
 
+// happy — codex is valid.
+func TestValidateBackend_CodexValid(t *testing.T) {
+	errs := validateNodeOnly(agentNodeWithBackend("a", BackendCodex))
+	if got := countBackendErrors(errs, "a"); got != 0 {
+		t.Fatalf("codex must be valid; got %d errors", got)
+	}
+}
+
+// boundary — codex near-misses (wrong case / surrounding whitespace) are rejected
+// so a mis-typed codex backend fails closed at load (exact-match lowercase).
+func TestValidateBackend_CodexNearMissRejected(t *testing.T) {
+	for _, bad := range []string{"Codex", " codex ", "codex "} {
+		errs := validateNodeOnly(agentNodeWithBackend("a", bad))
+		if got := countBackendErrors(errs, "a"); got != 1 {
+			t.Fatalf("codex near-miss %q must be rejected; got %d errors", bad, got)
+		}
+	}
+}
+
+// unit — IsValidAgentBackend is the shared vocabulary: codex is recognized;
+// near-miss case/whitespace variants are not (consistent with the existing
+// backends). Exercised directly so the source-of-truth contract is auditable.
+func TestIsValidAgentBackend_Codex(t *testing.T) {
+	if !IsValidAgentBackend(BackendCodex) {
+		t.Fatalf("%q must be a valid agent backend", BackendCodex)
+	}
+	for _, bad := range []string{"Codex", " codex ", "codex "} {
+		if IsValidAgentBackend(bad) {
+			t.Fatalf("near-miss backend %q must be rejected (fail-closed)", bad)
+		}
+	}
+}
+
+// unit — IsValidAgentBackend: comprehensive table covering all five scenario
+// categories for EVERY backend in the vocabulary. The focus area requires
+// exact-match lowercase and fail-closed near-miss rejection for ALL backends, not
+// just codex.
+func TestIsValidAgentBackend_AllValues(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		// happy — empty backend (inherit) is always valid
+		{"empty (inherit)", BackendUnset, true},
+
+		// success — exact-match allowed set
+		{"claude-code", BackendClaudeCode, true},
+		{"opencode", BackendOpencode, true},
+		{"codex", BackendCodex, true},
+
+		// failure — unknown / typo values
+		{"unknown string", "gpt-cli", false},
+		{"space only", " ", false},
+		{"completely unknown", "anthropic", false},
+
+		// edge — case variants of every allowed backend (fail-closed near-miss)
+		{"Claude-Code", "Claude-Code", false},
+		{"CLAUDE-CODE", "CLAUDE-CODE", false},
+		{"Opencode", "Opencode", false},
+		{"OPENCODE", "OPENCODE", false},
+		{"Codex", "Codex", false},
+		{"CODEX", "CODEX", false},
+		{"codex trailing space", "codex ", false},
+		{"codex leading space", " codex", false},
+		{"codex both spaces", " codex ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsValidAgentBackend(tc.value)
+			if got != tc.want {
+				t.Fatalf("IsValidAgentBackend(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
 // validation — an unknown backend is rejected with exactly one error naming the
 // node and the bad value (fail-closed).
 func TestValidateBackend_UnknownRejected(t *testing.T) {

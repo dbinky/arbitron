@@ -1,0 +1,490 @@
+package codex
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
+)
+
+func TestStreamProviderImplementsPort(t *testing.T) {
+	var _ engine.ChatProvider = (*StreamProvider)(nil)
+}
+
+// STRUCTURE — both adapters embed the shared core (fields + constructor +
+// ensureCompatible + probe memo), mirroring the claudecli adapterCore precedent.
+// This pins the shared seam: a Config-built core resolves the same binary for
+// both adapters, and the embedded probe memo is reachable on each. A future
+// refactor that splits the two back into hand-synced parallel structs is caught
+// here.
+func TestProviderAndStreamProvider_ShareEmbeddedCore(t *testing.T) {
+	cfg := Config{Binding: codexBinding("m", nil), BinaryPath: "codex"}
+	p := New(cfg)
+	sp := NewStreamProvider(cfg)
+
+	// Both expose the embedded core fields via promotion, set from the same Config.
+	assert.Equal(t, p.core.binPath, sp.core.binPath, "both adapters must resolve the same binary via the shared core")
+	assert.Equal(t, "codex", p.core.binPath)
+	assert.Equal(t, p.binding.Model, sp.binding.Model, "both adapters carry the same binding model via the shared core")
+}
+
+// collectChunks drains a ChatChunk channel into a slice. Mirrors the claudecli
+// stream-test helper.
+func collectChunks(t *testing.T, ch <-chan engine.ChatChunk) []engine.ChatChunk {
+	t.Helper()
+	var out []engine.ChatChunk
+	for c := range ch {
+		out = append(out, c)
+	}
+	return out
+}
+
+// streamBinding builds a subscription binding for the stream provider. Its
+// RevealKey is a SENTINEL that records whether it was called — the codex stream
+// path must NEVER reveal a key, so a recorded call is a security failure.
+func streamBinding(model string, revealed *bool) provider.ResolvedBinding {
+	return provider.ResolvedBinding{
+		Provider: "openai",
+		Model:    model,
+		RevealKey: func(context.Context) (string, error) {
+			if revealed != nil {
+				*revealed = true
+			}
+			return "sk-should-never-be-revealed", nil
+		},
+	}
+}
+
+// streamHappyMission is the canned `codex exec --json` stream for a successful
+// turn: thread/turn start, a command tool call, two incremental agent_message
+// items, and a terminal turn.completed carrying usage. Verified against the real
+// binary's event vocabulary (codex emits whole agent_message items, not token
+// deltas, so each item is one ChatChunk token).
+func streamHappyMission() runScript {
+	return runScript{lines: []string{
+		`{"type":"thread.started","thread_id":"thr-stream-1"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.completed","item":{"type":"command_execution","command":"echo hi"}}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"hello "}}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"world"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5}}`,
+	}}
+}
+
+// HAPPY (StreamChat) — incremental agent_message items arrive in order as
+// ChatChunk tokens, followed by a terminal Done chunk carrying the thread id and
+// token counts. Tool-call items contribute no token (no assistant text) and do
+// not corrupt accumulation.
+func TestStreamChat_HappyPath(t *testing.T) {
+	revealed := false
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", &revealed), BinaryPath: "codex", Runner: mr})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "edit hello.txt", WorkDir: "/tmp/ws", Model: "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+	require.NotEmpty(t, chunks)
+
+	// Ordered token accumulation excludes the command item.
+	var text string
+	for _, c := range chunks {
+		require.NoError(t, c.Error, "no chunk may carry an error on the happy path")
+		text += c.Token
+	}
+	assert.Equal(t, "hello world", text, "agent_message items stream in order; tool items add no text")
+
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done, "the terminal chunk must be Done")
+	assert.Equal(t, "thr-stream-1", last.SessionID, "codex thread id surfaced on the terminal chunk")
+	assert.Equal(t, 11, last.TokensIn)
+	assert.Equal(t, 5, last.TokensOut)
+
+	// SECURITY: the subscription path never reveals a key.
+	assert.False(t, revealed, "codex (subscription) stream must NEVER call binding.RevealKey")
+}
+
+// SECURITY — the launched stream env carries NO OPENAI_API_KEY and preserves
+// HOME (so codex resolves its on-disk ~/.codex/auth.json subscription
+// credential). Prompt is delivered via stdin, never argv.
+func TestStreamChat_EnvAndStdinInvariants(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-should-be-stripped")
+	t.Setenv("HOME", "/home/codex-user")
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "edit hello.txt to say goodbye", WorkDir: "/tmp/ws", Model: "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+
+	require.GreaterOrEqual(t, len(mr.calls), 2, "probe then run")
+	runSpec := mr.calls[1]
+	assert.Equal(t, execSubcommand, runSpec.Args[0])
+	assert.Equal(t, "/tmp/ws", runSpec.Dir, "WorkDir is the cwd pin")
+	assert.Equal(t, "edit hello.txt to say goodbye", runSpec.Stdin, "prompt via stdin")
+	for _, a := range runSpec.Args {
+		assert.NotContains(t, a, "edit hello.txt", "prompt must never appear in argv")
+	}
+
+	_, hasKey := envValue(runSpec.Env, "OPENAI_API_KEY")
+	assert.False(t, hasKey, "the launched codex stream env must carry NO OPENAI_API_KEY")
+	home, ok := envValue(runSpec.Env, "HOME")
+	require.True(t, ok, "HOME must be preserved in the stream env")
+	assert.Equal(t, "/home/codex-user", home)
+}
+
+// INPUT-VALIDATION — empty WorkDir is rejected before any launch (not even the
+// version probe).
+func TestStreamChat_EmptyWorkDir(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "", Model: "gpt-5-codex"})
+	require.Error(t, err)
+	assert.Nil(t, ch)
+	assert.ErrorIs(t, err, ErrWorkDirRequired)
+	assert.Empty(t, mr.calls, "no launch on empty WorkDir")
+}
+
+// INPUT-VALIDATION — empty model is rejected (fail-closed) before any launch.
+func TestStreamChat_EmptyModelFailsClosed(t *testing.T) {
+	mr := &multiRunner{}
+	p := NewStreamProvider(Config{Binding: streamBinding("", nil), BinaryPath: "codex", Runner: mr})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.Error(t, err)
+	assert.Nil(t, ch)
+	assert.ErrorIs(t, err, ErrModelRequired)
+	assert.Empty(t, mr.calls, "no launch (not even the probe) on empty model")
+}
+
+// ERROR — an incompatible binary fails the probe; StreamChat returns the error
+// before opening a channel, and the run never launches.
+func TestStreamChat_IncompatibleBinary(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{{lines: []string{"codex-cli 0.0.1"}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.Error(t, err)
+	assert.Nil(t, ch)
+	assert.ErrorIs(t, err, ErrIncompatibleCodex)
+	assert.Len(t, mr.calls, 1, "only the probe ran; the run never launched")
+}
+
+// ERROR — a malformed mid-stream line closes the channel with a typed ErrParse
+// chunk and NO terminal Done (no silent partial success).
+func TestStreamChat_MalformedEventClosesWithError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"partial "}}`,
+		`{"type":"item.completed", BROKEN`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	require.NotEmpty(t, chunks)
+	last := chunks[len(chunks)-1]
+	require.Error(t, last.Error, "a malformed event must close the channel with an error chunk")
+	assert.ErrorIs(t, last.Error, ErrParse)
+	assert.False(t, last.Done, "a failed stream must NOT emit a Done chunk (no partial-success masquerade)")
+}
+
+// ERROR — a mid-stream runner (process exit) error closes the channel with an
+// error chunk naming the failure and NO Done.
+func TestStreamChat_RunnerExitErrorClosesWithError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {
+		lines:   []string{`{"type":"turn.started"}`},
+		waitErr: errors.New("exit status 1"),
+	}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	require.NotEmpty(t, chunks)
+	last := chunks[len(chunks)-1]
+	require.Error(t, last.Error)
+	assert.Contains(t, last.Error.Error(), "exit status 1")
+	assert.False(t, last.Done)
+}
+
+// ERROR — a turn.failed event closes the channel with an error chunk carrying
+// the failure message and NO Done (a failed turn is never a silent success).
+func TestStreamChat_TurnFailedClosesWithError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"t1"}`,
+		`{"type":"error","message":"model not supported for this account"}`,
+		`{"type":"turn.failed","error":{"message":"model not supported for this account"}}`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	require.NotEmpty(t, chunks)
+	last := chunks[len(chunks)-1]
+	require.Error(t, last.Error, "a failed turn must close the channel with an error chunk")
+	assert.Contains(t, last.Error.Error(), "model not supported")
+	assert.False(t, last.Done)
+}
+
+// ERROR — a start failure (binary not found) is returned synchronously from
+// StreamChat (no channel).
+func TestStreamChat_StartFailure(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {startErr: errors.New(`exec: "codex": not found`)}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.Error(t, err)
+	assert.Nil(t, ch)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// Chat (non-streaming) — runs to completion and returns the terminal result.
+func TestStreamProviderChat_HappyPath(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "world", resp.Output, "Output is the terminal agent_message text")
+	assert.Equal(t, "gpt-5-codex", resp.Model)
+	assert.Equal(t, "thr-stream-1", resp.SessionID)
+	assert.Equal(t, 11, resp.TokensIn)
+	assert.Equal(t, 5, resp.TokensOut)
+}
+
+// CORRECTNESS — single model source in Chat. The EFFECTIVE model is the same one
+// launch() feeds to argv: req.Model when non-empty, else the binding model. Chat
+// must label ChatResponse.Model with that effective model, NOT the raw req.Model
+// — otherwise an empty-request-model call (which runs on the binding model)
+// reports an empty model, contradicting the model codex actually ran.
+func TestStreamProviderChat_ResponseModelMatchesArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	// Empty request model ⇒ argv uses the binding model; the response must report
+	// the binding model, not the empty req.Model.
+	p := NewStreamProvider(Config{Binding: streamBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: ""})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// argv carries the binding model (the effective model).
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok)
+	assert.Equal(t, "binding-model", m, "argv must use the effective (binding) model")
+
+	assert.Equal(t, "binding-model", resp.Model,
+		"ChatResponse.Model must be the effective model that fed argv, never the raw req.Model")
+}
+
+// CORRECTNESS — single model source on Chat's FAILURE path. A failed turn must
+// produce an error labeled with the effective model (binding model when
+// req.Model is empty), not the empty raw req.Model.
+func TestStreamProviderChat_ErrorLabelsArgvModel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"t1"}`,
+		`{"type":"turn.failed","error":{"message":"boom"}}`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("binding-model", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: ""})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binding-model",
+		"error must name the effective model that fed argv (binding), not the empty req.Model")
+}
+
+// ERROR (Chat) — a turn.failed / error event returns a hard error from Chat,
+// never a successful response. Mirrors TestStreamChat_TurnFailedClosesWithError
+// for the non-streaming path: out.failed must be checked before returning OK.
+func TestStreamProviderChat_TurnFailedReturnsError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"t1"}`,
+		`{"type":"error","message":"model not supported for this account"}`,
+		`{"type":"turn.failed","error":{"message":"model not supported for this account"}}`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.Error(t, err, "Chat must not return OK on a failed turn")
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "model not supported", "error must surface the failure message")
+}
+
+// Chat — empty WorkDir rejected before launch.
+func TestStreamProviderChat_EmptyWorkDir(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "", Model: "gpt-5-codex"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrWorkDirRequired)
+	assert.Empty(t, mr.calls)
+}
+
+// EXTENSIBILITY — a non-empty ChatRequest.Model overrides the binding's model
+// in the exec argv; an empty ChatRequest.Model falls back to the binding. The
+// launch() doc says "a non-empty request model wins over the binding" — this
+// test pins the per-request override so a future refactor of launch() that
+// removes the fallback is caught immediately.
+func TestStreamChat_RequestModelOverridesBinding(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	// Binding has "gpt-4-codex" but the request specifies "gpt-5-codex-override".
+	p := NewStreamProvider(Config{
+		Binding:    streamBinding("gpt-4-codex", nil),
+		BinaryPath: "codex",
+		Runner:     mr,
+	})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "go", WorkDir: "/tmp/ws",
+		Model: "gpt-5-codex-override", // explicit per-request model
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok, "-m flag must be present in the run argv")
+	assert.Equal(t, "gpt-5-codex-override", m, "request model must override the binding model in argv")
+}
+
+// EXTENSIBILITY — empty ChatRequest.Model falls back to the binding's model.
+func TestStreamChat_EmptyRequestModelFallsBackToBinding(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{
+		Binding:    streamBinding("gpt-4-fallback", nil),
+		BinaryPath: "codex",
+		Runner:     mr,
+	})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "go", WorkDir: "/tmp/ws",
+		// no Model — binding model must be used
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-4-fallback", m, "empty request model must fall back to the binding model")
+}
+
+// REGRESSION (shared decoder) — batch RunAgent and the stream Chat fold the SAME
+// event fixture into consistent summaries/sessions/tokens. This proves the
+// shared decodeLine + foldEvent primitives keep the two paths from diverging.
+func TestStreamAndBatch_ConsistentFromSameFixture(t *testing.T) {
+	fixture := streamHappyMission()
+
+	// Batch path.
+	batchRunner := &multiRunner{scripts: []runScript{compatibleProbe(), fixture}}
+	batch := New(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: batchRunner})
+	bres, err := batch.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+
+	// Stream path (Chat) over the SAME fixture.
+	streamRunner := &multiRunner{scripts: []runScript{compatibleProbe(), fixture}}
+	stream := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: streamRunner})
+	sres, err := stream.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+
+	assert.Equal(t, bres.Summary, sres.Output, "batch Summary and stream Output must match")
+	assert.Equal(t, bres.SessionID, sres.SessionID, "session ids must match")
+	assert.Equal(t, bres.TokensIn, sres.TokensIn)
+	assert.Equal(t, bres.TokensOut, sres.TokensOut)
+}
+
+// ERROR — context cancel mid-stream closes the channel without a Done (the
+// terminal chunk carries the cancellation error).
+func TestStreamChat_ContextCancel(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := p.StreamChat(ctx, engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	cancel()
+
+	chunks := collectChunks(t, ch)
+	for _, c := range chunks {
+		assert.False(t, c.Done, "a cancelled stream must not emit a clean Done")
+	}
+}
+
+// ERROR — a per-request Timeout that elapses closes the channel with an error
+// chunk (no Done).
+func TestStreamChat_Timeout(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true}}}
+	p := NewStreamProvider(Config{
+		Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr,
+		Timeout: 10 * time.Millisecond,
+	})
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+	for _, c := range chunks {
+		assert.False(t, c.Done, "a timed-out stream must not emit a clean Done")
+	}
+}
+
+// FA19 PAIRED (§3+§7+§10) — the subscription-env security invariant (no
+// OPENAI_API_KEY, HOME preserved, RevealKey never called) must hold across ALL
+// THREE codex subprocess paths in a single test with a poisoned parent env.
+// Individual paths are tested in env_test.go, provider_test.go, and
+// readiness_test.go; this paired test confirms NO path introduces a bypass
+// when all three are exercised with the same poisoned env.
+//
+// Note: this test exercises the stream path (§7) because the stream adapter
+// wraps the provider in the same package; batch (§6) and readiness (§10) are
+// also invoked through fakeRunners so the env assertions capture each path.
+func TestSubscriptionEnvInvariant_AllThreePaths(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-must-never-appear")
+	t.Setenv("HOME", "/home/codex-test")
+
+	const model = "gpt-5-codex"
+	revealed := false
+	binding := codexBinding(model, &revealed)
+
+	// §6 — batch RunAgent path.
+	batchRunner := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	batch := New(Config{Binding: binding, BinaryPath: "codex", Runner: batchRunner})
+	_, err := batch.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: model})
+	require.NoError(t, err)
+
+	// §7 — stream StreamChat path (uses a separate set of probe+mission scripts).
+	streamRunner := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	stream := NewStreamProvider(Config{Binding: binding, BinaryPath: "codex", Runner: streamRunner})
+	ch, err := stream.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: model})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+
+	// §10 — readiness path.
+	readinessRunner := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"Logged in using ChatGPT"}}}}
+	state, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: readinessRunner})
+	require.NoError(t, err)
+	assert.Equal(t, Ready, state)
+
+	// Assert security invariant across all three runners (all child RunSpecs).
+	for name, mr := range map[string]*multiRunner{
+		"batch":     batchRunner,
+		"stream":    streamRunner,
+		"readiness": readinessRunner,
+	} {
+		for i, spec := range mr.calls {
+			for _, kv := range spec.Env {
+				assert.NotContains(t, kv, "OPENAI_API_KEY",
+					"path=%s call=%d must not contain OPENAI_API_KEY", name, i)
+			}
+		}
+	}
+
+	// RevealKey must never have been called on ANY path (subscription-only).
+	assert.False(t, revealed, "RevealKey must never be called on ANY codex subprocess path")
+}

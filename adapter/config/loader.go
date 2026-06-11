@@ -123,8 +123,8 @@ func defaults() map[string]interface{} {
 			{"alias": "assessor", "kind": "chat", "model": ""},
 			{"alias": "interviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
 			{"alias": "reviewer", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"}},
-			{"alias": "coder", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
-			{"alias": "planner", "kind": "agent", "model": "", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
+			{"alias": "coder", "kind": "agent", "backend": "claude-code", "model": "opus-4.8", "allowedtools": []string{"Read", "Write", "Edit", "Grep", "Glob", "Bash"}},
+			{"alias": "planner", "kind": "agent", "backend": "claude-code", "model": "opus-4.8", "allowedtools": []string{"Read", "Write", "Grep", "Glob", "Bash"}},
 		},
 	}
 }
@@ -221,21 +221,44 @@ profiles:
   - alias: "assessor"
     kind: "chat"
     model: ""
+  # The DEFAULT interviewer runs on claude-code with the subscription default
+  # model (model: ""), so a fresh install runs the bundled feature-pipeline sample
+  # out of the box on the claude subscription — no extra prerequisites.
   - alias: "interviewer"
     kind: "agent"
     model: ""
     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
+  #
+  # MIXED-MODEL EXAMPLE (commented — NOT the default): to run the interviewer on
+  # the codex backend (ChatGPT subscription, codex exec) instead of claude-code,
+  # replace the interviewer block above with the one below. The backend axis is
+  # INDEPENDENT of the provider/connection; repoint a persona by editing its
+  # backend/model without touching workflow.json. NOTE: codex requires the codex
+  # CLI installed AND logged in, and the chosen model must be available on your
+  # ChatGPT plan (e.g. gpt-5.5 access is account-dependent) — see
+  # docs/agent-security-model.md for the bypass-approvals-and-sandbox posture and
+  # docs/install/README.md for the codex prerequisites. It is shipped commented so
+  # the bundled default always runs out of the box.
+  #
+  #   - alias: "interviewer"
+  #     kind: "agent"
+  #     backend: "codex"
+  #     model: "gpt-5.5"
+  #     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
+  #
   - alias: "reviewer"
     kind: "agent"
     model: ""
     allowedtools: ["Read", "Grep", "Glob", "Bash(gh:*)", "Bash(git:*)"]
   - alias: "coder"
     kind: "agent"
-    model: ""
+    backend: "claude-code"
+    model: "opus-4.8"
     allowedtools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
   - alias: "planner"
     kind: "agent"
-    model: ""
+    backend: "claude-code"
+    model: "opus-4.8"
     allowedtools: ["Read", "Write", "Grep", "Glob", "Bash"]
 logging:
   level: "info"

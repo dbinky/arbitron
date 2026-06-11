@@ -670,6 +670,49 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
 }
 
+// TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults verifies the
+// feature-pipeline sample's DEFAULT profile registry: the interviewer runs on
+// the claude-code default (empty backend, model "") so a fresh install runs the
+// bundled sample out of the box, while planner/coder run on claude-code
+// (opus-4.8). The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
+// the sample config, not the active default (PR #32 Must Fix #4 — do not ship a
+// default the authoring host could not run).
+func TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	byAlias := make(map[string]domainconfig.ProfileConfig, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		byAlias[p.Alias] = p
+	}
+
+	// interviewer → claude-code default (empty backend, model "") so it runs out
+	// of the box on the claude subscription; it must NOT pin the codex backend.
+	interviewer := byAlias["interviewer"]
+	assert.Equal(t, "agent", interviewer.Kind)
+	assert.NotEqual(t, "codex", interviewer.Backend, "default interviewer must NOT pin codex (would need codex installed+logged-in and a gpt-5.5 plan)")
+	assert.Empty(t, interviewer.Backend, "default interviewer must inherit the backend (empty)")
+	assert.Empty(t, interviewer.Model, "default interviewer must use the subscription default model")
+
+	// planner + coder → claude-code / opus-4.8 / agent.
+	for _, alias := range []string{"planner", "coder"} {
+		p := byAlias[alias]
+		assert.Equal(t, "agent", p.Kind, "%s must be agent kind", alias)
+		assert.Equal(t, "claude-code", p.Backend, "%s must run on claude-code", alias)
+		assert.Equal(t, "opus-4.8", p.Model, "%s must run on opus-4.8", alias)
+	}
+
+	// assessor stays chat-kind (it backs the feature-pipeline llm_call node, so
+	// it MUST remain a chat profile or the sample workflow fails kind-matching
+	// validation). Backend is ignored on chat profiles.
+	assert.Equal(t, "chat", byAlias["assessor"].Kind)
+}
+
 // ---- Phase 6 Task 1: AuthConfig loading & validation ----
 
 func TestLoad_AuthDefaults(t *testing.T) {

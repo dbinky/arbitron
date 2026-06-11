@@ -137,6 +137,47 @@ Only two values are individually overridable: `-Version` / `$env:ARBITRON_VERSIO
 (Shared, OIDC, a non-`8080` port, api-key mode, etc.) is **not** scriptable
 today — run those interactively.
 
+## Codex backend (optional, user-provided)
+
+The **codex** agent backend lets agent nodes (`agent_call`, `interactive_agent`)
+run on OpenAI's Codex CLI driving your **ChatGPT subscription** instead of
+claude-cli or opencode. It is **not** installed by `install.sh` / `install.ps1`
+— codex is a **user-provided prerequisite** you set up once on the host. (This is
+the only backend the installer does not manage; claude-cli and opencode are
+handled by the toolchain step above.)
+
+To use it:
+
+1. **Install the Codex CLI** on the host (per OpenAI's instructions). Arbitron
+   targets **codex-cli 0.137.0+** and resolves the `codex` binary from `PATH`
+   and the standard install dirs.
+2. **Sign in:** run `codex login` and complete **Sign in with ChatGPT** so a
+   valid subscription session is written to `~/.codex` (or `$CODEX_HOME`). The
+   engine sets **no `OPENAI_API_KEY`** — the on-disk session is codex's only
+   credential surface.
+3. **Point a profile at it:** set a profile's `backend: "codex"` and a codex
+   `model:` (e.g. the feature-pipeline sample ships `interviewer` on
+   `backend: codex` / `model: gpt-5.5`). The backend axis is independent of the
+   provider/connection.
+
+Arbitron surfaces a **readiness check** on `system_config` (HTTP
+`GET /system/config` and the MCP `system_config` tool) reporting
+`ready` / `not-installed` / `not-logged-in` for the codex backend, so an
+unusable backend is caught **before** a run rather than failing mid-mission.
+
+> **Security — `--dangerously-bypass-approvals-and-sandbox`.** The codex backend
+> runs `codex exec --dangerously-bypass-approvals-and-sandbox`, which bypasses
+> both approvals and codex's own sandbox — the same fully-open posture as
+> claude-cli's `--dangerously-skip-permissions` and opencode's allow-all. On
+> model-influenced prompts this is **RCE-equivalent**, accepted only for
+> **local, single-user, unattended** use where every prompt input is trusted,
+> and contained solely by the OS/container the agent runs in. See
+> [the agent security model](../agent-security-model.md) for the full posture
+> and the container boundary that is the real isolation surface.
+
+> **Scope.** codex is **subscription-only and agent-tier only**. API-key OpenAI
+> access (and chat-tier use) remains available via the **opencode** backend.
+
 ## Pick your scenario
 
 | | Scenario | OS / class | Script | Privilege |

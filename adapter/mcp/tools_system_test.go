@@ -156,6 +156,45 @@ func newSystemServer(
 
 // --- Tests ---
 
+// fakeBackendHealth is a stub BackendHealthChecker proving the system_config
+// tool delegates to the INJECTED, shared component (the TTL cache) rather than
+// forking a probe itself.
+type fakeBackendHealth struct {
+	calls    int
+	backends []config.RedactedBackend
+}
+
+func (f *fakeBackendHealth) Backends(context.Context) []config.RedactedBackend {
+	f.calls++
+	return f.backends
+}
+
+// INJECTION — the system_config tool must surface the backends list from the
+// injected BackendHealth seam (the SAME shared component the HTTP surface uses),
+// not a per-call fork. Pins the composition-root wiring on the MCP side.
+func TestSystemConfig_UsesInjectedBackendHealth(t *testing.T) {
+	cfg := &config.Config{}
+	fake := &fakeBackendHealth{backends: []config.RedactedBackend{{Name: "codex", State: "ready"}}}
+	deps := &adaptmcp.Deps{
+		Config:        cfg,
+		Settings:      config.NewSettingsStore(&cfg.Notifications.Teams),
+		QueueRepo:     &stubQueueRepo{},
+		QueueManager:  &stubQueueManager{},
+		Notifications: &stubNotificationRepo{},
+		Instances:     &stubInstanceRepo{},
+		BackendHealth: fake,
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterSystemTools(srv)
+
+	result := callTool(t, srv, "system_config", nil)
+	assert.False(t, result.IsError)
+	text := extractText(t, result)
+	assert.Contains(t, text, `"codex"`, "backends entry from the injected seam must reach the output")
+	assert.Contains(t, text, `"ready"`)
+	assert.Equal(t, 1, fake.calls, "the tool must consult the injected backend-health seam")
+}
+
 func TestSystemConfig(t *testing.T) {
 	t.Run("happy path returns config and queue counts", func(t *testing.T) {
 		cfg := &config.Config{

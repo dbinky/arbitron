@@ -11,6 +11,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/azurefoundry"
 	"github.com/arbitron/arbitron/adapter/bedrock"
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/codex"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	"github.com/arbitron/arbitron/adapter/openrouter"
 	"github.com/arbitron/arbitron/domain/engine"
@@ -23,9 +24,10 @@ import (
 var ErrUnknownProvider = errors.New("provider: no adapter for provider")
 
 // ErrUnknownBackend is returned by AgentProviderFor when a binding's effective
-// agent backend is neither claude-code nor opencode. It is defense-in-depth: the
-// workflow validator already rejects a bad backend at load (fail-closed), but
-// the factory must never silently fall through to a wrong adapter.
+// agent backend is none of claude-code, opencode, or codex. It is
+// defense-in-depth: the workflow validator already rejects a bad backend at load
+// (fail-closed), but the factory must never silently fall through to a wrong
+// adapter.
 var ErrUnknownBackend = errors.New("provider: unknown agent backend")
 
 // Chat-dispatch provider ids, matched after domprovider.Canonicalize. The
@@ -84,12 +86,17 @@ type Deps struct {
 	// OpencodeTimeout is the default per-mission opencode timeout; <=0 means no
 	// default.
 	OpencodeTimeout time.Duration
+	// CodexBinaryPath overrides PATH lookup for the codex binary; "" lets the
+	// adapter resolve it.
+	CodexBinaryPath string
+	// CodexTimeout is the default per-mission codex timeout; <=0 means no default.
+	CodexTimeout time.Duration
 	// MaxResponseBytes caps the per-request response/stdout read across ALL the
 	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry,
-	// anthropicapi, bedrock) bound their response-body read, and opencode bounds
-	// its subprocess stdout. 0 means no cap. SECURITY: a non-zero cap bounds the
-	// OOM DoS from an attacker-pointed base_url (or hostile subprocess) streaming
-	// an unbounded body.
+	// anthropicapi, bedrock) bound their response-body read, and the subprocess
+	// agent adapters (opencode, codex) bound their stdout. 0 means no cap.
+	// SECURITY: a non-zero cap bounds the OOM DoS from an attacker-pointed
+	// base_url (or hostile subprocess) streaming an unbounded body.
 	MaxResponseBytes int64
 	// OpencodeAllowAllTools is the operator knob (a) for the agent path's
 	// permission posture. SECURITY: it defaults to false (CLOSED) in the
@@ -111,12 +118,13 @@ type Deps struct {
 // (AgentProviderFor) dispatches on the BACKEND axis, NOT the provider
 // (org-readiness Phase 2): claude-code -> the claude-cli agent adapter (which
 // may now carry a non-claude connection; endpoint+key injected in the adapter),
-// opencode -> adapter/opencode. There is no native-HTTP agent adapter, so a
-// provider's chat credentials/env flow through the HTTP adapter on the chat path
-// but through opencode's subprocess env on the agent path — the two opencode
-// paths must agree on the provider vocabulary (see domprovider.Canonicalize),
-// which is why an env/-m mismatch in opencode is a live bug rather than a dead
-// branch. The backend and provider are now ORTHOGONAL.
+// opencode -> adapter/opencode, codex -> adapter/codex (subscription-only; no
+// key revealed, no AllowAllTools knob). There is no native-HTTP agent adapter,
+// so a provider's chat credentials/env flow through the HTTP adapter on the chat
+// path but through the subprocess env on the agent path — the two opencode paths
+// must agree on the provider vocabulary (see domprovider.Canonicalize), which is
+// why an env/-m mismatch in opencode is a live bug rather than a dead branch.
+// The backend and provider are ORTHOGONAL.
 type Factory struct {
 	deps Deps
 }
@@ -200,6 +208,7 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 //
 //   - claude-code -> the claude-cli AgentAdapter.
 //   - opencode    -> adapter/opencode, with the binding's per-provider env.
+//   - codex       -> adapter/codex (`codex exec`), subscription-only (NO key).
 //   - "" (unset) / any other value -> ErrUnknownBackend (fail-closed; never a
 //     silent fallback). The deployment default is owned by ONE place — the config
 //     floor (adapter/config loader) — and is applied by the AgentCallExecutor
@@ -241,6 +250,19 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			Timeout:          f.deps.OpencodeTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
 			AllowAllTools:    f.deps.OpencodeAllowAllTools,
+		}), nil
+	case workflow.BackendCodex:
+		// Subscription-only: codex authenticates via its on-disk ~/.codex/auth.json,
+		// so NO key is revealed and NO AllowAllTools knob exists — `codex exec` runs
+		// under the fixed v1 fully-open posture (--dangerously-bypass-approvals-and-
+		// sandbox, documented in the spec's risk section). The binding's provider is
+		// ignored on this arm; only its Model reaches the subprocess.
+		return codex.New(codex.Config{
+			Binding:          b,
+			BinaryPath:       f.deps.CodexBinaryPath,
+			Runner:           f.deps.Runner,
+			Timeout:          f.deps.CodexTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
 	default:
 		// Fail-closed: an unrecognized (or empty-with-empty-default) backend never

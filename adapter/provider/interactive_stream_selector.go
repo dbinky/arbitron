@@ -3,37 +3,61 @@ package provider
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
-// ErrUnsupportedAgentProvider is returned when an agent-kind binding names a
-// provider the interactive stream selector cannot route. MVP supports only the
-// claude-cli (or empty subscription) path for agent streaming. It is a
-// package-level sentinel wrapped with %w so callers can distinguish it from an
-// unknown-kind error via errors.Is (SF3, PR #18 comment 3350533149).
-var ErrUnsupportedAgentProvider = errors.New("interactive_agent: unsupported agent stream provider")
+// ErrUnsupportedAgentBackend is returned when an agent-kind interactive binding
+// names a backend the stream selector cannot route — an unknown/typo backend, or
+// opencode (which has no streaming adapter and is explicitly out of scope for
+// interactive streaming). It is a package-level sentinel wrapped with %w so
+// callers can distinguish it from an unknown-kind error via errors.Is.
+//
+// Renamed from ErrUnsupportedAgentProvider (Phase 2): dispatch moved from the
+// PROVIDER axis (claude-cli only) to the BACKEND axis (claude-code / codex /
+// opencode), matching the batch path's AgentProviderFor vocabulary.
+var ErrUnsupportedAgentBackend = errors.New("interactive_agent: unsupported agent stream backend")
 
 // InteractiveStreamSelector implements engine.InteractiveStreamSelector: it
 // routes a resolved binding to the appropriate streaming ChatProvider based on
-// the binding's Kind:
-//   - ProfileKindChat  → delegates to the injected ChatProviderSelector (tool-suppressed stream).
-//   - ProfileKindAgent → returns the injected agentStream ChatProvider (tool-enabled stream).
-//     Only Provider "claude-cli" (or empty subscription path) is supported in MVP.
+// the binding's Kind, dispatching agent-kind bindings on the BACKEND axis (the
+// SAME vocabulary and default-backend floor as the batch AgentProviderFor):
+//
+//   - ProfileKindChat  → delegates to the injected ChatProviderSelector
+//     (tool-suppressed stream); unchanged by the backend generalization.
+//   - ProfileKindAgent → the per-backend stream adapter (tool-enabled stream):
+//     claude-code → the claudecli stream adapter, codex → the codex stream
+//     adapter; an empty backend is floored to defaultBackend first; opencode and
+//     any unknown/typo backend fail closed with ErrUnsupportedAgentBackend (never
+//     a silent fallback to claude).
 type InteractiveStreamSelector struct {
-	chat        engine.ChatProviderSelector
-	agentStream engine.ChatProvider
+	chat engine.ChatProviderSelector
+	// agentStreams maps an agent backend id (workflow.Backend*) to its streaming
+	// ChatProvider. A backend absent from the map fails closed. opencode is
+	// deliberately NOT a key (no stream adapter exists).
+	agentStreams map[string]engine.ChatProvider
+	// defaultBackend is the deployment floor applied to an empty agent backend —
+	// the SAME floor the batch path applies before reaching the factory, so an
+	// interactive node and a batch node inherit the same default.
+	defaultBackend string
 }
 
 var _ engine.InteractiveStreamSelector = (*InteractiveStreamSelector)(nil)
 
 // NewInteractiveStreamSelector constructs an InteractiveStreamSelector.
-// chat is the existing ChatProviderSelector used for chat-kind bindings.
-// agentStream is the tool-enabled streaming adapter (e.g. claudecli.StreamAgentAdapter)
-// used for agent-kind bindings.
-func NewInteractiveStreamSelector(chat engine.ChatProviderSelector, agentStream engine.ChatProvider) *InteractiveStreamSelector {
-	return &InteractiveStreamSelector{chat: chat, agentStream: agentStream}
+// chat is the ChatProviderSelector used for chat-kind bindings. agentStreams
+// maps each supported agent backend to its tool-enabled streaming adapter (e.g.
+// {"claude-code": claudeStream, "codex": codexStream}). defaultBackend is the
+// floor applied to an empty agent-kind backend before dispatch.
+func NewInteractiveStreamSelector(chat engine.ChatProviderSelector, agentStreams map[string]engine.ChatProvider, defaultBackend string) *InteractiveStreamSelector {
+	return &InteractiveStreamSelector{
+		chat:           chat,
+		agentStreams:   agentStreams,
+		defaultBackend: defaultBackend,
+	}
 }
 
 // StreamProviderFor selects the streaming ChatProvider for the given binding.
@@ -42,11 +66,34 @@ func (s *InteractiveStreamSelector) StreamProviderFor(b provider.ResolvedBinding
 	case provider.ProfileKindChat:
 		return s.chat.ChatProviderFor(b)
 	case provider.ProfileKindAgent:
-		if b.Provider != ProviderClaudeCLI && b.Provider != "" {
-			return nil, fmt.Errorf("%w: provider %q (claude-cli only in MVP)", ErrUnsupportedAgentProvider, b.Provider)
-		}
-		return s.agentStream, nil
+		return s.agentStreamFor(b)
 	default:
 		return nil, fmt.Errorf("interactive stream: unknown profile kind %q", b.Kind)
 	}
+}
+
+// agentStreamFor dispatches an agent-kind binding on the backend axis. It trims
+// whitespace only (NOT lowercase) so the vocabulary stays exact-match identical
+// to the workflow validator and the factory — a near-miss case (e.g. "Codex")
+// stays unknown and fails closed, never silently routed. An empty backend is
+// floored to defaultBackend first (matching the batch path). opencode is rejected
+// with a clear, explicit message; any backend absent from the stream map (incl.
+// opencode and unknown values) returns ErrUnsupportedAgentBackend.
+func (s *InteractiveStreamSelector) agentStreamFor(b provider.ResolvedBinding) (engine.ChatProvider, error) {
+	backend := strings.TrimSpace(b.Backend)
+	if backend == "" {
+		backend = s.defaultBackend
+	}
+
+	// opencode has no streaming adapter: surface an explicit, fail-closed message
+	// (NOT a silent fallback to claude) so an operator who points an interactive
+	// node at opencode learns it is out of scope rather than getting claude.
+	if backend == workflow.BackendOpencode {
+		return nil, fmt.Errorf("%w: opencode does not support interactive streaming (backend %q)", ErrUnsupportedAgentBackend, b.Backend)
+	}
+
+	if stream, ok := s.agentStreams[backend]; ok {
+		return stream, nil
+	}
+	return nil, fmt.Errorf("%w: %q", ErrUnsupportedAgentBackend, b.Backend)
 }

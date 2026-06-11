@@ -19,7 +19,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/arbitron/arbitron/adapter/backendhealth"
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/codex"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
@@ -179,6 +181,12 @@ type domainStack struct {
 	authMW       *adapthttp.AuthMiddleware
 	authHandler  *adapthttp.AuthHandler
 	sweepCancel  context.CancelFunc
+	// backendHealth is the shared, TTL-cached backend-health component (codex
+	// install/login readiness). Constructed ONCE here and injected into BOTH the
+	// HTTP SystemHandler and the MCP server so the probe forks at most once per
+	// TTL across both surfaces (and the unauthenticated local GET /system/config
+	// route cannot fork a codex probe pair per request).
+	backendHealth *backendhealth.Checker
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -247,6 +255,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Users:               ds.userSvc,
 		ScheduleService:     ds.scheduleSvc,
 		Logger:              ds.logger,
+		BackendHealth:       ds.backendHealth,
 	}
 }
 
@@ -582,8 +591,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		ClaudeAgentConfig: agentCfg,
 		HTTPClient:        httpClient,
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		// Runner nil -> opencode uses the shared production os/exec runner.
+		// Runner nil -> opencode/codex use the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH
+		// (CodexBinaryPath left empty, mirroring opencode); the per-mission timeout
+		// reuses the shared LLM timeout floor. No allow-all knob: codex runs under
+		// the fixed v1 bypass posture (see adapter/codex args.go).
+		CodexTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
 		// the credential-bearing backends (openrouter, azurefoundry, anthropicapi,
 		// bedrock, opencode). Dropping this lets an attacker-pointed base_url stream
@@ -724,9 +738,28 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
-	// profiles route to the tool-enabled (YOLO) claude-cli streaming adapter.
-	streamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
-	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(providerFactory, streamAgent)
+	// profiles route by BACKEND to the matching tool-enabled streaming adapter —
+	// claude-code → the claude-cli stream adapter, codex → the codex stream
+	// adapter (`codex exec --json`, subscription-only). An empty agent backend is
+	// floored to the SAME deployment default the batch AgentCallExecutor uses
+	// (cfg.LLM.DefaultAgentBackend); opencode and unknown backends fail closed.
+	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
+	codexStreamAgent := codex.NewStreamProvider(codex.Config{
+		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH,
+		// the per-mission timeout reuses the shared LLM timeout floor, and the
+		// response cap mirrors the factory's codex arm. No allow-all knob: codex
+		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+	})
+	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
+		providerFactory,
+		map[string]engine.ChatProvider{
+			workflow.BackendClaudeCode: claudeStreamAgent,
+			workflow.BackendCodex:      codexStreamAgent,
+		},
+		cfg.LLM.DefaultAgentBackend,
+	)
 
 	// Register one interactive executor instance under BOTH interactive node
 	// types. Notification creation is handled by the engine when it processes the
@@ -830,6 +863,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		go sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger)
 	}
 
+	// Shared backend-health component: ONE TTL-cached Checker, injected into both
+	// the HTTP SystemHandler and the MCP server below. A nil runner falls back to
+	// the production os/exec probe (codex.Readiness); a 0 TTL uses the package
+	// default. Constructing it here (not per request) is what gives the cache its
+	// request-spanning lifetime.
+	backendHealthChecker := backendhealth.NewChecker(nil, 0, nil)
+
 	return &domainStack{
 		cfg:                 cfg,
 		settings:            settings,
@@ -872,6 +912,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
+		backendHealth:       backendHealthChecker,
 	}, nil
 }
 
@@ -929,6 +970,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Users:               ds.userSvc,
 		DashboardStats:      ds.dashboardSvc,
 		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
+		BackendHealth:       ds.backendHealth,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).
