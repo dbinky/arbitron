@@ -35,8 +35,8 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Pair | Pass | Status |
 |---|---|---|---|
 | 13 | Argv + env + batch provider (§2+§3+§6 — the exec slice shares one argv/env vocabulary; prompt-via-stdin and subscription-env invariants hold through `RunAgent`) | [x] | done |
-| 14 | Decoder + streaming adapter (§4+§7 — batch `RunAgent` and `StreamChat` fold an identical fixture to identical summary/session/tokens; no divergence after the shared-decoder refactor) | [ ] | pending |
-| 15 | Factory arm + stream selector (§8+§9 — both dispatch the backend axis with the same vocabulary + default floor; codex reachable on `agent_call` AND `interactive_agent`; opencode unsupported on stream only; unknown fails closed in both) | [ ] | pending |
+| 14 | Decoder + streaming adapter (§4+§7 — batch `RunAgent` and `StreamChat` fold an identical fixture to identical summary/session/tokens; no divergence after the shared-decoder refactor) | [x] | done |
+| 15 | Factory arm + stream selector (§8+§9 — both dispatch the backend axis with the same vocabulary + default floor; codex reachable on `agent_call` AND `interactive_agent`; opencode unsupported on stream only; unknown fails closed in both) | [x] | done |
 | 16 | Version probe + readiness (§5+§10 — shared binary resolution + version semantics; `minCodexVersion` failure vs readiness `NotInstalled` collapse stay consistent) | [ ] | pending |
 | 17 | Readiness + health surface (§10+§11 — state flows `codex.Readiness` → `backendhealth` → `RedactedConfig.Backends` → both read surfaces; a probe fault drops the entry without failing the config read) | [ ] | pending |
 | 18 | Sample config + dispatch (§12+§8+§9 — the `interviewer` codex profile resolves to `Backend == "codex"` and routes through BOTH the agent factory and the stream selector; `planner`/`coder` resolve to claude-code/`opus-4.8`) | [ ] | pending |

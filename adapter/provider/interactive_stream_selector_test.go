@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/arbitron/arbitron/adapter/codex"
+	"github.com/arbitron/arbitron/adapter/opencode"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -205,6 +207,59 @@ func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) 
 	assert.Nil(t, got)
 	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend,
 		"fall-through from absent map entry must wrap ErrUnsupportedAgentBackend")
+}
+
+// FA15 PAIRED (§8+§9) — the factory (AgentProviderFor) and the stream selector
+// (StreamProviderFor) must agree on the backend dispatch vocabulary:
+//   - "codex": factory → *codex.Provider; selector → codex stream sentinel.
+//     Codex is reachable on BOTH agent_call (factory) and interactive_agent (selector).
+//   - "opencode": factory → *opencode.Provider (success); selector → ErrUnsupportedAgentBackend.
+//     Opencode is BATCH-ONLY; interactive streaming is explicitly unsupported.
+//   - unknown backend: both fail closed (ErrUnknownBackend / ErrUnsupportedAgentBackend).
+//
+// If the two units used different string comparisons (e.g. factory trimmed but
+// selector did not), a backend that passes the factory check could silently fail
+// at the selector without a clear error.
+func TestFactoryAndSelector_SharedBackendVocabulary(t *testing.T) {
+	f := newBackendFactory(t)
+	_, codexStream, m := streamsByBackend()
+	sel := adapterprovider.NewInteractiveStreamSelector(
+		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},
+		m,
+		workflow.BackendClaudeCode,
+	)
+
+	agentBinding := func(backend string) provider.ResolvedBinding {
+		return provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: backend, Model: "m"}
+	}
+
+	// codex: reachable on both batch (factory) and stream (selector).
+	ap, err := f.AgentProviderFor(agentBinding(workflow.BackendCodex))
+	require.NoError(t, err, "codex must be reachable via factory (agent_call path)")
+	assert.IsType(t, (*codex.Provider)(nil), ap)
+
+	sp, err := sel.StreamProviderFor(agentBinding(workflow.BackendCodex))
+	require.NoError(t, err, "codex must be reachable via stream selector (interactive_agent path)")
+	assert.Same(t, codexStream, sp, "codex stream must return the codex sentinel")
+
+	// opencode: batch only (factory OK, selector fails closed).
+	ap2, err := f.AgentProviderFor(agentBinding(workflow.BackendOpencode))
+	require.NoError(t, err, "opencode must be reachable via factory (agent_call path)")
+	assert.IsType(t, (*opencode.Provider)(nil), ap2)
+
+	sp2, err := sel.StreamProviderFor(agentBinding(workflow.BackendOpencode))
+	require.Error(t, err, "opencode must fail closed on stream (interactive streaming unsupported)")
+	assert.Nil(t, sp2)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend)
+
+	// unknown backend: both fail closed.
+	_, errF := f.AgentProviderFor(agentBinding("ghost-backend"))
+	require.Error(t, errF)
+	assert.ErrorIs(t, errF, adapterprovider.ErrUnknownBackend)
+
+	_, errS := sel.StreamProviderFor(agentBinding("ghost-backend"))
+	require.Error(t, errS)
+	assert.ErrorIs(t, errS, adapterprovider.ErrUnsupportedAgentBackend)
 }
 
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an
