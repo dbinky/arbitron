@@ -140,6 +140,22 @@ func TestRunAgent_ProbeMemoized(t *testing.T) {
 	assert.NotContains(t, mr.calls[2].Args, "--version")
 }
 
+// EDGE — a probe failure is memoized: a second mission fails with the same
+// ErrIncompatibleCodex without triggering a second probe. The sync.Once must
+// retain the error, not silently re-probe on the next call.
+func TestRunAgent_ProbeMemoizedError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{{lines: []string{"codex-cli 0.0.1"}}}}
+	p := New(Config{Binding: codexBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err1 := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.ErrorIs(t, err1, ErrIncompatibleCodex)
+
+	_, err2 := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.ErrorIs(t, err2, ErrIncompatibleCodex, "memoized probe error must persist")
+
+	assert.Len(t, mr.calls, 1, "probe runs exactly once; failure is cached, not retried")
+}
+
 // ERROR — non-zero process exit (run wait() error) → wrapped error naming codex
 // and the model.
 func TestRunAgent_NonZeroExit(t *testing.T) {
