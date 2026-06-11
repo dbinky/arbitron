@@ -67,5 +67,36 @@ func TestProbeVersion_WaitError(t *testing.T) {
 	assert.Contains(t, err.Error(), "exit status 1")
 }
 
+// CLI-COUPLING PIN — the minimum codex-cli version is pinned here as a string
+// literal, mirroring TestBuildArgs_PinnedFlagSpellings and
+// TestCodexEnv_CodexHomeVarNamePinned. The constant must not be bumped without
+// a matching flag-surface re-verification (the minCodexVersion comment names
+// the exact flag surface: --dangerously-bypass-approvals-and-sandbox, --cd,
+// --json). A reviewer bumping the constant must update this pin too.
+func TestMinCodexVersion_Pinned(t *testing.T) {
+	assert.Equal(t, "0.137.0", minCodexVersion, "minimum version is pinned to the verified flag surface")
+}
+
+// CORRECTNESS — compareVersion covers all branch cases: less-than (per component
+// position), equal, and greater-than. These are exercised through probeVersion
+// indirectly, but a direct test makes the logic boundary explicit and catches a
+// future regression in the comparator without depending on the I/O path.
+func TestCompareVersion(t *testing.T) {
+	for _, tc := range []struct {
+		a, b []int
+		want int
+	}{
+		{[]int{0, 137, 0}, []int{0, 137, 0}, 0},  // equal
+		{[]int{0, 138, 0}, []int{0, 137, 0}, 1},  // minor above
+		{[]int{0, 137, 1}, []int{0, 137, 0}, 1},  // patch above
+		{[]int{1, 0, 0}, []int{0, 137, 0}, 1},    // major above
+		{[]int{0, 136, 9}, []int{0, 137, 0}, -1}, // minor below
+		{[]int{0, 0, 1}, []int{0, 137, 0}, -1},   // far below
+	} {
+		got := compareVersion(tc.a, tc.b)
+		assert.Equal(t, tc.want, got, "compareVersion(%v, %v)", tc.a, tc.b)
+	}
+}
+
 // guard — the shared seam is reused (compile-time check the fake satisfies it).
 var _ claudecli.CommandRunner = (*fakeRunner)(nil)
