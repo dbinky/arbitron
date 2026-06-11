@@ -183,6 +183,30 @@ func TestInteractiveStreamSelector_AgentKind_PaddedBackend(t *testing.T) {
 	assert.Same(t, codexSentinel, got, "trimmed codex backend must reach the codex stream adapter")
 }
 
+// TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap verifies that a
+// valid (non-opencode) backend that is simply absent from the agentStreams map
+// fails closed with ErrUnsupportedAgentBackend. This tests the fall-through
+// branch in agentStreamFor — a misconfigured deployment where, e.g., the codex
+// stream provider was not wired into the composition root.
+func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	// Build a map with ONLY claude-code; codex is deliberately absent.
+	claude := &sentinelChatProvider{name: "claude-stream"}
+	sparseMap := map[string]engine.ChatProvider{workflow.BackendClaudeCode: claude}
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, sparseMap, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendCodex,
+		Model:   "gpt-5-codex",
+	})
+	require.Error(t, err, "a backend absent from the stream map must fail closed")
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend,
+		"fall-through from absent map entry must wrap ErrUnsupportedAgentBackend")
+}
+
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an
 // unknown/empty kind returns an error (unchanged).
 func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
