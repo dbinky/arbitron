@@ -66,6 +66,26 @@ func TestCodexEnv_CodexHomeAbsentWhenUnset(t *testing.T) {
 	assert.False(t, ok, "absent CODEX_HOME must not be synthesized")
 }
 
+// EDGE — a CODEX_HOME value with surrounding whitespace is trimmed before
+// forwarding (consistent with the trim-then-use convention in args.go). Uses the
+// local `home` variable in the if-block, not a second os.Getenv call.
+func TestCodexEnv_CodexHomeWithSurroundingWhitespaceTrimmed(t *testing.T) {
+	t.Setenv("CODEX_HOME", "  /custom/codex/home  ")
+	env := codexEnv()
+	v, ok := envValue(env, "CODEX_HOME")
+	require.True(t, ok, "CODEX_HOME with surrounding whitespace must still be forwarded")
+	assert.Equal(t, "/custom/codex/home", v, "forwarded CODEX_HOME value must be trimmed")
+}
+
+// EDGE — a whitespace-only CODEX_HOME is treated as unset (not forwarded),
+// consistent with the whitespace-only model rejection in args.go.
+func TestCodexEnv_CodexHomeWhitespaceOnlyNotForwarded(t *testing.T) {
+	t.Setenv("CODEX_HOME", "   ")
+	env := codexEnv()
+	_, ok := envValue(env, "CODEX_HOME")
+	assert.False(t, ok, "whitespace-only CODEX_HOME must not be forwarded (treated as unset)")
+}
+
 // SECURITY — the base allowlist PATH augmentation is preserved (StandardBinDirs
 // reachable), so codex can find git/gh inside the workspace.
 func TestCodexEnv_PreservesBaseEnvPATH(t *testing.T) {

@@ -41,7 +41,7 @@ func codexEnv() []string {
 	// it directly (BaseEnv strips it as a non-allowlisted var) and append a single
 	// entry so codex resolves its auth dir exactly as it does interactively.
 	if home := strings.TrimSpace(os.Getenv(codexHomeVar)); home != "" {
-		env = append(env, codexHomeVar+"="+os.Getenv(codexHomeVar))
+		env = append(env, codexHomeVar+"="+home)
 	}
 	return env
 }
