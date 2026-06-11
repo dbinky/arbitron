@@ -274,6 +274,51 @@ func TestStreamProviderChat_EmptyWorkDir(t *testing.T) {
 	assert.Empty(t, mr.calls)
 }
 
+// EXTENSIBILITY — a non-empty ChatRequest.Model overrides the binding's model
+// in the exec argv; an empty ChatRequest.Model falls back to the binding. The
+// launch() doc says "a non-empty request model wins over the binding" — this
+// test pins the per-request override so a future refactor of launch() that
+// removes the fallback is caught immediately.
+func TestStreamChat_RequestModelOverridesBinding(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	// Binding has "gpt-4-codex" but the request specifies "gpt-5-codex-override".
+	p := NewStreamProvider(Config{
+		Binding:    streamBinding("gpt-4-codex", nil),
+		BinaryPath: "codex",
+		Runner:     mr,
+	})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "go", WorkDir: "/tmp/ws",
+		Model: "gpt-5-codex-override", // explicit per-request model
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok, "-m flag must be present in the run argv")
+	assert.Equal(t, "gpt-5-codex-override", m, "request model must override the binding model in argv")
+}
+
+// EXTENSIBILITY — empty ChatRequest.Model falls back to the binding's model.
+func TestStreamChat_EmptyRequestModelFallsBackToBinding(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	p := NewStreamProvider(Config{
+		Binding:    streamBinding("gpt-4-fallback", nil),
+		BinaryPath: "codex",
+		Runner:     mr,
+	})
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "go", WorkDir: "/tmp/ws",
+		// no Model — binding model must be used
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	m, ok := argValue(mr.calls[1].Args, modelFlag)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-4-fallback", m, "empty request model must fall back to the binding model")
+}
+
 // REGRESSION (shared decoder) — batch RunAgent and the stream Chat fold the SAME
 // event fixture into consistent summaries/sessions/tokens. This proves the
 // shared decodeLine + foldEvent primitives keep the two paths from diverging.
