@@ -118,12 +118,13 @@ type Deps struct {
 // (AgentProviderFor) dispatches on the BACKEND axis, NOT the provider
 // (org-readiness Phase 2): claude-code -> the claude-cli agent adapter (which
 // may now carry a non-claude connection; endpoint+key injected in the adapter),
-// opencode -> adapter/opencode. There is no native-HTTP agent adapter, so a
-// provider's chat credentials/env flow through the HTTP adapter on the chat path
-// but through opencode's subprocess env on the agent path — the two opencode
-// paths must agree on the provider vocabulary (see domprovider.Canonicalize),
-// which is why an env/-m mismatch in opencode is a live bug rather than a dead
-// branch. The backend and provider are now ORTHOGONAL.
+// opencode -> adapter/opencode, codex -> adapter/codex (subscription-only; no
+// key revealed, no AllowAllTools knob). There is no native-HTTP agent adapter,
+// so a provider's chat credentials/env flow through the HTTP adapter on the chat
+// path but through the subprocess env on the agent path — the two opencode paths
+// must agree on the provider vocabulary (see domprovider.Canonicalize), which is
+// why an env/-m mismatch in opencode is a live bug rather than a dead branch.
+// The backend and provider are ORTHOGONAL.
 type Factory struct {
 	deps Deps
 }
