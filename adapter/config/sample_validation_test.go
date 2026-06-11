@@ -1,12 +1,15 @@
 package config_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
+	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +34,42 @@ func (p profileKindChecker) ProfileKind(alias string) (string, bool) {
 type allFilesExist struct{}
 
 func (allFilesExist) FileExists(string, string) bool { return true }
+
+// TestInterviewerProfile_ResolvesToCodexBinding verifies the full chain
+// defaults → Load → ProfilesFromConfig → StaticProfileResolver → Resolve
+// for the "interviewer" alias. The agent factory and stream selector consume
+// the ResolvedBinding produced by Resolve, not the raw ProfileConfig struct,
+// so this test closes the gap between "the profile is loaded" (covered by
+// TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel) and "the profile
+// RESOLVES to a codex binding that the factory will dispatch correctly".
+//
+// The subscription path (empty ConnectionRef) sets Provider = "claude-cli",
+// Backend = "codex", and Model = "gpt-5.5"; the agent factory dispatches on
+// Backend alone, so it routes to adapter/codex.New regardless of Provider.
+func TestInterviewerProfile_ResolvesToCodexBinding(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	cfg, err := adapterconfig.Load(filepath.Join(tmpDir, "config.yaml"))
+	require.NoError(t, err)
+
+	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
+	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
+	require.NoError(t, err, "default profile registry must construct a valid resolver")
+
+	binding, err := resolver.Resolve(context.Background(), "interviewer")
+	require.NoError(t, err, "interviewer alias must resolve (it is present in the default registry)")
+
+	assert.Equal(t, provider.ProfileKindAgent, binding.Kind, "interviewer must be agent-kind")
+	assert.Equal(t, "codex", binding.Backend, "interviewer must resolve to the codex backend")
+	assert.Equal(t, "gpt-5.5", binding.Model, "interviewer must resolve to gpt-5.5")
+	// The subscription path (empty ConnectionRef) never reveals a key: RevealKey
+	// must return empty-string, not an error, so it is safe to call even on a
+	// codex binding (which never needs a key — the assert protects the subscription-only invariant).
+	key, keyErr := binding.RevealKey(context.Background())
+	require.NoError(t, keyErr, "codex interviewer RevealKey must not error (subscription-only path)")
+	assert.Empty(t, key, "codex interviewer must never carry an API key")
+}
 
 // TestSampleFeaturePipeline_ValidatesWithDefaultProfiles is the Phase 3 Task 2
 // acceptance: the committed samples/feature-pipeline/workflow.json still passes
