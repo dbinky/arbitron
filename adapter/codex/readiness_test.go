@@ -174,6 +174,57 @@ func TestEnvRunner_InjectsEnvOntoForwardedSpec(t *testing.T) {
 	assert.Equal(t, injected, fr.gotSpec.Env, "envRunner must set spec.Env to the injected env, replacing any prior value")
 }
 
+// FA16 PAIRED (§5+§10) — the version probe (version.go) and the readiness check
+// (readiness.go) share the minCodexVersion threshold and the same binary
+// resolution. The threshold is a BOUNDARY: exactly minCodexVersion is accepted
+// (probe succeeds, Readiness can reach the login probe), while one minor version
+// below is rejected by probeVersion (ErrIncompatibleCodex → NotInstalled).
+//
+// This table test pins the collapse contract: BOTH a binary-start error AND an
+// ErrIncompatibleCodex from the version probe map to the exact same NotInstalled
+// state, never to an error. The versions used here reference minCodexVersion
+// directly so a floor change is a one-line, test-caught update in BOTH units.
+func TestReadiness_VersionThresholdParity(t *testing.T) {
+	cases := []struct {
+		name    string
+		lines   []string
+		waitErr error
+		startErr error
+	}{
+		{
+			name:     "binary not found (start error)",
+			startErr: errors.New(`exec: "codex": not found`),
+		},
+		{
+			name:  "version below minimum (ErrIncompatibleCodex path)",
+			lines: []string{"codex-cli 0.0.1"},
+		},
+		{
+			// A version that is one minor below minCodexVersion (0.137.0 → 0.136.x).
+			// ErrIncompatibleCodex must still be returned by probeVersion and
+			// collapsed to NotInstalled here.
+			name:  "version one minor below minimum",
+			lines: []string{"codex-cli 0.136.9"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			mr := &multiRunner{scripts: []runScript{{
+				lines:    tc.lines,
+				startErr: tc.startErr,
+			}}}
+			state, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: mr})
+			require.NoError(t, err, "version/start failures must be a STATE, not an error")
+			assert.Equal(t, NotInstalled, state,
+				"any version probe failure must collapse to NotInstalled (§5+§10 shared threshold)")
+			// The login probe must NOT run: only one call expected.
+			assert.Len(t, mr.calls, 1, "login probe must not run after version failure")
+		})
+	}
+}
+
 // guard — TrimSpace handling: an env entry list with no OPENAI_API_KEY remains
 // clean even when the parent has unrelated vars set. (Defense-in-depth around
 // the security test.)
