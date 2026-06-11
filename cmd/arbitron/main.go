@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/codex"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
 	adaptcrypto "github.com/arbitron/arbitron/adapter/crypto"
 	"github.com/arbitron/arbitron/adapter/dashboard"
@@ -729,9 +730,28 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
-	// profiles route to the tool-enabled (YOLO) claude-cli streaming adapter.
-	streamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
-	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(providerFactory, streamAgent)
+	// profiles route by BACKEND to the matching tool-enabled streaming adapter —
+	// claude-code → the claude-cli stream adapter, codex → the codex stream
+	// adapter (`codex exec --json`, subscription-only). An empty agent backend is
+	// floored to the SAME deployment default the batch AgentCallExecutor uses
+	// (cfg.LLM.DefaultAgentBackend); opencode and unknown backends fail closed.
+	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
+	codexStreamAgent := codex.NewStreamProvider(codex.Config{
+		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH,
+		// the per-mission timeout reuses the shared LLM timeout floor, and the
+		// response cap mirrors the factory's codex arm. No allow-all knob: codex
+		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+	})
+	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
+		providerFactory,
+		map[string]engine.ChatProvider{
+			workflow.BackendClaudeCode: claudeStreamAgent,
+			workflow.BackendCodex:      codexStreamAgent,
+		},
+		cfg.LLM.DefaultAgentBackend,
+	)
 
 	// Register one interactive executor instance under BOTH interactive node
 	// types. Notification creation is handled by the engine when it processes the

@@ -8,6 +8,7 @@ import (
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,14 +36,26 @@ func (f *fakeChatProviderSelector) ChatProviderFor(b provider.ResolvedBinding) (
 	return f.returns, nil
 }
 
+// streamsByBackend assembles a fresh backend→stream map plus the per-backend
+// sentinels, so each test asserts the exact provider routed by backend.
+func streamsByBackend() (claude, codex *sentinelChatProvider, m map[string]engine.ChatProvider) {
+	claude = &sentinelChatProvider{name: "claude-stream"}
+	codex = &sentinelChatProvider{name: "codex-stream"}
+	return claude, codex, map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: claude,
+		workflow.BackendCodex:      codex,
+	}
+}
+
 // TestInteractiveStreamSelector_ChatKind verifies that a chat-kind binding
-// delegates to the injected ChatProviderSelector and returns its result.
+// delegates to the injected ChatProviderSelector and returns its result
+// (unchanged by the backend-dispatch generalization).
 func TestInteractiveStreamSelector_ChatKind(t *testing.T) {
 	chatSentinel := &sentinelChatProvider{name: "chat"}
 	fakeSelector := &fakeChatProviderSelector{returns: chatSentinel}
-	agentSentinel := &sentinelChatProvider{name: "agent"}
+	_, _, m := streamsByBackend()
 
-	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, agentSentinel)
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
 
 	binding := provider.ResolvedBinding{
 		Kind:     provider.ProfileKindChat,
@@ -56,87 +69,113 @@ func TestInteractiveStreamSelector_ChatKind(t *testing.T) {
 	assert.Equal(t, binding, fakeSelector.got, "binding must be forwarded to ChatProviderSelector unchanged")
 }
 
-// TestInteractiveStreamSelector_AgentKind_ClaudeCLI verifies that an agent-kind
-// binding with Provider "claude-cli" returns the injected agent-stream provider.
-func TestInteractiveStreamSelector_AgentKind_ClaudeCLI(t *testing.T) {
-	chatSentinel := &sentinelChatProvider{name: "chat"}
-	fakeSelector := &fakeChatProviderSelector{returns: chatSentinel}
-	agentSentinel := &sentinelChatProvider{name: "agent"}
-
-	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, agentSentinel)
-
-	binding := provider.ResolvedBinding{
-		Kind:     provider.ProfileKindAgent,
-		Provider: "claude-cli",
-		Model:    "claude-3-5-sonnet",
-	}
-
-	got, err := sel.StreamProviderFor(binding)
-	require.NoError(t, err)
-	assert.Same(t, agentSentinel, got, "agent/claude-cli binding must return the injected agentStream provider")
-}
-
-// TestInteractiveStreamSelector_AgentKind_EmptyProvider verifies that an
-// agent-kind binding with an empty Provider (subscription path) also returns the
-// injected agent-stream provider (empty == claude-cli in MVP).
-func TestInteractiveStreamSelector_AgentKind_EmptyProvider(t *testing.T) {
-	chatSentinel := &sentinelChatProvider{name: "chat"}
-	fakeSelector := &fakeChatProviderSelector{returns: chatSentinel}
-	agentSentinel := &sentinelChatProvider{name: "agent"}
-
-	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, agentSentinel)
-
-	binding := provider.ResolvedBinding{
-		Kind:     provider.ProfileKindAgent,
-		Provider: "", // empty = subscription / claude-cli path
-		Model:    "claude-3-5-sonnet",
-	}
-
-	got, err := sel.StreamProviderFor(binding)
-	require.NoError(t, err)
-	assert.Same(t, agentSentinel, got, "agent/empty-provider binding must return the injected agentStream provider")
-}
-
-// TestInteractiveStreamSelector_AgentKind_NonClaudeProvider verifies that an
-// agent-kind binding with a non-claude-cli provider returns an error (MVP only
-// supports claude-cli for interactive agent streaming).
-func TestInteractiveStreamSelector_AgentKind_NonClaudeProvider(t *testing.T) {
+// TestInteractiveStreamSelector_AgentKind_ClaudeCode verifies that an agent-kind
+// binding with Backend "claude-code" returns the claude stream adapter.
+func TestInteractiveStreamSelector_AgentKind_ClaudeCode(t *testing.T) {
 	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
-	agentSentinel := &sentinelChatProvider{name: "agent"}
+	claude, _, m := streamsByBackend()
 
-	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, agentSentinel)
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
 
-	binding := provider.ResolvedBinding{
-		Kind:     provider.ProfileKindAgent,
-		Provider: "openrouter",
-		Model:    "openai/gpt-4o",
-	}
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendClaudeCode,
+		Model:   "claude-3-5-sonnet",
+	})
+	require.NoError(t, err)
+	assert.Same(t, claude, got, "agent/claude-code binding must return the claude stream adapter")
+}
 
-	got, err := sel.StreamProviderFor(binding)
-	require.Error(t, err, "non-claude-cli agent binding must return an error")
+// TestInteractiveStreamSelector_AgentKind_Codex verifies that an agent-kind
+// binding with Backend "codex" returns the codex stream adapter.
+func TestInteractiveStreamSelector_AgentKind_Codex(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, codex, m := streamsByBackend()
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendCodex,
+		Model:   "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	assert.Same(t, codex, got, "agent/codex binding must return the codex stream adapter")
+}
+
+// TestInteractiveStreamSelector_AgentKind_EmptyBackendFloored verifies that an
+// agent-kind binding with an empty Backend is floored to the injected default
+// backend and then dispatched (here: default codex → codex stream).
+func TestInteractiveStreamSelector_AgentKind_EmptyBackendFloored(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, codex, m := streamsByBackend()
+
+	// Default floor = codex, so an empty backend must route to the codex stream.
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendCodex)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: "", // empty → floored to the default backend
+		Model:   "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	assert.Same(t, codex, got, "empty backend must be floored to the default backend, then dispatched")
+}
+
+// TestInteractiveStreamSelector_AgentKind_Opencode verifies that an agent-kind
+// binding with Backend "opencode" fails closed: opencode has no stream adapter
+// and interactive streaming is explicitly unsupported for it.
+func TestInteractiveStreamSelector_AgentKind_Opencode(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, _, m := streamsByBackend()
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendOpencode,
+		Model:   "anthropic/claude-3-5-sonnet",
+	})
+	require.Error(t, err, "opencode agent streaming must fail closed")
 	assert.Nil(t, got)
-	assert.Contains(t, err.Error(), "openrouter")
-	// SF3 (PR #18, comment 3350533149): the error must be a package-level
-	// sentinel wrapped with %w so callers can distinguish unsupported-provider
-	// from other failures via errors.Is.
-	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentProvider)
+	assert.Contains(t, err.Error(), "opencode")
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend)
+}
+
+// TestInteractiveStreamSelector_AgentKind_UnknownBackend verifies that an
+// unknown/typo backend (incl. a case-variant) fails closed with the sentinel.
+func TestInteractiveStreamSelector_AgentKind_UnknownBackend(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, _, m := streamsByBackend()
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	for _, backend := range []string{"Codex", "not-a-backend", "CLAUDE-CODE"} {
+		got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+			Kind:    provider.ProfileKindAgent,
+			Backend: backend,
+			Model:   "m",
+		})
+		require.Errorf(t, err, "unknown backend %q must fail closed", backend)
+		assert.Nil(t, got)
+		assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend)
+		assert.Contains(t, err.Error(), backend, "the error must quote the offending backend")
+	}
 }
 
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an
-// unknown/empty kind returns an error.
+// unknown/empty kind returns an error (unchanged).
 func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
 	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
-	agentSentinel := &sentinelChatProvider{name: "agent"}
+	_, _, m := streamsByBackend()
 
-	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, agentSentinel)
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
 
-	binding := provider.ResolvedBinding{
-		Kind:     provider.ProfileKind("unknown-kind"),
-		Provider: "claude-cli",
-		Model:    "claude-3-5-sonnet",
-	}
-
-	got, err := sel.StreamProviderFor(binding)
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKind("unknown-kind"),
+		Backend: workflow.BackendClaudeCode,
+		Model:   "claude-3-5-sonnet",
+	})
 	require.Error(t, err, "unknown kind must return an error")
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "unknown")

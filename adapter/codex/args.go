@@ -67,7 +67,30 @@ const (
 // is fully-open by default. Per-request ToolScope narrowing is deferred to
 // Phase 2's shared agent path (mirrors the opencode/claudecli posture work).
 func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([]string, error) {
-	model := strings.TrimSpace(binding.Model)
+	return buildExecArgs(binding.Model, mission.WorkDir)
+}
+
+// buildExecArgs is the SHARED `codex exec` argv builder consumed by both the
+// batch buildArgs (AgentMission/ResolvedBinding) and the streaming StreamProvider
+// (engine.ChatRequest). Centralizing the argv here keeps the batch and stream
+// paths on ONE exec contract (subcommand, bypass posture, model routing, --cd,
+// --json) so a flag change is a single edit, never a fork.
+//
+// Fail-closed: an empty model returns (nil, ErrModelRequired) so neither path
+// launches a default-model run. The WorkDir is emitted verbatim as `--cd`; the
+// empty-WorkDir guard is enforced by the caller (provider.go / stream_adapter.go)
+// before launch.
+//
+// SECURITY: only the model and working-dir strings reach argv here; the prompt is
+// stdin-only and secrets are env-only (env.go) — never argv or logs.
+//
+// ToolScope narrowing is intentionally NOT wired into argv: `codex exec` exposes
+// no per-tool allowlist flag, so the bypass posture stays fully open. Per-request
+// ToolScope precedence is honoured at the request boundary (the stream provider
+// prefers a non-empty ChatRequest.ToolScope over its global scope), matching
+// claudecli's precedence shape even though codex has no flag to emit it through.
+func buildExecArgs(model, workDir string) ([]string, error) {
+	model = strings.TrimSpace(model)
 	if model == "" {
 		return nil, ErrModelRequired
 	}
@@ -75,7 +98,7 @@ func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([
 		execSubcommand,
 		bypassFlag,
 		modelFlag, model,
-		cdFlag, mission.WorkDir,
+		cdFlag, workDir,
 		jsonFlag,
 	}, nil
 }
