@@ -16,24 +16,27 @@ The following carry-forward items were surfaced during draft implementation and
 are seeded here for the review loop to verify/close (each is a real review
 target, not a confirmed defect):
 
-1. **Coarse streaming granularity.** Codex emits whole `item.completed`
-   `agent_message` items, not token deltas, so `StreamChat` emits one
-   `ChatChunk` per item rather than per token. Confirm the interactive_agent UX
-   degrades acceptably (chunky but ordered), that the terminal chunk carries the
-   thread id + token counts, and that an empty/partial item is handled.
+1. ~~**Coarse streaming granularity.**~~ CLOSED (FA7). `StreamChat` emits one
+   `ChatChunk` per `item.completed` (chunky but ordered — per-token deltas are
+   not available from `codex exec --json`). `TestStreamChat_ChatChunkSequence`
+   confirms ordering. Terminal chunk carries `thread_id + tokensIn/Out`
+   (`TestStreamChat_ChatChunkSequence` lines 89-91). Unknown/partial
+   `item.type` values are skipped by `foldEvent` (FA4 — "unknown item kinds
+   tolerated"). The UX degradation is documented and accepted for v1.
 
-2. **No per-request stream timeout.** `engine.ChatRequest` has no per-request
-   timeout field (unlike `AgentMission.Timeout`), so the stream path uses only
-   the adapter's configured timeout floor. Verify a long/hung interactive codex
-   run cannot block unbounded and that the floor is sane (and surfaced/clamped
-   in the composition root).
+2. ~~**No per-request stream timeout.**~~ CLOSED (FA7). Stream path uses the
+   adapter `Config.Timeout` floor (set in composition root to
+   `cfg.LLM.TimeoutSeconds`). `TestStreamChat_Timeout` verifies a 10ms floor
+   closes the channel with an error chunk and no clean Done. A hung `codex exec
+   --json` cannot block the stream unbounded.
 
-3. **Model-availability failure legibility.** This host's ChatGPT account
-   rejected `gpt-5`/`gpt-5-codex` at runtime (codex returned `error` +
-   `turn.failed`); the sample uses `gpt-5.5`. Confirm a model the account cannot
-   use surfaces a clean, legible node failure (typed error naming codex/model),
-   never a hang or silent empty result, on BOTH batch and stream paths — and
-   that the docs note `gpt-5.5` availability depends on the user's plan.
+3. ~~**Model-availability failure legibility.**~~ CLOSED (FA6+FA7). Batch:
+   `TestRunAgent_NonZeroExit` verifies error names the model ("gpt-5-codex").
+   Stream: `TestStreamProviderChat_TurnFailedReturnsError` verifies `turn.failed`
+   returns a typed error containing the failure message ("model not supported
+   for this account"). Neither path hangs or returns a silent empty result.
+   The sample profile uses `gpt-5.5`; model availability depends on the
+   ChatGPT plan and is documented in `docs/install/README.md`.
 
 4. ~~**Readiness health-surface redaction.**~~ CLOSED (FA11). `RedactedBackend`
    struct has only `{Name, State}` (positive allow-list, struct-level).

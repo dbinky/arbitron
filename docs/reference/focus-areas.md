@@ -41,7 +41,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 17 | Readiness + health surface (§10+§11 — state flows `codex.Readiness` → `backendhealth` → `RedactedConfig.Backends` → both read surfaces; a probe fault drops the entry without failing the config read) | [x] | done |
 | 18 | Sample config + dispatch (§12+§8+§9 — the `interviewer` codex profile resolves to `Backend == "codex"` and routes through BOTH the agent factory and the stream selector; `planner`/`coder` resolve to claude-code/`opus-4.8`) | [x] | done |
 | 19 | Subscription-env security across all three paths (§3+§7+§10 — no `OPENAI_API_KEY`, `HOME` preserved, `RevealKey` never called on batch, stream, AND readiness; prompt off argv everywhere) | [x] | done |
-| 20 | Composition root + acceptance (§12 wiring + `test/acceptance/scenario_03_*` — `Deps.Codex*`, codex stream adapter, backend→stream map, default floor all wired; the both-agent-backends scenario exercises a third backend through the fake runner; `go build ./...` green) | [ ] | pending |
+| 20 | Composition root + acceptance (§12 wiring + `test/acceptance/scenario_03_*` — `Deps.Codex*`, codex stream adapter, backend→stream map, default floor all wired; the both-agent-backends scenario exercises a third backend through the fake runner; `go build ./...` green) | [x] | done |
 
 ---
 
