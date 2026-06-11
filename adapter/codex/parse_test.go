@@ -35,6 +35,7 @@ func TestParseOutput_FullStream(t *testing.T) {
 	assert.Contains(t, res.steps[0].Summary, "echo hi")
 	assert.Equal(t, "assistant", res.steps[1].Kind, "agent_message maps to assistant")
 	assert.Equal(t, "Edited the workspace toward the focus area.", res.steps[1].Summary)
+	assert.False(t, res.failed, "successful turn must not set parsed.failed")
 }
 
 // HAPPY — when several agent_message items appear, the LAST one is the Summary
@@ -122,6 +123,40 @@ func TestParseOutput_ErrorEventSurfacesMessage(t *testing.T) {
 	res, err := parseOutput(lines)
 	require.NoError(t, err)
 	assert.Contains(t, res.summary, "model not supported")
-	require.Len(t, res.steps, 1, "the error folds into a single result step")
+	require.Len(t, res.steps, 1, "the error folds into a single result step (dedup)")
 	assert.Equal(t, "result", res.steps[0].Kind)
+	assert.True(t, res.failed, "failed flag must be set even when both events carry the same message")
+}
+
+// STREAM-HONESTY — parsed.failed is the signal the stream adapter's Finalize
+// reads to emit a typed error chunk rather than a silent Done. Pin its value
+// across all failure shapes: error-only, turn.failed-only, and the normal
+// codex dual-event pair (error + turn.failed carrying the same message).
+func TestParseOutput_FailedFlagSetOnTerminalError(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{
+			"error event only",
+			[]string{`{"type":"error","message":"model unavailable"}`},
+		},
+		{
+			"turn.failed only",
+			[]string{`{"type":"turn.failed","error":{"message":"model unavailable"}}`},
+		},
+		{
+			"error then turn.failed (codex normal dedup pair)",
+			[]string{
+				`{"type":"error","message":"model unavailable"}`,
+				`{"type":"turn.failed","error":{"message":"model unavailable"}}`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := parseOutput(tc.lines)
+			require.NoError(t, err)
+			assert.True(t, res.failed, "parsed.failed must be true so stream Finalize fails closed")
+		})
+	}
 }
