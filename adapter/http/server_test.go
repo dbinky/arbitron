@@ -295,6 +295,73 @@ func TestRouter_SystemConfig(t *testing.T) {
 	assert.Equal(t, "localhost", server["host"])
 }
 
+// fakeBackendHealth is a stub BackendHealthChecker that records call count and
+// returns a fixed backends list, proving the SystemHandler delegates to the
+// INJECTED component (the shared TTL cache) rather than forking a probe itself.
+type fakeBackendHealth struct {
+	calls    int
+	backends []config.RedactedBackend
+}
+
+func (f *fakeBackendHealth) Backends(context.Context) []config.RedactedBackend {
+	f.calls++
+	return f.backends
+}
+
+// INJECTION — GET /system/config must surface the backends list from the injected
+// BackendHealth seam (not a per-request fork). This pins the composition-root
+// wiring: a shared component is consulted, and its result reaches the wire.
+func TestRouter_SystemConfig_UsesInjectedBackendHealth(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	fake := &fakeBackendHealth{backends: []config.RedactedBackend{{Name: "codex", State: "ready"}}}
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service: svc, Workflows: wfRepo, Instances: instRepo, NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo, FileReader: fileReader, EventBus: bus, Config: cfg,
+		QueueManager: qm, QueueRepo: qr, BackendHealth: fake,
+	})
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		backends, ok := resp["backends"].([]any)
+		require.True(t, ok, "backends list must be present from the injected seam")
+		require.Len(t, backends, 1)
+		entry := backends[0].(map[string]any)
+		assert.Equal(t, "codex", entry["name"])
+		assert.Equal(t, "ready", entry["state"])
+	}
+	// The handler delegates to the injected seam on every request (the TTL cache
+	// lives INSIDE the seam, so the dedupe is the Checker's job, verified in
+	// adapter/backendhealth; here we pin that the handler always consults it).
+	assert.Equal(t, 3, fake.calls, "handler must consult the injected backend-health seam per request")
+}
+
+// INJECTION — a nil BackendHealth seam (legacy/tests) must NOT fork a probe and
+// must omit the backends list rather than 500 or hang.
+func TestRouter_SystemConfig_NilBackendHealthOmitsList(t *testing.T) {
+	wfRepo, instRepo, nodeExecRepo, snapRepo, svc, fileReader, bus, cfg, qm, qr := newRouterTestDeps()
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service: svc, Workflows: wfRepo, Instances: instRepo, NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo, FileReader: fileReader, EventBus: bus, Config: cfg,
+		QueueManager: qm, QueueRepo: qr, // BackendHealth deliberately nil
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	if b, present := resp["backends"]; present {
+		assert.Empty(t, b, "a nil backend-health seam must yield an empty/absent backends list, never a fork")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests: Workflow routes wired correctly
 // ---------------------------------------------------------------------------

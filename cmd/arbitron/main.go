@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/arbitron/arbitron/adapter/backendhealth"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/codex"
 	configadapter "github.com/arbitron/arbitron/adapter/config"
@@ -180,6 +181,12 @@ type domainStack struct {
 	authMW       *adapthttp.AuthMiddleware
 	authHandler  *adapthttp.AuthHandler
 	sweepCancel  context.CancelFunc
+	// backendHealth is the shared, TTL-cached backend-health component (codex
+	// install/login readiness). Constructed ONCE here and injected into BOTH the
+	// HTTP SystemHandler and the MCP server so the probe forks at most once per
+	// TTL across both surfaces (and the unauthenticated local GET /system/config
+	// route cannot fork a codex probe pair per request).
+	backendHealth *backendhealth.Checker
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -248,6 +255,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Users:               ds.userSvc,
 		ScheduleService:     ds.scheduleSvc,
 		Logger:              ds.logger,
+		BackendHealth:       ds.backendHealth,
 	}
 }
 
@@ -855,6 +863,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		go sweepExpiredDeviceCodes(sweepCtx, deviceSvc, deviceCodeSweepInterval, logger)
 	}
 
+	// Shared backend-health component: ONE TTL-cached Checker, injected into both
+	// the HTTP SystemHandler and the MCP server below. A nil runner falls back to
+	// the production os/exec probe (codex.Readiness); a 0 TTL uses the package
+	// default. Constructing it here (not per request) is what gives the cache its
+	// request-spanning lifetime.
+	backendHealthChecker := backendhealth.NewChecker(nil, 0, nil)
+
 	return &domainStack{
 		cfg:                 cfg,
 		settings:            settings,
@@ -897,6 +912,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authMW:              authMW,
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
+		backendHealth:       backendHealthChecker,
 	}, nil
 }
 
@@ -954,6 +970,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Users:               ds.userSvc,
 		DashboardStats:      ds.dashboardSvc,
 		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
+		BackendHealth:       ds.backendHealth,
 	})
 
 	// 16. Add request logging middleware (wraps the entire router).

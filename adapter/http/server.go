@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/httprate"
 	"github.com/google/uuid"
 
-	"github.com/arbitron/arbitron/adapter/backendhealth"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
@@ -125,6 +124,12 @@ type RouterDeps struct {
 	// /api/v1/schedules (org-readiness Phase 3). Authz lives in the shared
 	// schedule.Service. Nil disables the routes (legacy/tests).
 	ScheduleHandler *ScheduleHandler
+	// BackendHealth is the shared, TTL-cached backend-health component (codex
+	// install/login readiness) constructed once in the composition root and
+	// injected into BOTH this HTTP SystemHandler and the MCP server, so the cache
+	// outlives any single request and the probe forks at most once per TTL. Nil
+	// omits the backends list (legacy/tests).
+	BackendHealth BackendHealthChecker
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -217,7 +222,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 	if settings == nil {
 		settings = config.NewSettingsStore(&d.Config.Notifications.Teams)
 	}
-	sysHandler := &SystemHandler{config: d.Config, settings: settings, queueManager: d.QueueManager, queueRepo: d.QueueRepo}
+	sysHandler := &SystemHandler{config: d.Config, settings: settings, queueManager: d.QueueManager, queueRepo: d.QueueRepo, backendHealth: d.BackendHealth}
 
 	var interactiveHandler *InteractiveHandler
 	if d.ConversationHandler != nil {
@@ -443,6 +448,15 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// BackendHealthChecker probes backend-scoped health (codex install/login
+// readiness) and projects it into the transport-neutral RedactedBackend list.
+// It is the injected, TTL-cached component (adapter/backendhealth.Checker) shared
+// with the MCP surface; the handler depends on this seam, not the concrete type,
+// so a frequently-polled GET /system/config forks at most one probe pair per TTL.
+type BackendHealthChecker interface {
+	Backends(ctx context.Context) []config.RedactedBackend
+}
+
 // SystemHandler handles system configuration endpoints.
 type SystemHandler struct {
 	mu           sync.Mutex // guards the runtime-mutable Queue caps on config
@@ -450,6 +464,10 @@ type SystemHandler struct {
 	settings     *config.SettingsStore // synchronized owner of Teams settings
 	queueManager QueueManagerPort
 	queueRepo    instance.QueueRepository
+	// backendHealth is the shared, TTL-cached backend-health component injected
+	// from the composition root. When nil, the handler omits the backends list
+	// (legacy/tests) rather than forking an uncached probe per request.
+	backendHealth BackendHealthChecker
 }
 
 // GetConfig handles GET /system/config. It marshals the shared
@@ -472,9 +490,13 @@ func (h *SystemHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	resp.Queue.QueuedCount = queued
 	resp.Queue.WaitingCount = waiting
 	// Attach backend-scoped health (codex install/login readiness) so the UI can
-	// pre-flight a run. Best-effort: a probe fault drops the entry rather than
-	// failing the read. nil runner ⇒ production os/exec probe.
-	resp.Backends = backendhealth.Backends(r.Context(), nil)
+	// pre-flight a run. Served from the shared, TTL-cached component injected at
+	// the composition root: a cached read forks nothing, so a frequently-polled
+	// (and, in local mode, unauthenticated) GET /system/config cannot fork a codex
+	// probe pair per request. Nil seam ⇒ omit the list (legacy/tests).
+	if h.backendHealth != nil {
+		resp.Backends = h.backendHealth.Backends(r.Context())
+	}
 	WriteJSON(w, http.StatusOK, resp)
 }
 
