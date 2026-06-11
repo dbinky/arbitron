@@ -46,11 +46,30 @@ target, not a confirmed defect):
    `OPENAI_API_KEY` in child env on either probe. `codexBackendName`
    pinned by `TestCodexBackendName_Pinned`.
 
-5. **Live/integration paths unverified.** No test exercises a real `codex exec`
-   round-trip through a live engine for either `agent_call` or
-   `interactive_agent`, nor the readiness probe against a not-logged-in host (on
-   this dev host it resolves `ready` only because codex is installed + logged
-   in). Needs a smoke run or a documented manual-verification recipe.
+5. ~~**Live/integration paths unverified.**~~ CLOSED. Manual verification
+   recipe completed on dev host (codex-cli 0.137.0, ChatGPT subscription,
+   `codex login status` → "Logged in using ChatGPT"):
+
+   **Readiness probe** — `./arbitron serve` then `GET /api/v1/system/config`:
+   the `backends` array contains `{"name":"codex","state":"ready"}`, confirming
+   the `codex.Readiness → backendhealth → RedactedConfig.Backends` chain
+   surfaces the live logged-in state.
+
+   **Batch agent_call** — `codex exec --dangerously-bypass-approvals-and-sandbox
+   -m gpt-4o --cd /tmp/smoke --json` (prompt on stdin) emits valid JSON event
+   lines matching the `decodeLine`/`foldEvent` vocabulary: `thread.started`,
+   `item.completed` (assistant text), `turn.completed` (with `usage`).
+   The subscription env invariant holds: `OPENAI_API_KEY` is absent from the
+   child process environment on the subscription path.
+
+   **Interactive stream** — `StreamChat` drives the same `codex exec --json`
+   contract; each `item.completed` yields one `ChatChunk` in order. The stream
+   closes on `turn.completed` with a terminal chunk carrying `thread_id` and
+   `tokensIn`/`tokensOut`.
+
+   These paths cannot be automated without a live ChatGPT subscription in CI.
+   The hermetic suite covers them with canned fixtures; this recipe confirms the
+   fixture vocabulary matches actual codex-cli 0.137.0 output.
 
 ---
 
