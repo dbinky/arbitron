@@ -114,3 +114,16 @@ func TestBackends_FaultOmitsEntry(t *testing.T) {
 	out := Backends(context.Background(), r)
 	assert.Empty(t, out, "a probe fault must not surface a misleading entry, but must not break the read")
 }
+
+// CLI-COUPLING PIN — the backend name surfaced on the health surface is pinned
+// as a string literal here, mirroring TestReadiness_LoginSubcommandPinned
+// (readiness.go), TestCodexEnv_CodexHomeVarNamePinned (env.go), and
+// TestMinCodexVersion_Pinned (version.go). codexBackendName flows as the JSON
+// "name" field on RedactedBackend; the UI/CLI correlates it with
+// workflow.BackendCodex ("codex") to map "codex not logged in" warnings to the
+// right profiles before a run. A rename without this pin would break the
+// correlation silently.
+func TestCodexBackendName_Pinned(t *testing.T) {
+	assert.Equal(t, "codex", codexBackendName,
+		"backend name must match workflow.BackendCodex and the health surface vocab consumed by the UI/CLI")
+}
