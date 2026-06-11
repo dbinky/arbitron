@@ -670,13 +670,14 @@ func TestLoad_DefaultProfileRegistry_AgentToolScopes(t *testing.T) {
 	assert.Empty(t, byAlias["assessor"], "chat profiles must not carry a tool allowlist")
 }
 
-// TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel verifies the
-// feature-pipeline sample's intended mixed-model split ships in the default
-// registry (Phase 3 Task 2): the interviewer runs on the codex backend
-// (gpt-5.5, ChatGPT subscription) while planner/coder run on claude-code
-// (opus-4.8). The backend axis is independent of the connection, so this is a
-// pure profile-definition change — workflow.json is untouched.
-func TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel(t *testing.T) {
+// TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults verifies the
+// feature-pipeline sample's DEFAULT profile registry: the interviewer runs on
+// the claude-code default (empty backend, model "") so a fresh install runs the
+// bundled sample out of the box, while planner/coder run on claude-code
+// (opus-4.8). The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
+// the sample config, not the active default (PR #32 Must Fix #4 — do not ship a
+// default the authoring host could not run).
+func TestLoad_DefaultProfileRegistry_FeaturePipelineDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -690,11 +691,13 @@ func TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel(t *testing.T) {
 		byAlias[p.Alias] = p
 	}
 
-	// interviewer → codex / gpt-5.5 / agent (the codex-backed interactive node).
+	// interviewer → claude-code default (empty backend, model "") so it runs out
+	// of the box on the claude subscription; it must NOT pin the codex backend.
 	interviewer := byAlias["interviewer"]
 	assert.Equal(t, "agent", interviewer.Kind)
-	assert.Equal(t, "codex", interviewer.Backend, "interviewer must run on the codex backend")
-	assert.Equal(t, "gpt-5.5", interviewer.Model)
+	assert.NotEqual(t, "codex", interviewer.Backend, "default interviewer must NOT pin codex (would need codex installed+logged-in and a gpt-5.5 plan)")
+	assert.Empty(t, interviewer.Backend, "default interviewer must inherit the backend (empty)")
+	assert.Empty(t, interviewer.Model, "default interviewer must use the subscription default model")
 
 	// planner + coder → claude-code / opus-4.8 / agent.
 	for _, alias := range []string{"planner", "coder"} {

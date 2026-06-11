@@ -35,18 +35,19 @@ type allFilesExist struct{}
 
 func (allFilesExist) FileExists(string, string) bool { return true }
 
-// TestInterviewerProfile_ResolvesToCodexBinding verifies the full chain
-// defaults → Load → ProfilesFromConfig → StaticProfileResolver → Resolve
-// for the "interviewer" alias. The agent factory and stream selector consume
-// the ResolvedBinding produced by Resolve, not the raw ProfileConfig struct,
-// so this test closes the gap between "the profile is loaded" (covered by
-// TestLoad_DefaultProfileRegistry_FeaturePipelineMixedModel) and "the profile
-// RESOLVES to a codex binding that the factory will dispatch correctly".
+// TestInterviewerProfile_ResolvesToClaudeCodeBinding verifies the full chain
+// defaults → Load → ProfilesFromConfig → StaticProfileResolver → Resolve for the
+// "interviewer" alias. The agent factory and stream selector consume the
+// ResolvedBinding produced by Resolve, not the raw ProfileConfig struct, so this
+// test closes the gap between "the profile is loaded" and "the profile RESOLVES
+// to a binding the factory dispatches correctly".
 //
-// The subscription path (empty ConnectionRef) sets Provider = "claude-cli",
-// Backend = "codex", and Model = "gpt-5.5"; the agent factory dispatches on
-// Backend alone, so it routes to adapter/codex.New regardless of Provider.
-func TestInterviewerProfile_ResolvesToCodexBinding(t *testing.T) {
+// The DEFAULT interviewer is claude-code with the subscription default model
+// (model ""), so a fresh install runs the bundled feature-pipeline sample out of
+// the box. The gpt-5.5/codex mixed-model split ships as a COMMENTED example in
+// the sample config (PR #32 Must Fix #4: do not ship a default the authoring host
+// could not run). The subscription path (empty ConnectionRef) reveals no key.
+func TestInterviewerProfile_ResolvesToClaudeCodeBinding(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
@@ -61,24 +62,28 @@ func TestInterviewerProfile_ResolvesToCodexBinding(t *testing.T) {
 	require.NoError(t, err, "interviewer alias must resolve (it is present in the default registry)")
 
 	assert.Equal(t, provider.ProfileKindAgent, binding.Kind, "interviewer must be agent-kind")
-	assert.Equal(t, "codex", binding.Backend, "interviewer must resolve to the codex backend")
-	assert.Equal(t, "gpt-5.5", binding.Model, "interviewer must resolve to gpt-5.5")
+	// The default interviewer sets no backend, so it resolves to the empty
+	// (inherit) backend — floored to the deployment default (claude-code) by the
+	// executor before dispatch. The key invariant this pins is that it is NOT the
+	// codex backend (which would require codex installed+logged-in and a gpt-5.5
+	// plan), so a fresh install runs out of the box.
+	assert.Empty(t, binding.Backend, "default interviewer must inherit the backend (empty), not pin codex")
+	assert.NotEqual(t, "codex", binding.Backend, "default interviewer must NOT pin the codex backend")
+	assert.Empty(t, binding.Model, "default interviewer must use the subscription default model (model \"\")")
 	// The subscription path (empty ConnectionRef) never reveals a key: RevealKey
-	// must return empty-string, not an error, so it is safe to call even on a
-	// codex binding (which never needs a key — the assert protects the subscription-only invariant).
+	// must return empty-string, not an error.
 	key, keyErr := binding.RevealKey(context.Background())
-	require.NoError(t, keyErr, "codex interviewer RevealKey must not error (subscription-only path)")
-	assert.Empty(t, key, "codex interviewer must never carry an API key")
+	require.NoError(t, keyErr, "interviewer RevealKey must not error (subscription-only path)")
+	assert.Empty(t, key, "default interviewer must never carry an API key")
 }
 
 // TestPlannerCoderProfiles_ResolveToClaudeCodeBindings complements
-// TestInterviewerProfile_ResolvesToCodexBinding by verifying the full resolver
-// chain for the planner and coder profiles: both must resolve to
+// TestInterviewerProfile_ResolvesToClaudeCodeBinding by verifying the full
+// resolver chain for the planner and coder profiles: both must resolve to
 // Backend="claude-code", Kind="agent", Model="opus-4.8" with an empty key
-// (subscription-only path). This confirms the mixed-model split in the default
-// registry: interviewer→codex, planner/coder→claude-code. The stream selector
-// dispatches on binding.Backend, so an incorrect backend value here would
-// silently route planner/coder to the wrong stream adapter.
+// (subscription-only path). The stream selector dispatches on binding.Backend, so
+// an incorrect backend value here would silently route planner/coder to the wrong
+// stream adapter.
 func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -105,12 +110,13 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 	}
 }
 
-// TestSampleFeaturePipeline_ValidatesWithDefaultProfiles is the Phase 3 Task 2
-// acceptance: the committed samples/feature-pipeline/workflow.json still passes
-// workflow.Validate against the default profile registry AFTER the mixed-model
-// repoint (interviewer→codex, planner/coder→claude-code). codex is a valid
-// agent backend (Phase 1 Task 1), and the interviewer/planner/coder profiles
-// stay agent-kind while assessor stays chat-kind, so kind-matching holds.
+// TestSampleFeaturePipeline_ValidatesWithDefaultProfiles is the acceptance that
+// the committed samples/feature-pipeline/workflow.json passes workflow.Validate
+// against the default profile registry. The DEFAULT interviewer runs on
+// claude-code (model ""), so the bundled sample validates and runs out of the box
+// (the gpt-5.5/codex split is a commented example, not the default — PR #32 Must
+// Fix #4). The interviewer/planner/coder profiles are agent-kind while assessor
+// is chat-kind, so kind-matching holds.
 func TestSampleFeaturePipeline_ValidatesWithDefaultProfiles(t *testing.T) {
 	// Load the default registry (no deployment config.yaml → defaults).
 	tmpDir := t.TempDir()
@@ -123,7 +129,7 @@ func TestSampleFeaturePipeline_ValidatesWithDefaultProfiles(t *testing.T) {
 		kinds[p.Alias] = p.Kind
 	}
 
-	// Sanity: the mixed-model repoint is in effect for this validation.
+	// Sanity: the profile kinds the sample relies on.
 	assert.Equal(t, "agent", kinds["interviewer"])
 	assert.Equal(t, "agent", kinds["planner"])
 	assert.Equal(t, "agent", kinds["coder"])

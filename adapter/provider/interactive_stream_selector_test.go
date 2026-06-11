@@ -266,6 +266,99 @@ func TestFactoryAndSelector_SharedBackendVocabulary(t *testing.T) {
 	assert.ErrorIs(t, errS, adapterprovider.ErrUnsupportedAgentBackend)
 }
 
+// TestBackendVocabulary_ThreeDispatchSitesAgree is the single table that pins the
+// agreed backend vocabulary and routing rules across ALL THREE dispatch sites
+// that must stay in lockstep (manager Should Fix #2 / DRY thread):
+//
+//   - the workflow VALIDATOR  — workflow.IsValidAgentBackend (gates workflow_validate)
+//   - the BATCH dispatch      — Factory.AgentProviderFor (agent_call)
+//   - the STREAM dispatch     — InteractiveStreamSelector.agentStreamFor (interactive_agent)
+//
+// Each row is one backend string; the columns are the per-site expectations. The
+// table encodes the three shared invariants the prose calls out:
+//
+//   - SAME accepted names: claude-code / opencode / codex are the only known
+//     backends; everything else is unknown.
+//   - opencode SPECIAL CASE: valid + batch-routable, but stream-UNsupported
+//     (no interactive streaming adapter) — a fail-closed error, never a silent
+//     fallback.
+//   - TRIM-not-lowercase + FAIL-CLOSED: the factory and selector TrimSpace but do
+//     NOT lowercase, so "Codex"/" codex "-with-internal-junk near-misses fail
+//     closed; the validator is exact-match (no trim), so a padded value is invalid
+//     there. A wrong-case value is rejected everywhere.
+//
+// If any site drifts (e.g. one starts lowercasing, or opencode becomes
+// stream-routable), exactly one column flips and this test fails — turning the
+// prose invariant into a CI guard.
+func TestBackendVocabulary_ThreeDispatchSitesAgree(t *testing.T) {
+	f := newBackendFactory(t)
+	_, _, m := streamsByBackend()
+	sel := adapterprovider.NewInteractiveStreamSelector(
+		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},
+		m,
+		workflow.BackendClaudeCode,
+	)
+
+	agentBinding := func(backend string) provider.ResolvedBinding {
+		return provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: backend, Model: "m"}
+	}
+
+	cases := []struct {
+		name string
+		// backend is the raw backend string under test.
+		backend string
+		// validatorValid: workflow.IsValidAgentBackend accepts it (empty = inherit).
+		validatorValid bool
+		// batchOK: Factory.AgentProviderFor routes it without ErrUnknownBackend.
+		batchOK bool
+		// streamOK: the stream selector routes it without ErrUnsupportedAgentBackend.
+		streamOK bool
+	}{
+		// SAME accepted names — known backends route on batch; codex/claude-code also stream.
+		{"claude-code", workflow.BackendClaudeCode, true, true, true},
+		{"codex", workflow.BackendCodex, true, true, true},
+		// opencode SPECIAL CASE — valid + batch-routable, but stream-unsupported.
+		{"opencode", workflow.BackendOpencode, true, true, false},
+		// empty inherits — valid at the validator; batch fails closed (no re-default
+		// in the factory), stream floors to the default backend (claude-code) and routes.
+		{"empty inherits", "", true, false, true},
+		// FAIL-CLOSED unknowns — rejected at every site.
+		{"unknown typo", "claude", false, false, false},
+		{"wrong case", "Codex", false, false, false},
+		{"ghost backend", "ghost-backend", false, false, false},
+		// TRIM behavior — factory/selector TrimSpace (so " codex " routes), but the
+		// validator is exact-match and rejects the padded value.
+		{"padded codex", "  codex  ", false, true, true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// VALIDATOR.
+			assert.Equal(t, tc.validatorValid, workflow.IsValidAgentBackend(tc.backend),
+				"validator (IsValidAgentBackend) verdict for %q", tc.backend)
+
+			// BATCH dispatch.
+			_, batchErr := f.AgentProviderFor(agentBinding(tc.backend))
+			if tc.batchOK {
+				assert.NoError(t, batchErr, "batch factory must route %q", tc.backend)
+			} else {
+				require.Error(t, batchErr, "batch factory must fail closed on %q", tc.backend)
+				assert.ErrorIs(t, batchErr, adapterprovider.ErrUnknownBackend)
+			}
+
+			// STREAM dispatch.
+			_, streamErr := sel.StreamProviderFor(agentBinding(tc.backend))
+			if tc.streamOK {
+				assert.NoError(t, streamErr, "stream selector must route %q", tc.backend)
+			} else {
+				require.Error(t, streamErr, "stream selector must fail closed on %q", tc.backend)
+				assert.ErrorIs(t, streamErr, adapterprovider.ErrUnsupportedAgentBackend)
+			}
+		})
+	}
+}
+
 // TestInteractiveStreamSelector_UnknownKind verifies that a binding with an
 // unknown/empty kind returns an error (unchanged).
 func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
@@ -284,17 +377,19 @@ func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown")
 }
 
-// FA18 PAIRED (§12+§8+§9) — the "interviewer" profile from the default config
-// must route through BOTH the agent factory (§8, AgentProviderFor → codex.Provider)
-// AND the interactive stream selector (§9, StreamProviderFor → codex stream sentinel).
-// Similarly, "planner" and "coder" route to claude-code in both directions.
+// FA18 PAIRED (§12+§8+§9) — a resolved sample profile must route through BOTH the
+// agent factory (§8, AgentProviderFor) AND the interactive stream selector (§9,
+// StreamProviderFor). "planner" and "coder" resolve to claude-code in both
+// directions; the codex backend is exercised via an explicit codex binding (the
+// DEFAULT interviewer now runs on the claude-code default so a fresh install runs
+// out of the box — the gpt-5.5/codex split is a commented sample example, PR #32
+// Must Fix #4).
 //
 // This test exercises the full pipeline:
 //   1. Load default config → ProfilesFromConfig → StaticProfileResolver
-//   2. Resolve "interviewer" → ResolvedBinding{Backend: "codex", ...}
-//   3. AgentProviderFor(binding) → *codex.Provider        (agent_call path)
-//   4. StreamProviderFor(binding) → codex stream sentinel (interactive_agent path)
-//   5. Repeat for "planner"/"coder" → *claudecli.AgentAdapter / claude stream sentinel
+//   2. A codex-backed binding → *codex.Provider (agent_call) AND codex stream
+//      sentinel (interactive_agent), proving both arms route codex.
+//   3. Resolve "planner"/"coder" → *claudecli.AgentAdapter / claude stream sentinel.
 func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
 	// Load the default profile registry (no deployment config.yaml).
 	tmpDir := t.TempDir()
@@ -316,18 +411,16 @@ func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
 		workflow.BackendClaudeCode,
 	)
 
-	// --- interviewer → codex ---
-	iBinding, err := resolver.Resolve(context.Background(), "interviewer")
-	require.NoError(t, err)
-	require.Equal(t, "codex", iBinding.Backend)
+	// --- codex backend routes through BOTH arms (explicit codex binding) ---
+	iBinding := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: workflow.BackendCodex, Model: "gpt-5.5"}
 
 	ap, err := f.AgentProviderFor(iBinding)
-	require.NoError(t, err, "interviewer must route through factory (agent_call path)")
-	assert.IsType(t, (*codex.Provider)(nil), ap, "interviewer must produce a codex.Provider")
+	require.NoError(t, err, "codex binding must route through factory (agent_call path)")
+	assert.IsType(t, (*codex.Provider)(nil), ap, "codex binding must produce a codex.Provider")
 
 	sp, err := sel.StreamProviderFor(iBinding)
-	require.NoError(t, err, "interviewer must route through stream selector (interactive_agent path)")
-	assert.Same(t, codexStream, sp, "interviewer stream must return the codex stream sentinel")
+	require.NoError(t, err, "codex binding must route through stream selector (interactive_agent path)")
+	assert.Same(t, codexStream, sp, "codex stream must return the codex stream sentinel")
 
 	// --- planner / coder → claude-code ---
 	for _, alias := range []string{"planner", "coder"} {
