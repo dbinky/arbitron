@@ -1,8 +1,8 @@
 # Focus Areas Review Tracking
 
-This document tracks the systematic review of the **final org-readiness gaps**
-implementation (schedule "run now", SSO group→department mapping, schedule & run
-visibility) for correctness, security, and robustness.
+This document tracks the systematic review of the **codex agent backend**
+implementation (batch `agent_call` + interactive `agent` streaming on the user's
+ChatGPT/Codex subscription) for correctness, security, and robustness.
 
 Each **single focus area** requires **2 full review passes** before being considered done.
 Each **paired focus area** requires **1 full review pass** before being considered done.
@@ -15,18 +15,18 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Run-now domain core (`domain/schedule/runner.go` `Runner.Fire`, shared `resolveCreatorIdentity`, `Service.RunNow`/`WithFirer`/`HasFirer`, `ErrCreatorUnresolved`/`ErrRunNowUnavailable`) — never advances `LastFiredAt`; owner-or-admin authz; run attributed to creator | [x] | [x] | done |
-| 2 | Run-now adapters & wiring (`adapter/http/schedule_handler.go` `POST /schedules/{id}/run` 202/200/409/503; `adapter/mcp/tools_schedule.go` conditional `schedule_run_now`; composition-root `NewRunner` from the Evaluator's collaborators) | [x] | [x] | done |
-| 3 | Edge group extraction (`domain/identity/edge.go` `EdgeIdentity{Email,Groups}`; `adapter/edge/verifier.go` configured `GroupClaim`, string-or-array, missing⇒nil⇒NOT 401, raw token never logged) | [x] | [x] | done |
-| 4 | Department resolution mapping (`domain/identity/groups.go` `ResolveDepartments` mapping▸verbatim▸default chokepoint + `GroupConfig.Mapping`; `EffectiveMembership`/`Leads` union preserved) | [x] | [x] | done |
-| 5 | Provisioner edge scoping (`domain/instance/provisioner.go` `ResolveByEmail(ctx,email,groups)` threads groups; group claim NEVER confers admin; email allow-list authoritative; OIDC path unchanged) | [x] | [x] | done |
-| 6 | Department remap reconciler (`domain/identity/remap.go` `ReconcileMappings`/`DepartmentRenamer`; `adapter/sqlite/department_renamer.go` four-table rewrite, `UPDATE OR IGNORE`+`DELETE` membership-collision; idempotent; fail-fast boot wiring) | [x] | [x] | done |
-| 7 | Run-origin model & stamping (`domain/instance/origin.go` `Origin`/`TriggerSource`/`WithOrigin`/`OriginFromContext`; `domain/engine/engine.go` reads ctx, no `domain/schedule` import; cron `fireOne` + `Runner.Fire` inject origin) | [x] | [x] | done |
-| 8 | Instance origin persistence (`adapter/sqlite` migration `014_instance_trigger_origin`, hand-maintained sqlc, repo read/write, backfill `manual`, deleted-schedule still lists; HTTP summary `triggerSource`/`scheduleId`) | [x] | [x] | done |
-| 9 | Workflow-scoped schedule listing (`domain/schedule/service.go` variadic `List`/`ListOptions{WorkflowName}` — creator scoping service-set, never request input; `adapter/http` `GET /schedules?workflowName=`) | [x] | [x] | done |
-| 10 | Dashboard read-only surfaces (`dashboard/src` `OriginBadge`, `SchedulesPanel`, `api.schedules.list`, TS types) — zero mutation controls; visibility-scoped; graceful empty/error | [x] | [x] | done |
-| 11 | Config & headless wiring (`cfg.Auth.RBAC` `GroupClaim`/`DefaultGroup`/`Mapping` loading + `ARBITRON_AUTH_RBAC_MAPPING_*` env overlay; edge verifier `GroupClaim` wired; unset claim ⇒ today's behavior) | [x] | [x] | done |
-| 12 | Test coverage & embedded dist (five-category coverage for new code; injected clock/`httptest`/fakes; `adapter/dashboard/dist` synced with `dashboard/`) | [x] | [x] | done |
+| 1 | Backend vocabulary (`domain/workflow/workflow.go` `BackendCodex` + `IsValidAgentBackend`; exact-match lowercase, fail-closed near-miss rejection; allowed-set / `NodeConfig.Backend` / validator-message doc accuracy) | [ ] | [ ] | pending |
+| 2 | Codex argv builder (`adapter/codex/args.go` — `exec --dangerously-bypass-approvals-and-sandbox -m <model> --cd <WorkDir> --json`; prompt via stdin, NEVER argv; `ErrModelRequired` on empty/whitespace model; flag spellings pinned in one const block, version-recorded) | [ ] | [ ] | pending |
+| 3 | Codex subscription env (`adapter/codex/env.go` — `procenv.BaseEnv()` + `HOME` preserved, `CODEX_HOME` forwarded only when set; NO `OPENAI_API_KEY`; never calls `binding.RevealKey`; cannot fail) | [ ] | [ ] | pending |
+| 4 | Codex event decoder (`adapter/codex/parse.go` — shared `decodeLine`/`foldEvent`; `thread.started`/`turn.started`/`item.completed`/`turn.completed`/`error`/`turn.failed`; unknown event/item kinds tolerated; `ErrParse` on malformed JSON; Summary/Steps/tokens/thread fold) | [ ] | [ ] | pending |
+| 5 | Codex version probe (`adapter/codex/version.go` — memoized `sync.Once` over the shared runner; `minCodexVersion`/`ErrIncompatibleCodex`; binary resolution PATH/StandardBinDirs) | [ ] | [ ] | pending |
+| 6 | Codex batch provider (`adapter/codex/provider.go` `RunAgent` — strict fail-closed ordering WorkDir→args→env→probe→run→parse; empty WorkDir/model ⇒ ZERO launches; runner/exit error names codex+model) | [ ] | [ ] | pending |
+| 7 | Codex streaming adapter (`adapter/codex/stream_adapter.go` `Chat`+`StreamChat` — ordered `ChatChunk` per `item.completed`; terminal chunk carries tokens/thread; `turn.failed`/`error` closes with typed error not silent Done; `ChatRequest.Model`/`ToolScope` precedence; batch/stream fold parity) | [ ] | [ ] | pending |
+| 8 | Factory backend dispatch (`adapter/provider/factory.go` `AgentProviderFor` `case BackendCodex` → `codex.New`; `Deps.CodexBinaryPath`/`CodexTimeout`; `ErrUnknownBackend` on case-variant/unknown; INVARIANT doc updated) | [ ] | [ ] | pending |
+| 9 | Interactive stream selector (`adapter/provider/interactive_stream_selector.go` — backend-keyed map + default floor; claude-code/codex/opencode-unsupported/unknown; `ErrUnsupportedAgentBackend` + `errors.Is`; chat-kind still delegates) | [ ] | [ ] | pending |
+| 10 | Codex readiness (`adapter/codex/readiness.go` — `Ready`/`NotInstalled`/`NotLoggedIn`; `codex --version` + `codex login status` by exit-status only; state-not-error for not-ready; runner-fault→error; no `OPENAI_API_KEY`, no token logging; incompatible⇒NotInstalled) | [ ] | [ ] | pending |
+| 11 | Readiness health surface (`adapter/backendhealth` + `config.RedactedConfig.Backends`; `system_config` MCP handler + HTTP `GET /system/config`; `{name, opaque state}` only; probe fault drops entry; `adapter/codex` kept out of `domain/config`) | [ ] | [ ] | pending |
+| 12 | Sample mixed-model config + composition wiring (`adapter/config/loader.go` defaults + `defaultYAMLContent` profiles: interviewer→codex/`gpt-5.5`, planner/coder→claude-code/`opus-4.8`, assessor `kind: chat`; `cmd/arbitron/main.go` `Deps.Codex*` + codex `StreamProvider` + backend→stream map + default floor; sample workflow validates) | [ ] | [ ] | pending |
 
 ---
 
@@ -34,14 +34,14 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 13 | Run-now core + adapters (§1+§2 — `RunNowResult{InstanceID,Fired}` fired-vs-skipped contract; sentinel→HTTP/MCP mapping; REST/MCP parity over one `Service`) | [x] | done |
-| 14 | Edge groups + department resolution (§3+§4 — `Groups []string` flows verifier→`ResolveDepartments`; missing/malformed claim ⇒ default group, not 401) | [x] | done |
-| 15 | Resolution + remap reconciler (§4+§6 — a verbatim department later mapped renames consistently across user_departments/instances/schedules/published_workflows with no orphan/dupe) | [x] | done |
-| 16 | Origin model + persistence (§7+§8 — in-memory `Origin` fields round-trip the migration columns; `manual`/`schedule`/`run_now` survive write→read→summary) | [x] | done |
-| 17 | Origin persistence + dashboard (§8+§10 — summary `triggerSource`/`scheduleId` JSON drives `OriginBadge`; deleted-schedule run still renders) | [x] | done |
-| 18 | Workflow listing + SchedulesPanel (§9+§10 — `GET /schedules?workflowName=` contract matches `api.schedules.list`; owner-or-admin scope honored in UI) | [x] | done |
-| 19 | Config + edge + resolution (§11+§3+§4 — configured `GroupClaim`/`Mapping` are actually consumed end-to-end; env overlay precedence correct) | [x] | done |
-| 20 | Run-now origin slice (§1+§7+§8 — a run-now fire stamps `run_now`+`scheduleId` and reaches the DB + summary; does not advance the cron position) | [x] | done |
+| 13 | Argv + env + batch provider (§2+§3+§6 — the exec slice shares one argv/env vocabulary; prompt-via-stdin and subscription-env invariants hold through `RunAgent`) | [ ] | pending |
+| 14 | Decoder + streaming adapter (§4+§7 — batch `RunAgent` and `StreamChat` fold an identical fixture to identical summary/session/tokens; no divergence after the shared-decoder refactor) | [ ] | pending |
+| 15 | Factory arm + stream selector (§8+§9 — both dispatch the backend axis with the same vocabulary + default floor; codex reachable on `agent_call` AND `interactive_agent`; opencode unsupported on stream only; unknown fails closed in both) | [ ] | pending |
+| 16 | Version probe + readiness (§5+§10 — shared binary resolution + version semantics; `minCodexVersion` failure vs readiness `NotInstalled` collapse stay consistent) | [ ] | pending |
+| 17 | Readiness + health surface (§10+§11 — state flows `codex.Readiness` → `backendhealth` → `RedactedConfig.Backends` → both read surfaces; a probe fault drops the entry without failing the config read) | [ ] | pending |
+| 18 | Sample config + dispatch (§12+§8+§9 — the `interviewer` codex profile resolves to `Backend == "codex"` and routes through BOTH the agent factory and the stream selector; `planner`/`coder` resolve to claude-code/`opus-4.8`) | [ ] | pending |
+| 19 | Subscription-env security across all three paths (§3+§7+§10 — no `OPENAI_API_KEY`, `HOME` preserved, `RevealKey` never called on batch, stream, AND readiness; prompt off argv everywhere) | [ ] | pending |
+| 20 | Composition root + acceptance (§12 wiring + `test/acceptance/scenario_03_*` — `Deps.Codex*`, codex stream adapter, backend→stream map, default floor all wired; the both-agent-backends scenario exercises a third backend through the fake runner; `go build ./...` green) | [ ] | pending |
 
 ---
 
@@ -50,20 +50,18 @@ A review pass is only checked when the checklist produces a passing result for t
 ### Single Area Reviews — What To Check
 
 **Pass 1 (Correctness & Coverage):**
-- All public functions have test coverage (happy / success / failure / error / edge)
-- The code does what the spec and phase design doc say it should
-- Error handling is thorough — no silent failures; fail-closed where security-relevant
-- Module boundaries are clean (hexagonal: domain has no infra import; engine never imports schedule; origin flows via `domain/instance` context)
+- All public functions have test coverage (happy / success / failure / error / edge), with the subprocess seam faked.
+- The code does what the spec and phase design doc say it should.
+- Error handling is thorough — no silent failures; fail-closed where security-relevant (empty input ⇒ zero launches; failure events ⇒ typed error, not silent Done).
+- Module boundaries are clean (hexagonal: `adapter/codex` reuses the `claudecli.CommandRunner` seam, never redefines it; `domain/config` never imports `adapter/codex`).
 
 **Pass 2 (Robustness & Extensibility):**
-- Code aligns to the spirit of the design, not just surface conformance
-- Authz is owner-or-admin and service-set from identity (never request input); group claims never confer admin
-- Test assertions test real risks (remap consistency across all four tables; missing group claim ⇒ default group; run-now skip-vs-fire), not happy-path ceremony
-- Edge cases handled (empty inputs, deleted schedule/workflow, membership collision, unset config)
+- Code aligns to the spirit of the design, not just surface conformance.
+- The subscription-only credential invariant is airtight on the path under review.
+- CLI coupling is pinned in one place and guarded by a test, so a codex-version bump is a one-line, test-caught change.
+- The five-category coverage is meaningful (asserts behavior, not just "no error").
 
 ### Paired Area Reviews — What To Check
 
-- Data flows cleanly across the boundary (the cross-task contracts the plan-alignment review verified: `Runner.Fire`, `ResolveByEmail` signature, `Origin`/summary field names, `Service.List` variadic, sentinel mappings)
-- Error propagation works end-to-end (401 vs 500 on edge; 409/503 on run-now; graceful UI degradation)
-- No assumptions in one component the other doesn't satisfy
-- Integration tests cover the seams between the pair, not just unit happy paths
+- The two (or three) areas agree on their shared contract (one argv/env vocabulary; one event decoder; one backend-dispatch vocabulary; one readiness state flowing to the health surface).
+- The end-to-end slice behaves correctly: a codex profile drives both node types; a run-now/interactive codex mission carries the subscription env with no key; the sample mixed-model split resolves and validates.
