@@ -127,6 +127,64 @@ func TestBackends_FaultOmitsEntry(t *testing.T) {
 	assert.Empty(t, out, "a probe fault must not surface a misleading entry, but must not break the read")
 }
 
+// FA17 PAIRED (§10+§11) — all three ReadinessState enum values produced by
+// codex.Readiness must flow correctly through CodexEntry into a
+// config.RedactedBackend with BOTH Name AND State populated. The entry then
+// appears on the RedactedConfig.Backends list returned to both read surfaces
+// (MCP system_config + HTTP GET /system/config). This table test pins the
+// full §10→§11 flow for every state so a rename or mapping gap in either
+// layer is caught immediately.
+func TestCodexEntry_AllStatesFlowToRedactedBackend(t *testing.T) {
+	cases := []struct {
+		name    string
+		scripts []script
+		want    string
+	}{
+		{
+			name: "ready",
+			scripts: []script{
+				{lines: []string{"codex-cli 0.137.0"}},
+				{lines: []string{"Logged in using ChatGPT"}},
+			},
+			want: string(codex.Ready),
+		},
+		{
+			name:    "not-installed (start error)",
+			scripts: []script{{startErr: errors.New(`exec: "codex": not found`)}},
+			want:    string(codex.NotInstalled),
+		},
+		{
+			name: "not-logged-in",
+			scripts: []script{
+				{lines: []string{"codex-cli 0.137.0"}},
+				{lines: []string{"Not logged in"}, waitErr: errors.New("exit status 1")},
+			},
+			want: string(codex.NotLoggedIn),
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			r := &scriptRunner{scripts: tc.scripts}
+			entry, err := CodexEntry(context.Background(), r)
+			require.NoError(t, err, "clean readiness state must never be an error")
+
+			// Both fields must be correct: Name is the correlation key the UI uses to
+			// map a health entry to a profile's backend; State is the opaque enum
+			// value that appears on the RedactedConfig.Backends wire surface.
+			assert.Equal(t, "codex", entry.Name, "entry Name must equal codexBackendName for state %q", tc.want)
+			assert.Equal(t, tc.want, entry.State, "entry State must carry the enum string for state %q", tc.want)
+
+			// Full surface: the entry must also appear in Backends() for non-fault states.
+			r2 := &scriptRunner{scripts: tc.scripts}
+			out := Backends(context.Background(), r2)
+			require.Len(t, out, 1, "Backends must include the codex entry for state %q", tc.want)
+			assert.Equal(t, entry, out[0], "Backends entry must equal CodexEntry result")
+		})
+	}
+}
+
 // SECURITY — CodexEntry must never place OPENAI_API_KEY in a child env on
 // either the version probe or the login-status probe. The codex backend is
 // subscription-only; the health surface is a read path, not an auth path, but
