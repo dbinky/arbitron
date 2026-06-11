@@ -3,8 +3,12 @@ package provider_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
+	adapterconfig "github.com/arbitron/arbitron/adapter/config"
+	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/codex"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
@@ -279,3 +283,71 @@ func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "unknown")
 }
+
+// FA18 PAIRED (§12+§8+§9) — the "interviewer" profile from the default config
+// must route through BOTH the agent factory (§8, AgentProviderFor → codex.Provider)
+// AND the interactive stream selector (§9, StreamProviderFor → codex stream sentinel).
+// Similarly, "planner" and "coder" route to claude-code in both directions.
+//
+// This test exercises the full pipeline:
+//   1. Load default config → ProfilesFromConfig → StaticProfileResolver
+//   2. Resolve "interviewer" → ResolvedBinding{Backend: "codex", ...}
+//   3. AgentProviderFor(binding) → *codex.Provider        (agent_call path)
+//   4. StreamProviderFor(binding) → codex stream sentinel (interactive_agent path)
+//   5. Repeat for "planner"/"coder" → *claudecli.AgentAdapter / claude stream sentinel
+func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
+	// Load the default profile registry (no deployment config.yaml).
+	tmpDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(tmpDir, 0o755))
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg, err := adapterconfig.Load(filepath.Join(tmpDir, "config.yaml"))
+	require.NoError(t, err)
+
+	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
+	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
+	require.NoError(t, err)
+
+	// Build factory + stream selector with sentinels.
+	f := newBackendFactory(t)
+	claudeStream, codexStream, m := streamsByBackend()
+	sel := adapterprovider.NewInteractiveStreamSelector(
+		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},
+		m,
+		workflow.BackendClaudeCode,
+	)
+
+	// --- interviewer → codex ---
+	iBinding, err := resolver.Resolve(context.Background(), "interviewer")
+	require.NoError(t, err)
+	require.Equal(t, "codex", iBinding.Backend)
+
+	ap, err := f.AgentProviderFor(iBinding)
+	require.NoError(t, err, "interviewer must route through factory (agent_call path)")
+	assert.IsType(t, (*codex.Provider)(nil), ap, "interviewer must produce a codex.Provider")
+
+	sp, err := sel.StreamProviderFor(iBinding)
+	require.NoError(t, err, "interviewer must route through stream selector (interactive_agent path)")
+	assert.Same(t, codexStream, sp, "interviewer stream must return the codex stream sentinel")
+
+	// --- planner / coder → claude-code ---
+	for _, alias := range []string{"planner", "coder"} {
+		alias := alias
+		t.Run(alias, func(t *testing.T) {
+			b, err := resolver.Resolve(context.Background(), alias)
+			require.NoError(t, err)
+			require.Equal(t, "claude-code", b.Backend, "%s must resolve to claude-code", alias)
+
+			ap2, err := f.AgentProviderFor(b)
+			require.NoError(t, err, "%s must route through factory", alias)
+			// newBackendFactory wires ClaudeAgent (not ClaudeAgentConfig), so the factory
+			// returns the pre-built *claudecli.AgentAdapter on the claude-code arm.
+			assert.IsType(t, (*claudecli.AgentAdapter)(nil), ap2,
+				"%s must produce a claudecli.AgentAdapter from the factory", alias)
+
+			sp2, err := sel.StreamProviderFor(b)
+			require.NoError(t, err, "%s must route through stream selector", alias)
+			assert.Same(t, claudeStream, sp2, "%s stream must return the claude stream sentinel", alias)
+		})
+	}
+}
+
