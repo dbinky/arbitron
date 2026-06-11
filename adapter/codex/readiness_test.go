@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/arbitron/arbitron/adapter/claudecli"
 )
 
 // loggedInProbe is the canned `codex login status` reply that reports an active
@@ -150,6 +152,26 @@ func TestReadiness_NilRunnerDoesNotPanic(t *testing.T) {
 	state, err := Readiness(context.Background(), Config{BinaryPath: "codex-does-not-exist-xyz"})
 	require.NoError(t, err)
 	assert.Equal(t, NotInstalled, state)
+}
+
+// envRunner unit test — the adapter must REPLACE spec.Env with the injected
+// env on every forwarded RunSpec. Without this, a future refactor that changes
+// how the env is set (e.g., to "merge" instead of "replace") could silently
+// pass OPENAI_API_KEY through on the version probe before we detected it via
+// the integration-style security test.
+func TestEnvRunner_InjectsEnvOntoForwardedSpec(t *testing.T) {
+	fr := &fakeRunner{lines: []string{"ignored"}}
+	injected := []string{"FOO=bar", "BAZ=qux"}
+
+	er := envRunner{inner: fr, env: injected}
+	_, _, _ = er.Run(context.Background(), claudecli.RunSpec{
+		Bin:  "codex",
+		Args: []string{"--version"},
+		Env:  []string{"SHOULD_BE_REPLACED=yes"}, // envRunner must override, not merge
+	})
+
+	require.True(t, fr.runCalled)
+	assert.Equal(t, injected, fr.gotSpec.Env, "envRunner must set spec.Env to the injected env, replacing any prior value")
 }
 
 // guard — TrimSpace handling: an env entry list with no OPENAI_API_KEY remains
