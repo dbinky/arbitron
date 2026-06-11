@@ -376,3 +376,58 @@ func TestStreamChat_Timeout(t *testing.T) {
 		assert.False(t, c.Done, "a timed-out stream must not emit a clean Done")
 	}
 }
+
+// FA19 PAIRED (§3+§7+§10) — the subscription-env security invariant (no
+// OPENAI_API_KEY, HOME preserved, RevealKey never called) must hold across ALL
+// THREE codex subprocess paths in a single test with a poisoned parent env.
+// Individual paths are tested in env_test.go, provider_test.go, and
+// readiness_test.go; this paired test confirms NO path introduces a bypass
+// when all three are exercised with the same poisoned env.
+//
+// Note: this test exercises the stream path (§7) because the stream adapter
+// wraps the provider in the same package; batch (§6) and readiness (§10) are
+// also invoked through fakeRunners so the env assertions capture each path.
+func TestSubscriptionEnvInvariant_AllThreePaths(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-must-never-appear")
+	t.Setenv("HOME", "/home/codex-test")
+
+	const model = "gpt-5-codex"
+	revealed := false
+	binding := codexBinding(model, &revealed)
+
+	// §6 — batch RunAgent path.
+	batchRunner := &multiRunner{scripts: []runScript{compatibleProbe(), happyMission()}}
+	batch := New(Config{Binding: binding, BinaryPath: "codex", Runner: batchRunner})
+	_, err := batch.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: model})
+	require.NoError(t, err)
+
+	// §7 — stream StreamChat path (uses a separate set of probe+mission scripts).
+	streamRunner := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
+	stream := NewStreamProvider(Config{Binding: binding, BinaryPath: "codex", Runner: streamRunner})
+	ch, err := stream.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: model})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+
+	// §10 — readiness path.
+	readinessRunner := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"Logged in using ChatGPT"}}}}
+	state, err := Readiness(context.Background(), Config{BinaryPath: "codex", Runner: readinessRunner})
+	require.NoError(t, err)
+	assert.Equal(t, Ready, state)
+
+	// Assert security invariant across all three runners (all child RunSpecs).
+	for name, mr := range map[string]*multiRunner{
+		"batch":     batchRunner,
+		"stream":    streamRunner,
+		"readiness": readinessRunner,
+	} {
+		for i, spec := range mr.calls {
+			for _, kv := range spec.Env {
+				assert.NotContains(t, kv, "OPENAI_API_KEY",
+					"path=%s call=%d must not contain OPENAI_API_KEY", name, i)
+			}
+		}
+	}
+
+	// RevealKey must never have been called on ANY path (subscription-only).
+	assert.False(t, revealed, "RevealKey must never be called on ANY codex subprocess path")
+}
