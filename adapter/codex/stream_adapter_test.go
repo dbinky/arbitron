@@ -247,6 +247,22 @@ func TestStreamProviderChat_HappyPath(t *testing.T) {
 	assert.Equal(t, 5, resp.TokensOut)
 }
 
+// ERROR (Chat) — a turn.failed / error event returns a hard error from Chat,
+// never a successful response. Mirrors TestStreamChat_TurnFailedClosesWithError
+// for the non-streaming path: out.failed must be checked before returning OK.
+func TestStreamProviderChat_TurnFailedReturnsError(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"t1"}`,
+		`{"type":"error","message":"model not supported for this account"}`,
+		`{"type":"turn.failed","error":{"message":"model not supported for this account"}}`,
+	}}}}
+	p := NewStreamProvider(Config{Binding: streamBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex"})
+	require.Error(t, err, "Chat must not return OK on a failed turn")
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "model not supported", "error must surface the failure message")
+}
+
 // Chat — empty WorkDir rejected before launch.
 func TestStreamProviderChat_EmptyWorkDir(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{compatibleProbe(), streamHappyMission()}}
