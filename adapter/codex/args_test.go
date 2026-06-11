@@ -86,3 +86,15 @@ func TestBuildArgs_NoSecretsInArgv(t *testing.T) {
 	assert.NotContains(t, joined, "OPENAI_API_KEY")
 	assert.NotContains(t, joined, "do work")
 }
+
+// EDGE — a model with surrounding whitespace is trimmed to the clean name in
+// argv, not rejected. This documents the trim-then-check contract: callers
+// feeding a config-loaded model string with accidental whitespace get the
+// trimmed model name in the exec slice, not an ErrModelRequired.
+func TestBuildArgs_ModelWithSurroundingWhitespaceTrimmedInArgv(t *testing.T) {
+	args, err := buildArgs(engine.AgentMission{WorkDir: "/ws"}, bindingForArgs("  gpt-5-codex  "))
+	require.NoError(t, err, "model with surrounding whitespace must succeed after trim")
+	m, ok := argValue(args, modelFlag)
+	require.True(t, ok, "-m flag must be present")
+	assert.Equal(t, "gpt-5-codex", m, "trimmed model name must appear in argv, not raw input")
+}

@@ -16,13 +16,6 @@ The following carry-forward items were surfaced during draft implementation and
 are seeded here for the review loop to verify/close (each is a real review
 target, not a confirmed defect):
 
-1. **Codex bypass flag is version-pinned.** `adapter/codex/args.go` pins
-   `--dangerously-bypass-approvals-and-sandbox` (there is no `--yolo` on
-   codex-cli 0.137.0), recorded in a const-block comment and guarded by a test.
-   Verify the pin is genuinely single-source, that a future codex flag rename
-   would be caught by a test (not silently mis-launch), and consider whether the
-   version probe (`minCodexVersion`) should gate the flag assumption.
-
 2. **Coarse streaming granularity.** Codex emits whole `item.completed`
    `agent_message` items, not token deltas, so `StreamChat` emits one
    `ChatChunk` per item rather than per token. Confirm the interactive_agent UX
@@ -66,6 +59,14 @@ target, not a confirmed defect):
 ---
 
 ## Fixed Previously
+
+- **Codex bypass flag version-pin verified (FA2).** `adapter/codex/args.go` pins
+  all flag spellings in ONE const block with a comment recording codex-cli
+  0.137.0. `TestBuildArgs_PinnedFlagSpellings` uses string literals (not the
+  const names) so a future value change fails the test immediately. The
+  `minCodexVersion = "0.137.0"` comment explicitly names the flag surface
+  (`--dangerously-bypass-approvals-and-sandbox`, `--cd`, `--json`), linking the
+  version gate to the flag assumption. All three sub-checks confirmed working.
 
 - **`assessor` profile kind.** The plan's sample-config table listed `assessor`
   as `kind: agent`, but the feature-pipeline workflow uses `assessor` on an
