@@ -63,9 +63,11 @@ const (
 // SECURITY: only the model and working-dir strings reach argv here; the prompt
 // is stdin-only and secrets are env-only (env.go) — never argv or logs.
 //
-// ToolScope narrowing is intentionally NOT wired in Phase 1: the bypass posture
-// is fully-open by default. Per-request ToolScope narrowing is deferred to
-// Phase 2's shared agent path (mirrors the opencode/claudecli posture work).
+// ToolScope narrowing is intentionally NOT wired into argv: `codex exec` exposes
+// no per-tool allowlist flag (see buildExecArgs), so the bypass posture stays fully
+// open regardless of ChatRequest/AgentMission.ToolScope. This is the permanent v1
+// posture — the same posture as opencode's --allow-all-tools and claudecli's
+// --dangerously-skip-permissions. See also: docs/specs/codex-backend-spec.md §8.
 func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([]string, error) {
 	return buildExecArgs(binding.Model, mission.WorkDir)
 }

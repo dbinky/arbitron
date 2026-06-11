@@ -16,33 +16,26 @@ The following carry-forward items were surfaced during draft implementation and
 are seeded here for the review loop to verify/close (each is a real review
 target, not a confirmed defect):
 
-2. **Coarse streaming granularity.** Codex emits whole `item.completed`
+1. **Coarse streaming granularity.** Codex emits whole `item.completed`
    `agent_message` items, not token deltas, so `StreamChat` emits one
    `ChatChunk` per item rather than per token. Confirm the interactive_agent UX
    degrades acceptably (chunky but ordered), that the terminal chunk carries the
    thread id + token counts, and that an empty/partial item is handled.
 
-3. **No per-request stream timeout.** `engine.ChatRequest` has no per-request
+2. **No per-request stream timeout.** `engine.ChatRequest` has no per-request
    timeout field (unlike `AgentMission.Timeout`), so the stream path uses only
    the adapter's configured timeout floor. Verify a long/hung interactive codex
    run cannot block unbounded and that the floor is sane (and surfaced/clamped
    in the composition root).
 
-4. **Model-availability failure legibility.** This host's ChatGPT account
+3. **Model-availability failure legibility.** This host's ChatGPT account
    rejected `gpt-5`/`gpt-5-codex` at runtime (codex returned `error` +
    `turn.failed`); the sample uses `gpt-5.5`. Confirm a model the account cannot
    use surfaces a clean, legible node failure (typed error naming codex/model),
    never a hang or silent empty result, on BOTH batch and stream paths — and
    that the docs note `gpt-5.5` availability depends on the user's plan.
 
-5. **ToolScope under full-bypass posture.** `ChatRequest.ToolScope` precedence
-   is honored at the request boundary, but codex `exec` exposes no per-tool argv
-   flag, so under `--dangerously-bypass-approvals-and-sandbox` the posture is
-   fully open regardless of ToolScope. Verify this is the intended/documented v1
-   behavior (per the spec's full-bypass choice) and that ToolScope does not imply
-   a narrowing that silently does not happen.
-
-6. **Readiness health-surface redaction.** Phase 3 added a NEW
+4. **Readiness health-surface redaction.** Phase 3 added a NEW
    `config.RedactedConfig.Backends` field populated by `adapter/backendhealth`.
    Verify the redaction allow-list projection leaks nothing beyond
    `{name, opaque state}` (no path, no token, no version string if sensitive),
@@ -50,7 +43,7 @@ target, not a confirmed defect):
    read, and that both read surfaces (MCP `system_config` + HTTP
    `GET /system/config`) populate it identically.
 
-7. **Live/integration paths unverified.** No test exercises a real `codex exec`
+5. **Live/integration paths unverified.** No test exercises a real `codex exec`
    round-trip through a live engine for either `agent_call` or
    `interactive_agent`, nor the readiness probe against a not-logged-in host (on
    this dev host it resolves `ready` only because codex is installed + logged
@@ -59,6 +52,13 @@ target, not a confirmed defect):
 ---
 
 ## Fixed Previously
+
+- **ToolScope posture is intentional and documented (FA2).** `buildExecArgs`
+  comment explains `codex exec` has no per-tool allowlist flag so bypass posture
+  stays fully open permanently (not a deferred narrowing). `buildArgs` comment
+  updated to match. `StreamProvider` doc confirms the same. Spec §8 documents the
+  full-bypass posture as an accepted, operator-chosen risk for v1. No silent
+  narrowing occurs; the posture is explicit at every callsite.
 
 - **Codex bypass flag version-pin verified (FA2).** `adapter/codex/args.go` pins
   all flag spellings in ONE const block with a comment recording codex-cli
