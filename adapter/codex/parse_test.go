@@ -128,6 +128,36 @@ func TestParseOutput_ErrorEventSurfacesMessage(t *testing.T) {
 	assert.True(t, res.failed, "failed flag must be set even when both events carry the same message")
 }
 
+// SHARED ENTRY POINT — decodeLine is called directly by the stream adapter
+// (not through parseOutput), so its three-return contract is pinned here.
+// These tests also verify the JSON field-name coupling (CLI coupling pin for
+// the decoder schema, analogous to TestBuildArgs_PinnedFlagSpellings):
+// "thread_id" → ev.ThreadID, "item" → ev.Item, "usage" → ev.Usage,
+// "message" → ev.Message, "error" → ev.Error.
+func TestDecodeLine_ValidEvent(t *testing.T) {
+	ev, ok, err := decodeLine(`{"type":"thread.started","thread_id":"thr-abc"}`)
+	require.NoError(t, err)
+	require.True(t, ok, "valid JSON must return ok=true")
+	assert.Equal(t, "thread.started", ev.Type)
+	assert.Equal(t, "thr-abc", ev.ThreadID, `"thread_id" JSON key must map to ev.ThreadID`)
+}
+
+func TestDecodeLine_BlankLineSkipped(t *testing.T) {
+	for _, blank := range []string{"", "   ", "\t"} {
+		ev, ok, err := decodeLine(blank)
+		require.NoError(t, err, "blank line must not error")
+		assert.False(t, ok, "blank line must return ok=false (stream path skips it)")
+		assert.Equal(t, codexEvent{}, ev, "blank line must return a zero event")
+	}
+}
+
+func TestDecodeLine_MalformedJSON(t *testing.T) {
+	_, ok, err := decodeLine(`{BROKEN`)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrParse)
+	assert.False(t, ok)
+}
+
 // STREAM-HONESTY — parsed.failed is the signal the stream adapter's Finalize
 // reads to emit a typed error chunk rather than a silent Done. Pin its value
 // across all failure shapes: error-only, turn.failed-only, and the normal
