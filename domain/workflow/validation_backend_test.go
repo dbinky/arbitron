@@ -58,6 +58,39 @@ func TestValidateBackend_OpencodeValid(t *testing.T) {
 	}
 }
 
+// happy — codex is valid.
+func TestValidateBackend_CodexValid(t *testing.T) {
+	errs := validateNodeOnly(agentNodeWithBackend("a", BackendCodex))
+	if got := countBackendErrors(errs, "a"); got != 0 {
+		t.Fatalf("codex must be valid; got %d errors", got)
+	}
+}
+
+// boundary — codex near-misses (wrong case / surrounding whitespace) are rejected
+// so a mis-typed codex backend fails closed at load (exact-match lowercase).
+func TestValidateBackend_CodexNearMissRejected(t *testing.T) {
+	for _, bad := range []string{"Codex", " codex ", "codex "} {
+		errs := validateNodeOnly(agentNodeWithBackend("a", bad))
+		if got := countBackendErrors(errs, "a"); got != 1 {
+			t.Fatalf("codex near-miss %q must be rejected; got %d errors", bad, got)
+		}
+	}
+}
+
+// unit — IsValidAgentBackend is the shared vocabulary: codex is recognized;
+// near-miss case/whitespace variants are not (consistent with the existing
+// backends). Exercised directly so the source-of-truth contract is auditable.
+func TestIsValidAgentBackend_Codex(t *testing.T) {
+	if !IsValidAgentBackend(BackendCodex) {
+		t.Fatalf("%q must be a valid agent backend", BackendCodex)
+	}
+	for _, bad := range []string{"Codex", " codex ", "codex "} {
+		if IsValidAgentBackend(bad) {
+			t.Fatalf("near-miss backend %q must be rejected (fail-closed)", bad)
+		}
+	}
+}
+
 // validation — an unknown backend is rejected with exactly one error naming the
 // node and the bad value (fail-closed).
 func TestValidateBackend_UnknownRejected(t *testing.T) {

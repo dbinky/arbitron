@@ -563,7 +563,7 @@ func validateAgentBackend(n Node) []ValidationError {
 	}
 	return []ValidationError{{
 		Code:    "INVALID_AGENT_BACKEND",
-		Message: "node " + n.ID + " has unknown agent backend " + n.Config.Backend + " (want claude-code or opencode)",
+		Message: "node " + n.ID + " has unknown agent backend " + n.Config.Backend + " (want claude-code, opencode, or codex)",
 		NodeID:  n.ID,
 	}}
 }

@@ -36,6 +36,9 @@ const (
 	BackendClaudeCode = "claude-code"
 	// BackendOpencode selects the opencode agent backend.
 	BackendOpencode = "opencode"
+	// BackendCodex selects the codex agent backend (`codex exec`, run on the
+	// ChatGPT subscription with no API key).
+	BackendCodex = "codex"
 )
 
 // IsValidAgentBackend reports whether b is a recognized agent backend value.
@@ -44,7 +47,7 @@ const (
 // rejected so a mis-routed agent fails closed at workflow load.
 func IsValidAgentBackend(b string) bool {
 	switch b {
-	case BackendUnset, BackendClaudeCode, BackendOpencode:
+	case BackendUnset, BackendClaudeCode, BackendOpencode, BackendCodex:
 		return true
 	default:
 		return false
@@ -94,7 +97,7 @@ type NodeConfig struct {
 	TemplateFile       string            `json:"templateFile,omitempty"`
 	Model              string            `json:"model,omitempty"`
 	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
-	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" (agent_call/interactive_agent only)
+	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
 	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`

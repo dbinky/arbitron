@@ -582,8 +582,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		ClaudeAgentConfig: agentCfg,
 		HTTPClient:        httpClient,
 		HTTPTimeout:       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		// Runner nil -> opencode uses the shared production os/exec runner.
+		// Runner nil -> opencode/codex use the shared production os/exec runner.
 		OpencodeTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH
+		// (CodexBinaryPath left empty, mirroring opencode); the per-mission timeout
+		// reuses the shared LLM timeout floor. No allow-all knob: codex runs under
+		// the fixed v1 bypass posture (see adapter/codex args.go).
+		CodexTimeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// SECURITY (OOM DoS): cap the per-request response/stdout read across all
 		// the credential-bearing backends (openrouter, azurefoundry, anthropicapi,
 		// bedrock, opencode). Dropping this lets an attacker-pointed base_url stream

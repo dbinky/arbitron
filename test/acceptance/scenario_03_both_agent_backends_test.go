@@ -101,6 +101,58 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 		_, hasPath := envValue(opencodeSpec.Env, "PATH")
 		assert.True(t, hasPath, "base allowlist PATH preserved in the injected env")
 	})
+
+	// --- Backend C: editor via codex (subscription, NO API key) -------------
+	// Proves the THIRD agent backend: an agent_call node with backend: codex runs
+	// a mission through the shared fake runner on the ChatGPT subscription with no
+	// API key configured (codex authenticates via its on-disk credential).
+	t.Run("editor via codex agent with no API key", func(t *testing.T) {
+		runner := newFakeRunner().on("exec", codexEditorLines...)
+		transport := newFakeTransport(true) // assessor (openrouter) reports done → completes
+		h := newHarness(t, codexBinding(runner, transport))
+
+		res := h.runWorkedExample(t, 5)
+		require.Equal(t, instance.StateCompleted, res.instance.State,
+			"codex run completes (codex editor + openrouter assessor)")
+
+		// The codex invocation: the pinned `codex exec` contract — the exec
+		// subcommand, the bypass posture, -m <model>, --cd <WorkDir>, --json — with
+		// the prompt on stdin (NOT argv) and NO claude --print flag. The `--version`
+		// probe spec is skipped.
+		var codexSpec *claudecli.RunSpec
+		recorded := runner.recordedSpecs()
+		for i := range recorded {
+			joined := strings.Join(recorded[i].Args, " ")
+			if strings.Contains(joined, "exec") && !strings.Contains(joined, "--version") {
+				codexSpec = &recorded[i]
+				break
+			}
+		}
+		require.NotNil(t, codexSpec, "editor must run via the codex AgentProvider")
+		assert.Equal(t, "exec", codexSpec.Args[0], "codex uses the exec subcommand")
+		assert.Contains(t, codexSpec.Args, "--dangerously-bypass-approvals-and-sandbox",
+			"codex runs under the fixed v1 bypass posture")
+		assert.Contains(t, codexSpec.Args, "--json", "codex emits the machine-readable event stream")
+		m, ok := argValue(codexSpec.Args, "-m")
+		require.True(t, ok, "codex routes the model via -m")
+		assert.Equal(t, "gpt-5-codex", m)
+		cd, ok := argValue(codexSpec.Args, "--cd")
+		require.True(t, ok, "codex carries the WorkDir via --cd")
+		assert.NotEmpty(t, cd, "the --cd WorkDir is the instance {{workspace}}")
+		assert.NotEmpty(t, codexSpec.Dir, "codex runs in cmd.Dir = the instance {{workspace}}")
+		assert.NotEmpty(t, codexSpec.Stdin, "the mission prompt is delivered via stdin")
+
+		// SECURITY: subscription path — NO OPENAI_API_KEY in the codex env, and the
+		// prompt never appears in argv.
+		_, hasKey := envValue(codexSpec.Env, "OPENAI_API_KEY")
+		assert.False(t, hasKey, "codex subscription env must carry NO OPENAI_API_KEY")
+		for _, a := range codexSpec.Args {
+			assert.NotEqual(t, codexSpec.Stdin, a, "the prompt must never appear in argv")
+		}
+		// The base allowlist PATH is preserved.
+		_, hasPath := envValue(codexSpec.Env, "PATH")
+		assert.True(t, hasPath, "base allowlist PATH preserved in the codex env")
+	})
 }
 
 // envValue returns the value of name=... in env, and whether it was present.

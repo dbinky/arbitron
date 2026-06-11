@@ -438,6 +438,42 @@ const (
 	opencodeKey   = "sk-SENTINEL-opencode-DO-NOT-LOG"
 )
 
+// codexEditorLines is a canned codex-cli `codex exec --json` JSONL transcript for
+// the editor agent run: a thread start, a command tool call, a terminal
+// agent_message, and a turn.completed carrying usage. The codex AgentProvider
+// folds these into AgentResult.Summary + Steps.
+var codexEditorLines = []string{
+	`{"type":"thread.started","thread_id":"codex-thread-1"}`,
+	`{"type":"turn.started"}`,
+	`{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"sed -i edit focus-areas.md","status":"completed"}}`,
+	`{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Edited the workspace toward the focus area."}}`,
+	`{"type":"turn.completed","usage":{"input_tokens":11,"output_tokens":5}}`,
+}
+
+// codexBinding is the codex-subscription configuration: editor=agent on the
+// codex backend (subscription-only — empty ConnectionRef, no key, like the
+// Claude no-key path) and assessor=chat over an OpenRouter HTTP endpoint that
+// reports done so the loop exits on `assessor.done`. It proves the THIRD agent
+// backend (codex) runs an agent_call mission through the shared fake runner with
+// NO API key configured.
+func codexBinding(runner *fakeRunner, transport *fakeTransport) binding {
+	return binding{
+		name: "codex",
+		profiles: []provider.Profile{
+			{Alias: "editor", Kind: provider.ProfileKindAgent, ConnectionRef: "", Model: "gpt-5-codex", Backend: "codex"},
+			{Alias: "assessor", Kind: provider.ProfileKindChat, ConnectionRef: "openrouter-chat", Model: "deepseek/deepseek-r1"},
+		},
+		connections: []seedConn{
+			{
+				conn: provider.Connection{Name: "openrouter-chat", Provider: "openrouter", BaseURL: "https://openrouter.example/api/v1"},
+				key:  openrouterKey,
+			},
+		},
+		runner:    runner,
+		transport: transport,
+	}
+}
+
 // openWeightBinding is the open-weight configuration: the SAME aliases
 // (editor=agent, assessor=chat) now backed by connections — editor via opencode
 // (connection-backed key env-injected at launch) and assessor via an OpenRouter
@@ -574,6 +610,7 @@ func newHarness(t *testing.T, b binding) *harness {
 		HTTPClient:         httpClient,
 		Runner:             runner,
 		OpencodeBinaryPath: "opencode",
+		CodexBinaryPath:    "codex",
 		// Mirror the composition root's open-by-default agent posture (config
 		// llm.agentallowalltools defaults to true) so the opencode agent path runs
 		// as it does in production.

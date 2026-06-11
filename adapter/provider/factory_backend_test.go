@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
+	"github.com/arbitron/arbitron/adapter/codex"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -68,6 +69,25 @@ func TestFactoryBackend_Opencode_WithClaudeProvider(t *testing.T) {
 	ap, err := f.AgentProviderFor(agentBindingBackend("claude-cli", "opencode"))
 	require.NoError(t, err)
 	assert.IsType(t, (*opencode.Provider)(nil), ap)
+}
+
+// happy — codex backend selects the codex adapter, regardless of the provider
+// carried on the binding (backend, not provider, drives the choice). The codex
+// path is subscription-only, so no key is configured on the binding.
+func TestFactoryBackend_Codex_SelectsCodex(t *testing.T) {
+	f := newBackendFactory(t)
+	ap, err := f.AgentProviderFor(agentBindingBackend("openai", "codex"))
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.Provider)(nil), ap)
+}
+
+// boundary — a near-miss case on the codex backend ("Codex") is rejected by the
+// factory's exact-match vocabulary (consistent with the workflow validator).
+func TestFactoryBackend_Codex_UpperCaseFailsClosed(t *testing.T) {
+	f := newBackendFactory(t)
+	_, err := f.AgentProviderFor(agentBindingBackend("openai", "Codex"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnknownBackend)
 }
 
 // fail-closed — an unset (empty) backend is NEVER silently re-defaulted by the
