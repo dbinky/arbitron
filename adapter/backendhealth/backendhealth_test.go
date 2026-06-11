@@ -45,6 +45,18 @@ func (s *scriptRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan 
 	return ch, func() error { return sc.waitErr }, nil
 }
 
+// captureRunner wraps a scriptRunner and records every RunSpec it receives.
+// Used by security tests that need to assert on the child env.
+type captureRunner struct {
+	inner *scriptRunner
+	specs []claudecli.RunSpec
+}
+
+func (c *captureRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
+	c.specs = append(c.specs, spec)
+	return c.inner.Run(ctx, spec)
+}
+
 // HAPPY — a ready codex backend surfaces a single entry named "codex" carrying
 // the "ready" state, so the system/health surface can show it pre-run.
 func TestCodexEntry_Ready(t *testing.T) {
@@ -113,6 +125,36 @@ func TestBackends_FaultOmitsEntry(t *testing.T) {
 	}}
 	out := Backends(context.Background(), r)
 	assert.Empty(t, out, "a probe fault must not surface a misleading entry, but must not break the read")
+}
+
+// SECURITY — CodexEntry must never place OPENAI_API_KEY in a child env on
+// either the version probe or the login-status probe. The codex backend is
+// subscription-only; the health surface is a read path, not an auth path, but
+// it still shells out — so the subscription-env invariant applies. A naive
+// implementation that forwarded the parent env would leak a key into the child.
+//
+// This mirrors TestReadiness_SecurityNoAPIKeyInEnv at the readiness layer but
+// verifies the invariant holds end-to-end through CodexEntry (closing gap #4
+// in docs/reference/gaps-identified.md — no credential reaches the surface).
+func TestCodexEntry_SecurityNoAPIKeyInEnv(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-should-never-be-forwarded")
+
+	inner := &scriptRunner{scripts: []script{
+		{lines: []string{"codex-cli 0.137.0"}},
+		{lines: []string{"Logged in using ChatGPT"}},
+	}}
+	cr := &captureRunner{inner: inner}
+
+	_, err := CodexEntry(context.Background(), cr)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(cr.specs), 1, "at least one probe must have run")
+
+	for i, spec := range cr.specs {
+		for _, kv := range spec.Env {
+			assert.NotContains(t, kv, "OPENAI_API_KEY",
+				"CodexEntry probe %d must not contain OPENAI_API_KEY in child env (subscription-only)", i)
+		}
+	}
 }
 
 // CLI-COUPLING PIN — the backend name surfaced on the health surface is pinned

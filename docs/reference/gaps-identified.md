@@ -35,13 +35,13 @@ target, not a confirmed defect):
    never a hang or silent empty result, on BOTH batch and stream paths — and
    that the docs note `gpt-5.5` availability depends on the user's plan.
 
-4. **Readiness health-surface redaction.** Phase 3 added a NEW
-   `config.RedactedConfig.Backends` field populated by `adapter/backendhealth`.
-   Verify the redaction allow-list projection leaks nothing beyond
-   `{name, opaque state}` (no path, no token, no version string if sensitive),
-   that a probe fault DROPS the entry rather than failing/500-ing the config
-   read, and that both read surfaces (MCP `system_config` + HTTP
-   `GET /system/config`) populate it identically.
+4. ~~**Readiness health-surface redaction.**~~ CLOSED (FA11). `RedactedBackend`
+   struct has only `{Name, State}` (positive allow-list, struct-level).
+   Probe fault drops entry without error (`TestBackends_FaultOmitsEntry`).
+   Both read surfaces call the same `backendhealth.Backends(ctx, nil)`.
+   Security test `TestCodexEntry_SecurityNoAPIKeyInEnv` verifies no
+   `OPENAI_API_KEY` in child env on either probe. `codexBackendName`
+   pinned by `TestCodexBackendName_Pinned`.
 
 5. **Live/integration paths unverified.** No test exercises a real `codex exec`
    round-trip through a live engine for either `agent_call` or
