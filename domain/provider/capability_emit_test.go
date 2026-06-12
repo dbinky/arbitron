@@ -148,6 +148,22 @@ func TestEmit_CodexDefaultEffortEmitsNothing(t *testing.T) {
 	assert.Empty(t, e.Args, "codex default effort must emit no args")
 }
 
+// Pass 2 parity: the write-time and runtime invariant — Validate and Emit called
+// with the same input must agree on the effective floored effort. This test
+// observes the agreement directly so a future refactor that decouples the two
+// (breaking the invariant) produces a failing test, not a silent divergence.
+func TestEmit_ValidateAndEmitAgreeOnFlooredEffort(t *testing.T) {
+	// sonnet-4.6: xhigh is floored to high by the explicit effort_floor map.
+	_, effEffort, err := rules().Validate("claude-code", "sonnet-4.6", provider.ContextDefault, provider.EffortXHigh)
+	require.NoError(t, err)
+	require.Equal(t, provider.EffortHigh, effEffort, "Validate must floor xhigh -> high")
+
+	e, err := rules().Emit("claude-code", "sonnet-4.6", provider.ContextDefault, provider.EffortXHigh)
+	require.NoError(t, err)
+	assert.Equal(t, string(effEffort), e.Env["CLAUDE_CODE_EFFORT_LEVEL"],
+		"Emit must emit exactly the effective effort Validate returned")
+}
+
 // Opencode (and unknown backends): emits nothing for both axes (deferred).
 func TestEmit_UnknownBackendEmitsNothing(t *testing.T) {
 	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
