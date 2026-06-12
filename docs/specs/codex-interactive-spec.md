@@ -35,8 +35,11 @@ drifted. The fix must be an **enforced** posture, not a request.
 - A codex-backed `interactive_agent` node conducts a **real interview**: asks one
   question at a time, waits for the human, and resumes the same conversation when
   the human replies.
-- During the interview, codex **modifies nothing** in the codebase — no
-  source / test / config edits, and no builds / tests / installs.
+- During the interview, codex **cannot mutate the codebase**. It may read
+  freely and run informational commands (for example, checking what a file
+  contains or which CLIs are installed), but every write **outside its declared
+  deliverable** — source, tests, config, build artifacts — is denied. It can
+  neither edit code nor land a build.
 - The node still **completes its contract**: on human approval it produces and
   commits its declared deliverable (e.g. the spec under `docs/specs/`, or design
   documents under `docs/superpowers/specs/`).
@@ -52,14 +55,17 @@ drifted. The fix must be an **enforced** posture, not a request.
 - **Turn-taking interview.** A codex-backed interactive node asks a question and
   yields control. The human answers; the **same conversation resumes**. This is
   the same conversational UX as the existing Claude interactive path.
-- **Codebase is read-only to the interviewer.** Codex may **read** repository
-  files during the interview so it can ask grounded, informed clarifiers
-  (for example, referencing what a file actually contains). It cannot change
-  anything. "Never modify the codebase" means no writes; reads are safe and
-  improve interview quality.
+- **Read and run, but don't mutate.** Codex may **read** repository files and
+  **run informational commands** during the interview (for example, inspecting
+  what a file contains or checking which CLIs are installed) so it can ask
+  grounded, informed clarifiers. What it **cannot** do is change the codebase:
+  every write outside its declared deliverable is denied, so it can neither edit
+  code nor produce a build. "Never modify the codebase" means no mutation — not
+  no reading or inspecting.
 - **Invisible guardrail.** If codex attempts a forbidden action mid-interview
-  (edit a file, run a build), the attempt is **silently blocked** and codex
-  continues interviewing. The human is **not** interrupted and sees a clean
+  (a write outside the deliverable, or a command whose effect would mutate the
+  tree), the attempt is **silently blocked** and codex continues interviewing.
+  The human is **not** interrupted and sees a clean
   interview. The blocked attempt is **observable in the run trace** for
   debugging, but never surfaces as a notification or an approval prompt.
 - **Deliverable still produced.** On human approval, codex writes **only** the
@@ -100,8 +106,9 @@ drifted. The fix must be an **enforced** posture, not a request.
 ## 5. Success Criteria
 
 - A codex-backed `interactive_agent` node asks a question and yields; across the
-  **whole conversation** it modifies no source / test / config file and runs no
-  build / test / install.
+  **whole conversation** it modifies no source / test / config file and produces
+  no build — every write outside its `docs/` deliverable is denied, even though
+  codex may run read-only / informational commands.
 - The same node still completes its contract: on approval, the deliverable is
   written and committed under its declared location.
 - **Human replies resume the same codex session** — conversation continuity
@@ -111,8 +118,9 @@ drifted. The fix must be an **enforced** posture, not a request.
   node (profile `interviewer-codex`) on a feature like "remove the Queue Status
   section from Settings."
   - **Before:** codex edits `Settings.tsx` and runs the build.
-  - **After:** codex interviews (asks clarifiers, waits), never touches code, and
-    writes the spec only after approval.
+  - **After:** codex interviews (asks clarifiers, waits) — it may inspect files
+    or check which CLIs are available, but never modifies code or lands a
+    build — and writes the spec (committing it itself) only after approval.
 
 ## 6. Risks & Considerations
 
