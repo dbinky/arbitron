@@ -180,6 +180,36 @@ func TestInteractiveStreamSelector_AgentKind_Opencode(t *testing.T) {
 	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend)
 }
 
+// TestInteractiveStreamSelector_AgentKind_OpencodeDefaultBackend_FailsClosed
+// verifies that the opencode rejection cannot be bypassed via the defaultBackend
+// floor. A misconfigured deployment that sets defaultBackend = "opencode" must
+// still fail closed — the explicit opencode check fires on the floored value
+// before the map lookup, so there is no silent fallback to any other provider.
+// Without this test, removing the explicit opencode check from agentStreamFor
+// would silently route opencode-floored bindings as ErrUnsupportedAgentBackend
+// only via the map-miss branch, which is correct but the explicit error message
+// would lose the "opencode" context and the test would still pass.
+func TestInteractiveStreamSelector_AgentKind_OpencodeDefaultBackend_FailsClosed(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, _, m := streamsByBackend()
+
+	// Misconfigured deployment: default floor is opencode (no streaming adapter).
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendOpencode)
+
+	// An empty-backend binding floors to the default ("opencode") and must fail closed.
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: "", // floors to defaultBackend = "opencode"
+		Model:   "anthropic/claude-3-5-sonnet",
+	})
+	require.Error(t, err, "flooring to opencode via defaultBackend must fail closed")
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend,
+		"opencode reached via default-backend floor must still be rejected")
+	assert.Contains(t, err.Error(), "opencode",
+		"error must identify opencode as the offending backend even when reached via the floor")
+}
+
 // TestInteractiveStreamSelector_AgentKind_UnknownBackend verifies that an
 // unknown/typo backend (incl. a case-variant) fails closed with the sentinel.
 func TestInteractiveStreamSelector_AgentKind_UnknownBackend(t *testing.T) {
