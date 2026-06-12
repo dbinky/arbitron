@@ -468,3 +468,52 @@ func TestDynamicResolver_ImplementsPort(t *testing.T) {
 	_, err := port.Resolve(context.Background(), "x")
 	assert.True(t, errors.Is(err, provider.ErrUnknownProfile))
 }
+
+// Paired integration (#16): ProfileStore → ProfileCache → DynamicProfileResolver.
+// A profile written to the store, loaded into the cache, and resolved through the
+// resolver carries its ContextWindow + Effort on the binding. The connection-backed
+// path additionally has a lazy RevealKey that decrypts the key through the raw
+// ConnectionStore without touching the store at Resolve time (only on demand).
+func TestPaired_StoreToCache_ToResolver_AxesAndReveal(t *testing.T) {
+	ctx := context.Background()
+	connStore := newFakeConnectionStore()
+	connStore.put(provider.Connection{Name: "or", Provider: "openrouter", BaseURL: "https://x"}, "sk-reveal")
+
+	ps := newFakeProfileStore(
+		provider.Profile{
+			Alias: "no-conn", Kind: provider.ProfileKindAgent,
+			Backend: "claude-code", Model: "opus-4.8",
+			ContextWindow: provider.Context200K, Effort: provider.EffortHigh,
+		},
+		provider.Profile{
+			Alias: "with-conn", Kind: provider.ProfileKindAgent,
+			ConnectionRef: "or", Model: "m",
+			ContextWindow: provider.Context1M, Effort: provider.EffortMedium,
+		},
+	)
+
+	// Store → Cache → Resolver chain.
+	cache := adapterprovider.NewProfileCache(ps)
+	require.NoError(t, cache.Load(ctx))
+	r := adapterprovider.NewDynamicProfileResolver(cache, connStore)
+
+	// No-connection path: axes survive store → cache → binding.
+	nc, err := r.Resolve(ctx, "no-conn")
+	require.NoError(t, err)
+	assert.Equal(t, provider.Context200K, nc.ContextWindow, "no-conn: ContextWindow must survive the full chain")
+	assert.Equal(t, provider.EffortHigh, nc.Effort, "no-conn: Effort must survive the full chain")
+	assert.Equal(t, 0, connStore.revealCalls, "Resolve must NOT call Reveal — RevealKey is lazy")
+
+	// Connection-backed path: axes + lazy key reveal.
+	wc, err := r.Resolve(ctx, "with-conn")
+	require.NoError(t, err)
+	assert.Equal(t, provider.Context1M, wc.ContextWindow, "with-conn: ContextWindow must survive the full chain")
+	assert.Equal(t, provider.EffortMedium, wc.Effort, "with-conn: Effort must survive the full chain")
+	assert.Equal(t, 0, connStore.revealCalls, "Resolve must NOT call Reveal — RevealKey is still lazy")
+
+	// Only when RevealKey is explicitly called does the store reveal.
+	key, err := wc.RevealKey(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "sk-reveal", key, "RevealKey must return the stored key via the raw ConnectionStore")
+	assert.Equal(t, 1, connStore.revealCalls, "RevealKey must call Reveal exactly once")
+}

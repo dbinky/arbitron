@@ -522,6 +522,59 @@ func TestConnectionCreate_BedrockValidationUsesDefaultBranch(t *testing.T) {
 	assert.Contains(t, body, "failed to create", "bedrock validation falls through to the default error branch")
 }
 
+// Paired integration (#19): the connErrorResult sentinel-to-message mapping is
+// faithful when exercised through the REAL ConnectionService (not a stub). Each
+// key sentinel is triggered by a real service call through the real admin gate so
+// a future divergence between connErrorResult and the actual sentinels surfaces
+// as a test failure rather than a silent wrong message.
+func TestPaired_ConnectionTools_SentinelMappingFaithful(t *testing.T) {
+	store := newFakeConnStore()
+	// Seed one connection so get/delete can find it (non-admin tests below).
+	require.NoError(t, store.Create(context.Background(),
+		provider.Connection{Name: "seeded", Provider: "openrouter", BaseURL: "https://x"}, "sk-seed"))
+	srv := newConnServer(t, store, nil)
+
+	// ErrForbidden → "forbidden: admin only"
+	res := callTool(t, srv, "connection_create", map[string]any{
+		"name": "new", "provider": "openrouter", "base_url": "https://y", "api_key": "k",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "forbidden", "ErrForbidden sentinel mapping")
+
+	// ErrUnauthenticated → "authentication required"
+	res = callToolCtx(t, srv, context.Background(), "connection_list", nil)
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "authentication required", "ErrUnauthenticated sentinel mapping")
+
+	// ErrConnectionExists → "already exists"
+	res = callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name": "seeded", "provider": "openrouter", "base_url": "https://x", "api_key": "k2",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "already exists", "ErrConnectionExists sentinel mapping")
+
+	// ErrConnectionNotFound → "not found"
+	res = callToolAdmin(t, srv, "connection_get", map[string]any{"name": "ghost"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "not found", "ErrConnectionNotFound sentinel mapping")
+
+	// ErrAzureAPIVersionRequired → "api-version"
+	res = callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name": "az", "provider": "azure-openai", "base_url": "https://az", "api_key": "k",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "api-version", "ErrAzureAPIVersionRequired sentinel mapping")
+
+	// No api_key ever echoed: create response must not contain the seeded key.
+	getRes := callToolAdmin(t, srv, "connection_get", map[string]any{"name": "seeded"})
+	require.False(t, getRes.IsError, extractText(t, getRes))
+	assert.NotContains(t, extractText(t, getRes), "sk-seed", "api_key must not appear in get response")
+
+	listRes := callToolAdmin(t, srv, "connection_list", nil)
+	require.False(t, listRes.IsError, extractText(t, listRes))
+	assert.NotContains(t, extractText(t, listRes), "sk-seed", "api_key must not appear in list response")
+}
+
 // Security (Pass 2): connection_update response never echoes the rotated api_key.
 // The update handler returns metaOf(conn) which has no key field, but this pins
 // the behaviour so a future change is caught immediately.

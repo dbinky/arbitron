@@ -383,6 +383,47 @@ func TestProfileCreate_NonArrayAllowedTools(t *testing.T) {
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "array")
 }
 
+// Paired integration (#18): the profileErrorResult sentinel-to-message mapping is
+// faithful when exercised through the REAL ProfileService (not a stub). Each key
+// sentinel is triggered by a real service call and the tool error message is
+// checked. This catches any future divergence between profileErrorResult and the
+// actual sentinels the service returns.
+func TestPaired_ProfileTools_SentinelMappingFaithful(t *testing.T) {
+	srv := newProfileServer(t,
+		newMemProfileStore(
+			provider.Profile{Alias: "exists", Kind: provider.ProfileKindChat},
+		),
+		&noopReloader{},
+	)
+
+	// ErrForbidden (non-admin) → "forbidden: admin only"
+	res := callTool(t, srv, "profile_create", map[string]any{"alias": "x", "kind": "agent", "backend": "claude-code"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "forbidden", "ErrForbidden sentinel mapping")
+
+	// ErrUnauthenticated (anon) → "authentication required"
+	res = callToolCtx(t, srv, context.Background(), "profile_list", nil)
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "authentication required", "ErrUnauthenticated sentinel mapping")
+
+	// ErrProfileExists → "profile already exists"
+	res = callToolAdmin(t, srv, "profile_create", map[string]any{"alias": "exists", "kind": "agent", "backend": "claude-code"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "already exists", "ErrProfileExists sentinel mapping")
+
+	// ErrProfileNotFound → "profile not found"
+	res = callToolAdmin(t, srv, "profile_delete", map[string]any{"alias": "ghost"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "not found", "ErrProfileNotFound sentinel mapping")
+
+	// ErrAxisNotApplicable → err.Error() which contains "not applicable"
+	res = callToolAdmin(t, srv, "profile_create", map[string]any{
+		"alias": "bad", "kind": "agent", "backend": "codex", "context_window": "1m",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "not applicable", "ErrAxisNotApplicable sentinel mapping")
+}
+
 // Nil ProfileAdmin -> every tool reports the service unavailable, not a panic.
 func TestProfileTools_NilService(t *testing.T) {
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", &adaptmcp.Deps{})

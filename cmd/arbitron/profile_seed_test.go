@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	configadapter "github.com/arbitron/arbitron/adapter/config"
+	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -217,4 +219,57 @@ func TestSeedProfiles_NoCandidates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	assert.Equal(t, 0, skipped)
+}
+
+// Paired integration (#20): ProfilesFromConfig → SeedProfiles → store reflects the
+// valid entries; invalid entries are skipped. On a second call (non-empty store)
+// the seeder is a complete no-op (DB-wins). This exercises the full
+// config → adapter/config → domain chain in one test.
+func TestPaired_ConfigToSeedToStore(t *testing.T) {
+	ctx := context.Background()
+	// Construct config-file-style profile entries (as the YAML/koanf parser
+	// would produce them) and map them through ProfilesFromConfig to domain profiles.
+	cfgProfiles := []struct {
+		alias, kind, backend string
+		valid                bool
+	}{
+		{"chat-one", "chat", "", true},            // empty backend → substituted to claude-cli
+		{"agent-one", "agent", "claude-code", true},
+		{"invalid-backend", "agent", "notabackend", false}, // unknown backend → skipped
+	}
+
+	var domainCfg []domainconfig.ProfileConfig
+	for _, c := range cfgProfiles {
+		domainCfg = append(domainCfg, domainconfig.ProfileConfig{
+			Alias:   c.alias,
+			Kind:    c.kind,
+			Backend: c.backend,
+		})
+	}
+
+	profiles := configadapter.ProfilesFromConfig(domainCfg)
+	assert.Len(t, profiles, 3, "ProfilesFromConfig must map all 3 entries (invalid filter happens in SeedProfiles)")
+
+	store := newSeedFakeStore()
+	n, skipped, err := SeedProfiles(ctx, store, testRules(), profiles)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "exactly 2 valid profiles must be seeded")
+	assert.Equal(t, 1, skipped, "the invalid-backend profile must be skipped, not an error")
+
+	// Valid profiles are reachable by alias.
+	_, err = store.Get(ctx, "chat-one")
+	assert.NoError(t, err, "chat-one must be in the store")
+	_, err = store.Get(ctx, "agent-one")
+	assert.NoError(t, err, "agent-one must be in the store")
+
+	// Invalid entry must not have been stored.
+	_, err = store.Get(ctx, "invalid-backend")
+	assert.ErrorIs(t, err, provider.ErrProfileNotFound, "invalid-backend must not be in the store")
+
+	// Second boot: the store is non-empty — seed must be a complete no-op.
+	n2, skipped2, err := SeedProfiles(ctx, store, testRules(), profiles)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n2, "second seed must produce zero creates (DB-wins)")
+	assert.Equal(t, 0, skipped2, "second seed must not skip any entries (no validation run)")
+	assert.Equal(t, 2, len(store.byAlias), "store must still contain exactly 2 profiles after second seed")
 }

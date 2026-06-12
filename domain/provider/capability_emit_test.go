@@ -164,6 +164,40 @@ func TestEmit_ValidateAndEmitAgreeOnFlooredEffort(t *testing.T) {
 		"Emit must emit exactly the effective effort Validate returned")
 }
 
+// Paired parity (#15): Validate + Emit for EffortNone must agree. Validate passes
+// none through unchanged (special bypass); Emit must then disable thinking via
+// MAX_THINKING_TOKENS=0. The two calls use the SAME inputs and their agreement is
+// checked directly so a future divergence between the validation and emission
+// paths is caught as a test failure rather than a silent runtime mismatch.
+func TestParity_ValidateAndEmitAgreeOnEffortNone(t *testing.T) {
+	_, effEffort, err := rules().Validate("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortNone, effEffort, "Validate must pass EffortNone through unchanged")
+
+	e, err := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	// Emit for EffortNone must disable thinking — MAX_THINKING_TOKENS=0.
+	// CLAUDE_CODE_EFFORT_LEVEL must NOT appear (disable uses a different var).
+	assert.Equal(t, "0", e.Env["MAX_THINKING_TOKENS"], "Emit must set MAX_THINKING_TOKENS=0 for EffortNone")
+	assert.Empty(t, e.Env["CLAUDE_CODE_EFFORT_LEVEL"], "Emit must NOT set CLAUDE_CODE_EFFORT_LEVEL for EffortNone")
+}
+
+// Paired parity (#15): default context + default effort must produce no extra
+// env or args from EITHER Validate (effective values are the defaults) OR Emit
+// (defaults → nothing). Tests the "emit nothing for defaults" invariant from
+// both ends of the pair.
+func TestParity_ValidateAndEmitAgreeOnDefaults(t *testing.T) {
+	effCW, effEff, err := rules().Validate("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Equal(t, provider.ContextDefault, effCW, "Validate must return ContextDefault for default tier")
+	assert.Equal(t, provider.EffortDefault, effEff, "Validate must return EffortDefault for default effort")
+
+	e, err := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Empty(t, e.Env, "Emit must produce no env vars for default tier+effort")
+	assert.Empty(t, e.Args, "Emit must produce no args for default tier+effort")
+}
+
 // Opencode (and unknown backends): emits nothing for both axes (deferred).
 func TestEmit_UnknownBackendEmitsNothing(t *testing.T) {
 	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{

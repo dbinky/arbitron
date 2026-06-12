@@ -7,10 +7,31 @@ import (
 	"testing"
 
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// adminCtx returns a context carrying an admin identity for tests that need to
+// pass the ProfileService admin gate.
+func adminCtx() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{Role: identity.RoleAdmin})
+}
+
+// minimalCapRules returns a CapabilityRules that accepts any profile with
+// backend=claude-code and the default axes. Used by paired-integration tests
+// that exercise the ProfileService → ProfileCache → Resolver chain without
+// needing the full production ruleset.
+func minimalCapRules() provider.CapabilityRules {
+	return provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"claude-code": {
+			Backend:      "claude-code",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault, provider.Context200K},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortHigh},
+		},
+	})
+}
 
 // Reload: a store mutation is invisible to a resolver until Reload runs, then it
 // becomes visible. This is the recache-hook contract the Phase-4 service relies
@@ -100,6 +121,48 @@ func TestNewProfileCacheFromProfiles_DuplicateAlias_LastWins(t *testing.T) {
 	b, err := r.Resolve(context.Background(), "p")
 	require.NoError(t, err)
 	assert.Equal(t, provider.ProfileKindAgent, b.Kind, "last entry must win on duplicate alias")
+}
+
+// Paired integration (#17): ProfileService write → ProfileCache Reload → resolver
+// visible. The ProfileCache is passed as the Reloader to ProfileService, so a
+// service.Create triggers cache.Reload internally, and the resolver reading the
+// SAME cache sees the new profile immediately — with no external Reload call.
+//
+// Also verifies: a persist error in service.Create does NOT call Reload, so the
+// resolver's snapshot is unaffected (durable-first invariant from the service side).
+func TestPaired_ServiceWrite_RecachesResolver(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeProfileStore()
+	cache := adapterprovider.NewProfileCache(store)
+	require.NoError(t, cache.Load(ctx))
+
+	svc := provider.NewProfileService(store, minimalCapRules(), cache)
+	r := adapterprovider.NewDynamicProfileResolver(cache, nil)
+
+	// Before the write the alias is unknown.
+	_, err := r.Resolve(ctx, "new-profile")
+	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
+
+	// Service write triggers Reload internally; the resolver sees the new profile.
+	_, _, err = svc.Create(adminCtx(), provider.Profile{
+		Alias: "new-profile", Kind: provider.ProfileKindAgent, Backend: "claude-code",
+	})
+	require.NoError(t, err)
+
+	b, err := r.Resolve(ctx, "new-profile")
+	require.NoError(t, err, "resolver must see the new profile after the service write recaches")
+	assert.Equal(t, provider.ProfileKindAgent, b.Kind)
+
+	// A persist error must NOT recache: seed a duplicate so Create returns
+	// ErrProfileExists, then verify the resolver state is unchanged.
+	_, _, err = svc.Create(adminCtx(), provider.Profile{
+		Alias: "new-profile", Kind: provider.ProfileKindChat, Backend: "claude-code",
+	})
+	assert.ErrorIs(t, err, provider.ErrProfileExists)
+	// The Kind in the resolver must still be Agent (the original write), not Chat.
+	b2, err := r.Resolve(ctx, "new-profile")
+	require.NoError(t, err)
+	assert.Equal(t, provider.ProfileKindAgent, b2.Kind, "a failed write must not change the cached snapshot")
 }
 
 // Concurrency: concurrent Resolve reads and Reload writes are race-free (run
