@@ -40,16 +40,31 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
       return
     }
 
-    // Node dimensions from the layout constants (200x80 default)
-    const nodeWidth = node.measured?.width ?? node.width ?? 200
-    const nodeHeight = node.measured?.height ?? node.height ?? 80
-
-    // Right-center of the node in flow coordinates
-    const flowX = (node.position?.x ?? 0) + nodeWidth
-    const flowY = (node.position?.y ?? 0) + nodeHeight / 2
-
-    // Convert to screen (viewport) coordinates
-    const screenPos = flowToScreenPosition({ x: flowX, y: flowY })
+    // Anchor the source to the node's RENDERED geometry. The node's DOM rect
+    // already reflects the live viewport transform (pan/zoom) AND its true
+    // content-sized width, so the orange dot lands on the actual right edge.
+    // The flow-coordinate math below is only a fallback for the brief window
+    // before the element is mounted/measured: relying on it directly let the
+    // dot fall to position.x + a 200px width guess, which is mid-node for any
+    // node wider than 200 (e.g. long interactive labels).
+    let sourceX: number
+    let sourceY: number
+    const nodeEl = document.querySelector(
+      `.react-flow__node[data-id="${nodeId}"]`,
+    ) as HTMLElement | null
+    if (nodeEl) {
+      const rect = nodeEl.getBoundingClientRect()
+      sourceX = rect.right
+      sourceY = rect.top + rect.height / 2
+    } else {
+      const nodeWidth = node.measured?.width ?? node.width ?? 200
+      const nodeHeight = node.measured?.height ?? node.height ?? 80
+      const flowX = (node.position?.x ?? 0) + nodeWidth
+      const flowY = (node.position?.y ?? 0) + nodeHeight / 2
+      const screenPos = flowToScreenPosition({ x: flowX, y: flowY })
+      sourceX = screenPos.x
+      sourceY = screenPos.y
+    }
 
     // Target: left edge of the panel divider.
     // The ResizablePanel divider is the boundary. We find it by looking for the
@@ -65,10 +80,10 @@ export default function CalloutConnector({ nodeId, visible }: CalloutConnectorPr
     }
 
     setGeometry({
-      sourceX: screenPos.x,
-      sourceY: screenPos.y,
+      sourceX,
+      sourceY,
       targetX,
-      targetY: screenPos.y,
+      targetY: sourceY,
     })
   }, [nodes, nodeId, flowToScreenPosition])
 

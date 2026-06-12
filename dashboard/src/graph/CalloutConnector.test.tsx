@@ -59,6 +59,42 @@ describe('CalloutConnector — happy path', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Anchor: source circle sits on the node's RENDERED right edge, not a width
+// fallback. Regression for the orange dot landing in the middle of a node whose
+// real width exceeds the 200px fallback (measured width unavailable at compute).
+// ---------------------------------------------------------------------------
+
+describe('CalloutConnector — anchors to rendered node right edge', () => {
+  it('places the source circle at the node DOM right edge, not position.x + fallback width', () => {
+    // measured width is a small/stale 200, but the node actually renders ~320 wide.
+    mockNodes.push(makeNode('interactive-1', 100, 100, 200, 80))
+    Object.defineProperty(window, 'innerWidth', { value: 1200, writable: true })
+
+    // The real rendered node element: right edge at 420, vertical center at 140.
+    const el = document.createElement('div')
+    el.className = 'react-flow__node'
+    el.setAttribute('data-id', 'interactive-1')
+    el.getBoundingClientRect = () =>
+      ({
+        x: 100, y: 100, left: 100, top: 100, right: 420, bottom: 180,
+        width: 320, height: 80, toJSON: () => {},
+      }) as DOMRect
+    document.body.appendChild(el)
+
+    const { container } = render(
+      <CalloutConnector nodeId="interactive-1" visible />,
+    )
+    const circle = container.querySelector('circle')
+    expect(circle).toBeInTheDocument()
+    // Right edge = 420. The old width-fallback path would give 100 + 200 = 300.
+    expect(circle?.getAttribute('cx')).toBe('420')
+    expect(circle?.getAttribute('cy')).toBe('140')
+
+    document.body.removeChild(el)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Error path: returns null when visible=false
 // ---------------------------------------------------------------------------
 
