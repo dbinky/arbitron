@@ -275,6 +275,49 @@ func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) 
 		"fall-through from absent map entry must wrap ErrUnsupportedAgentBackend")
 }
 
+// PAIRED (FA#17) — dual-arm isolation: the SAME codex backend routes to two
+// DISTINCT, TYPE-INCOMPATIBLE implementations. The batch factory arm returns
+// *codex.Provider (agent_call, autonomous `codex exec`); the interactive stream
+// arm returns *codex.InteractiveProvider (interactive_agent, `codex mcp-server`
+// with approval policy). They must be different objects and different types —
+// no shared state, no accidental cross-routing.
+//
+// Using the REAL *codex.InteractiveProvider (not a sentinel) closes the gap that
+// all other vocabulary tests use a sentinel for the stream side: this test proves
+// the concrete type distinction holds in the production wiring.
+func TestInteractiveStreamSelector_CodexDualArm_DistinctTypes(t *testing.T) {
+	f := newBackendFactory(t)
+
+	// Wire the real interactive provider exactly as the composition root does.
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	m := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: &sentinelChatProvider{name: "claude-stream"},
+		workflow.BackendCodex:      codexInteractive,
+	}
+	sel := adapterprovider.NewInteractiveStreamSelector(
+		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},
+		m,
+		workflow.BackendClaudeCode,
+	)
+	binding := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: workflow.BackendCodex, Model: "gpt-5.5"}
+
+	// Batch (autonomous) arm → *codex.Provider.
+	ap, err := f.AgentProviderFor(binding)
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.Provider)(nil), ap, "batch factory must return *codex.Provider for codex backend")
+
+	// Interactive (stream) arm → *codex.InteractiveProvider.
+	sp, err := sel.StreamProviderFor(binding)
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.InteractiveProvider)(nil), sp,
+		"stream selector must return *codex.InteractiveProvider for codex backend")
+
+	// The two objects must be distinct (no accidental sharing of the autonomous provider).
+	if ap != nil && sp != nil {
+		assert.NotSame(t, ap, sp, "batch and interactive providers must be distinct objects")
+	}
+}
+
 // FA15 PAIRED (§8+§9) — the factory (AgentProviderFor) and the stream selector
 // (StreamProviderFor) must agree on the backend dispatch vocabulary:
 //   - "codex": factory → *codex.Provider; selector → codex stream sentinel.
