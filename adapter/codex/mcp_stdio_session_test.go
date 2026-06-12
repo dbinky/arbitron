@@ -611,3 +611,20 @@ func TestSpikeConstants_AssumedPostureConstantsArePinned(t *testing.T) {
 	assert.Equal(t, "on-request", codexApprovalPolicyOnRequest, "approval routing value that forces mutations through elicitation (SPIKE: verify against 0.139)")
 	assert.Equal(t, "conversation_id", codexArgResumeID, "resume arg key that carries the prior conversation id (SPIKE: verify against 0.139)")
 }
+
+// SECURITY — security-critical arg KEY strings must be pinned separately.
+// TestStartToolRequest_Happy_FreshConversation uses constants in both the map
+// build and the lookup (args[codexArgSandboxMode]), so a key that drifts from
+// its expected wire value still passes that test. A wrong key silently drops
+// the posture config: codex falls back to its default (possibly read-write or
+// no-approval) mode without any test failure.
+func TestSpikeConstants_SecurityPostureArgKeysPinned(t *testing.T) {
+	assert.Equal(t, "sandbox_mode", codexArgSandboxMode,
+		"wrong key silently drops the read-only sandbox constraint (SPIKE: verify against 0.139)")
+	assert.Equal(t, "approval_policy", codexArgApprovalPolicy,
+		"wrong key silently bypasses the mutation approval guardrail (SPIKE: verify against 0.139)")
+	assert.Equal(t, "codex", codexStartToolName,
+		"MCP tool name to start a conversation (SPIKE: verify against 0.139)")
+	assert.Equal(t, "codex/event", codexEventNotificationMethod,
+		"notification method for streaming events; wrong value means no events arrive (SPIKE: verify against 0.139)")
+}
