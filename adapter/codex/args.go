@@ -69,7 +69,54 @@ const (
 // posture — the same posture as opencode's --allow-all-tools and claudecli's
 // --dangerously-skip-permissions. See also: docs/specs/codex-backend-spec.md §8.
 func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([]string, error) {
-	return buildExecArgs(binding.Model, mission.WorkDir)
+	return buildExecArgs(binding.Model, mission.WorkDir, nil)
+}
+
+// codexBackend is the effective-backend identity buildArgsWithRules passes to
+// CapabilityRules.Emit when a binding carries no resolved Backend. The codex
+// adapter unambiguously drives `codex exec`, so an empty Backend defaults to this.
+const codexBackend = "codex"
+
+// buildArgsWithRules assembles the `codex exec` argv with the binding's resolved
+// effort appended as `-c model_reasoning_effort=<v>` (profile-editing Phase 3).
+// The effort emission is computed from the capability rules so the value codex
+// receives is the SAME effective (possibly floored) value the write validated. A
+// default/empty effort appends nothing. An Empty (unconfigured) ruleset is a
+// no-op, so it degrades to the bare buildArgs contract.
+//
+// Fail-closed: an empty model still returns ErrModelRequired (via buildExecArgs).
+func buildArgsWithRules(mission engine.AgentMission, binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	extra, err := codexEffortArgs(binding, rules)
+	if err != nil {
+		return nil, err
+	}
+	return buildExecArgs(binding.Model, mission.WorkDir, extra)
+}
+
+// codexEffortArgs computes the codex `-c model_reasoning_effort=<v>` argv addition
+// for a binding via the capability rules. An Empty ruleset, an empty/default
+// effort, or an unset backend (defaulted to codex) that yields no graded effort
+// all return nil (no extra args). It is shared by the batch buildArgsWithRules and
+// the streaming launch so the two paths emit identical effort args.
+func codexEffortArgs(binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	if rules.Empty() {
+		return nil, nil
+	}
+	backend := binding.Backend
+	if backend == "" {
+		backend = codexBackend
+	}
+	effort := binding.Effort
+	if effort == "" {
+		effort = provider.EffortDefault
+	}
+	// Context is inapplicable to codex (rejected at write); pass ContextDefault so
+	// Emit never trips the context-axis check and only the effort args come back.
+	em, err := rules.Emit(backend, binding.Model, provider.ContextDefault, effort)
+	if err != nil {
+		return nil, err
+	}
+	return em.Args, nil
 }
 
 // buildExecArgs is the SHARED `codex exec` argv builder consumed by both the
@@ -91,16 +138,18 @@ func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding) ([
 // ToolScope precedence is honoured at the request boundary (the stream provider
 // prefers a non-empty ChatRequest.ToolScope over its global scope), matching
 // claudecli's precedence shape even though codex has no flag to emit it through.
-func buildExecArgs(model, workDir string) ([]string, error) {
+// extra carries optional `-c <key=value>` config overrides (profile-editing
+// Phase 3: `-c model_reasoning_effort=<v>`) appended AFTER the model flag and
+// BEFORE --cd/--json, so the effort override rides the same exec contract on both
+// the batch and stream paths. A nil/empty extra reproduces the pre-Phase-3 argv
+// exactly (back-compat for buildArgs and existing call sites).
+func buildExecArgs(model, workDir string, extra []string) ([]string, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return nil, ErrModelRequired
 	}
-	return []string{
-		execSubcommand,
-		bypassFlag,
-		modelFlag, model,
-		cdFlag, workDir,
-		jsonFlag,
-	}, nil
+	args := []string{execSubcommand, bypassFlag, modelFlag, model}
+	args = append(args, extra...) // e.g. -c model_reasoning_effort=medium
+	args = append(args, cdFlag, workDir, jsonFlag)
+	return args, nil
 }

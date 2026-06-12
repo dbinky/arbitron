@@ -76,7 +76,15 @@ func (p *StreamProvider) launch(ctx context.Context, req engine.ChatRequest) (li
 	if model == "" {
 		model = p.binding.Model
 	}
-	args, err := buildExecArgs(model, req.WorkDir)
+	// Effort emission (profile-editing Phase 3): the configured binding's resolved
+	// Effort rides argv as `-c model_reasoning_effort=<v>`, computed via the SAME
+	// codexEffortArgs helper the batch path uses so stream and batch never diverge.
+	// A default/empty effort or an Empty ruleset appends nothing.
+	extra, err := codexEffortArgs(p.binding, p.rules)
+	if err != nil {
+		return nil, nil, nil, nil, model, fmt.Errorf("codex stream (model %q): %w", model, err)
+	}
+	args, err := buildExecArgs(model, req.WorkDir, extra)
 	if err != nil {
 		return nil, nil, nil, nil, model, fmt.Errorf("codex stream (model %q): %w", model, err)
 	}

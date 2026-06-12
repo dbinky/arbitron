@@ -25,6 +25,65 @@ func bindingForArgs(model string) provider.ResolvedBinding {
 	return provider.ResolvedBinding{Provider: "openai", Model: model}
 }
 
+// testCapRules builds a capability ruleset exercising the codex emission surface:
+// codex has no context knob (default-only tier) and graded effort levels so a
+// medium effort emits `-c model_reasoning_effort=medium`.
+func testCapRules() provider.CapabilityRules {
+	return provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"codex": {
+			Backend:      "codex",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortNone, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh},
+		},
+	})
+}
+
+// assertContainsSeq asserts args contains a..b as an adjacent pair (a immediately
+// followed by b), matching how `-c <kv>` must reach codex.
+func assertContainsSeq(t *testing.T, args []string, a, b string) {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return
+		}
+	}
+	t.Fatalf("expected adjacent sequence %q %q in %v", a, b, args)
+}
+
+// contains reports whether args contains v.
+func contains(args []string, v string) bool {
+	for _, a := range args {
+		if a == v {
+			return true
+		}
+	}
+	return false
+}
+
+// capability — a codex binding with medium effort appends `-c
+// model_reasoning_effort=medium` after the model flag; the model flag is still
+// present.
+func TestBuildArgs_AppendsEffort(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=medium")
+	assertContainsSeq(t, args, "-m", "gpt-5.5")
+}
+
+// capability (default) — a default-effort binding emits NO `-c` arg (codex picks
+// its own default).
+func TestBuildArgs_NoEffortWhenDefault(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5"}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	if contains(args, "model_reasoning_effort=default") || contains(args, "-c") {
+		t.Fatalf("default effort must not emit -c: %v", args)
+	}
+}
+
 // HAPPY PATH — the pinned `codex exec` argv: exec subcommand, the bypass posture,
 // -m <model>, --cd <WorkDir>, --json. The PROMPT is NOT in argv (it is delivered
 // via stdin in provider.go).
