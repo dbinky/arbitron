@@ -146,6 +146,66 @@ func TestBuildArgs_NoSecretsInArgv(t *testing.T) {
 	assert.NotContains(t, joined, "do work")
 }
 
+// capability (none→minimal) — EffortNone maps to codex's "minimal" keyword, not
+// the literal string "none". The mapping lives in emitCodexEffort (domain layer)
+// and is relayed verbatim through codexEffortArgs; this test verifies it survives
+// the full adapter path.
+func TestBuildArgs_NoneEffortYieldsMinimal(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortNone}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=minimal")
+}
+
+// INPUT-VALIDATION — an empty model in buildArgsWithRules (not buildArgs) also
+// returns ErrModelRequired. The fail-closed guarantee applies to both paths.
+func TestBuildArgsWithRules_EmptyModelRejected(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "", Effort: provider.EffortMedium}
+	_, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrModelRequired)
+}
+
+// Edge: an empty Backend in the binding falls back to codexBackend ("codex")
+// inside codexEffortArgs so the effort arg is emitted correctly without an
+// explicit Backend on the binding.
+func TestBuildArgs_EmptyBackendFallsBackToCodex(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "", Model: "gpt-5.5", Effort: provider.EffortHigh}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=high")
+}
+
+// Edge: extra effort args appear BEFORE --cd and --json in the final argv.
+// This ordering is required by buildExecArgs design so the effort override is
+// part of the model section, not appended after the path flags.
+func TestBuildArgs_ExtraArgsOrderedBeforePathFlags(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+
+	var cdIdx, jsonIdx, cIdx int = -1, -1, -1
+	for i, a := range args {
+		switch a {
+		case "-c":
+			cIdx = i
+		case "--cd":
+			cdIdx = i
+		case "--json":
+			jsonIdx = i
+		}
+	}
+	require.Greater(t, cIdx, 0, "-c flag must be present")
+	require.Greater(t, cdIdx, 0, "--cd flag must be present")
+	require.Greater(t, jsonIdx, 0, "--json flag must be present")
+	assert.Less(t, cIdx, cdIdx, "-c must appear before --cd")
+	assert.Less(t, cIdx, jsonIdx, "-c must appear before --json")
+}
+
 // EDGE — a model with surrounding whitespace is trimmed to the clean name in
 // argv, not rejected. This documents the trim-then-check contract: callers
 // feeding a config-loaded model string with accidental whitespace get the
