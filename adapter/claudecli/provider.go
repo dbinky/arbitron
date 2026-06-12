@@ -8,6 +8,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // ErrWorkDirRequired is returned by Chat/StreamChat when req.WorkDir is empty.
@@ -42,6 +43,12 @@ type Config struct {
 	SkipPermissions  bool
 	MaxResponseBytes int64
 	Runner           CommandRunner
+	// CapabilityRules drives the per-call context-window + effort env emission
+	// (profile-editing Phase 3): the agent run appends the binding's resolved
+	// axes to its subprocess env via this ruleset. A zero-value (Empty) ruleset
+	// emits nothing, so adapters constructed without it (back-compat / tests)
+	// behave exactly as before.
+	CapabilityRules provider.CapabilityRules
 }
 
 // Provider implements engine.ChatProvider by invoking the `claude` CLI in

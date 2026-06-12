@@ -42,6 +42,58 @@ func envValue(env []string, name string) (string, bool) {
 	return "", false
 }
 
+// testCapRules builds a capability ruleset exercising the claude-code emission
+// surface: full context tiers (default/200k/1m) and effort levels so a 200k +
+// high binding emits the proven RalphFactory env pair plus CLAUDE_CODE_EFFORT_LEVEL.
+func testCapRules() provider.CapabilityRules {
+	return provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"claude-code": {
+			Backend:      "claude-code",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault, provider.Context200K, provider.Context1M},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortNone, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh, provider.EffortMax},
+		},
+	})
+}
+
+// assertEnv asserts the env slice carries name=want exactly once.
+func assertEnv(t *testing.T, env []string, name, want string) {
+	t.Helper()
+	got, ok := envValue(env, name)
+	require.True(t, ok, "env var %q must be present", name)
+	assert.Equal(t, want, got, "env var %q", name)
+}
+
+// capability — a claude-code binding with a 200k tier + high effort emits the
+// context env pair AND the effort-level var on top of the credential env.
+func TestAgentEnv_AppliesContextAndEffort(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "opus-4.8",
+		ContextWindow: provider.Context200K, Effort: provider.EffortHigh,
+		RevealKey: func(context.Context) (string, error) { return "", nil },
+	}
+	env, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "200000")
+}
+
+// capability (defaults) — a default-tier, default-effort binding adds NOTHING on
+// top of the credential-only env: the WithRules form equals agentEnv in length.
+func TestAgentEnv_DefaultsAddNothing(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "opus-4.8",
+		RevealKey: func(context.Context) (string, error) { return "", nil },
+	}
+	base, err := agentEnv(context.Background(), binding) // existing credential-only path
+	require.NoError(t, err)
+	withRules, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+	assert.Len(t, withRules, len(base), "defaults must not add env")
+}
+
 // happy — base_url + key present: env carries both.
 func TestAgentEnv_GatewayInjectsBaseURLAndKey(t *testing.T) {
 	b := gatewayBinding("https://litellm.internal:4000", "sk-test", nil)

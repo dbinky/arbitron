@@ -60,6 +60,18 @@ func TestEmit_CodexEffort(t *testing.T) {
 	}
 }
 
+// Empty: a zero-value ruleset reports Empty()==true so callers can skip emission
+// when no capability policy is configured (back-compat for adapters constructed
+// without rules); a non-empty ruleset reports false.
+func TestCapabilityRules_Empty(t *testing.T) {
+	if !(provider.CapabilityRules{}).Empty() {
+		t.Fatal("zero-value CapabilityRules must be Empty")
+	}
+	if rules().Empty() {
+		t.Fatal("a populated ruleset must not be Empty")
+	}
+}
+
 // Defaults: a default tier + default effort emits nothing on either axis.
 func TestEmit_DefaultsEmitNothing(t *testing.T) {
 	e, _ := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortDefault)

@@ -5,7 +5,58 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/arbitron/arbitron/adapter/procenv"
+	"github.com/arbitron/arbitron/domain/provider"
 )
+
+// claudeBackend is the effective-backend identity the claude-cli adapters pass to
+// CapabilityRules.Emit when a binding carries no resolved Backend (e.g. the chat
+// path, whose ChatRequest carries no axes). Emit treats "claude-code" and
+// "claude-cli" identically — both drive the `claude` CLI — so this is the safe
+// default that keeps chat + agent on one emission contract.
+const claudeBackend = "claude-code"
+
+// applyCapabilityEnv appends the capability-derived env (context window, effort)
+// to an existing env slice, computed from the binding via the capability rules.
+// Backend is the EFFECTIVE backend already resolved onto the binding; an empty
+// Backend falls back to claudeBackend (both claude-cli adapters drive the `claude`
+// CLI, and Emit maps the two identically). A default tier + default effort emits
+// nothing, so this is a no-op for unconfigured bindings.
+//
+// SECURITY: the appended vars are non-secret policy knobs (effort level, context
+// window) — safe to log by key. They ride the SAME per-call env slice as the
+// credential vars and are appended AFTER them, never replacing the key.
+func applyCapabilityEnv(env []string, binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	// No capability policy configured (adapter built without rules / tests): emit
+	// nothing rather than treating every backend as unknown.
+	if rules.Empty() {
+		return env, nil
+	}
+	backend := binding.Backend
+	if backend == "" {
+		backend = claudeBackend
+	}
+	// The ResolvedBinding axes use "" as the unset/default sentinel (Go zero value);
+	// normalize to the explicit default values Emit understands so an unset axis is
+	// a no-op rather than ErrInvalid*.
+	tier := binding.ContextWindow
+	if tier == "" {
+		tier = provider.ContextDefault
+	}
+	effort := binding.Effort
+	if effort == "" {
+		effort = provider.EffortDefault
+	}
+	em, err := rules.Emit(backend, binding.Model, tier, effort)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range em.Env {
+		env = append(env, k+"="+v)
+	}
+	return env, nil
+}
 
 // validateWorkDir enforces the per-call WorkDir invariants shared by every
 // claude-cli adapter:
@@ -35,6 +86,27 @@ func validateWorkDir(workDir, workspaceRoot string) error {
 		return fmt.Errorf("%w: %q not under %q", ErrWorkDirEscapesRoot, abs, root)
 	}
 	return nil
+}
+
+// chatEnv builds the chat/stream-agent subprocess env: the controlled base env
+// (procenv.BaseEnv — allowlist-filtered, no engine secrets) with the capability
+// env appended via the same applyCapabilityEnv helper the agent path uses, so
+// chat and agent share ONE emission seam and cannot drift.
+//
+// The chat ChatRequest carries no per-request capability axes today, so emission
+// runs against a zero binding and is a no-op (default tier/effort emit nothing) —
+// the seam exists for the day a chat-kind binding's axes are plumbed through.
+// applyCapabilityEnv only errors on a non-empty ruleset with an unknown backend;
+// a zero binding falls back to the claude backend (known), so this cannot error
+// in practice. A defensive error is swallowed (the base env is still returned)
+// rather than surfaced, because the chat spec builder has no error channel and a
+// missing non-secret policy knob must never block a chat turn.
+func (c *adapterCore) chatEnv() []string {
+	env, err := applyCapabilityEnv(procenv.BaseEnv(), provider.ResolvedBinding{}, c.rules)
+	if err != nil {
+		return procenv.BaseEnv()
+	}
+	return env
 }
 
 // collectResult runs spec to completion via runner, draining the stdout lines

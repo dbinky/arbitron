@@ -59,7 +59,7 @@ func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              procenv.BaseEnv(),
+		Env:              a.core.chatEnv(),
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }

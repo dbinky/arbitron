@@ -51,6 +51,15 @@ func NewCapabilityRules(m map[string]BackendCapability) CapabilityRules {
 	return CapabilityRules{byBackend: m}
 }
 
+// Empty reports whether the ruleset carries no backends (the zero value). Adapters
+// constructed without a capability ruleset (back-compat / tests) use this to skip
+// emission entirely rather than treating every backend as unknown — a configured
+// ruleset always has at least one backend, so Empty is the unambiguous "no policy"
+// signal.
+func (r CapabilityRules) Empty() bool {
+	return len(r.byBackend) == 0
+}
+
 // containsCtx reports whether s contains v.
 func containsCtx(s []ContextWindow, v ContextWindow) bool {
 	for _, x := range s {

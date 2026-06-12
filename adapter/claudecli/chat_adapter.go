@@ -7,6 +7,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // adapterCore holds the construction inputs shared by ChatAdapter and
@@ -22,6 +23,10 @@ type adapterCore struct {
 	allowedTools     []string
 	maxResponseBytes int64
 	runner           CommandRunner
+	// rules drives the capability env emission (context window + effort) appended
+	// to the per-call env (profile-editing Phase 3). A zero-value (Empty) ruleset
+	// emits nothing.
+	rules provider.CapabilityRules
 }
 
 func newAdapterCore(cfg Config) adapterCore {
@@ -36,6 +41,7 @@ func newAdapterCore(cfg Config) adapterCore {
 		allowedTools:     cfg.AllowedTools,
 		maxResponseBytes: cfg.MaxResponseBytes,
 		runner:           cfg.Runner,
+		rules:            cfg.CapabilityRules,
 	}
 }
 
@@ -77,7 +83,7 @@ func (a *ChatAdapter) spec(req engine.ChatRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              procenv.BaseEnv(),
+		Env:              a.core.chatEnv(),
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }
