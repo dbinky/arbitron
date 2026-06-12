@@ -354,13 +354,38 @@ func TestMCPStdioSession_Error_IncompatibleProbeFailsClosed(t *testing.T) {
 // ERROR — an empty WorkDir fails closed before the probe even runs (the same
 // sandbox-root invariant the exec path guards), with no stream.
 func TestMCPStdioSession_Error_EmptyWorkDirFailsClosed(t *testing.T) {
-	c := newCore(Config{BinaryPath: "/nonexistent/codex", Runner: &fakeRunner{}})
+	runner := &fakeRunner{}
+	c := newCore(Config{BinaryPath: "/nonexistent/codex", Runner: runner})
 	s := newMCPStdioSession(&c)
 
 	stream, err := s.Start(context.Background(), turnConfig{Model: "gpt-5", Prompt: "p"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrWorkDirRequired)
 	assert.Nil(t, stream)
+	assert.False(t, runner.runCalled, "WorkDir guard must fire before the probe — probe must never run")
+}
+
+// ERROR — probe passes (compatible binary) but the actual mcp-server launch
+// fails because the binary does not exist at exec time. Start must return
+// (nil, err) — fail closed — and the error must not be ErrWorkDirRequired or
+// ErrIncompatibleCodex (those come from earlier guards).
+func TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe(t *testing.T) {
+	c := newCore(Config{
+		BinaryPath: "/nonexistent/codex",
+		Runner:     &multiRunner{scripts: []runScript{compatibleProbe()}},
+	})
+	s := newMCPStdioSession(&c)
+
+	stream, err := s.Start(context.Background(), turnConfig{
+		Model:   "gpt-5",
+		Prompt:  "p",
+		WorkDir: "/w",
+	})
+	require.Error(t, err)
+	assert.Nil(t, stream, "a launch failure after a compatible probe must yield no stream")
+	assert.NotErrorIs(t, err, ErrWorkDirRequired)
+	assert.NotErrorIs(t, err, ErrIncompatibleCodex)
+	assert.Contains(t, err.Error(), "codex mcp-server", "error must identify the launch site")
 }
 
 // --- elicitationApprover: the handler glue (no subprocess) -----------------

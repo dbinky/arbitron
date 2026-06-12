@@ -6,6 +6,8 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 _(none)_
 
+
+
 ## Fixed Previously
 
 - **FA#1 Pass 1 — nil Approver default-deny not tested.** The `fakeMCPSession.Start` correctly records a zero `approvalDecision{Allow:false}` when `cfg.Approver` is nil (fail-closed by Go zero value), but this was not exercised. Added `TestFakeMCPSession_Edge_NilApproverDefaultDeny` to verify the fail-closed property explicitly.
@@ -13,6 +15,8 @@ _(none)_
 - **FA#1 Pass 2 — FAILURE test did not assert no-Done-after-failure.** `TestFakeMCPSession_Failure_TurnFailedSurfacesError` verified `turnFailed` is returned but did not assert that a subsequent `Next` call yields `errStreamDone` (not `turnDone`). Added the assertion to prove a failed turn never silently becomes a success.
 - **FA#2 Pass 1 — single-approval SUCCESS test insufficient.** No test verified all N approval requests from a mixed scenario (allow+deny) are each delivered to the approver in order, with each decision recorded separately. Added `TestFakeMCPSession_Success_MultipleApprovalsAllDeliveredInOrder` to cover this gap and prove a denial doesn't terminate the event stream.
 - **FA#2 Pass 2 — no compile-time check for fakeTurnStream implementing turnStream.** The fake's stream type was only implicitly checked via the `Start()` return type. Added `var _ turnStream = (*fakeTurnStream)(nil)` alongside the existing mcpSession check so any future interface expansion is caught at the test-seam level.
+- **FA#3 Pass 1 — compatible probe + launch fails was untested.** `mcpStdioSession.Start` has three fail-closed paths (empty WorkDir, incompatible probe, compatible probe but exec fails). Only the first two were tested. Added `TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe` using `multiRunner{compatibleProbe()}` to exercise the third path: probe passes, but `/nonexistent/codex mcp-server` fails at OS exec time.
+- **FA#3 Pass 1 — WorkDir guard ordering not asserted.** `TestMCPStdioSession_Error_EmptyWorkDirFailsClosed` verified the error sentinel but did not assert that the runner was never called. Added `assert.False(t, runner.runCalled)` to prove the WorkDir guard fires before the probe, not after.
 
 ## Won't Fix (Beyond Current Scope)
 
