@@ -166,7 +166,15 @@ type domainStack struct {
 	profileChecker      workflow.ProfileChecker
 	connChecker         workflow.ConnectionChecker
 	connStore           provider.ConnectionStore
-	tracingShutdown     func(ctx context.Context) error
+	// profile-editing Phase 4: admin services exposed through the MCP profile_*
+	// and connection_* tools. profileSvc carries the capability ruleset +
+	// store-bound cache (its Reload recaches after a write); connSvc is the admin
+	// gate over connStore. capabilityRules is retained for the read-only
+	// provider_capabilities tool.
+	profileSvc      *provider.ProfileService
+	connSvc         *provider.ConnectionService
+	capabilityRules provider.CapabilityRules
+	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler and sweepCancel are nil in local mode.
 	sessionRepo  identity.SessionRepository
@@ -251,6 +259,9 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
 		Connections:         ds.connStore,
+		ProfileAdmin:        ds.profileSvc,
+		ConnectionAdmin:     ds.connSvc,
+		Capabilities:        ds.capabilityRules,
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
 		ScheduleService:     ds.scheduleSvc,
@@ -606,6 +617,16 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
 
+	// profile-editing Phase 4: the admin-facing editing services. ProfileService
+	// owns authz + capability validation + recache: the store-bound profileCache
+	// satisfies provider.Reloader directly (its Reload(ctx) re-reads the DB), so it
+	// is passed verbatim and a write reloads the SAME cache the resolver reads — a
+	// live edit takes effect with no restart. ConnectionService is the admin gate
+	// over the raw connStore (Reveal stays off the management surface). Both are
+	// injected into the MCP Deps below.
+	profileSvc := provider.NewProfileService(profileRepo, capabilityRules, profileCache)
+	connSvc := provider.NewConnectionService(connStore)
+
 	// 8e. Build the connection-existence checker for workflow validation over the
 	// loaded profiles + the connection store. It confirms a profile's non-empty
 	// ConnectionRef names an existing connection at workflow_validate time.
@@ -957,6 +978,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		profileChecker:      profileChecker,
 		connChecker:         connChecker,
 		connStore:           connStore,
+		profileSvc:          profileSvc,
+		connSvc:             connSvc,
+		capabilityRules:     capabilityRules,
 		tracingShutdown:     tracingShutdown,
 		sessionRepo:         sessionRepo,
 		tokenRepo:           tokenRepo,
