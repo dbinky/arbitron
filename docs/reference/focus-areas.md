@@ -39,7 +39,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 17 | Composition root + selector + autonomous factory (interactive codex → `InteractiveProvider`; batch `AgentProviderFor` codex → exec `Provider`; no leak; `opencode`/unknown still fail closed) | [x] | Done |
 | 18 | Approval policy + sandbox posture + docs boundary (policy is the PRIMARY gate, read-only sandbox is defense-in-depth only; `docs` root covers `docs/specs/` + `docs/superpowers/specs/`; no source/test/config lives under `docs/`) | [x] | Done |
 | 19 | InteractiveProvider + engine seam (`ChatChunk` contract honored; `SessionID` persisted by `conversation.go`; resume round-trips through the existing `StreamProviderFor` path; zero engine edits) | [x] | Done |
-| 20 | Subscription-auth + transport launch + version probe (`codexEnv()` on the mcp-server launch shares the no-key invariant with the exec path; the memoized `ensureCompatible` probe is shared so the two cannot drift) | [ ] | Not started |
+| 20 | Subscription-auth + transport launch + version probe (`codexEnv()` on the mcp-server launch shares the no-key invariant with the exec path; the memoized `ensureCompatible` probe is shared so the two cannot drift) | [x] | Done |
 
 ---
 

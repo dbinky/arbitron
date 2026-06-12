@@ -475,6 +475,35 @@ func TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe(t *testing.T) {
 	assert.Contains(t, err.Error(), "codex mcp-server", "error must identify the launch site")
 }
 
+// PAIRED (FA#20) — the version probe for the interactive mcp-server path uses
+// codexEnv() (the no-key subscription env), sharing the invariant with the exec
+// path. Without this test, changing core.ensureCompatible to pass nil (inheriting
+// the engine's full env — OPENAI_API_KEY, ANTHROPIC_API_KEY, DSNs) would not be
+// caught, silently breaking the no-key invariant on every probe in the interactive
+// path.
+func TestMCPStdioSession_Probe_SubscriptionEnv_NoAPIKey(t *testing.T) {
+	// Set an OPENAI_API_KEY in the parent env: if the probe uses nil (inheriting
+	// the parent) instead of codexEnv(), the key would appear in mr.calls[0].Env.
+	t.Setenv("OPENAI_API_KEY", "sk-should-not-be-forwarded")
+
+	mr := &multiRunner{scripts: []runScript{compatibleProbe()}}
+	c := newCore(Config{BinaryPath: "/nonexistent/codex", Runner: mr})
+	s := newMCPStdioSession(&c)
+
+	// WorkDir set so the guard passes; probe runs, then the real mcp-server
+	// launch fails because the binary doesn't exist — that's expected.
+	_, _ = s.Start(context.Background(), turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w"})
+
+	// Probe ran (calls[0] is the --version call).
+	require.Len(t, mr.calls, 1, "exactly one runner call — the version probe")
+	assert.Contains(t, mr.calls[0].Args, "--version", "call must be the version probe")
+
+	// Probe must have used codexEnv() — no OPENAI_API_KEY forwarded.
+	_, hasKey := envValue(mr.calls[0].Env, "OPENAI_API_KEY")
+	assert.False(t, hasKey,
+		"mcp-server path probe must use codexEnv() — OPENAI_API_KEY must not be forwarded to the version probe subprocess")
+}
+
 // --- elicitationApprover: the handler glue (no subprocess) -----------------
 
 // HAPPY — the elicitation approver translates a codex exec-approval request into
