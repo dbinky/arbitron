@@ -169,6 +169,22 @@ func TestProfileRepo_CorruptedAxis_GetErrors(t *testing.T) {
 	assert.Equal(t, provider.Profile{}, got)
 }
 
+// Error: a malformed stored effort is a corruption error on Get (mirrors the
+// context_window test — both axes go through rowToProfile's ParseEffort path).
+func TestProfileRepo_CorruptedEffort_GetErrors(t *testing.T) {
+	repo, db := newProfileRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleProfile("corrupteff")))
+
+	_, err := db.DB.Exec("UPDATE profiles SET effort = ? WHERE alias = ?", "not-an-effort", "corrupteff")
+	require.NoError(t, err)
+
+	got, err := repo.Get(ctx, "corrupteff")
+	assert.Error(t, err)
+	assert.NotErrorIs(t, err, provider.ErrProfileNotFound, "effort corruption is not a missing-profile error")
+	assert.Equal(t, provider.Profile{}, got)
+}
+
 // Error: a malformed stored allowed_tools JSON is a corruption error on Get.
 func TestProfileRepo_CorruptedTools_GetErrors(t *testing.T) {
 	repo, db := newProfileRepo(t)
@@ -180,6 +196,21 @@ func TestProfileRepo_CorruptedTools_GetErrors(t *testing.T) {
 
 	_, err = repo.Get(ctx, "badtools")
 	assert.Error(t, err)
+}
+
+// Error: a corrupted row encountered by List propagates the error (not swallowed,
+// not silently dropped). The List loop calls rowToProfile for every row.
+func TestProfileRepo_CorruptedAxis_ListErrors(t *testing.T) {
+	repo, db := newProfileRepo(t)
+	ctx := context.Background()
+	require.NoError(t, repo.Create(ctx, sampleProfile("good")))
+	require.NoError(t, repo.Create(ctx, sampleProfile("corrupt")))
+
+	_, err := db.DB.Exec("UPDATE profiles SET context_window = ? WHERE alias = ?", "not-a-tier", "corrupt")
+	require.NoError(t, err)
+
+	_, err = repo.List(ctx)
+	assert.Error(t, err, "corruption in any row must cause List to return an error")
 }
 
 // ---------------------------------------------------------------------------
