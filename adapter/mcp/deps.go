@@ -90,11 +90,25 @@ type Deps struct {
 	// existing connection during workflow validation. Optional: a nil checker
 	// skips the connection-reference validation pass.
 	ConnChecker workflow.ConnectionChecker
-	// Connections is the connection-management store powering the
-	// connection_* CRUD tools. The plaintext API key enters only through
-	// Create/Update and is sealed immediately; it is never returned by Get/List.
-	// Optional: when nil, the connection tools report the store as unavailable.
+	// Connections is the connection-management store powering the runtime
+	// resolver path. The MCP connection_* CRUD tools now route through
+	// ConnectionAdmin (admin-gated); this raw store is retained for any non-admin
+	// engine path. The plaintext API key enters only through Create/Update and is
+	// sealed immediately; it is never returned by Get/List.
 	Connections provider.ConnectionStore
+	// ProfileAdmin powers the admin-only profile_* mutation tools and the
+	// read-open profile_list / profile_get + provider_capabilities tools. Authz +
+	// capability validation + recache live in the service. Optional: when nil, the
+	// profile tools report the service as unavailable.
+	ProfileAdmin *provider.ProfileService
+	// ConnectionAdmin powers the now admin-only connection_* tools. It is a thin
+	// admin gate over the ConnectionStore (same authz rule as ProfileAdmin).
+	// Optional: when nil, the connection tools report the service as unavailable.
+	ConnectionAdmin *provider.ConnectionService
+	// Capabilities is the effective capability ruleset (allowed tiers + effort per
+	// backend/model). Injected for any surface that needs the rules directly;
+	// provider_capabilities also reaches them through ProfileAdmin.Capabilities.
+	Capabilities provider.CapabilityRules
 	// Tokens powers the token_* tools. Every operation is scoped to the calling
 	// user's identity (carried on the tool ctx by the auth middleware). Optional:
 	// when nil, the token tools report the service as unavailable.
