@@ -6,6 +6,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // StreamAgentAdapter implements engine.ChatProvider by invoking the `claude`
@@ -59,7 +60,7 @@ func (a *StreamAgentAdapter) spec(req engine.ChatRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              a.core.chatEnv(),
+		Env:              a.core.chatEnvWithBinding(provider.ResolvedBinding{}),
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }

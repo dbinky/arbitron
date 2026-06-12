@@ -88,21 +88,23 @@ func validateWorkDir(workDir, workspaceRoot string) error {
 	return nil
 }
 
-// chatEnv builds the chat/stream-agent subprocess env: the controlled base env
-// (procenv.BaseEnv — allowlist-filtered, no engine secrets) with the capability
-// env appended via the same applyCapabilityEnv helper the agent path uses, so
-// chat and agent share ONE emission seam and cannot drift.
+// chatEnvWithBinding builds the chat/stream-agent subprocess env: the
+// controlled base env (procenv.BaseEnv — allowlist-filtered, no engine secrets)
+// with the capability env appended via the same applyCapabilityEnv helper the
+// agent path uses, so chat and agent share ONE emission seam and cannot drift.
 //
-// The chat ChatRequest carries no per-request capability axes today, so emission
-// runs against a zero binding and is a no-op (default tier/effort emit nothing) —
-// the seam exists for the day a chat-kind binding's axes are plumbed through.
+// A zero binding produces no capability additions (default tier/effort emit
+// nothing) — this is the behavior for the subscription/no-profile path.
+// A binding with non-default axes (e.g. Context200K + EffortHigh) emits the
+// matching env vars exactly as the agent path does.
+//
 // applyCapabilityEnv only errors on a non-empty ruleset with an unknown backend;
-// a zero binding falls back to the claude backend (known), so this cannot error
+// a zero/empty binding falls back to claudeBackend (known), so this cannot error
 // in practice. A defensive error is swallowed (the base env is still returned)
 // rather than surfaced, because the chat spec builder has no error channel and a
 // missing non-secret policy knob must never block a chat turn.
-func (c *adapterCore) chatEnv() []string {
-	env, err := applyCapabilityEnv(procenv.BaseEnv(), provider.ResolvedBinding{}, c.rules)
+func (c *adapterCore) chatEnvWithBinding(binding provider.ResolvedBinding) []string {
+	env, err := applyCapabilityEnv(procenv.BaseEnv(), binding, c.rules)
 	if err != nil {
 		return procenv.BaseEnv()
 	}

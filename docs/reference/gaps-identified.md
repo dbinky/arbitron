@@ -4,13 +4,21 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-### EMIT-001: chat-kind profiles do not yet emit context/effort (wired-but-no-op seam)
-**Area**: claude-cli emission (`adapter/claudecli/env.go`, `shared.go`, `chat_adapter.go`, `stream_agent_adapter.go`) + Runtime mapping (#7, #8, #21)
-**Detail**: Design Phase 3 specifies that context-window + effort take effect for the claude backend on **both** chat and agent paths (e.g. a `kind: chat` profile pinned to `200k` should run the standard window). The implementation routes the chat/stream env build through the shared `applyCapabilityEnv` seam, but the chat path constructs it from a **zero `ResolvedBinding`** because `engine.ChatRequest` does not carry the profile's `ContextWindow`/`Effort` — so chat-kind emission is currently a no-op. Agent-kind profiles emit correctly. **Action for the loop**: verify whether chat-kind (`llm_call`) profiles genuinely need the axes at runtime; if so, plumb `ContextWindow`/`Effort` from the resolved profile through the chat resolution path onto the chat env build (the seam already exists), with tests proving a `chat`+`200k` profile sets `CLAUDE_CODE_DISABLE_1M_CONTEXT`/`AUTO_COMPACT_WINDOW` and a `chat`+effort profile sets `CLAUDE_CODE_EFFORT_LEVEL`. If the team decides chat-tier context/effort is out of scope for v1, move this to Won't Fix with that rationale (only the user may do so).
+_(none — all identified gaps have been resolved)_
 
 ## Fixed Previously
 
-_(none yet — as issues are fixed during iterations, move them here with a summary of what was wrong and how it was fixed)_
+### EMIT-001: chat-kind profiles did not emit context/effort (wired-but-no-op seam)
+**Fixed in**: this iteration (commit following the 22-area review loop)
+**What was wrong**: `ChatAdapter.spec()` called `adapterCore.chatEnv()` which always used a zero `provider.ResolvedBinding{}`. The binding's `ContextWindow` and `Effort` axes were never applied to the chat subprocess, so a `kind: chat` profile with `200k` or a non-default effort was silently a no-op. Agent-kind profiles emitted correctly via `agentEnvWithRules`.
+**How it was fixed**:
+- Renamed `adapterCore.chatEnv()` → `chatEnvWithBinding(binding)` so the method takes the actual binding.
+- Added `binding provider.ResolvedBinding` field to `ChatAdapter` and a new `NewChatAdapterForBinding(cfg, binding)` constructor (mirroring the agent arm's `NewAgentAdapterForBinding`).
+- Updated `ChatAdapter.spec()` to call `a.core.chatEnvWithBinding(a.binding)`.
+- Updated `StreamAgentAdapter.spec()` (the other caller) to pass `provider.ResolvedBinding{}` (zero — unchanged behavior).
+- Added `ClaudeChatConfig claudecli.Config` to `adapter/provider.Deps` and `claudeChatConfigSupplied()` helper. When supplied, `Factory.ChatProviderFor` builds a per-binding `ChatAdapter` instead of returning the pre-built singleton.
+- Wired `ClaudeChatConfig: chatCfg` in `cmd/arbitron/main.go`.
+- Tests: `TestChatAdapterForBinding_EmitsContextAndEffort`, `TestChatAdapterForBinding_DefaultAxesAddNoVars`, `TestChatAdapter_NoBindingNoCapabilityVars` in `adapter/claudecli/chat_adapter_test.go`; `TestFactory_ChatProviderFor_ClaudeChatConfigBuildsPerBindingAdapter`, `TestFactory_ChatProviderFor_ClaudeChatConfigExplicitProvider` in `adapter/provider/factory_test.go`.
 
 ## Won't Fix (Beyond Current Scope)
 

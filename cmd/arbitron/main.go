@@ -515,9 +515,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
 		// Capability rules drive the per-call context-window + effort env emission
-		// (profile-editing Phase 3). A chat-kind binding carries no axes today, so
-		// this is a no-op until they are plumbed through, but the seam is shared
-		// with the agent path so chat + agent cannot drift.
+		// (profile-editing Phase 3). The factory's claude-cli chat arm uses this
+		// config to build per-binding ChatAdapters so a chat-kind profile's
+		// ContextWindow + Effort axes reach the subprocess env.
 		CapabilityRules: capabilityRules,
 		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
 	}
@@ -654,6 +654,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
+		// profile-editing Phase 3: chat Config so the claude-cli chat arm builds
+		// a PER-BINDING adapter that applies ContextWindow + Effort env vars from
+		// a chat-kind profile to the chat subprocess. An empty/default binding
+		// degrades to the subscription env with no axis additions.
+		ClaudeChatConfig: chatCfg,
 		// org-readiness Phase 2: the claude agent Config so the claude-code arm
 		// builds a PER-BINDING adapter that injects ANTHROPIC_BASE_URL + key from
 		// the binding (the org gateway / a configured provider). An empty binding

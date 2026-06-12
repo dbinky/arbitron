@@ -56,8 +56,16 @@ const (
 // Factory builds on demand.
 type Deps struct {
 	// ClaudeChat is the tool-suppressed claude-cli chat adapter used for the
-	// empty/claude-cli provider path. Required for that path.
+	// empty/claude-cli provider path as a back-compat fallback when
+	// ClaudeChatConfig is not supplied. Required when ClaudeChatConfig is absent.
 	ClaudeChat engine.ChatProvider
+	// ClaudeChatConfig is the claude-cli chat Config (binary, workspace root,
+	// timeout, max-response-bytes, capability rules, runner). When supplied
+	// (profile-editing Phase 3), the claude-cli chat arm constructs a PER-BINDING
+	// adapter (claudecli.NewChatAdapterForBinding) so a chat-kind profile's
+	// ContextWindow + Effort axes actually reach the subprocess. An empty binding
+	// through this path degrades to no-axis additions (the subscription env).
+	ClaudeChatConfig claudecli.Config
 	// ClaudeAgent is a pre-built tools-enabled claude-cli agent adapter used as
 	// the fallback for the claude-code backend when ClaudeAgentConfig is not
 	// supplied (subscription-only path). org-readiness Phase 2 prefers
@@ -141,6 +149,14 @@ func NewFactory(deps Deps) *Factory {
 	return &Factory{deps: deps}
 }
 
+// claudeChatConfigSupplied reports whether a usable claude chat Config was wired
+// (so the claude-cli chat arm builds per-binding adapters). A bare zero-value
+// Config is treated as "not supplied" so test factories that wire only
+// Deps.ClaudeChat keep the pre-built singleton fallback.
+func claudeChatConfigSupplied(cfg claudecli.Config) bool {
+	return cfg.Runner != nil || cfg.BinaryPath != "" || cfg.WorkspaceRoot != ""
+}
+
 // claudeAgentConfigSupplied reports whether a usable claude agent Config was
 // wired (so the claude-code arm builds a per-binding adapter). A bare zero-value
 // Config (no runner, no binary path, no workspace root) is treated as "not
@@ -168,6 +184,13 @@ func (f *Factory) ChatProviderFor(b domprovider.ResolvedBinding) (engine.ChatPro
 	// once in domprovider.Canonicalize, not forked per selector).
 	switch domprovider.Canonicalize(b.Provider) {
 	case "", providerClaudeCLI:
+		// profile-editing Phase 3: when a chat Config is supplied, build a
+		// PER-BINDING adapter so the binding's ContextWindow + Effort axes are
+		// applied to the chat subprocess env. A zero binding (no profile axes)
+		// degrades to the subscription env with no axis additions.
+		if claudeChatConfigSupplied(f.deps.ClaudeChatConfig) {
+			return claudecli.NewChatAdapterForBinding(f.deps.ClaudeChatConfig, b), nil
+		}
 		if f.deps.ClaudeChat == nil {
 			return nil, errors.New("provider: claude-cli chat adapter is not configured for the empty-provider path")
 		}

@@ -12,6 +12,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 func TestChatAdapterImplementsPort(t *testing.T) {
@@ -395,4 +396,69 @@ func TestChatAdapterStreamChat_NoGoroutineLeakWhenConsumerStops(t *testing.T) {
 	case <-timeout:
 		t.Fatal("producer goroutine did not return after consumer cancelled")
 	}
+}
+
+// capability (Phase 3 chat parity) — NewChatAdapterForBinding wires the
+// binding's axes so a chat-kind profile with 200k + high effort emits
+// CLAUDE_CODE_DISABLE_1M_CONTEXT, CLAUDE_CODE_AUTO_COMPACT_WINDOW, and
+// CLAUDE_CODE_EFFORT_LEVEL on the chat subprocess, just like the agent path.
+func TestChatAdapterForBinding_EmitsContextAndEffort(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend:       "claude-code",
+		Model:         "opus-4.8",
+		ContextWindow: provider.Context200K,
+		Effort:        provider.EffortHigh,
+	}
+	fr := &fakeRunner{lines: []string{
+		`{"type":"result","result":"ok","session_id":"s"}`,
+	}}
+	a := NewChatAdapterForBinding(Config{BinaryPath: "claude", Runner: fr, CapabilityRules: rules}, binding)
+
+	_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
+	require.NoError(t, err)
+
+	assertEnv(t, fr.gotSpec.Env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, fr.gotSpec.Env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "200000")
+	assertEnv(t, fr.gotSpec.Env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+}
+
+// capability (Phase 3 chat parity defaults) — NewChatAdapterForBinding with a
+// default-tier, default-effort binding adds NO capability vars on the chat
+// subprocess (defaults emit nothing, mirroring the agent path).
+func TestChatAdapterForBinding_DefaultAxesAddNoVars(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "claude-code", Model: "opus-4.8"}
+	fr := &fakeRunner{lines: []string{
+		`{"type":"result","result":"ok","session_id":"s"}`,
+	}}
+	a := NewChatAdapterForBinding(Config{BinaryPath: "claude", Runner: fr, CapabilityRules: rules}, binding)
+
+	_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
+	require.NoError(t, err)
+
+	_, has := envValue(fr.gotSpec.Env, "CLAUDE_CODE_DISABLE_1M_CONTEXT")
+	assert.False(t, has, "default tier must not emit context vars")
+	_, has = envValue(fr.gotSpec.Env, "CLAUDE_CODE_EFFORT_LEVEL")
+	assert.False(t, has, "default effort must not emit effort vars")
+}
+
+// back-compat — NewChatAdapter (no binding) still produces no capability vars
+// even with rules wired: without a binding the axes are zero (= default) and
+// defaults emit nothing. This guards against the fix accidentally breaking the
+// subscription path.
+func TestChatAdapter_NoBindingNoCapabilityVars(t *testing.T) {
+	rules := testCapRules()
+	fr := &fakeRunner{lines: []string{
+		`{"type":"result","result":"ok","session_id":"s"}`,
+	}}
+	a := NewChatAdapter(Config{BinaryPath: "claude", Runner: fr, CapabilityRules: rules})
+
+	_, err := a.Chat(context.Background(), engine.ChatRequest{Prompt: "x", WorkDir: "/tmp"})
+	require.NoError(t, err)
+
+	_, has := envValue(fr.gotSpec.Env, "CLAUDE_CODE_DISABLE_1M_CONTEXT")
+	assert.False(t, has, "no-binding NewChatAdapter must not emit context vars")
+	_, has = envValue(fr.gotSpec.Env, "CLAUDE_CODE_EFFORT_LEVEL")
+	assert.False(t, has, "no-binding NewChatAdapter must not emit effort vars")
 }
