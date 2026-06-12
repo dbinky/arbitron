@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // ErrUnsupportedScheme is returned when the binding's BaseURL uses a scheme
@@ -29,7 +30,7 @@ const chatPath = "/chat/completions"
 // ChatRequest. The system message is omitted when SystemPrompt is empty; zero
 // max_tokens / temperature are omitted; response_format is set when the
 // request carries an OutputSchema (structured output).
-func buildBody(req engine.ChatRequest, model string, stream bool) ([]byte, error) {
+func buildBody(req engine.ChatRequest, model string, stream bool, effort provider.Effort) ([]byte, error) {
 	type message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -63,6 +64,13 @@ func buildBody(req engine.ChatRequest, model string, stream bool) ([]byte, error
 				"strict": true,
 			},
 		}
+	}
+	// Reasoning-effort axis: a graded/none effort is emitted as the
+	// OpenAI-compatible `reasoning_effort` field (xhigh floors to high via the
+	// shared domain mapping, so this matches the value ProfileService validated at
+	// write time). default/unset emits nothing — the model uses its own default.
+	if _, value, emit := provider.ChatReasoningEffort(effort); emit {
+		body["reasoning_effort"] = value
 	}
 
 	out, err := json.Marshal(body)

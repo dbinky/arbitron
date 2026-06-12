@@ -1,6 +1,9 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Effective is the floored, runtime-effective view of a profile's axes echoed
 // back on a write. It is what the emitter will actually emit at launch: a
@@ -109,7 +112,7 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 	if err != nil {
 		return Profile{}, Effective{}, err
 	}
-	effTier, effEffort, err := s.rules.Validate(backend, p.Model, tier, effort)
+	effTier, effEffort, err := s.resolveAxes(p, backend, tier, effort)
 	if err != nil {
 		return Profile{}, Effective{}, err
 	}
@@ -123,6 +126,29 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 	// domain free of a concrete logger dependency.
 	s.recache(ctx)
 	return p, Effective{ContextWindow: effTier, Effort: effEffort}, nil
+}
+
+// resolveAxes validates and floors a profile's (context, effort) axes and returns
+// the effective values the emitter will use. A profile whose effective backend has
+// a capability entry validates against it (the agent path: claude-code/codex/...).
+//
+// A connection-backed CHAT profile has no agent backend — EffectiveBackend is ""
+// (the connection supplies the routing) and is absent from the agent ruleset. Its
+// axes are instead governed by the OpenAI-compatible chat tier: the reasoning
+// effort is honored (floored via ChatReasoningEffort, the SAME mapping the
+// openrouter adapter emits as reasoning_effort, so write-time and launch agree),
+// and there is no context-window knob, so a non-default tier is ErrAxisNotApplicable.
+// Any OTHER backend-less profile (e.g. an agent that named no backend) still fails
+// through Validate with ErrUnknownBackend — an agent must name a concrete backend.
+func (s *ProfileService) resolveAxes(p Profile, backend string, tier ContextWindow, effort Effort) (ContextWindow, Effort, error) {
+	if !s.rules.Has(backend) && p.Kind == ProfileKindChat {
+		if tier != ContextDefault {
+			return "", "", fmt.Errorf("%w: context %q on the connection-backed chat path", ErrAxisNotApplicable, tier)
+		}
+		effEffort, _, _ := ChatReasoningEffort(effort)
+		return ContextDefault, effEffort, nil
+	}
+	return s.rules.Validate(backend, p.Model, tier, effort)
 }
 
 // Delete removes a profile by alias (admin-only) and recaches. A missing alias

@@ -140,6 +140,38 @@ func TestParse_CaseSensitive(t *testing.T) {
 	}
 }
 
+// ChatReasoningEffort maps an Effort onto the OpenAI-compatible chat
+// `reasoning_effort` vocabulary (low|medium|high|max|none — NO xhigh), flooring
+// xhigh to high. default emits nothing; none/graded levels emit their token. It
+// is the SINGLE source of truth shared by ProfileService write-time validation
+// and the openrouter adapter's runtime emission so the two never disagree.
+func TestChatReasoningEffort(t *testing.T) {
+	tests := []struct {
+		in        provider.Effort
+		wantEff   provider.Effort
+		wantValue string
+		wantEmit  bool
+		name      string
+	}{
+		{provider.EffortDefault, provider.EffortDefault, "", false, "default emits nothing"},
+		{provider.Effort(""), provider.EffortDefault, "", false, "the unset empty value emits nothing (binding carries raw, un-normalized effort)"},
+		{provider.EffortNone, provider.EffortNone, "none", true, "none disables reasoning"},
+		{provider.EffortLow, provider.EffortLow, "low", true, "low passes through"},
+		{provider.EffortMedium, provider.EffortMedium, "medium", true, "medium passes through"},
+		{provider.EffortHigh, provider.EffortHigh, "high", true, "high passes through"},
+		{provider.EffortXHigh, provider.EffortHigh, "high", true, "xhigh floors to high (no xhigh in the OpenAI vocab)"},
+		{provider.EffortMax, provider.EffortMax, "max", true, "max passes through"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			eff, value, emit := provider.ChatReasoningEffort(tc.in)
+			assert.Equal(t, tc.wantEff, eff, "effective effort")
+			assert.Equal(t, tc.wantValue, value, "reasoning_effort token")
+			assert.Equal(t, tc.wantEmit, emit, "emit flag")
+		})
+	}
+}
+
 // Sentinel errors are non-nil and distinct so callers can match with errors.Is.
 func TestAxisSentinels_Distinct(t *testing.T) {
 	require.Error(t, provider.ErrInvalidContextWindow)

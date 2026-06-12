@@ -105,6 +105,32 @@ func (e Effort) GreaterThan(o Effort) bool {
 	return effortRank[e] > effortRank[o]
 }
 
+// ChatReasoningEffort maps an Effort onto the OpenAI-compatible chat
+// `reasoning_effort` vocabulary (low|medium|high|max|none) and reports the
+// effective (possibly floored) effort, the token to emit, and whether anything
+// should be emitted at all. The OpenAI/Ollama chat tier has no `xhigh`, so xhigh
+// floors to high; EffortDefault emits nothing (the model's own default); none and
+// the graded levels emit their verbatim token.
+//
+// It is the single source of truth for the chat-tier effort axis: ProfileService
+// uses it for write-time validation/flooring of connection-backed chat profiles,
+// and the openrouter adapter uses it to add `reasoning_effort` to the request
+// body at launch, so the value validated and the value emitted never disagree.
+func ChatReasoningEffort(e Effort) (effective Effort, value string, emit bool) {
+	switch e {
+	case "", EffortDefault:
+		// "" is the raw unset value a binding may carry (writes persist the axis
+		// verbatim, un-normalized); both mean "the model's own default".
+		return EffortDefault, "", false
+	case EffortXHigh:
+		// The OpenAI-compatible vocabulary has no xhigh; floor it to high.
+		return EffortHigh, "high", true
+	default:
+		// none/low/medium/high/max emit their token verbatim.
+		return e, string(e), true
+	}
+}
+
 // ParseEffort parses a string into an Effort. An empty string normalizes to
 // EffortDefault (the "unset" value); any other unknown value returns
 // ErrInvalidEffort.
