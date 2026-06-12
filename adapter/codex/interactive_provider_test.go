@@ -558,3 +558,34 @@ func TestInteractive_Policy_UsesConfiguredWritableRoot(t *testing.T) {
 	require.Len(t, fake.decisions, 1)
 	assert.True(t, fake.decisions[0].Allow, "a write under the configured writable root must be allowed")
 }
+
+// --- SECURITY: approvalSummary log-safety --------------------------------
+
+// SECURITY — approvalSummary produces the "summary" field in the slog trace
+// emitted by tracingApprover. It must NEVER include req.Reason (codex's
+// human-readable explanation for the request, which may contain prompt-derived
+// content — user intent, partial transcript, sensitive context). Only structural
+// facts (argv or paths) are safe to log. This test verifies all three branches.
+func TestApprovalSummary_NeverLogsRequestReason(t *testing.T) {
+	secret := "the user asked me to implement the login button"
+
+	// command branch — only the argv, never req.Reason
+	got := approvalSummary(approvalRequest{
+		Command: []string{"git", "status"},
+		Reason:  secret,
+	})
+	assert.Contains(t, got, "git status", "summary must identify the command argv")
+	assert.NotContains(t, got, secret, "summary must never include req.Reason for a command request")
+
+	// write branch — only the paths, never req.Reason
+	got = approvalSummary(approvalRequest{
+		WritePaths: []string{"docs/spec.md"},
+		Reason:     secret,
+	})
+	assert.Contains(t, got, "docs/spec.md", "summary must identify the write paths")
+	assert.NotContains(t, got, secret, "summary must never include req.Reason for a write request")
+
+	// unrecognized branch — fallback string only, never req.Reason
+	got = approvalSummary(approvalRequest{Reason: secret})
+	assert.NotContains(t, got, secret, "summary must never include req.Reason for an unrecognized request")
+}

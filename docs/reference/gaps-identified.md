@@ -34,6 +34,8 @@ _(none)_
 
 - **FA#9 Pass 1 — `Chat` transport-error hard-error path untested.** `StreamChat` has `TestInteractive_StreamChat_TransportError_ErrorNoDone` proving a non-sentinel stdio break returns a terminal Error chunk with no Done. The symmetric `Chat` path (`return nil, fmt.Errorf("...: %w", nerr)` at line 263 of `interactive_provider.go`) is only exercised via context.Canceled; a plain transport error like `errors.New("stdio broke")` is untested. Added `TestInteractive_Chat_TransportError_HardError`.
 
+- **FA#9 Pass 2 — `approvalSummary` security property untested.** `approvalSummary` produces the slog "summary" field in `tracingApprover`. It must never include `req.Reason` (codex's human-readable explanation, which may contain prompt-derived content); only the structural facts (argv or paths) are safe to log. All three branches (command / write / unknown) are untested; if someone added `+ req.Reason` to any branch, no test would catch the leak. Added `TestApprovalSummary_NeverLogsRequestReason` to directly verify the security property across all three paths.
+
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
