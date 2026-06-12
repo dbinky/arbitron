@@ -4,21 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none — all identified gaps have been resolved)_
+_(none yet — review loop has not started)_
 
 ## Fixed Previously
 
-### EMIT-001: chat-kind profiles did not emit context/effort (wired-but-no-op seam)
-**Fixed in**: this iteration (commit following the 22-area review loop)
-**What was wrong**: `ChatAdapter.spec()` called `adapterCore.chatEnv()` which always used a zero `provider.ResolvedBinding{}`. The binding's `ContextWindow` and `Effort` axes were never applied to the chat subprocess, so a `kind: chat` profile with `200k` or a non-default effort was silently a no-op. Agent-kind profiles emitted correctly via `agentEnvWithRules`.
-**How it was fixed**:
-- Renamed `adapterCore.chatEnv()` → `chatEnvWithBinding(binding)` so the method takes the actual binding.
-- Added `binding provider.ResolvedBinding` field to `ChatAdapter` and a new `NewChatAdapterForBinding(cfg, binding)` constructor (mirroring the agent arm's `NewAgentAdapterForBinding`).
-- Updated `ChatAdapter.spec()` to call `a.core.chatEnvWithBinding(a.binding)`.
-- Updated `StreamAgentAdapter.spec()` (the other caller) to pass `provider.ResolvedBinding{}` (zero — unchanged behavior).
-- Added `ClaudeChatConfig claudecli.Config` to `adapter/provider.Deps` and `claudeChatConfigSupplied()` helper. When supplied, `Factory.ChatProviderFor` builds a per-binding `ChatAdapter` instead of returning the pre-built singleton.
-- Wired `ClaudeChatConfig: chatCfg` in `cmd/arbitron/main.go`.
-- Tests: `TestChatAdapterForBinding_EmitsContextAndEffort`, `TestChatAdapterForBinding_DefaultAxesAddNoVars`, `TestChatAdapter_NoBindingNoCapabilityVars` in `adapter/claudecli/chat_adapter_test.go`; `TestFactory_ChatProviderFor_ClaudeChatConfigBuildsPerBindingAdapter`, `TestFactory_ChatProviderFor_ClaudeChatConfigExplicitProvider` in `adapter/provider/factory_test.go`.
+_(none yet)_
 
 ## Won't Fix (Beyond Current Scope)
 
@@ -26,9 +16,10 @@ _(items logged here are new functionality or enhancements that are outside the s
 
 <!--
 Candidate out-of-scope items per the spec's Non-Goals (do NOT build these; log here if encountered):
-- Per-node context/effort override (node > profile precedence).
-- opencode + ollama.com (DeepSeek) effort/thinking runtime wiring.
-- CLI commands for profile/connection mutation (MCP is the only mutation surface).
-- New model backends or adapters beyond claude-code/codex/opencode.
-- REST endpoints for profile management (services are surface-agnostic, but only MCP is wired this feature).
+- Surfacing blocked approval attempts to the human as a notification or dashboard approval gate (the guardrail is deliberately invisible — slog/OTel only).
+- A per-node / per-profile configurable writable root (the boundary is the fixed `docs/` default; both interactive deliverables live there).
+- Changing the autonomous codex `agent_call` path, the claude-cli adapter, or the opencode adapter.
+- Giving opencode an interactive streaming posture (it is explicitly unsupported for interactive streaming and fails closed).
+- A live-codex integration test that spawns the real `codex mcp-server` (unit tests mock the `mcpSession` seam; live verification of the SPIKE protocol constants is a manual/real-binary follow-up, not a unit test to build here).
+- Multi-user / shared-deployment ChatGPT-subscription auth for codex.
 -->
