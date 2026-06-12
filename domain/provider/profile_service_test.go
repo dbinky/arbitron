@@ -284,6 +284,30 @@ func TestProfileService_CreateEmptyBackendDefaultsToCli(t *testing.T) {
 	assert.Equal(t, 1, rl.calls)
 }
 
+// Error (Pass 2): Update on an unauthenticated context (no identity) returns
+// ErrUnauthenticated — anon is distinct from non-admin (ErrForbidden).
+func TestProfileService_UpdateUnauthenticated(t *testing.T) {
+	store := newMemProfileStore(provider.Profile{Alias: "x", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+	_, _, err := svc.Update(anon(), provider.Profile{Alias: "x", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	assert.ErrorIs(t, err, provider.ErrUnauthenticated)
+}
+
+// Error (Pass 2): a persist error (e.g. ErrProfileExists on Create) propagates
+// and the reloader is NOT called — reload is only triggered on a durable write,
+// not on a failed one.
+func TestProfileService_PersistErrorSuppressesReload(t *testing.T) {
+	// Pre-seed the store so Create returns ErrProfileExists.
+	store := newMemProfileStore(provider.Profile{Alias: "dup", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	rl := &fakeReloader{}
+	svc := provider.NewProfileService(store, rules(), rl)
+
+	_, _, err := svc.Create(admins(), provider.Profile{Alias: "dup", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrProfileExists)
+	assert.Equal(t, 0, rl.calls, "reloader must NOT be called when persist fails")
+}
+
 // Error: Delete on an unauthenticated context returns ErrUnauthenticated (anon
 // is not the same as non-admin).
 func TestProfileService_DeleteUnauthenticated(t *testing.T) {
