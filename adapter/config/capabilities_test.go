@@ -1,11 +1,13 @@
 package config_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +138,96 @@ func TestLoadCapabilityRules_OverrideAddsNewBackend(t *testing.T) {
 	// Embedded backends are still present.
 	_, _, err = r.Validate("claude-code", "opus-4.8", provider.Context200K, provider.EffortHigh)
 	require.NoError(t, err, "embedded claude-code backend must survive after additive override")
+}
+
+// Paired integration (#22): the embedded/override ruleset actually drives
+// ProfileService write rejection + flooring. LoadCapabilityRules feeds directly
+// into a ProfileService; the service's Validate call uses the same rules object
+// that LoadCapabilityRules returned so the two components are genuinely linked.
+//
+// This also verifies that a narrowed override (here: the embedded sonnet-4.6
+// override) changes what writes are accepted — xhigh is floored to high,
+// context tiers are inherited from the parent backend.
+func TestPaired_LoadedRulesDriveProfileServiceValidation(t *testing.T) {
+	// Load the embedded default ruleset (no override file).
+	rules, err := adapterconfig.LoadCapabilityRules("")
+	require.NoError(t, err)
+
+	// Wire a ProfileService with the LOADED rules.
+	store := &inlineProfileStore{byAlias: map[string]provider.Profile{}}
+	rl := &noopReload{}
+	svc := provider.NewProfileService(store, rules, rl)
+
+	// Codex: context_tiers=[default] — requesting 200k must be rejected.
+	_, _, err = svc.Create(adminIdentity(), provider.Profile{
+		Alias: "bad-ctx", Kind: provider.ProfileKindAgent, Backend: "codex",
+		ContextWindow: provider.Context200K,
+	})
+	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable,
+		"codex context_tiers=[default] must reject 200k (loaded ruleset drives rejection)")
+
+	// claude-code + sonnet-4.6: xhigh is floored to high by the embedded override.
+	stored, eff, err := svc.Create(adminIdentity(), provider.Profile{
+		Alias: "capped", Kind: provider.ProfileKindAgent, Backend: "claude-code",
+		Model: "sonnet-4.6", Effort: provider.EffortXHigh,
+	})
+	require.NoError(t, err, "sonnet-4.6 + xhigh must succeed (floored, not rejected)")
+	assert.Equal(t, provider.EffortXHigh, stored.Effort, "stored effort must be the requested value")
+	assert.Equal(t, provider.EffortHigh, eff.Effort,
+		"effective effort must be floored by the loaded sonnet-4.6 override")
+}
+
+// inlineProfileStore is a minimal provider.ProfileStore for the paired test
+// above. It avoids importing a test fixture from another package.
+type inlineProfileStore struct{ byAlias map[string]provider.Profile }
+
+func (s *inlineProfileStore) Create(_ context.Context, p provider.Profile) error {
+	if _, ok := s.byAlias[p.Alias]; ok {
+		return provider.ErrProfileExists
+	}
+	s.byAlias[p.Alias] = p
+	return nil
+}
+func (s *inlineProfileStore) Update(_ context.Context, p provider.Profile) error {
+	if _, ok := s.byAlias[p.Alias]; !ok {
+		return provider.ErrProfileNotFound
+	}
+	s.byAlias[p.Alias] = p
+	return nil
+}
+func (s *inlineProfileStore) Delete(_ context.Context, alias string) error {
+	if _, ok := s.byAlias[alias]; !ok {
+		return provider.ErrProfileNotFound
+	}
+	delete(s.byAlias, alias)
+	return nil
+}
+func (s *inlineProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
+	p, ok := s.byAlias[alias]
+	if !ok {
+		return provider.Profile{}, provider.ErrProfileNotFound
+	}
+	return p, nil
+}
+func (s *inlineProfileStore) List(_ context.Context) ([]provider.Profile, error) {
+	out := make([]provider.Profile, 0, len(s.byAlias))
+	for _, p := range s.byAlias {
+		out = append(out, p)
+	}
+	return out, nil
+}
+func (s *inlineProfileStore) Count(_ context.Context) (int, error) {
+	return len(s.byAlias), nil
+}
+
+var _ provider.ProfileStore = (*inlineProfileStore)(nil)
+
+type noopReload struct{}
+
+func (*noopReload) Reload(context.Context) error { return nil }
+
+func adminIdentity() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{Role: identity.RoleAdmin})
 }
 
 // NilInherit: a model_override that specifies only effort_floor (omitting

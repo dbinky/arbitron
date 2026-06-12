@@ -198,6 +198,44 @@ func TestParity_ValidateAndEmitAgreeOnDefaults(t *testing.T) {
 	assert.Empty(t, e.Args, "Emit must produce no args for default tier+effort")
 }
 
+// Paired integration (#21): the SAME CapabilityRules drives distinct, backend-specific
+// emission for claude-code vs codex. This verifies the effective-backend keying
+// is correct — both adapters read from the same ruleset, but produce different
+// emission shapes. The test also pins the opencode "emit nothing" invariant.
+func TestPaired_EmissionBackendKeying(t *testing.T) {
+	sharedRules := rules() // claude-code + codex (no opencode)
+
+	// claude-code: effort medium → CLAUDE_CODE_EFFORT_LEVEL=medium; no -c args.
+	claudeEmission, err := sharedRules.Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortMedium)
+	require.NoError(t, err)
+	assert.Equal(t, "medium", claudeEmission.Env["CLAUDE_CODE_EFFORT_LEVEL"], "claude-code must use env var for effort")
+	assert.Empty(t, claudeEmission.Args, "claude-code must not use -c args for effort")
+
+	// codex: effort medium → -c model_reasoning_effort=medium; no env vars.
+	codexEmission, err := sharedRules.Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortMedium)
+	require.NoError(t, err)
+	assert.Empty(t, codexEmission.Env, "codex must not use env vars for effort")
+	assert.True(t, contains(codexEmission.Args, "model_reasoning_effort=medium"),
+		"codex must use -c model_reasoning_effort for effort; args: %v", codexEmission.Args)
+
+	// The two backends produce disjoint emission shapes: env-only vs args-only.
+	assert.Empty(t, claudeEmission.Args, "claude-code must produce no args")
+	assert.Empty(t, codexEmission.Env, "codex must produce no env vars")
+
+	// opencode with its own ruleset: emits nothing (context-default + effort-default).
+	opencodeRules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"opencode": {
+			Backend:      "opencode",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault},
+		},
+	})
+	opencodeEmission, err := opencodeRules.Emit("opencode", "any", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Empty(t, opencodeEmission.Env, "opencode must emit nothing in Env")
+	assert.Empty(t, opencodeEmission.Args, "opencode must emit nothing in Args")
+}
+
 // Opencode (and unknown backends): emits nothing for both axes (deferred).
 func TestEmit_UnknownBackendEmitsNothing(t *testing.T) {
 	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{

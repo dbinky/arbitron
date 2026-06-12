@@ -40,8 +40,8 @@ A review pass is only checked when the checklist produces a passing result for t
 | 18 | MCP profile tools + ProfileService (sentinel→tool-error mapping is faithful; admin gate enforced end-to-end; effective values echoed; capabilities serialized without secrets) | [x] | Done |
 | 19 | ConnectionService + connection tools (admin gate end-to-end on every connection op; no api_key in any response or log; `Reveal` unreachable from the tool surface) | [x] | Done |
 | 20 | Seeding + ProfileStore + config (`ProfilesFromConfig` ∪ defaults seed once; invalid entries skipped; `config.yaml` ignored thereafter; non-profile config untouched) | [x] | Done |
-| 21 | Emission + claude/codex adapters (effective-backend keying correct across both adapters; chat vs agent paths; opencode emits nothing) | [ ] | |
-| 22 | Capability loader + ProfileService validation (the embedded/override ruleset actually drives write rejection + flooring; a narrowed override changes what writes are accepted) | [ ] | |
+| 21 | Emission + claude/codex adapters (effective-backend keying correct across both adapters; chat vs agent paths; opencode emits nothing) | [x] | Done |
+| 22 | Capability loader + ProfileService validation (the embedded/override ruleset actually drives write rejection + flooring; a narrowed override changes what writes are accepted) | [x] | Done |
 
 ---
 
