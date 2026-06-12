@@ -78,6 +78,14 @@ Sentinels: `ErrAxisNotApplicable`, `ErrUnknownBackend`, `ErrInvalidContextWindow
 "emit nothing" / "disable"); only *non-default* values are checked for
 applicability.
 
+> Companion method: Phase 3 adds `CapabilityRules.Emit(backend, model, tier,
+> effort) → Emission` to this same rules engine — the runtime counterpart of
+> `Validate` that turns the (already-validated, floored) values into native env/
+> argv. It is documented in Phase 3 because that is where it is first consumed,
+> but it is part of this Phase-1 component conceptually and shares its per-backend/
+> per-model tables. Keeping both on `CapabilityRules` guarantees write-time
+> validation and runtime emission can never disagree.
+
 ## Loader (`adapter/config`)
 
 - **Embedded default** ruleset compiled in (`//go:embed capabilities.default.yaml`)
