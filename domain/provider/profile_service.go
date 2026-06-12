@@ -53,24 +53,49 @@ func (s *ProfileService) Create(ctx context.Context, p Profile) (Profile, Effect
 }
 
 // Update overwrites an existing profile by alias (admin-only), with the same
-// validate-then-recache flow as Create.
+// validate-then-recache flow as Create. It is a FULL replace; UpdatePatch is the
+// merge-on-update path that preserves omitted fields.
 func (s *ProfileService) Update(ctx context.Context, p Profile) (Profile, Effective, error) {
 	return s.write(ctx, p, s.store.Update)
 }
 
+// UpdatePatch is the merge-on-update path (admin-only): it loads the existing
+// profile, overlays ONLY the fields present in the sparse patch, then runs the
+// same validate-then-recache flow as a full write. Omitting an optional field
+// leaves the stored value unchanged rather than blanking it; an explicitly
+// cleared field (present, empty) IS applied. The merge lives HERE in the domain
+// (not the MCP handler) so a future REST surface inherits the safe partial-edit
+// semantics, mirroring how the authz gate is a shared service rule.
+//
+// SECURITY: this closes the destructive-full-replace footgun where omitting
+// connection_ref silently blanked it and re-routed the profile to the claude-cli
+// no-key subscription path (a different trust domain, no BaseURL policy).
+func (s *ProfileService) UpdatePatch(ctx context.Context, alias string, patch ProfilePatch) (Profile, Effective, error) {
+	if err := requireAdmin(ctx); err != nil {
+		return Profile{}, Effective{}, err
+	}
+	existing, err := s.store.Get(ctx, alias)
+	if err != nil {
+		return Profile{}, Effective{}, err
+	}
+	merged, err := patch.apply(existing)
+	if err != nil {
+		return Profile{}, Effective{}, err
+	}
+	return s.write(ctx, merged, s.store.Update)
+}
+
 // write is the shared admin-gated mutation path: gate → validate (NOTHING is
-// persisted on a capability rejection) → persist → best-effort recache. The
-// effective backend defaults to claude-cli when the profile names neither a
-// backend nor a connection (the no-key subscription path), matching the runtime
-// emitter's resolution so write-time validation and launch never disagree.
+// persisted on a capability rejection) → persist → recache. The effective backend
+// the capability ruleset is keyed on comes from the shared EffectiveBackend(p)
+// rule (claude-cli when the profile names neither a backend nor a connection),
+// the SAME rule the seed path uses so write-time validation and launch never
+// disagree.
 func (s *ProfileService) write(ctx context.Context, p Profile, persist func(context.Context, Profile) error) (Profile, Effective, error) {
 	if err := requireAdmin(ctx); err != nil {
 		return Profile{}, Effective{}, err
 	}
-	backend := p.Backend
-	if backend == "" && p.ConnectionRef == "" {
-		backend = "claude-cli"
-	}
+	backend := EffectiveBackend(p)
 	// Normalize the unset ("") axes to their explicit default sentinel before
 	// validating, exactly as the seed path does: an empty string is not a Valid()
 	// enum value, but a profile that omits the new axes must validate as
@@ -92,8 +117,11 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 		return Profile{}, Effective{}, err
 	}
 	// Best-effort recache: the write is already durable, so a reload failure does
-	// not fail the operation. The next boot reloads cleanly from the DB.
-	_ = s.reloader.Reload(ctx)
+	// not fail the operation. The reload failure is NOT silently discarded — the
+	// injected Reloader is the observability seam (the wiring layer decorates it
+	// with a WARN log so a stale cache / split-brain is surfaced), which keeps the
+	// domain free of a concrete logger dependency.
+	s.recache(ctx)
 	return p, Effective{ContextWindow: effTier, Effort: effEffort}, nil
 }
 
@@ -106,8 +134,19 @@ func (s *ProfileService) Delete(ctx context.Context, alias string) error {
 	if err := s.store.Delete(ctx, alias); err != nil {
 		return err
 	}
-	_ = s.reloader.Reload(ctx)
+	s.recache(ctx)
 	return nil
+}
+
+// recache runs the best-effort post-write reload. The error is intentionally not
+// returned (a durable write must not be failed by a stale cache), but it is NOT
+// silently discarded: the Reloader is the observability seam — the wiring layer
+// wraps it in a decorator that WARN-logs a reload failure so the cache/DB
+// split-brain on this live admin surface is surfaced. Keeping the discard here in
+// one place (rather than three bare `_ =` sites) makes the best-effort contract
+// explicit and the logging boundary unambiguous.
+func (s *ProfileService) recache(ctx context.Context) {
+	_ = s.reloader.Reload(ctx)
 }
 
 // Capabilities exposes the capability ruleset for the read-only

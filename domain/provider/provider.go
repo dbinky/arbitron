@@ -49,6 +49,30 @@ type Profile struct {
 	Effort Effort
 }
 
+// EffectiveBackend returns the backend a profile is VALIDATED and SEEDED against:
+// the capability ruleset is keyed on this value at write time. An explicit
+// Backend wins; an empty Backend with no ConnectionRef defaults to the
+// "claude-cli" no-key subscription path; an empty Backend WITH a ConnectionRef is
+// left empty (the connection supplies the routing). It is the single source of
+// truth shared by ProfileService.write and the startup SeedProfiles path so the
+// two never drift.
+//
+// NOTE on the adapter-side fallback: the claude-cli adapters default an empty
+// binding Backend to "claude-code" at EMIT time (adapter/claudecli/shared.go).
+// That fallback is only reachable when the resolver left ResolvedBinding.Backend
+// empty — i.e. the chat/subscription path, where claude-cli and claude-code emit
+// identically. On the agent path the executor overwrites ResolvedBinding.Backend
+// with the effective node>profile>deployment value before dispatch, so the
+// emitter never sees an empty Backend for a connection-backed profile. The
+// adapter fallback answering a DIFFERENT question (no resolved backend at all) is
+// why it is not folded into this function.
+func EffectiveBackend(p Profile) string {
+	if p.Backend == "" && p.ConnectionRef == "" {
+		return "claude-cli"
+	}
+	return p.Backend
+}
+
 // ResolvedBinding is the fully resolved backend selection for an alias. It is
 // the seam Phase 3 adapters consume. RevealKey is lazy: it decrypts the
 // connection's key only when invoked, at call/launch time.

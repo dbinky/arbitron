@@ -56,7 +56,7 @@ func effectiveBodyOf(e provider.Effective) effectiveBody {
 func RegisterProfileTools(srv *Server) {
 	srv.AddTool(
 		gomcp.NewTool("profile_create",
-			gomcp.WithDescription("Create a model profile (admin only). Validates context_window/effort against the backend/model capability rules and echoes the floored effective values."),
+			gomcp.WithDescription("Create a model profile (admin only). Validates context_window/effort against the backend/model capability rules and echoes the floored effective values. The response carries both profile.* (your requested axes, as stored) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
 			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Unique profile alias referenced by workflow nodes")),
 			gomcp.WithString("kind", gomcp.Required(), gomcp.Description("'chat' or 'agent'")),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name supplying the endpoint+key; empty = claude-cli no-key subscription")),
@@ -70,9 +70,9 @@ func RegisterProfileTools(srv *Server) {
 	)
 	srv.AddTool(
 		gomcp.NewTool("profile_update",
-			gomcp.WithDescription("Update a model profile by alias (admin only). Full replace; same shape as profile_create."),
-			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Profile alias to replace")),
-			gomcp.WithString("kind", gomcp.Required(), gomcp.Description("'chat' or 'agent'")),
+			gomcp.WithDescription("Update a model profile by alias (admin only). MERGE, not replace: omitted fields keep their stored value; pass a field (even empty) to change or clear it. The response carries both profile.* (the merged stored axes) and effective.* (the values that will actually take effect at launch); compare them to detect whether a requested axis was floored to the backend/model ceiling."),
+			gomcp.WithString("alias", gomcp.Required(), gomcp.Description("Profile alias to update")),
+			gomcp.WithString("kind", gomcp.Description("'chat' or 'agent'; omit to keep the stored kind")),
 			gomcp.WithString("connection_ref", gomcp.Description("Connection name; empty = claude-cli no-key subscription")),
 			gomcp.WithString("model", gomcp.Description("Model id / Azure deployment / provider-model")),
 			gomcp.WithString("backend", gomcp.Description("Agent backend; empty inherits")),
@@ -196,21 +196,109 @@ func profileFromArgs(args map[string]any) (provider.Profile, error) {
 }
 
 func profileCreateHandler(srv *Server) server.ToolHandlerFunc {
-	return profileWriteHandler(srv, "created", func(ctx context.Context, p provider.Profile) (provider.Profile, provider.Effective, error) {
+	return profileCreateWriteHandler(srv, func(ctx context.Context, p provider.Profile) (provider.Profile, provider.Effective, error) {
 		return srv.deps.ProfileAdmin.Create(ctx, p)
 	})
 }
 
-func profileUpdateHandler(srv *Server) server.ToolHandlerFunc {
-	return profileWriteHandler(srv, "updated", func(ctx context.Context, p provider.Profile) (provider.Profile, provider.Effective, error) {
-		return srv.deps.ProfileAdmin.Update(ctx, p)
-	})
+// patchFromArgs builds a sparse provider.ProfilePatch from the update arguments.
+// It distinguishes "field absent" (leave the stored value unchanged) from "field
+// present but empty" (explicit clear) via `_, present := args[k]`, so a partial
+// edit does not silently blank the fields the caller did not touch. alias and kind
+// are not patched here: alias is the identity key, kind stays required. The merge
+// against the existing profile happens in ProfileService.UpdatePatch (the domain),
+// not here, so a future REST surface inherits the same safe semantics.
+func patchFromArgs(args map[string]any) (provider.ProfilePatch, error) {
+	var patch provider.ProfilePatch
+	if v, present := args["kind"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("kind must be a string")
+		}
+		patch.Kind = &s
+	}
+	if v, present := args["connection_ref"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("connection_ref must be a string")
+		}
+		patch.ConnectionRef = &s
+	}
+	if v, present := args["model"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("model must be a string")
+		}
+		patch.Model = &s
+	}
+	if v, present := args["backend"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("backend must be a string")
+		}
+		patch.Backend = &s
+	}
+	if _, present := args["allowed_tools"]; present {
+		tools, err := stringSliceArg(args["allowed_tools"])
+		if err != nil {
+			return provider.ProfilePatch{}, err
+		}
+		if tools == nil {
+			tools = []string{}
+		}
+		patch.AllowedTools = &tools
+	}
+	if v, present := args["context_window"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("context_window must be a string")
+		}
+		patch.ContextWindow = &s
+	}
+	if v, present := args["effort"]; present {
+		s, ok := v.(string)
+		if !ok {
+			return provider.ProfilePatch{}, fmt.Errorf("effort must be a string")
+		}
+		patch.Effort = &s
+	}
+	return patch, nil
 }
 
-// profileWriteHandler is the shared create/update handler: nil-guard, arg parse
+// profileUpdateHandler implements profile_update as a MERGE, not a destructive
+// full-replace: it builds a sparse patch from the present arguments and lets the
+// ProfileService overlay only those onto the stored profile, preserving the rest.
+func profileUpdateHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.ProfileAdmin == nil {
+			return gomcp.NewToolResultError("profile service not available"), nil
+		}
+		args := request.GetArguments()
+		alias, _ := args["alias"].(string)
+		if alias == "" {
+			return gomcp.NewToolResultError("alias is required"), nil
+		}
+		patch, err := patchFromArgs(args)
+		if err != nil {
+			return profileErrorResult(err), nil
+		}
+		stored, eff, err := srv.deps.ProfileAdmin.UpdatePatch(ctx, alias, patch)
+		if err != nil {
+			return profileErrorResult(err), nil
+		}
+		return MarshalResult(map[string]any{
+			"status":    "updated",
+			"profile":   profileMetaOf(stored),
+			"effective": effectiveBodyOf(eff),
+		})
+	}
+}
+
+// profileCreateWriteHandler is the create handler: nil-guard, full arg parse
 // (axis parse errors map to tool errors), service call, sentinel mapping, and the
-// {status, profile, effective} echo on success.
-func profileWriteHandler(srv *Server, status string, write func(context.Context, provider.Profile) (provider.Profile, provider.Effective, error)) server.ToolHandlerFunc {
+// {status, profile, effective} echo on success. Create is a full write (every
+// field comes from the request); update uses the sparse-patch merge path instead.
+func profileCreateWriteHandler(srv *Server, write func(context.Context, provider.Profile) (provider.Profile, provider.Effective, error)) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		if srv.deps.ProfileAdmin == nil {
 			return gomcp.NewToolResultError("profile service not available"), nil
@@ -224,7 +312,7 @@ func profileWriteHandler(srv *Server, status string, write func(context.Context,
 			return profileErrorResult(err), nil
 		}
 		return MarshalResult(map[string]any{
-			"status":    status,
+			"status":    "created",
 			"profile":   profileMetaOf(stored),
 			"effective": effectiveBodyOf(eff),
 		})

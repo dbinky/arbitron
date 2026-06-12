@@ -211,6 +211,61 @@ func TestProfileUpdate_AdminAndForbidden(t *testing.T) {
 	assert.Contains(t, extractText(t, resN), "forbidden: admin only")
 }
 
+// profile_update is a MERGE, not a destructive full-replace: omitting an optional
+// field at the boundary preserves the stored value rather than blanking it.
+// SECURITY: omitting connection_ref must NOT silently detach the profile from its
+// credentialed connection (which would re-route it to the no-key subscription).
+func TestProfileUpdate_MergesOmittedFields(t *testing.T) {
+	store := newMemProfileStore(provider.Profile{
+		Alias:         "prod-agent",
+		Kind:          provider.ProfileKindAgent,
+		ConnectionRef: "openrouter-prod",
+		Model:         "opus-4.8",
+		Backend:       "claude-code",
+		AllowedTools:  []string{"Read", "Edit"},
+		ContextWindow: provider.Context1M,
+		Effort:        provider.EffortHigh,
+	})
+	srv := newProfileServer(t, store, &noopReloader{})
+
+	// Admin tweaks ONLY kind; every other field is omitted and must survive.
+	res := callToolAdmin(t, srv, "profile_update", map[string]any{
+		"alias": "prod-agent",
+		"kind":  "agent",
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	got, err := store.Get(context.Background(), "prod-agent")
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter-prod", got.ConnectionRef, "omitted connection_ref must be preserved, not blanked")
+	assert.Equal(t, "opus-4.8", got.Model, "omitted model must be preserved")
+	assert.Equal(t, "claude-code", got.Backend, "omitted backend must be preserved")
+	assert.Equal(t, []string{"Read", "Edit"}, got.AllowedTools, "omitted allowed_tools must be preserved")
+	assert.Equal(t, provider.Context1M, got.ContextWindow, "omitted context_window must be preserved")
+	assert.Equal(t, provider.EffortHigh, got.Effort, "omitted effort must be preserved")
+}
+
+// An explicitly provided empty connection_ref DOES clear the field — present
+// (empty) is distinguishable from absent at the boundary via `_, present`.
+func TestProfileUpdate_ExplicitClearApplied(t *testing.T) {
+	store := newMemProfileStore(provider.Profile{
+		Alias: "p", Kind: provider.ProfileKindChat, ConnectionRef: "c", Model: "m",
+	})
+	srv := newProfileServer(t, store, &noopReloader{})
+
+	res := callToolAdmin(t, srv, "profile_update", map[string]any{
+		"alias":          "p",
+		"kind":           "chat",
+		"connection_ref": "", // explicit clear
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	got, err := store.Get(context.Background(), "p")
+	require.NoError(t, err)
+	assert.Equal(t, "", got.ConnectionRef, "an explicit empty connection_ref clears the field")
+	assert.Equal(t, "m", got.Model, "an unrelated omitted field stays put")
+}
+
 // profile_update on a missing alias -> "profile not found".
 func TestProfileUpdate_Missing(t *testing.T) {
 	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
@@ -358,7 +413,10 @@ func TestProfileMeta_NoKeyMaterialInResponse(t *testing.T) {
 		newMemProfileStore(provider.Profile{Alias: "a", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "opus-4.8", ConnectionRef: "conn1"}),
 		&noopReloader{},
 	)
-	for _, tc := range []struct{ tool string; args map[string]any }{
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
 		{"profile_list", nil},
 		{"profile_get", map[string]any{"alias": "a"}},
 	} {

@@ -624,8 +624,18 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// live edit takes effect with no restart. ConnectionService is the admin gate
 	// over the raw connStore (Reveal stays off the management surface). Both are
 	// injected into the MCP Deps below.
-	profileSvc := provider.NewProfileService(profileRepo, capabilityRules, profileCache)
-	connSvc := provider.NewConnectionService(connStore)
+	// Wrap the store-bound profileCache (the recache hook) in a loggingReloader so
+	// a post-write recache failure is WARN-logged rather than silently swallowed:
+	// without it the engine keeps resolving the STALE profile after a {status:
+	// updated} response until the next restart (a credential-binding split-brain).
+	// The decorator lives in the wiring layer, keeping the domain logger-free.
+	profileReloader := newLoggingReloader(profileCache, logger)
+	profileSvc := provider.NewProfileService(profileRepo, capabilityRules, profileReloader)
+	// profileRepo (the live source of truth) backs ConnectionService's delete-time
+	// in-use check: deleting a connection a profile still references is rejected
+	// fail-closed, so an orphaned reference surfaces at delete time rather than at
+	// a far-removed workflow run/validate failure.
+	connSvc := provider.NewConnectionService(connStore, profileRepo)
 
 	// 8e. Build the connection-existence checker for workflow validation over the
 	// loaded profiles + the connection store. It confirms a profile's non-empty

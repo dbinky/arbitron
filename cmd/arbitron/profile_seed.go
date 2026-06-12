@@ -25,13 +25,11 @@ func SeedProfiles(ctx context.Context, store provider.ProfileStore, rules provid
 		return 0, 0, nil // already seeded; the DB wins.
 	}
 	for _, p := range candidates {
-		// Choose the backend the capability ruleset is keyed on. An empty backend
-		// with no connection is the claude-cli chat-subscription default; validate
-		// against that so a bare config chat profile (default/default axes) passes.
-		backend := p.Backend
-		if backend == "" && p.ConnectionRef == "" {
-			backend = "claude-cli"
-		}
+		// Choose the backend the capability ruleset is keyed on via the shared
+		// EffectiveBackend rule (the SAME one ProfileService.write uses): an empty
+		// backend with no connection is the claude-cli chat-subscription default, so
+		// a bare config chat profile (default/default axes) validates against that.
+		backend := provider.EffectiveBackend(p)
 		// Normalize the unset ("") axes to their explicit default sentinel before
 		// validating: an empty string is not a Valid() enum value, but a config
 		// profile that omits the new axes must seed as default/default (always
