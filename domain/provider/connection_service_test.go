@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -156,10 +157,72 @@ func TestConnectionService_AdminPassthrough(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrConnectionNotFound)
 }
 
+// Security: ConnectionService must NOT expose a Reveal method. The key
+// decryption path is internal to the runtime resolver only. A future accidental
+// addition of Reveal to ConnectionService would be caught here.
+func TestConnectionService_NoRevealMethod(t *testing.T) {
+	svc := provider.NewConnectionService(newMemConnStore())
+	rt := reflect.TypeOf(svc)
+	_, hasReveal := rt.MethodByName("Reveal")
+	assert.False(t, hasReveal, "ConnectionService must NOT expose Reveal — key decryption belongs in the resolver, not the service")
+}
+
+// Edge: Update with a nil apiKey preserves the previously stored key — the nil
+// sentinel means "keep existing key", not "clear it".
+func TestConnectionService_UpdateNilKeyPreservesStoredKey(t *testing.T) {
+	store := newMemConnStore()
+	svc := provider.NewConnectionService(store)
+	conn := provider.Connection{Name: "c", Provider: "openrouter", BaseURL: "https://x"}
+
+	require.NoError(t, svc.Create(admins(), conn, "sk-original"))
+	assert.Equal(t, "sk-original", store.keys["c"])
+
+	require.NoError(t, svc.Update(admins(), provider.Connection{Name: "c", Provider: "litellm", BaseURL: "https://y"}, nil))
+	assert.Equal(t, "sk-original", store.keys["c"], "nil apiKey must preserve the stored key")
+}
+
 // Domain validation still applies under the admin gate: an Azure connection
 // missing api-version is rejected by the store's ValidateConnection.
 func TestConnectionService_DelegatesValidation(t *testing.T) {
 	svc := provider.NewConnectionService(newMemConnStore())
 	err := svc.Create(admins(), provider.Connection{Name: "az", Provider: "azure-openai", BaseURL: "https://az"}, "k")
 	assert.ErrorIs(t, err, provider.ErrAzureAPIVersionRequired)
+}
+
+// Error (Pass 2): Get on a missing name propagates ErrConnectionNotFound through
+// the admin gate. Confirms the service does not swallow or transform the sentinel.
+func TestConnectionService_GetMissingPropagatesNotFound(t *testing.T) {
+	svc := provider.NewConnectionService(newMemConnStore())
+	_, err := svc.Get(admins(), "ghost")
+	assert.ErrorIs(t, err, provider.ErrConnectionNotFound)
+}
+
+// Error (Pass 2): Create with a duplicate name propagates ErrConnectionExists so
+// the caller can surface a meaningful conflict error, not a generic failure.
+func TestConnectionService_CreateDuplicatePropagatesExists(t *testing.T) {
+	conn := provider.Connection{Name: "dup", Provider: "openrouter", BaseURL: "https://x"}
+	store := newMemConnStore(conn)
+	svc := provider.NewConnectionService(store)
+	err := svc.Create(admins(), conn, "sk")
+	assert.ErrorIs(t, err, provider.ErrConnectionExists)
+}
+
+// Security (Pass 2): the Connection struct returned by Get carries no key-like
+// field. This is a belt-and-suspenders structural check: even if an implementor
+// adds an APIKey field to Connection by mistake, this test fails immediately.
+func TestConnectionService_GetReturnsConnectionWithoutKeyField(t *testing.T) {
+	conn := provider.Connection{Name: "c", Provider: "openrouter", BaseURL: "https://x"}
+	store := newMemConnStore(conn)
+	svc := provider.NewConnectionService(store)
+	got, err := svc.Get(admins(), "c")
+	require.NoError(t, err)
+
+	rt := reflect.TypeOf(got)
+	for i := range rt.NumField() {
+		name := rt.Field(i).Name
+		assert.False(t,
+			name == "APIKey" || name == "ApiKey" || name == "Key" || name == "Secret",
+			"Connection.%s looks like a key field — key material must not be carried on Connection", name,
+		)
+	}
 }
