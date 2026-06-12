@@ -628,3 +628,30 @@ func TestSpikeConstants_SecurityPostureArgKeysPinned(t *testing.T) {
 	assert.Equal(t, "codex/event", codexEventNotificationMethod,
 		"notification method for streaming events; wrong value means no events arrive (SPIKE: verify against 0.139)")
 }
+
+// PAIRED (FA#16) / TYPE — ASSUMED approval payload key and type-value constants
+// that must be verified against codex-cli 0.139 before going live. These are used
+// by mapApprovalRequest (decoding the elicitation payload) and
+// decisionToElicitationResult (encoding the allow/deny response). A wrong key or
+// type value silently breaks the approval loop: codex receives a malformed response
+// and the policy sees mis-classified or missing action payloads.
+//
+// These are NOT in the three earlier SPIKE tests because they are elicitation-side
+// (not start-tool-side) constants. Keeping them in a dedicated group localizes any
+// 0.139 breakage to this file.
+func TestSpikeConstants_ApprovalPayloadKeysPinned(t *testing.T) {
+	assert.Equal(t, "type", codexApprovalTypeKey,
+		"approval payload type discriminator key (SPIKE: verify against 0.139)")
+	assert.Equal(t, "exec", codexApprovalTypeExec,
+		"exec approval type value (SPIKE: verify against 0.139)")
+	assert.Equal(t, "patch", codexApprovalTypePatch,
+		"patch/write approval type value (SPIKE: verify against 0.139)")
+	assert.Equal(t, "command", codexApprovalCommandKey,
+		"approval payload key for exec command argv (SPIKE: verify against 0.139)")
+	assert.Equal(t, "paths", codexApprovalPathsKey,
+		"approval payload key for write path list (SPIKE: verify against 0.139)")
+	assert.Equal(t, "reason", codexApprovalReasonKey,
+		"approval payload key for human-readable reason (SPIKE: verify against 0.139)")
+	assert.Equal(t, "approved", codexApprovalDecisionKey,
+		"approval response key for the boolean allow/deny decision (SPIKE: verify against 0.139)")
+}
