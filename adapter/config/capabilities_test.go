@@ -102,6 +102,42 @@ func TestLoadCapabilityRules_MalformedEffortFloorValue(t *testing.T) {
 	assert.ErrorContains(t, err, "mybackend", "error must name the offending backend")
 }
 
+// Structurally invalid YAML: if the override file contains invalid YAML syntax
+// (not just a bad enum, but a parse error), LoadCapabilityRules returns a
+// wrapped error that identifies the file. The embedded default is NOT used.
+func TestLoadCapabilityRules_InvalidYAMLSyntax(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bad.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("backends: {\nnot: valid: yaml: at: all\n"), 0o600))
+
+	_, err := adapterconfig.LoadCapabilityRules(p)
+	require.Error(t, err, "structurally invalid YAML must fail")
+	// The error must wrap and name the offending file path.
+	assert.ErrorContains(t, err, p, "error must reference the override file path")
+}
+
+// Override adds new backend: an override file can introduce backends that are
+// not present in the embedded defaults. The result contains both the new backend
+// and all unaffected embedded entries.
+func TestLoadCapabilityRules_OverrideAddsNewBackend(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "capabilities.yaml")
+	yaml := "backends:\n  custom-backend:\n    context_tiers: [default]\n    effort_levels: [default, medium]\n"
+	require.NoError(t, os.WriteFile(p, []byte(yaml), 0o600))
+
+	r, err := adapterconfig.LoadCapabilityRules(p)
+	require.NoError(t, err)
+
+	// The new backend is accessible.
+	_, eff, err := r.Validate("custom-backend", "any", provider.ContextDefault, provider.EffortMedium)
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortMedium, eff, "new backend must be usable after additive override")
+
+	// Embedded backends are still present.
+	_, _, err = r.Validate("claude-code", "opus-4.8", provider.Context200K, provider.EffortHigh)
+	require.NoError(t, err, "embedded claude-code backend must survive after additive override")
+}
+
 // NilInherit: a model_override that specifies only effort_floor (omitting
 // context_tiers and effort_levels) inherits the backend's lists for those axes.
 // The embedded default exercises this (sonnet-4.6 has no context_tiers; it
