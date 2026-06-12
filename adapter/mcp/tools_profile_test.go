@@ -264,6 +264,125 @@ func TestProviderCapabilities_ReadOpen(t *testing.T) {
 	assert.Contains(t, body, "codex")
 }
 
+// Error: an unauthenticated caller (no identity in context) hits the
+// ErrUnauthenticated branch of profileErrorResult on both read and write tools.
+func TestProfileTools_Unauthenticated(t *testing.T) {
+	srv := newProfileServer(t,
+		newMemProfileStore(provider.Profile{Alias: "a", Kind: provider.ProfileKindChat}),
+		&noopReloader{},
+	)
+	ctx := context.Background() // no identity → ErrUnauthenticated
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"profile_create", map[string]any{"alias": "x", "kind": "agent", "backend": "claude-code"}},
+		{"profile_update", map[string]any{"alias": "a", "kind": "chat"}},
+		{"profile_delete", map[string]any{"alias": "a"}},
+		{"profile_list", nil},
+		{"profile_get", map[string]any{"alias": "a"}},
+		{"provider_capabilities", nil},
+	} {
+		res := callToolCtx(t, srv, ctx, tc.tool, tc.args)
+		require.True(t, res.IsError, "%s must fail for unauthenticated caller", tc.tool)
+		assert.Contains(t, strings.ToLower(extractText(t, res)), "authentication required", tc.tool)
+	}
+}
+
+// Edge: profile_get with an empty alias string is caught before the service
+// call and returns "alias is required".
+func TestProfileGet_EmptyAlias(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_get", map[string]any{"alias": ""})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "alias is required")
+}
+
+// Error: profile_get on a missing alias maps to "profile not found".
+func TestProfileGet_NotFound(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_get", map[string]any{"alias": "ghost"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "not found")
+}
+
+// Failure: profileFromArgs rejects an empty alias before the service is reached.
+func TestProfileCreate_EmptyAlias(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_create", map[string]any{"alias": "", "kind": "agent"})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "alias is required")
+}
+
+// Failure: profileFromArgs rejects an empty kind before the service is reached.
+func TestProfileCreate_EmptyKind(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_create", map[string]any{"alias": "x", "kind": ""})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "kind is required")
+}
+
+// Edge: a non-string element in allowed_tools is caught by stringSliceArg and
+// returns a tool error before the service is reached.
+func TestProfileCreate_NonStringAllowedToolsElement(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_create", map[string]any{
+		"alias": "x", "kind": "agent", "backend": "claude-code",
+		"allowed_tools": []any{"bash", 42}, // 42 is not a string
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "string")
+}
+
+// Pass 2: provider_capabilities serializes model_overrides and effort_floor so
+// callers can discover flooring rules before writing — verifies the full
+// backendCapabilityBody → modelCapabilityBody → EffortFloor chain.
+func TestProviderCapabilities_IncludesModelOverridesAndFloor(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callTool(t, srv, "provider_capabilities", nil)
+	require.False(t, res.IsError, extractText(t, res))
+	body := extractText(t, res)
+	assert.Contains(t, body, "model_overrides", "model overrides must be serialized")
+	assert.Contains(t, body, "effort_floor", "effort floor must be serialized so callers can discover flooring")
+	assert.Contains(t, body, "sonnet-4.6", "the override model must appear by name")
+	// The floor entry "xhigh" -> "high" must be present.
+	assert.Contains(t, body, "xhigh", "xhigh must appear as a floor source key")
+	assert.Contains(t, body, "\"high\"", "high must appear as a floor target value")
+}
+
+// Security (Pass 2): profile_list and profile_get responses must not contain
+// any key-like field name. profileMeta deliberately has no APIKey field; this
+// test pins the JSON representation to make an accidental addition observable.
+func TestProfileMeta_NoKeyMaterialInResponse(t *testing.T) {
+	srv := newProfileServer(t,
+		newMemProfileStore(provider.Profile{Alias: "a", Kind: provider.ProfileKindAgent, Backend: "claude-code", Model: "opus-4.8", ConnectionRef: "conn1"}),
+		&noopReloader{},
+	)
+	for _, tc := range []struct{ tool string; args map[string]any }{
+		{"profile_list", nil},
+		{"profile_get", map[string]any{"alias": "a"}},
+	} {
+		res := callToolAdmin(t, srv, tc.tool, tc.args)
+		require.False(t, res.IsError, tc.tool+": "+extractText(t, res))
+		body := strings.ToLower(extractText(t, res))
+		assert.NotContains(t, body, `"api_key"`, tc.tool+" must not include api_key field")
+		assert.NotContains(t, body, `"apikey"`, tc.tool+" must not include apikey field")
+		assert.NotContains(t, body, `"secret"`, tc.tool+" must not include secret field")
+	}
+}
+
+// Edge (Pass 2): stringSliceArg with a non-array argument type (e.g. a plain
+// string instead of []any) returns "allowed_tools must be an array".
+func TestProfileCreate_NonArrayAllowedTools(t *testing.T) {
+	srv := newProfileServer(t, newMemProfileStore(), &noopReloader{})
+	res := callToolAdmin(t, srv, "profile_create", map[string]any{
+		"alias": "x", "kind": "agent", "backend": "claude-code",
+		"allowed_tools": "bash", // plain string, not an array
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "array")
+}
+
 // Nil ProfileAdmin -> every tool reports the service unavailable, not a panic.
 func TestProfileTools_NilService(t *testing.T) {
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", &adaptmcp.Deps{})
