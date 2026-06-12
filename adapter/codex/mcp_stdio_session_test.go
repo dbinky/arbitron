@@ -206,6 +206,35 @@ func TestMapNotification_Edge_TerminalMissingTokens(t *testing.T) {
 	assert.Equal(t, 0, ev.TokensOut)
 }
 
+// EDGE — a turn.completed notification that carries only thread_id (and no
+// conversation_id) still surfaces a SessionID so session resume is not lost.
+// The conversationID helper prefers conversation_id; this covers the fallback.
+func TestMapNotification_Edge_TurnCompletedWithThreadIDFallback(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, map[string]any{
+		"type":      codexTurnCompleted,
+		"thread_id": "thread-abc",
+	})
+	ev, ok := mapNotification(n)
+	require.True(t, ok)
+	assert.Equal(t, turnDone, ev.Kind)
+	assert.Equal(t, "thread-abc", ev.SessionID, "thread_id must be used when conversation_id is absent")
+}
+
+// EDGE — an agent_message whose item is absent falls back to the top-level
+// message field. Without this fallback a surface variant that uses message
+// instead of item.text would silently drop every token.
+func TestMapNotification_Edge_AgentMessageFallsBackToTopLevelMessage(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, map[string]any{
+		"type":    codexItemAgentMessage,
+		"message": "hi from top-level",
+		// deliberately no "item" key
+	})
+	ev, ok := mapNotification(n)
+	require.True(t, ok)
+	assert.Equal(t, turnToken, ev.Kind)
+	assert.Equal(t, "hi from top-level", ev.Text, "top-level message must be used when item is absent")
+}
+
 // --- mapApprovalRequest: HAPPY/SUCCESS -------------------------------------
 
 // HAPPY — a command-exec approval payload maps to an approvalRequest carrying
@@ -250,6 +279,22 @@ func TestMapApprovalRequest_Error_NoActionFailsClosed(t *testing.T) {
 	})
 	_, err := mapApprovalRequest(p)
 	require.Error(t, err)
+}
+
+// EDGE — when both command and paths are present (a malformed but non-empty
+// payload), command takes precedence. This ensures the approval policy
+// evaluates the command, not a silent write that could bypass path-scope
+// checks by hiding write paths behind a command request.
+func TestMapApprovalRequest_Edge_CommandTakesPrecedenceOverPaths(t *testing.T) {
+	p := elicitParams(t, "Ambiguous?", map[string]any{
+		codexApprovalCommandKey: []any{"git", "status"},
+		codexApprovalPathsKey:   []any{"docs/notes.md"},
+		codexApprovalReasonKey:  "combined",
+	})
+	req, err := mapApprovalRequest(p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"git", "status"}, req.Command, "command must take precedence when both command and paths are present")
+	assert.Nil(t, req.WritePaths, "WritePaths must be nil when command takes precedence")
 }
 
 // EDGE — when codex omits the reason, the human-readable Message is used as the
