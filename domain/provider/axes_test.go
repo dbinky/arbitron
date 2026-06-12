@@ -115,6 +115,28 @@ func TestEffort_GreaterThan(t *testing.T) {
 	}
 }
 
+// Parse is case-sensitive: capitalised or mixed-case variants of known values
+// are not accepted. This matters because LLMs generating MCP tool calls may
+// produce "High", "200K", or "Default" — they must be rejected so validation
+// stays fail-closed rather than silently accepting a mismatched string.
+func TestParse_CaseSensitive(t *testing.T) {
+	effortCases := []string{"High", "NONE", "Low", "Medium", "XHigh", "Max", "DEFAULT"}
+	for _, s := range effortCases {
+		t.Run("effort/"+s, func(t *testing.T) {
+			_, err := provider.ParseEffort(s)
+			assert.ErrorIs(t, err, provider.ErrInvalidEffort, "case variant %q must be rejected", s)
+		})
+	}
+
+	cwCases := []string{"200K", "1M", "Default", "DEFAULT"}
+	for _, s := range cwCases {
+		t.Run("contextwindow/"+s, func(t *testing.T) {
+			_, err := provider.ParseContextWindow(s)
+			assert.ErrorIs(t, err, provider.ErrInvalidContextWindow, "case variant %q must be rejected", s)
+		})
+	}
+}
+
 // Sentinel errors are non-nil and distinct so callers can match with errors.Is.
 func TestAxisSentinels_Distinct(t *testing.T) {
 	require.Error(t, provider.ErrInvalidContextWindow)
