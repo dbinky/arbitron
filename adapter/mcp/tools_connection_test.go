@@ -474,3 +474,78 @@ func TestConnectionTools_Unauthenticated(t *testing.T) {
 		assert.Contains(t, extractText(t, res), "authentication required", tc.tool)
 	}
 }
+
+// Failure: connection_create with an empty api_key returns "api_key is required"
+// before the service is reached. An LLM omitting the key must not create a keyless
+// connection entry.
+func TestConnectionCreate_EmptyAPIKeyRejected(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name": "c", "provider": "openrouter", "base_url": "https://x", "api_key": "",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "api_key")
+	assert.Equal(t, 0, len(store.conns), "nothing stored when api_key is empty")
+}
+
+// Edge: stringExtras with a non-object type (e.g. a plain string) returns a tool
+// error from the "extras must be an object" guard.
+func TestConnectionCreate_ExtrasNonObject(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name":     "c",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  "sk-x",
+		"extras":   "not-an-object",
+	})
+	require.True(t, res.IsError)
+	assert.Contains(t, strings.ToLower(extractText(t, res)), "object")
+}
+
+// Error: a bedrock connection with a missing region lands in the connErrorResult
+// default branch (no explicit bedrock case), producing "failed to create…".
+func TestConnectionCreate_BedrockValidationUsesDefaultBranch(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name":     "br",
+		"provider": "bedrock",
+		"base_url": "https://bedrock.local",
+		"api_key":  "sk-br",
+		// missing region + access-key-id in extras → ErrBedrockCredentialsRequired → default
+	})
+	require.True(t, res.IsError)
+	body := strings.ToLower(extractText(t, res))
+	assert.Contains(t, body, "failed to create", "bedrock validation falls through to the default error branch")
+}
+
+// Security (Pass 2): connection_update response never echoes the rotated api_key.
+// The update handler returns metaOf(conn) which has no key field, but this pins
+// the behaviour so a future change is caught immediately.
+func TestConnectionUpdate_ResponseDoesNotEchoKey(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	const origKey = "sk-ORIG-KEY"
+	const newKey = "sk-NEW-ROTATED-KEY"
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name":     "c",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  origKey,
+	}).IsError)
+
+	res := callToolAdmin(t, srv, "connection_update", map[string]any{
+		"name":     "c",
+		"provider": "openrouter",
+		"base_url": "https://x",
+		"api_key":  newKey,
+	})
+	require.False(t, res.IsError, extractText(t, res))
+	body := extractText(t, res)
+	assert.NotContains(t, body, newKey, "update response must not echo the new key")
+	assert.NotContains(t, body, origKey, "update response must not echo the old key")
+}
