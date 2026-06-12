@@ -17,6 +17,7 @@ var assertAnError = errors.New("seed: forced create failure")
 type seedFakeStore struct {
 	byAlias     map[string]provider.Profile
 	createErr   error // forced Create error (non-ErrProfileExists), for the error path
+	countErr    error // forced Count error, to exercise the early-abort gate
 	createCalls int
 }
 
@@ -67,7 +68,12 @@ func (s *seedFakeStore) List(_ context.Context) ([]provider.Profile, error) {
 	}
 	return out, nil
 }
-func (s *seedFakeStore) Count(_ context.Context) (int, error) { return len(s.byAlias), nil }
+func (s *seedFakeStore) Count(_ context.Context) (int, error) {
+	if s.countErr != nil {
+		return 0, s.countErr
+	}
+	return len(s.byAlias), nil
+}
 
 var _ provider.ProfileStore = (*seedFakeStore)(nil)
 
@@ -139,6 +145,53 @@ func TestSeedProfiles_CreateErrorPropagates(t *testing.T) {
 		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, assertAnError)
+}
+
+// Failure: a candidate whose ContextWindow or Effort string is malformed (not a
+// valid enum value) is skipped — the axis parse happens BEFORE rules.Validate so
+// the skip is independent of the capability rules.
+func TestSeedProfiles_MalformedAxisSkipped(t *testing.T) {
+	store := newSeedFakeStore()
+	in := []provider.Profile{
+		// Bad context_window — will fail ParseContextWindow.
+		{Alias: "bad-cw", Kind: provider.ProfileKindAgent, Backend: "claude-code", ContextWindow: "not-a-tier"},
+		// Bad effort — will fail ParseEffort.
+		{Alias: "bad-eff", Kind: provider.ProfileKindAgent, Backend: "claude-code", Effort: "not-an-effort"},
+		// Valid — must still be seeded (malformed entries must not abort the loop).
+		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},
+	}
+	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the valid candidate is seeded")
+	assert.Equal(t, 2, skipped, "both malformed-axis candidates are skipped")
+}
+
+// Error: an ErrProfileExists returned by Create is treated as a silent skip
+// (the profile was created concurrently or is a duplicate alias in the input),
+// not as an abort. seeded count is not incremented.
+func TestSeedProfiles_CreateExistsIsSkipped(t *testing.T) {
+	store := newSeedFakeStore()
+	// Pre-populate the store so Create will return ErrProfileExists for the alias.
+	_ = store.Create(context.Background(), provider.Profile{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"})
+	store.createCalls = 0 // reset the counter
+
+	n, skipped, err := SeedProfiles(context.Background(), store, testRules(),
+		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	require.NoError(t, err, "ErrProfileExists must not abort seeding")
+	assert.Equal(t, 0, n, "a duplicate is not counted as seeded")
+	assert.Equal(t, 0, skipped, "a duplicate is not counted as skipped (it is silently skipped)")
+}
+
+// Error: a Count failure aborts SeedProfiles before any Create is attempted.
+func TestSeedProfiles_CountErrorPropagates(t *testing.T) {
+	store := newSeedFakeStore()
+	store.countErr = errors.New("count: db unavailable")
+
+	_, _, err := SeedProfiles(context.Background(), store, testRules(),
+		[]provider.Profile{{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code"}})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, store.countErr)
+	assert.Equal(t, 0, store.createCalls, "Count failure must abort before any Create is attempted")
 }
 
 // Edge: no candidates on an empty table seeds nothing without error.
