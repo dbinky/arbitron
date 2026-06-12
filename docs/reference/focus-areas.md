@@ -14,7 +14,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
 | 1 | Axis enums (`domain/provider/axes.go` — `ContextWindow`/`Effort` validity, parse, empty→default, effort ordering/`GreaterThan`) | [x] | [x] | Done |
-| 2 | Capability validation (`domain/provider/capability.go` — `Validate`, model-override resolution, effort floor, inapplicable-axis rejection, unknown-backend) | [x] | [ ] | |
+| 2 | Capability validation (`domain/provider/capability.go` — `Validate`, model-override resolution, effort floor, inapplicable-axis rejection, unknown-backend) | [x] | [x] | Done |
 | 3 | Capability loader (`adapter/config/capabilities.go` + `capabilities.default.yaml` — embedded default, per-backend override merge, malformed-enum fail-fast, nil-override inherit) | [ ] | [ ] | |
 | 4 | Profile persistence (`adapter/sqlite/profile_repo.go`, `migrations/015_profiles.*`, `queries/profiles.sql` — CRUD, dup→`ErrProfileExists`, missing→`ErrProfileNotFound`, JSON allowed_tools + axes round-trip) | [ ] | [ ] | |
 | 5 | Cache + resolver (`adapter/provider/cache.go`, `dynamic.go` — store-bound `Load`/`Reload`, axes on binding, lazy `RevealKey`, zero-I/O `Kind`, `-race`) | [ ] | [ ] | |

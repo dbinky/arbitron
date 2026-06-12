@@ -34,32 +34,31 @@ func TestEmit_ClaudeCode200K(t *testing.T) {
 // Floor: sonnet-4.6 caps effort at high, so an xhigh request emits the floored
 // CLAUDE_CODE_EFFORT_LEVEL=high (write-time and runtime never disagree).
 func TestEmit_ClaudeCodeEffortAndFloor(t *testing.T) {
-	e, _ := rules().Emit("claude-code", "sonnet-4.6", provider.ContextDefault, provider.EffortXHigh)
-	if e.Env["CLAUDE_CODE_EFFORT_LEVEL"] != "high" { // floored
-		t.Fatalf("expected floored high, got %q", e.Env["CLAUDE_CODE_EFFORT_LEVEL"])
-	}
+	e, err := rules().Emit("claude-code", "sonnet-4.6", provider.ContextDefault, provider.EffortXHigh)
+	require.NoError(t, err)
+	assert.Equal(t, "high", e.Env["CLAUDE_CODE_EFFORT_LEVEL"], "floored xhigh -> high")
 }
 
 // Boundary: effort none disables thinking via MAX_THINKING_TOKENS=0 (not an
 // effort-level var).
 func TestEmit_ClaudeCodeEffortNoneDisables(t *testing.T) {
-	e, _ := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortNone)
-	if e.Env["MAX_THINKING_TOKENS"] != "0" {
-		t.Fatalf("none should disable: %+v", e.Env)
-	}
+	e, err := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	assert.Equal(t, "0", e.Env["MAX_THINKING_TOKENS"], "none should set MAX_THINKING_TOKENS=0")
 }
 
 // Happy (codex): a graded effort emits `-c model_reasoning_effort=<v>`; none maps
 // to codex's "minimal".
 func TestEmit_CodexEffort(t *testing.T) {
-	e, _ := rules().Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortMedium)
-	if !contains(e.Args, "-c") || !contains(e.Args, "model_reasoning_effort=medium") {
-		t.Fatalf("codex effort arg missing: %+v", e.Args)
-	}
-	none, _ := rules().Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortNone)
-	if !contains(none.Args, "model_reasoning_effort=minimal") {
-		t.Fatalf("codex none→minimal missing: %+v", none.Args)
-	}
+	e, err := rules().Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortMedium)
+	require.NoError(t, err)
+	assert.True(t, contains(e.Args, "-c") && contains(e.Args, "model_reasoning_effort=medium"),
+		"codex effort arg missing: %v", e.Args)
+
+	none, err := rules().Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	assert.True(t, contains(none.Args, "model_reasoning_effort=minimal"),
+		"codex none→minimal missing: %v", none.Args)
 }
 
 // Empty: a zero-value ruleset reports Empty()==true so callers can skip emission
@@ -76,10 +75,10 @@ func TestCapabilityRules_Empty(t *testing.T) {
 
 // Defaults: a default tier + default effort emits nothing on either axis.
 func TestEmit_DefaultsEmitNothing(t *testing.T) {
-	e, _ := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortDefault)
-	if len(e.Env) != 0 || len(e.Args) != 0 {
-		t.Fatalf("default should emit nothing: %+v", e)
-	}
+	e, err := rules().Emit("claude-code", "opus-4.8", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Empty(t, e.Env, "default tier+effort must emit nothing in Env")
+	assert.Empty(t, e.Args, "default tier+effort must emit nothing in Args")
 }
 
 // Context 1m: the 1m tier raises the auto-compact window but does NOT set
@@ -105,6 +104,21 @@ func TestEmit_ClaudeCli(t *testing.T) {
 	assert.Equal(t, "1", e.Env["CLAUDE_CODE_DISABLE_1M_CONTEXT"])
 	assert.Equal(t, "200000", e.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 	assert.Equal(t, "high", e.Env["CLAUDE_CODE_EFFORT_LEVEL"])
+}
+
+// Describe: each call returns a fresh outer map so a caller mutating the result
+// cannot corrupt the rules engine's internal state (the provider_capabilities
+// tool must be able to serialize this without holding a reference).
+func TestDescribe_ReturnsFreshCopy(t *testing.T) {
+	r := rules()
+	d := r.Describe()
+	// Contents are present.
+	assert.Contains(t, d, "claude-code")
+	assert.Contains(t, d, "codex")
+	// Injecting a key into the returned map does not affect future calls.
+	d["injected"] = provider.BackendCapability{Backend: "injected"}
+	d2 := r.Describe()
+	assert.NotContains(t, d2, "injected", "mutating the Describe result must not affect the ruleset")
 }
 
 // Opencode (and unknown backends): emits nothing for both axes (deferred).
