@@ -121,6 +121,33 @@ func TestDescribe_ReturnsFreshCopy(t *testing.T) {
 	assert.NotContains(t, d2, "injected", "mutating the Describe result must not affect the ruleset")
 }
 
+// Error: Emit propagates ErrUnknownBackend from Validate when the backend is
+// absent from the ruleset (defensive: writes are pre-validated, but the error
+// path must be exercised to prevent silent regression).
+func TestEmit_UnknownBackendReturnsError(t *testing.T) {
+	_, err := rules().Emit("not-a-backend", "any", provider.ContextDefault, provider.EffortDefault)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrUnknownBackend)
+}
+
+// Error: Emit propagates ErrAxisNotApplicable when a non-default context tier is
+// requested on a backend that has no context knob (codex in rules() has
+// context_tiers: [default] only).
+func TestEmit_InapplicableAxisReturnsError(t *testing.T) {
+	_, err := rules().Emit("codex", "gpt-5.5", provider.Context200K, provider.EffortDefault)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable)
+}
+
+// Edge: codex with default effort emits no args (the EffortDefault case in
+// emitCodexEffort). Only codex medium and none were previously exercised.
+func TestEmit_CodexDefaultEffortEmitsNothing(t *testing.T) {
+	e, err := rules().Emit("codex", "gpt-5.5", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Nil(t, e.Env, "codex default must produce nil Env")
+	assert.Empty(t, e.Args, "codex default effort must emit no args")
+}
+
 // Opencode (and unknown backends): emits nothing for both axes (deferred).
 func TestEmit_UnknownBackendEmitsNothing(t *testing.T) {
 	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
