@@ -109,6 +109,38 @@ func TestInteractiveStreamSelector_AgentKind_Codex(t *testing.T) {
 	assert.Same(t, codex, got, "agent/codex binding must return the codex stream adapter")
 }
 
+// TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider verifies
+// that the REAL codex interactive provider — the exact *codex.InteractiveProvider
+// the composition root (main.go §12c) now wires as the codex agentStreams entry —
+// satisfies engine.ChatProvider and routes through the selector on the codex
+// backend. The other routing tests use an identity sentinel, which proves the
+// dispatch logic but NOT that the wired type is a valid ChatProvider; this test
+// closes that gap so a swap that broke the real type's interface or construction
+// would fail here rather than only at composition.
+func TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	claude, _, _ := streamsByBackend()
+
+	// Construct the real interactive provider exactly as main.go §12c does, and
+	// route the codex backend to it (claude-code keeps its sentinel).
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	var _ engine.ChatProvider = codexInteractive // it is the wired ChatProvider
+	m := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: claude,
+		workflow.BackendCodex:      codexInteractive,
+	}
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendCodex,
+		Model:   "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	assert.Same(t, codexInteractive, got, "agent/codex binding must return the real interactive provider wired by main.go")
+}
+
 // TestInteractiveStreamSelector_AgentKind_EmptyBackendFloored verifies that an
 // agent-kind binding with an empty Backend is floored to the injected default
 // backend and then dispatched (here: default codex → codex stream).

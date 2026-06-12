@@ -829,28 +829,32 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
 	// profiles route by BACKEND to the matching tool-enabled streaming adapter —
-	// claude-code → the claude-cli stream adapter, codex → the codex stream
-	// adapter (`codex exec --json`, subscription-only). An empty agent backend is
-	// floored to the SAME deployment default the batch AgentCallExecutor uses
+	// claude-code → the claude-cli stream adapter, codex → the codex INTERACTIVE
+	// provider (codex `mcp-server`, subscription-only): a read-only sandbox with
+	// approval-gated, docs/-scoped writes (NOT `codex exec`, which is the
+	// autonomous batch posture). An empty agent backend is floored to the SAME
+	// deployment default the batch AgentCallExecutor uses
 	// (cfg.LLM.DefaultAgentBackend); opencode and unknown backends fail closed.
 	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
-	codexStreamAgent := codex.NewStreamProvider(codex.Config{
-		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH,
-		// the per-mission timeout reuses the shared LLM timeout floor, and the
-		// response cap mirrors the factory's codex arm. No allow-all knob: codex
-		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{
+		// Codex (subscription-only `codex mcp-server`): binary auto-resolved from
+		// PATH, the per-turn timeout reuses the shared LLM timeout floor, and the
+		// response cap mirrors the factory's codex arm. The interactive posture is
+		// read-only + approval-gated: WritableRoot scopes the auto-policy's allowed
+		// writes to docs/ (a zero value fails closed to that subtree, never
+		// "everywhere"); there is no allow-all knob.
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-		// profile-editing Phase 3: the binding's resolved effort rides argv as
-		// `-c model_reasoning_effort=<v>` via these rules on the interactive_agent
-		// streaming path too.
+		// profile-editing Phase 3: the binding's resolved effort rides the protocol
+		// body via these rules on the interactive_agent streaming path too.
 		CapabilityRules: capabilityRules,
+		WritableRoot:    "docs",
 	})
 	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
 		providerFactory,
 		map[string]engine.ChatProvider{
 			workflow.BackendClaudeCode: claudeStreamAgent,
-			workflow.BackendCodex:      codexStreamAgent,
+			workflow.BackendCodex:      codexInteractive,
 		},
 		cfg.LLM.DefaultAgentBackend,
 	)
