@@ -128,6 +128,16 @@ func TestDecide_Patch_Edge_EmptyPathInList_Denied(t *testing.T) {
 	assert.NotEmpty(t, d.Reason)
 }
 
+// FAIL-CLOSED — a non-nil but empty WritePaths slice must be denied, not
+// vacuously allowed. Without the len==0 guard, range over []string{} iterates
+// zero times and the trailing "all paths within root" return would fire.
+func TestDecide_Patch_Edge_EmptyWritePathsSlice_Denied(t *testing.T) {
+	p := newTestPolicy()
+	d := p.decide(approvalRequest{WritePaths: []string{}})
+	assert.False(t, d.Allow)
+	assert.Contains(t, d.Reason, "no target paths")
+}
+
 // --- decide: command exec classification ----------------------------------
 
 func TestDecide_Command_HappyPath_Informational_Allowed(t *testing.T) {
