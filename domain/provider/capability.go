@@ -60,6 +60,19 @@ func (r CapabilityRules) Empty() bool {
 	return len(r.byBackend) == 0
 }
 
+// Describe returns a read-only copy of the per-backend capability map so a
+// caller (the provider_capabilities tool) can serialize the allowed tiers/effort
+// per backend/model without holding a reference to the ruleset's internal map.
+// The outer map is freshly allocated; the BackendCapability values are copied by
+// value (their slices/maps are not mutated by callers, only read).
+func (r CapabilityRules) Describe() map[string]BackendCapability {
+	out := make(map[string]BackendCapability, len(r.byBackend))
+	for k, v := range r.byBackend {
+		out[k] = v
+	}
+	return out
+}
+
 // containsCtx reports whether s contains v.
 func containsCtx(s []ContextWindow, v ContextWindow) bool {
 	for _, x := range s {
