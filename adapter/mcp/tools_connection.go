@@ -106,6 +106,10 @@ func connErrorResult(action, name string, err error) *gomcp.CallToolResult {
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q already exists", name))
 	case errors.Is(err, provider.ErrConnectionNotFound):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q not found", name))
+	case errors.Is(err, provider.ErrConnectionInUse):
+		// Surface the full message so the operator sees which profiles still
+		// reference the connection.
+		return gomcp.NewToolResultError(err.Error())
 	case errors.Is(err, provider.ErrAzureAPIVersionRequired):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q: azure connections require an api-version in extras", name))
 	default:
@@ -179,9 +183,20 @@ func connectionUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		providerID, _ := args["provider"].(string)
 		baseURL, _ := args["base_url"].(string)
-		extras, err := stringExtras(args["extras"])
-		if err != nil {
-			return gomcp.NewToolResultError(err.Error()), nil
+
+		// Optional extras: present -> parse + replace; absent -> nil -> the service
+		// preserves the stored extras (so a partial update never blanks the
+		// load-bearing non-secret credential metadata and desyncs the sealed key).
+		var extrasPtr *map[string]string
+		if _, present := args["extras"]; present {
+			extras, err := stringExtras(args["extras"])
+			if err != nil {
+				return gomcp.NewToolResultError(err.Error()), nil
+			}
+			if extras == nil {
+				extras = map[string]string{}
+			}
+			extrasPtr = &extras
 		}
 
 		// Optional api_key: present -> re-seal; absent -> nil -> preserve stored key.
@@ -192,15 +207,22 @@ func connectionUpdateHandler(srv *Server) server.ToolHandlerFunc {
 			}
 		}
 
-		conn := provider.Connection{Name: name, Provider: providerID, BaseURL: baseURL, Extras: extras}
-		if err := srv.deps.ConnectionAdmin.Update(ctx, conn, keyPtr); err != nil {
+		conn := provider.Connection{Name: name, Provider: providerID, BaseURL: baseURL}
+		if err := srv.deps.ConnectionAdmin.UpdatePatch(ctx, conn, extrasPtr, keyPtr); err != nil {
 			return connErrorResult("update", name, err), nil
 		}
 		// SECURITY: log the name and whether a key was rotated, never the key value.
 		connLogger(srv).Info("connection updated",
 			slog.String("connection", name),
 			slog.Bool("key_rotated", keyPtr != nil))
-		return MarshalResult(map[string]any{"status": "updated", "connection": metaOf(conn)})
+		// Echo the STORED connection (metadata only, never the key) so the response
+		// reflects the merged extras — the preserved map when extras was omitted —
+		// rather than the request, which carries no extras on a partial update.
+		stored, err := srv.deps.ConnectionAdmin.Get(ctx, name)
+		if err != nil {
+			return connErrorResult("update", name, err), nil
+		}
+		return MarshalResult(map[string]any{"status": "updated", "connection": metaOf(stored)})
 	}
 }
 

@@ -91,6 +91,13 @@ func (s *fakeConnStore) Reveal(_ context.Context, name string) (string, error) {
 
 func (s *fakeConnStore) Count(_ context.Context) (int, error) { return len(s.conns), nil }
 
+// emptyProfileLister is a provider.ProfileLister with no profiles; it backs
+// ConnectionService's in-use check in the connection-tool tests, which do not
+// exercise that check (so no connection appears referenced).
+type emptyProfileLister struct{}
+
+func (emptyProfileLister) List(context.Context) ([]provider.Profile, error) { return nil, nil }
+
 func newConnServer(t *testing.T, store provider.ConnectionStore, logger *slog.Logger) *adaptmcp.Server {
 	t.Helper()
 	// The connection_* tools are admin-only now: they route through the
@@ -98,7 +105,7 @@ func newConnServer(t *testing.T, store provider.ConnectionStore, logger *slog.Lo
 	// nil-guard ("connection service not available") tests still exercise it.
 	var svc *provider.ConnectionService
 	if store != nil {
-		svc = provider.NewConnectionService(store)
+		svc = provider.NewConnectionService(store, emptyProfileLister{})
 	}
 	deps := &adaptmcp.Deps{
 		ConnectionAdmin: svc,
@@ -391,6 +398,67 @@ func TestConnectionUpdate_EmptyAPIKeyPreservesKey(t *testing.T) {
 	// The original sealed key must be unchanged.
 	assert.Equal(t, origKey, store.keys["c1"],
 		"empty api_key on update must not rotate the stored key")
+}
+
+// Security: connection_update with extras OMITTED preserves the stored extras
+// rather than full-replacing (blanking) them. The sealed key (also omitted) stays
+// paired with its load-bearing extras (bedrock access-key-id/region), so a
+// partial base_url edit cannot desync a still-encrypted credential from its
+// routing/identity metadata.
+func TestConnectionUpdate_OmittedExtrasPreserved(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name":     "bed",
+		"provider": "bedrock",
+		"base_url": "https://bedrock-runtime.us-east-1.amazonaws.com",
+		"api_key":  "sealed-secret",
+		"extras": map[string]any{
+			"region":        "us-east-1",
+			"access-key-id": "AKIA-ORIG",
+		},
+	}).IsError, "bedrock create with valid extras must succeed")
+
+	// Update only base_url; extras and api_key omitted entirely.
+	res := callToolAdmin(t, srv, "connection_update", map[string]any{
+		"name":     "bed",
+		"provider": "bedrock",
+		"base_url": "https://bedrock-runtime.us-east-1.amazonaws.com/v2",
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	got, err := store.Get(context.Background(), "bed")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"region": "us-east-1", "access-key-id": "AKIA-ORIG"}, got.Extras,
+		"omitted extras must be preserved, not blanked")
+	assert.Equal(t, "sealed-secret", store.keys["bed"], "omitted api_key preserves the sealed key")
+}
+
+// connection_update with extras PRESENT replaces the stored extras (explicit set).
+func TestConnectionUpdate_PresentExtrasReplace(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
+		"name":     "az",
+		"provider": "azure-openai",
+		"base_url": "https://az",
+		"api_key":  "sk",
+		"extras":   map[string]any{"api-version": "2024-01-01"},
+	}).IsError)
+
+	res := callToolAdmin(t, srv, "connection_update", map[string]any{
+		"name":     "az",
+		"provider": "azure-openai",
+		"base_url": "https://az",
+		"extras":   map[string]any{"api-version": "2024-06-01"},
+	})
+	require.False(t, res.IsError, extractText(t, res))
+
+	got, err := store.Get(context.Background(), "az")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"api-version": "2024-06-01"}, got.Extras)
 }
 
 // Security: connection_update logs key_rotated=true when a new key is supplied,

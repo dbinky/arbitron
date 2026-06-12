@@ -40,7 +40,9 @@ func newProfileAuthzServer(t *testing.T, seed ...provider.Profile) (*adaptmcp.Se
 	// The cache satisfies provider.Reloader directly, so the service reloads the
 	// SAME cache the resolver reads.
 	profileSvc := provider.NewProfileService(pstore, rules, cache)
-	connSvc := provider.NewConnectionService(connStore)
+	// pstore backs the connection in-use check so a connection referenced by a
+	// seeded profile cannot be deleted out from under it.
+	connSvc := provider.NewConnectionService(connStore, pstore)
 
 	deps := &adaptmcp.Deps{
 		ProfileAdmin:    profileSvc,
