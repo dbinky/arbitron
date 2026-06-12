@@ -77,6 +77,13 @@ var expectedTools = []string{
 	"connection_delete",
 	"connection_get",
 	"connection_list",
+	// Profile management (6)
+	"profile_create",
+	"profile_update",
+	"profile_delete",
+	"profile_get",
+	"profile_list",
+	"provider_capabilities",
 	// Personal API tokens (3)
 	"token_create",
 	"token_list",

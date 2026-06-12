@@ -42,6 +42,58 @@ func envValue(env []string, name string) (string, bool) {
 	return "", false
 }
 
+// testCapRules builds a capability ruleset exercising the claude-code emission
+// surface: full context tiers (default/200k/1m) and effort levels so a 200k +
+// high binding emits the proven RalphFactory env pair plus CLAUDE_CODE_EFFORT_LEVEL.
+func testCapRules() provider.CapabilityRules {
+	return provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"claude-code": {
+			Backend:      "claude-code",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault, provider.Context200K, provider.Context1M},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortNone, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh, provider.EffortMax},
+		},
+	})
+}
+
+// assertEnv asserts the env slice carries name=want exactly once.
+func assertEnv(t *testing.T, env []string, name, want string) {
+	t.Helper()
+	got, ok := envValue(env, name)
+	require.True(t, ok, "env var %q must be present", name)
+	assert.Equal(t, want, got, "env var %q", name)
+}
+
+// capability — a claude-code binding with a 200k tier + high effort emits the
+// context env pair AND the effort-level var on top of the credential env.
+func TestAgentEnv_AppliesContextAndEffort(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "opus-4.8",
+		ContextWindow: provider.Context200K, Effort: provider.EffortHigh,
+		RevealKey: func(context.Context) (string, error) { return "", nil },
+	}
+	env, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "200000")
+}
+
+// capability (defaults) — a default-tier, default-effort binding adds NOTHING on
+// top of the credential-only env: the WithRules form equals agentEnv in length.
+func TestAgentEnv_DefaultsAddNothing(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "opus-4.8",
+		RevealKey: func(context.Context) (string, error) { return "", nil },
+	}
+	base, err := agentEnv(context.Background(), binding) // existing credential-only path
+	require.NoError(t, err)
+	withRules, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+	assert.Len(t, withRules, len(base), "defaults must not add env")
+}
+
 // happy — base_url + key present: env carries both.
 func TestAgentEnv_GatewayInjectsBaseURLAndKey(t *testing.T) {
 	b := gatewayBinding("https://litellm.internal:4000", "sk-test", nil)
@@ -244,6 +296,70 @@ func TestRemoveVar_PrefixNotStripped(t *testing.T) {
 	joined := strings.Join(got, "\n")
 	assert.Contains(t, joined, "ANTHROPIC_BASE_URL_EXTRA=https://extra")
 	assert.Contains(t, joined, "HOME=/root")
+}
+
+// Edge: an empty Backend in the binding falls back to claudeBackend ("claude-code")
+// inside applyCapabilityEnv so the chat path (which passes a zero binding) still
+// drives the correct emission path.
+func TestApplyCapabilityEnv_EmptyBackendFallsBackToClaude(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend:       "", // deliberately empty — fallback must fire
+		Model:         "opus-4.8",
+		ContextWindow: provider.Context200K,
+		Effort:        provider.EffortHigh,
+	}
+	env, err := applyCapabilityEnv(procenv.BaseEnv(), binding, rules)
+	require.NoError(t, err)
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+}
+
+// Edge: an empty CapabilityRules (the back-compat gate) skips all emission and
+// returns the env slice unchanged.
+func TestApplyCapabilityEnv_EmptyRulesSkips(t *testing.T) {
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "m",
+		ContextWindow: provider.Context200K, Effort: provider.EffortHigh,
+	}
+	base := []string{"HOME=/home/user"}
+	got, err := applyCapabilityEnv(base, binding, provider.CapabilityRules{})
+	require.NoError(t, err)
+	assert.Equal(t, base, got, "empty rules must return the env slice unchanged")
+}
+
+// Security (Pass 2): agentEnvWithRules preserves the credential vars (key +
+// base-url) AFTER appending the capability env. The capability append must not
+// drop, duplicate, or overwrite the credential section.
+func TestAgentEnvWithRules_CredentialsPreservedAfterCapabilityAppend(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend:       "claude-code",
+		Model:         "opus-4.8",
+		BaseURL:       "https://litellm:4000",
+		ContextWindow: provider.Context200K,
+		Effort:        provider.EffortHigh,
+		RevealKey:     func(context.Context) (string, error) { return "sk-preserved", nil },
+	}
+	env, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+
+	// Credentials survive the append.
+	assertEnv(t, env, "ANTHROPIC_API_KEY", "sk-preserved")
+	assertEnv(t, env, "ANTHROPIC_BASE_URL", "https://litellm:4000")
+
+	// Capability vars are present (appended, not mixed into credentials).
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+
+	// Exactly one API key entry — no duplication from the append.
+	count := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "exactly one ANTHROPIC_API_KEY after capability append")
 }
 
 // error — a RevealKey failure aborts RunAgent before the runner is invoked

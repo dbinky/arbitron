@@ -166,7 +166,15 @@ type domainStack struct {
 	profileChecker      workflow.ProfileChecker
 	connChecker         workflow.ConnectionChecker
 	connStore           provider.ConnectionStore
-	tracingShutdown     func(ctx context.Context) error
+	// profile-editing Phase 4: admin services exposed through the MCP profile_*
+	// and connection_* tools. profileSvc carries the capability ruleset +
+	// store-bound cache (its Reload recaches after a write); connSvc is the admin
+	// gate over connStore. capabilityRules is retained for the read-only
+	// provider_capabilities tool.
+	profileSvc      *provider.ProfileService
+	connSvc         *provider.ConnectionService
+	capabilityRules provider.CapabilityRules
+	tracingShutdown func(ctx context.Context) error
 	// Auth (Phase 6). sessionRepo is always built; authMW is always built;
 	// authHandler and sweepCancel are nil in local mode.
 	sessionRepo  identity.SessionRepository
@@ -251,6 +259,9 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		ProfileChecker:      ds.profileChecker,
 		ConnChecker:         ds.connChecker,
 		Connections:         ds.connStore,
+		ProfileAdmin:        ds.profileSvc,
+		ConnectionAdmin:     ds.connSvc,
+		Capabilities:        ds.capabilityRules,
 		Tokens:              ds.tokenSvc,
 		Users:               ds.userSvc,
 		ScheduleService:     ds.scheduleSvc,
@@ -477,12 +488,37 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("resolving workspace path: %w", err)
 	}
 
+	// Resolve the capability-ruleset override path: empty defaults to
+	// ~/.arbitron/capabilities.yaml (resolved like the config path). A missing
+	// file is not an error — LoadCapabilityRules falls back to the embedded
+	// default ruleset. Loaded here (before the adapter Configs) so the rules can
+	// be threaded into the claudecli + codex adapters for runtime context-window +
+	// effort emission (profile-editing Phase 3); the SAME value is reused below for
+	// the one-time profile seed validation.
+	capabilitiesPath := cfg.CapabilitiesPath
+	if capabilitiesPath == "" {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			capabilitiesPath = filepath.Join(home, ".arbitron", "capabilities.yaml")
+		}
+	}
+	capabilityRules, err := configadapter.LoadCapabilityRules(capabilitiesPath)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading capability rules: %w", err)
+	}
+
 	chatCfg := claudecli.Config{
 		BinaryPath:       cfg.LLM.BinaryPath,
 		DefaultModel:     cfg.LLM.Model,
 		WorkspaceRoot:    wsRoot,
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// Capability rules drive the per-call context-window + effort env emission
+		// (profile-editing Phase 3). The factory's claude-cli chat arm uses this
+		// config to build per-binding ChatAdapters so a chat-kind profile's
+		// ContextWindow + Effort axes reach the subprocess env.
+		CapabilityRules: capabilityRules,
 		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
 	}
 
@@ -541,21 +577,65 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, err
 	}
 
-	// 8d. Build the immutable profile resolver from config profiles. This is the
-	// single source of truth for model_profile aliases: the executors resolve a
-	// node's alias to a concrete model through it, and workflow validation checks
-	// alias/kind through the ResolverChecker wrapper built below. The widened
-	// resolver carries the connection store so a profile with a non-empty
-	// ConnectionRef resolves to its endpoint + lazy key reveal; an empty
-	// ConnectionRef stays on the claude-cli no-key subscription path.
+	// 8d. Build the DB-backed profile resolver (profile-editing Phase 2). Profiles
+	// now live in SQLite (the source of truth) behind an in-memory ProfileCache; a
+	// DynamicProfileResolver reads the cache so the executors resolve a node's
+	// alias to a concrete model+axes through it, and workflow validation checks
+	// alias/kind through the ResolverChecker wrapper. The resolver carries the
+	// connection store so a profile with a non-empty ConnectionRef resolves to its
+	// endpoint + lazy key reveal; an empty ConnectionRef stays on the claude-cli
+	// no-key subscription path.
+	//
+	// One-time seed: the FIRST boot with an empty profiles table seeds it from the
+	// config-file profiles (∪ the built-in defaults the loader already merged in).
+	// Each candidate is validated against the capability ruleset; an invalid one
+	// is logged and skipped so operator config never blocks boot. After the first
+	// seed the table is non-empty and config profile entries are ignored — the DB
+	// wins.
 	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
-	profileResolver, err := providersadapter.NewStaticProfileResolver(domainProfiles, connStore)
+
+	profileRepo := adaptsqlite.NewProfileRepo(db)
+	seeded, skipped, err := SeedProfiles(context.Background(), profileRepo, capabilityRules, domainProfiles)
 	if err != nil {
 		db.Close()
 		logCloser.Close()
-		return nil, fmt.Errorf("building profile resolver: %w", err)
+		return nil, fmt.Errorf("seeding profiles: %w", err)
 	}
+	if seeded > 0 || skipped > 0 {
+		logger.Info("seeded profiles from config", "seeded", seeded, "skipped", skipped)
+	}
+
+	// profileCache is bound to the repo at construction so it can be reloaded
+	// after a write (the Phase-4 ProfileService recache hook); keep the reference
+	// for that future wiring. Load it once before serving.
+	profileCache := providersadapter.NewProfileCache(profileRepo)
+	if err := profileCache.Load(context.Background()); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading profile cache: %w", err)
+	}
+	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
+
+	// profile-editing Phase 4: the admin-facing editing services. ProfileService
+	// owns authz + capability validation + recache: the store-bound profileCache
+	// satisfies provider.Reloader directly (its Reload(ctx) re-reads the DB), so it
+	// is passed verbatim and a write reloads the SAME cache the resolver reads — a
+	// live edit takes effect with no restart. ConnectionService is the admin gate
+	// over the raw connStore (Reveal stays off the management surface). Both are
+	// injected into the MCP Deps below.
+	// Wrap the store-bound profileCache (the recache hook) in a loggingReloader so
+	// a post-write recache failure is WARN-logged rather than silently swallowed:
+	// without it the engine keeps resolving the STALE profile after a {status:
+	// updated} response until the next restart (a credential-binding split-brain).
+	// The decorator lives in the wiring layer, keeping the domain logger-free.
+	profileReloader := newLoggingReloader(profileCache, logger)
+	profileSvc := provider.NewProfileService(profileRepo, capabilityRules, profileReloader)
+	// profileRepo (the live source of truth) backs ConnectionService's delete-time
+	// in-use check: deleting a connection a profile still references is rejected
+	// fail-closed, so an orphaned reference surfaces at delete time rather than at
+	// a far-removed workflow run/validate failure.
+	connSvc := provider.NewConnectionService(connStore, profileRepo)
 
 	// 8e. Build the connection-existence checker for workflow validation over the
 	// loaded profiles + the connection store. It confirms a profile's non-empty
@@ -584,6 +664,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	providerFactory := providersadapter.NewFactory(providersadapter.Deps{
 		ClaudeChat:  claudeChatAdapter,
 		ClaudeAgent: claudeAgentAdapter,
+		// profile-editing Phase 3: chat Config so the claude-cli chat arm builds
+		// a PER-BINDING adapter that applies ContextWindow + Effort env vars from
+		// a chat-kind profile to the chat subprocess. An empty/default binding
+		// degrades to the subscription env with no axis additions.
+		ClaudeChatConfig: chatCfg,
 		// org-readiness Phase 2: the claude agent Config so the claude-code arm
 		// builds a PER-BINDING adapter that injects ANTHROPIC_BASE_URL + key from
 		// the binding (the org gateway / a configured provider). An empty binding
@@ -608,6 +693,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// credential-bearing opencode subprocess fed model-influenced prompts an
 		// allow-all posture is RCE-equivalent (the lethal trifecta).
 		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
+		// profile-editing Phase 3: thread the loaded capability rules into the
+		// codex arm so a profile's resolved effort reaches `codex exec`. The
+		// claude-code arm receives its rules through ClaudeAgentConfig (= agentCfg,
+		// which carries CapabilityRules).
+		CapabilityRules: capabilityRules,
 	})
 
 	// 9. Create all node executors and build the executor map.
@@ -751,6 +841,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// profile-editing Phase 3: the binding's resolved effort rides argv as
+		// `-c model_reasoning_effort=<v>` via these rules on the interactive_agent
+		// streaming path too.
+		CapabilityRules: capabilityRules,
 	})
 	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
 		providerFactory,
@@ -899,6 +993,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		profileChecker:      profileChecker,
 		connChecker:         connChecker,
 		connStore:           connStore,
+		profileSvc:          profileSvc,
+		connSvc:             connSvc,
+		capabilityRules:     capabilityRules,
 		tracingShutdown:     tracingShutdown,
 		sessionRepo:         sessionRepo,
 		tokenRepo:           tokenRepo,

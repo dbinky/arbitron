@@ -85,8 +85,10 @@ func (a *AgentAdapter) RunAgent(ctx context.Context, mission engine.AgentMission
 
 	// Build the per-call env BEFORE any subprocess so a RevealKey / collision
 	// failure aborts the run with NO partial-env launch (fail-closed). A
-	// zero-value binding yields the subscription env (no endpoint/key).
-	env, err := agentEnv(ctx, a.binding)
+	// zero-value binding yields the subscription env (no endpoint/key); the
+	// capability rules append the binding's resolved context-window + effort env
+	// on top (profile-editing Phase 3) — a default/empty axis adds nothing.
+	env, err := agentEnvWithRules(ctx, a.binding, a.core.rules)
 	if err != nil {
 		return nil, err
 	}

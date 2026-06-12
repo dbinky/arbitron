@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	adapterconfig "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/codex"
+	adapterconfig "github.com/arbitron/arbitron/adapter/config"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
@@ -386,10 +386,10 @@ func TestInteractiveStreamSelector_UnknownKind(t *testing.T) {
 // Must Fix #4).
 //
 // This test exercises the full pipeline:
-//   1. Load default config → ProfilesFromConfig → StaticProfileResolver
-//   2. A codex-backed binding → *codex.Provider (agent_call) AND codex stream
-//      sentinel (interactive_agent), proving both arms route codex.
-//   3. Resolve "planner"/"coder" → *claudecli.AgentAdapter / claude stream sentinel.
+//  1. Load default config → ProfilesFromConfig → DynamicProfileResolver
+//  2. A codex-backed binding → *codex.Provider (agent_call) AND codex stream
+//     sentinel (interactive_agent), proving both arms route codex.
+//  3. Resolve "planner"/"coder" → *claudecli.AgentAdapter / claude stream sentinel.
 func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
 	// Load the default profile registry (no deployment config.yaml).
 	tmpDir := t.TempDir()
@@ -399,8 +399,7 @@ func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
 	require.NoError(t, err)
 
 	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
-	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
-	require.NoError(t, err)
+	resolver := newDynamicResolver(t, profiles, nil)
 
 	// Build factory + stream selector with sentinels.
 	f := newBackendFactory(t)
@@ -443,4 +442,3 @@ func TestFA18_SampleProfileDispatchThroughBothArms(t *testing.T) {
 		})
 	}
 }
-

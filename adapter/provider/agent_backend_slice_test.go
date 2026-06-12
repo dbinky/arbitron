@@ -9,7 +9,7 @@ package provider_test
 //   - factory_claudecode_inject_test.go calls AgentProviderFor directly, proving
 //     env injection but bypassing the executor's precedence chain.
 //
-// This slice wires REAL executor + REAL factory + REAL StaticProfileResolver.
+// This slice wires REAL executor + REAL factory + REAL DynamicProfileResolver.
 // Only subprocess runners are replaced so tests run without installed CLIs.
 
 import (
@@ -112,7 +112,7 @@ func sliceNode(alias, backend string) workflow.Node {
 }
 
 // litellmProfile builds a profile + store pair with a real LiteLLM connection
-// so the StaticProfileResolver exercises the full alias→connection chain.
+// so the DynamicProfileResolver exercises the full alias→connection chain.
 func litellmProfile(alias, backend string) (provider.Profile, *fakeConnectionStore) {
 	store := newFakeConnectionStore()
 	conn := provider.Connection{
@@ -140,12 +140,11 @@ func subscriptionProfile(alias string) provider.Profile {
 	}
 }
 
-// newSliceResolver builds a StaticProfileResolver for the given profiles and store.
-func newSliceResolver(t *testing.T, profiles []provider.Profile, store provider.ConnectionStore) *adapterprovider.StaticProfileResolver {
+// newSliceResolver builds a DynamicProfileResolver for the given profiles and
+// store (cache-backed; the test analogue of the removed static resolver).
+func newSliceResolver(t *testing.T, profiles []provider.Profile, store provider.ConnectionStore) *adapterprovider.DynamicProfileResolver {
 	t.Helper()
-	r, err := adapterprovider.NewStaticProfileResolver(profiles, store)
-	require.NoError(t, err)
-	return r
+	return newDynamicResolver(t, profiles, store)
 }
 
 // runSlice wires the full stack (real executor + real factory) and executes a

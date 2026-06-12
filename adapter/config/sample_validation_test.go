@@ -36,7 +36,7 @@ type allFilesExist struct{}
 func (allFilesExist) FileExists(string, string) bool { return true }
 
 // TestInterviewerProfile_ResolvesToClaudeCodeBinding verifies the full chain
-// defaults → Load → ProfilesFromConfig → StaticProfileResolver → Resolve for the
+// defaults → Load → ProfilesFromConfig → DynamicProfileResolver → Resolve for the
 // "interviewer" alias. The agent factory and stream selector consume the
 // ResolvedBinding produced by Resolve, not the raw ProfileConfig struct, so this
 // test closes the gap between "the profile is loaded" and "the profile RESOLVES
@@ -55,8 +55,8 @@ func TestInterviewerProfile_ResolvesToClaudeCodeBinding(t *testing.T) {
 	require.NoError(t, err)
 
 	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
-	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
-	require.NoError(t, err, "default profile registry must construct a valid resolver")
+	resolver := adapterprovider.NewDynamicProfileResolver(
+		adapterprovider.NewProfileCacheFromProfiles(profiles...), nil)
 
 	binding, err := resolver.Resolve(context.Background(), "interviewer")
 	require.NoError(t, err, "interviewer alias must resolve (it is present in the default registry)")
@@ -92,8 +92,8 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 	require.NoError(t, err)
 
 	profiles := adapterconfig.ProfilesFromConfig(cfg.Profiles)
-	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
-	require.NoError(t, err)
+	resolver := adapterprovider.NewDynamicProfileResolver(
+		adapterprovider.NewProfileCacheFromProfiles(profiles...), nil)
 
 	for _, alias := range []string{"planner", "coder"} {
 		alias := alias

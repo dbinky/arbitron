@@ -39,6 +39,38 @@ type Profile struct {
 	// Empty for chat-kind profiles (tool-suppressed) and for agent profiles
 	// that intentionally inherit the adapter's global allowlist.
 	AllowedTools []string
+	// ContextWindow is the per-profile context-window axis (Phase 2). The empty
+	// string is the "unset/default" sentinel that emits nothing; a non-default
+	// value is validated against the CapabilityRules before it is persisted
+	// (the store stays a dumb persistence port).
+	ContextWindow ContextWindow
+	// Effort is the per-profile reasoning-effort axis (Phase 2). Empty == default
+	// (no-op); validated against the CapabilityRules like ContextWindow.
+	Effort Effort
+}
+
+// EffectiveBackend returns the backend a profile is VALIDATED and SEEDED against:
+// the capability ruleset is keyed on this value at write time. An explicit
+// Backend wins; an empty Backend with no ConnectionRef defaults to the
+// "claude-cli" no-key subscription path; an empty Backend WITH a ConnectionRef is
+// left empty (the connection supplies the routing). It is the single source of
+// truth shared by ProfileService.write and the startup SeedProfiles path so the
+// two never drift.
+//
+// NOTE on the adapter-side fallback: the claude-cli adapters default an empty
+// binding Backend to "claude-code" at EMIT time (adapter/claudecli/shared.go).
+// That fallback is only reachable when the resolver left ResolvedBinding.Backend
+// empty — i.e. the chat/subscription path, where claude-cli and claude-code emit
+// identically. On the agent path the executor overwrites ResolvedBinding.Backend
+// with the effective node>profile>deployment value before dispatch, so the
+// emitter never sees an empty Backend for a connection-backed profile. The
+// adapter fallback answering a DIFFERENT question (no resolved backend at all) is
+// why it is not folded into this function.
+func EffectiveBackend(p Profile) string {
+	if p.Backend == "" && p.ConnectionRef == "" {
+		return "claude-cli"
+	}
+	return p.Backend
 }
 
 // ResolvedBinding is the fully resolved backend selection for an alias. It is
@@ -60,7 +92,14 @@ type ResolvedBinding struct {
 	// Adapters prefer it over their global scope as the per-request tool scope
 	// for agent-kind bindings. Empty means "use the adapter's global scope".
 	AllowedTools []string
-	RevealKey    func(ctx context.Context) (string, error) // nil-safe; no-key path returns ""
+	// ContextWindow is copied verbatim from the resolved Profile by the resolver
+	// (Phase 2). It is consumed by the Phase-3 emission path; an empty value is
+	// the default sentinel that emits nothing.
+	ContextWindow ContextWindow
+	// Effort is copied verbatim from the resolved Profile by the resolver
+	// (Phase 2), consumed by Phase-3 emission. Empty == default (no-op).
+	Effort    Effort
+	RevealKey func(ctx context.Context) (string, error) // nil-safe; no-key path returns ""
 }
 
 // ProfileResolver maps a node's alias to a fully-resolved ResolvedBinding,

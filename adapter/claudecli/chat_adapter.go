@@ -7,6 +7,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // adapterCore holds the construction inputs shared by ChatAdapter and
@@ -22,6 +23,10 @@ type adapterCore struct {
 	allowedTools     []string
 	maxResponseBytes int64
 	runner           CommandRunner
+	// rules drives the capability env emission (context window + effort) appended
+	// to the per-call env (profile-editing Phase 3). A zero-value (Empty) ruleset
+	// emits nothing.
+	rules provider.CapabilityRules
 }
 
 func newAdapterCore(cfg Config) adapterCore {
@@ -36,6 +41,7 @@ func newAdapterCore(cfg Config) adapterCore {
 		allowedTools:     cfg.AllowedTools,
 		maxResponseBytes: cfg.MaxResponseBytes,
 		runner:           cfg.Runner,
+		rules:            cfg.CapabilityRules,
 	}
 }
 
@@ -50,21 +56,39 @@ func (c *adapterCore) validateWorkDir(workDir string) error {
 // headless (`--print`) mode with tools suppressed (`--allowedTools ""`, no
 // `--dangerously-skip-permissions`), so it behaves as a plain completion with
 // no file side effects.
+//
+// When constructed with NewChatAdapterForBinding, the binding's ContextWindow
+// and Effort axes are applied to the subprocess env (profile-editing Phase 3)
+// so a chat-kind profile with 200k or a non-default effort setting uses the
+// correct context window / effort level at runtime. NewChatAdapter (no binding)
+// produces the subscription env with no capability additions.
 type ChatAdapter struct {
-	core adapterCore
+	core    adapterCore
+	binding provider.ResolvedBinding
 }
 
 var _ engine.ChatProvider = (*ChatAdapter)(nil)
 
-// NewChatAdapter constructs a tool-suppressed chat adapter from cfg. An empty
-// BinaryPath is resolved from PATH and common install directories. A zero
-// Timeout means no timeout. A nil Runner uses the production os/exec runner.
+// NewChatAdapter constructs a tool-suppressed chat adapter from cfg with NO
+// per-binding axes (the subscription path, or any path where the caller
+// manages axis emission separately). An empty BinaryPath is resolved from PATH
+// and common install directories. A zero Timeout means no timeout. A nil
+// Runner uses the production os/exec runner.
 //
 // SECURITY: the chat path never emits --dangerously-skip-permissions and never
 // forwards cfg.AllowedTools; any tool-related Config fields are intentionally
 // ignored here.
 func NewChatAdapter(cfg Config) *ChatAdapter {
 	return &ChatAdapter{core: newAdapterCore(cfg)}
+}
+
+// NewChatAdapterForBinding constructs a tool-suppressed chat adapter that
+// applies the binding's ContextWindow and Effort axes to the subprocess env
+// (profile-editing Phase 3). A zero-value binding is equivalent to
+// NewChatAdapter (no axis additions). The factory's claude-cli arm calls this
+// so a chat-kind profile with non-default axes actually takes effect.
+func NewChatAdapterForBinding(cfg Config, binding provider.ResolvedBinding) *ChatAdapter {
+	return &ChatAdapter{core: newAdapterCore(cfg), binding: binding}
 }
 
 // spec builds the tool-suppressed RunSpec for a chat request.
@@ -77,7 +101,7 @@ func (a *ChatAdapter) spec(req engine.ChatRequest) RunSpec {
 		}),
 		Stdin:            req.Prompt,
 		Dir:              req.WorkDir,
-		Env:              procenv.BaseEnv(),
+		Env:              a.core.chatEnvWithBinding(a.binding),
 		MaxResponseBytes: a.core.maxResponseBytes,
 	}
 }

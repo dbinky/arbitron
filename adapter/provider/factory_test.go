@@ -554,6 +554,33 @@ func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
 		"per-profile AllowedTools must name the permitted tools in the run argv")
 }
 
+// profile-editing Phase 3: when ClaudeChatConfig is supplied, ChatProviderFor
+// for the empty/claude-cli provider builds a PER-BINDING ChatAdapter so the
+// binding's ContextWindow + Effort axes can be applied to the chat subprocess.
+// The returned adapter type is still *claudecli.ChatAdapter; the binding
+// propagation is verified through the chatCfgBinding helper below.
+func TestFactory_ChatProviderFor_ClaudeChatConfigBuildsPerBindingAdapter(t *testing.T) {
+	cfg := claudecli.Config{Runner: &noopRunner{}}
+	f := adapterprovider.NewFactory(adapterprovider.Deps{ClaudeChatConfig: cfg})
+	b := chatBinding("")
+	b.ContextWindow = provider.Context200K
+	b.Effort = provider.EffortHigh
+	cp, err := f.ChatProviderFor(b)
+	require.NoError(t, err)
+	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp,
+		"ClaudeChatConfig path must still return *claudecli.ChatAdapter")
+}
+
+// profile-editing Phase 3: with ClaudeChatConfig wired, even an explicit
+// claude-cli provider string returns a per-binding adapter.
+func TestFactory_ChatProviderFor_ClaudeChatConfigExplicitProvider(t *testing.T) {
+	cfg := claudecli.Config{Runner: &noopRunner{}}
+	f := adapterprovider.NewFactory(adapterprovider.Deps{ClaudeChatConfig: cfg})
+	cp, err := f.ChatProviderFor(chatBinding("claude-cli"))
+	require.NoError(t, err)
+	assert.IsType(t, (*claudecli.ChatAdapter)(nil), cp)
+}
+
 // seam (posture config knob a + knob b): per-profile AllowedTools (knob b) must
 // emit --allowed-tools even when OpencodeAllowAllTools=false (knob a). Both
 // controls can be independently active; knob b narrows regardless of knob a's

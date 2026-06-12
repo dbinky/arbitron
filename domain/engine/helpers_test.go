@@ -85,7 +85,7 @@ func streamSelector(p engine.ChatProvider) *fakeStreamSelector {
 
 // fakeResolver is an in-memory provider.ProfileResolver for engine tests. A
 // miss returns provider.ErrUnknownProfile (wrapped), mirroring the real
-// StaticProfileResolver.
+// DynamicProfileResolver.
 type fakeResolver struct {
 	byAlias map[string]provider.Profile
 }

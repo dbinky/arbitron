@@ -116,7 +116,7 @@ func TestAcceptance_07_ConnectionSafety_EnvInjectionAndSecrecy(t *testing.T) {
 // each resolves to the CORRECT endpoint + key with no cross-contamination.
 //
 // Requires: Phase 2 resolution + RevealKey + the AES-GCM store; the two-Azure
-// topology. Resolution is exercised through the REAL StaticProfileResolver over
+// topology. Resolution is exercised through the REAL DynamicProfileResolver over
 // the REAL connection store (sealed at rest), and the lazy RevealKey is invoked
 // for each binding to prove no cross-region key bleed.
 func TestAcceptance_07_ConnectionSafety_MultiRegion(t *testing.T) {

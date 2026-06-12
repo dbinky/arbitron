@@ -23,11 +23,10 @@ func (s stubKinder) Kind(string) (provider.ProfileKind, bool) {
 
 // Happy path: a resolvable chat alias yields its kind as a plain string, ok=true.
 func TestResolverChecker_ProfileKindChat(t *testing.T) {
-	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+	r := newDynamicResolver(t, []provider.Profile{
 		{Alias: "default-chat", Kind: provider.ProfileKindChat, Model: "m-chat"},
 		{Alias: "default-agent", Kind: provider.ProfileKindAgent, Model: "m-agent"},
 	}, nil)
-	require.NoError(t, err)
 
 	c := adapterprovider.NewResolverChecker(r)
 
@@ -38,10 +37,9 @@ func TestResolverChecker_ProfileKindChat(t *testing.T) {
 
 // Success: an agent alias maps to the "agent" kind string.
 func TestResolverChecker_ProfileKindAgent(t *testing.T) {
-	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+	r := newDynamicResolver(t, []provider.Profile{
 		{Alias: "default-agent", Kind: provider.ProfileKindAgent, Model: "m-agent"},
 	}, nil)
-	require.NoError(t, err)
 
 	c := adapterprovider.NewResolverChecker(r)
 
@@ -52,8 +50,7 @@ func TestResolverChecker_ProfileKindAgent(t *testing.T) {
 
 // Error: an unknown alias (ErrUnknownProfile) reports ok=false, empty kind.
 func TestResolverChecker_UnknownAlias(t *testing.T) {
-	r, err := adapterprovider.NewStaticProfileResolver(nil, nil)
-	require.NoError(t, err)
+	r := newDynamicResolver(t, nil, nil)
 
 	c := adapterprovider.NewResolverChecker(r)
 
@@ -72,16 +69,15 @@ func TestResolverChecker_KinderReportsUnknown(t *testing.T) {
 }
 
 // Integration with workflow.Validate: a ResolverChecker backed by a real
-// StaticProfileResolver drives the kind-mismatch check end-to-end — an
+// DynamicProfileResolver drives the kind-mismatch check end-to-end — an
 // agent_call node referencing a chat profile produces PROFILE_KIND_MISMATCH
 // via workflow.Validate, and an unknown alias produces UNKNOWN_PROFILE.
 // This proves the ResolverChecker satisfies the workflow.ProfileChecker port
 // at the boundary that matters: capability validation before any run.
 func TestResolverChecker_SatisfiesWorkflowPort(t *testing.T) {
-	r, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
+	r := newDynamicResolver(t, []provider.Profile{
 		{Alias: "chat-only", Kind: provider.ProfileKindChat, Model: "m-chat"},
 	}, nil)
-	require.NoError(t, err)
 	c := adapterprovider.NewResolverChecker(r)
 
 	// agent_call bound to a chat profile: kind mismatch must be caught by
@@ -159,8 +155,7 @@ func TestResolverChecker_ValidProfileAbsentConnection_IsUnknownConnection(t *tes
 	// connection is exercised through the ConnChecker.
 	store := &existsStore{present: map[string]bool{}}
 
-	resolver, err := adapterprovider.NewStaticProfileResolver(profiles, nil)
-	require.NoError(t, err)
+	resolver := newDynamicResolver(t, profiles, nil)
 	profileChecker := adapterprovider.NewResolverChecker(resolver)
 	connChecker := adapterprovider.NewConnChecker(profiles, store)
 

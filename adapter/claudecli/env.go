@@ -42,3 +42,20 @@ func agentEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, 
 		EmptyKey:   procenv.EmptyKeyAllowBaseURLOnly,
 	})
 }
+
+// agentEnvWithRules builds the credential env (agentEnv) and then appends the
+// capability-derived env (context window + effort) from the binding via the
+// capability rules (profile-editing Phase 3). It is the production env path for
+// the agent run: the credential vars come first (fail-closed on a reveal error,
+// no partial env), then the non-secret policy knobs.
+//
+// agentEnv is kept intact (credential-only) so its existing security tests still
+// pin the credential skeleton; this wrapper is what the adapter calls so a
+// profile's 200k/effort axes actually reach the subprocess.
+func agentEnvWithRules(ctx context.Context, binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	env, err := agentEnv(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	return applyCapabilityEnv(env, binding, rules)
+}

@@ -25,6 +25,65 @@ func bindingForArgs(model string) provider.ResolvedBinding {
 	return provider.ResolvedBinding{Provider: "openai", Model: model}
 }
 
+// testCapRules builds a capability ruleset exercising the codex emission surface:
+// codex has no context knob (default-only tier) and graded effort levels so a
+// medium effort emits `-c model_reasoning_effort=medium`.
+func testCapRules() provider.CapabilityRules {
+	return provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"codex": {
+			Backend:      "codex",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortNone, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh},
+		},
+	})
+}
+
+// assertContainsSeq asserts args contains a..b as an adjacent pair (a immediately
+// followed by b), matching how `-c <kv>` must reach codex.
+func assertContainsSeq(t *testing.T, args []string, a, b string) {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return
+		}
+	}
+	t.Fatalf("expected adjacent sequence %q %q in %v", a, b, args)
+}
+
+// contains reports whether args contains v.
+func contains(args []string, v string) bool {
+	for _, a := range args {
+		if a == v {
+			return true
+		}
+	}
+	return false
+}
+
+// capability — a codex binding with medium effort appends `-c
+// model_reasoning_effort=medium` after the model flag; the model flag is still
+// present.
+func TestBuildArgs_AppendsEffort(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=medium")
+	assertContainsSeq(t, args, "-m", "gpt-5.5")
+}
+
+// capability (default) — a default-effort binding emits NO `-c` arg (codex picks
+// its own default).
+func TestBuildArgs_NoEffortWhenDefault(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5"}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	if contains(args, "model_reasoning_effort=default") || contains(args, "-c") {
+		t.Fatalf("default effort must not emit -c: %v", args)
+	}
+}
+
 // HAPPY PATH — the pinned `codex exec` argv: exec subcommand, the bypass posture,
 // -m <model>, --cd <WorkDir>, --json. The PROMPT is NOT in argv (it is delivered
 // via stdin in provider.go).
@@ -85,6 +144,93 @@ func TestBuildArgs_NoSecretsInArgv(t *testing.T) {
 	joined := strings.Join(args, " ")
 	assert.NotContains(t, joined, "OPENAI_API_KEY")
 	assert.NotContains(t, joined, "do work")
+}
+
+// capability (none→minimal) — EffortNone maps to codex's "minimal" keyword, not
+// the literal string "none". The mapping lives in emitCodexEffort (domain layer)
+// and is relayed verbatim through codexEffortArgs; this test verifies it survives
+// the full adapter path.
+func TestBuildArgs_NoneEffortYieldsMinimal(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortNone}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=minimal")
+}
+
+// INPUT-VALIDATION — an empty model in buildArgsWithRules (not buildArgs) also
+// returns ErrModelRequired. The fail-closed guarantee applies to both paths.
+func TestBuildArgsWithRules_EmptyModelRejected(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "", Effort: provider.EffortMedium}
+	_, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrModelRequired)
+}
+
+// Edge: an empty Backend in the binding falls back to codexBackend ("codex")
+// inside codexEffortArgs so the effort arg is emitted correctly without an
+// explicit Backend on the binding.
+func TestBuildArgs_EmptyBackendFallsBackToCodex(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "", Model: "gpt-5.5", Effort: provider.EffortHigh}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+	assertContainsSeq(t, args, "-c", "model_reasoning_effort=high")
+}
+
+// Edge: extra effort args appear BEFORE --cd and --json in the final argv.
+// This ordering is required by buildExecArgs design so the effort override is
+// part of the model section, not appended after the path flags.
+func TestBuildArgs_ExtraArgsOrderedBeforePathFlags(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.NoError(t, err)
+
+	var cdIdx, jsonIdx, cIdx int = -1, -1, -1
+	for i, a := range args {
+		switch a {
+		case "-c":
+			cIdx = i
+		case "--cd":
+			cdIdx = i
+		case "--json":
+			jsonIdx = i
+		}
+	}
+	require.Greater(t, cIdx, 0, "-c flag must be present")
+	require.Greater(t, cdIdx, 0, "--cd flag must be present")
+	require.Greater(t, jsonIdx, 0, "--json flag must be present")
+	assert.Less(t, cIdx, cdIdx, "-c must appear before --cd")
+	assert.Less(t, cIdx, jsonIdx, "-c must appear before --json")
+}
+
+// Error (Pass 2): codexEffortArgs propagates an Emit error when the backend (after
+// the empty-backend fallback) is absent from the ruleset. The error must reach
+// buildArgsWithRules' caller rather than being swallowed.
+func TestCodexEffortArgs_EmitErrorPropagates(t *testing.T) {
+	// A ruleset that knows "openai" but NOT "codex"; binding backend is empty so
+	// codexEffortArgs falls back to codexBackend ("codex") which is then unknown.
+	rules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"openai": {Backend: "openai"},
+	})
+	binding := provider.ResolvedBinding{Backend: "", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	_, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrUnknownBackend)
+}
+
+// Edge (Pass 2): an empty CapabilityRules (no-policy, back-compat) causes
+// codexEffortArgs to skip all emission and return nil extra args — the result
+// is the same argv as the pre-Phase-3 buildArgs.
+func TestCodexEffortArgs_EmptyRulesSkips(t *testing.T) {
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortHigh}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, provider.CapabilityRules{})
+	require.NoError(t, err)
+	if contains(args, "-c") {
+		t.Fatalf("empty rules must not emit -c: %v", args)
+	}
 }
 
 // EDGE — a model with surrounding whitespace is trimmed to the clean name in

@@ -47,6 +47,12 @@ type Config struct {
 	Timeout time.Duration
 	// MaxResponseBytes caps per-request stdout bytes; 0 means no cap.
 	MaxResponseBytes int64
+	// CapabilityRules drives the per-call effort emission (profile-editing Phase
+	// 3): the binding's resolved Effort is appended as `-c
+	// model_reasoning_effort=<v>` via this ruleset. A zero-value (Empty) ruleset
+	// emits nothing, so a codex adapter constructed without it behaves exactly as
+	// before. Context is inapplicable to codex (no context knob) and never emits.
+	CapabilityRules provider.CapabilityRules
 }
 
 // core holds the construction inputs and version-probe memo shared by the batch
@@ -65,6 +71,9 @@ type core struct {
 	runner           claudecli.CommandRunner
 	timeout          time.Duration
 	maxResponseBytes int64
+	// rules drives the per-call effort emission appended to argv (profile-editing
+	// Phase 3). A zero-value (Empty) ruleset emits nothing.
+	rules provider.CapabilityRules
 
 	// probeOnce memoizes the binary version probe across calls; probeErr retains
 	// the verdict so a failure fails closed without re-probing.
@@ -86,6 +95,7 @@ func newCore(cfg Config) core {
 		runner:           runner,
 		timeout:          cfg.Timeout,
 		maxResponseBytes: cfg.MaxResponseBytes,
+		rules:            cfg.CapabilityRules,
 	}
 }
 
@@ -148,9 +158,11 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	model := p.binding.Model
 
 	// Build args FIRST so an empty model fails closed with NO launch (never a
-	// silent default-model run). buildArgs names the failure; we add the model
-	// context here.
-	args, err := buildArgs(mission, p.binding)
+	// silent default-model run). buildArgsWithRules names the failure; we add the
+	// model context here. The binding's resolved Effort rides argv as `-c
+	// model_reasoning_effort=<v>` (profile-editing Phase 3); a default/empty effort
+	// or an Empty ruleset appends nothing.
+	args, err := buildArgsWithRules(mission, p.binding, p.rules)
 	if err != nil {
 		return nil, fmt.Errorf("codex agent (model %q): %w", model, err)
 	}
