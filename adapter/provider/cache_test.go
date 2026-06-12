@@ -88,6 +88,20 @@ func TestProfileCache_FailedReloadLeavesStateIntact(t *testing.T) {
 	assert.NoError(t, err, "a failed Reload must not wipe the previous snapshot")
 }
 
+// Edge (Pass 2): NewProfileCacheFromProfiles takes the last entry on a duplicate
+// alias. This is the documented "last entry wins" contract.
+func TestNewProfileCacheFromProfiles_DuplicateAlias_LastWins(t *testing.T) {
+	c := adapterprovider.NewProfileCacheFromProfiles(
+		provider.Profile{Alias: "p", Kind: provider.ProfileKindChat},
+		provider.Profile{Alias: "p", Kind: provider.ProfileKindAgent},
+	)
+	r := adapterprovider.NewDynamicProfileResolver(c, nil)
+
+	b, err := r.Resolve(context.Background(), "p")
+	require.NoError(t, err)
+	assert.Equal(t, provider.ProfileKindAgent, b.Kind, "last entry must win on duplicate alias")
+}
+
 // Concurrency: concurrent Resolve reads and Reload writes are race-free (run
 // under -race). Resolvers take the read-lock; Reload takes the write-lock.
 func TestProfileCache_ConcurrentReadReloadSafe(t *testing.T) {

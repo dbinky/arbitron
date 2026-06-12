@@ -17,7 +17,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 2 | Capability validation (`domain/provider/capability.go` — `Validate`, model-override resolution, effort floor, inapplicable-axis rejection, unknown-backend) | [x] | [x] | Done |
 | 3 | Capability loader (`adapter/config/capabilities.go` + `capabilities.default.yaml` — embedded default, per-backend override merge, malformed-enum fail-fast, nil-override inherit) | [x] | [x] | Done |
 | 4 | Profile persistence (`adapter/sqlite/profile_repo.go`, `migrations/015_profiles.*`, `queries/profiles.sql` — CRUD, dup→`ErrProfileExists`, missing→`ErrProfileNotFound`, JSON allowed_tools + axes round-trip) | [x] | [x] | Done |
-| 5 | Cache + resolver (`adapter/provider/cache.go`, `dynamic.go` — store-bound `Load`/`Reload`, axes on binding, lazy `RevealKey`, zero-I/O `Kind`, `-race`) | [x] | [ ] | |
+| 5 | Cache + resolver (`adapter/provider/cache.go`, `dynamic.go` — store-bound `Load`/`Reload`, axes on binding, lazy `RevealKey`, zero-I/O `Kind`, `-race`) | [x] | [x] | Done |
 | 6 | Startup seeding (`cmd/arbitron/profile_seed.go` + `initDomain` wiring — empty-table seed, validate+skip invalid, non-empty no-op, DB-wins) | [ ] | [ ] | |
 | 7 | Runtime mapping (`domain/provider/capability.go` `Emit`/`Emission` — claude env vars, codex `-c`, none-disables, defaults emit nothing, floor parity with `Validate`) | [ ] | [ ] | |
 | 8 | claude-cli emission (`adapter/claudecli/env.go`, `shared.go`, chat/agent paths — `applyCapabilityEnv`, credential env preserved, effective-backend keying) | [ ] | [ ] | |
