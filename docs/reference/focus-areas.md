@@ -20,7 +20,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 5 | Cache + resolver (`adapter/provider/cache.go`, `dynamic.go` — store-bound `Load`/`Reload`, axes on binding, lazy `RevealKey`, zero-I/O `Kind`, `-race`) | [x] | [x] | Done |
 | 6 | Startup seeding (`cmd/arbitron/profile_seed.go` + `initDomain` wiring — empty-table seed, validate+skip invalid, non-empty no-op, DB-wins) | [x] | [x] | Done |
 | 7 | Runtime mapping (`domain/provider/capability.go` `Emit`/`Emission` — claude env vars, codex `-c`, none-disables, defaults emit nothing, floor parity with `Validate`) | [x] | [x] | Done |
-| 8 | claude-cli emission (`adapter/claudecli/env.go`, `shared.go`, chat/agent paths — `applyCapabilityEnv`, credential env preserved, effective-backend keying) | [ ] | [ ] | |
+| 8 | claude-cli emission (`adapter/claudecli/env.go`, `shared.go`, chat/agent paths — `applyCapabilityEnv`, credential env preserved, effective-backend keying) | [x] | [ ] | |
 | 9 | codex emission (`adapter/codex/args.go`, `stream_adapter.go` — `buildExecArgs` extra args, `model_reasoning_effort`, batch+stream parity, model-required fail-closed) | [ ] | [ ] | |
 | 10 | ProfileService (`domain/provider/profile_service.go`, `authz.go` — admin gate on writes, read-open list/get, validate-before-persist, recache, effective echo) | [ ] | [ ] | |
 | 11 | ConnectionService (`domain/provider/connection_service.go` — admin gate on all ops, `Reveal` not exposed) | [ ] | [ ] | |

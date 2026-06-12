@@ -298,6 +298,36 @@ func TestRemoveVar_PrefixNotStripped(t *testing.T) {
 	assert.Contains(t, joined, "HOME=/root")
 }
 
+// Edge: an empty Backend in the binding falls back to claudeBackend ("claude-code")
+// inside applyCapabilityEnv so the chat path (which passes a zero binding) still
+// drives the correct emission path.
+func TestApplyCapabilityEnv_EmptyBackendFallsBackToClaude(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend:       "", // deliberately empty — fallback must fire
+		Model:         "opus-4.8",
+		ContextWindow: provider.Context200K,
+		Effort:        provider.EffortHigh,
+	}
+	env, err := applyCapabilityEnv(procenv.BaseEnv(), binding, rules)
+	require.NoError(t, err)
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+}
+
+// Edge: an empty CapabilityRules (the back-compat gate) skips all emission and
+// returns the env slice unchanged.
+func TestApplyCapabilityEnv_EmptyRulesSkips(t *testing.T) {
+	binding := provider.ResolvedBinding{
+		Backend: "claude-code", Model: "m",
+		ContextWindow: provider.Context200K, Effort: provider.EffortHigh,
+	}
+	base := []string{"HOME=/home/user"}
+	got, err := applyCapabilityEnv(base, binding, provider.CapabilityRules{})
+	require.NoError(t, err)
+	assert.Equal(t, base, got, "empty rules must return the env slice unchanged")
+}
+
 // error — a RevealKey failure aborts RunAgent before the runner is invoked
 // (no partial-env launch).
 func TestAgentAdapter_RevealErrorAbortsBeforeLaunch(t *testing.T) {
