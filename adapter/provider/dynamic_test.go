@@ -84,6 +84,7 @@ func (f *fakeConnectionStore) Reveal(_ context.Context, name string) (string, er
 
 type fakeProfileStore struct {
 	byAlias map[string]provider.Profile
+	listErr error // if non-nil, List returns this error
 }
 
 func newFakeProfileStore(profiles ...provider.Profile) *fakeProfileStore {
@@ -127,6 +128,9 @@ func (s *fakeProfileStore) Get(_ context.Context, alias string) (provider.Profil
 	return p, nil
 }
 func (s *fakeProfileStore) List(_ context.Context) ([]provider.Profile, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	out := make([]provider.Profile, 0, len(s.byAlias))
 	for _, p := range s.byAlias {
 		out = append(out, p)

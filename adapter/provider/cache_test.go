@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -65,6 +66,26 @@ func TestProfileCache_ReloadReplacesSnapshot(t *testing.T) {
 
 	_, err = r.Resolve(context.Background(), "gone")
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile, "a deleted profile disappears after Reload")
+}
+
+// Error: a store failure during Reload returns the error but leaves the previous
+// cache snapshot intact (the durable-first invariant: a transient store outage
+// must not wipe the in-flight snapshot that is currently serving traffic).
+func TestProfileCache_FailedReloadLeavesStateIntact(t *testing.T) {
+	store := newFakeProfileStore(provider.Profile{Alias: "before", Kind: provider.ProfileKindChat})
+	cache := adapterprovider.NewProfileCache(store)
+	require.NoError(t, cache.Load(context.Background()))
+	r := adapterprovider.NewDynamicProfileResolver(cache, nil)
+
+	_, err := r.Resolve(context.Background(), "before")
+	require.NoError(t, err, "sanity: before is visible after initial Load")
+
+	store.listErr = errors.New("store unavailable")
+	require.Error(t, cache.Reload(context.Background()), "Reload must propagate the store error")
+
+	// The snapshot must still contain the pre-failure state.
+	_, err = r.Resolve(context.Background(), "before")
+	assert.NoError(t, err, "a failed Reload must not wipe the previous snapshot")
 }
 
 // Concurrency: concurrent Resolve reads and Reload writes are race-free (run
