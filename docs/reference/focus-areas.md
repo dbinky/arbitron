@@ -25,7 +25,7 @@ A review pass is only checked when the checklist produces a passing result for t
 | 10 | Fail-closed streaming invariant (cross-cutting — failed turn / transport break / malformed frame → terminal `Error` no `Done`; zero-stream on guard/launch fail; `-race`) | [x] | [x] | Done |
 | 11 | Subscription-auth / no-API-key invariant (cross-cutting — `codexEnv()` on launch, `HOME`/`CODEX_HOME` preserved, no `OPENAI_API_KEY`, `RevealKey` never consulted, prompt off-argv) | [x] | [x] | Done |
 | 12 | Session lifecycle & resume (spawn-per-turn; `ChatRequest.SessionID`→`turnConfig.ResumeID`; terminal `ChatChunk.SessionID` back out; no in-memory session state; no engine edit) | [x] | [x] | Done |
-| 13 | Composition-root wiring + selector routing (`cmd/arbitron/main.go` §12c swap; `adapter/provider/interactive_stream_selector_test.go`; dead `codexStreamAgent` removed; autonomous arm untouched) | [ ] | [ ] | Not started |
+| 13 | Composition-root wiring + selector routing (`cmd/arbitron/main.go` §12c swap; `adapter/provider/interactive_stream_selector_test.go`; dead `codexStreamAgent` removed; autonomous arm untouched) | [x] | [ ] | In progress |
 
 ---
 

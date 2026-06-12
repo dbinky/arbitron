@@ -183,6 +183,27 @@ func TestInteractive_StreamChat_RequestModelOverridesBinding(t *testing.T) {
 	assert.Equal(t, "request-model", fake.gotCfg.Model)
 }
 
+// SUCCESS / COMPOSITION-ROOT — a provider constructed with an empty Binding.Model
+// (the composition-root pattern: no static binding, model injected per-request by
+// the engine from the profile binding) uses req.Model as the turn model. This is
+// the EXACT wiring in main.go §12c: NewInteractiveProvider(InteractiveConfig{...})
+// with no Binding, so the engine-provided req.Model is the sole model source.
+func TestInteractive_StreamChat_EmptyBindingModel_UsesRequestModel(t *testing.T) {
+	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	// Empty Binding (no Model) — mirrors the composition root's NewInteractiveProvider call.
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{},
+		func() mcpSession { return fake },
+	)
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5.5", // model from engine/profile
+	})
+	require.NoError(t, err)
+	collectChunks(t, ch)
+	assert.Equal(t, "gpt-5.5", fake.gotCfg.Model, "req.Model must be used when Binding.Model is empty")
+}
+
 // SUCCESS — an informational-command approval request is ALLOWED.
 func TestInteractive_Approval_InformationalCommand_Allowed(t *testing.T) {
 	fake := &fakeMCPSession{
