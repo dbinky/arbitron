@@ -108,6 +108,59 @@ func TestFakeMCPSession_Success_RecordsResumeAndApproval(t *testing.T) {
 	assert.Equal(t, "info command is safe", f.decisions[0].Reason)
 }
 
+// SUCCESS — multiple approval requests with different verdicts (allow, allow, deny)
+// are ALL delivered to the approver in order and each decision is recorded
+// separately. This also proves a denial does not terminate the event stream —
+// the stream still reaches a clean Done, modelling the FA#14 mandatory scenario.
+func TestFakeMCPSession_Success_MultipleApprovalsAllDeliveredInOrder(t *testing.T) {
+	requests := []approvalRequest{
+		{Command: []string{"git", "log", "--oneline"}, Reason: "inspect history"},
+		{WritePaths: []string{"docs/specs/interview.md"}, Reason: "write deliverable"},
+		{WritePaths: []string{"internal/core.go"}, Reason: "apply source patch"},
+	}
+
+	var gotReqs []approvalRequest
+	approver := func(req approvalRequest) approvalDecision {
+		gotReqs = append(gotReqs, req)
+		if len(req.WritePaths) > 0 && req.WritePaths[0] == "internal/core.go" {
+			return approvalDecision{Allow: false, Reason: "source write denied"}
+		}
+		return approvalDecision{Allow: true, Reason: "ok"}
+	}
+
+	f := &fakeMCPSession{
+		approvals: requests,
+		events:    []turnEvent{{Kind: turnDone, SessionID: "c3"}},
+	}
+
+	stream, err := f.Start(context.Background(), turnConfig{
+		Prompt:   "describe the design",
+		WorkDir:  "/project",
+		Approver: approver,
+	})
+	require.NoError(t, err)
+
+	// All three requests delivered in order.
+	require.Len(t, gotReqs, 3)
+	assert.Equal(t, requests[0], gotReqs[0])
+	assert.Equal(t, requests[1], gotReqs[1])
+	assert.Equal(t, requests[2], gotReqs[2])
+
+	// Decisions: allow, allow, deny — recorded separately.
+	require.Len(t, f.decisions, 3)
+	assert.True(t, f.decisions[0].Allow)
+	assert.True(t, f.decisions[1].Allow)
+	assert.False(t, f.decisions[2].Allow)
+	assert.Equal(t, "source write denied", f.decisions[2].Reason)
+
+	// Denial does not terminate the stream — it still reaches Done.
+	events, drainErr := drainStream(t, context.Background(), stream)
+	require.NoError(t, drainErr)
+	require.Len(t, events, 1)
+	assert.Equal(t, turnDone, events[0].Kind)
+	assert.Equal(t, "c3", events[0].SessionID)
+}
+
 // FAILURE — a turnFailed terminal event surfaces its error from Next (a failed
 // turn is never a clean done).
 func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {

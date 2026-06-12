@@ -11,6 +11,7 @@ _(none)_
 - **FA#1 Pass 1 — nil Approver default-deny not tested.** The `fakeMCPSession.Start` correctly records a zero `approvalDecision{Allow:false}` when `cfg.Approver` is nil (fail-closed by Go zero value), but this was not exercised. Added `TestFakeMCPSession_Edge_NilApproverDefaultDeny` to verify the fail-closed property explicitly.
 - **FA#1 Pass 2 — nil-safety contract undocumented at port level.** `turnConfig.Approver` and `approvalFunc` type comment did not state that nil must be treated as default-deny. Added a one-line clarification to both so transport implementations know to nil-check before calling, not panic.
 - **FA#1 Pass 2 — FAILURE test did not assert no-Done-after-failure.** `TestFakeMCPSession_Failure_TurnFailedSurfacesError` verified `turnFailed` is returned but did not assert that a subsequent `Next` call yields `errStreamDone` (not `turnDone`). Added the assertion to prove a failed turn never silently becomes a success.
+- **FA#2 Pass 1 — single-approval SUCCESS test insufficient.** No test verified all N approval requests from a mixed scenario (allow+deny) are each delivered to the approver in order, with each decision recorded separately. Added `TestFakeMCPSession_Success_MultipleApprovalsAllDeliveredInOrder` to cover this gap and prove a denial doesn't terminate the event stream.
 
 ## Won't Fix (Beyond Current Scope)
 
