@@ -1,0 +1,18 @@
+backends:
+  claude-code:
+    context_tiers: [default, 200k, 1m]
+    effort_levels: [default, none, low, medium, high, xhigh, max]
+    model_overrides:
+      # Sonnet 4.6 has no xhigh; floor it to high.
+      sonnet-4.6:
+        effort_levels: [default, none, low, medium, high, max]
+        effort_floor: { xhigh: high }
+  claude-cli:
+    context_tiers: [default, 200k, 1m]
+    effort_levels: [default, none, low, medium, high, xhigh, max]
+  codex:
+    context_tiers: [default]
+    effort_levels: [default, none, low, medium, high, xhigh]
+  opencode:
+    context_tiers: [default]
+    effort_levels: [default]
