@@ -250,6 +250,23 @@ func TestInteractive_Chat_TurnFailed_HardError(t *testing.T) {
 	assert.Nil(t, resp, "a failed turn must not return a partial ChatResponse")
 }
 
+// FAILURE — Chat fails closed when the stream ends with errStreamDone but no
+// turnDone event was ever received (e.g. an immediately-closed or aborted turn).
+// Without the sawDone guard, Chat would silently return an empty ChatResponse
+// instead of an error — a vacuous-success that masks a broken session.
+func TestInteractive_Chat_NoTerminalDone_HardError(t *testing.T) {
+	sess := &errStreamSession{nextErr: errStreamDone}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
+		func() mcpSession { return sess },
+	)
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	assert.Error(t, err, "a stream that ends without a turnDone must return an error")
+	assert.Contains(t, err.Error(), "turn ended without completion")
+	assert.Nil(t, resp, "no partial ChatResponse must escape when turnDone was never received")
+}
+
 // --- ERROR -----------------------------------------------------------------
 
 // ERROR — a Start error makes StreamChat return (nil, err): no half-open stream.

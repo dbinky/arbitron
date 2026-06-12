@@ -29,6 +29,8 @@ _(none)_
 - **FA#6 Pass 1 — empty WritePaths slice allows vacuous truth.** `decidePatch([]string{})` without the `len(paths) == 0` guard would range over nothing and return `Allow: true`. Added `TestDecide_Patch_Edge_EmptyWritePathsSlice_Denied` to pin the guard.
 - **FA#5 Pass 2 — security-critical arg KEY strings not pinned.** `TestStartToolRequest_Happy_FreshConversation` uses constants in both the map build and the lookup (`args[codexArgSandboxMode]`), so a wrong KEY string (e.g. `codexArgSandboxMode = "sandbox"`) passes that test — the constant-keyed lookup finds the value at the same wrong key. A wrong key silently drops the posture config: codex falls back to its default (possibly read-write or no-approval) mode. Added `TestSpikeConstants_SecurityPostureArgKeysPinned` to pin `sandbox_mode`/`approval_policy`/`codex`/`codex/event`.
 
+- **FA#8 Pass 1 — `Chat` `!sawDone` hard-error path untested.** `Chat` has a `sawDone` guard: if the turn stream ends with `errStreamDone` but no `turnDone` was received, it returns `"turn ended without completion"` rather than a silent empty `ChatResponse`. This path had no test. Added `TestInteractive_Chat_NoTerminalDone_HardError` using `errStreamSession{nextErr: errStreamDone}` to exercise the fail-closed guard.
+
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_
