@@ -206,6 +206,33 @@ func TestBuildArgs_ExtraArgsOrderedBeforePathFlags(t *testing.T) {
 	assert.Less(t, cIdx, jsonIdx, "-c must appear before --json")
 }
 
+// Error (Pass 2): codexEffortArgs propagates an Emit error when the backend (after
+// the empty-backend fallback) is absent from the ruleset. The error must reach
+// buildArgsWithRules' caller rather than being swallowed.
+func TestCodexEffortArgs_EmitErrorPropagates(t *testing.T) {
+	// A ruleset that knows "openai" but NOT "codex"; binding backend is empty so
+	// codexEffortArgs falls back to codexBackend ("codex") which is then unknown.
+	rules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"openai": {Backend: "openai"},
+	})
+	binding := provider.ResolvedBinding{Backend: "", Model: "gpt-5.5", Effort: provider.EffortMedium}
+	_, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, rules)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, provider.ErrUnknownBackend)
+}
+
+// Edge (Pass 2): an empty CapabilityRules (no-policy, back-compat) causes
+// codexEffortArgs to skip all emission and return nil extra args — the result
+// is the same argv as the pre-Phase-3 buildArgs.
+func TestCodexEffortArgs_EmptyRulesSkips(t *testing.T) {
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortHigh}
+	args, err := buildArgsWithRules(engine.AgentMission{WorkDir: "/w"}, binding, provider.CapabilityRules{})
+	require.NoError(t, err)
+	if contains(args, "-c") {
+		t.Fatalf("empty rules must not emit -c: %v", args)
+	}
+}
+
 // EDGE — a model with surrounding whitespace is trimmed to the clean name in
 // argv, not rejected. This documents the trim-then-check contract: callers
 // feeding a config-loaded model string with accidental whitespace get the
