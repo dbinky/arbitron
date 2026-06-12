@@ -84,6 +84,18 @@ func TestValidate_UnknownBackend(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrUnknownBackend)
 }
 
+// Has reports whether a backend has a capability entry. A present backend is true;
+// an absent one (including the empty connection-supplied backend) is false. It lets
+// callers branch on "no agent-backend ruleset applies" without provoking the
+// ErrUnknownBackend path of Validate.
+func TestCapabilityRules_Has(t *testing.T) {
+	r := rules()
+	assert.True(t, r.Has("claude-code"), "present backend")
+	assert.True(t, r.Has("codex"), "present backend")
+	assert.False(t, r.Has("mystery"), "absent backend")
+	assert.False(t, r.Has(""), "empty (connection-supplied) backend")
+}
+
 // Invalid context window: a malformed tier string is rejected with
 // ErrInvalidContextWindow before any backend lookup (mirrors TestValidate_InvalidEffort).
 func TestValidate_InvalidContextWindow(t *testing.T) {

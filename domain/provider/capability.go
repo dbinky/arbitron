@@ -73,6 +73,15 @@ func (r CapabilityRules) Describe() map[string]BackendCapability {
 	return out
 }
 
+// Has reports whether the ruleset carries a capability entry for backend. It lets
+// a caller (ProfileService) detect the "no agent-backend ruleset applies" case —
+// e.g. the empty, connection-supplied backend of a chat profile — and branch to
+// the chat-tier axis policy instead of provoking Validate's ErrUnknownBackend.
+func (r CapabilityRules) Has(backend string) bool {
+	_, ok := r.byBackend[backend]
+	return ok
+}
+
 // containsCtx reports whether s contains v.
 func containsCtx(s []ContextWindow, v ContextWindow) bool {
 	for _, x := range s {

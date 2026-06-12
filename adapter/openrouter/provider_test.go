@@ -159,6 +159,74 @@ func TestChat_HappyPath(t *testing.T) {
 	assert.EqualValues(t, 0.5, body["temperature"])
 }
 
+// bindingWithEffort is staticBinding plus a reasoning-effort axis, so the body
+// assertions below can exercise the reasoning_effort emission.
+func bindingWithEffort(baseURL, model string, eff provider.Effort) provider.ResolvedBinding {
+	b := staticBinding(baseURL, model)
+	b.Effort = eff
+	return b
+}
+
+// bodyOf drains a (non-stream) Chat call against a 200 and returns the decoded
+// request body the transport captured.
+func bodyOf(t *testing.T, b provider.ResolvedBinding) map[string]any {
+	t.Helper()
+	ft := &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"ok"}}]}`)}
+	p := newProvider(t, ft, b)
+	_, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.NoError(t, err)
+	require.NotNil(t, ft.gotReq)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(ft.gotBody, &body))
+	return body
+}
+
+// A graded reasoning effort on the binding is emitted as the OpenAI-compatible
+// `reasoning_effort` field so it actually reaches the model.
+func TestChat_EmitsReasoningEffort(t *testing.T) {
+	body := bodyOf(t, bindingWithEffort("https://router.test/v1", "m", provider.EffortHigh))
+	assert.Equal(t, "high", body["reasoning_effort"])
+}
+
+// The OpenAI-compatible vocabulary has no xhigh, so an xhigh binding floors to high
+// — the SAME flooring ProfileService validated at write time (provider.ChatReasoningEffort).
+func TestChat_FloorsXHighReasoningEffort(t *testing.T) {
+	body := bodyOf(t, bindingWithEffort("https://router.test/v1", "m", provider.EffortXHigh))
+	assert.Equal(t, "high", body["reasoning_effort"])
+}
+
+// EffortNone explicitly disables reasoning and is emitted verbatim ("none" is in
+// the accepted reasoning_effort vocabulary).
+func TestChat_EmitsNoneReasoningEffort(t *testing.T) {
+	body := bodyOf(t, bindingWithEffort("https://router.test/v1", "m", provider.EffortNone))
+	assert.Equal(t, "none", body["reasoning_effort"])
+}
+
+// Default (and the raw unset empty) effort emits NOTHING: the request body carries
+// no reasoning_effort key so the model uses its own default.
+func TestChat_OmitsReasoningEffortWhenUnset(t *testing.T) {
+	for _, eff := range []provider.Effort{provider.EffortDefault, provider.Effort("")} {
+		body := bodyOf(t, bindingWithEffort("https://router.test/v1", "m", eff))
+		_, present := body["reasoning_effort"]
+		assert.Falsef(t, present, "no reasoning_effort key for effort %q", eff)
+	}
+}
+
+// The streaming path emits reasoning_effort identically to the non-streaming path.
+func TestStreamChat_EmitsReasoningEffort(t *testing.T) {
+	ft := &fakeTransport{resp: sseResponse(200, "data: [DONE]\n\n")}
+	p := newProvider(t, ft, bindingWithEffort("https://router.test/v1", "m", provider.EffortHigh))
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "x"})
+	require.NoError(t, err)
+	for range ch { // drain to completion
+	}
+	require.NotNil(t, ft.gotReq)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(ft.gotBody, &body))
+	assert.Equal(t, "high", body["reasoning_effort"])
+	assert.Equal(t, true, body["stream"], "stream flag still set alongside reasoning_effort")
+}
+
 // --- SECURITY: auth header carries revealed key (verified via transport) ---
 
 func TestChat_AuthHeaderCarriesRevealedKey(t *testing.T) {

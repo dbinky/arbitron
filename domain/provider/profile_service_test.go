@@ -284,6 +284,94 @@ func TestProfileService_CreateEmptyBackendDefaultsToCli(t *testing.T) {
 	assert.Equal(t, 1, rl.calls)
 }
 
+// Gap 2 — Success: a connection-backed CHAT profile with an empty agent backend
+// must be creatable. Its EffectiveBackend is "" (the connection supplies routing),
+// which is absent from the capability ruleset; rather than ErrUnknownBackend, the
+// connection-supplied chat path validates against the chat-tier axis policy.
+// Default axes always pass, so the write succeeds.
+func TestProfileService_CreateChatConnectionDefaultAxes(t *testing.T) {
+	store := newMemProfileStore()
+	rl := &fakeReloader{}
+	svc := provider.NewProfileService(store, rules(), rl)
+
+	stored, eff, err := svc.Create(admins(), provider.Profile{
+		Alias: "workhorse", Kind: provider.ProfileKindChat,
+		ConnectionRef: "ollama-cloud", Model: "deepseek-v4-flash",
+		// Backend intentionally empty: the connection supplies the routing.
+	})
+	require.NoError(t, err, "a connection-backed chat profile must be creatable without an agent backend")
+	assert.Equal(t, "workhorse", stored.Alias)
+	assert.Equal(t, provider.ContextDefault, eff.ContextWindow)
+	assert.Equal(t, provider.EffortDefault, eff.Effort)
+	assert.Equal(t, 1, store.writeCount())
+	assert.Equal(t, 1, rl.calls)
+}
+
+// Success: a connection-backed chat profile may set a graded reasoning effort. The
+// chat tier honors it (it reaches the OpenAI-compatible adapter as reasoning_effort),
+// so high validates and echoes high as the effective effort.
+func TestProfileService_CreateChatConnectionEffortHonored(t *testing.T) {
+	store := newMemProfileStore()
+	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+
+	_, eff, err := svc.Create(admins(), provider.Profile{
+		Alias: "ds4", Kind: provider.ProfileKindChat,
+		ConnectionRef: "ollama-cloud", Model: "deepseek-v4-flash",
+		Effort: provider.EffortHigh,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortHigh, eff.Effort, "graded effort is honored on the chat tier")
+}
+
+// Floor: the OpenAI-compatible chat vocabulary has no xhigh, so an xhigh request on
+// a connection-backed chat profile floors to high — and the echoed Effective shows
+// the floored value, matching what the adapter will emit.
+func TestProfileService_CreateChatConnectionFloorsXHigh(t *testing.T) {
+	store := newMemProfileStore()
+	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+
+	_, eff, err := svc.Create(admins(), provider.Profile{
+		Alias: "ds4x", Kind: provider.ProfileKindChat,
+		ConnectionRef: "ollama-cloud", Model: "deepseek-v4-flash",
+		Effort: provider.EffortXHigh,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortHigh, eff.Effort, "xhigh floors to high on the chat tier")
+}
+
+// Error: the OpenAI-compatible chat tier has no context-window knob, so a
+// non-default context on a connection-backed chat profile is rejected with
+// ErrAxisNotApplicable and nothing is persisted.
+func TestProfileService_CreateChatConnectionNonDefaultContextRejected(t *testing.T) {
+	store := newMemProfileStore()
+	rl := &fakeReloader{}
+	svc := provider.NewProfileService(store, rules(), rl)
+
+	_, _, err := svc.Create(admins(), provider.Profile{
+		Alias: "ds4ctx", Kind: provider.ProfileKindChat,
+		ConnectionRef: "ollama-cloud", Model: "deepseek-v4-flash",
+		ContextWindow: provider.Context1M,
+	})
+	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable, "a context tier is not applicable to the chat connection path")
+	assert.Equal(t, 0, store.writeCount(), "nothing persisted on a rejected axis")
+	assert.Equal(t, 0, rl.calls)
+}
+
+// Regression: an AGENT profile with a connection but an empty backend must still
+// fail with ErrUnknownBackend — an agent needs a concrete backend; only the chat
+// path is exempted. This guards the seed contract (profile_seed_test.go).
+func TestProfileService_CreateAgentConnectionEmptyBackendStillRejected(t *testing.T) {
+	store := newMemProfileStore()
+	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+
+	_, _, err := svc.Create(admins(), provider.Profile{
+		Alias: "cloud-agent", Kind: provider.ProfileKindAgent,
+		ConnectionRef: "my-conn", // backend="" conn!="" on the AGENT path
+	})
+	assert.ErrorIs(t, err, provider.ErrUnknownBackend, "an agent profile must name a backend in the ruleset")
+	assert.Equal(t, 0, store.writeCount())
+}
+
 // Error (Pass 2): Update on an unauthenticated context (no identity) returns
 // ErrUnauthenticated — anon is distinct from non-admin (ErrForbidden).
 func TestProfileService_UpdateUnauthenticated(t *testing.T) {

@@ -75,7 +75,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 	ctx, cancel := procenv.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
-	body, err := buildBody(req, p.binding.Model, false)
+	body, err := buildBody(req, p.binding.Model, false, p.binding.Effort)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (p *Provider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.Ch
 func (p *Provider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
 	streamCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
-	body, err := buildBody(req, p.binding.Model, true)
+	body, err := buildBody(req, p.binding.Model, true, p.binding.Effort)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -210,4 +210,3 @@ func send(ctx context.Context, out chan<- engine.ChatChunk, c engine.ChatChunk) 
 func (p *Provider) statusError(status int, body io.Reader) error {
 	return fmt.Errorf("%w: status=%d body=%s", ErrUpstreamStatus, status, procenv.StatusSnippet(body))
 }
-
