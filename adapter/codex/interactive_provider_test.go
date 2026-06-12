@@ -269,6 +269,37 @@ func TestInteractive_StreamChat_TurnDoneAfterTurnFailed_NoDoneChunk(t *testing.T
 	}
 }
 
+// FAILURE / CROSS-CUTTING — a transport error arriving AFTER a turnFailed must
+// produce exactly ONE error chunk, not two. The `failed` flag gates the transport-
+// error send path (`if !failed { sendChunk(...) }`) so the consumer never sees a
+// second error event from the same turn. Without the `!failed` guard, a double-
+// error would escape: the consumer would receive both the turn-failure chunk and a
+// transport-error chunk, violating the single-terminal-event contract and
+// confusing any caller that inspects the last chunk.
+func TestInteractive_StreamChat_TransportErrorAfterTurnFailed_SingleErrorOnly(t *testing.T) {
+	turnErr := errors.New("rate limited")
+	transportErr := errors.New("codex mcp-server: stdio broke")
+	sess := &errStreamSession{pre: []turnEvent{failedEv(turnErr)}, nextErr: transportErr}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
+		func() mcpSession { return sess },
+	)
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	var errChunks []engine.ChatChunk
+	for _, c := range chunks {
+		if c.Error != nil {
+			errChunks = append(errChunks, c)
+		}
+		assert.False(t, c.Done, "a failure sequence must never produce a Done chunk")
+	}
+	require.Len(t, errChunks, 1, "exactly one error chunk — transport error after turnFailed must be suppressed")
+	assert.ErrorIs(t, errChunks[0].Error, turnErr, "the surfaced error must be the turn failure, not the later transport error")
+}
+
 // FAILURE — Chat surfaces a failed turn as a hard error (no silent empty result).
 // The returned error must wrap the underlying turn error so callers can use
 // errors.Is for retry/classification logic.
