@@ -4,11 +4,11 @@ Issues found during review iterations. Only the user can move items to the Won't
 
 ## Open Issues
 
-_(none yet — review loop has not started)_
+_(none)_
 
 ## Fixed Previously
 
-_(none yet)_
+- **FA#1 — nil Approver default-deny not tested.** The `fakeMCPSession.Start` correctly records a zero `approvalDecision{Allow:false}` when `cfg.Approver` is nil (fail-closed by Go zero value), but this was not exercised. Added `TestFakeMCPSession_Edge_NilApproverDefaultDeny` to verify the fail-closed property explicitly.
 
 ## Won't Fix (Beyond Current Scope)
 

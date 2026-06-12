@@ -202,6 +202,29 @@ func TestFakeMCPSession_Edge_ApprovalBeforeAnyToken(t *testing.T) {
 	assert.Equal(t, []string{"internal/secret.go"}, f.approvals[0].WritePaths)
 }
 
+// EDGE — nil Approver with scripted approvals records a default-deny decision;
+// fail-closed means a missing policy never silently permits a mutation.
+func TestFakeMCPSession_Edge_NilApproverDefaultDeny(t *testing.T) {
+	f := &fakeMCPSession{
+		approvals: []approvalRequest{{
+			WritePaths: []string{"internal/secret.go"},
+			Reason:     "apply patch",
+		}},
+		events: []turnEvent{{Kind: turnDone, SessionID: "c1"}},
+	}
+
+	_, err := f.Start(context.Background(), turnConfig{
+		Prompt:   "p",
+		WorkDir:  "/w",
+		Approver: nil,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, f.decisions, 1)
+	assert.False(t, f.decisions[0].Allow, "nil Approver must produce a default-deny decision (fail-closed)")
+	assert.Empty(t, f.decisions[0].Reason)
+}
+
 // TYPE — the turnEventKind constants are distinct and the approval value types
 // carry the structured codex payload (exec argv vs. patch write-paths).
 func TestTurnEventKinds_AreDistinct(t *testing.T) {
