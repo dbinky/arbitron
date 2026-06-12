@@ -135,6 +135,91 @@ func (r CapabilityRules) Validate(backend, model string, tier ContextWindow, eff
 	return tier, effEffort, nil
 }
 
+// Emission is the native runtime artifact derived from a (validated) requested
+// tier+effort: env additions (claude-code) and/or argv additions (codex). It is
+// the runtime counterpart of Validate's write-time check — a single deterministic
+// mapping so the value emitted at launch is the SAME effective value the write
+// validated. A zero Emission (nil Env, nil Args) means "emit nothing".
+type Emission struct {
+	Env  map[string]string // backend env additions (e.g. CLAUDE_CODE_EFFORT_LEVEL)
+	Args []string          // backend argv additions (e.g. -c model_reasoning_effort=medium)
+}
+
+// Emit turns a (validated) requested tier+effort into native env/argv for the
+// backend. It floors effort via the same rules as Validate, so write-time and
+// runtime never disagree. Defaults/unknown axes emit nothing for that axis.
+//
+// The backend is the EFFECTIVE backend already resolved onto the binding (the
+// executor overwrites ResolvedBinding.Backend with the effective node>profile>
+// deployment value before dispatch). claude-cli and claude-code share one
+// emission (both drive the `claude` CLI); codex emits its `-c` arg; opencode and
+// any other backend are deferred and emit nothing.
+func (r CapabilityRules) Emit(backend, model string, tier ContextWindow, effort Effort) (Emission, error) {
+	// Reuse Validate to floor effort + reject inapplicable (defensive; writes are
+	// pre-validated). default/none for effort and default for tier never error.
+	effTier, effEffort, err := r.Validate(backend, model, tier, effort)
+	if err != nil {
+		return Emission{}, err
+	}
+	out := Emission{Env: map[string]string{}}
+	switch backend {
+	case "claude-code", "claude-cli":
+		emitClaudeContext(&out, effTier)
+		emitClaudeEffort(&out, effEffort)
+	case "codex":
+		emitCodexEffort(&out, effEffort)
+	default:
+		// opencode and others: deferred — emit nothing.
+	}
+	if len(out.Env) == 0 {
+		out.Env = nil
+	}
+	return out, nil
+}
+
+// emitClaudeContext maps a context tier to the claude-code env pair. 200k pins the
+// standard window via the proven RalphFactory pair; 1m raises the auto-compact
+// window; default emits nothing.
+func emitClaudeContext(out *Emission, tier ContextWindow) {
+	switch tier {
+	case Context200K:
+		out.Env["CLAUDE_CODE_DISABLE_1M_CONTEXT"] = "1"
+		out.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "200000"
+	case Context1M:
+		out.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "1000000"
+	case ContextDefault:
+		// emit nothing
+	}
+}
+
+// emitClaudeEffort maps an effective effort to the claude-code env. default emits
+// nothing; none disables thinking (MAX_THINKING_TOKENS=0); a graded level sets
+// CLAUDE_CODE_EFFORT_LEVEL to that level verbatim.
+func emitClaudeEffort(out *Emission, e Effort) {
+	switch e {
+	case EffortDefault:
+		// nothing
+	case EffortNone:
+		out.Env["MAX_THINKING_TOKENS"] = "0"
+	default:
+		out.Env["CLAUDE_CODE_EFFORT_LEVEL"] = string(e)
+	}
+}
+
+// emitCodexEffort maps an effective effort to the codex `-c model_reasoning_effort`
+// argv pair. default emits nothing; none maps to codex's "minimal"; a graded level
+// is passed verbatim.
+func emitCodexEffort(out *Emission, e Effort) {
+	switch e {
+	case EffortDefault:
+		// nothing
+	case EffortNone:
+		out.Args = append(out.Args, "-c", "model_reasoning_effort=minimal")
+	default:
+		out.Args = append(out.Args, "-c", "model_reasoning_effort="+string(e))
+	}
+}
+
 // floorToHighest returns the highest allowed graded level at or below want, or
 // "" when no graded level qualifies. EffortDefault and EffortNone are skipped
 // because they sit outside the graded order.
