@@ -122,6 +122,31 @@ func TestInteractive_StreamChat_ResumeID(t *testing.T) {
 	assert.Equal(t, "conv-1", fake.gotCfg.ResumeID, "req.SessionID must flow to turnConfig.ResumeID")
 }
 
+// PAIRED (FA#15) — full session-id round-trip through the transport seam: the
+// req.SessionID flows in as turnConfig.ResumeID (resume), and the terminal
+// doneEv.SessionID flows back out as ChatChunk.SessionID (the new id for the
+// next resume). Tests both directions of the seam in one scenario.
+func TestInteractive_StreamChat_SessionIDRoundTrip(t *testing.T) {
+	// Terminal done carries a DIFFERENT id from the resume id (codex can rotate
+	// the conversation id after certain events — the provider must pass through
+	// whatever the transport returns, not reflect the input id back).
+	fake := &fakeMCPSession{events: []turnEvent{doneEv("new-conv-id", 5, 3)}}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
+		Prompt: "next turn", WorkDir: "/tmp/ws", SessionID: "old-conv-id",
+	})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	// Forward: req.SessionID → turnConfig.ResumeID.
+	assert.Equal(t, "old-conv-id", fake.gotCfg.ResumeID, "req.SessionID must flow to turnConfig.ResumeID")
+	// Back-out: doneEv.SessionID → ChatChunk.SessionID on the terminal Done chunk.
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done, "session-id round-trip test must reach a terminal Done")
+	assert.Equal(t, "new-conv-id", last.SessionID, "terminal ChatChunk must carry the new session id from the done event, not the resume id")
+}
+
 // SUCCESS — a non-empty req.SessionID flows to the Chat fold's turnConfig.ResumeID
 // so the same codex conversation resumes when Chat is used instead of StreamChat.
 // The startTurn prelude is shared, but a refactor that bypassed it for Chat could
