@@ -39,7 +39,9 @@ Tasks 1.1, 2.1, 2.2 are unaffected. Record the chosen surface in the appendix.
 - **Probe** via `ensureCompatible(ctx)` before the first turn → incompatible /
   missing binary fails closed with zero events.
 - **Start/resume** — call the pinned conversation tool; for resume pass
-  `cfg.ResumeID`.
+  `cfg.ResumeID`. Pass `cfg.Effort` through if the surface accepts a
+  reasoning-effort parameter (preserve the existing effort-emission behaviour; a
+  default/empty effort passes nothing).
 - **Notifications → events** — register an mcp-go notification handler mapping
   assistant-text increments to `turnEvent{turnToken}` and the terminal result to
   `turnEvent{turnDone, SessionID, tokens}`. A `turn.failed`/error →

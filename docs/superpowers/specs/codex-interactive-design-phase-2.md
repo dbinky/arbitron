@@ -99,10 +99,13 @@ Rules that make this robust:
   so it needs an explicit allow). The recognition is narrow; everything else
   shell-side is denied. (If the spike shows codex never elicits for the commit
   under the chosen posture, this arm is inert — documented, not removed.)
-- **Trace.** Each decision is recorded as a node-trace step
-  (`kind: approval`, the request summary, allow/deny + reason). Denials are the
-  operator's only signal the guardrail fired (spec §6) — they are never surfaced
-  to the human as a notification or an approval prompt.
+- **Trace.** Each decision is recorded via **structured logging (`slog`) and/or
+  an OTel span event** — the request summary, allow/deny + reason. The
+  `engine.ChatProvider` seam carries only `ChatChunk{Token,Done,Error,SessionID}`
+  with **no step channel** (the interactive exec adapter likewise emits no trace
+  steps), so this observability is log/span-based and needs **no engine change**.
+  Denials are the operator's only signal the guardrail fired (spec §6) — they are
+  never surfaced to the human as a notification or an approval prompt.
 
 The `writableRoot` is a provider field (default `docs/`), set in Phase 3. It is
 **not** plumbed per-node — both interactive deliverables live under `docs/` and

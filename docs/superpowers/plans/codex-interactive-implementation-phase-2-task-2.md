@@ -2,7 +2,10 @@
 
 **Slug:** `codex-interactive`
 **Design:** `docs/superpowers/specs/codex-interactive-design-phase-2.md` (§2, §4)
-**Depends on:** Task 1.1 (port + fake), Task 2.1 (the `decide` policy)
+**Depends on:** Task 1.1 (port + fake) and Task 2.1 (the `decide` policy) for the
+*tests*; Task 1.2 (`mcpStdioSession`) for the *production default factory* (the
+provider's nil-factory default constructs the real session). Sequencing: after
+1.1, 1.2, and 2.1.
 **Package:** `adapter/codex`
 
 ## Goal
@@ -36,13 +39,25 @@ type InteractiveProvider struct {
     writableRoot string
 }
 
+// Production constructor: nil session factory → defaults to the real
+// mcpStdioSession (Task 1.2) built from core, exactly as newCore defaults the
+// runner to NewExecRunner. The composition root calls this (Phase 3).
 func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider
+
+// In-package test seam: injects a fake mcpSession factory (mirrors how codex
+// Config.Runner accepts a fake runner). Tests use this; external callers use the
+// public constructor and get the real session.
+func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() mcpSession) *InteractiveProvider
+
 var _ engine.ChatProvider = (*InteractiveProvider)(nil)
 ```
 
 - `WritableRoot` defaults to `"docs"` when empty.
 - Build `core` via `newCore` so construction + the version probe cannot drift
   from the exec adapters.
+- A nil `newSession` defaults to a closure building the real `mcpStdioSession`
+  (Task 1.2) from `core`; in-package tests inject `fakeMCPSession` via
+  `newInteractiveProviderWithSession`.
 
 ### `StreamChat`
 
@@ -56,9 +71,10 @@ var _ engine.ChatProvider = (*InteractiveProvider)(nil)
    `ChatChunk{Error}` with **no Done**. Always drain + reap. Reuse the existing
    `makeSendChunk` non-blocking pattern (ctx-raced send) so a gone consumer never
    blocks the drainer.
-5. Record each approval decision to the node trace (kind `approval`, summary,
-   allow/deny + reason). Denials are the only guardrail signal; never surface to
-   the human.
+5. Record each approval decision via structured `slog` (and/or an OTel span
+   event) — summary, allow/deny + reason. **Not** a `ChatChunk` field and **not**
+   an engine change (the port has no step channel). Denials are the only
+   guardrail signal; never surface to the human.
 
 ### `Chat`
 
