@@ -62,6 +62,31 @@ func TestWithinRoot(t *testing.T) {
 	}
 }
 
+// EDGE — a deeper writableRoot correctly narrows the allowed subtree. All
+// TestWithinRoot cases use root="docs"; this verifies the prefix-separator
+// logic with a multi-level root so narrowing writableRoot can never be
+// accidentally widened by the helper.
+func TestWithinRoot_Edge_DeeperRoot_NarrowsSubtree(t *testing.T) {
+	workDir := filepath.FromSlash("/repo")
+	root := filepath.FromSlash("docs/superpowers")
+
+	// within the narrowed subtree — allowed
+	assert.True(t, withinRoot(workDir, root, "docs/superpowers/specs/a.md"),
+		"docs/superpowers/specs/a.md is within docs/superpowers")
+
+	// sibling subtree under docs/ — denied (in docs/ but outside docs/superpowers/)
+	assert.False(t, withinRoot(workDir, root, "docs/specs/a.md"),
+		"docs/specs is outside docs/superpowers — narrower root must deny it")
+
+	// prefix-sibling of the deeper root — denied
+	assert.False(t, withinRoot(workDir, root, "docs/superpowers-archive/x.md"),
+		"prefix-sibling of docs/superpowers must not match")
+
+	// the narrowed root itself — denied (not a writable child)
+	assert.False(t, withinRoot(workDir, root, "docs/superpowers"),
+		"root itself must not be within")
+}
+
 // --- decide: patch/write classification ----------------------------------
 
 func TestDecide_Patch_HappyPath_SingleDocsFile_Allowed(t *testing.T) {
