@@ -122,6 +122,26 @@ func TestInteractive_StreamChat_ResumeID(t *testing.T) {
 	assert.Equal(t, "conv-1", fake.gotCfg.ResumeID, "req.SessionID must flow to turnConfig.ResumeID")
 }
 
+// SUCCESS — a non-empty req.SessionID flows to the Chat fold's turnConfig.ResumeID
+// so the same codex conversation resumes when Chat is used instead of StreamChat.
+// The startTurn prelude is shared, but a refactor that bypassed it for Chat could
+// silently break resume — this test pins the plumbing symmetrically.
+func TestInteractive_Chat_ResumeID(t *testing.T) {
+	fake := &fakeMCPSession{events: []turnEvent{
+		tokenEv("ok"),
+		doneEv("conv-1", 5, 3),
+	}}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{
+		Prompt: "continue", WorkDir: "/tmp/ws", SessionID: "conv-1",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "conv-1", fake.gotCfg.ResumeID, "req.SessionID must flow to turnConfig.ResumeID in the Chat fold")
+	assert.Equal(t, "conv-1", resp.SessionID, "terminal SessionID must round-trip back out through Chat")
+}
+
 // SUCCESS — a non-empty req.Model overrides the binding's model.
 func TestInteractive_StreamChat_RequestModelOverridesBinding(t *testing.T) {
 	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
