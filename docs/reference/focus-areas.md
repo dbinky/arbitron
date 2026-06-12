@@ -13,7 +13,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | mcpSession port + types (`adapter/codex/mcp_session.go` — `mcpSession`/`turnConfig`/`turnStream`/`turnEvent`/`approvalRequest`/`approvalDecision`/`approvalFunc`, `errStreamDone` sentinel; hexagonal: no domain import) | [x] | [ ] | Pass 1 done |
+| 1 | mcpSession port + types (`adapter/codex/mcp_session.go` — `mcpSession`/`turnConfig`/`turnStream`/`turnEvent`/`approvalRequest`/`approvalDecision`/`approvalFunc`, `errStreamDone` sentinel; hexagonal: no domain import) | [x] | [x] | Done |
 | 2 | Fake transport (`adapter/codex/fake_mcp_session_test.go` + `mcp_session_test.go` — scripted events, scripted approval requests + recorded decisions, `startErr`/`blockOnCtx`, recorded `turnConfig`; mirrors `fake_runner_test.go`) | [ ] | [ ] | Not started |
 | 3 | Real transport launch/probe/env (`adapter/codex/mcp_stdio_session.go` — `codex mcp-server` launch via mcp-go stdio, `codexEnv()` no-key, shared `ensureCompatible` probe, prompt-via-protocol, spawn-per-turn teardown/reap) | [ ] | [ ] | Not started |
 | 4 | Real transport mappers (`mcp_stdio_session.go` — notification→`turnEvent`, elicitation payload→`approvalRequest`, `approvalDecision`→protocol response, start-tool request build incl. resume + effort; fail-closed decode) | [ ] | [ ] | Not started |

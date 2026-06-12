@@ -54,7 +54,8 @@ type turnConfig struct {
 	// Approver is the provider's auto-policy, invoked for each server→client
 	// approval request. The transport surfaces EVERY request to it and never
 	// auto-allows internally, so the guardrail is the provider's, not the
-	// transport's.
+	// transport's. nil must be treated as default-deny (fail-closed) — transport
+	// implementations must nil-check before calling rather than panicking.
 	Approver approvalFunc
 	// Effort is an optional reasoning-effort hint, applied only if the codex
 	// surface accepts it; "" applies nothing.
@@ -138,5 +139,6 @@ type approvalDecision struct {
 //
 // SECURITY / fail-closed: the transport must surface EVERY request to this
 // function and never auto-allow internally — the mutation guardrail belongs to
-// the provider's policy, not to the transport.
+// the provider's policy, not to the transport. A nil approvalFunc must be
+// treated as default-deny; transport implementations nil-check before calling.
 type approvalFunc func(req approvalRequest) approvalDecision

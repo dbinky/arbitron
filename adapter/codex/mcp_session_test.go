@@ -131,6 +131,11 @@ func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, turnFailed, ev.Kind)
 	assert.ErrorIs(t, ev.Err, turnErr)
+
+	// After the terminal failure, Next reports errStreamDone — never a clean Done.
+	// A failed turn must never silently become a success on a subsequent poll.
+	_, err = stream.Next(context.Background())
+	assert.ErrorIs(t, err, errStreamDone, "Next after turnFailed must return errStreamDone, not a turnDone")
 }
 
 // ERROR — startErr makes Start fail closed: (nil, err) with no stream.
