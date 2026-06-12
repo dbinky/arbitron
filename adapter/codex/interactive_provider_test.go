@@ -759,6 +759,70 @@ func TestInteractive_Policy_UsesConfiguredWritableRoot(t *testing.T) {
 	assert.True(t, fake.decisions[0].Allow, "a write under the configured writable root must be allowed")
 }
 
+// PAIRED (FA#18) — the policy is the PRIMARY gate for command execution; the
+// read-only sandbox is defence-in-depth only. A mutating command (make build,
+// rm -rf, git push) must be denied by the policy regardless of whether the
+// sandbox would independently block it. This test verifies the primary-gate
+// property at the provider integration level (not just the policy unit level).
+func TestInteractive_Approval_MutatingCommand_DeniedByPolicy_PrimaryGate(t *testing.T) {
+	fake := &fakeMCPSession{
+		events: []turnEvent{tokenEv("building..."), doneEv("conv-1", 0, 0)},
+		approvals: []approvalRequest{
+			{Command: []string{"make", "build"}, Reason: "compile the output"},
+		},
+	}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	// Policy fired as the primary gate: mutating command denied before sandbox.
+	require.Len(t, fake.decisions, 1)
+	assert.False(t, fake.decisions[0].Allow,
+		"policy must deny a mutating command as the primary gate — not relying on sandbox defence-in-depth")
+	assert.Contains(t, fake.decisions[0].Reason, "make",
+		"denial reason must identify the denied command for the operator slog trace")
+
+	// The denial was invisible: stream reached Done with no Error chunk.
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done, "a denied mutating command must NOT suppress the turn's Done")
+	for _, c := range chunks {
+		assert.NoError(t, c.Error, "a guardrail denial must never surface as a human-facing Error chunk")
+	}
+}
+
+// PAIRED (FA#18) — both deliverable directories (docs/specs/ and
+// docs/superpowers/specs/) are within the default writable root at the provider
+// integration level. Verifying here (not just at the policy unit level) ensures
+// a writableRoot wiring bug cannot silently narrow the boundary to only one of
+// the two delivery directories.
+func TestInteractive_Approval_DocsBoundaryBothDeliverables_BothAllowed(t *testing.T) {
+	fake := &fakeMCPSession{
+		events: []turnEvent{doneEv("conv-1", 3, 2)},
+		approvals: []approvalRequest{
+			{WritePaths: []string{"docs/specs/design.md"}, Reason: "primary spec"},
+			{WritePaths: []string{"docs/superpowers/specs/feature.md"}, Reason: "superpowers spec"},
+		},
+	}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	require.Len(t, fake.decisions, 2)
+	assert.True(t, fake.decisions[0].Allow,
+		"docs/specs/ must be within the default writable root (primary deliverable directory)")
+	assert.True(t, fake.decisions[1].Allow,
+		"docs/superpowers/specs/ must be within the default writable root (superpowers deliverable directory)")
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done)
+	for _, c := range chunks {
+		assert.NoError(t, c.Error)
+	}
+}
+
 // --- SECURITY: approvalSummary log-safety --------------------------------
 
 // SECURITY — approvalSummary produces the "summary" field in the slog trace
