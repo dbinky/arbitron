@@ -60,6 +60,61 @@ func TestParseEffort(t *testing.T) {
 	assert.Equal(t, provider.EffortDefault, got)
 }
 
+// Valid: every defined Effort constant passes Valid; an unknown string does not.
+func TestEffort_Valid(t *testing.T) {
+	for _, e := range []provider.Effort{
+		provider.EffortDefault,
+		provider.EffortNone,
+		provider.EffortLow,
+		provider.EffortMedium,
+		provider.EffortHigh,
+		provider.EffortXHigh,
+		provider.EffortMax,
+	} {
+		assert.Truef(t, e.Valid(), "expected %q valid", e)
+	}
+	assert.False(t, provider.Effort("ultra").Valid(), "expected ultra invalid")
+	assert.False(t, provider.Effort("").Valid(), "empty string is not a valid Effort constant (parse normalises separately)")
+}
+
+// GreaterThan: the full graded order is none < low < medium < high < xhigh < max;
+// EffortDefault sits outside the order (never greater, nothing is greater than it).
+func TestEffort_GreaterThan(t *testing.T) {
+	tests := []struct {
+		e, o     provider.Effort
+		expected bool
+		name     string
+	}{
+		// Graded order — adjacent and span
+		{provider.EffortMax, provider.EffortXHigh, true, "max > xhigh"},
+		{provider.EffortXHigh, provider.EffortHigh, true, "xhigh > high"},
+		{provider.EffortHigh, provider.EffortMedium, true, "high > medium"},
+		{provider.EffortMedium, provider.EffortLow, true, "medium > low"},
+		{provider.EffortLow, provider.EffortNone, true, "low > none"},
+		{provider.EffortMax, provider.EffortNone, true, "max > none (span)"},
+		// Reverses
+		{provider.EffortNone, provider.EffortLow, false, "none not > low"},
+		{provider.EffortHigh, provider.EffortXHigh, false, "high not > xhigh"},
+		{provider.EffortXHigh, provider.EffortMax, false, "xhigh not > max"},
+		// Equal levels are never greater
+		{provider.EffortNone, provider.EffortNone, false, "none not > none (equal)"},
+		{provider.EffortLow, provider.EffortLow, false, "low not > low (equal)"},
+		{provider.EffortHigh, provider.EffortHigh, false, "high not > high (equal)"},
+		{provider.EffortMax, provider.EffortMax, false, "max not > max (equal)"},
+		// Default is outside the order — never greater, nothing is greater than it
+		{provider.EffortDefault, provider.EffortDefault, false, "default not > default"},
+		{provider.EffortDefault, provider.EffortLow, false, "default not > low (unordered)"},
+		{provider.EffortLow, provider.EffortDefault, false, "low not > default (unordered)"},
+		{provider.EffortNone, provider.EffortDefault, false, "none not > default (unordered)"},
+		{provider.EffortMax, provider.EffortDefault, false, "max not > default (unordered)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.e.GreaterThan(tc.o))
+		})
+	}
+}
+
 // Sentinel errors are non-nil and distinct so callers can match with errors.Is.
 func TestAxisSentinels_Distinct(t *testing.T) {
 	require.Error(t, provider.ErrInvalidContextWindow)
