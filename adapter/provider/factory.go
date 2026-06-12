@@ -105,6 +105,13 @@ type Deps struct {
 	// model-influenced prompts). Per-profile ResolvedBinding.AllowedTools
 	// (knob (b)) narrows independently of this switch.
 	OpencodeAllowAllTools bool
+	// CapabilityRules drives the per-call context-window + effort emission for the
+	// backend adapters the factory builds (profile-editing Phase 3): the codex arm
+	// threads it into codex.Config so a profile's resolved effort reaches `codex
+	// exec` as `-c model_reasoning_effort=<v>`. The claude-code arm gets its rules
+	// through ClaudeAgentConfig.CapabilityRules. A zero-value (Empty) ruleset emits
+	// nothing. opencode carries the axes but emits nothing yet (deferred).
+	CapabilityRules domprovider.CapabilityRules
 }
 
 // Factory holds the shared construction inputs and selects a concrete backend
@@ -263,6 +270,10 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			Runner:           f.deps.Runner,
 			Timeout:          f.deps.CodexTimeout,
 			MaxResponseBytes: f.deps.MaxResponseBytes,
+			// profile-editing Phase 3: the binding's resolved effort rides argv as
+			// `-c model_reasoning_effort=<v>` via these rules. A default/empty effort
+			// or an Empty ruleset emits nothing.
+			CapabilityRules: f.deps.CapabilityRules,
 		}), nil
 	default:
 		// Fail-closed: an unrecognized (or empty-with-empty-default) backend never

@@ -477,12 +477,37 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("resolving workspace path: %w", err)
 	}
 
+	// Resolve the capability-ruleset override path: empty defaults to
+	// ~/.arbitron/capabilities.yaml (resolved like the config path). A missing
+	// file is not an error — LoadCapabilityRules falls back to the embedded
+	// default ruleset. Loaded here (before the adapter Configs) so the rules can
+	// be threaded into the claudecli + codex adapters for runtime context-window +
+	// effort emission (profile-editing Phase 3); the SAME value is reused below for
+	// the one-time profile seed validation.
+	capabilitiesPath := cfg.CapabilitiesPath
+	if capabilitiesPath == "" {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			capabilitiesPath = filepath.Join(home, ".arbitron", "capabilities.yaml")
+		}
+	}
+	capabilityRules, err := configadapter.LoadCapabilityRules(capabilitiesPath)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading capability rules: %w", err)
+	}
+
 	chatCfg := claudecli.Config{
 		BinaryPath:       cfg.LLM.BinaryPath,
 		DefaultModel:     cfg.LLM.Model,
 		WorkspaceRoot:    wsRoot,
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// Capability rules drive the per-call context-window + effort env emission
+		// (profile-editing Phase 3). A chat-kind binding carries no axes today, so
+		// this is a no-op until they are plumbed through, but the seam is shared
+		// with the agent path so chat + agent cannot drift.
+		CapabilityRules: capabilityRules,
 		// chat is tool-suppressed by construction: no AllowedTools, no SkipPermissions.
 	}
 
@@ -558,23 +583,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// wins.
 	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
 
-	// Resolve the capability-ruleset override path: empty defaults to
-	// ~/.arbitron/capabilities.yaml (resolved like the config path). A missing
-	// file is not an error — LoadCapabilityRules falls back to the embedded
-	// default ruleset.
-	capabilitiesPath := cfg.CapabilitiesPath
-	if capabilitiesPath == "" {
-		if home, herr := os.UserHomeDir(); herr == nil {
-			capabilitiesPath = filepath.Join(home, ".arbitron", "capabilities.yaml")
-		}
-	}
-	capabilityRules, err := configadapter.LoadCapabilityRules(capabilitiesPath)
-	if err != nil {
-		db.Close()
-		logCloser.Close()
-		return nil, fmt.Errorf("loading capability rules: %w", err)
-	}
-
 	profileRepo := adaptsqlite.NewProfileRepo(db)
 	seeded, skipped, err := SeedProfiles(context.Background(), profileRepo, capabilityRules, domainProfiles)
 	if err != nil {
@@ -649,6 +657,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// credential-bearing opencode subprocess fed model-influenced prompts an
 		// allow-all posture is RCE-equivalent (the lethal trifecta).
 		OpencodeAllowAllTools: cfg.LLM.AgentAllowAllTools,
+		// profile-editing Phase 3: thread the loaded capability rules into the
+		// codex arm so a profile's resolved effort reaches `codex exec`. The
+		// claude-code arm receives its rules through ClaudeAgentConfig (= agentCfg,
+		// which carries CapabilityRules).
+		CapabilityRules: capabilityRules,
 	})
 
 	// 9. Create all node executors and build the executor map.
@@ -792,6 +805,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// profile-editing Phase 3: the binding's resolved effort rides argv as
+		// `-c model_reasoning_effort=<v>` via these rules on the interactive_agent
+		// streaming path too.
+		CapabilityRules: capabilityRules,
 	})
 	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
 		providerFactory,
