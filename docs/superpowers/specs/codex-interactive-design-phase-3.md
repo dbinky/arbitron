@@ -127,8 +127,8 @@ spec's scenario:
 
 - `cmd/arbitron/main.go` — the one-line map-value swap + `InteractiveConfig`
   construction.
-- `adapter/codex/interactive_provider.go` — `InteractiveConfig` + constructor
-  (if not already added in Phase 2).
+- (`InteractiveConfig` + `NewInteractiveProvider` are defined in Phase 2; Phase 3
+  only constructs and wires them — it adds no new adapter constructor.)
 - Selection/regression tests (composition seam).
 - A short operating-posture note (read-only sandbox + auto-approval + `docs/`
   boundary) appended to the codex backend docs.

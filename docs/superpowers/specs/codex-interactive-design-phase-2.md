@@ -33,6 +33,12 @@ It depends only on the `engine.ChatProvider` port (consumed) and the Phase-1
   so construction + compatibility cannot drift,
 - the **approval policy** (its `writableRoot`, default `docs/`).
 
+**Constructor (owned by this phase).** Phase 2 defines both the `InteractiveConfig`
+struct (`Timeout`, `MaxResponseBytes`, `CapabilityRules`, `WritableRoot`, plus the
+`mcpSession` factory) and `NewInteractiveProvider(InteractiveConfig) *InteractiveProvider`,
+building the shared `core` via `newCore` exactly as the exec adapters do. Phase 3
+only *constructs and wires* it — it adds no new constructor.
+
 ### Turn flow (`StreamChat`)
 
 1. **Guard** — empty `WorkDir` → `ErrWorkDirRequired` (reuse the existing
@@ -140,7 +146,8 @@ All tests drive the `fakeMCPSession` (Phase 1). **No live codex.** The
 ## 6. Deliverables
 
 - `adapter/codex/interactive_provider.go` — `InteractiveProvider` (Chat +
-  StreamChat) over `mcpSession`, sharing `core`.
+  StreamChat) over `mcpSession`, sharing `core`, plus the `InteractiveConfig`
+  struct and `NewInteractiveProvider` constructor (owned here; used in Phase 3).
 - `adapter/codex/approval_policy.go` — `decide` + path-scope classification.
 - `adapter/codex/interactive_provider_test.go`,
   `adapter/codex/approval_policy_test.go` — full five-category coverage on the
