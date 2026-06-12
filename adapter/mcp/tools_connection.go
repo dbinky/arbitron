@@ -93,9 +93,15 @@ func connLogger(srv *Server) *slog.Logger {
 	return slog.Default()
 }
 
-// connErrorResult maps domain sentinels to a stable tool error message.
+// connErrorResult maps domain sentinels to a stable tool error message. The
+// connection_* tools are admin-only now (routed through ConnectionService), so
+// the authz sentinels map to the same strings as the user/profile tools.
 func connErrorResult(action, name string, err error) *gomcp.CallToolResult {
 	switch {
+	case errors.Is(err, provider.ErrForbidden):
+		return gomcp.NewToolResultError("forbidden: admin only")
+	case errors.Is(err, provider.ErrUnauthenticated):
+		return gomcp.NewToolResultError("authentication required")
 	case errors.Is(err, provider.ErrConnectionExists):
 		return gomcp.NewToolResultError(fmt.Sprintf("connection %q already exists", name))
 	case errors.Is(err, provider.ErrConnectionNotFound):
@@ -130,8 +136,8 @@ func stringExtras(raw any) (map[string]string, error) {
 
 func connectionCreateHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Connections == nil {
-			return gomcp.NewToolResultError("connection store not available"), nil
+		if srv.deps.ConnectionAdmin == nil {
+			return gomcp.NewToolResultError("connection service not available"), nil
 		}
 		args := request.GetArguments()
 		name, _ := args["name"].(string)
@@ -152,7 +158,7 @@ func connectionCreateHandler(srv *Server) server.ToolHandlerFunc {
 		conn := provider.Connection{Name: name, Provider: providerID, BaseURL: baseURL, Extras: extras}
 		// apiKey is consumed only by Create here (sealed immediately); it is never
 		// placed in the response or logged.
-		if err := srv.deps.Connections.Create(ctx, conn, apiKey); err != nil {
+		if err := srv.deps.ConnectionAdmin.Create(ctx, conn, apiKey); err != nil {
 			return connErrorResult("create", name, err), nil
 		}
 		// SECURITY: log the connection NAME only, never the key.
@@ -163,8 +169,8 @@ func connectionCreateHandler(srv *Server) server.ToolHandlerFunc {
 
 func connectionUpdateHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Connections == nil {
-			return gomcp.NewToolResultError("connection store not available"), nil
+		if srv.deps.ConnectionAdmin == nil {
+			return gomcp.NewToolResultError("connection service not available"), nil
 		}
 		args := request.GetArguments()
 		name, _ := args["name"].(string)
@@ -187,7 +193,7 @@ func connectionUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		conn := provider.Connection{Name: name, Provider: providerID, BaseURL: baseURL, Extras: extras}
-		if err := srv.deps.Connections.Update(ctx, conn, keyPtr); err != nil {
+		if err := srv.deps.ConnectionAdmin.Update(ctx, conn, keyPtr); err != nil {
 			return connErrorResult("update", name, err), nil
 		}
 		// SECURITY: log the name and whether a key was rotated, never the key value.
@@ -200,15 +206,15 @@ func connectionUpdateHandler(srv *Server) server.ToolHandlerFunc {
 
 func connectionDeleteHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Connections == nil {
-			return gomcp.NewToolResultError("connection store not available"), nil
+		if srv.deps.ConnectionAdmin == nil {
+			return gomcp.NewToolResultError("connection service not available"), nil
 		}
 		args := request.GetArguments()
 		name, _ := args["name"].(string)
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
-		if err := srv.deps.Connections.Delete(ctx, name); err != nil {
+		if err := srv.deps.ConnectionAdmin.Delete(ctx, name); err != nil {
 			return connErrorResult("delete", name, err), nil
 		}
 		connLogger(srv).Info("connection deleted", slog.String("connection", name))
@@ -218,15 +224,15 @@ func connectionDeleteHandler(srv *Server) server.ToolHandlerFunc {
 
 func connectionGetHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Connections == nil {
-			return gomcp.NewToolResultError("connection store not available"), nil
+		if srv.deps.ConnectionAdmin == nil {
+			return gomcp.NewToolResultError("connection service not available"), nil
 		}
 		args := request.GetArguments()
 		name, _ := args["name"].(string)
 		if name == "" {
 			return gomcp.NewToolResultError("name is required"), nil
 		}
-		conn, err := srv.deps.Connections.Get(ctx, name)
+		conn, err := srv.deps.ConnectionAdmin.Get(ctx, name)
 		if err != nil {
 			return connErrorResult("get", name, err), nil
 		}
@@ -237,12 +243,12 @@ func connectionGetHandler(srv *Server) server.ToolHandlerFunc {
 
 func connectionListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, _ gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
-		if srv.deps.Connections == nil {
-			return gomcp.NewToolResultError("connection store not available"), nil
+		if srv.deps.ConnectionAdmin == nil {
+			return gomcp.NewToolResultError("connection service not available"), nil
 		}
-		conns, err := srv.deps.Connections.List(ctx)
+		conns, err := srv.deps.ConnectionAdmin.List(ctx)
 		if err != nil {
-			return gomcp.NewToolResultError(fmt.Sprintf("failed to list connections: %s", err)), nil
+			return connErrorResult("list", "", err), nil
 		}
 		metas := make([]connectionMeta, len(conns))
 		for i, c := range conns {

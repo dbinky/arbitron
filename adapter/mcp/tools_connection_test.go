@@ -93,9 +93,17 @@ func (s *fakeConnStore) Count(_ context.Context) (int, error) { return len(s.con
 
 func newConnServer(t *testing.T, store provider.ConnectionStore, logger *slog.Logger) *adaptmcp.Server {
 	t.Helper()
+	// The connection_* tools are admin-only now: they route through the
+	// ConnectionService admin gate. A nil store yields a nil service so the
+	// nil-guard ("connection service not available") tests still exercise it.
+	var svc *provider.ConnectionService
+	if store != nil {
+		svc = provider.NewConnectionService(store)
+	}
 	deps := &adaptmcp.Deps{
-		Connections: store,
-		Logger:      logger,
+		ConnectionAdmin: svc,
+		Connections:     store,
+		Logger:          logger,
 	}
 	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
 	adaptmcp.RegisterConnectionTools(srv)
@@ -109,7 +117,7 @@ func TestConnectionCreate_HappyPath(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	result := callTool(t, srv, "connection_create", map[string]any{
+	result := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "azure-prod",
 		"provider": "openrouter",
 		"base_url": "https://api.openrouter.ai",
@@ -132,7 +140,7 @@ func TestConnectionCRUD_RoundTrip(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	createRes := callTool(t, srv, "connection_create", map[string]any{
+	createRes := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "c1",
 		"provider": "openrouter",
 		"base_url": "https://api.openrouter.ai",
@@ -140,19 +148,19 @@ func TestConnectionCRUD_RoundTrip(t *testing.T) {
 	})
 	require.False(t, createRes.IsError, extractText(t, createRes))
 
-	getRes := callTool(t, srv, "connection_get", map[string]any{"name": "c1"})
+	getRes := callToolAdmin(t, srv, "connection_get", map[string]any{"name": "c1"})
 	require.False(t, getRes.IsError)
 	getBody := extractText(t, getRes)
 	assert.Contains(t, getBody, "c1")
 	assert.NotContains(t, getBody, "sk-orig")
 	assert.NotContains(t, strings.ToLower(getBody), "api_key")
 
-	listRes := callTool(t, srv, "connection_list", nil)
+	listRes := callToolAdmin(t, srv, "connection_list", nil)
 	require.False(t, listRes.IsError)
 	assert.NotContains(t, extractText(t, listRes), "sk-orig")
 
 	// Update with no api_key preserves the sealed key.
-	updRes := callTool(t, srv, "connection_update", map[string]any{
+	updRes := callToolAdmin(t, srv, "connection_update", map[string]any{
 		"name":     "c1",
 		"provider": "litellm",
 		"base_url": "https://litellm.local",
@@ -163,7 +171,7 @@ func TestConnectionCRUD_RoundTrip(t *testing.T) {
 	assert.Equal(t, "litellm", got.Provider)
 
 	// Update with a new api_key re-seals.
-	updKeyRes := callTool(t, srv, "connection_update", map[string]any{
+	updKeyRes := callToolAdmin(t, srv, "connection_update", map[string]any{
 		"name":     "c1",
 		"provider": "litellm",
 		"base_url": "https://litellm.local",
@@ -172,7 +180,7 @@ func TestConnectionCRUD_RoundTrip(t *testing.T) {
 	require.False(t, updKeyRes.IsError, extractText(t, updKeyRes))
 	assert.Equal(t, "sk-new", store.keys["c1"])
 
-	delRes := callTool(t, srv, "connection_delete", map[string]any{"name": "c1"})
+	delRes := callToolAdmin(t, srv, "connection_delete", map[string]any{"name": "c1"})
 	require.False(t, delRes.IsError, extractText(t, delRes))
 	_, err := store.Get(context.Background(), "c1")
 	assert.ErrorIs(t, err, provider.ErrConnectionNotFound)
@@ -190,9 +198,9 @@ func TestConnectionCreate_Duplicate(t *testing.T) {
 		"base_url": "https://x",
 		"api_key":  "sk-1",
 	}
-	require.False(t, callTool(t, srv, "connection_create", args).IsError)
+	require.False(t, callToolAdmin(t, srv, "connection_create", args).IsError)
 
-	res := callTool(t, srv, "connection_create", args)
+	res := callToolAdmin(t, srv, "connection_create", args)
 	assert.True(t, res.IsError)
 	assert.Contains(t, strings.ToLower(extractText(t, res)), "already exists")
 }
@@ -211,7 +219,7 @@ func TestConnection_MissingErrors(t *testing.T) {
 		{"connection_delete", map[string]any{"name": "ghost"}},
 		{"connection_update", map[string]any{"name": "ghost", "provider": "x", "base_url": "y"}},
 	} {
-		res := callTool(t, srv, tc.tool, tc.args)
+		res := callToolAdmin(t, srv, tc.tool, tc.args)
 		assert.True(t, res.IsError, tc.tool)
 		assert.Contains(t, strings.ToLower(extractText(t, res)), "not found", tc.tool)
 	}
@@ -223,7 +231,7 @@ func TestConnectionCreate_AzureMissingAPIVersion(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	res := callTool(t, srv, "connection_create", map[string]any{
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "az",
 		"provider": "azure-openai",
 		"base_url": "https://az.example.com",
@@ -238,7 +246,7 @@ func TestConnectionCreate_WithExtras(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	res := callTool(t, srv, "connection_create", map[string]any{
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "az",
 		"provider": "azure-openai",
 		"base_url": "https://az.example.com",
@@ -262,7 +270,7 @@ func TestConnectionCreate_DoesNotLogKey(t *testing.T) {
 	srv := newConnServer(t, store, logger)
 
 	const sentinel = "sk-SENTINEL-DO-NOT-LOG"
-	res := callTool(t, srv, "connection_create", map[string]any{
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "redact-me",
 		"provider": "openrouter",
 		"base_url": "https://x",
@@ -284,14 +292,14 @@ func TestConnection_ResponseShape(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	require.False(t, callTool(t, srv, "connection_create", map[string]any{
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "c1",
 		"provider": "openrouter",
 		"base_url": "https://x",
 		"api_key":  "sk-zzz",
 	}).IsError)
 
-	body := extractText(t, callTool(t, srv, "connection_get", map[string]any{"name": "c1"}))
+	body := extractText(t, callToolAdmin(t, srv, "connection_get", map[string]any{"name": "c1"}))
 	var meta map[string]any
 	require.NoError(t, json.Unmarshal([]byte(body), &meta))
 	_, hasKey := meta["api_key"]
@@ -345,7 +353,7 @@ func TestConnectionCreate_ExtrasNonStringValue(t *testing.T) {
 	store := newFakeConnStore()
 	srv := newConnServer(t, store, nil)
 
-	res := callTool(t, srv, "connection_create", map[string]any{
+	res := callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "bad-extras",
 		"provider": "azure-openai",
 		"base_url": "https://x",
@@ -364,7 +372,7 @@ func TestConnectionUpdate_EmptyAPIKeyPreservesKey(t *testing.T) {
 	srv := newConnServer(t, store, nil)
 
 	const origKey = "sk-original-sealed"
-	require.False(t, callTool(t, srv, "connection_create", map[string]any{
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "c1",
 		"provider": "openrouter",
 		"base_url": "https://x",
@@ -372,7 +380,7 @@ func TestConnectionUpdate_EmptyAPIKeyPreservesKey(t *testing.T) {
 	}).IsError)
 
 	// Update with an explicitly-empty api_key — must be treated as "omit rotation".
-	res := callTool(t, srv, "connection_update", map[string]any{
+	res := callToolAdmin(t, srv, "connection_update", map[string]any{
 		"name":     "c1",
 		"provider": "litellm",
 		"base_url": "https://x",
@@ -394,7 +402,7 @@ func TestConnectionUpdate_DoesNotLogKeyValue(t *testing.T) {
 	srv := newConnServer(t, store, logger)
 
 	const sentinel = "sk-SENTINEL-UPDATE-LOG"
-	require.False(t, callTool(t, srv, "connection_create", map[string]any{
+	require.False(t, callToolAdmin(t, srv, "connection_create", map[string]any{
 		"name":     "c1",
 		"provider": "openrouter",
 		"base_url": "https://x",
@@ -402,7 +410,7 @@ func TestConnectionUpdate_DoesNotLogKeyValue(t *testing.T) {
 	}).IsError)
 	buf.Reset() // clear create log
 
-	res := callTool(t, srv, "connection_update", map[string]any{
+	res := callToolAdmin(t, srv, "connection_update", map[string]any{
 		"name":     "c1",
 		"provider": "openrouter",
 		"base_url": "https://x",
@@ -413,4 +421,56 @@ func TestConnectionUpdate_DoesNotLogKeyValue(t *testing.T) {
 	logs := buf.String()
 	assert.NotContains(t, logs, sentinel, "updated key must never appear in logs")
 	assert.Contains(t, logs, "key_rotated")
+}
+
+// Security (retrofit): the connection_* tools are admin-only now. A non-admin
+// caller is refused on every operation with the standard admin-only message, and
+// the refusal happens before the store is touched (no existence leak).
+func TestConnectionTools_NonAdminForbidden(t *testing.T) {
+	store := newFakeConnStore()
+	// Seed a connection so a read could succeed if the gate were absent.
+	require.NoError(t, store.Create(context.Background(),
+		provider.Connection{Name: "seeded", Provider: "openrouter", BaseURL: "https://x"}, "sk-secret"))
+	srv := newConnServer(t, store, nil)
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"connection_create", map[string]any{"name": "new", "provider": "openrouter", "base_url": "https://y", "api_key": "k"}},
+		{"connection_update", map[string]any{"name": "seeded", "provider": "litellm", "base_url": "https://y"}},
+		{"connection_delete", map[string]any{"name": "seeded"}},
+		{"connection_get", map[string]any{"name": "seeded"}},
+		{"connection_list", nil},
+	} {
+		// callTool injects a NON-admin identity.
+		res := callTool(t, srv, tc.tool, tc.args)
+		require.True(t, res.IsError, "%s must refuse a non-admin", tc.tool)
+		assert.Contains(t, extractText(t, res), "forbidden: admin only", tc.tool)
+	}
+
+	// The non-admin create/delete must not have mutated the store.
+	assert.NotContains(t, store.keys, "new", "forbidden create must not persist")
+	_, err := store.Get(context.Background(), "seeded")
+	assert.NoError(t, err, "forbidden delete must not remove the seeded connection")
+}
+
+// Security (retrofit): an unauthenticated caller (no identity in context) is
+// rejected with "authentication required" on every connection tool.
+func TestConnectionTools_Unauthenticated(t *testing.T) {
+	store := newFakeConnStore()
+	srv := newConnServer(t, store, nil)
+
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"connection_create", map[string]any{"name": "x", "provider": "p", "base_url": "u", "api_key": "k"}},
+		{"connection_get", map[string]any{"name": "x"}},
+		{"connection_list", nil},
+	} {
+		res := callToolCtx(t, srv, context.Background(), tc.tool, tc.args)
+		require.True(t, res.IsError, tc.tool)
+		assert.Contains(t, extractText(t, res), "authentication required", tc.tool)
+	}
 }
