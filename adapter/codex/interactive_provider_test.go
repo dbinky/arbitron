@@ -84,12 +84,13 @@ func TestInteractive_StreamChat_HappyPath(t *testing.T) {
 // HAPPY — Chat folds the same turn to completion into a ChatResponse with the
 // resolved model, conversation id, output text, and token counts.
 func TestInteractive_Chat_HappyPath(t *testing.T) {
+	revealed := false
 	fake := &fakeMCPSession{events: []turnEvent{
 		tokenEv("hello "),
 		tokenEv("world"),
 		doneEv("conv-1", 7, 3),
 	}}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", &revealed))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "hi", WorkDir: "/tmp/ws"})
 	require.NoError(t, err)
@@ -99,6 +100,9 @@ func TestInteractive_Chat_HappyPath(t *testing.T) {
 	assert.Equal(t, "gpt-5-codex", resp.Model)
 	assert.Equal(t, 7, resp.TokensIn)
 	assert.Equal(t, 3, resp.TokensOut)
+
+	// SECURITY: the no-key subscription path must never reveal a key from either fold.
+	assert.False(t, revealed, "codex interactive (Chat fold) must never reveal an API key")
 }
 
 // --- SUCCESS ---------------------------------------------------------------
