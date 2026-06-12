@@ -13,6 +13,10 @@ import (
 // here at compile time.
 var _ mcpSession = (*fakeMCPSession)(nil)
 
+// The stream the fake returns must also satisfy the port — catches a missing
+// method if turnStream ever grows beyond Next.
+var _ turnStream = (*fakeTurnStream)(nil)
+
 // drainStream replays a turnStream to completion, collecting events until the
 // terminal errStreamDone sentinel. A non-terminal error is returned for the
 // caller to assert (failure / context-cancel paths). It mirrors the fold
