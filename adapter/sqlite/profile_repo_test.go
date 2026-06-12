@@ -217,6 +217,25 @@ func TestProfileRepo_CorruptedAxis_ListErrors(t *testing.T) {
 // Edge cases
 // ---------------------------------------------------------------------------
 
+// Edge: zero-value axes (the Go zero value, an empty string, which is NOT the
+// same as ContextDefault/"default") are stored as the "default" literal by
+// axisString. This test checks the raw column values so the normalization
+// invariant is observable at the storage layer, not just via round-trip semantics.
+func TestProfileRepo_AxisNormalization_RawStorage(t *testing.T) {
+	repo, db := newProfileRepo(t)
+	ctx := context.Background()
+	p := provider.Profile{Alias: "norm", Kind: provider.ProfileKindAgent}
+	// ContextWindow and Effort are intentionally left as zero values ("").
+	require.NoError(t, repo.Create(ctx, p))
+
+	var cw, eff string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT context_window, effort FROM profiles WHERE alias = ?", "norm",
+	).Scan(&cw, &eff))
+	assert.Equal(t, "default", cw, "empty ContextWindow must be stored as 'default', not ''")
+	assert.Equal(t, "default", eff, "empty Effort must be stored as 'default', not ''")
+}
+
 // Edge: a chat profile with empty axes and no connection round-trips as the
 // default sentinels (empty == default), the claude-cli no-key shape.
 func TestProfileRepo_DefaultAxesRoundTrip(t *testing.T) {
