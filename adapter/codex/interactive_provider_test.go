@@ -220,11 +220,14 @@ func TestInteractive_StreamChat_NoEffortByDefault(t *testing.T) {
 // --- FAILURE ---------------------------------------------------------------
 
 // FAILURE — a turnFailed frame closes the stream with a terminal Error chunk and
-// NO Done; the deliverable is never reported as written.
+// NO Done; the deliverable is never reported as written. The chunk's error must
+// wrap the underlying turn error so callers can use errors.Is to identify the
+// specific failure cause (rate-limit, auth, model error, etc.).
 func TestInteractive_StreamChat_TurnFailed_ErrorNoDone(t *testing.T) {
+	turnErr := errors.New("model overloaded")
 	fake := &fakeMCPSession{events: []turnEvent{
 		tokenEv("partial"),
-		failedEv(errors.New("model overloaded")),
+		failedEv(turnErr),
 	}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
@@ -235,18 +238,23 @@ func TestInteractive_StreamChat_TurnFailed_ErrorNoDone(t *testing.T) {
 	require.NotEmpty(t, chunks)
 	last := chunks[len(chunks)-1]
 	assert.Error(t, last.Error, "a failed turn must surface a terminal error chunk")
+	assert.ErrorIs(t, last.Error, turnErr, "the error chunk must wrap the underlying turn error (%%w, not %%v)")
 	for _, c := range chunks {
 		assert.False(t, c.Done, "a failed turn must never emit a clean Done")
 	}
 }
 
 // FAILURE — Chat surfaces a failed turn as a hard error (no silent empty result).
+// The returned error must wrap the underlying turn error so callers can use
+// errors.Is for retry/classification logic.
 func TestInteractive_Chat_TurnFailed_HardError(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{failedEv(errors.New("boom"))}}
+	turnErr := errors.New("boom")
+	fake := &fakeMCPSession{events: []turnEvent{failedEv(turnErr)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, turnErr, "Chat must wrap the underlying turn error (%%w, not %%v)")
 	assert.Nil(t, resp, "a failed turn must not return a partial ChatResponse")
 }
 
