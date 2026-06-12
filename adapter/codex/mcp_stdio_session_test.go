@@ -153,6 +153,32 @@ func TestMapNotification_Error_UnknownEventTypeIgnored(t *testing.T) {
 	assert.False(t, ok, "an unknown codex event type must be ignored, not mis-mapped")
 }
 
+// ERROR — a codex-event notification whose payload cannot be decoded fails
+// CLOSED as a terminal failure (ok=true, kind=turnFailed) rather than being
+// silently dropped. A silently-dropped frame would let the stream end in a
+// clean Done even though a malformed event arrived — a partial-success lie.
+// We exercise this by injecting a non-marshalable value into AdditionalFields
+// (bypassing the JSON-round-tripping notif() helper intentionally).
+func TestMapNotification_Error_MalformedPayloadFailsClosed(t *testing.T) {
+	n := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: codexEventNotificationMethod,
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{
+					"type": make(chan int), // channels are not JSON-serialisable
+				},
+			},
+		},
+	}
+
+	ev, ok := mapNotification(n)
+	require.True(t, ok, "a malformed payload must NOT be silently dropped (fail closed)")
+	assert.Equal(t, turnFailed, ev.Kind, "a malformed payload must produce a terminal failure, not a silent drop")
+	require.Error(t, ev.Err)
+	assert.Contains(t, ev.Err.Error(), "codex mcp-server")
+}
+
 // --- mapNotification: EDGE -------------------------------------------------
 
 // EDGE — an agent_message with empty text is ignored: an empty increment must

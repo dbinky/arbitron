@@ -17,6 +17,7 @@ _(none)_
 - **FA#2 Pass 2 — no compile-time check for fakeTurnStream implementing turnStream.** The fake's stream type was only implicitly checked via the `Start()` return type. Added `var _ turnStream = (*fakeTurnStream)(nil)` alongside the existing mcpSession check so any future interface expansion is caught at the test-seam level.
 - **FA#3 Pass 1 — compatible probe + launch fails was untested.** `mcpStdioSession.Start` has three fail-closed paths (empty WorkDir, incompatible probe, compatible probe but exec fails). Only the first two were tested. Added `TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe` using `multiRunner{compatibleProbe()}` to exercise the third path: probe passes, but `/nonexistent/codex mcp-server` fails at OS exec time.
 - **FA#3 Pass 1 — WorkDir guard ordering not asserted.** `TestMCPStdioSession_Error_EmptyWorkDirFailsClosed` verified the error sentinel but did not assert that the runner was never called. Added `assert.False(t, runner.runCalled)` to prove the WorkDir guard fires before the probe, not after.
+- **FA#3 Pass 2 — malformed notification payload fail-closed path untested.** `mapNotification` maps a decode error to `(turnFailed, ok=true)` — fail-closed so a corrupted mcp frame never silently drops from the stream. This path had no test. Added `TestMapNotification_Error_MalformedPayloadFailsClosed` using a non-marshalable channel value in `AdditionalFields` to force the decode error and assert `turnFailed` is returned (not a silent drop).
 
 ## Won't Fix (Beyond Current Scope)
 
