@@ -521,24 +521,32 @@ func TestInteractive_Approval_UnknownKind_Denied(t *testing.T) {
 
 // EDGE — empty WorkDir fails closed with ErrWorkDirRequired and NO stream; the
 // session is never even started.
+// SECURITY — the no-key invariant holds on this error path too: RevealKey must
+// not be called even before the guard, because startTurn touches p.binding only
+// for Model (field read, no RevealKey).
 func TestInteractive_StreamChat_EmptyWorkDir(t *testing.T) {
+	revealed := false
 	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", &revealed))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: ""})
 	assert.Nil(t, ch)
 	assert.ErrorIs(t, err, ErrWorkDirRequired)
 	assert.False(t, fake.startCalled, "an empty WorkDir must not start a session")
+	assert.False(t, revealed, "the no-key invariant must hold on error paths — RevealKey must never be called")
 }
 
 // EDGE — empty WorkDir fails closed on Chat too.
+// SECURITY — RevealKey must not be called even on this early error path.
 func TestInteractive_Chat_EmptyWorkDir(t *testing.T) {
+	revealed := false
 	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", &revealed))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: ""})
 	assert.Nil(t, resp)
 	assert.ErrorIs(t, err, ErrWorkDirRequired)
+	assert.False(t, revealed, "the no-key invariant must hold on error paths — RevealKey must never be called")
 }
 
 // EDGE — a cancelled context mid-stream unblocks the sender and reaps the child;
