@@ -93,16 +93,22 @@ func TestDecide_Patch_Adversarial_DotDotEscape_Denied(t *testing.T) {
 	p := newTestPolicy()
 	d := p.decide(approvalRequest{WritePaths: []string{"docs/../domain/x.go"}})
 	assert.False(t, d.Allow)
-	assert.NotEmpty(t, d.Reason)
+	// Reason must identify the offending raw path so the slog trace is actionable.
+	assert.Contains(t, d.Reason, "docs/../domain/x.go")
 }
 
 func TestDecide_Patch_Adversarial_AbsoluteOutside_Denied(t *testing.T) {
 	p := newTestPolicy()
-	d := p.decide(approvalRequest{WritePaths: []string{filepath.FromSlash("/etc/passwd")}})
+	offender := filepath.FromSlash("/etc/passwd")
+	d := p.decide(approvalRequest{WritePaths: []string{offender}})
 	assert.False(t, d.Allow)
-	assert.NotEmpty(t, d.Reason)
+	assert.Contains(t, d.Reason, offender, "denial reason must name the offending absolute path")
 }
 
+// GUARDRAIL — the canonical "codex tries to edit source mid-interview" scenario.
+// A multi-file patch with even one path outside docs/ is denied in full; the
+// Reason must identify the source file that triggered the denial so the operator
+// can audit it via slog.
 func TestDecide_Patch_Adversarial_MixedMultiFile_DeniedWholesale(t *testing.T) {
 	p := newTestPolicy()
 	d := p.decide(approvalRequest{WritePaths: []string{
@@ -110,7 +116,7 @@ func TestDecide_Patch_Adversarial_MixedMultiFile_DeniedWholesale(t *testing.T) {
 		"cmd/main.go",
 	}})
 	assert.False(t, d.Allow)
-	assert.NotEmpty(t, d.Reason)
+	assert.Contains(t, d.Reason, "cmd/main.go", "denial reason must name the offending path, not the allowed one")
 }
 
 func TestDecide_Patch_Edge_RootItself_Denied(t *testing.T) {
