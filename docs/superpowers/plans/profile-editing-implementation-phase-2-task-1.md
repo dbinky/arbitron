@@ -200,8 +200,8 @@ func TestDynamicResolver_ResolveCarriesAxes(t *testing.T) {
 	store := newFakeStore( // in-memory ProfileStore fake
 		provider.Profile{Alias: "coder", Kind: provider.ProfileKindAgent, Backend: "claude-code",
 			Model: "opus-4.8", ContextWindow: provider.Context1M, Effort: provider.EffortHigh})
-	cache := NewProfileCache()
-	if err := cache.Load(context.Background(), store); err != nil { t.Fatal(err) }
+	cache := NewProfileCache(store)            // store bound at construction
+	if err := cache.Load(context.Background()); err != nil { t.Fatal(err) }
 	r := NewDynamicProfileResolver(cache, nil)
 	b, err := r.Resolve(context.Background(), "coder")
 	if err != nil || b.ContextWindow != provider.Context1M || b.Effort != provider.EffortHigh {
@@ -209,14 +209,14 @@ func TestDynamicResolver_ResolveCarriesAxes(t *testing.T) {
 	}
 }
 
-func TestDynamicResolver_ReloadReflectsMutation(t *testing.T) {
+func TestProfileCache_ReloadReflectsMutation(t *testing.T) {
 	store := newFakeStore()
-	cache := NewProfileCache()
-	cache.Load(context.Background(), store)
+	cache := NewProfileCache(store)
+	cache.Load(context.Background())
 	r := NewDynamicProfileResolver(cache, nil)
 	if _, err := r.Resolve(context.Background(), "coder"); err == nil { t.Fatal("expected unknown") }
 	store.put(provider.Profile{Alias: "coder", Kind: provider.ProfileKindChat})
-	cache.Load(context.Background(), store) // recache
+	if err := cache.Reload(context.Background()); err != nil { t.Fatal(err) } // recache (== Load)
 	if _, err := r.Resolve(context.Background(), "coder"); err != nil { t.Fatalf("after reload: %v", err) }
 }
 ```
@@ -235,15 +235,22 @@ import (
 	dprovider "github.com/arbitron/arbitron/domain/provider"
 )
 
+// ProfileCache binds the store at construction so it satisfies the Phase-4
+// dprovider.Reloader interface (Reload(ctx) error) directly — the ProfileService
+// recache hook calls Reload after every successful write.
 type ProfileCache struct {
+	store   dprovider.ProfileStore
 	mu      sync.RWMutex
 	byAlias map[string]dprovider.Profile
 }
 
-func NewProfileCache() *ProfileCache { return &ProfileCache{byAlias: map[string]dprovider.Profile{}} }
+func NewProfileCache(store dprovider.ProfileStore) *ProfileCache {
+	return &ProfileCache{store: store, byAlias: map[string]dprovider.Profile{}}
+}
 
-func (c *ProfileCache) Load(ctx context.Context, store dprovider.ProfileStore) error {
-	list, err := store.List(ctx)
+// Load (re)populates the cache from the bound store.
+func (c *ProfileCache) Load(ctx context.Context) error {
+	list, err := c.store.List(ctx)
 	if err != nil { return err }
 	m := make(map[string]dprovider.Profile, len(list))
 	for _, p := range list { m[p.Alias] = p }
@@ -251,13 +258,16 @@ func (c *ProfileCache) Load(ctx context.Context, store dprovider.ProfileStore) e
 	return nil
 }
 
+// Reload is the recache hook (alias of Load) satisfying dprovider.Reloader.
+func (c *ProfileCache) Reload(ctx context.Context) error { return c.Load(ctx) }
+
 func (c *ProfileCache) get(alias string) (dprovider.Profile, bool) {
 	c.mu.RLock(); defer c.mu.RUnlock()
 	p, ok := c.byAlias[alias]; return p, ok
 }
 ```
 
-- [ ] **Step 4: Implement `dynamic.go`** — copy the resolve chain from `static.go` but read `cache.get(alias)` instead of the immutable map, and copy `ContextWindow`/`Effort` onto both binding branches (no-key and connection-backed). Keep `Kind(alias)` zero-I/O via `cache.get`. Add a `Reload(ctx)` method delegating to `cache.Load(ctx, store)` (store captured at construction).
+- [ ] **Step 4: Implement `dynamic.go`** — copy the resolve chain from `static.go` but read `cache.get(alias)` instead of the immutable map, and copy `ContextWindow`/`Effort` onto both binding branches (no-key and connection-backed). Keep `Kind(alias)` zero-I/O via `cache.get`. The resolver may also expose `Reload(ctx)` delegating to `cache.Reload(ctx)` for callers that hold only the resolver.
 
 - [ ] **Step 5: Run, verify pass; race test** — `go test ./adapter/provider/ -race -v`
 
@@ -324,7 +334,7 @@ func SeedProfiles(ctx context.Context, store provider.ProfileStore, rules provid
 }
 ```
 
-- [ ] **Step 4: Wire into `initDomain`** — after building `connStore`, capability `rules` (from `config.LoadCapabilityRules(cfg.CapabilitiesPath)`), build `profileRepo := sqlite.NewProfileRepo(db)`; gather candidates `configadapter.ProfilesFromConfig(cfg.Profiles)` (∪ defaults already merged by the loader); call `SeedProfiles(ctx, profileRepo, rules, candidates)` and `slog`-log seeded/skipped counts; `cache := providersadapter.NewProfileCache(); cache.Load(ctx, profileRepo)`; `profileResolver := providersadapter.NewDynamicProfileResolver(cache, connStore)`. Replace the old `NewStaticProfileResolver` usage; keep `NewResolverChecker(profileResolver)` and downstream wiring identical. Add a `CapabilitiesPath` field to `domain/config/config.go` (default `~/.arbitron/capabilities.yaml`, resolved like other paths).
+- [ ] **Step 4: Wire into `initDomain`** — after building `connStore`, capability `rules` (from `config.LoadCapabilityRules(cfg.CapabilitiesPath)`), build `profileRepo := sqlite.NewProfileRepo(db)`; gather candidates `configadapter.ProfilesFromConfig(cfg.Profiles)` (∪ defaults already merged by the loader); call `SeedProfiles(ctx, profileRepo, rules, candidates)` and `slog`-log seeded/skipped counts; `cache := providersadapter.NewProfileCache(profileRepo); cache.Load(ctx)`; `profileResolver := providersadapter.NewDynamicProfileResolver(cache, connStore)`. Keep a reference to `cache` — it is injected into the Phase-4 `ProfileService` as the `Reloader`. Replace the old `NewStaticProfileResolver` usage; keep `NewResolverChecker(profileResolver)` and downstream wiring identical. Add a `CapabilitiesPath` field to `domain/config/config.go` (default `~/.arbitron/capabilities.yaml`, resolved like other paths).
 
 - [ ] **Step 5: Build + full provider/sqlite/cmd tests** — `go build ./... && go test ./domain/provider/... ./adapter/provider/... ./adapter/sqlite/... ./cmd/...`
 

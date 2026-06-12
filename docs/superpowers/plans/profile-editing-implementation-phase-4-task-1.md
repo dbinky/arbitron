@@ -54,7 +54,7 @@ func TestProfileService_ListReadOpenToAuthenticated(t *testing.T) {
 
 - [ ] **Step 2: Run, verify fail.**
 
-- [ ] **Step 3: Implement `profile_service.go`**
+- [ ] **Step 3a: Create the shared `domain/provider/authz.go`** (sentinels + helpers used by BOTH services — declare them once here, not in each service file):
 
 ```go
 package provider
@@ -65,19 +65,42 @@ import (
 	"github.com/arbitron/arbitron/domain/identity"
 )
 
-// Reuse the canonical authz sentinels so errors.Is matches across surfaces.
+// Reuse the canonical authz sentinels so errors.Is matches across surfaces
+// (identity → instance → provider all alias the same vars). domain/identity
+// imports nothing from domain/provider, so there is no import cycle.
 var (
 	ErrUnauthenticated = identity.ErrUnauthenticated
 	ErrForbidden       = identity.ErrForbidden
 )
+
+func requireAuthed(ctx context.Context) (identity.Identity, error) {
+	id, ok := identity.FromContext(ctx)
+	if !ok { return identity.Identity{}, ErrUnauthenticated }
+	return id, nil
+}
+func requireAdmin(ctx context.Context) error {
+	id, err := requireAuthed(ctx); if err != nil { return err }
+	if !id.IsAdmin() { return ErrForbidden }
+	return nil
+}
+
+// Reloader is the recache hook the ProfileService calls after a successful
+// write. The adapter ProfileCache (Phase 2) satisfies it via Reload(ctx).
+type Reloader interface{ Reload(ctx context.Context) error }
+```
+
+- [ ] **Step 3b: Implement `profile_service.go`**
+
+```go
+package provider
+
+import "context"
 
 // Effective is the floored, runtime-effective view echoed back on a write.
 type Effective struct {
 	ContextWindow ContextWindow
 	Effort        Effort
 }
-
-type Reloader interface{ Reload(ctx context.Context) error }
 
 type ProfileService struct {
 	store    ProfileStore
@@ -89,23 +112,12 @@ func NewProfileService(store ProfileStore, rules CapabilityRules, reloader Reloa
 	return &ProfileService{store: store, rules: rules, reloader: reloader}
 }
 
-func (s *ProfileService) requireAuthed(ctx context.Context) (identity.Identity, error) {
-	id, ok := identity.FromContext(ctx)
-	if !ok { return identity.Identity{}, ErrUnauthenticated }
-	return id, nil
-}
-func (s *ProfileService) requireAdmin(ctx context.Context) error {
-	id, err := s.requireAuthed(ctx); if err != nil { return err }
-	if !id.IsAdmin() { return ErrForbidden }
-	return nil
-}
-
 func (s *ProfileService) List(ctx context.Context) ([]Profile, error) {
-	if _, err := s.requireAuthed(ctx); err != nil { return nil, err }
+	if _, err := requireAuthed(ctx); err != nil { return nil, err }
 	return s.store.List(ctx)
 }
 func (s *ProfileService) Get(ctx context.Context, alias string) (Profile, error) {
-	if _, err := s.requireAuthed(ctx); err != nil { return Profile{}, err }
+	if _, err := requireAuthed(ctx); err != nil { return Profile{}, err }
 	return s.store.Get(ctx, alias)
 }
 
@@ -117,7 +129,7 @@ func (s *ProfileService) Update(ctx context.Context, p Profile) (Profile, Effect
 }
 
 func (s *ProfileService) write(ctx context.Context, p Profile, persist func(context.Context, Profile) error) (Profile, Effective, error) {
-	if err := s.requireAdmin(ctx); err != nil { return Profile{}, Effective{}, err }
+	if err := requireAdmin(ctx); err != nil { return Profile{}, Effective{}, err }
 	backend := p.Backend
 	if backend == "" && p.ConnectionRef == "" { backend = "claude-cli" }
 	effTier, effEffort, err := s.rules.Validate(backend, p.Model, p.ContextWindow, p.Effort)
@@ -128,7 +140,7 @@ func (s *ProfileService) write(ctx context.Context, p Profile, persist func(cont
 }
 
 func (s *ProfileService) Delete(ctx context.Context, alias string) error {
-	if err := s.requireAdmin(ctx); err != nil { return err }
+	if err := requireAdmin(ctx); err != nil { return err }
 	if err := s.store.Delete(ctx, alias); err != nil { return err }
 	_ = s.reloader.Reload(ctx)
 	return nil
@@ -136,7 +148,7 @@ func (s *ProfileService) Delete(ctx context.Context, alias string) error {
 
 // Capabilities exposes the rules for the provider_capabilities read tool.
 func (s *ProfileService) Capabilities(ctx context.Context) (CapabilityRules, error) {
-	if _, err := s.requireAuthed(ctx); err != nil { return CapabilityRules{}, err }
+	if _, err := requireAuthed(ctx); err != nil { return CapabilityRules{}, err }
 	return s.rules, nil
 }
 ```
@@ -167,7 +179,7 @@ func TestConnectionService_AdminGate(t *testing.T) {
 
 - [ ] **Step 2: Run, verify fail.**
 
-- [ ] **Step 3: Implement `connection_service.go`** — wrap `ConnectionStore`; every method calls `requireAdmin(ctx)` (reuse the identity helpers; factor `requireAdmin` into a small shared file `authz.go` in `domain/provider` so both services share it) then delegates. Signatures mirror the store: `Create(ctx, Connection, apiKey string)`, `Update(ctx, Connection, *string)`, `Delete(ctx, name)`, `Get(ctx, name)`, `List(ctx)`. Do **not** expose `Reveal`.
+- [ ] **Step 3: Implement `connection_service.go`** — wrap `ConnectionStore`; every method calls the shared `requireAdmin(ctx)` from `authz.go` (created in Task 1 Step 3a) then delegates. Signatures mirror the store: `Create(ctx, Connection, apiKey string)`, `Update(ctx, Connection, *string)`, `Delete(ctx, name)`, `Get(ctx, name)`, `List(ctx)`. Do **not** expose `Reveal`. (If implementing Task 2 before Task 1, create `authz.go` here instead — it must exist exactly once.)
 
 - [ ] **Step 4: Run, verify pass.**
 
@@ -253,7 +265,7 @@ The create/update success result includes `{"status":"created","profile":<meta>,
 - Modify: `cmd/arbitron/main.go` (`initDomain` — construct services, inject into `Deps`)
 - Test: `adapter/mcp/profile_authz_e2e_test.go` (mirror `authz_e2e_test.go`)
 
-- [ ] **Step 1:** Build `provider.NewProfileService(profileRepo, rules, cache)` (the `cache` from Phase 2 Task 4 satisfies `Reloader` via its `Load`-backed `Reload`; add a `Reload(ctx)` method on `*ProfileCache` that calls `Load(ctx, store)` with the store captured at construction — adjust `NewProfileCache` to take the store, or wrap). Build `provider.NewConnectionService(connStore)`. Set `deps.ProfileAdmin`, `deps.ConnectionAdmin`, `deps.Capabilities`.
+- [ ] **Step 1:** Build `provider.NewProfileService(profileRepo, rules, cache)` — the `cache` from Phase 2 Task 4 (`*ProfileCache`, store bound at construction) satisfies `provider.Reloader` directly via its `Reload(ctx)` method, so it is passed verbatim. Build `provider.NewConnectionService(connStore)`. Set `deps.ProfileAdmin`, `deps.ConnectionAdmin`, `deps.Capabilities`.
 - [ ] **Step 2: Write e2e test** — admin vs non-admin across every profile_* and connection_* tool; recache visibility (update a profile, resolve reflects it); effective echo present; `provider_capabilities` readable by non-admin; no secret in any connection response.
 - [ ] **Step 3: Build + full suite** — `go build ./... && make test`
 - [ ] **Step 4: Commit** — `git commit -m "feat(cmd): wire profile/connection admin services into MCP"`
@@ -263,4 +275,4 @@ The create/update success result includes `{"status":"created","profile":<meta>,
 ## Self-Review (Phase 4)
 - **Spec coverage:** §5 write-time validation + effective echo → Task 1/3; §6 admin-only mutation (profiles+connections), read-open profiles, admin-only connections, local-implicit-admin → Tasks 1-4 (+ middleware already injects admin locally); §7 recache → Task 1/5; `provider_capabilities` discovery → Task 3. ✓
 - **Type consistency:** `ProfileService`/`ConnectionService`/`Effective`/`Reloader`/`profileErrorResult` align with design Phase 4; `Reloader` satisfied by `*ProfileCache.Reload` from Phase 2. ✓
-- **Placeholder scan:** none. `ProfileCache` gains a store-bound `Reload` (note in Task 5 Step 1) — fold into Phase 2 Task 4 if implementing in order.
+- **Placeholder scan:** none. `ProfileCache` is store-bound and satisfies `provider.Reloader` directly (Phase 2 Task 4), so Task 5 passes the cache verbatim — no adapter glue needed.
