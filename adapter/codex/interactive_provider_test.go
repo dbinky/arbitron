@@ -142,6 +142,34 @@ func TestInteractive_Chat_ResumeID(t *testing.T) {
 	assert.Equal(t, "conv-1", resp.SessionID, "terminal SessionID must round-trip back out through Chat")
 }
 
+// SUCCESS / LIFECYCLE — spawn-per-turn: each StreamChat call must create a fresh
+// mcpSession via the factory. If the provider cached the session (e.g. sync.Once),
+// the second turn would reuse the first turn's Approver (stale WorkDir-scoped
+// policy) and share an exhausted stream. The factory call count must equal the
+// number of turns.
+func TestInteractive_SpawnPerTurn_FreshSessionEachStreamChat(t *testing.T) {
+	var callCount int
+	factory := func() mcpSession {
+		callCount++
+		return &fakeMCPSession{events: []turnEvent{doneEv("conv-x", 1, 1)}}
+	}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
+		factory,
+	)
+	req := engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"}
+
+	ch1, err := p.StreamChat(context.Background(), req)
+	require.NoError(t, err)
+	collectChunks(t, ch1)
+
+	ch2, err := p.StreamChat(context.Background(), req)
+	require.NoError(t, err)
+	collectChunks(t, ch2)
+
+	assert.Equal(t, 2, callCount, "spawn-per-turn: two StreamChat calls must create two independent sessions, not reuse one")
+}
+
 // SUCCESS — a non-empty req.Model overrides the binding's model.
 func TestInteractive_StreamChat_RequestModelOverridesBinding(t *testing.T) {
 	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
