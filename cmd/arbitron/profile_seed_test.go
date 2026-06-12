@@ -194,6 +194,22 @@ func TestSeedProfiles_CountErrorPropagates(t *testing.T) {
 	assert.Equal(t, 0, store.createCalls, "Count failure must abort before any Create is attempted")
 }
 
+// Failure (Pass 2): a profile with an empty backend but a non-empty ConnectionRef
+// does NOT get the claude-cli backend substitution (that only applies to the
+// no-connection path). An empty backend passed to rules.Validate is unknown and
+// the profile is skipped. This exercises the boundary of the substitution guard.
+func TestSeedProfiles_EmptyBackendWithConnectionSkipped(t *testing.T) {
+	store := newSeedFakeStore()
+	in := []provider.Profile{
+		{Alias: "cloud", Kind: provider.ProfileKindAgent, ConnectionRef: "my-conn"}, // backend="" conn!=""
+		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},       // valid
+	}
+	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "only the explicit-backend candidate is seeded")
+	assert.Equal(t, 1, skipped, "empty backend + non-empty connection is skipped (no substitution)")
+}
+
 // Edge: no candidates on an empty table seeds nothing without error.
 func TestSeedProfiles_NoCandidates(t *testing.T) {
 	store := newSeedFakeStore()
