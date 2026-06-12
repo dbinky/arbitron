@@ -73,11 +73,13 @@ const (
 // Callers match it with errors.Is.
 var ErrInvalidEffort = errors.New("provider: invalid effort")
 
-// effortRank orders the graded levels for floor logic. EffortDefault is unranked
-// (rank 0) because it sits outside the graded order; the graded order is
-// none < low < medium < high < xhigh < max.
+// effortRank orders the GRADED levels for floor logic: low < medium < high <
+// xhigh < max. EffortDefault and EffortNone are deliberately absent (rank 0,
+// the missing-key zero) because they sit OUTSIDE the graded order — default emits
+// nothing and none explicitly disables reasoning, and floorToHighest skips both
+// so neither is ever a floor target. A ranked none entry would be dead anyway
+// (floorToHighest filters it before the rank is consulted), so it is not listed.
 var effortRank = map[Effort]int{
-	EffortNone:   1,
 	EffortLow:    2,
 	EffortMedium: 3,
 	EffortHigh:   4,

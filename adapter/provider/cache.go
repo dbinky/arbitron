@@ -32,12 +32,12 @@ func NewProfileCache(store provider.ProfileStore) *ProfileCache {
 type fixedProfileStore struct{ profiles []provider.Profile }
 
 func (s fixedProfileStore) Create(context.Context, provider.Profile) error {
-	return provider.ErrProfileExists
+	return provider.ErrReadOnlyStore
 }
 func (s fixedProfileStore) Update(context.Context, provider.Profile) error {
-	return provider.ErrProfileNotFound
+	return provider.ErrReadOnlyStore
 }
-func (s fixedProfileStore) Delete(context.Context, string) error { return provider.ErrProfileNotFound }
+func (s fixedProfileStore) Delete(context.Context, string) error { return provider.ErrReadOnlyStore }
 func (s fixedProfileStore) Get(_ context.Context, alias string) (provider.Profile, error) {
 	for _, p := range s.profiles {
 		if p.Alias == alias {

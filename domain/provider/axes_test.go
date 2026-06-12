@@ -77,8 +77,11 @@ func TestEffort_Valid(t *testing.T) {
 	assert.False(t, provider.Effort("").Valid(), "empty string is not a valid Effort constant (parse normalises separately)")
 }
 
-// GreaterThan: the full graded order is none < low < medium < high < xhigh < max;
-// EffortDefault sits outside the order (never greater, nothing is greater than it).
+// GreaterThan: the graded order is low < medium < high < xhigh < max. EffortNone
+// and EffortDefault sit OUTSIDE the graded order (unranked, rank 0): nothing
+// floors down to them, but GreaterThan still reports the graded levels as greater
+// than the rank-0 none (low > none) since none is the unreasoning floor of the
+// comparison — it is never a floor TARGET (floorToHighest skips it).
 func TestEffort_GreaterThan(t *testing.T) {
 	tests := []struct {
 		e, o     provider.Effort

@@ -123,6 +123,56 @@ func TestValidate_NonePassthrough(t *testing.T) {
 	assert.Equal(t, provider.EffortNone, eff)
 }
 
+// none/default are UNIVERSAL: they validate on every backend regardless of
+// whether the backend's effort_levels lists them — the list governs only the
+// GRADED levels (low..max). The YAML therefore does not (and must not) list
+// `none` per-backend; the code handles none/default in the short-circuit before
+// the allowlist check. This table pins that contract across the real backend
+// shapes, including the opencode shape (effort_levels: [default] only) where
+// `none` validates clean and Emit produces nothing — a documented DELIBERATE
+// no-op, not a silent accept-then-ignore.
+func TestValidate_NoneAndDefaultUniversalAcrossBackends(t *testing.T) {
+	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		// Full-axis claude shape: lists graded levels, never `none`.
+		"claude-code": {
+			Backend:      "claude-code",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault, provider.Context200K, provider.Context1M},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh, provider.EffortMax},
+		},
+		// codex shape: graded up to xhigh, no `none` in the list.
+		"codex": {
+			Backend:      "codex",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortLow, provider.EffortMedium, provider.EffortHigh, provider.EffortXHigh},
+		},
+		// opencode shape: ONLY default; no graded levels and no `none` listed.
+		"opencode": {
+			Backend:      "opencode",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault},
+		},
+	})
+
+	backends := []string{"claude-code", "codex", "opencode"}
+	for _, backend := range backends {
+		for _, eff := range []provider.Effort{provider.EffortNone, provider.EffortDefault} {
+			t.Run(backend+"/"+string(eff), func(t *testing.T) {
+				_, got, err := r.Validate(backend, "any-model", provider.ContextDefault, eff)
+				require.NoError(t, err, "%s/%s must validate without a YAML effort_levels entry", backend, eff)
+				assert.Equal(t, eff, got, "none/default pass through unchanged")
+			})
+		}
+	}
+
+	// Documented no-op: `none` on opencode validates, but Emit produces nothing
+	// (opencode is deferred), so the knob is a deliberate no-op rather than a
+	// silent accept-then-ignore of a graded value.
+	em, err := r.Emit("opencode", "any-model", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	assert.Nil(t, em.Env, "opencode none emits no env")
+	assert.Nil(t, em.Args, "opencode none emits no args")
+}
+
 // Unknown model: a model not in ModelOverrides falls back to backend rules; it
 // is not an error.
 func TestValidate_UnknownModel_FallsBackToBackend(t *testing.T) {

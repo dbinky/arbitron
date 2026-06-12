@@ -1,18 +1,25 @@
+# `none` is UNIVERSAL — it explicitly disables reasoning and is handled in code
+# (Validate short-circuits none/default before the allowlist), so it is valid on
+# every backend and is intentionally NOT listed in any effort_levels. Listing
+# `none` per-backend implied the list governed it, which contradicted the code:
+# e.g. opencode lists no graded levels, yet `effort: none` validates and is a
+# deliberate no-op on the deferred emit path. effort_levels now governs only the
+# graded levels (default is the universal "emit nothing" baseline).
 backends:
   claude-code:
     context_tiers: [default, 200k, 1m]
-    effort_levels: [default, none, low, medium, high, xhigh, max]
+    effort_levels: [default, low, medium, high, xhigh, max]
     model_overrides:
       # Sonnet 4.6 has no xhigh; floor it to high.
       sonnet-4.6:
-        effort_levels: [default, none, low, medium, high, max]
+        effort_levels: [default, low, medium, high, max]
         effort_floor: { xhigh: high }
   claude-cli:
     context_tiers: [default, 200k, 1m]
-    effort_levels: [default, none, low, medium, high, xhigh, max]
+    effort_levels: [default, low, medium, high, xhigh, max]
   codex:
     context_tiers: [default]
-    effort_levels: [default, none, low, medium, high, xhigh]
+    effort_levels: [default, low, medium, high, xhigh]
   opencode:
     context_tiers: [default]
     effort_levels: [default]

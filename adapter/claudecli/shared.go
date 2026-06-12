@@ -3,6 +3,7 @@ package claudecli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -100,12 +101,20 @@ func validateWorkDir(workDir, workspaceRoot string) error {
 //
 // applyCapabilityEnv only errors on a non-empty ruleset with an unknown backend;
 // a zero/empty binding falls back to claudeBackend (known), so this cannot error
-// in practice. A defensive error is swallowed (the base env is still returned)
-// rather than surfaced, because the chat spec builder has no error channel and a
-// missing non-secret policy knob must never block a chat turn.
+// in practice. A defensive error is logged at WARN (with the backend+model) and
+// then the bare base env is returned, because the chat spec builder has no error
+// channel and a missing non-secret policy knob must never block a chat turn. The
+// WARN log makes the misconfiguration observable on the chat path, matching the
+// agent path (which surfaces the error) — same input must not fail two different,
+// invisible ways. (Bridge: when the resolver owns flooring the emit step becomes
+// total and this swallow disappears entirely.)
 func (c *adapterCore) chatEnvWithBinding(binding provider.ResolvedBinding) []string {
 	env, err := applyCapabilityEnv(procenv.BaseEnv(), binding, c.rules)
 	if err != nil {
+		slog.Warn("claudecli: chat capability env emission failed; proceeding with the base env (no axis additions)",
+			slog.String("backend", binding.Backend),
+			slog.String("model", binding.Model),
+			slog.String("error", err.Error()))
 		return procenv.BaseEnv()
 	}
 	return env

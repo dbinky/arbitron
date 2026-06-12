@@ -13,6 +13,15 @@ var ErrProfileExists = errors.New("provider: profile already exists")
 // profile with the given alias exists. Callers match it with errors.Is.
 var ErrProfileNotFound = errors.New("provider: profile not found")
 
+// ErrReadOnlyStore is returned by the mutating methods (Create/Update/Delete) of
+// a read-only ProfileStore (e.g. the fixed in-memory fixture backing a cache over
+// an immutable profile set). It honestly describes "this store does not mutate"
+// rather than borrowing ErrProfileExists/ErrProfileNotFound, which describe a
+// missing/duplicate alias — a caller branching on those (e.g. retry-on-conflict)
+// against a read-only store would otherwise loop or misbehave. Callers match it
+// with errors.Is.
+var ErrReadOnlyStore = errors.New("provider: profile store is read-only")
+
 // ProfileStore is the driven port for profile persistence. It is a DUMB
 // persistence port: capability validation (against the CapabilityRules) lives in
 // the Phase-4 ProfileService and the startup seed path, NOT here. The store
