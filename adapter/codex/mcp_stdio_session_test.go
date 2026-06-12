@@ -181,6 +181,22 @@ func TestMapNotification_Error_MalformedPayloadFailsClosed(t *testing.T) {
 
 // --- mapNotification: EDGE -------------------------------------------------
 
+// EDGE — a turn.failed notification with no error object and no message still
+// produces a turnFailed with a non-empty cause. turnError's "turn failed"
+// fallback ensures the stream never terminates with an empty-cause error that
+// would misrepresent the failure mode.
+func TestMapNotification_Edge_TurnFailedNoMessageFallback(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, map[string]any{
+		"type": codexTurnFailed,
+		// no "error" object, no "message" field
+	})
+	ev, ok := mapNotification(n)
+	require.True(t, ok)
+	assert.Equal(t, turnFailed, ev.Kind)
+	require.Error(t, ev.Err)
+	assert.NotEmpty(t, ev.Err.Error(), "turn.failed with no message must never produce an empty error cause")
+}
+
 // EDGE — an agent_message with empty text is ignored: an empty increment must
 // not be surfaced as a token.
 func TestMapNotification_Edge_EmptyTextIgnored(t *testing.T) {

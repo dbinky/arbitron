@@ -21,6 +21,7 @@ _(none)_
 - **FA#4 Pass 1 — conversationID thread_id fallback untested.** `conversationID` prefers `conversation_id` and falls back to `thread_id` for session resume, but the fallback path had no test. Added `TestMapNotification_Edge_TurnCompletedWithThreadIDFallback` to assert that a `turn.completed` with only `thread_id` still produces a `turnDone` with the thread id as `SessionID`.
 - **FA#4 Pass 1 — agentText top-level message fallback untested.** `agentText` falls back to `ev.Message` when `item.text` is absent — if broken, tokens would be silently dropped. Added `TestMapNotification_Edge_AgentMessageFallsBackToTopLevelMessage` to exercise the fallback path.
 - **FA#4 Pass 1 — mapApprovalRequest both-present precedence untested.** When both `command` and `paths` are present (ambiguous payload), command takes precedence. Without a test, removing the command-first switch case would silently change behavior. Added `TestMapApprovalRequest_Edge_CommandTakesPrecedenceOverPaths` to pin the precedence.
+- **FA#4 Pass 2 — turnError empty-message fallback untested.** A `turn.failed` or `error` event with neither a nested error message nor a top-level message produces `fmt.Errorf("codex turn failed: turn failed")` via the fallback string. Without a test, a refactor that removed the fallback would silently produce empty-cause failures. Added `TestMapNotification_Edge_TurnFailedNoMessageFallback` to assert the error is always non-empty.
 
 ## Won't Fix (Beyond Current Scope)
 
