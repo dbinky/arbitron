@@ -41,6 +41,8 @@ func TestWithinRoot(t *testing.T) {
 		{"absolute outside repo", filepath.FromSlash("/etc/passwd"), false},
 		{"absolute in repo but outside root", filepath.FromSlash("/repo/domain/x.go"), false},
 		{"deep dotdot escape", "docs/a/../../secret.txt", false},
+		{"dotdot escape above workDir", "../../etc/passwd", false},
+		{"dotdot escape to sibling repo", "../sibling-repo/docs/x.md", false},
 
 		// edge: a sibling whose name merely shares the root prefix must NOT match
 		{"prefix-sibling not under root", "docs-archive/x.md", false},
