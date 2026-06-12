@@ -583,3 +583,31 @@ func TestEventStream_Error_CloseErrSurfaces(t *testing.T) {
 	_, err := s.Next(context.Background())
 	assert.ErrorIs(t, err, transportErr)
 }
+
+// --- SPIKE-gated constants: value pinning ----------------------------------
+//
+// The mapper tests use constants in both the input payload AND in the
+// expected-value assertions, so if a constant drifts from its intended string
+// the mappers silently use the wrong value and the mapper tests still pass.
+// These TYPE tests pin the exact string values so any change is a deliberate,
+// test-driven decision — not an accidental rename.
+//
+// The "REUSED from parse.go" constants must stay in sync with the literal
+// strings parse.go uses for the verified exec-path vocabulary.
+
+// TYPE — REUSED exec-vocabulary constants must match parse.go's literals.
+func TestSpikeConstants_ReusedExecVocabularyArePinned(t *testing.T) {
+	assert.Equal(t, "agent_message", codexItemAgentMessage, "must match parse.go item type for assistant text")
+	assert.Equal(t, "turn.completed", codexTurnCompleted, "must match parse.go event type for terminal success")
+	assert.Equal(t, "turn.failed", codexTurnFailed, "must match parse.go event type for terminal failure")
+	assert.Equal(t, "error", codexErrorEvent, "must match parse.go event type for error events")
+}
+
+// TYPE — critical ASSUMED posture constants are pinned so the read-only sandbox
+// + approval-policy values cannot change without a deliberate test update and a
+// live-binary verification against codex-cli 0.139.
+func TestSpikeConstants_AssumedPostureConstantsArePinned(t *testing.T) {
+	assert.Equal(t, "read-only", codexSandboxReadOnly, "sandbox posture value for interview mode (SPIKE: verify against 0.139)")
+	assert.Equal(t, "on-request", codexApprovalPolicyOnRequest, "approval routing value that forces mutations through elicitation (SPIKE: verify against 0.139)")
+	assert.Equal(t, "conversation_id", codexArgResumeID, "resume arg key that carries the prior conversation id (SPIKE: verify against 0.139)")
+}
