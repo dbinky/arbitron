@@ -511,7 +511,7 @@ type harness struct {
 	instances   *adaptsqlite.InstanceRepo
 	nodeExecs   *adaptsqlite.NodeExecutionRepo
 	snapshots   *adaptsqlite.VariableSnapshotRepo
-	resolver    *providersadapter.StaticProfileResolver
+	resolver    *providersadapter.DynamicProfileResolver
 	connChecker *providersadapter.ConnChecker
 	fileReader  *filesystem.FileReaderAdapter
 	defaultUser uuid.UUID
@@ -567,9 +567,11 @@ func newHarness(t *testing.T, b binding) *harness {
 		require.NoError(t, connStore.Create(context.Background(), sc.conn, sc.key))
 	}
 
-	// Real profile resolver over the real connection store.
-	resolver, err := providersadapter.NewStaticProfileResolver(b.profiles, connStore)
-	require.NoError(t, err)
+	// Real DB-backed profile resolver over the real connection store. The cache
+	// is built from this binding's fixed profile set (the acceptance analogue of
+	// the boot-time seed).
+	resolver := providersadapter.NewDynamicProfileResolver(
+		providersadapter.NewProfileCacheFromProfiles(b.profiles...), connStore)
 	connChecker := providersadapter.NewConnChecker(b.profiles, connStore)
 
 	// Real filesystem repo + reader. The worked example is committed flat under

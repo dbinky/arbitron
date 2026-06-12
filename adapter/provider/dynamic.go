@@ -7,6 +7,17 @@ import (
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
+// ProviderClaudeCLI is the binding.Provider identity for the no-connection
+// subscription path: a profile with an empty ConnectionRef runs against the
+// local Claude subscription (claude-cli) and needs no endpoint or key. It is the
+// single source of truth for this provider string across the adapter so the
+// routing literal lives in exactly one place (SF3, PR #18 comment 3350533149).
+const ProviderClaudeCLI = "claude-cli"
+
+// claudeCLIProvider is retained as an internal alias of ProviderClaudeCLI for
+// the resolver call sites.
+const claudeCLIProvider = ProviderClaudeCLI
+
 // DynamicProfileResolver resolves aliases against a live ProfileCache (DB-backed,
 // refreshed by Reload) and runs the full alias -> profile -> connection ->
 // binding chain. It replaces the immutable StaticProfileResolver: the registry

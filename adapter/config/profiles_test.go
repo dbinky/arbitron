@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
-	domainconfig "github.com/arbitron/arbitron/domain/config"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
+	domainconfig "github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,8 +58,12 @@ func TestProfilesFromConfig_Mapping(t *testing.T) {
 }
 
 // Failure/Error: a malformed kind value flows through the loader and mapping as
-// a literal ProfileKind (no panic) and is rejected downstream by the resolver.
-func TestProfilesFromConfig_MalformedKindRejectedDownstream(t *testing.T) {
+// a literal ProfileKind (no panic). The DB-backed DynamicProfileResolver no
+// longer validates kinds at construction (the seed validator + workflow
+// validation own that), so the literal kind is carried through Kind()/Resolve
+// and rejected DOWNSTREAM by workflow.Validate (PROFILE_KIND_MISMATCH), not by
+// the resolver constructor.
+func TestProfilesFromConfig_MalformedKindCarriedForDownstreamRejection(t *testing.T) {
 	cfgs := []domainconfig.ProfileConfig{
 		{Alias: "weird", Kind: "tool", Model: "m"},
 	}
@@ -68,9 +72,13 @@ func TestProfilesFromConfig_MalformedKindRejectedDownstream(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, provider.ProfileKind("tool"), got[0].Kind)
 
-	_, err := adapterprovider.NewStaticProfileResolver(got, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tool")
+	// Construction does not panic or reject; the literal kind is carried.
+	resolver := adapterprovider.NewDynamicProfileResolver(
+		adapterprovider.NewProfileCacheFromProfiles(got...), nil)
+	kind, ok := resolver.Kind("weird")
+	require.True(t, ok, "the profile is present in the registry")
+	assert.Equal(t, provider.ProfileKind("tool"), kind,
+		"the malformed kind is surfaced literally for downstream (workflow) rejection")
 }
 
 // Success: a YAML profile with connectionref round-trips through Load and

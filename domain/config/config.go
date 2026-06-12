@@ -15,6 +15,11 @@ type Config struct {
 	Profiles      []ProfileConfig
 	Auth          AuthConfig
 	Samples       SamplesConfig
+	// CapabilitiesPath is the path to an optional capability-ruleset override file
+	// (profile-editing Phase 2). Empty or a non-existent path falls back to the
+	// embedded default ruleset (LoadCapabilityRules treats a missing file as
+	// "use the default", not an error). Default: ~/.arbitron/capabilities.yaml.
+	CapabilitiesPath string
 }
 
 // AuthConfig selects the operating mode and holds the org-mode auth settings.

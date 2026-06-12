@@ -541,20 +541,61 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, err
 	}
 
-	// 8d. Build the immutable profile resolver from config profiles. This is the
-	// single source of truth for model_profile aliases: the executors resolve a
-	// node's alias to a concrete model through it, and workflow validation checks
-	// alias/kind through the ResolverChecker wrapper built below. The widened
-	// resolver carries the connection store so a profile with a non-empty
-	// ConnectionRef resolves to its endpoint + lazy key reveal; an empty
-	// ConnectionRef stays on the claude-cli no-key subscription path.
+	// 8d. Build the DB-backed profile resolver (profile-editing Phase 2). Profiles
+	// now live in SQLite (the source of truth) behind an in-memory ProfileCache; a
+	// DynamicProfileResolver reads the cache so the executors resolve a node's
+	// alias to a concrete model+axes through it, and workflow validation checks
+	// alias/kind through the ResolverChecker wrapper. The resolver carries the
+	// connection store so a profile with a non-empty ConnectionRef resolves to its
+	// endpoint + lazy key reveal; an empty ConnectionRef stays on the claude-cli
+	// no-key subscription path.
+	//
+	// One-time seed: the FIRST boot with an empty profiles table seeds it from the
+	// config-file profiles (∪ the built-in defaults the loader already merged in).
+	// Each candidate is validated against the capability ruleset; an invalid one
+	// is logged and skipped so operator config never blocks boot. After the first
+	// seed the table is non-empty and config profile entries are ignored — the DB
+	// wins.
 	domainProfiles := configadapter.ProfilesFromConfig(cfg.Profiles)
-	profileResolver, err := providersadapter.NewStaticProfileResolver(domainProfiles, connStore)
+
+	// Resolve the capability-ruleset override path: empty defaults to
+	// ~/.arbitron/capabilities.yaml (resolved like the config path). A missing
+	// file is not an error — LoadCapabilityRules falls back to the embedded
+	// default ruleset.
+	capabilitiesPath := cfg.CapabilitiesPath
+	if capabilitiesPath == "" {
+		if home, herr := os.UserHomeDir(); herr == nil {
+			capabilitiesPath = filepath.Join(home, ".arbitron", "capabilities.yaml")
+		}
+	}
+	capabilityRules, err := configadapter.LoadCapabilityRules(capabilitiesPath)
 	if err != nil {
 		db.Close()
 		logCloser.Close()
-		return nil, fmt.Errorf("building profile resolver: %w", err)
+		return nil, fmt.Errorf("loading capability rules: %w", err)
 	}
+
+	profileRepo := adaptsqlite.NewProfileRepo(db)
+	seeded, skipped, err := SeedProfiles(context.Background(), profileRepo, capabilityRules, domainProfiles)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("seeding profiles: %w", err)
+	}
+	if seeded > 0 || skipped > 0 {
+		logger.Info("seeded profiles from config", "seeded", seeded, "skipped", skipped)
+	}
+
+	// profileCache is bound to the repo at construction so it can be reloaded
+	// after a write (the Phase-4 ProfileService recache hook); keep the reference
+	// for that future wiring. Load it once before serving.
+	profileCache := providersadapter.NewProfileCache(profileRepo)
+	if err := profileCache.Load(context.Background()); err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("loading profile cache: %w", err)
+	}
+	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
 
 	// 8e. Build the connection-existence checker for workflow validation over the

@@ -18,7 +18,7 @@ import (
 //
 // Requires: Phase 1 capability validation; the worked example's negative binding
 // variant. Validation runs over the real filesystem file-checker, the real
-// StaticProfileResolver→ResolverChecker, and the real ConnChecker — no engine
+// DynamicProfileResolver→ResolverChecker, and the real ConnChecker — no engine
 // run is started, so no node executes.
 func TestAcceptance_06_CapabilityValidation(t *testing.T) {
 	wf := loadWorkedExampleGraph(t)

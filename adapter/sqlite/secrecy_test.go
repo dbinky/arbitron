@@ -53,12 +53,13 @@ func TestSecrecy_ResolveAndUse_NeverLogsKey(t *testing.T) {
 	}
 	require.NoError(t, store.Create(ctx, conn, sentinelKey))
 
-	// Widened resolver over the real store.
-	resolver, err := adapterprovider.NewStaticProfileResolver([]provider.Profile{
-		{Alias: "az-chat", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "gpt-4o"},
-		{Alias: "claude", Kind: provider.ProfileKindChat}, // no-key path
-	}, store)
-	require.NoError(t, err)
+	// Widened resolver over the real store (DB-backed cache built from a fixed
+	// profile set for this test).
+	resolver := adapterprovider.NewDynamicProfileResolver(
+		adapterprovider.NewProfileCacheFromProfiles(
+			provider.Profile{Alias: "az-chat", Kind: provider.ProfileKindChat, ConnectionRef: "azure-prod", Model: "gpt-4o"},
+			provider.Profile{Alias: "claude", Kind: provider.ProfileKindChat}, // no-key path
+		), store)
 
 	// Resolve the connection-backed profile: metadata only, no key yet.
 	binding, err := resolver.Resolve(ctx, "az-chat")

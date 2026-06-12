@@ -7,9 +7,10 @@ import (
 
 // ProfilesFromConfig maps the config-file profile shape onto domain provider
 // profiles, converting each Kind string into a provider.ProfileKind. It is the
-// seam main.go (Task 6) uses to build a StaticProfileResolver. Mapping is
-// straight-through; an out-of-range kind passes through as a literal
-// ProfileKind and is rejected later by NewStaticProfileResolver.
+// seam the composition root uses to gather the boot-time profile seed candidates
+// (profile-editing Phase 2). Mapping is straight-through; an out-of-range kind
+// passes through as a literal ProfileKind and is rejected downstream (the seed
+// validator and workflow validation), not at this mapping step.
 func ProfilesFromConfig(cfgs []domainconfig.ProfileConfig) []provider.Profile {
 	if cfgs == nil {
 		return nil

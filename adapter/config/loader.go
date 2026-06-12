@@ -22,10 +22,14 @@ import (
 // defaults returns the default configuration values as a flat map keyed for koanf.
 func defaults() map[string]interface{} {
 	return map[string]interface{}{
-		"server.host":       "127.0.0.1",
-		"server.port":       8080,
-		"database.path":     "./arbitron.db",
-		"workspace.path":    "./workspaces",
+		"server.host":    "127.0.0.1",
+		"server.port":    8080,
+		"database.path":  "./arbitron.db",
+		"workspace.path": "./workspaces",
+		// Optional capability-ruleset override (profile-editing Phase 2). Empty =>
+		// the composition root defaults it to ~/.arbitron/capabilities.yaml; a
+		// missing file falls back to the embedded default ruleset.
+		"capabilitiespath":  "",
 		"samples.seed":      true,
 		"samples.sourcedir": "",
 		"llm.provider":      "anthropic",
