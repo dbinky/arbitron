@@ -234,6 +234,65 @@ func TestProfileService_ReloadFailureIsNonFatal(t *testing.T) {
 	assert.Equal(t, 1, store.writeCount(), "write persisted despite reload failure")
 }
 
+// Failure: a malformed axis string (not a valid enum value) is rejected before
+// persist and before rules.Validate — the ParseContextWindow/ParseEffort gate
+// is upstream of Validate and must fail closed with nothing stored.
+func TestProfileService_CreateMalformedAxisRejected(t *testing.T) {
+	store := newMemProfileStore()
+	rl := &fakeReloader{}
+	svc := provider.NewProfileService(store, rules(), rl)
+
+	// Malformed context_window.
+	_, _, err := svc.Create(admins(), provider.Profile{
+		Alias: "bad-cw", Kind: provider.ProfileKindAgent, Backend: "claude-code",
+		ContextWindow: "not-a-tier",
+	})
+	assert.Error(t, err, "malformed ContextWindow must be rejected")
+	assert.Equal(t, 0, store.writeCount(), "nothing persisted on axis parse error")
+	assert.Equal(t, 0, rl.calls)
+
+	// Malformed effort.
+	_, _, err = svc.Create(admins(), provider.Profile{
+		Alias: "bad-eff", Kind: provider.ProfileKindAgent, Backend: "claude-code",
+		Effort: "not-an-effort",
+	})
+	assert.Error(t, err, "malformed Effort must be rejected")
+	assert.Equal(t, 0, store.writeCount())
+}
+
+// Success: a profile with empty Backend and empty ConnectionRef defaults the
+// validation backend to "claude-cli" (the no-key subscription path). Default
+// axes (default/default) always validate on claude-li, so the write succeeds.
+func TestProfileService_CreateEmptyBackendDefaultsToCli(t *testing.T) {
+	// Use a ruleset that includes claude-li (the substituted backend).
+	// The shared rules() fixture only covers claude-code + codex.
+	cliRules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"claude-cli": {Backend: "claude-cli"},
+	})
+	store := newMemProfileStore()
+	rl := &fakeReloader{}
+	svc := provider.NewProfileService(store, cliRules, rl)
+
+	stored, eff, err := svc.Create(admins(), provider.Profile{
+		Alias: "plain-chat", Kind: provider.ProfileKindChat,
+		// Backend and ConnectionRef intentionally empty.
+	})
+	require.NoError(t, err, "empty backend + empty connection must validate as claude-cli (default/default)")
+	assert.Equal(t, "plain-chat", stored.Alias)
+	assert.Equal(t, provider.ContextDefault, eff.ContextWindow)
+	assert.Equal(t, provider.EffortDefault, eff.Effort)
+	assert.Equal(t, 1, rl.calls)
+}
+
+// Error: Delete on an unauthenticated context returns ErrUnauthenticated (anon
+// is not the same as non-admin).
+func TestProfileService_DeleteUnauthenticated(t *testing.T) {
+	store := newMemProfileStore(provider.Profile{Alias: "x", Kind: provider.ProfileKindChat})
+	svc := provider.NewProfileService(store, rules(), &fakeReloader{})
+	err := svc.Delete(anon(), "x")
+	assert.ErrorIs(t, err, provider.ErrUnauthenticated)
+}
+
 // Capabilities is read-open: any authenticated caller can fetch the ruleset to
 // discover valid axis values; an unauthenticated caller is rejected.
 func TestProfileService_Capabilities(t *testing.T) {
