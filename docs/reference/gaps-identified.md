@@ -32,6 +32,8 @@ _(none)_
 - **FA#8 Pass 2 — `turnFailed` error wrapping not asserted in either failure test.** `StreamChat` and `Chat` both format the failure as `fmt.Errorf("...: %w", ev.Err)` so callers can `errors.Is(err, specificErr)` to identify rate-limit / auth / model errors. Neither `TestInteractive_StreamChat_TurnFailed_ErrorNoDone` nor `TestInteractive_Chat_TurnFailed_HardError` verified this — they used only `assert.Error`. Changing `%w` to `%v` would silently break error identification without failing those tests. Strengthened both with `assert.ErrorIs` against the sentinel error.
 - **FA#8 Pass 1 — `Chat` `!sawDone` hard-error path untested.** `Chat` has a `sawDone` guard: if the turn stream ends with `errStreamDone` but no `turnDone` was received, it returns `"turn ended without completion"` rather than a silent empty `ChatResponse`. This path had no test. Added `TestInteractive_Chat_NoTerminalDone_HardError` using `errStreamSession{nextErr: errStreamDone}` to exercise the fail-closed guard.
 
+- **FA#9 Pass 1 — `Chat` transport-error hard-error path untested.** `StreamChat` has `TestInteractive_StreamChat_TransportError_ErrorNoDone` proving a non-sentinel stdio break returns a terminal Error chunk with no Done. The symmetric `Chat` path (`return nil, fmt.Errorf("...: %w", nerr)` at line 263 of `interactive_provider.go`) is only exercised via context.Canceled; a plain transport error like `errors.New("stdio broke")` is untested. Added `TestInteractive_Chat_TransportError_HardError`.
+
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_

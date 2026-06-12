@@ -299,6 +299,25 @@ func TestInteractive_Chat_StartError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
+// ERROR — a non-sentinel transport error mid-stream makes Chat return (nil, err).
+// Mirrors TestInteractive_StreamChat_TransportError_ErrorNoDone for the Chat fold.
+// The Chat fold's transport-error branch (`return nil, fmt.Errorf("...: %w", nerr)`)
+// must wrap the error so callers can identify the cause; an errored Chat must never
+// return a partial result.
+func TestInteractive_Chat_TransportError_HardError(t *testing.T) {
+	transportErr := errors.New("codex mcp-server: stdio broke")
+	sess := &errStreamSession{pre: []turnEvent{tokenEv("partial")}, nextErr: transportErr}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
+		func() mcpSession { return sess },
+	)
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	assert.Nil(t, resp, "a transport break must not return a partial ChatResponse")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, transportErr, "Chat must wrap the transport error so callers can identify it")
+}
+
 // errStreamSession is a local test mcpSession whose stream yields some events and
 // then a NON-sentinel transport error from Next (a broken stdio mid-turn), which
 // the shared scripted fake cannot express. It exercises the provider's
