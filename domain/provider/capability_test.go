@@ -83,3 +83,52 @@ func TestValidate_UnknownBackend(t *testing.T) {
 	_, _, err := rules().Validate("mystery", "x", provider.ContextDefault, provider.EffortDefault)
 	assert.ErrorIs(t, err, provider.ErrUnknownBackend)
 }
+
+// Invalid context window: a malformed tier string is rejected with
+// ErrInvalidContextWindow before any backend lookup (mirrors TestValidate_InvalidEffort).
+func TestValidate_InvalidContextWindow(t *testing.T) {
+	_, _, err := rules().Validate("claude-code", "opus-4.8", provider.ContextWindow("4m"), provider.EffortDefault)
+	assert.ErrorIs(t, err, provider.ErrInvalidContextWindow)
+}
+
+// Effort inapplicable: when a backend's effort_levels list contains only
+// default/none (no graded levels), any graded effort request must return
+// ErrAxisNotApplicable — the fail-closed path via floorToHighest returning "".
+func TestValidate_EffortInapplicable(t *testing.T) {
+	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"opencode-like": {
+			Backend:      "opencode-like",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault}, // no graded levels
+		},
+	})
+	_, _, err := r.Validate("opencode-like", "any", provider.ContextDefault, provider.EffortMedium)
+	assert.ErrorIs(t, err, provider.ErrAxisNotApplicable)
+}
+
+// None always passes through: EffortNone is special-cased to bypass the level
+// check (it explicitly disables reasoning, so it is always acceptable on any
+// backend regardless of what effort_levels contains).
+func TestValidate_NonePassthrough(t *testing.T) {
+	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"no-none": {
+			Backend:      "no-none",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortLow}, // no EffortNone listed
+		},
+	})
+	// EffortNone should still pass through (bypass level check) even if not listed.
+	_, eff, err := r.Validate("no-none", "any", provider.ContextDefault, provider.EffortNone)
+	require.NoError(t, err)
+	assert.Equal(t, provider.EffortNone, eff)
+}
+
+// Unknown model: a model not in ModelOverrides falls back to backend rules; it
+// is not an error.
+func TestValidate_UnknownModel_FallsBackToBackend(t *testing.T) {
+	// "unknown-model" is not in any ModelOverrides, so backend-level rules apply.
+	tier, eff, err := rules().Validate("claude-code", "unknown-model", provider.Context200K, provider.EffortHigh)
+	require.NoError(t, err)
+	assert.Equal(t, provider.Context200K, tier)
+	assert.Equal(t, provider.EffortHigh, eff)
+}

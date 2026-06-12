@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/provider"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // contains reports whether s contains v. Local helper for the Emit args assertions
@@ -78,4 +80,44 @@ func TestEmit_DefaultsEmitNothing(t *testing.T) {
 	if len(e.Env) != 0 || len(e.Args) != 0 {
 		t.Fatalf("default should emit nothing: %+v", e)
 	}
+}
+
+// Context 1m: the 1m tier raises the auto-compact window but does NOT set
+// CLAUDE_CODE_DISABLE_1M_CONTEXT (unlike 200k which disables and caps it).
+func TestEmit_ClaudeCode1M(t *testing.T) {
+	e, err := rules().Emit("claude-code", "opus-4.8", provider.Context1M, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Equal(t, "1000000", e.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1m should set auto-compact to 1M")
+	assert.Empty(t, e.Env["CLAUDE_CODE_DISABLE_1M_CONTEXT"], "1m must NOT set DISABLE_1M_CONTEXT")
+}
+
+// Claude-cli: emits the same env vars as claude-code (both drive the `claude` CLI).
+func TestEmit_ClaudeCli(t *testing.T) {
+	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"claude-cli": {
+			Backend:      "claude-cli",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault, provider.Context200K, provider.Context1M},
+			EffortLevels: []provider.Effort{provider.EffortDefault, provider.EffortNone, provider.EffortLow, provider.EffortMedium, provider.EffortHigh},
+		},
+	})
+	e, err := r.Emit("claude-cli", "any", provider.Context200K, provider.EffortHigh)
+	require.NoError(t, err)
+	assert.Equal(t, "1", e.Env["CLAUDE_CODE_DISABLE_1M_CONTEXT"])
+	assert.Equal(t, "200000", e.Env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+	assert.Equal(t, "high", e.Env["CLAUDE_CODE_EFFORT_LEVEL"])
+}
+
+// Opencode (and unknown backends): emits nothing for both axes (deferred).
+func TestEmit_UnknownBackendEmitsNothing(t *testing.T) {
+	r := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"opencode": {
+			Backend:      "opencode",
+			ContextTiers: []provider.ContextWindow{provider.ContextDefault},
+			EffortLevels: []provider.Effort{provider.EffortDefault},
+		},
+	})
+	e, err := r.Emit("opencode", "any", provider.ContextDefault, provider.EffortDefault)
+	require.NoError(t, err)
+	assert.Empty(t, e.Env)
+	assert.Empty(t, e.Args)
 }
