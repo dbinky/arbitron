@@ -36,6 +36,8 @@ _(none)_
 
 - **FA#9 Pass 2 — `approvalSummary` security property untested.** `approvalSummary` produces the slog "summary" field in `tracingApprover`. It must never include `req.Reason` (codex's human-readable explanation, which may contain prompt-derived content); only the structural facts (argv or paths) are safe to log. All three branches (command / write / unknown) are untested; if someone added `+ req.Reason` to any branch, no test would catch the leak. Added `TestApprovalSummary_NeverLogsRequestReason` to directly verify the security property across all three paths.
 
+- **FA#10 Pass 1 — spurious `turnDone` after `turnFailed` not proven suppressed.** The `failed` flag in `StreamChat` drains all subsequent events after a `turnFailed` — including a spurious `turnDone` that a misbehaving transport might emit. Without a test, someone could accidentally remove the `if failed { continue }` guard and a post-failure Done would escape as a clean chunk, silently overriding the failure. Added `TestInteractive_StreamChat_TurnDoneAfterTurnFailed_NoDoneChunk` to prove the guard holds end-to-end.
+
 ## Won't Fix (Beyond Current Scope)
 
 _(items logged here are new functionality or enhancements that are outside the scope of the current review — only the user can move items to this section)_

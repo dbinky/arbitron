@@ -244,6 +244,31 @@ func TestInteractive_StreamChat_TurnFailed_ErrorNoDone(t *testing.T) {
 	}
 }
 
+// FAILURE / CROSS-CUTTING — a turnDone arriving after a turnFailed must never
+// produce a clean Done chunk (fail-closed drain: the `failed` flag gates all
+// events that arrive after the failure). A misbehaving transport could send
+// both a turnFailed and a later turnDone; removing the `if failed { continue }`
+// guard would silently upgrade the failure to a success.
+func TestInteractive_StreamChat_TurnDoneAfterTurnFailed_NoDoneChunk(t *testing.T) {
+	turnErr := errors.New("rate limited")
+	fake := &fakeMCPSession{events: []turnEvent{
+		failedEv(turnErr),
+		doneEv("conv-1", 10, 5), // spurious turnDone after failure — must be suppressed
+	}}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	require.NotEmpty(t, chunks, "at least the error chunk must arrive")
+	last := chunks[len(chunks)-1]
+	assert.ErrorIs(t, last.Error, turnErr, "the failure error must be surfaced")
+	for _, c := range chunks {
+		assert.False(t, c.Done, "a spurious turnDone after turnFailed must NOT produce a Done chunk")
+	}
+}
+
 // FAILURE — Chat surfaces a failed turn as a hard error (no silent empty result).
 // The returned error must wrap the underlying turn error so callers can use
 // errors.Is for retry/classification logic.
