@@ -126,19 +126,15 @@ func (r *ProfileRepo) Create(ctx context.Context, p provider.Profile) error {
 }
 
 func (r *ProfileRepo) Update(ctx context.Context, p provider.Profile) error {
-	// Pre-check existence so a missing profile maps to the sentinel rather than
-	// silently affecting zero rows.
-	if _, err := r.queries.GetProfile(ctx, p.Alias); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("profile %q: %w", p.Alias, provider.ErrProfileNotFound)
-		}
-		return fmt.Errorf("checking profile %q: %w", p.Alias, err)
-	}
 	toolsJSON, err := toolsToJSON(p.AllowedTools)
 	if err != nil {
 		return fmt.Errorf("marshalling allowed_tools for profile %q: %w", p.Alias, err)
 	}
-	err = r.queries.UpdateProfile(ctx, generated.UpdateProfileParams{
+	// Rely on the write's own rows-affected to detect a missing row in ONE
+	// statement: a separate pre-check SELECT races a concurrent delete (the UPDATE
+	// would then affect zero rows yet report success). Zero rows affected -> the
+	// profile does not exist -> the sentinel.
+	rows, err := r.queries.UpdateProfile(ctx, generated.UpdateProfileParams{
 		Kind:          string(p.Kind),
 		ConnectionRef: p.ConnectionRef,
 		Model:         p.Model,
@@ -152,19 +148,22 @@ func (r *ProfileRepo) Update(ctx context.Context, p provider.Profile) error {
 	if err != nil {
 		return fmt.Errorf("updating profile %q: %w", p.Alias, err)
 	}
+	if rows == 0 {
+		return fmt.Errorf("profile %q: %w", p.Alias, provider.ErrProfileNotFound)
+	}
 	return nil
 }
 
 func (r *ProfileRepo) Delete(ctx context.Context, alias string) error {
-	// Pre-check existence so deleting a missing profile maps to the sentinel.
-	if _, err := r.queries.GetProfile(ctx, alias); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("profile %q: %w", alias, provider.ErrProfileNotFound)
-		}
-		return fmt.Errorf("checking profile %q: %w", alias, err)
-	}
-	if err := r.queries.DeleteProfile(ctx, alias); err != nil {
+	// Single-statement delete: zero rows affected maps to the sentinel, correct
+	// under a concurrent delete and one round-trip instead of a check-then-act
+	// pre-check SELECT.
+	rows, err := r.queries.DeleteProfile(ctx, alias)
+	if err != nil {
 		return fmt.Errorf("deleting profile %q: %w", alias, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("profile %q: %w", alias, provider.ErrProfileNotFound)
 	}
 	return nil
 }

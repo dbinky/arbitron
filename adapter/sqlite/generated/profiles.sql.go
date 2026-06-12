@@ -54,13 +54,16 @@ func (q *Queries) CreateProfile(ctx context.Context, arg CreateProfileParams) er
 	return err
 }
 
-const deleteProfile = `-- name: DeleteProfile :exec
+const deleteProfile = `-- name: DeleteProfile :execrows
 DELETE FROM profiles WHERE alias = ?
 `
 
-func (q *Queries) DeleteProfile(ctx context.Context, alias string) error {
-	_, err := q.db.ExecContext(ctx, deleteProfile, alias)
-	return err
+func (q *Queries) DeleteProfile(ctx context.Context, alias string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteProfile, alias)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getProfile = `-- name: GetProfile :one
@@ -143,7 +146,7 @@ func (q *Queries) ListProfiles(ctx context.Context) ([]ListProfilesRow, error) {
 	return items, nil
 }
 
-const updateProfile = `-- name: UpdateProfile :exec
+const updateProfile = `-- name: UpdateProfile :execrows
 UPDATE profiles
 SET kind = ?, connection_ref = ?, model = ?, backend = ?, allowed_tools = ?, context_window = ?, effort = ?, updated_at = ?
 WHERE alias = ?
@@ -161,8 +164,8 @@ type UpdateProfileParams struct {
 	Alias         string
 }
 
-func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) error {
-	_, err := q.db.ExecContext(ctx, updateProfile,
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateProfile,
 		arg.Kind,
 		arg.ConnectionRef,
 		arg.Model,
@@ -173,5 +176,8 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) er
 		arg.UpdatedAt,
 		arg.Alias,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
