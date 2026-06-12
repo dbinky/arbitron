@@ -328,6 +328,40 @@ func TestApplyCapabilityEnv_EmptyRulesSkips(t *testing.T) {
 	assert.Equal(t, base, got, "empty rules must return the env slice unchanged")
 }
 
+// Security (Pass 2): agentEnvWithRules preserves the credential vars (key +
+// base-url) AFTER appending the capability env. The capability append must not
+// drop, duplicate, or overwrite the credential section.
+func TestAgentEnvWithRules_CredentialsPreservedAfterCapabilityAppend(t *testing.T) {
+	rules := testCapRules()
+	binding := provider.ResolvedBinding{
+		Backend:       "claude-code",
+		Model:         "opus-4.8",
+		BaseURL:       "https://litellm:4000",
+		ContextWindow: provider.Context200K,
+		Effort:        provider.EffortHigh,
+		RevealKey:     func(context.Context) (string, error) { return "sk-preserved", nil },
+	}
+	env, err := agentEnvWithRules(context.Background(), binding, rules)
+	require.NoError(t, err)
+
+	// Credentials survive the append.
+	assertEnv(t, env, "ANTHROPIC_API_KEY", "sk-preserved")
+	assertEnv(t, env, "ANTHROPIC_BASE_URL", "https://litellm:4000")
+
+	// Capability vars are present (appended, not mixed into credentials).
+	assertEnv(t, env, "CLAUDE_CODE_DISABLE_1M_CONTEXT", "1")
+	assertEnv(t, env, "CLAUDE_CODE_EFFORT_LEVEL", "high")
+
+	// Exactly one API key entry — no duplication from the append.
+	count := 0
+	for _, e := range env {
+		if strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "exactly one ANTHROPIC_API_KEY after capability append")
+}
+
 // error — a RevealKey failure aborts RunAgent before the runner is invoked
 // (no partial-env launch).
 func TestAgentAdapter_RevealErrorAbortsBeforeLaunch(t *testing.T) {
