@@ -33,7 +33,7 @@ A review pass is only checked when the checklist produces a passing result for t
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 14 | InteractiveProvider + approval policy (the mandatory guardrail end-to-end: a source-path patch mid-interview is DENIED, the decision is traced via slog, the stream still reaches a clean `Done`, no chunk carries an Error, no human surfacing) | [ ] | Not started |
+| 14 | InteractiveProvider + approval policy (the mandatory guardrail end-to-end: a source-path patch mid-interview is DENIED, the decision is traced via slog, the stream still reaches a clean `Done`, no chunk carries an Error, no human surfacing) | [x] | Done |
 | 15 | InteractiveProvider + mcpSession transport (`turnConfig` built correctly from `ChatRequest`; `turnStream` folded to `errStreamDone`; resume id flows; transport break → fail-closed `Error` chunk) | [ ] | Not started |
 | 16 | Real transport mappers + spike constants (notification/elicitation/decision mappers consume the SPIKE protocol keys consistently; an app-server/elicitation-vs-sampling change stays contained to `mcp_stdio_session.go`) | [ ] | Not started |
 | 17 | Composition root + selector + autonomous factory (interactive codex → `InteractiveProvider`; batch `AgentProviderFor` codex → exec `Provider`; no leak; `opencode`/unknown still fail closed) | [ ] | Not started |

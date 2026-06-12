@@ -588,6 +588,44 @@ func TestInteractive_Approval_UnknownKind_Denied(t *testing.T) {
 	assert.False(t, fake.decisions[0].Allow, "an unknown approval kind must be denied")
 }
 
+// PAIRED (FA#14) — a turn with mixed approvals (some allowed, some denied)
+// proves that each approval is adjudicated independently: denials are INVISIBLE
+// to the human (no Error chunk, no Done suppression), and the stream still
+// reaches a clean Done. This is the critical integration seam between the
+// provider's tracingApprover and the policy: the provider must NOT abort the
+// stream on a denial, and the policy must NOT make all-or-nothing decisions.
+func TestInteractive_Approval_MixedDecisions_StreamReachesDone(t *testing.T) {
+	fake := &fakeMCPSession{
+		events: []turnEvent{
+			tokenEv("here is my analysis"),
+			doneEv("conv-1", 10, 6),
+		},
+		approvals: []approvalRequest{
+			{Command: []string{"git", "status"}, Reason: "inspect state"},     // ALLOWED (info command)
+			{WritePaths: []string{"domain/auth/handler.go"}, Reason: "fix"},  // DENIED (source write)
+			{WritePaths: []string{"docs/specs/feature.md"}, Reason: "notes"}, // ALLOWED (docs write)
+		},
+	}
+	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+
+	// All three approvals were adjudicated.
+	require.Len(t, fake.decisions, 3)
+	assert.True(t, fake.decisions[0].Allow, "info command must be allowed")
+	assert.False(t, fake.decisions[1].Allow, "source write outside docs/ must be denied")
+	assert.True(t, fake.decisions[2].Allow, "docs/ write must be allowed")
+
+	// The denial was invisible: stream reached Done, no Error chunk.
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done, "mixed-decision turn must still reach a clean Done")
+	for _, c := range chunks {
+		assert.NoError(t, c.Error, "a guardrail denial in a mixed-approval turn must never produce an Error chunk")
+	}
+}
+
 // EDGE — empty WorkDir fails closed with ErrWorkDirRequired and NO stream; the
 // session is never even started.
 // SECURITY — the no-key invariant holds on this error path too: RevealKey must
