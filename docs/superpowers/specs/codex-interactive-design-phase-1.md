@@ -195,3 +195,85 @@ the **fake's** own contract. The provider's behavior is Phase 2.
 - The `engine.ChatProvider` implementation and the approval **policy** (Phase 2).
 - Any composition-root wiring / sandbox config plumbing (Phase 3).
 - Any change to `codex exec`, the batch `Provider`, claude-cli, or opencode.
+
+## Spike Findings (provisional)
+
+**Status:** NOT YET VERIFIED against a live codex-cli 0.139. This run had no live
+codex binary available, so the real `mcpStdioSession` (Task 1.2) was implemented
+against the **documented mcp-go API** (verified — see below) and a **provisional
+codex mcp-server protocol vocabulary** (assumed). The code structure and every
+mcp-go API call are correct and compile; only the protocol string *values* are
+provisional. Each provisional constant in `adapter/codex/mcp_stdio_session.go` is
+tagged `// SPIKE: verify against codex-cli 0.139` so the real-binary check is a
+small, isolated follow-up.
+
+### mcp-go API — VERIFIED (from the v0.53.0 module source)
+
+These are confirmed against `github.com/mark3labs/mcp-go@v0.53.0` and the impl
+uses them as written:
+
+- **Launch (lazy):** `transport.NewStdio(command, env, args...)` builds the stdio
+  transport; the subprocess is spawned by `Client.Start(ctx)` (so the elicitation
+  capability can be declared *before* spawn). We launch
+  `transport.NewStdio(binPath, codexEnv(), "mcp-server")` — argv carries ONLY the
+  bare subcommand, never the prompt.
+- **Client + handler registration:**
+  `client.NewClient(transport, client.WithElicitationHandler(h))`. The
+  `ElicitationHandler` interface is `Elicit(ctx, mcp.ElicitationRequest)
+  (*mcp.ElicitationResult, error)`. mcp-go declares the elicitation capability
+  during `Initialize` iff this handler is set, and routes server→client
+  `elicitation/create` requests to it via the bidirectional transport request
+  handler (`handleIncomingRequest` → `handleElicitationRequestTransport`).
+- **Streaming notifications:** `Client.OnNotification(func(mcp.JSONRPCNotification))`
+  registers a server→client notification handler.
+- **Handshake / turn:** `Client.Start(ctx)`, `Client.Initialize(ctx,
+  mcp.InitializeRequest)`, `Client.CallTool(ctx, mcp.CallToolRequest)`,
+  `Client.Close()`.
+
+> **Approval channel = elicitation.** Codex's client-answered approval request is
+> modelled as MCP **elicitation** (`elicitation/create`), the standard
+> server→client "ask the user/client a question" request. mcp-go also exposes
+> **sampling** (`sampling/createMessage`) as a server→client request; elicitation
+> is the correct fit for an allow/deny approval and is what the impl registers. If
+> the live spike shows codex uses sampling (or a bespoke method) instead, only the
+> handler registration + the `mapApprovalRequest` payload decode change — the port,
+> the policy, and Phase 2 are unaffected.
+
+### codex mcp-server protocol — ASSUMED (must be verified against 0.139)
+
+| Concern | Constant(s) in `mcp_stdio_session.go` | Assumed value | Status |
+| --- | --- | --- | --- |
+| Start/resume tool name | `codexStartToolName` | `"codex"` | ASSUMED |
+| Start-tool arg keys | `codexArgModel/Prompt/Cwd/SandboxMode/ApprovalPolicy/ResumeID/Effort` | `model`/`prompt`/`cwd`/`sandbox_mode`/`approval_policy`/`conversation_id`/`model_reasoning_effort` | ASSUMED |
+| Read-only sandbox value | `codexSandboxReadOnly` | `"read-only"` | ASSUMED |
+| Approval policy value | `codexApprovalPolicyOnRequest` | `"on-request"` | ASSUMED |
+| Streaming notification method | `codexEventNotificationMethod` | `"codex/event"` | ASSUMED |
+| Turn-event `type` discriminators | `codexItemAgentMessage/TurnCompleted/TurnFailed/ErrorEvent` | `agent_message`/`turn.completed`/`turn.failed`/`error` | **REUSED from the VERIFIED `codex exec --json` vocabulary** (`parse.go`, codex-cli 0.137.0); mcp-server assumed to carry the same item/usage/error shapes inside its notifications |
+| Usage token keys | (via `codexUsage`) | `input_tokens`/`output_tokens` | REUSED (verified for exec) |
+| Conversation id key | `conversation_id` (fallback `thread_id`) | — | ASSUMED (fallback reuses the verified exec key) |
+| Approval payload keys | `codexApprovalTypeKey/CommandKey/PathsKey/ReasonKey` | `type`(`exec`/`patch`)/`command`/`paths`/`reason` | ASSUMED |
+| Approval verdict response | `codexApprovalDecisionKey` | `approved` (in the elicitation result content; allow→`accept`, deny→`decline`) | ASSUMED |
+
+### Decision gate — outcome
+
+**Default surface: `codex mcp-server`** (selected). The mcp-go client + the
+elicitation channel can, in principle, express all five spike questions:
+(1) a start tool with model/prompt/cwd/sandbox/approval args; (2) fresh-process
+resume via a `conversation_id` arg on the start call; (3) streaming via
+notifications + a terminal completion frame; (4) a client-answered approval via
+`elicitation/create`; (5) sandbox/approval passed as tool args.
+
+**Fallback (behind the SAME `mcpSession` port): `codex app-server`.** Adopt it
+only if live verification shows mcp-server *cannot* express either (a)
+fresh-process resume-by-id or (b) a client-answerable approval request. Switching
+surfaces changes ONLY `mcp_stdio_session.go` — the `mcpSession` interface, the
+fake, the approval policy, and all of Phase 2 are unaffected.
+
+### Live-codex follow-up (the small isolated check)
+
+Run `codex mcp-server` once against codex-cli 0.139 and confirm/adjust the
+ASSUMED rows above: the exact tool name, arg keys + sandbox/approval values, the
+streaming notification method + payload shape, and the elicitation approval
+payload + verdict response schema. Only the tagged constants change; the mappers
+(`mapNotification`, `mapApprovalRequest`, `decisionToElicitationResult`,
+`startToolRequest`) and their tests stay structurally identical.
