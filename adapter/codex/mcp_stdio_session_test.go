@@ -507,6 +507,50 @@ func TestMCPStdioSession_Probe_SubscriptionEnv_NoAPIKey(t *testing.T) {
 		"mcp-server path probe must use codexEnv() — OPENAI_API_KEY must not be forwarded to the version probe subprocess")
 }
 
+// --- verifyInitializePosture: fail-closed handshake self-check -------------
+//
+// SECURITY (PR #36 HIGH, SPIKE fail-open): the read-only + every-mutation-gated
+// posture rides FOUR // SPIKE arg keys that MCP tools silently ignore if their
+// names are wrong — a mismatch launches codex in its default autonomous mode with
+// NO local signal. The whole guardrail depends on codex routing mutations to the
+// client via ELICITATION; if the Initialize handshake does not confirm elicitation
+// support, our policy is never consulted and codex runs unsandboxed. So the
+// post-Initialize self-check asserts the server advertised elicitation and fails
+// CLOSED otherwise — turning a silent fail-open into a loud, session-aborting error.
+
+// SUCCESS — a handshake that advertises elicitation confirms the approval loop is
+// wired: the posture check passes.
+func TestVerifyInitializePosture_Success_ElicitationAdvertised(t *testing.T) {
+	res := &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{
+			Elicitation: &mcp.ElicitationCapability{},
+		},
+	}
+	assert.NoError(t, verifyInitializePosture(res),
+		"a server advertising elicitation confirms mutations route through the approval policy")
+}
+
+// SECURITY / FAIL-CLOSED — a handshake WITHOUT elicitation means codex will never
+// ask the client to approve a mutation: it would run in its default autonomous
+// posture. The self-check must fail closed (the exact SPIKE fail-open the finding
+// flagged), with an error that names the posture so an operator can diagnose it.
+func TestVerifyInitializePosture_Security_NoElicitation_FailsClosed(t *testing.T) {
+	res := &mcp.InitializeResult{
+		Capabilities: mcp.ServerCapabilities{}, // elicitation NOT advertised
+	}
+	err := verifyInitializePosture(res)
+	require.Error(t, err, "a handshake without elicitation must fail closed (fail-open guardrail)")
+	assert.ErrorIs(t, err, ErrUnverifiedPosture)
+}
+
+// SECURITY / FAIL-CLOSED — a nil InitializeResult (a transport that returned no
+// negotiated capabilities) must also fail closed, never be treated as confirmed.
+func TestVerifyInitializePosture_Security_NilResult_FailsClosed(t *testing.T) {
+	err := verifyInitializePosture(nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnverifiedPosture)
+}
+
 // --- sendTurnEvent: backpressure (no silent drop) --------------------------
 
 // BACKPRESSURE — when the buffer is full the send must BLOCK (slow the producer)

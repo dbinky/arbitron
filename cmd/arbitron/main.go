@@ -850,12 +850,28 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		CapabilityRules: capabilityRules,
 		WritableRoot:    "docs",
 	})
+	// SECURITY (PR #36 HIGH, SPIKE fail-open): the codex interactive provider's
+	// read-only + every-mutation-gated posture rides four // SPIKE arg keys that
+	// fail OPEN if codex ignores them, and the protocol is not yet verified against
+	// a live codex-cli 0.139. So the codex interactive arm is GATED: it is only
+	// registered when an operator explicitly opts in via
+	// ARBITRON_CODEX_INTERACTIVE_VERIFIED. Default off → the codex backend is absent
+	// from the stream map and the selector fails closed (ErrUnsupportedAgentBackend),
+	// so an unverified build cannot arm the unverified protocol against a real binary.
+	agentStreams := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: claudeStreamAgent,
+	}
+	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
+		agentStreams[workflow.BackendCodex] = codexInteractive
+		logger.Warn("codex interactive provider ARMED via " + codexInteractiveVerifiedEnv +
+			" — the SPIKE protocol is operator-verified against a live codex binary")
+	} else {
+		logger.Info("codex interactive provider gated off (unverified SPIKE protocol); " +
+			"set " + codexInteractiveVerifiedEnv + "=true to arm it against a verified codex binary")
+	}
 	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
 		providerFactory,
-		map[string]engine.ChatProvider{
-			workflow.BackendClaudeCode: claudeStreamAgent,
-			workflow.BackendCodex:      codexInteractive,
-		},
+		agentStreams,
 		cfg.LLM.DefaultAgentBackend,
 	)
 

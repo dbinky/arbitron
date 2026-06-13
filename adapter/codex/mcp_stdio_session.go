@@ -148,9 +148,21 @@ func (s *mcpStdioSession) Start(ctx context.Context, cfg turnConfig) (turnStream
 		_ = cli.Close()
 		return nil, fmt.Errorf("codex mcp-server: start: %w", err)
 	}
-	if _, err := cli.Initialize(ctx, initializeRequest()); err != nil {
+	initRes, err := cli.Initialize(ctx, initializeRequest())
+	if err != nil {
 		_ = cli.Close()
 		return nil, fmt.Errorf("codex mcp-server: initialize: %w", err)
+	}
+
+	// SECURITY / fail-closed posture self-check: the read-only + every-mutation-
+	// gated posture rests on the // SPIKE arg keys, which fail OPEN if codex ignores
+	// them. The handshake is the one local signal we have — if the server did not
+	// negotiate elicitation, codex will never route a mutation to our policy and is
+	// running in its default autonomous mode. Abort the session here rather than run
+	// an unsandboxed turn (turning a silent fail-open into a loud error).
+	if err := verifyInitializePosture(initRes); err != nil {
+		_ = cli.Close()
+		return nil, fmt.Errorf("codex mcp-server: %w", err)
 	}
 
 	// term carries the turn's terminal error; the goroutine sets it BEFORE closing
@@ -221,6 +233,34 @@ func initializeRequest() mcp.InitializeRequest {
 			ClientInfo:      mcp.Implementation{Name: codexClientName, Version: codexClientVersion},
 		},
 	}
+}
+
+// ErrUnverifiedPosture is returned when the Initialize handshake does not confirm
+// the read-only + every-mutation-gated posture this provider depends on — so the
+// session is aborted rather than run an unsandboxed turn. It is a fail-closed
+// guard against the // SPIKE arg keys silently failing OPEN (codex ignoring an
+// unknown sandbox_mode/approval_policy key and running in its default autonomous
+// mode).
+var ErrUnverifiedPosture = errors.New("codex mcp-server: handshake did not confirm read-only/on-request posture (elicitation not negotiated)")
+
+// verifyInitializePosture is the post-Initialize fail-closed self-check. The
+// guardrail's entire premise is that codex routes every mutation back to the
+// client as an ELICITATION (approval) request our policy adjudicates; if the
+// server did not negotiate elicitation, no approval request can ever reach the
+// policy and codex is running in its default, approval-bypassing posture. So a
+// missing elicitation capability (or a nil result) fails CLOSED with
+// ErrUnverifiedPosture — converting the silent SPIKE fail-open into a loud,
+// session-aborting error.
+//
+// SPIKE: the precise sandbox_mode/approval_policy capability echo from codex-cli
+// 0.139 is not yet verified; the elicitation capability is the protocol-level
+// invariant we CAN assert without the live binary, and it is the one that actually
+// gates whether the approval loop is wired.
+func verifyInitializePosture(res *mcp.InitializeResult) error {
+	if res == nil || res.Capabilities.Elicitation == nil {
+		return ErrUnverifiedPosture
+	}
+	return nil
 }
 
 // startToolRequest builds the codex start/resume tool call. The prompt rides the
