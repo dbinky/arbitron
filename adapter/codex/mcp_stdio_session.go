@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -131,17 +132,15 @@ func (s *mcpStdioSession) Start(ctx context.Context, cfg turnConfig) (turnStream
 	cli := mcpclient.NewClient(stdio, mcpclient.WithElicitationHandler(approver))
 
 	// events buffers mapped turn events; the bidirectional notification handler
-	// feeds it, the returned stream drains it. Buffered so a burst of tokens never
-	// blocks the transport's reader goroutine.
+	// feeds it, the returned stream drains it. Buffered so a normal burst of tokens
+	// does not stall the transport's reader goroutine; when the buffer DOES fill,
+	// sendTurnEvent applies real backpressure (blocks the producer) rather than
+	// discarding transcript frames, and only gives up (with a slog.Warn) if the
+	// turn ctx is done — i.e. the consumer has actually torn down.
 	events := make(chan turnEvent, 64)
 	cli.OnNotification(func(n mcp.JSONRPCNotification) {
 		if ev, ok := mapNotification(n); ok {
-			select {
-			case events <- ev:
-			default:
-				// The buffer is full only if the caller has stopped draining; drop
-				// rather than block the transport reader (the caller is tearing down).
-			}
+			sendTurnEvent(ctx, events, ev, slog.Default())
 		}
 	})
 
@@ -176,6 +175,40 @@ func (s *mcpStdioSession) Start(ctx context.Context, cfg turnConfig) (turnStream
 	}()
 
 	return newEventStream(events, term), nil
+}
+
+// sendTurnEvent delivers one mapped turn event to the buffered events channel
+// with real backpressure: it tries a non-blocking send first (the common,
+// free-buffer path), and on a full buffer BLOCKS the producer (the transport
+// reader goroutine) until either a slot frees — slowing codex instead of
+// discarding transcript content — or the turn ctx is done. It returns true when
+// the frame was delivered, false on a true drop.
+//
+// A drop happens ONLY when ctx is cancelled/timed-out, i.e. the consumer has torn
+// down and nothing will ever drain again; blocking past that point would leak the
+// reader goroutine. That genuine drop is logged at WARN so the lost frame is
+// observable (the transcript that becomes the deliverable and the audit record
+// must not lose content silently). The approval decisions are logged separately
+// (tracingApprover), so a drop here never silently loses a deny verdict.
+func sendTurnEvent(ctx context.Context, events chan<- turnEvent, ev turnEvent, logger *slog.Logger) bool {
+	// Fast path: free buffer space, deliver without blocking the reader goroutine.
+	select {
+	case events <- ev:
+		return true
+	default:
+	}
+	// Buffer full: apply backpressure. Block until a slot frees (consumer drains)
+	// or the turn ctx is done (consumer gone — give up rather than leak).
+	select {
+	case events <- ev:
+		return true
+	case <-ctx.Done():
+		logger.Warn("codex interactive: dropping turn event under backpressure after context done",
+			"kind", ev.Kind,
+			"err", ctx.Err(),
+		)
+		return false
+	}
 }
 
 // initializeRequest is the MCP handshake request: latest protocol version, the

@@ -1,10 +1,13 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -502,6 +505,60 @@ func TestMCPStdioSession_Probe_SubscriptionEnv_NoAPIKey(t *testing.T) {
 	_, hasKey := envValue(mr.calls[0].Env, "OPENAI_API_KEY")
 	assert.False(t, hasKey,
 		"mcp-server path probe must use codexEnv() — OPENAI_API_KEY must not be forwarded to the version probe subprocess")
+}
+
+// --- sendTurnEvent: backpressure (no silent drop) --------------------------
+
+// BACKPRESSURE — when the buffer is full the send must BLOCK (slow the producer)
+// until the consumer drains, then deliver the frame — NOT silently discard it.
+// Before the fix the buffer-full `default:` arm dropped assistant transcript
+// frames under a normal fast burst with no signal. We fill a size-1 channel, then
+// drain it from a goroutine after a short delay; the send must succeed (return
+// true) and the frame must arrive in order.
+func TestSendTurnEvent_Backpressure_BlocksThenDelivers(t *testing.T) {
+	events := make(chan turnEvent, 1)
+	events <- turnEvent{Kind: turnToken, Text: "first"} // buffer now full
+
+	// Drain the first event shortly, freeing a slot for the blocked send.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		<-events
+	}()
+
+	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnToken, Text: "second"}, slog.Default())
+	assert.True(t, ok, "a full buffer must block until drained, not drop the frame")
+
+	got := <-events
+	assert.Equal(t, "second", got.Text, "the back-pressured frame must be delivered, not lost")
+}
+
+// DROP + WARN — if the consumer is gone (ctx cancelled) and the buffer is full,
+// the send must NOT block forever: it gives up and emits a slog.Warn so the true
+// drop is observable (the audit floor the reviewers required). It must return
+// false (frame not delivered).
+func TestSendTurnEvent_ConsumerGone_WarnsAndGivesUp(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	events := make(chan turnEvent, 1)
+	events <- turnEvent{Kind: turnToken, Text: "stuck"} // full, and nobody draining
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the consumer has torn down
+
+	ok := sendTurnEvent(ctx, events, turnEvent{Kind: turnToken, Text: "lost"}, logger)
+	assert.False(t, ok, "a send to a gone consumer must give up, not block forever")
+	assert.Contains(t, buf.String(), "level=WARN", "a true drop must be logged at WARN")
+	assert.Contains(t, buf.String(), "drop", "the warn must identify the dropped frame")
+}
+
+// HAPPY — with free buffer space the send delivers immediately and returns true,
+// the common no-contention path (no blocking, no warn).
+func TestSendTurnEvent_Happy_DeliversImmediately(t *testing.T) {
+	events := make(chan turnEvent, 4)
+	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnToken, Text: "hi"}, slog.Default())
+	assert.True(t, ok)
+	assert.Equal(t, "hi", (<-events).Text)
 }
 
 // --- elicitationApprover: the handler glue (no subprocess) -----------------
