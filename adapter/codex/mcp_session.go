@@ -66,7 +66,7 @@ type turnConfig struct {
 // It mirrors the existing parsed/foldEvent contract so the Phase-2 provider
 // reuses the same fold discipline over a live transport.
 type turnStream interface {
-	// Next returns the next event: an assistant-text increment (turnToken), a
+	// Next returns the next event: an assistant-text increment (turnText), a
 	// terminal success (turnDone, carrying the conversation id + token counts), or
 	// a terminal failure (turnFailed, carrying the cause). Once the turn's events
 	// are exhausted Next returns errStreamDone. A context cancellation / timeout
@@ -75,14 +75,16 @@ type turnStream interface {
 }
 
 // turnEventKind tags a turnEvent. The kinds are mutually exclusive: a turn folds
-// to a run of turnToken increments terminated by exactly one of turnDone (clean)
+// to a run of turnText increments terminated by exactly one of turnDone (clean)
 // or turnFailed (a failure is NEVER reported as a clean done).
 type turnEventKind int
 
 const (
-	// turnToken is an assistant-text increment (codex emits whole agent_message
-	// items, not token deltas; each is one turnToken).
-	turnToken turnEventKind = iota
+	// turnText is an assistant-text increment. The name deliberately does NOT say
+	// "token": codex emits whole agent_message items, not token deltas — each
+	// turnText carries one complete message increment, so a reader must not build a
+	// per-token delta-streaming model (buffering, partial-word UI) around it.
+	turnText turnEventKind = iota
 	// turnDone is the terminal success carrying the codex conversation id + token
 	// counts.
 	turnDone
@@ -91,12 +93,12 @@ const (
 )
 
 // turnEvent is the small tagged event a turnStream yields. Which fields are
-// populated is driven by Kind: Text for turnToken; SessionID/TokensIn/TokensOut
+// populated is driven by Kind: Text for turnText; SessionID/TokensIn/TokensOut
 // for turnDone; Err for turnFailed.
 type turnEvent struct {
 	// Kind tags which event this is.
 	Kind turnEventKind
-	// Text is the assistant-text increment (turnToken).
+	// Text is the assistant-text increment (turnText).
 	Text string
 	// SessionID is the codex conversation id (turnDone) — surfaced for the trace
 	// and for a later resume.

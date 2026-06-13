@@ -200,7 +200,7 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 }
 
 // StreamChat runs one codex interview turn and streams assistant text as it
-// arrives. Each turnToken becomes a ChatChunk token in order; the terminal
+// arrives. Each turnText becomes a ChatChunk token in order; the terminal
 // turnDone becomes a ChatChunk{Done} carrying the conversation id + token counts.
 // A turnFailed event or any non-sentinel transport error becomes a terminal
 // ChatChunk{Error} with NO Done — a failure is never a silent partial success.
@@ -246,7 +246,7 @@ func (p *InteractiveProvider) StreamChat(ctx context.Context, req engine.ChatReq
 				continue // already surfaced a failure; keep draining to reach the terminal
 			}
 			switch ev.Kind {
-			case turnToken:
+			case turnText:
 				if !sendChunk(engine.ChatChunk{Token: ev.Text}) {
 					failed = true // consumer gone / timed out; stop emitting, keep draining
 				}
@@ -295,7 +295,7 @@ func (p *InteractiveProvider) Chat(ctx context.Context, req engine.ChatRequest) 
 			return nil, fmt.Errorf("codex interactive (model %q): stream: %w", model, nerr)
 		}
 		switch ev.Kind {
-		case turnToken:
+		case turnText:
 			b.WriteString(ev.Text)
 		case turnDone:
 			done = ev

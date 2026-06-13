@@ -55,7 +55,7 @@ func elicitParams(t *testing.T, message string, meta map[string]any) mcp.Elicita
 
 // --- mapNotification: HAPPY ------------------------------------------------
 
-// HAPPY — an agent_message item notification maps to a turnToken carrying the
+// HAPPY — an agent_message item notification maps to a turnText carrying the
 // assistant text.
 func TestMapNotification_Happy_AgentMessageToken(t *testing.T) {
 	n := notif(t, codexEventNotificationMethod, map[string]any{
@@ -65,7 +65,7 @@ func TestMapNotification_Happy_AgentMessageToken(t *testing.T) {
 
 	ev, ok := mapNotification(n)
 	require.True(t, ok)
-	assert.Equal(t, turnToken, ev.Kind)
+	assert.Equal(t, turnText, ev.Kind)
 	assert.Equal(t, "hello world", ev.Text)
 }
 
@@ -90,7 +90,7 @@ func TestMapNotification_Happy_TurnCompletedDone(t *testing.T) {
 
 // SUCCESS — a session-configured/started notification carries only the
 // conversation id (no tokens, not terminal) and folds into a turnDone-less
-// SessionID carrier. We surface it as a turnToken-free SessionID-only token so
+// SessionID carrier. We surface it as a turnText-free SessionID-only token so
 // the id is captured even if the terminal frame omits it.
 func TestMapNotification_Success_ConversationIDCaptured(t *testing.T) {
 	n := notif(t, codexEventNotificationMethod, map[string]any{
@@ -250,7 +250,7 @@ func TestMapNotification_Edge_AgentMessageFallsBackToTopLevelMessage(t *testing.
 	})
 	ev, ok := mapNotification(n)
 	require.True(t, ok)
-	assert.Equal(t, turnToken, ev.Kind)
+	assert.Equal(t, turnText, ev.Kind)
 	assert.Equal(t, "hi from top-level", ev.Text, "top-level message must be used when item is absent")
 }
 
@@ -561,7 +561,7 @@ func TestVerifyInitializePosture_Security_NilResult_FailsClosed(t *testing.T) {
 // true) and the frame must arrive in order.
 func TestSendTurnEvent_Backpressure_BlocksThenDelivers(t *testing.T) {
 	events := make(chan turnEvent, 1)
-	events <- turnEvent{Kind: turnToken, Text: "first"} // buffer now full
+	events <- turnEvent{Kind: turnText, Text: "first"} // buffer now full
 
 	// Drain the first event shortly, freeing a slot for the blocked send.
 	go func() {
@@ -569,7 +569,7 @@ func TestSendTurnEvent_Backpressure_BlocksThenDelivers(t *testing.T) {
 		<-events
 	}()
 
-	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnToken, Text: "second"}, slog.Default())
+	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnText, Text: "second"}, slog.Default())
 	assert.True(t, ok, "a full buffer must block until drained, not drop the frame")
 
 	got := <-events
@@ -585,12 +585,12 @@ func TestSendTurnEvent_ConsumerGone_WarnsAndGivesUp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	events := make(chan turnEvent, 1)
-	events <- turnEvent{Kind: turnToken, Text: "stuck"} // full, and nobody draining
+	events <- turnEvent{Kind: turnText, Text: "stuck"} // full, and nobody draining
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // the consumer has torn down
 
-	ok := sendTurnEvent(ctx, events, turnEvent{Kind: turnToken, Text: "lost"}, logger)
+	ok := sendTurnEvent(ctx, events, turnEvent{Kind: turnText, Text: "lost"}, logger)
 	assert.False(t, ok, "a send to a gone consumer must give up, not block forever")
 	assert.Contains(t, buf.String(), "level=WARN", "a true drop must be logged at WARN")
 	assert.Contains(t, buf.String(), "drop", "the warn must identify the dropped frame")
@@ -600,7 +600,7 @@ func TestSendTurnEvent_ConsumerGone_WarnsAndGivesUp(t *testing.T) {
 // the common no-contention path (no blocking, no warn).
 func TestSendTurnEvent_Happy_DeliversImmediately(t *testing.T) {
 	events := make(chan turnEvent, 4)
-	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnToken, Text: "hi"}, slog.Default())
+	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnText, Text: "hi"}, slog.Default())
 	assert.True(t, ok)
 	assert.Equal(t, "hi", (<-events).Text)
 }
@@ -668,8 +668,8 @@ func TestElicitationApprover_Edge_NilApproverDeclines(t *testing.T) {
 // terminal errStreamDone once the channel closes.
 func TestEventStream_Happy_DrainsThenDone(t *testing.T) {
 	ch := make(chan turnEvent, 3)
-	ch <- turnEvent{Kind: turnToken, Text: "a"}
-	ch <- turnEvent{Kind: turnToken, Text: "b"}
+	ch <- turnEvent{Kind: turnText, Text: "a"}
+	ch <- turnEvent{Kind: turnText, Text: "b"}
 	ch <- turnEvent{Kind: turnDone, SessionID: "c1"}
 	close(ch)
 	s := newEventStream(ch, &terminalError{})

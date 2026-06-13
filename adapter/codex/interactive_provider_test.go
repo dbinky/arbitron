@@ -31,7 +31,7 @@ func newInteractiveTestProvider(t *testing.T, fake *fakeMCPSession, binding prov
 }
 
 // tokenEv / doneEv / failedEv build scripted turnEvents for the fake stream.
-func tokenEv(text string) turnEvent { return turnEvent{Kind: turnToken, Text: text} }
+func tokenEv(text string) turnEvent { return turnEvent{Kind: turnText, Text: text} }
 func doneEv(sid string, in, out int) turnEvent {
 	return turnEvent{Kind: turnDone, SessionID: sid, TokensIn: in, TokensOut: out}
 }

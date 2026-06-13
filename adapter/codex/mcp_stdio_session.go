@@ -339,7 +339,7 @@ func decodeNotificationPayload(n mcp.JSONRPCNotification) (codexMCPEvent, error)
 }
 
 // foldNotificationEvent maps one decoded codex event to a turnEvent. An
-// agent_message with non-empty text → turnToken; turn.completed → turnDone with
+// agent_message with non-empty text → turnText; turn.completed → turnDone with
 // the conversation id + best-effort tokens; turn.failed / error → turnFailed; any
 // other (or an empty-text message) → (zero, false) ignored.
 func foldNotificationEvent(ev codexMCPEvent) (turnEvent, bool) {
@@ -349,7 +349,7 @@ func foldNotificationEvent(ev codexMCPEvent) (turnEvent, bool) {
 		if text == "" {
 			return turnEvent{}, false
 		}
-		return turnEvent{Kind: turnToken, Text: text}, true
+		return turnEvent{Kind: turnText, Text: text}, true
 	case codexTurnCompleted:
 		out := turnEvent{Kind: turnDone, SessionID: conversationID(ev)}
 		if ev.Usage != nil {

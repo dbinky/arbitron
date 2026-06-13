@@ -40,8 +40,8 @@ func drainStream(t *testing.T, ctx context.Context, s turnStream) ([]turnEvent, 
 // order via Next, and gotCfg captures the prompt + workdir handed to Start.
 func TestFakeMCPSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
 	f := &fakeMCPSession{events: []turnEvent{
-		{Kind: turnToken, Text: "Hi"},
-		{Kind: turnToken, Text: " there"},
+		{Kind: turnText, Text: "Hi"},
+		{Kind: turnText, Text: " there"},
 		{Kind: turnDone, SessionID: "c1", TokensIn: 7, TokensOut: 3},
 	}}
 
@@ -57,9 +57,9 @@ func TestFakeMCPSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, events, 3)
-	assert.Equal(t, turnToken, events[0].Kind)
+	assert.Equal(t, turnText, events[0].Kind)
 	assert.Equal(t, "Hi", events[0].Text)
-	assert.Equal(t, turnToken, events[1].Kind)
+	assert.Equal(t, turnText, events[1].Kind)
 	assert.Equal(t, " there", events[1].Text)
 	assert.Equal(t, turnDone, events[2].Kind)
 	assert.Equal(t, "c1", events[2].SessionID)
@@ -170,7 +170,7 @@ func TestFakeMCPSession_Success_MultipleApprovalsAllDeliveredInOrder(t *testing.
 func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {
 	turnErr := errors.New("turn.failed: model refused")
 	f := &fakeMCPSession{events: []turnEvent{
-		{Kind: turnToken, Text: "partial"},
+		{Kind: turnText, Text: "partial"},
 		{Kind: turnFailed, Err: turnErr},
 	}}
 
@@ -180,7 +180,7 @@ func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {
 	// First event is the partial token.
 	ev, err := stream.Next(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, turnToken, ev.Kind)
+	assert.Equal(t, turnText, ev.Kind)
 	assert.Equal(t, "partial", ev.Text)
 
 	// Second event is the terminal failure carrying the cause.
@@ -251,7 +251,7 @@ func TestFakeMCPSession_Edge_ApprovalBeforeAnyToken(t *testing.T) {
 			WritePaths: []string{"internal/secret.go"},
 			Reason:     "apply patch",
 		}},
-		events: []turnEvent{{Kind: turnToken, Text: "hello"}, {Kind: turnDone}},
+		events: []turnEvent{{Kind: turnText, Text: "hello"}, {Kind: turnDone}},
 	}
 
 	_, err := f.Start(context.Background(), turnConfig{Prompt: "p", WorkDir: "/w", Approver: approver})
@@ -290,6 +290,6 @@ func TestFakeMCPSession_Edge_NilApproverDefaultDeny(t *testing.T) {
 // TYPE — the turnEventKind constants are distinct and the approval value types
 // carry the structured codex payload (exec argv vs. patch write-paths).
 func TestTurnEventKinds_AreDistinct(t *testing.T) {
-	kinds := map[turnEventKind]struct{}{turnToken: {}, turnDone: {}, turnFailed: {}}
-	assert.Len(t, kinds, 3, "turnToken/turnDone/turnFailed must be distinct kinds")
+	kinds := map[turnEventKind]struct{}{turnText: {}, turnDone: {}, turnFailed: {}}
+	assert.Len(t, kinds, 3, "turnText/turnDone/turnFailed must be distinct kinds")
 }
