@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -317,38 +316,6 @@ func (p *InteractiveProvider) Chat(ctx context.Context, req engine.ChatRequest) 
 		TokensIn:  done.TokensIn,
 		TokensOut: done.TokensOut,
 	}, nil
-}
-
-// tracingApprover wraps the policy's decide so every approval decision is
-// recorded via structured logging (slog) — the request summary, allow/deny, and
-// reason. Denials are the operator's ONLY signal the guardrail fired; they are
-// NEVER surfaced to the human (no ChatChunk field, no engine change — the port
-// carries no step channel). The wrapper calls the real decide, logs the verdict,
-// and returns it unchanged.
-func tracingApprover(decide approvalFunc) approvalFunc {
-	return func(req approvalRequest) approvalDecision {
-		dec := decide(req)
-		slog.Info("codex interactive approval decision",
-			"summary", approvalSummary(req),
-			"allow", dec.Allow,
-			"reason", dec.Reason,
-		)
-		return dec
-	}
-}
-
-// approvalSummary renders a short, log-safe description of an approval request:
-// the command argv for an exec request, the target paths for a write, or a
-// fallback for an unrecognized kind. It never logs the prompt or any secret.
-func approvalSummary(req approvalRequest) string {
-	switch {
-	case len(req.Command) > 0:
-		return "exec: " + strings.Join(req.Command, " ")
-	case len(req.WritePaths) > 0:
-		return "write: " + strings.Join(req.WritePaths, ", ")
-	default:
-		return "unrecognized approval request"
-	}
 }
 
 // codexEffortValue resolves the bare codex model_reasoning_effort value (e.g.

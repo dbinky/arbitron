@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -367,4 +368,46 @@ func resolve(workDir, p string) string {
 		return filepath.Clean(p)
 	}
 	return filepath.Join(workDir, p)
+}
+
+// ---------------------------------------------------------------------------
+// Approval trace surface
+//
+// tracingApprover + approvalSummary live HERE (not in the provider) so an auditor
+// reads ONE file to learn the whole approval surface: the allow/deny decision AND
+// exactly what gets logged on each verdict. They are the policy's observability
+// skin, not turn orchestration.
+// ---------------------------------------------------------------------------
+
+// tracingApprover wraps the policy's decide so every approval decision is
+// recorded via structured logging (slog) — the request summary, allow/deny, and
+// reason. Denials are the operator's ONLY signal the guardrail fired; they are
+// NEVER surfaced to the human (no ChatChunk field, no engine change — the port
+// carries no step channel). The wrapper calls the real decide, logs the verdict,
+// and returns it unchanged.
+func tracingApprover(decide approvalFunc) approvalFunc {
+	return func(req approvalRequest) approvalDecision {
+		dec := decide(req)
+		slog.Info("codex interactive approval decision",
+			"summary", approvalSummary(req),
+			"allow", dec.Allow,
+			"reason", dec.Reason,
+		)
+		return dec
+	}
+}
+
+// approvalSummary renders a short, log-safe description of an approval request:
+// the command argv for an exec request, the target paths for a write, or a
+// fallback for an unrecognized kind. It never logs the prompt or any secret
+// (notably never req.Reason, which may carry prompt-derived content).
+func approvalSummary(req approvalRequest) string {
+	switch {
+	case len(req.Command) > 0:
+		return "exec: " + strings.Join(req.Command, " ")
+	case len(req.WritePaths) > 0:
+		return "write: " + strings.Join(req.WritePaths, ", ")
+	default:
+		return "unrecognized approval request"
+	}
 }
