@@ -166,9 +166,11 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	}
 
 	// Effort emission: the binding's resolved Effort is floored + mapped through
-	// the SAME capability pipeline the exec path uses, then carried as the turn's
-	// model_reasoning_effort. A default/empty effort or an Empty ruleset emits "".
-	effort, err := codexEffortValue(p.binding, p.rules)
+	// the SAME capability pipeline the exec path uses (codexEffortGrade — the shared
+	// graded-value core), then carried as the turn's model_reasoning_effort. A
+	// default/empty effort or an Empty ruleset emits "". The MCP path consumes the
+	// bare grade directly, so the exec `-c` flag format is not load-bearing here.
+	effort, err := codexEffortGrade(p.binding, p.rules)
 	if err != nil {
 		return nil, nil, nil, model, fmt.Errorf("codex interactive (model %q): %w", model, err)
 	}
@@ -316,28 +318,6 @@ func (p *InteractiveProvider) Chat(ctx context.Context, req engine.ChatRequest) 
 		TokensIn:  done.TokensIn,
 		TokensOut: done.TokensOut,
 	}, nil
-}
-
-// codexEffortValue resolves the bare codex model_reasoning_effort value (e.g.
-// "high", or "minimal" for none) for a binding via the capability rules,
-// reusing the exec path's codexEffortArgs so the interactive turn and `codex
-// exec` floor + emit the IDENTICAL effective value. An Empty ruleset, a
-// default/empty effort, or a backend that yields no graded effort returns "" (the
-// turn carries no effort and the protocol body omits the key).
-func codexEffortValue(binding provider.ResolvedBinding, rules provider.CapabilityRules) (string, error) {
-	args, err := codexEffortArgs(binding, rules)
-	if err != nil {
-		return "", err
-	}
-	// codexEffortArgs returns the exec form ["-c", "model_reasoning_effort=<v>"];
-	// extract the bare value so the MCP protocol body carries just <v>.
-	const prefix = "model_reasoning_effort="
-	for _, a := range args {
-		if v, ok := strings.CutPrefix(a, prefix); ok {
-			return v, nil
-		}
-	}
-	return "", nil
 }
 
 // isStreamDone reports whether err is the turn stream's clean terminal sentinel
