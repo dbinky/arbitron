@@ -28,16 +28,20 @@ var ErrUnsupportedAgentBackend = errors.New("interactive_agent: unsupported agen
 //
 //   - ProfileKindChat  → delegates to the injected ChatProviderSelector
 //     (tool-suppressed stream); unchanged by the backend generalization.
-//   - ProfileKindAgent → the per-backend stream adapter (tool-enabled stream):
-//     claude-code → the claudecli stream adapter, codex → the codex stream
-//     adapter; an empty backend is floored to defaultBackend first; opencode and
-//     any unknown/typo backend fail closed with ErrUnsupportedAgentBackend (never
-//     a silent fallback to claude).
+//   - ProfileKindAgent → the per-backend streaming provider. The dispatch contract
+//     is "backend id → its interactive streaming provider"; the TOOL/SANDBOX
+//     POSTURE is each provider's own implementation detail, NOT a property of this
+//     map. It is backend-defined: claude-code is the tool-enabled (autonomous)
+//     stream adapter, codex is the read-only + docs/-scoped approval-gated
+//     interactive provider. An empty backend is floored to defaultBackend first;
+//     opencode and any unknown/typo backend fail closed with
+//     ErrUnsupportedAgentBackend (never a silent fallback to claude).
 type InteractiveStreamSelector struct {
 	chat engine.ChatProviderSelector
 	// agentStreams maps an agent backend id (workflow.Backend*) to its streaming
-	// ChatProvider. A backend absent from the map fails closed. opencode is
-	// deliberately NOT a key (no stream adapter exists).
+	// ChatProvider, whatever posture that provider implements (backend-defined —
+	// see the type doc; NOT necessarily tool-enabled). A backend absent from the
+	// map fails closed. opencode is deliberately NOT a key (no stream adapter).
 	agentStreams map[string]engine.ChatProvider
 	// defaultBackend is the deployment floor applied to an empty agent backend —
 	// the SAME floor the batch path applies before reaching the factory, so an
@@ -49,9 +53,11 @@ var _ engine.InteractiveStreamSelector = (*InteractiveStreamSelector)(nil)
 
 // NewInteractiveStreamSelector constructs an InteractiveStreamSelector.
 // chat is the ChatProviderSelector used for chat-kind bindings. agentStreams
-// maps each supported agent backend to its tool-enabled streaming adapter (e.g.
-// {"claude-code": claudeStream, "codex": codexStream}). defaultBackend is the
-// floor applied to an empty agent-kind backend before dispatch.
+// maps each supported agent backend to its streaming provider — whatever posture
+// that provider implements is backend-defined, not assumed tool-enabled (e.g.
+// {"claude-code": claudeStream (tool-enabled), "codex": codexInteractive
+// (read-only + approval-gated)}). defaultBackend is the floor applied to an empty
+// agent-kind backend before dispatch.
 func NewInteractiveStreamSelector(chat engine.ChatProviderSelector, agentStreams map[string]engine.ChatProvider, defaultBackend string) *InteractiveStreamSelector {
 	return &InteractiveStreamSelector{
 		chat:           chat,

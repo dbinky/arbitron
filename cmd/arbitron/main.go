@@ -828,9 +828,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
-	// profiles route by BACKEND to the matching tool-enabled streaming adapter —
-	// claude-code → the claude-cli stream adapter, codex → the codex INTERACTIVE
-	// provider (codex `mcp-server`, subscription-only): a read-only sandbox with
+	// profiles route by BACKEND to the matching streaming provider. The tool/
+	// sandbox POSTURE is backend-defined (each provider's own implementation
+	// detail), NOT uniformly tool-enabled: claude-code → the claude-cli stream
+	// adapter (tool-enabled / autonomous), codex → the codex INTERACTIVE provider
+	// (codex `mcp-server`, subscription-only): a read-only sandbox with
 	// approval-gated, docs/-scoped writes (NOT `codex exec`, which is the
 	// autonomous batch posture). An empty agent backend is floored to the SAME
 	// deployment default the batch AgentCallExecutor uses
