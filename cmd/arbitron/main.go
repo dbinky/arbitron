@@ -838,13 +838,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
 	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{
 		// Codex (subscription-only `codex mcp-server`): binary auto-resolved from
-		// PATH, the per-turn timeout reuses the shared LLM timeout floor, and the
-		// response cap mirrors the factory's codex arm. The interactive posture is
-		// read-only + approval-gated: WritableRoot scopes the auto-policy's allowed
-		// writes to docs/ (a zero value fails closed to that subtree, never
-		// "everywhere"); there is no allow-all knob.
-		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
+		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
+		// wedged turn). The interactive posture is read-only + approval-gated:
+		// WritableRoot scopes the auto-policy's allowed writes to docs/ (a zero value
+		// fails closed to that subtree, never "everywhere"); there is no allow-all
+		// knob. There is no MaxResponseBytes: the JSON-RPC event-frame transport has
+		// no raw stdout byte pipe to cap (the deadline is the bound that applies).
+		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		// profile-editing Phase 3: the binding's resolved effort rides the protocol
 		// body via these rules on the interactive_agent streaming path too.
 		CapabilityRules: capabilityRules,

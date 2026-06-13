@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arbitron/arbitron/adapter/procenv"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -15,10 +16,16 @@ import (
 // InteractiveConfig configures an InteractiveProvider — the conversational codex
 // backend that runs over the mcpSession transport seam (not `codex exec`). It is
 // the interactive sibling of codex.Config: it shares the same construction
-// inputs (binding, binary, timeout, response cap, capability rules) but adds the
+// inputs (binding, binary, per-turn timeout, capability rules) but adds the
 // auto-approval policy's WritableRoot, and it owns NO Runner (the mcpSession
 // factory replaces the subprocess runner seam — real stdio in prod, fake in
 // tests).
+//
+// Unlike codex.Config there is deliberately NO MaxResponseBytes: the exec path
+// enforces a stdout byte cap on a raw pipe, but the interactive turn streams
+// discrete JSON-RPC event frames over the mcp-go transport (no raw byte pipe to
+// cap), so a byte counter here would be a knob nothing reads — a lying contract.
+// The per-turn deadline (Timeout) is the bound that matters on this path.
 //
 // SECURITY: like the exec Config there is no per-provider credential — codex is
 // subscription-only (env.go), so Binding.RevealKey is never consulted and no API
@@ -30,10 +37,10 @@ type InteractiveConfig struct {
 	Binding provider.ResolvedBinding
 	// BinaryPath is the codex binary; "" resolves from PATH / StandardBinDirs.
 	BinaryPath string
-	// Timeout is the default per-turn timeout; <=0 means no default.
+	// Timeout is the default per-turn timeout; <=0 means no default (the turn is
+	// governed solely by the engine ctx). It is wired through procenv.WithTimeout
+	// in startTurn, so a wedged turn that never emits a terminal frame is bounded.
 	Timeout time.Duration
-	// MaxResponseBytes caps per-request response bytes; 0 means no cap.
-	MaxResponseBytes int64
 	// CapabilityRules drives the per-turn effort emission: the binding's resolved
 	// Effort is floored and applied as turnConfig.Effort via the SAME pipeline the
 	// exec path uses, so interactive and exec never disagree on the effective
@@ -106,14 +113,15 @@ func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() 
 // Config so the shared core is built by the SAME newCore path — the interactive
 // provider owns no Runner (the mcpSession factory replaces that seam), so it is
 // left at its zero value (nil → the production os/exec runner, used only by the
-// version probe).
+// version probe). MaxResponseBytes is deliberately left at its zero value: the
+// exec stdout byte cap has no meaning on the JSON-RPC event-frame transport, so
+// the interactive path never sets it (see InteractiveConfig).
 func interactiveCoreConfig(cfg InteractiveConfig) Config {
 	return Config{
-		Binding:          cfg.Binding,
-		BinaryPath:       cfg.BinaryPath,
-		Timeout:          cfg.Timeout,
-		MaxResponseBytes: cfg.MaxResponseBytes,
-		CapabilityRules:  cfg.CapabilityRules,
+		Binding:         cfg.Binding,
+		BinaryPath:      cfg.BinaryPath,
+		Timeout:         cfg.Timeout,
+		CapabilityRules: cfg.CapabilityRules,
 	}
 }
 
@@ -128,16 +136,26 @@ func writableRootOrDefault(root string) string {
 
 // startTurn performs the shared fail-closed prelude for both Chat and StreamChat:
 // it guards an empty WorkDir, resolves the model (req.Model overrides the binding
-// model) and the floored effort, installs the docs/-scoped auto-policy (wrapped
-// to trace each decision), and starts ONE codex turn over a fresh mcpSession. An
-// empty WorkDir, empty model, or a failed Start yields NO stream (no half-open
-// turn) — the error is returned before any events flow.
-func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequest) (turnStream, string, error) {
+// model) and the floored effort, derives the per-turn deadline, installs the
+// docs/-scoped auto-policy (wrapped to trace each decision), and starts ONE codex
+// turn over a fresh mcpSession. An empty WorkDir, empty model, or a failed Start
+// yields NO stream (no half-open turn) — the error is returned before any events
+// flow.
+//
+// It returns the per-turn context (which the caller MUST use to fold the stream so
+// the deadline reaches Next) and its CancelFunc (which the caller MUST call when
+// the turn ends, releasing the deadline timer + reaping the transport child). The
+// timeout wrap honours p.timeout via procenv.WithTimeout — the SAME per-call
+// deadline plumbing the exec path uses — so a wedged turn (no terminal frame) is
+// killed by the deadline instead of parking the node in WAITING forever. A
+// non-positive timeout yields the parent ctx unchanged (no deadline), so the turn
+// is governed solely by the engine ctx, exactly as before.
+func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequest) (turnStream, context.Context, context.CancelFunc, string, error) {
 	// WorkDir guard FIRST: an empty cwd would inherit the engine launch directory
 	// (arbitron.db / config.yaml). Same invariant the exec path enforces — fail
 	// closed before any session starts.
 	if req.WorkDir == "" {
-		return nil, "", ErrWorkDirRequired
+		return nil, nil, nil, "", ErrWorkDirRequired
 	}
 
 	// Single model source per turn: req.Model wins over the binding so an
@@ -153,15 +171,20 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	// model_reasoning_effort. A default/empty effort or an Empty ruleset emits "".
 	effort, err := codexEffortValue(p.binding, p.rules)
 	if err != nil {
-		return nil, model, fmt.Errorf("codex interactive (model %q): %w", model, err)
+		return nil, nil, nil, model, fmt.Errorf("codex interactive (model %q): %w", model, err)
 	}
+
+	// Per-turn deadline: derive a turn context honouring p.timeout. This is the
+	// only deadline in the conversation.go → StreamChat → startTurn path, so a
+	// wedged codex turn that never emits a terminal frame is bounded here.
+	turnCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
 	// Install the docs/-scoped auto-policy, wrapped so each decision is traced
 	// (slog). The transport routes EVERY codex approval request through this.
 	policy := approvalPolicy{workDir: req.WorkDir, writableRoot: p.writableRoot}
 	approver := tracingApprover(policy.decide)
 
-	stream, err := p.newSession().Start(ctx, turnConfig{
+	stream, err := p.newSession().Start(turnCtx, turnConfig{
 		Model:    model,
 		Prompt:   req.Prompt,
 		WorkDir:  req.WorkDir,
@@ -170,9 +193,10 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 		Approver: approver,
 	})
 	if err != nil {
-		return nil, model, err
+		cancel()
+		return nil, nil, nil, model, err
 	}
-	return stream, model, nil
+	return stream, turnCtx, cancel, model, nil
 }
 
 // StreamChat runs one codex interview turn and streams assistant text as it
@@ -182,9 +206,11 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 // ChatChunk{Error} with NO Done — a failure is never a silent partial success.
 // The internal goroutine ALWAYS drains the turn stream to its terminal signal so
 // the child (real transport) is reaped; a cancelled/timed-out consumer never
-// blocks the drainer (the ctx-raced makeSendChunk send).
+// blocks the drainer (the turnCtx-raced makeSendChunk send). The per-turn
+// deadline (startTurn's turnCtx) bounds a wedged turn that never emits a terminal
+// frame, and the deferred cancel releases it on every exit path.
 func (p *InteractiveProvider) StreamChat(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error) {
-	stream, _, err := p.startTurn(ctx, req)
+	stream, turnCtx, cancel, _, err := p.startTurn(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -192,14 +218,18 @@ func (p *InteractiveProvider) StreamChat(ctx context.Context, req engine.ChatReq
 	out := make(chan engine.ChatChunk)
 	go func() {
 		defer close(out)
+		// Release the per-turn deadline + reap the transport child once the drain
+		// reaches its terminal, on every exit path.
+		defer cancel()
 
-		// ctx governs the non-blocking send, so a cancelled consumer OR an elapsed
-		// timeout unblocks the sender while the drain loop runs to the terminal.
-		sendChunk := makeSendChunk(ctx, out)
+		// turnCtx (the deadline-bearing context) governs both the drain and the
+		// non-blocking send, so a cancelled consumer, an elapsed engine ctx, OR the
+		// per-turn timeout unblocks the sender while the drain loop runs to terminal.
+		sendChunk := makeSendChunk(turnCtx, out)
 
 		var failed bool
 		for {
-			ev, nerr := stream.Next(ctx)
+			ev, nerr := stream.Next(turnCtx)
 			if nerr != nil {
 				// errStreamDone is the clean terminal sentinel; any OTHER error is a
 				// real transport/context failure (fail closed — a terminal error chunk,
@@ -245,16 +275,18 @@ func (p *InteractiveProvider) StreamChat(ctx context.Context, req engine.ChatReq
 // a transport break, or a cancelled context is a hard error (no silent empty
 // result) — mirroring the exec adapter's Chat/StreamChat symmetry.
 func (p *InteractiveProvider) Chat(ctx context.Context, req engine.ChatRequest) (*engine.ChatResponse, error) {
-	stream, model, err := p.startTurn(ctx, req)
+	stream, turnCtx, cancel, model, err := p.startTurn(ctx, req)
 	if err != nil {
 		return nil, err
 	}
+	// Release the per-turn deadline + reap the transport child when the fold ends.
+	defer cancel()
 
 	var b strings.Builder
 	var done turnEvent
 	var sawDone bool
 	for {
-		ev, nerr := stream.Next(ctx)
+		ev, nerr := stream.Next(turnCtx)
 		if nerr != nil {
 			if isStreamDone(nerr) {
 				break

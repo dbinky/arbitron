@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -626,7 +627,7 @@ func TestInteractive_Approval_MixedDecisions_StreamReachesDone(t *testing.T) {
 			doneEv("conv-1", 10, 6),
 		},
 		approvals: []approvalRequest{
-			{Command: []string{"git", "status"}, Reason: "inspect state"},     // ALLOWED (info command)
+			{Command: []string{"git", "status"}, Reason: "inspect state"},    // ALLOWED (info command)
 			{WritePaths: []string{"domain/auth/handler.go"}, Reason: "fix"},  // DENIED (source write)
 			{WritePaths: []string{"docs/specs/feature.md"}, Reason: "notes"}, // ALLOWED (docs write)
 		},
@@ -709,6 +710,69 @@ func TestInteractive_Chat_ContextCancel(t *testing.T) {
 	resp, err := p.Chat(ctx, engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
 	assert.Nil(t, resp)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// --- TIMEOUT (hang vector regression) --------------------------------------
+
+// HANG / REGRESSION — a turn whose transport never emits a terminal frame must be
+// killed by the per-turn deadline, not park forever. The fake blocks Next on the
+// turn ctx; with a tiny Timeout the derived deadline must fire, the stream must
+// yield NO clean Done, and StreamChat must terminate (the channel closes) rather
+// than hang. Before the fix Timeout was dead config and this would block forever.
+func TestInteractive_StreamChat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
+	fake := &fakeMCPSession{blockOnCtx: true} // Next blocks until the turn ctx is done
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{
+			Binding: codexBinding("gpt-5-codex", nil),
+			Timeout: 20 * time.Millisecond, // the per-turn deadline under test
+		},
+		func() mcpSession { return fake },
+	)
+
+	// A background ctx with NO deadline of its own: the ONLY bound is p.Timeout, so
+	// this test fails (hangs) if the timeout is not wired into startTurn.
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+
+	chunks := collectChunks(t, ch) // returns only when the channel closes
+	for _, c := range chunks {
+		assert.False(t, c.Done, "a turn killed by the per-turn deadline must never emit a clean Done")
+	}
+}
+
+// HANG / REGRESSION — the Chat fold honours the per-turn deadline too: a wedged
+// turn returns a context.DeadlineExceeded error (no partial result), not a hang.
+func TestInteractive_Chat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
+	fake := &fakeMCPSession{blockOnCtx: true}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{
+			Binding: codexBinding("gpt-5-codex", nil),
+			Timeout: 20 * time.Millisecond,
+		},
+		func() mcpSession { return fake },
+	)
+
+	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	assert.Nil(t, resp, "a deadline-killed turn must not return a partial result")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "a wedged turn must be killed by the per-turn deadline")
+}
+
+// SUCCESS — a non-positive Timeout (the default) imposes no deadline: a normal
+// turn with a terminal frame completes cleanly, proving the wrap degrades to the
+// parent ctx (procenv.WithTimeout no-op) rather than spuriously cancelling.
+func TestInteractive_StreamChat_ZeroTimeout_NoSpuriousDeadline(t *testing.T) {
+	fake := &fakeMCPSession{events: []turnEvent{tokenEv("hi"), doneEv("conv-1", 1, 1)}}
+	p := newInteractiveProviderWithSession(
+		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)}, // Timeout zero
+		func() mcpSession { return fake },
+	)
+
+	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
+	require.NoError(t, err)
+	chunks := collectChunks(t, ch)
+	last := chunks[len(chunks)-1]
+	assert.True(t, last.Done, "a zero Timeout must not impose a spurious deadline on a normal turn")
 }
 
 // --- CONSTRUCTOR -----------------------------------------------------------
