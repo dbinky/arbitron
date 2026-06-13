@@ -892,6 +892,35 @@ func TestConversationHandler_HandleMessage_StreamChunkError_ReturnsError(t *test
 }
 
 // ---------------------------------------------------------------------------
+// HandleMessage Tests: Engine seam (PAIRED FA#19)
+// ---------------------------------------------------------------------------
+
+// PAIRED (FA#19) — WorkDir flows from the instance's workspace variable to the
+// ChatRequest so the InteractiveProvider can use it as its sandbox root guard.
+// An empty workspace would cause InteractiveProvider to fail closed with
+// ErrWorkDirRequired; this test proves the conversation handler correctly
+// propagates the instance workspace to the request, using the existing
+// StreamProviderFor path with zero engine edits.
+func TestConversationHandler_HandleMessage_WorkDirFlowsFromWorkspace(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	// Seed the workspace variable on the instance.
+	instRepo.mu.Lock()
+	instRepo.instances[instanceID].Variables["workspace"] = "/tmp/conv-ws"
+	instRepo.mu.Unlock()
+
+	llmProvider.streamCallFn = cannedStream([]string{"ok"}, 3, 4)
+
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+	require.NoError(t, handler.HandleMessage(convoCtx(), instanceID, "help"))
+
+	reqs := llmProvider.getCapturedReqs()
+	require.Len(t, reqs, 1)
+	assert.Equal(t, "/tmp/conv-ws", reqs[0].WorkDir,
+		"WorkDir must flow from inst.Variables[workspace] so the InteractiveProvider can use it as its sandbox root guard")
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

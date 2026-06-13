@@ -233,6 +233,52 @@ func TestCodexEffortArgs_EmptyRulesSkips(t *testing.T) {
 	}
 }
 
+// --- codexEffortGrade: the shared graded-value core ------------------------
+
+// SUCCESS — codexEffortGrade returns the bare graded effort value (no -c flag
+// wrapping) for a configured ruleset, so the MCP/interactive path consumes the
+// grade DIRECTLY rather than reverse-parsing the exec -c argv format (which would
+// make the exec flag spelling load-bearing on the MCP path — a latent silent
+// effort-floor bug). This pins the interactive effort value the manager required.
+func TestCodexEffortGrade_ReturnsBareValue(t *testing.T) {
+	rules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"codex": {Backend: "codex", EffortLevels: []provider.Effort{provider.EffortLow, provider.EffortMedium, provider.EffortHigh}},
+	})
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortHigh}
+
+	grade, err := codexEffortGrade(binding, rules)
+	require.NoError(t, err)
+	assert.Equal(t, "high", grade, "the bare graded value must be returned, not the -c flag form")
+}
+
+// EDGE — codexEffortGrade returns "" (no effort) for an Empty ruleset, a
+// default/empty effort, or an unknown backend that yields no graded effort, so
+// the interactive protocol body omits the key (back-compat with the exec path).
+func TestCodexEffortGrade_EmptyWhenNoGradedEffort(t *testing.T) {
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortHigh}
+	grade, err := codexEffortGrade(binding, provider.CapabilityRules{})
+	require.NoError(t, err)
+	assert.Equal(t, "", grade, "an Empty ruleset must yield no grade")
+}
+
+// PARITY — codexEffortArgs is now DERIVED from codexEffortGrade: when the grade is
+// non-empty the args are exactly ["-c", "model_reasoning_effort=<grade>"], and
+// when the grade is empty there are no args. This proves the grade is the single
+// source of truth and the exec -c form wraps it (not the reverse).
+func TestCodexEffortArgs_DerivedFromGrade(t *testing.T) {
+	rules := provider.NewCapabilityRules(map[string]provider.BackendCapability{
+		"codex": {Backend: "codex", EffortLevels: []provider.Effort{provider.EffortLow, provider.EffortMedium, provider.EffortHigh}},
+	})
+	binding := provider.ResolvedBinding{Backend: "codex", Model: "gpt-5.5", Effort: provider.EffortHigh}
+
+	grade, err := codexEffortGrade(binding, rules)
+	require.NoError(t, err)
+	args, err := codexEffortArgs(binding, rules)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"-c", "model_reasoning_effort=" + grade}, args,
+		"codexEffortArgs must wrap the grade into the exec -c form")
+}
+
 // EDGE — a model with surrounding whitespace is trimmed to the clean name in
 // argv, not rejected. This documents the trim-then-check contract: callers
 // feeding a config-loaded model string with accidental whitespace get the

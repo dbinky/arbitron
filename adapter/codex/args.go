@@ -93,14 +93,27 @@ func buildArgsWithRules(mission engine.AgentMission, binding provider.ResolvedBi
 	return buildExecArgs(binding.Model, mission.WorkDir, extra)
 }
 
-// codexEffortArgs computes the codex `-c model_reasoning_effort=<v>` argv addition
-// for a binding via the capability rules. An Empty ruleset, an empty/default
-// effort, or an unset backend (defaulted to codex) that yields no graded effort
-// all return nil (no extra args). It is shared by the batch buildArgsWithRules and
-// the streaming launch so the two paths emit identical effort args.
-func codexEffortArgs(binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+// codexEffortConfigKey is the codex `-c` config key carrying the reasoning effort
+// (`-c model_reasoning_effort=<v>`). It is the ONE place the exec flag key lives —
+// codexEffortArgs wraps a grade into this form, and codexEffortGrade reads the
+// grade back out of the domain emission, so neither path hard-codes the spelling.
+const codexEffortConfigKey = "model_reasoning_effort"
+
+// codexEffortGrade is the SHARED graded-effort core for both codex paths: it
+// resolves the bare effective reasoning-effort value (e.g. "high", or "minimal"
+// for none) for a binding via the capability rules — the SAME floor + mapping the
+// exec path applies, so interactive and exec never disagree on the effective
+// value. An Empty ruleset, an empty/default effort, or a backend that yields no
+// graded effort returns "" (no effort).
+//
+// This is the value the interactive (MCP) path carries directly in the protocol
+// body, and the value codexEffortArgs wraps into the exec `-c` form — so the exec
+// flag FORMAT is never load-bearing for the MCP path (the previous reverse-parse
+// of codexEffortArgs' output could silently floor interactive effort to default
+// if the arg format changed, with green tests).
+func codexEffortGrade(binding provider.ResolvedBinding, rules provider.CapabilityRules) (string, error) {
 	if rules.Empty() {
-		return nil, nil
+		return "", nil
 	}
 	backend := binding.Backend
 	if backend == "" {
@@ -111,12 +124,44 @@ func codexEffortArgs(binding provider.ResolvedBinding, rules provider.Capability
 		effort = provider.EffortDefault
 	}
 	// Context is inapplicable to codex (rejected at write); pass ContextDefault so
-	// Emit never trips the context-axis check and only the effort args come back.
+	// Emit never trips the context-axis check and only the effort emission comes back.
 	em, err := rules.Emit(backend, binding.Model, provider.ContextDefault, effort)
+	if err != nil {
+		return "", err
+	}
+	// The domain emission exposes codex effort only as the `-c <key>=<v>` arg pair;
+	// extract the bare <v> here, in the ONE place that knows the emission shape, so
+	// callers consume the grade rather than re-deriving it.
+	return gradeFromEmissionArgs(em.Args), nil
+}
+
+// gradeFromEmissionArgs extracts the bare reasoning-effort value from a codex
+// `-c model_reasoning_effort=<v>` emission arg pair, returning "" when no such
+// pair is present (default/empty effort emits nothing).
+func gradeFromEmissionArgs(args []string) string {
+	prefix := codexEffortConfigKey + "="
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// codexEffortArgs computes the codex `-c model_reasoning_effort=<v>` argv addition
+// for a binding by WRAPPING the shared codexEffortGrade into the exec `-c` form. A
+// "" grade (Empty ruleset, empty/default effort, or a backend with no graded
+// effort) returns nil (no extra args). It is shared by the batch buildArgsWithRules
+// and the streaming launch so the two paths emit identical effort args.
+func codexEffortArgs(binding provider.ResolvedBinding, rules provider.CapabilityRules) ([]string, error) {
+	grade, err := codexEffortGrade(binding, rules)
 	if err != nil {
 		return nil, err
 	}
-	return em.Args, nil
+	if grade == "" {
+		return nil, nil
+	}
+	return []string{"-c", codexEffortConfigKey + "=" + grade}, nil
 }
 
 // buildExecArgs is the SHARED `codex exec` argv builder consumed by both the

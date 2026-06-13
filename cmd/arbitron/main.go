@@ -828,30 +828,52 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
 	// route to the tool-suppressed chat stream (via the provider factory), agent
-	// profiles route by BACKEND to the matching tool-enabled streaming adapter —
-	// claude-code → the claude-cli stream adapter, codex → the codex stream
-	// adapter (`codex exec --json`, subscription-only). An empty agent backend is
-	// floored to the SAME deployment default the batch AgentCallExecutor uses
+	// profiles route by BACKEND to the matching streaming provider. The tool/
+	// sandbox POSTURE is backend-defined (each provider's own implementation
+	// detail), NOT uniformly tool-enabled: claude-code → the claude-cli stream
+	// adapter (tool-enabled / autonomous), codex → the codex INTERACTIVE provider
+	// (codex `mcp-server`, subscription-only): a read-only sandbox with
+	// approval-gated, docs/-scoped writes (NOT `codex exec`, which is the
+	// autonomous batch posture). An empty agent backend is floored to the SAME
+	// deployment default the batch AgentCallExecutor uses
 	// (cfg.LLM.DefaultAgentBackend); opencode and unknown backends fail closed.
 	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
-	codexStreamAgent := codex.NewStreamProvider(codex.Config{
-		// Codex (subscription-only `codex exec`): binary auto-resolved from PATH,
-		// the per-mission timeout reuses the shared LLM timeout floor, and the
-		// response cap mirrors the factory's codex arm. No allow-all knob: codex
-		// runs under the fixed v1 bypass posture (see adapter/codex args.go).
-		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
-		// profile-editing Phase 3: the binding's resolved effort rides argv as
-		// `-c model_reasoning_effort=<v>` via these rules on the interactive_agent
-		// streaming path too.
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{
+		// Codex (subscription-only `codex mcp-server`): binary auto-resolved from
+		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
+		// wedged turn). The interactive posture is read-only + approval-gated:
+		// WritableRoot scopes the auto-policy's allowed writes to docs/ (a zero value
+		// fails closed to that subtree, never "everywhere"); there is no allow-all
+		// knob. There is no MaxResponseBytes: the JSON-RPC event-frame transport has
+		// no raw stdout byte pipe to cap (the deadline is the bound that applies).
+		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// profile-editing Phase 3: the binding's resolved effort rides the protocol
+		// body via these rules on the interactive_agent streaming path too.
 		CapabilityRules: capabilityRules,
+		WritableRoot:    "docs",
 	})
+	// SECURITY (PR #36 HIGH, SPIKE fail-open): the codex interactive provider's
+	// read-only + every-mutation-gated posture rides four // SPIKE arg keys that
+	// fail OPEN if codex ignores them, and the protocol is not yet verified against
+	// a live codex-cli 0.139. So the codex interactive arm is GATED: it is only
+	// registered when an operator explicitly opts in via
+	// ARBITRON_CODEX_INTERACTIVE_VERIFIED. Default off → the codex backend is absent
+	// from the stream map and the selector fails closed (ErrUnsupportedAgentBackend),
+	// so an unverified build cannot arm the unverified protocol against a real binary.
+	agentStreams := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: claudeStreamAgent,
+	}
+	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
+		agentStreams[workflow.BackendCodex] = codexInteractive
+		logger.Warn("codex interactive provider ARMED via " + codexInteractiveVerifiedEnv +
+			" — the SPIKE protocol is operator-verified against a live codex binary")
+	} else {
+		logger.Info("codex interactive provider gated off (unverified SPIKE protocol); " +
+			"set " + codexInteractiveVerifiedEnv + "=true to arm it against a verified codex binary")
+	}
 	interactiveStreamSel := providersadapter.NewInteractiveStreamSelector(
 		providerFactory,
-		map[string]engine.ChatProvider{
-			workflow.BackendClaudeCode: claudeStreamAgent,
-			workflow.BackendCodex:      codexStreamAgent,
-		},
+		agentStreams,
 		cfg.LLM.DefaultAgentBackend,
 	)
 

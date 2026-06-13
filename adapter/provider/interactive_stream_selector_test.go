@@ -109,6 +109,38 @@ func TestInteractiveStreamSelector_AgentKind_Codex(t *testing.T) {
 	assert.Same(t, codex, got, "agent/codex binding must return the codex stream adapter")
 }
 
+// TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider verifies
+// that the REAL codex interactive provider — the exact *codex.InteractiveProvider
+// the composition root (main.go §12c) now wires as the codex agentStreams entry —
+// satisfies engine.ChatProvider and routes through the selector on the codex
+// backend. The other routing tests use an identity sentinel, which proves the
+// dispatch logic but NOT that the wired type is a valid ChatProvider; this test
+// closes that gap so a swap that broke the real type's interface or construction
+// would fail here rather than only at composition.
+func TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	claude, _, _ := streamsByBackend()
+
+	// Construct the real interactive provider exactly as main.go §12c does, and
+	// route the codex backend to it (claude-code keeps its sentinel).
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	var _ engine.ChatProvider = codexInteractive // it is the wired ChatProvider
+	m := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: claude,
+		workflow.BackendCodex:      codexInteractive,
+	}
+
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendClaudeCode)
+
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: workflow.BackendCodex,
+		Model:   "gpt-5-codex",
+	})
+	require.NoError(t, err)
+	assert.Same(t, codexInteractive, got, "agent/codex binding must return the real interactive provider wired by main.go")
+}
+
 // TestInteractiveStreamSelector_AgentKind_EmptyBackendFloored verifies that an
 // agent-kind binding with an empty Backend is floored to the injected default
 // backend and then dispatched (here: default codex → codex stream).
@@ -146,6 +178,36 @@ func TestInteractiveStreamSelector_AgentKind_Opencode(t *testing.T) {
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "opencode")
 	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend)
+}
+
+// TestInteractiveStreamSelector_AgentKind_OpencodeDefaultBackend_FailsClosed
+// verifies that the opencode rejection cannot be bypassed via the defaultBackend
+// floor. A misconfigured deployment that sets defaultBackend = "opencode" must
+// still fail closed — the explicit opencode check fires on the floored value
+// before the map lookup, so there is no silent fallback to any other provider.
+// Without this test, removing the explicit opencode check from agentStreamFor
+// would silently route opencode-floored bindings as ErrUnsupportedAgentBackend
+// only via the map-miss branch, which is correct but the explicit error message
+// would lose the "opencode" context and the test would still pass.
+func TestInteractiveStreamSelector_AgentKind_OpencodeDefaultBackend_FailsClosed(t *testing.T) {
+	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
+	_, _, m := streamsByBackend()
+
+	// Misconfigured deployment: default floor is opencode (no streaming adapter).
+	sel := adapterprovider.NewInteractiveStreamSelector(fakeSelector, m, workflow.BackendOpencode)
+
+	// An empty-backend binding floors to the default ("opencode") and must fail closed.
+	got, err := sel.StreamProviderFor(provider.ResolvedBinding{
+		Kind:    provider.ProfileKindAgent,
+		Backend: "", // floors to defaultBackend = "opencode"
+		Model:   "anthropic/claude-3-5-sonnet",
+	})
+	require.Error(t, err, "flooring to opencode via defaultBackend must fail closed")
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend,
+		"opencode reached via default-backend floor must still be rejected")
+	assert.Contains(t, err.Error(), "opencode",
+		"error must identify opencode as the offending backend even when reached via the floor")
 }
 
 // TestInteractiveStreamSelector_AgentKind_UnknownBackend verifies that an
@@ -211,6 +273,49 @@ func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) 
 	assert.Nil(t, got)
 	assert.ErrorIs(t, err, adapterprovider.ErrUnsupportedAgentBackend,
 		"fall-through from absent map entry must wrap ErrUnsupportedAgentBackend")
+}
+
+// PAIRED (FA#17) — dual-arm isolation: the SAME codex backend routes to two
+// DISTINCT, TYPE-INCOMPATIBLE implementations. The batch factory arm returns
+// *codex.Provider (agent_call, autonomous `codex exec`); the interactive stream
+// arm returns *codex.InteractiveProvider (interactive_agent, `codex mcp-server`
+// with approval policy). They must be different objects and different types —
+// no shared state, no accidental cross-routing.
+//
+// Using the REAL *codex.InteractiveProvider (not a sentinel) closes the gap that
+// all other vocabulary tests use a sentinel for the stream side: this test proves
+// the concrete type distinction holds in the production wiring.
+func TestInteractiveStreamSelector_CodexDualArm_DistinctTypes(t *testing.T) {
+	f := newBackendFactory(t)
+
+	// Wire the real interactive provider exactly as the composition root does.
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	m := map[string]engine.ChatProvider{
+		workflow.BackendClaudeCode: &sentinelChatProvider{name: "claude-stream"},
+		workflow.BackendCodex:      codexInteractive,
+	}
+	sel := adapterprovider.NewInteractiveStreamSelector(
+		&fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}},
+		m,
+		workflow.BackendClaudeCode,
+	)
+	binding := provider.ResolvedBinding{Kind: provider.ProfileKindAgent, Backend: workflow.BackendCodex, Model: "gpt-5.5"}
+
+	// Batch (autonomous) arm → *codex.Provider.
+	ap, err := f.AgentProviderFor(binding)
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.Provider)(nil), ap, "batch factory must return *codex.Provider for codex backend")
+
+	// Interactive (stream) arm → *codex.InteractiveProvider.
+	sp, err := sel.StreamProviderFor(binding)
+	require.NoError(t, err)
+	assert.IsType(t, (*codex.InteractiveProvider)(nil), sp,
+		"stream selector must return *codex.InteractiveProvider for codex backend")
+
+	// The two objects must be distinct (no accidental sharing of the autonomous provider).
+	if ap != nil && sp != nil {
+		assert.NotSame(t, ap, sp, "batch and interactive providers must be distinct objects")
+	}
 }
 
 // FA15 PAIRED (§8+§9) — the factory (AgentProviderFor) and the stream selector
