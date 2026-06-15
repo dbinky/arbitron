@@ -15,10 +15,9 @@ import (
 // InteractiveConfig configures an InteractiveProvider — the conversational codex
 // backend that runs over the mcpSession transport seam (not `codex exec`). It is
 // the interactive sibling of codex.Config: it shares the same construction
-// inputs (binding, binary, per-turn timeout, capability rules) but adds the
-// auto-approval policy's WritableRoot, and it owns NO Runner (the mcpSession
-// factory replaces the subprocess runner seam — real stdio in prod, fake in
-// tests).
+// inputs (binding, binary, per-turn timeout, capability rules), and it owns NO
+// Runner (the mcpSession factory replaces the subprocess runner seam — real stdio
+// in prod, fake in tests).
 //
 // Unlike codex.Config there is deliberately NO MaxResponseBytes: the exec path
 // enforces a stdout byte cap on a raw pipe, but the interactive turn streams
@@ -45,15 +44,10 @@ type InteractiveConfig struct {
 	// exec path uses, so interactive and exec never disagree on the effective
 	// value. A zero-value (Empty) ruleset emits nothing.
 	CapabilityRules provider.CapabilityRules
-	// WritableRoot is the only directory subtree the auto-policy lets codex write
-	// (the deliverable). Empty defaults to "docs" (defaultWritableRoot) — a zero
-	// value must never mean "everywhere" (fail closed).
-	WritableRoot string
 }
 
 // InteractiveProvider implements engine.ChatProvider (Chat + StreamChat) by
-// running one codex interview turn over the mcpSession seam, wiring the
-// docs/-scoped auto-approval policy as the turn's approvalFunc, folding the turn
+// running one codex interview turn over the mcpSession seam, folding the turn
 // stream into ChatChunks, and round-tripping the conversation id for resume.
 //
 // It holds NO in-memory session state between turns (spawn-per-turn): the
@@ -64,16 +58,16 @@ type InteractiveConfig struct {
 // SECURITY / fail-closed: it shares the exec adapters' core (binding, binary
 // resolution, memoized version probe), so a missing/incompatible binary or an
 // empty WorkDir fails closed with zero events; the prompt rides the protocol
-// body (never argv); no OPENAI_API_KEY ever enters env/argv; and EVERY codex
-// approval request is routed through the policy (default-deny). A failed turn or
-// transport break yields a terminal Error chunk and NEVER a clean Done.
+// body (never argv); and no OPENAI_API_KEY ever enters env/argv. The turn runs
+// under codex's workspace-write sandbox (confined to the WorkDir worktree — see
+// startToolRequest), so codex's own sandbox is the write containment; there is no
+// per-mutation approval loop. A failed turn or transport break yields a terminal
+// Error chunk and NEVER a clean Done.
 type InteractiveProvider struct {
 	core
 	// newSession builds one mcpSession per turn (real mcpStdioSession in prod, a
 	// fake in tests). It mirrors codex.Config.Runner's subprocess injection seam.
 	newSession func() mcpSession
-	// writableRoot is the only writable subtree the policy permits (default docs).
-	writableRoot string
 }
 
 var _ engine.ChatProvider = (*InteractiveProvider)(nil)
@@ -89,8 +83,7 @@ func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider {
 	// newCore(cfg)} precedent). The default session factory is set AFTER so it can
 	// capture &p.core, sharing the memoized version probe with construction.
 	p := &InteractiveProvider{
-		core:         newCore(interactiveCoreConfig(cfg)),
-		writableRoot: writableRootOrDefault(cfg.WritableRoot),
+		core: newCore(interactiveCoreConfig(cfg)),
 	}
 	p.newSession = func() mcpSession { return newMCPStdioSession(&p.core) }
 	return p
@@ -102,9 +95,8 @@ func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider {
 // NewInteractiveProvider and get the real session.
 func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() mcpSession) *InteractiveProvider {
 	return &InteractiveProvider{
-		core:         newCore(interactiveCoreConfig(cfg)),
-		newSession:   newSession,
-		writableRoot: writableRootOrDefault(cfg.WritableRoot),
+		core:       newCore(interactiveCoreConfig(cfg)),
+		newSession: newSession,
 	}
 }
 
@@ -124,22 +116,12 @@ func interactiveCoreConfig(cfg InteractiveConfig) Config {
 	}
 }
 
-// writableRootOrDefault defaults an empty writable root to defaultWritableRoot so
-// a zero-value config never silently widens the policy's scope to "everywhere".
-func writableRootOrDefault(root string) string {
-	if root == "" {
-		return defaultWritableRoot
-	}
-	return root
-}
-
 // startTurn performs the shared fail-closed prelude for both Chat and StreamChat:
 // it guards an empty WorkDir, resolves the model (req.Model overrides the binding
-// model) and the floored effort, derives the per-turn deadline, installs the
-// docs/-scoped auto-policy (wrapped to trace each decision), and starts ONE codex
-// turn over a fresh mcpSession. An empty WorkDir, empty model, or a failed Start
-// yields NO stream (no half-open turn) — the error is returned before any events
-// flow.
+// model) and the floored effort, derives the per-turn deadline, and starts ONE
+// codex turn over a fresh mcpSession. An empty WorkDir, empty model, or a failed
+// Start yields NO stream (no half-open turn) — the error is returned before any
+// events flow.
 //
 // It returns the per-turn context (which the caller MUST use to fold the stream so
 // the deadline reaches Next) and its CancelFunc (which the caller MUST call when
@@ -180,18 +162,12 @@ func (p *InteractiveProvider) startTurn(ctx context.Context, req engine.ChatRequ
 	// wedged codex turn that never emits a terminal frame is bounded here.
 	turnCtx, cancel := procenv.WithTimeout(ctx, p.timeout)
 
-	// Install the docs/-scoped auto-policy, wrapped so each decision is traced
-	// (slog). The transport routes EVERY codex approval request through this.
-	policy := approvalPolicy{workDir: req.WorkDir, writableRoot: p.writableRoot}
-	approver := tracingApprover(policy.decide)
-
 	stream, err := p.newSession().Start(turnCtx, turnConfig{
 		Model:    model,
 		Prompt:   req.Prompt,
 		WorkDir:  req.WorkDir,
 		ResumeID: req.SessionID,
 		Effort:   effort,
-		Approver: approver,
 	})
 	if err != nil {
 		cancel()

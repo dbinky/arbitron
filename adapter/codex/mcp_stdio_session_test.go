@@ -20,65 +20,68 @@ var _ mcpSession = (*mcpStdioSession)(nil)
 
 // --- helpers ---------------------------------------------------------------
 
-// notif builds an mcp.JSONRPCNotification whose params carry the given codex
-// event fields (re-encoded through JSON exactly as the wire would deliver them),
-// so the mapper is exercised against a realistic frame, not a hand-built struct.
-func notif(t *testing.T, method string, payload map[string]any) mcp.JSONRPCNotification {
+// notif builds an mcp.JSONRPCNotification whose params are the given codex/event
+// params object, decoded through mcp-go's NotificationParams.UnmarshalJSON exactly
+// as the transport hands them to OnNotification — so the MCP-reserved `_meta` key
+// is routed to Params.Meta and the rest (e.g. `msg`) to AdditionalFields, matching
+// the wire. Pass the full {_meta?, msg} envelope.
+func notif(t *testing.T, method string, params map[string]any) mcp.JSONRPCNotification {
 	t.Helper()
-	n := mcp.JSONRPCNotification{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		Notification: mcp.Notification{
-			Method: method,
-			Params: mcp.NotificationParams{AdditionalFields: payload},
-		},
-	}
-	// Round-trip through JSON so AdditionalFields decode the way the transport
-	// hands them to OnNotification (numbers become float64, etc.).
-	raw, err := json.Marshal(n)
+	raw, err := json.Marshal(params)
 	require.NoError(t, err)
-	var back mcp.JSONRPCNotification
-	require.NoError(t, json.Unmarshal(raw, &back))
-	return back
+	var np mcp.NotificationParams
+	require.NoError(t, json.Unmarshal(raw, &np))
+	return mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: method, Params: np},
+	}
 }
 
-// elicitParams builds an mcp.ElicitationParams whose codex approval payload rides
-// the AdditionalFields of _meta (round-tripped through JSON like the wire).
-func elicitParams(t *testing.T, message string, meta map[string]any) mcp.ElicitationParams {
-	t.Helper()
-	p := mcp.ElicitationParams{Message: message, Meta: &mcp.Meta{AdditionalFields: meta}}
-	raw, err := json.Marshal(p)
-	require.NoError(t, err)
-	var back mcp.ElicitationParams
-	require.NoError(t, json.Unmarshal(raw, &back))
-	return back
+// codexEvt wraps a msg body (and optional _meta threadId) in the verified
+// codex/event params envelope.
+func codexEvt(msg map[string]any) map[string]any {
+	return map[string]any{"msg": msg}
+}
+
+// codexEvtWithThread wraps a msg body plus a _meta.threadId.
+func codexEvtWithThread(threadID string, msg map[string]any) map[string]any {
+	return map[string]any{"_meta": map[string]any{"threadId": threadID}, "msg": msg}
 }
 
 // --- mapNotification: HAPPY ------------------------------------------------
 
-// HAPPY — an agent_message item notification maps to a turnText carrying the
-// assistant text.
+// HAPPY — an agent_message event maps to a turnText carrying the assistant text
+// from msg.message.
 func TestMapNotification_Happy_AgentMessageToken(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type": codexItemAgentMessage,
-		"item": map[string]any{"type": codexItemAgentMessage, "text": "hello world"},
-	})
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type":    codexMsgAgentMessage,
+		"message": "hello world",
+	}))
 
-	ev, ok := mapNotification(n)
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnText, ev.Kind)
 	assert.Equal(t, "hello world", ev.Text)
 }
 
-// HAPPY — the terminal turn-completed notification maps to a turnDone carrying
-// the conversation id + token counts.
-func TestMapNotification_Happy_TurnCompletedDone(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":            codexTurnCompleted,
-		"conversation_id": "conv-xyz",
-		"usage":           map[string]any{"input_tokens": 11, "output_tokens": 4},
-	})
+// HAPPY — the terminal task_complete event maps to a turnDone carrying the thread
+// id (from _meta.threadId) + the tokens accumulated from a prior token_count.
+func TestMapNotification_Happy_TaskCompleteDoneWithTokens(t *testing.T) {
+	m := &eventMapper{}
 
-	ev, ok := mapNotification(n)
+	// token_count arrives before task_complete (codex sends them as separate events).
+	tc := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type": codexMsgTokenCount,
+		"info": map[string]any{"total_token_usage": map[string]any{"input_tokens": 11, "output_tokens": 4}},
+	}))
+	_, ok := m.mapNotification(tc)
+	assert.False(t, ok, "a token_count is usage-only and surfaces no event")
+
+	done := notif(t, codexEventNotificationMethod, codexEvtWithThread("conv-xyz", map[string]any{
+		"type":               codexMsgTaskComplete,
+		"last_agent_message": "all done",
+	}))
+	ev, ok := m.mapNotification(done)
 	require.True(t, ok)
 	assert.Equal(t, turnDone, ev.Kind)
 	assert.Equal(t, "conv-xyz", ev.SessionID)
@@ -88,17 +91,14 @@ func TestMapNotification_Happy_TurnCompletedDone(t *testing.T) {
 
 // --- mapNotification: SUCCESS ----------------------------------------------
 
-// SUCCESS — a session-configured/started notification carries only the
-// conversation id (no tokens, not terminal) and folds into a turnDone-less
-// SessionID carrier. We surface it as a turnText-free SessionID-only token so
-// the id is captured even if the terminal frame omits it.
-func TestMapNotification_Success_ConversationIDCaptured(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":            codexTurnCompleted,
-		"conversation_id": "conv-resumed",
-	})
+// SUCCESS — task_complete without a preceding token_count still maps to a
+// turnDone carrying the thread id (tokens default to zero, never an error).
+func TestMapNotification_Success_TaskCompleteNoTokens(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvtWithThread("conv-resumed", map[string]any{
+		"type": codexMsgTaskComplete,
+	}))
 
-	ev, ok := mapNotification(n)
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnDone, ev.Kind)
 	assert.Equal(t, "conv-resumed", ev.SessionID)
@@ -108,30 +108,30 @@ func TestMapNotification_Success_ConversationIDCaptured(t *testing.T) {
 
 // --- mapNotification: FAILURE ----------------------------------------------
 
-// FAILURE — a turn.failed notification maps to a turnFailed carrying the cause,
-// never a clean turnDone.
-func TestMapNotification_Failure_TurnFailed(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":  codexTurnFailed,
-		"error": map[string]any{"message": "model refused"},
-	})
+// FAILURE — an error event maps to a turnFailed carrying the cause, never a clean
+// turnDone.
+func TestMapNotification_Failure_ErrorEvent(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type":    codexMsgError,
+		"message": "model refused",
+	}))
 
-	ev, ok := mapNotification(n)
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnFailed, ev.Kind)
 	require.Error(t, ev.Err)
 	assert.Contains(t, ev.Err.Error(), "model refused")
 }
 
-// FAILURE — a top-level `error` event (no nested error object) still fails with
-// its message.
-func TestMapNotification_Failure_TopLevelErrorMessage(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":    codexErrorEvent,
-		"message": "stream aborted",
-	})
+// FAILURE — a stream_error event with a nested error object still fails with its
+// message.
+func TestMapNotification_Failure_StreamErrorNestedMessage(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type":  codexMsgStreamError,
+		"error": map[string]any{"message": "stream aborted"},
+	}))
 
-	ev, ok := mapNotification(n)
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnFailed, ev.Kind)
 	require.Error(t, ev.Err)
@@ -143,25 +143,23 @@ func TestMapNotification_Failure_TopLevelErrorMessage(t *testing.T) {
 // ERROR — a notification with a method we do not consume is ignored (ok=false),
 // so unrelated MCP chatter never produces a spurious event.
 func TestMapNotification_Error_UnknownMethodIgnored(t *testing.T) {
-	n := notif(t, "notifications/message", map[string]any{"type": codexItemAgentMessage})
-	_, ok := mapNotification(n)
+	n := notif(t, "notifications/message", codexEvt(map[string]any{"type": codexMsgAgentMessage}))
+	_, ok := (&eventMapper{}).mapNotification(n)
 	assert.False(t, ok, "an unrelated notification method must be ignored")
 }
 
-// ERROR — a codex event notification whose payload is not a recognised type is
-// ignored rather than mis-mapped (forward-compat with future codex events).
+// ERROR — a codex event whose msg.type is not one we surface (e.g. session_configured,
+// item_started, a future event) is ignored rather than mis-mapped (forward-compat).
 func TestMapNotification_Error_UnknownEventTypeIgnored(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{"type": "task.queued"})
-	_, ok := mapNotification(n)
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{"type": "session_configured"}))
+	_, ok := (&eventMapper{}).mapNotification(n)
 	assert.False(t, ok, "an unknown codex event type must be ignored, not mis-mapped")
 }
 
-// ERROR — a codex-event notification whose payload cannot be decoded fails
-// CLOSED as a terminal failure (ok=true, kind=turnFailed) rather than being
-// silently dropped. A silently-dropped frame would let the stream end in a
-// clean Done even though a malformed event arrived — a partial-success lie.
-// We exercise this by injecting a non-marshalable value into AdditionalFields
-// (bypassing the JSON-round-tripping notif() helper intentionally).
+// ERROR — a codex-event notification whose payload cannot be decoded fails CLOSED
+// as a terminal failure (ok=true, kind=turnFailed) rather than being silently
+// dropped. We exercise this by injecting a non-marshalable value into
+// AdditionalFields (bypassing the JSON-round-tripping notif() helper).
 func TestMapNotification_Error_MalformedPayloadFailsClosed(t *testing.T) {
 	n := mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
@@ -169,13 +167,13 @@ func TestMapNotification_Error_MalformedPayloadFailsClosed(t *testing.T) {
 			Method: codexEventNotificationMethod,
 			Params: mcp.NotificationParams{
 				AdditionalFields: map[string]any{
-					"type": make(chan int), // channels are not JSON-serialisable
+					"msg": make(chan int), // channels are not JSON-serialisable
 				},
 			},
 		},
 	}
 
-	ev, ok := mapNotification(n)
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok, "a malformed payload must NOT be silently dropped (fail closed)")
 	assert.Equal(t, turnFailed, ev.Kind, "a malformed payload must produce a terminal failure, not a silent drop")
 	require.Error(t, ev.Err)
@@ -184,192 +182,60 @@ func TestMapNotification_Error_MalformedPayloadFailsClosed(t *testing.T) {
 
 // --- mapNotification: EDGE -------------------------------------------------
 
-// EDGE — a turn.failed notification with no error object and no message still
-// produces a turnFailed with a non-empty cause. turnError's "turn failed"
-// fallback ensures the stream never terminates with an empty-cause error that
-// would misrepresent the failure mode.
-func TestMapNotification_Edge_TurnFailedNoMessageFallback(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type": codexTurnFailed,
+// EDGE — an error event with no error object and no message still produces a
+// turnFailed with a non-empty cause (turnError's "turn failed" fallback).
+func TestMapNotification_Edge_ErrorNoMessageFallback(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type": codexMsgError,
 		// no "error" object, no "message" field
-	})
-	ev, ok := mapNotification(n)
+	}))
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnFailed, ev.Kind)
 	require.Error(t, ev.Err)
-	assert.NotEmpty(t, ev.Err.Error(), "turn.failed with no message must never produce an empty error cause")
+	assert.NotEmpty(t, ev.Err.Error(), "an error event with no message must never produce an empty cause")
 }
 
-// EDGE — an agent_message with empty text is ignored: an empty increment must
-// not be surfaced as a token.
+// EDGE — an agent_message with empty text is ignored: an empty increment must not
+// be surfaced as a token.
 func TestMapNotification_Edge_EmptyTextIgnored(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type": codexItemAgentMessage,
-		"item": map[string]any{"type": codexItemAgentMessage, "text": ""},
-	})
-	_, ok := mapNotification(n)
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type":    codexMsgAgentMessage,
+		"message": "",
+	}))
+	_, ok := (&eventMapper{}).mapNotification(n)
 	assert.False(t, ok, "an empty assistant-text increment must not be surfaced")
 }
 
-// EDGE — a terminal turn-completed notification missing token counts still maps
-// to a turnDone (best-effort tokens default to zero, never an error).
-func TestMapNotification_Edge_TerminalMissingTokens(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":            codexTurnCompleted,
-		"conversation_id": "conv-1",
-	})
-	ev, ok := mapNotification(n)
-	require.True(t, ok)
-	assert.Equal(t, turnDone, ev.Kind)
-	assert.Equal(t, 0, ev.TokensIn)
-	assert.Equal(t, 0, ev.TokensOut)
-}
-
-// EDGE — a turn.completed notification that carries only thread_id (and no
-// conversation_id) still surfaces a SessionID so session resume is not lost.
-// The conversationID helper prefers conversation_id; this covers the fallback.
-func TestMapNotification_Edge_TurnCompletedWithThreadIDFallback(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":      codexTurnCompleted,
+// EDGE — a task_complete carrying only msg.thread_id (no _meta.threadId) still
+// surfaces a SessionID so session resume is not lost (the threadID fallback).
+func TestMapNotification_Edge_TaskCompleteThreadIDFallback(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type":      codexMsgTaskComplete,
 		"thread_id": "thread-abc",
-	})
-	ev, ok := mapNotification(n)
+	}))
+	ev, ok := (&eventMapper{}).mapNotification(n)
 	require.True(t, ok)
 	assert.Equal(t, turnDone, ev.Kind)
-	assert.Equal(t, "thread-abc", ev.SessionID, "thread_id must be used when conversation_id is absent")
+	assert.Equal(t, "thread-abc", ev.SessionID, "msg.thread_id must be used when _meta.threadId is absent")
 }
 
-// EDGE — an agent_message whose item is absent falls back to the top-level
-// message field. Without this fallback a surface variant that uses message
-// instead of item.text would silently drop every token.
-func TestMapNotification_Edge_AgentMessageFallsBackToTopLevelMessage(t *testing.T) {
-	n := notif(t, codexEventNotificationMethod, map[string]any{
-		"type":    codexItemAgentMessage,
-		"message": "hi from top-level",
-		// deliberately no "item" key
-	})
-	ev, ok := mapNotification(n)
-	require.True(t, ok)
-	assert.Equal(t, turnText, ev.Kind)
-	assert.Equal(t, "hi from top-level", ev.Text, "top-level message must be used when item is absent")
-}
-
-// --- mapApprovalRequest: HAPPY/SUCCESS -------------------------------------
-
-// HAPPY — a command-exec approval payload maps to an approvalRequest carrying
-// the argv + reason (WritePaths nil).
-func TestMapApprovalRequest_Happy_CommandExec(t *testing.T) {
-	p := elicitParams(t, "Allow running git status?", map[string]any{
-		codexApprovalTypeKey:    codexApprovalTypeExec,
-		codexApprovalCommandKey: []any{"git", "status"},
-		codexApprovalReasonKey:  "inspect working tree",
-	})
-
-	req, err := mapApprovalRequest(p)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"git", "status"}, req.Command)
-	assert.Nil(t, req.WritePaths)
-	assert.Equal(t, "inspect working tree", req.Reason)
-}
-
-// SUCCESS — a patch/write approval payload maps to an approvalRequest carrying
-// the target write paths + reason (Command nil).
-func TestMapApprovalRequest_Success_PatchWrite(t *testing.T) {
-	p := elicitParams(t, "Apply patch to docs/notes.md?", map[string]any{
-		codexApprovalTypeKey:   codexApprovalTypePatch,
-		codexApprovalPathsKey:  []any{"docs/notes.md", "docs/extra.md"},
-		codexApprovalReasonKey: "write interview notes",
-	})
-
-	req, err := mapApprovalRequest(p)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"docs/notes.md", "docs/extra.md"}, req.WritePaths)
-	assert.Nil(t, req.Command)
-	assert.Equal(t, "write interview notes", req.Reason)
-}
-
-// --- mapApprovalRequest: FAILURE/ERROR -------------------------------------
-
-// ERROR — an approval payload with neither a command nor write paths is a
-// malformed request; the mapper fails closed so the transport can deny.
-func TestMapApprovalRequest_Error_NoActionFailsClosed(t *testing.T) {
-	p := elicitParams(t, "approve?", map[string]any{
-		codexApprovalReasonKey: "unspecified",
-	})
-	_, err := mapApprovalRequest(p)
-	require.Error(t, err)
-}
-
-// EDGE — when both command and paths are present (a malformed but non-empty
-// payload), command takes precedence. This ensures the approval policy
-// evaluates the command, not a silent write that could bypass path-scope
-// checks by hiding write paths behind a command request.
-func TestMapApprovalRequest_Edge_CommandTakesPrecedenceOverPaths(t *testing.T) {
-	p := elicitParams(t, "Ambiguous?", map[string]any{
-		codexApprovalCommandKey: []any{"git", "status"},
-		codexApprovalPathsKey:   []any{"docs/notes.md"},
-		codexApprovalReasonKey:  "combined",
-	})
-	req, err := mapApprovalRequest(p)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"git", "status"}, req.Command, "command must take precedence when both command and paths are present")
-	assert.Nil(t, req.WritePaths, "WritePaths must be nil when command takes precedence")
-}
-
-// EDGE — when codex omits the reason, the human-readable Message is used as the
-// reason so the trace is never blank.
-func TestMapApprovalRequest_Edge_FallsBackToMessageReason(t *testing.T) {
-	p := elicitParams(t, "Allow running ls?", map[string]any{
-		codexApprovalTypeKey:    codexApprovalTypeExec,
-		codexApprovalCommandKey: []any{"ls"},
-	})
-	req, err := mapApprovalRequest(p)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"ls"}, req.Command)
-	assert.Equal(t, "Allow running ls?", req.Reason)
-}
-
-// --- decisionToElicitationResult: HAPPY/FAILURE/EDGE -----------------------
-
-// HAPPY — an allow decision becomes an "accept" elicitation result whose content
-// carries the approval verdict + reason for the trace.
-func TestDecisionToElicitationResult_Happy_Allow(t *testing.T) {
-	res := decisionToElicitationResult(approvalDecision{Allow: true, Reason: "info command is safe"})
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionAccept, res.Action)
-
-	content, ok := res.Content.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, true, content[codexApprovalDecisionKey])
-	assert.Equal(t, "info command is safe", content[codexApprovalReasonKey])
-}
-
-// FAILURE — a deny decision becomes a "decline" elicitation result (codex must
-// not proceed with the mutation), still carrying the recorded reason.
-func TestDecisionToElicitationResult_Failure_Deny(t *testing.T) {
-	res := decisionToElicitationResult(approvalDecision{Allow: false, Reason: "writes to source are denied"})
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionDecline, res.Action)
-
-	content, ok := res.Content.(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, false, content[codexApprovalDecisionKey])
-	assert.Equal(t, "writes to source are denied", content[codexApprovalReasonKey])
-}
-
-// EDGE — a deny with an empty reason still declines and produces a non-nil
-// result (never a dropped/garbled response that would wedge codex).
-func TestDecisionToElicitationResult_Edge_EmptyReasonDeny(t *testing.T) {
-	res := decisionToElicitationResult(approvalDecision{Allow: false})
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionDecline, res.Action)
+// EDGE — a token_count event surfaces NO turn event (it only updates the running
+// usage that a later task_complete reports).
+func TestMapNotification_Edge_TokenCountSurfacesNoEvent(t *testing.T) {
+	n := notif(t, codexEventNotificationMethod, codexEvt(map[string]any{
+		"type": codexMsgTokenCount,
+		"info": map[string]any{"total_token_usage": map[string]any{"input_tokens": 7, "output_tokens": 2}},
+	}))
+	_, ok := (&eventMapper{}).mapNotification(n)
+	assert.False(t, ok, "a token_count is usage-only and must surface no event")
 }
 
 // --- startToolRequest: SECURITY / argument assertions ----------------------
 
-// HAPPY — a fresh conversation: the start tool request carries the model, prompt
-// (via the protocol body, NEVER argv), and the read-only sandbox + approval
-// posture, with no resume id.
+// HAPPY — a fresh conversation: the start tool request targets the `codex` tool
+// and carries the model, prompt (via the protocol body, NEVER argv), cwd, and the
+// workspace-write + no-approval posture, with no resume id.
 func TestStartToolRequest_Happy_FreshConversation(t *testing.T) {
 	req := startToolRequest(turnConfig{
 		Model:   "gpt-5",
@@ -383,48 +249,52 @@ func TestStartToolRequest_Happy_FreshConversation(t *testing.T) {
 	assert.Equal(t, "gpt-5", args[codexArgModel])
 	assert.Equal(t, "interview me", args[codexArgPrompt])
 	assert.Equal(t, "/work/dir", args[codexArgCwd])
-	assert.Equal(t, codexSandboxReadOnly, args[codexArgSandboxMode])
-	assert.Equal(t, codexApprovalPolicyOnRequest, args[codexArgApprovalPolicy])
-	_, hasResume := args[codexArgResumeID]
+	assert.Equal(t, codexSandboxWorkspaceWrite, args[codexArgSandbox])
+	assert.Equal(t, codexApprovalPolicyNever, args[codexArgApprovalPolicy])
+	_, hasResume := args[codexArgConversationID]
 	assert.False(t, hasResume, "a fresh conversation must not carry a resume id")
-	_, hasEffort := args[codexArgEffort]
-	assert.False(t, hasEffort, "an empty effort must emit nothing")
 }
 
-// SUCCESS — resume: the prior conversation id rides the start call, the prompt is
-// still in the protocol body, and a non-empty effort is threaded through.
-func TestStartToolRequest_Success_ResumeAndEffort(t *testing.T) {
+// SUCCESS — resume: the call targets the `codex-reply` tool with the prior
+// conversation id + prompt; the model/sandbox carry from the original session and
+// are NOT re-sent.
+func TestStartToolRequest_Success_ResumeViaCodexReply(t *testing.T) {
 	req := startToolRequest(turnConfig{
 		Model:    "gpt-5",
 		Prompt:   "continue",
 		WorkDir:  "/work/dir",
 		ResumeID: "conv-abc",
-		Effort:   "high",
 	})
 
+	assert.Equal(t, codexReplyToolName, req.Params.Name, "a resume must target the codex-reply tool")
 	args, ok := req.Params.Arguments.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "conv-abc", args[codexArgResumeID])
-	assert.Equal(t, "high", args[codexArgEffort])
+	assert.Equal(t, "conv-abc", args[codexArgConversationID])
 	assert.Equal(t, "continue", args[codexArgPrompt])
+	_, hasModel := args[codexArgModel]
+	assert.False(t, hasModel, "codex-reply does not re-send the model — it carries from the session")
+	_, hasSandbox := args[codexArgSandbox]
+	assert.False(t, hasSandbox, "codex-reply does not re-send the sandbox posture")
 }
 
-// EDGE — an empty effort string emits no effort key at all (preserving the
-// existing "default/empty effort passes nothing" behaviour).
-func TestStartToolRequest_Edge_EmptyEffortOmitted(t *testing.T) {
-	req := startToolRequest(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w", Effort: ""})
+// EDGE — effort is ignored on the mcp-server path (codex 0.139 has no verified
+// top-level reasoning-effort arg): a non-empty Effort emits no extra key and the
+// fresh-conversation posture is unchanged.
+func TestStartToolRequest_Edge_EffortIgnored(t *testing.T) {
+	req := startToolRequest(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w", Effort: "high"})
 	args := req.Params.Arguments.(map[string]any)
-	_, has := args[codexArgEffort]
-	assert.False(t, has)
+	assert.Equal(t, codexStartToolName, req.Params.Name)
+	// No effort key in any form.
+	_, hasEffort := args["model_reasoning_effort"]
+	assert.False(t, hasEffort, "effort is not emitted on the mcp-server path")
+	assert.Len(t, args, 5, "fresh-conversation args are exactly model/prompt/cwd/sandbox/approval-policy")
 }
 
 // --- mcpStdioSession.Start: ERROR (fail-closed before any subprocess) ------
 
 // ERROR — an incompatible-binary probe fails closed: Start returns the probe
-// error and NO stream, before any conversation is launched. The probe runs
-// through the shared core seam (a fake runner), so no live codex is needed.
+// error and NO stream, before any conversation is launched.
 func TestMCPStdioSession_Error_IncompatibleProbeFailsClosed(t *testing.T) {
-	// A runner whose `--version` reply is below minCodexVersion → ErrIncompatibleCodex.
 	c := newCore(Config{
 		BinaryPath: "/nonexistent/codex",
 		Runner:     &fakeRunner{lines: []string{"codex-cli 0.1.0"}},
@@ -455,10 +325,9 @@ func TestMCPStdioSession_Error_EmptyWorkDirFailsClosed(t *testing.T) {
 	assert.False(t, runner.runCalled, "WorkDir guard must fire before the probe — probe must never run")
 }
 
-// ERROR — probe passes (compatible binary) but the actual mcp-server launch
-// fails because the binary does not exist at exec time. Start must return
-// (nil, err) — fail closed — and the error must not be ErrWorkDirRequired or
-// ErrIncompatibleCodex (those come from earlier guards).
+// ERROR — probe passes (compatible binary) but the actual mcp-server launch fails
+// because the binary does not exist at exec time. Start must return (nil, err) —
+// fail closed — and not ErrWorkDirRequired / ErrIncompatibleCodex.
 func TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe(t *testing.T) {
 	c := newCore(Config{
 		BinaryPath: "/nonexistent/codex",
@@ -480,28 +349,19 @@ func TestMCPStdioSession_Error_LaunchFailsAfterCompatibleProbe(t *testing.T) {
 
 // PAIRED (FA#20) — the version probe for the interactive mcp-server path uses
 // codexEnv() (the no-key subscription env), sharing the invariant with the exec
-// path. Without this test, changing core.ensureCompatible to pass nil (inheriting
-// the engine's full env — OPENAI_API_KEY, ANTHROPIC_API_KEY, DSNs) would not be
-// caught, silently breaking the no-key invariant on every probe in the interactive
-// path.
+// path: OPENAI_API_KEY in the parent env must NOT reach the probe subprocess.
 func TestMCPStdioSession_Probe_SubscriptionEnv_NoAPIKey(t *testing.T) {
-	// Set an OPENAI_API_KEY in the parent env: if the probe uses nil (inheriting
-	// the parent) instead of codexEnv(), the key would appear in mr.calls[0].Env.
 	t.Setenv("OPENAI_API_KEY", "sk-should-not-be-forwarded")
 
 	mr := &multiRunner{scripts: []runScript{compatibleProbe()}}
 	c := newCore(Config{BinaryPath: "/nonexistent/codex", Runner: mr})
 	s := newMCPStdioSession(&c)
 
-	// WorkDir set so the guard passes; probe runs, then the real mcp-server
-	// launch fails because the binary doesn't exist — that's expected.
 	_, _ = s.Start(context.Background(), turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w"})
 
-	// Probe ran (calls[0] is the --version call).
 	require.Len(t, mr.calls, 1, "exactly one runner call — the version probe")
 	assert.Contains(t, mr.calls[0].Args, "--version", "call must be the version probe")
 
-	// Probe must have used codexEnv() — no OPENAI_API_KEY forwarded.
 	_, hasKey := envValue(mr.calls[0].Env, "OPENAI_API_KEY")
 	assert.False(t, hasKey,
 		"mcp-server path probe must use codexEnv() — OPENAI_API_KEY must not be forwarded to the version probe subprocess")
@@ -509,42 +369,36 @@ func TestMCPStdioSession_Probe_SubscriptionEnv_NoAPIKey(t *testing.T) {
 
 // --- verifyInitializePosture: fail-closed handshake self-check -------------
 //
-// SECURITY (PR #36 HIGH, SPIKE fail-open): the read-only + every-mutation-gated
-// posture rides FOUR // SPIKE arg keys that MCP tools silently ignore if their
-// names are wrong — a mismatch launches codex in its default autonomous mode with
-// NO local signal. The whole guardrail depends on codex routing mutations to the
-// client via ELICITATION; if the Initialize handshake does not confirm elicitation
-// support, our policy is never consulted and codex runs unsandboxed. So the
-// post-Initialize self-check asserts the server advertised elicitation and fails
-// CLOSED otherwise — turning a silent fail-open into a loud, session-aborting error.
+// The workspace-write sandbox containment rests on the peer being a real codex
+// mcp-server that honours the `sandbox` arg. The post-Initialize self-check
+// confirms serverInfo.name == codexServerName and fails CLOSED otherwise. (The
+// original check asserted a SERVER-advertised elicitation capability, which is
+// structurally always absent — elicitation is a CLIENT capability in MCP — so it
+// could never pass against any real codex build.)
 
-// SUCCESS — a handshake that advertises elicitation confirms the approval loop is
-// wired: the posture check passes.
-func TestVerifyInitializePosture_Success_ElicitationAdvertised(t *testing.T) {
+// SUCCESS — a handshake whose serverInfo identifies codex mcp-server passes.
+func TestVerifyInitializePosture_Success_CodexPeer(t *testing.T) {
 	res := &mcp.InitializeResult{
-		Capabilities: mcp.ServerCapabilities{
-			Elicitation: &mcp.ElicitationCapability{},
-		},
+		ServerInfo: mcp.Implementation{Name: codexServerName, Version: "0.139.0"},
 	}
 	assert.NoError(t, verifyInitializePosture(res),
-		"a server advertising elicitation confirms mutations route through the approval policy")
+		"a handshake identifying codex mcp-server confirms the workspace-write sandbox arg is honoured")
 }
 
-// SECURITY / FAIL-CLOSED — a handshake WITHOUT elicitation means codex will never
-// ask the client to approve a mutation: it would run in its default autonomous
-// posture. The self-check must fail closed (the exact SPIKE fail-open the finding
-// flagged), with an error that names the posture so an operator can diagnose it.
-func TestVerifyInitializePosture_Security_NoElicitation_FailsClosed(t *testing.T) {
+// SECURITY / FAIL-CLOSED — a handshake from a non-codex (or unnamed) peer must
+// fail closed: an arbitrary MCP server might ignore our `sandbox` arg and run a
+// turn unconfined.
+func TestVerifyInitializePosture_Security_NonCodexPeer_FailsClosed(t *testing.T) {
 	res := &mcp.InitializeResult{
-		Capabilities: mcp.ServerCapabilities{}, // elicitation NOT advertised
+		ServerInfo: mcp.Implementation{Name: "some-other-mcp-server"},
 	}
 	err := verifyInitializePosture(res)
-	require.Error(t, err, "a handshake without elicitation must fail closed (fail-open guardrail)")
+	require.Error(t, err, "a non-codex peer must fail closed")
 	assert.ErrorIs(t, err, ErrUnverifiedPosture)
 }
 
 // SECURITY / FAIL-CLOSED — a nil InitializeResult (a transport that returned no
-// negotiated capabilities) must also fail closed, never be treated as confirmed.
+// negotiated handshake) must also fail closed, never be treated as confirmed.
 func TestVerifyInitializePosture_Security_NilResult_FailsClosed(t *testing.T) {
 	err := verifyInitializePosture(nil)
 	require.Error(t, err)
@@ -555,15 +409,10 @@ func TestVerifyInitializePosture_Security_NilResult_FailsClosed(t *testing.T) {
 
 // BACKPRESSURE — when the buffer is full the send must BLOCK (slow the producer)
 // until the consumer drains, then deliver the frame — NOT silently discard it.
-// Before the fix the buffer-full `default:` arm dropped assistant transcript
-// frames under a normal fast burst with no signal. We fill a size-1 channel, then
-// drain it from a goroutine after a short delay; the send must succeed (return
-// true) and the frame must arrive in order.
 func TestSendTurnEvent_Backpressure_BlocksThenDelivers(t *testing.T) {
 	events := make(chan turnEvent, 1)
 	events <- turnEvent{Kind: turnText, Text: "first"} // buffer now full
 
-	// Drain the first event shortly, freeing a slot for the blocked send.
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		<-events
@@ -578,8 +427,7 @@ func TestSendTurnEvent_Backpressure_BlocksThenDelivers(t *testing.T) {
 
 // DROP + WARN — if the consumer is gone (ctx cancelled) and the buffer is full,
 // the send must NOT block forever: it gives up and emits a slog.Warn so the true
-// drop is observable (the audit floor the reviewers required). It must return
-// false (frame not delivered).
+// drop is observable. It must return false (frame not delivered).
 func TestSendTurnEvent_ConsumerGone_WarnsAndGivesUp(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -596,8 +444,7 @@ func TestSendTurnEvent_ConsumerGone_WarnsAndGivesUp(t *testing.T) {
 	assert.Contains(t, buf.String(), "drop", "the warn must identify the dropped frame")
 }
 
-// HAPPY — with free buffer space the send delivers immediately and returns true,
-// the common no-contention path (no blocking, no warn).
+// HAPPY — with free buffer space the send delivers immediately and returns true.
 func TestSendTurnEvent_Happy_DeliversImmediately(t *testing.T) {
 	events := make(chan turnEvent, 4)
 	ok := sendTurnEvent(context.Background(), events, turnEvent{Kind: turnText, Text: "hi"}, slog.Default())
@@ -605,64 +452,7 @@ func TestSendTurnEvent_Happy_DeliversImmediately(t *testing.T) {
 	assert.Equal(t, "hi", (<-events).Text)
 }
 
-// --- elicitationApprover: the handler glue (no subprocess) -----------------
-
-// HAPPY — the elicitation approver translates a codex exec-approval request into
-// an approvalRequest, calls the injected Approver, and returns the allow verdict
-// as an accept result — with the transport making NO judgement of its own.
-func TestElicitationApprover_Happy_PlumbsToApprover(t *testing.T) {
-	var got approvalRequest
-	approver := func(req approvalRequest) approvalDecision {
-		got = req
-		return approvalDecision{Allow: true, Reason: "ok"}
-	}
-	h := &elicitationApprover{approver: approver}
-
-	p := elicitParams(t, "Allow git status?", map[string]any{
-		codexApprovalTypeKey:    codexApprovalTypeExec,
-		codexApprovalCommandKey: []any{"git", "status"},
-		codexApprovalReasonKey:  "inspect",
-	})
-	res, err := h.Elicit(context.Background(), mcp.ElicitationRequest{Params: p})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionAccept, res.Action)
-	assert.Equal(t, []string{"git", "status"}, got.Command)
-}
-
-// ERROR — a malformed approval payload (no action) fails closed: the approver is
-// NEVER consulted and the handler declines, so codex cannot proceed.
-func TestElicitationApprover_Error_MalformedDeclinesWithoutApprover(t *testing.T) {
-	called := false
-	approver := func(req approvalRequest) approvalDecision {
-		called = true
-		return approvalDecision{Allow: true}
-	}
-	h := &elicitationApprover{approver: approver}
-
-	p := elicitParams(t, "approve?", map[string]any{codexApprovalReasonKey: "huh"})
-	res, err := h.Elicit(context.Background(), mcp.ElicitationRequest{Params: p})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionDecline, res.Action)
-	assert.False(t, called, "a malformed approval request must fail closed without consulting the policy")
-}
-
-// EDGE — a nil Approver (mis-wired provider) fails closed: the handler declines
-// rather than panicking or silently allowing.
-func TestElicitationApprover_Edge_NilApproverDeclines(t *testing.T) {
-	h := &elicitationApprover{approver: nil}
-	p := elicitParams(t, "Allow ls?", map[string]any{
-		codexApprovalTypeKey:    codexApprovalTypeExec,
-		codexApprovalCommandKey: []any{"ls"},
-	})
-	res, err := h.Elicit(context.Background(), mcp.ElicitationRequest{Params: p})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Equal(t, mcp.ElicitationResponseActionDecline, res.Action)
-}
-
-// --- streamFromEvents: the in-memory turnStream the handler feeds -----------
+// --- eventStream: the in-memory turnStream the handler feeds ----------------
 
 // HAPPY — the event-channel stream yields buffered events in order, then the
 // terminal errStreamDone once the channel closes.
@@ -714,74 +504,36 @@ func TestEventStream_Error_CloseErrSurfaces(t *testing.T) {
 	assert.ErrorIs(t, err, transportErr)
 }
 
-// --- SPIKE-gated constants: value pinning ----------------------------------
+// --- protocol constants: value pinning (VERIFIED against codex-cli 0.139) ---
 //
-// The mapper tests use constants in both the input payload AND in the
-// expected-value assertions, so if a constant drifts from its intended string
-// the mappers silently use the wrong value and the mapper tests still pass.
-// These TYPE tests pin the exact string values so any change is a deliberate,
-// test-driven decision — not an accidental rename.
-//
-// The "REUSED from parse.go" constants must stay in sync with the literal
-// strings parse.go uses for the verified exec-path vocabulary.
+// The mapper tests use constants in both the input payload AND the expected-value
+// assertions, so if a constant drifts the mappers silently use the wrong value
+// and the mapper tests still pass. These TYPE tests pin the exact verified
+// strings so any change is a deliberate, test-driven decision.
 
-// TYPE — REUSED exec-vocabulary constants must match parse.go's literals.
-func TestSpikeConstants_ReusedExecVocabularyArePinned(t *testing.T) {
-	assert.Equal(t, "agent_message", codexItemAgentMessage, "must match parse.go item type for assistant text")
-	assert.Equal(t, "turn.completed", codexTurnCompleted, "must match parse.go event type for terminal success")
-	assert.Equal(t, "turn.failed", codexTurnFailed, "must match parse.go event type for terminal failure")
-	assert.Equal(t, "error", codexErrorEvent, "must match parse.go event type for error events")
+// TYPE — tool names + the notification method (verified via tools/list + live turns).
+func TestProtocolConstants_ToolsAndMethodPinned(t *testing.T) {
+	assert.Equal(t, "codex", codexStartToolName, "start-conversation tool name")
+	assert.Equal(t, "codex-reply", codexReplyToolName, "resume-conversation tool name")
+	assert.Equal(t, "codex/event", codexEventNotificationMethod, "streaming-event notification method")
+	assert.Equal(t, "codex-mcp-server", codexServerName, "serverInfo.name of a genuine codex mcp-server")
 }
 
-// TYPE — critical ASSUMED posture constants are pinned so the read-only sandbox
-// + approval-policy values cannot change without a deliberate test update and a
-// live-binary verification against codex-cli 0.139.
-func TestSpikeConstants_AssumedPostureConstantsArePinned(t *testing.T) {
-	assert.Equal(t, "read-only", codexSandboxReadOnly, "sandbox posture value for interview mode (SPIKE: verify against 0.139)")
-	assert.Equal(t, "on-request", codexApprovalPolicyOnRequest, "approval routing value that forces mutations through elicitation (SPIKE: verify against 0.139)")
-	assert.Equal(t, "conversation_id", codexArgResumeID, "resume arg key that carries the prior conversation id (SPIKE: verify against 0.139)")
+// SECURITY — the start-tool arg keys + posture values. A wrong key silently drops
+// the workspace-write sandbox constraint (codex would run in its default posture).
+func TestProtocolConstants_PostureArgsPinned(t *testing.T) {
+	assert.Equal(t, "sandbox", codexArgSandbox, "sandbox arg key (was wrongly sandbox_mode)")
+	assert.Equal(t, "approval-policy", codexArgApprovalPolicy, "approval-policy arg key (hyphen, was wrongly approval_policy)")
+	assert.Equal(t, "workspace-write", codexSandboxWorkspaceWrite, "worktree-confined write posture")
+	assert.Equal(t, "never", codexApprovalPolicyNever, "no per-mutation approval loop")
+	assert.Equal(t, "conversationId", codexArgConversationID, "codex-reply resume arg key")
 }
 
-// SECURITY — security-critical arg KEY strings must be pinned separately.
-// TestStartToolRequest_Happy_FreshConversation uses constants in both the map
-// build and the lookup (args[codexArgSandboxMode]), so a key that drifts from
-// its expected wire value still passes that test. A wrong key silently drops
-// the posture config: codex falls back to its default (possibly read-write or
-// no-approval) mode without any test failure.
-func TestSpikeConstants_SecurityPostureArgKeysPinned(t *testing.T) {
-	assert.Equal(t, "sandbox_mode", codexArgSandboxMode,
-		"wrong key silently drops the read-only sandbox constraint (SPIKE: verify against 0.139)")
-	assert.Equal(t, "approval_policy", codexArgApprovalPolicy,
-		"wrong key silently bypasses the mutation approval guardrail (SPIKE: verify against 0.139)")
-	assert.Equal(t, "codex", codexStartToolName,
-		"MCP tool name to start a conversation (SPIKE: verify against 0.139)")
-	assert.Equal(t, "codex/event", codexEventNotificationMethod,
-		"notification method for streaming events; wrong value means no events arrive (SPIKE: verify against 0.139)")
-}
-
-// PAIRED (FA#16) / TYPE — ASSUMED approval payload key and type-value constants
-// that must be verified against codex-cli 0.139 before going live. These are used
-// by mapApprovalRequest (decoding the elicitation payload) and
-// decisionToElicitationResult (encoding the allow/deny response). A wrong key or
-// type value silently breaks the approval loop: codex receives a malformed response
-// and the policy sees mis-classified or missing action payloads.
-//
-// These are NOT in the three earlier SPIKE tests because they are elicitation-side
-// (not start-tool-side) constants. Keeping them in a dedicated group localizes any
-// 0.139 breakage to this file.
-func TestSpikeConstants_ApprovalPayloadKeysPinned(t *testing.T) {
-	assert.Equal(t, "type", codexApprovalTypeKey,
-		"approval payload type discriminator key (SPIKE: verify against 0.139)")
-	assert.Equal(t, "exec", codexApprovalTypeExec,
-		"exec approval type value (SPIKE: verify against 0.139)")
-	assert.Equal(t, "patch", codexApprovalTypePatch,
-		"patch/write approval type value (SPIKE: verify against 0.139)")
-	assert.Equal(t, "command", codexApprovalCommandKey,
-		"approval payload key for exec command argv (SPIKE: verify against 0.139)")
-	assert.Equal(t, "paths", codexApprovalPathsKey,
-		"approval payload key for write path list (SPIKE: verify against 0.139)")
-	assert.Equal(t, "reason", codexApprovalReasonKey,
-		"approval payload key for human-readable reason (SPIKE: verify against 0.139)")
-	assert.Equal(t, "approved", codexApprovalDecisionKey,
-		"approval response key for the boolean allow/deny decision (SPIKE: verify against 0.139)")
+// TYPE — the codex/event msg.type discriminators that drive event folding.
+func TestProtocolConstants_EventTypesPinned(t *testing.T) {
+	assert.Equal(t, "agent_message", codexMsgAgentMessage, "final assistant text event")
+	assert.Equal(t, "task_complete", codexMsgTaskComplete, "terminal turn-success event (was wrongly turn.completed)")
+	assert.Equal(t, "token_count", codexMsgTokenCount, "usage event (was wrongly a usage field)")
+	assert.Equal(t, "error", codexMsgError, "terminal error event")
+	assert.Equal(t, "stream_error", codexMsgStreamError, "terminal stream-error event")
 }

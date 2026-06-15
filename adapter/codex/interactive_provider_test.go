@@ -41,7 +41,7 @@ func failedEv(err error) turnEvent { return turnEvent{Kind: turnFailed, Err: err
 
 // HAPPY — a scripted [token, token, done{c1}] yields the tokens in order then a
 // single terminal Done carrying the conversation id + token counts; the
-// turnConfig carries the WorkDir + model and an installed Approver.
+// turnConfig carries the WorkDir + model.
 func TestInteractive_StreamChat_HappyPath(t *testing.T) {
 	revealed := false
 	fake := &fakeMCPSession{events: []turnEvent{
@@ -71,12 +71,11 @@ func TestInteractive_StreamChat_HappyPath(t *testing.T) {
 	assert.Equal(t, 5, last.TokensOut)
 	assert.NoError(t, last.Error)
 
-	// turnConfig carried the WorkDir + binding model and an installed Approver.
+	// turnConfig carried the WorkDir + binding model.
 	assert.True(t, fake.startCalled)
 	assert.Equal(t, "/tmp/ws", fake.gotCfg.WorkDir)
 	assert.Equal(t, "say hi", fake.gotCfg.Prompt)
 	assert.Equal(t, "gpt-5-codex", fake.gotCfg.Model)
-	assert.NotNil(t, fake.gotCfg.Approver, "the provider must install its approval policy")
 
 	// SECURITY: the no-key subscription path never reveals a key.
 	assert.False(t, revealed, "codex interactive must never reveal an API key")
@@ -170,9 +169,8 @@ func TestInteractive_Chat_ResumeID(t *testing.T) {
 
 // SUCCESS / LIFECYCLE — spawn-per-turn: each StreamChat call must create a fresh
 // mcpSession via the factory. If the provider cached the session (e.g. sync.Once),
-// the second turn would reuse the first turn's Approver (stale WorkDir-scoped
-// policy) and share an exhausted stream. The factory call count must equal the
-// number of turns.
+// the second turn would share an exhausted stream from the first. The factory call
+// count must equal the number of turns.
 func TestInteractive_SpawnPerTurn_FreshSessionEachStreamChat(t *testing.T) {
 	var callCount int
 	factory := func() mcpSession {
@@ -228,54 +226,6 @@ func TestInteractive_StreamChat_EmptyBindingModel_UsesRequestModel(t *testing.T)
 	require.NoError(t, err)
 	collectChunks(t, ch)
 	assert.Equal(t, "gpt-5.5", fake.gotCfg.Model, "req.Model must be used when Binding.Model is empty")
-}
-
-// SUCCESS — an informational-command approval request is ALLOWED.
-func TestInteractive_Approval_InformationalCommand_Allowed(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{Command: []string{"git", "status"}, Reason: "check state"}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.True(t, fake.decisions[0].Allow, "a read-only/informational command must be allowed")
-}
-
-// SUCCESS — a write whose every path is under docs/ is ALLOWED.
-func TestInteractive_Approval_DocsWrite_Allowed(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{WritePaths: []string{"docs/specs/feature.md"}, Reason: "deliverable"}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.True(t, fake.decisions[0].Allow, "a docs/-scoped write must be allowed")
-}
-
-// SUCCESS — the deliverable git commit is ALLOWED.
-func TestInteractive_Approval_Commit_Allowed(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{Command: []string{"git", "commit", "-m", "docs: deliverable"}, Reason: "commit"}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.True(t, fake.decisions[0].Allow, "the deliverable commit must be allowed")
 }
 
 // SUCCESS — a configured capability ruleset floors+emits the effort value onto
@@ -525,132 +475,7 @@ func TestInteractive_StreamChat_TransportError_ErrorNoDone(t *testing.T) {
 	}
 }
 
-// --- EDGE CASE (mandatory guardrail) ---------------------------------------
-
-// EDGE / MANDATORY — codex tries to patch a SOURCE path outside docs/ during the
-// interview. The policy DENIES it, the decision is traced (recorded via the
-// fake's decision log), the stream continues to its clean Done (no spurious
-// suppression), and nothing is surfaced to the human (no Error chunk, no Done
-// suppression — denials are an operator-only signal).
-func TestInteractive_Approval_SourceWriteDuringInterview_Denied(t *testing.T) {
-	fake := &fakeMCPSession{
-		events: []turnEvent{
-			tokenEv("let me update Settings"),
-			doneEv("conv-1", 0, 0),
-		},
-		approvals: []approvalRequest{
-			{WritePaths: []string{"domain/x/Settings.tsx"}, Reason: "wire the toggle"},
-		},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	chunks := collectChunks(t, ch)
-
-	// The guardrail fired: the source write was denied.
-	require.Len(t, fake.decisions, 1)
-	assert.False(t, fake.decisions[0].Allow, "a write to a source path outside docs/ must be denied")
-	assert.NotEmpty(t, fake.decisions[0].Reason, "the denial must carry a reason for the trace")
-
-	// The interview continued: the token flowed and the turn reached a clean Done.
-	require.Len(t, chunks, 2)
-	assert.Equal(t, "let me update Settings", chunks[0].Token)
-	assert.True(t, chunks[1].Done, "a denied mutation must NOT suppress the turn's Done")
-
-	// No human-facing surfacing: no chunk carries an Error for the denial.
-	for _, c := range chunks {
-		assert.NoError(t, c.Error, "a guardrail denial must never surface as a human-facing error")
-	}
-}
-
-// EDGE — a multi-file patch with one docs/ path and one source path is denied
-// wholesale (one outside path denies the whole patch).
-func TestInteractive_Approval_MixedPatch_Denied(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{WritePaths: []string{"docs/specs/ok.md", "internal/secret.go"}}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.False(t, fake.decisions[0].Allow, "a mixed patch with any non-docs path must be denied wholesale")
-}
-
-// EDGE — a ..-escape path resolving outside WorkDir/docs is denied (fail closed).
-func TestInteractive_Approval_DotDotEscape_Denied(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{WritePaths: []string{"docs/../../etc/passwd"}}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.False(t, fake.decisions[0].Allow, "a ..-escape path must be denied")
-}
-
-// EDGE — an unknown approval kind (neither command nor write paths) is denied by
-// default (default-deny / fail closed).
-func TestInteractive_Approval_UnknownKind_Denied(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{Reason: "some brand-new approval kind"}},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.False(t, fake.decisions[0].Allow, "an unknown approval kind must be denied")
-}
-
-// PAIRED (FA#14) — a turn with mixed approvals (some allowed, some denied)
-// proves that each approval is adjudicated independently: denials are INVISIBLE
-// to the human (no Error chunk, no Done suppression), and the stream still
-// reaches a clean Done. This is the critical integration seam between the
-// provider's tracingApprover and the policy: the provider must NOT abort the
-// stream on a denial, and the policy must NOT make all-or-nothing decisions.
-func TestInteractive_Approval_MixedDecisions_StreamReachesDone(t *testing.T) {
-	fake := &fakeMCPSession{
-		events: []turnEvent{
-			tokenEv("here is my analysis"),
-			doneEv("conv-1", 10, 6),
-		},
-		approvals: []approvalRequest{
-			{Command: []string{"git", "status"}, Reason: "inspect state"},    // ALLOWED (info command)
-			{WritePaths: []string{"domain/auth/handler.go"}, Reason: "fix"},  // DENIED (source write)
-			{WritePaths: []string{"docs/specs/feature.md"}, Reason: "notes"}, // ALLOWED (docs write)
-		},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	chunks := collectChunks(t, ch)
-
-	// All three approvals were adjudicated.
-	require.Len(t, fake.decisions, 3)
-	assert.True(t, fake.decisions[0].Allow, "info command must be allowed")
-	assert.False(t, fake.decisions[1].Allow, "source write outside docs/ must be denied")
-	assert.True(t, fake.decisions[2].Allow, "docs/ write must be allowed")
-
-	// The denial was invisible: stream reached Done, no Error chunk.
-	last := chunks[len(chunks)-1]
-	assert.True(t, last.Done, "mixed-decision turn must still reach a clean Done")
-	for _, c := range chunks {
-		assert.NoError(t, c.Error, "a guardrail denial in a mixed-approval turn must never produce an Error chunk")
-	}
-}
+// --- EDGE CASE -------------------------------------------------------------
 
 // EDGE — empty WorkDir fails closed with ErrWorkDirRequired and NO stream; the
 // session is never even started.
@@ -777,112 +602,15 @@ func TestInteractive_StreamChat_ZeroTimeout_NoSpuriousDeadline(t *testing.T) {
 
 // --- CONSTRUCTOR -----------------------------------------------------------
 
-// CONSTRUCTOR — the public NewInteractiveProvider defaults WritableRoot to docs
-// when empty and builds the shared core via newCore (same binary resolution as
-// the exec adapters). A nil session factory is non-nil (defaults to the real
-// stdio session).
+// CONSTRUCTOR — the public NewInteractiveProvider builds the shared core via
+// newCore (same binary resolution as the exec adapters), and a nil session factory
+// defaults to the real stdio session.
 func TestNewInteractiveProvider_Defaults(t *testing.T) {
 	p := NewInteractiveProvider(InteractiveConfig{
 		Binding:    codexBinding("gpt-5-codex", nil),
 		BinaryPath: "codex",
 	})
 	require.NotNil(t, p)
-	assert.Equal(t, defaultWritableRoot, p.writableRoot, "empty WritableRoot must default to docs")
 	assert.Equal(t, "codex", p.binPath, "core must resolve the binary like the exec adapters")
 	require.NotNil(t, p.newSession, "a nil session factory must default to the real stdio session")
-}
-
-// CONSTRUCTOR — an explicit WritableRoot is honoured.
-func TestNewInteractiveProvider_ExplicitWritableRoot(t *testing.T) {
-	p := NewInteractiveProvider(InteractiveConfig{
-		Binding:      codexBinding("gpt-5-codex", nil),
-		BinaryPath:   "codex",
-		WritableRoot: "deliverables",
-	})
-	assert.Equal(t, "deliverables", p.writableRoot)
-}
-
-// CONSTRUCTOR — the policy installed by the provider uses the provider's
-// writableRoot. A write under the configured root is allowed; a write under the
-// default docs/ (which is NOT the configured root) is denied.
-func TestInteractive_Policy_UsesConfiguredWritableRoot(t *testing.T) {
-	fake := &fakeMCPSession{
-		events:    []turnEvent{doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{{WritePaths: []string{"deliverables/out.md"}}},
-	}
-	p := newInteractiveProviderWithSession(
-		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil), WritableRoot: "deliverables"},
-		func() mcpSession { return fake },
-	)
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 1)
-	assert.True(t, fake.decisions[0].Allow, "a write under the configured writable root must be allowed")
-}
-
-// PAIRED (FA#18) — the policy is the PRIMARY gate for command execution; the
-// read-only sandbox is defence-in-depth only. A mutating command (make build,
-// rm -rf, git push) must be denied by the policy regardless of whether the
-// sandbox would independently block it. This test verifies the primary-gate
-// property at the provider integration level (not just the policy unit level).
-func TestInteractive_Approval_MutatingCommand_DeniedByPolicy_PrimaryGate(t *testing.T) {
-	fake := &fakeMCPSession{
-		events: []turnEvent{tokenEv("building..."), doneEv("conv-1", 0, 0)},
-		approvals: []approvalRequest{
-			{Command: []string{"make", "build"}, Reason: "compile the output"},
-		},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	chunks := collectChunks(t, ch)
-
-	// Policy fired as the primary gate: mutating command denied before sandbox.
-	require.Len(t, fake.decisions, 1)
-	assert.False(t, fake.decisions[0].Allow,
-		"policy must deny a mutating command as the primary gate — not relying on sandbox defence-in-depth")
-	assert.Contains(t, fake.decisions[0].Reason, "make",
-		"denial reason must identify the denied command for the operator slog trace")
-
-	// The denial was invisible: stream reached Done with no Error chunk.
-	last := chunks[len(chunks)-1]
-	assert.True(t, last.Done, "a denied mutating command must NOT suppress the turn's Done")
-	for _, c := range chunks {
-		assert.NoError(t, c.Error, "a guardrail denial must never surface as a human-facing Error chunk")
-	}
-}
-
-// PAIRED (FA#18) — both deliverable directories (docs/specs/ and
-// docs/superpowers/specs/) are within the default writable root at the provider
-// integration level. Verifying here (not just at the policy unit level) ensures
-// a writableRoot wiring bug cannot silently narrow the boundary to only one of
-// the two delivery directories.
-func TestInteractive_Approval_DocsBoundaryBothDeliverables_BothAllowed(t *testing.T) {
-	fake := &fakeMCPSession{
-		events: []turnEvent{doneEv("conv-1", 3, 2)},
-		approvals: []approvalRequest{
-			{WritePaths: []string{"docs/specs/design.md"}, Reason: "primary spec"},
-			{WritePaths: []string{"docs/superpowers/specs/feature.md"}, Reason: "superpowers spec"},
-		},
-	}
-	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
-
-	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
-	require.NoError(t, err)
-	chunks := collectChunks(t, ch)
-
-	require.Len(t, fake.decisions, 2)
-	assert.True(t, fake.decisions[0].Allow,
-		"docs/specs/ must be within the default writable root (primary deliverable directory)")
-	assert.True(t, fake.decisions[1].Allow,
-		"docs/superpowers/specs/ must be within the default writable root (superpowers deliverable directory)")
-	last := chunks[len(chunks)-1]
-	assert.True(t, last.Done)
-	for _, c := range chunks {
-		assert.NoError(t, c.Error)
-	}
 }

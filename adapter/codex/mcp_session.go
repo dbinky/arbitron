@@ -51,14 +51,9 @@ type turnConfig struct {
 	// ResumeID is the codex conversation id to resume; "" starts a new
 	// conversation.
 	ResumeID string
-	// Approver is the provider's auto-policy, invoked for each server→client
-	// approval request. The transport surfaces EVERY request to it and never
-	// auto-allows internally, so the guardrail is the provider's, not the
-	// transport's. nil must be treated as default-deny (fail-closed) — transport
-	// implementations must nil-check before calling rather than panicking.
-	Approver approvalFunc
 	// Effort is an optional reasoning-effort hint, applied only if the codex
-	// surface accepts it; "" applies nothing.
+	// surface accepts it; "" applies nothing. (Not emitted on the mcp-server path —
+	// codex 0.139's start tool has no verified top-level effort arg.)
 	Effort string
 }
 
@@ -109,38 +104,3 @@ type turnEvent struct {
 	// Err is the failure cause (turnFailed).
 	Err error
 }
-
-// approvalRequest is the structured payload codex sends when it asks the client
-// to approve a mutation. Exactly one of Command / WritePaths describes the
-// action: Command holds the argv of a command-exec request (WritePaths nil); a
-// patch/write request holds the target WritePaths (Command nil). Reason is
-// codex's stated justification, recorded to the trace.
-type approvalRequest struct {
-	// Command is the argv for a command-exec approval request (nil for a patch).
-	Command []string
-	// WritePaths are the target paths for a patch/write approval request (nil for
-	// an exec).
-	WritePaths []string
-	// Reason is codex's stated reason for the request (recorded to the trace).
-	Reason string
-}
-
-// approvalDecision is the client's verdict on an approvalRequest. Reason is
-// recorded to the trace alongside the request so an operator can audit why the
-// policy allowed or denied a given mutation.
-type approvalDecision struct {
-	// Allow is the verdict: true permits the requested action, false denies it.
-	Allow bool
-	// Reason is the policy's justification, recorded to the trace.
-	Reason string
-}
-
-// approvalFunc is the provider's auto-policy, called by the transport for every
-// server→client approval request codex raises (command exec / patch apply); it
-// returns allow/deny. Phase 1 defines the SHAPE; Phase 2 supplies the policy.
-//
-// SECURITY / fail-closed: the transport must surface EVERY request to this
-// function and never auto-allow internally — the mutation guardrail belongs to
-// the provider's policy, not to the transport. A nil approvalFunc must be
-// treated as default-deny; transport implementations nil-check before calling.
-type approvalFunc func(req approvalRequest) approvalDecision

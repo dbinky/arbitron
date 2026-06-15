@@ -73,20 +73,10 @@ func TestFakeMCPSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
 	assert.Equal(t, "gpt-5", f.gotCfg.Model)
 }
 
-// SUCCESS — ResumeID set on the turnConfig is recorded, and a one-request
-// approval script invokes the caller's Approver and records its decision.
-func TestFakeMCPSession_Success_RecordsResumeAndApproval(t *testing.T) {
-	var gotReq approvalRequest
-	approver := func(req approvalRequest) approvalDecision {
-		gotReq = req
-		return approvalDecision{Allow: true, Reason: "info command is safe"}
-	}
-
+// SUCCESS — ResumeID + Effort set on the turnConfig are recorded by Start so
+// argument-threading assertions can read them back.
+func TestFakeMCPSession_Success_RecordsResumeAndEffort(t *testing.T) {
 	f := &fakeMCPSession{
-		approvals: []approvalRequest{{
-			Command: []string{"git", "status"},
-			Reason:  "inspect working tree",
-		}},
 		events: []turnEvent{{Kind: turnDone, SessionID: "c2"}},
 	}
 
@@ -95,7 +85,6 @@ func TestFakeMCPSession_Success_RecordsResumeAndApproval(t *testing.T) {
 		Prompt:   "continue",
 		WorkDir:  "/work/dir",
 		ResumeID: "conv-abc",
-		Approver: approver,
 		Effort:   "high",
 	})
 	require.NoError(t, err)
@@ -103,66 +92,6 @@ func TestFakeMCPSession_Success_RecordsResumeAndApproval(t *testing.T) {
 	// Resume id + effort threaded through to the transport.
 	assert.Equal(t, "conv-abc", f.gotCfg.ResumeID)
 	assert.Equal(t, "high", f.gotCfg.Effort)
-
-	// The approval request reached the policy, and its decision was recorded.
-	assert.Equal(t, []string{"git", "status"}, gotReq.Command)
-	assert.Equal(t, "inspect working tree", gotReq.Reason)
-	require.Len(t, f.decisions, 1)
-	assert.True(t, f.decisions[0].Allow)
-	assert.Equal(t, "info command is safe", f.decisions[0].Reason)
-}
-
-// SUCCESS — multiple approval requests with different verdicts (allow, allow, deny)
-// are ALL delivered to the approver in order and each decision is recorded
-// separately. This also proves a denial does not terminate the event stream —
-// the stream still reaches a clean Done, modelling the FA#14 mandatory scenario.
-func TestFakeMCPSession_Success_MultipleApprovalsAllDeliveredInOrder(t *testing.T) {
-	requests := []approvalRequest{
-		{Command: []string{"git", "log", "--oneline"}, Reason: "inspect history"},
-		{WritePaths: []string{"docs/specs/interview.md"}, Reason: "write deliverable"},
-		{WritePaths: []string{"internal/core.go"}, Reason: "apply source patch"},
-	}
-
-	var gotReqs []approvalRequest
-	approver := func(req approvalRequest) approvalDecision {
-		gotReqs = append(gotReqs, req)
-		if len(req.WritePaths) > 0 && req.WritePaths[0] == "internal/core.go" {
-			return approvalDecision{Allow: false, Reason: "source write denied"}
-		}
-		return approvalDecision{Allow: true, Reason: "ok"}
-	}
-
-	f := &fakeMCPSession{
-		approvals: requests,
-		events:    []turnEvent{{Kind: turnDone, SessionID: "c3"}},
-	}
-
-	stream, err := f.Start(context.Background(), turnConfig{
-		Prompt:   "describe the design",
-		WorkDir:  "/project",
-		Approver: approver,
-	})
-	require.NoError(t, err)
-
-	// All three requests delivered in order.
-	require.Len(t, gotReqs, 3)
-	assert.Equal(t, requests[0], gotReqs[0])
-	assert.Equal(t, requests[1], gotReqs[1])
-	assert.Equal(t, requests[2], gotReqs[2])
-
-	// Decisions: allow, allow, deny — recorded separately.
-	require.Len(t, f.decisions, 3)
-	assert.True(t, f.decisions[0].Allow)
-	assert.True(t, f.decisions[1].Allow)
-	assert.False(t, f.decisions[2].Allow)
-	assert.Equal(t, "source write denied", f.decisions[2].Reason)
-
-	// Denial does not terminate the stream — it still reaches Done.
-	events, drainErr := drainStream(t, context.Background(), stream)
-	require.NoError(t, drainErr)
-	require.Len(t, events, 1)
-	assert.Equal(t, turnDone, events[0].Kind)
-	assert.Equal(t, "c3", events[0].SessionID)
 }
 
 // FAILURE — a turnFailed terminal event surfaces its error from Next (a failed
@@ -210,10 +139,9 @@ func TestFakeMCPSession_Error_StartErrYieldsNoStream(t *testing.T) {
 	assert.Equal(t, "p", f.gotCfg.Prompt)
 }
 
-// EDGE — three boundary conditions:
+// EDGE — boundary conditions:
 //   - an empty script reports terminal completion immediately (no block);
-//   - blockOnCtx + a cancelled ctx makes Next return the context error;
-//   - an approval request before any token is still delivered to the Approver.
+//   - blockOnCtx + a cancelled ctx makes Next return the context error.
 func TestFakeMCPSession_Edge_EmptyScriptTerminatesImmediately(t *testing.T) {
 	f := &fakeMCPSession{} // no events
 
@@ -239,56 +167,7 @@ func TestFakeMCPSession_Edge_BlockOnCtxReturnsContextError(t *testing.T) {
 	assert.Equal(t, turnEvent{}, ev)
 }
 
-func TestFakeMCPSession_Edge_ApprovalBeforeAnyToken(t *testing.T) {
-	var called bool
-	approver := func(req approvalRequest) approvalDecision {
-		called = true
-		return approvalDecision{Allow: false, Reason: "writes to source are denied"}
-	}
-
-	f := &fakeMCPSession{
-		approvals: []approvalRequest{{
-			WritePaths: []string{"internal/secret.go"},
-			Reason:     "apply patch",
-		}},
-		events: []turnEvent{{Kind: turnText, Text: "hello"}, {Kind: turnDone}},
-	}
-
-	_, err := f.Start(context.Background(), turnConfig{Prompt: "p", WorkDir: "/w", Approver: approver})
-	require.NoError(t, err)
-
-	// The approval reached the policy at Start time — before any token was drained.
-	assert.True(t, called, "approval must be delivered to the Approver before any token")
-	require.Len(t, f.decisions, 1)
-	assert.False(t, f.decisions[0].Allow)
-	assert.Equal(t, []string{"internal/secret.go"}, f.approvals[0].WritePaths)
-}
-
-// EDGE — nil Approver with scripted approvals records a default-deny decision;
-// fail-closed means a missing policy never silently permits a mutation.
-func TestFakeMCPSession_Edge_NilApproverDefaultDeny(t *testing.T) {
-	f := &fakeMCPSession{
-		approvals: []approvalRequest{{
-			WritePaths: []string{"internal/secret.go"},
-			Reason:     "apply patch",
-		}},
-		events: []turnEvent{{Kind: turnDone, SessionID: "c1"}},
-	}
-
-	_, err := f.Start(context.Background(), turnConfig{
-		Prompt:   "p",
-		WorkDir:  "/w",
-		Approver: nil,
-	})
-	require.NoError(t, err)
-
-	require.Len(t, f.decisions, 1)
-	assert.False(t, f.decisions[0].Allow, "nil Approver must produce a default-deny decision (fail-closed)")
-	assert.Empty(t, f.decisions[0].Reason)
-}
-
-// TYPE — the turnEventKind constants are distinct and the approval value types
-// carry the structured codex payload (exec argv vs. patch write-paths).
+// TYPE — the turnEventKind constants are distinct.
 func TestTurnEventKinds_AreDistinct(t *testing.T) {
 	kinds := map[turnEventKind]struct{}{turnText: {}, turnDone: {}, turnFailed: {}}
 	assert.Len(t, kinds, 3, "turnText/turnDone/turnFailed must be distinct kinds")

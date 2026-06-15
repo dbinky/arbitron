@@ -123,7 +123,7 @@ func TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider(t *te
 
 	// Construct the real interactive provider exactly as main.go §12c does, and
 	// route the codex backend to it (claude-code keeps its sentinel).
-	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
 	var _ engine.ChatProvider = codexInteractive // it is the wired ChatProvider
 	m := map[string]engine.ChatProvider{
 		workflow.BackendClaudeCode: claude,
@@ -289,7 +289,7 @@ func TestInteractiveStreamSelector_CodexDualArm_DistinctTypes(t *testing.T) {
 	f := newBackendFactory(t)
 
 	// Wire the real interactive provider exactly as the composition root does.
-	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
 	m := map[string]engine.ChatProvider{
 		workflow.BackendClaudeCode: &sentinelChatProvider{name: "claude-stream"},
 		workflow.BackendCodex:      codexInteractive,
