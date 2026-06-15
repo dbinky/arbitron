@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-// fakeMCPSession is a hand-driven mcpSession that replays a scripted sequence of
+// fakeTurnSession is a hand-driven turnSession that replays a scripted sequence of
 // turnEvents. It mirrors fake_runner_test.go's philosophy — no live codex, no
 // subprocess, no network — and is the substrate for every later
 // interactive-provider test.
@@ -12,7 +12,7 @@ import (
 // Like the runner fake it is fail-closed by construction: a startErr makes Start
 // return no stream, and an empty script makes Next report the terminal outcome
 // immediately rather than blocking.
-type fakeMCPSession struct {
+type fakeTurnSession struct {
 	// events is the scripted turnEvent sequence Next replays in order. When it is
 	// exhausted (or empty), Next reports terminal completion via io.EOF-style
 	// handling driven by the event kinds.
@@ -33,7 +33,7 @@ type fakeMCPSession struct {
 
 // Start records cfg, fails closed on startErr, then returns a stream that replays
 // the scripted events.
-func (f *fakeMCPSession) Start(ctx context.Context, cfg turnConfig) (turnStream, error) {
+func (f *fakeTurnSession) Start(ctx context.Context, cfg turnConfig) (turnStream, error) {
 	f.startCalled = true
 	f.gotCfg = cfg
 	if f.startErr != nil {

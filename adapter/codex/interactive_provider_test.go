@@ -19,14 +19,14 @@ func TestInteractiveProviderImplementsPort(t *testing.T) {
 	var _ engine.ChatProvider = (*InteractiveProvider)(nil)
 }
 
-// newInteractiveTestProvider builds an InteractiveProvider whose mcpSession is
+// newInteractiveTestProvider builds an InteractiveProvider whose turnSession is
 // the supplied fake, with a binding model and no key reveal. It mirrors how the
 // exec stream tests inject a fake runner.
-func newInteractiveTestProvider(t *testing.T, fake *fakeMCPSession, binding provider.ResolvedBinding) *InteractiveProvider {
+func newInteractiveTestProvider(t *testing.T, fake *fakeTurnSession, binding provider.ResolvedBinding) *InteractiveProvider {
 	t.Helper()
 	return newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: binding},
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 }
 
@@ -44,7 +44,7 @@ func failedEv(err error) turnEvent { return turnEvent{Kind: turnFailed, Err: err
 // turnConfig carries the WorkDir + model.
 func TestInteractive_StreamChat_HappyPath(t *testing.T) {
 	revealed := false
-	fake := &fakeMCPSession{events: []turnEvent{
+	fake := &fakeTurnSession{events: []turnEvent{
 		tokenEv("hello "),
 		tokenEv("world"),
 		doneEv("conv-1", 11, 5),
@@ -85,7 +85,7 @@ func TestInteractive_StreamChat_HappyPath(t *testing.T) {
 // resolved model, conversation id, output text, and token counts.
 func TestInteractive_Chat_HappyPath(t *testing.T) {
 	revealed := false
-	fake := &fakeMCPSession{events: []turnEvent{
+	fake := &fakeTurnSession{events: []turnEvent{
 		tokenEv("hello "),
 		tokenEv("world"),
 		doneEv("conv-1", 7, 3),
@@ -110,7 +110,7 @@ func TestInteractive_Chat_HappyPath(t *testing.T) {
 // SUCCESS — a non-empty req.SessionID flows to the turn's ResumeID so the same
 // codex conversation continues across human turns.
 func TestInteractive_StreamChat_ResumeID(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
@@ -130,7 +130,7 @@ func TestInteractive_StreamChat_SessionIDRoundTrip(t *testing.T) {
 	// Terminal done carries a DIFFERENT id from the resume id (codex can rotate
 	// the conversation id after certain events — the provider must pass through
 	// whatever the transport returns, not reflect the input id back).
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("new-conv-id", 5, 3)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("new-conv-id", 5, 3)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
@@ -152,7 +152,7 @@ func TestInteractive_StreamChat_SessionIDRoundTrip(t *testing.T) {
 // The startTurn prelude is shared, but a refactor that bypassed it for Chat could
 // silently break resume — this test pins the plumbing symmetrically.
 func TestInteractive_Chat_ResumeID(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{
+	fake := &fakeTurnSession{events: []turnEvent{
 		tokenEv("ok"),
 		doneEv("conv-1", 5, 3),
 	}}
@@ -168,14 +168,14 @@ func TestInteractive_Chat_ResumeID(t *testing.T) {
 }
 
 // SUCCESS / LIFECYCLE — spawn-per-turn: each StreamChat call must create a fresh
-// mcpSession via the factory. If the provider cached the session (e.g. sync.Once),
+// turnSession via the factory. If the provider cached the session (e.g. sync.Once),
 // the second turn would share an exhausted stream from the first. The factory call
 // count must equal the number of turns.
 func TestInteractive_SpawnPerTurn_FreshSessionEachStreamChat(t *testing.T) {
 	var callCount int
-	factory := func() mcpSession {
+	factory := func() turnSession {
 		callCount++
-		return &fakeMCPSession{events: []turnEvent{doneEv("conv-x", 1, 1)}}
+		return &fakeTurnSession{events: []turnEvent{doneEv("conv-x", 1, 1)}}
 	}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
@@ -196,7 +196,7 @@ func TestInteractive_SpawnPerTurn_FreshSessionEachStreamChat(t *testing.T) {
 
 // SUCCESS — a non-empty req.Model overrides the binding's model.
 func TestInteractive_StreamChat_RequestModelOverridesBinding(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("binding-model", nil))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
@@ -210,14 +210,14 @@ func TestInteractive_StreamChat_RequestModelOverridesBinding(t *testing.T) {
 // SUCCESS / COMPOSITION-ROOT — a provider constructed with an empty Binding.Model
 // (the composition-root pattern: no static binding, model injected per-request by
 // the engine from the profile binding) uses req.Model as the turn model. This is
-// the EXACT wiring in main.go §12c: NewInteractiveProvider(InteractiveConfig{...})
+// the EXACT wiring in initDomain: NewInteractiveProvider(InteractiveConfig{...})
 // with no Binding, so the engine-provided req.Model is the sole model source.
 func TestInteractive_StreamChat_EmptyBindingModel_UsesRequestModel(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	// Empty Binding (no Model) — mirrors the composition root's NewInteractiveProvider call.
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{},
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{
@@ -242,10 +242,10 @@ func TestInteractive_StreamChat_EffortEmitted(t *testing.T) {
 	binding.Backend = "codex"
 	binding.Effort = provider.EffortHigh
 
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: binding, CapabilityRules: rules},
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -257,7 +257,7 @@ func TestInteractive_StreamChat_EffortEmitted(t *testing.T) {
 // SUCCESS — with no capability ruleset (Empty), the turnConfig carries no effort
 // (default emits nothing), preserving back-compat.
 func TestInteractive_StreamChat_NoEffortByDefault(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -274,7 +274,7 @@ func TestInteractive_StreamChat_NoEffortByDefault(t *testing.T) {
 // specific failure cause (rate-limit, auth, model error, etc.).
 func TestInteractive_StreamChat_TurnFailed_ErrorNoDone(t *testing.T) {
 	turnErr := errors.New("model overloaded")
-	fake := &fakeMCPSession{events: []turnEvent{
+	fake := &fakeTurnSession{events: []turnEvent{
 		tokenEv("partial"),
 		failedEv(turnErr),
 	}}
@@ -300,7 +300,7 @@ func TestInteractive_StreamChat_TurnFailed_ErrorNoDone(t *testing.T) {
 // guard would silently upgrade the failure to a success.
 func TestInteractive_StreamChat_TurnDoneAfterTurnFailed_NoDoneChunk(t *testing.T) {
 	turnErr := errors.New("rate limited")
-	fake := &fakeMCPSession{events: []turnEvent{
+	fake := &fakeTurnSession{events: []turnEvent{
 		failedEv(turnErr),
 		doneEv("conv-1", 10, 5), // spurious turnDone after failure — must be suppressed
 	}}
@@ -327,11 +327,11 @@ func TestInteractive_StreamChat_TurnDoneAfterTurnFailed_NoDoneChunk(t *testing.T
 // confusing any caller that inspects the last chunk.
 func TestInteractive_StreamChat_TransportErrorAfterTurnFailed_SingleErrorOnly(t *testing.T) {
 	turnErr := errors.New("rate limited")
-	transportErr := errors.New("codex mcp-server: stdio broke")
+	transportErr := errors.New("codex exec: stream broke")
 	sess := &errStreamSession{pre: []turnEvent{failedEv(turnErr)}, nextErr: transportErr}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
-		func() mcpSession { return sess },
+		func() turnSession { return sess },
 	)
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -354,7 +354,7 @@ func TestInteractive_StreamChat_TransportErrorAfterTurnFailed_SingleErrorOnly(t 
 // errors.Is for retry/classification logic.
 func TestInteractive_Chat_TurnFailed_HardError(t *testing.T) {
 	turnErr := errors.New("boom")
-	fake := &fakeMCPSession{events: []turnEvent{failedEv(turnErr)}}
+	fake := &fakeTurnSession{events: []turnEvent{failedEv(turnErr)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -371,7 +371,7 @@ func TestInteractive_Chat_NoTerminalDone_HardError(t *testing.T) {
 	sess := &errStreamSession{nextErr: errStreamDone}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
-		func() mcpSession { return sess },
+		func() turnSession { return sess },
 	)
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -384,8 +384,8 @@ func TestInteractive_Chat_NoTerminalDone_HardError(t *testing.T) {
 
 // ERROR — a Start error makes StreamChat return (nil, err): no half-open stream.
 func TestInteractive_StreamChat_StartError(t *testing.T) {
-	wantErr := errors.New("codex mcp-server: start failed")
-	fake := &fakeMCPSession{startErr: wantErr}
+	wantErr := errors.New("codex exec: start failed")
+	fake := &fakeTurnSession{startErr: wantErr}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -395,8 +395,8 @@ func TestInteractive_StreamChat_StartError(t *testing.T) {
 
 // ERROR — a Start error makes Chat return (nil, err).
 func TestInteractive_Chat_StartError(t *testing.T) {
-	wantErr := errors.New("codex mcp-server: start failed")
-	fake := &fakeMCPSession{startErr: wantErr}
+	wantErr := errors.New("codex exec: start failed")
+	fake := &fakeTurnSession{startErr: wantErr}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -410,11 +410,11 @@ func TestInteractive_Chat_StartError(t *testing.T) {
 // must wrap the error so callers can identify the cause; an errored Chat must never
 // return a partial result.
 func TestInteractive_Chat_TransportError_HardError(t *testing.T) {
-	transportErr := errors.New("codex mcp-server: stdio broke")
+	transportErr := errors.New("codex exec: stream broke")
 	sess := &errStreamSession{pre: []turnEvent{tokenEv("partial")}, nextErr: transportErr}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
-		func() mcpSession { return sess },
+		func() turnSession { return sess },
 	)
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -423,7 +423,7 @@ func TestInteractive_Chat_TransportError_HardError(t *testing.T) {
 	assert.ErrorIs(t, err, transportErr, "Chat must wrap the transport error so callers can identify it")
 }
 
-// errStreamSession is a local test mcpSession whose stream yields some events and
+// errStreamSession is a local test turnSession whose stream yields some events and
 // then a NON-sentinel transport error from Next (a broken stdio mid-turn), which
 // the shared scripted fake cannot express. It exercises the provider's
 // fail-closed fold of an arbitrary Next error.
@@ -456,11 +456,11 @@ func (s *errTurnStream) Next(_ context.Context) (turnEvent, error) {
 // ERROR — a non-sentinel transport error mid-stream becomes a terminal Error
 // chunk (no Done), and the drainer still completes.
 func TestInteractive_StreamChat_TransportError_ErrorNoDone(t *testing.T) {
-	transportErr := errors.New("codex mcp-server: stdio broke")
+	transportErr := errors.New("codex exec: stream broke")
 	sess := &errStreamSession{pre: []turnEvent{tokenEv("partial")}, nextErr: transportErr}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)},
-		func() mcpSession { return sess },
+		func() turnSession { return sess },
 	)
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -484,7 +484,7 @@ func TestInteractive_StreamChat_TransportError_ErrorNoDone(t *testing.T) {
 // for Model (field read, no RevealKey).
 func TestInteractive_StreamChat_EmptyWorkDir(t *testing.T) {
 	revealed := false
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", &revealed))
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: ""})
@@ -498,7 +498,7 @@ func TestInteractive_StreamChat_EmptyWorkDir(t *testing.T) {
 // SECURITY — RevealKey must not be called even on this early error path.
 func TestInteractive_Chat_EmptyWorkDir(t *testing.T) {
 	revealed := false
-	fake := &fakeMCPSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
+	fake := &fakeTurnSession{events: []turnEvent{doneEv("conv-1", 0, 0)}}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", &revealed))
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: ""})
@@ -510,7 +510,7 @@ func TestInteractive_Chat_EmptyWorkDir(t *testing.T) {
 // EDGE — a cancelled context mid-stream unblocks the sender and reaps the child;
 // no clean Done is emitted.
 func TestInteractive_StreamChat_ContextCancel(t *testing.T) {
-	fake := &fakeMCPSession{blockOnCtx: true}
+	fake := &fakeTurnSession{blockOnCtx: true}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -527,7 +527,7 @@ func TestInteractive_StreamChat_ContextCancel(t *testing.T) {
 // EDGE — a cancelled context makes Chat return a context error, not a partial
 // result.
 func TestInteractive_Chat_ContextCancel(t *testing.T) {
-	fake := &fakeMCPSession{blockOnCtx: true}
+	fake := &fakeTurnSession{blockOnCtx: true}
 	p := newInteractiveTestProvider(t, fake, codexBinding("gpt-5-codex", nil))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -545,13 +545,13 @@ func TestInteractive_Chat_ContextCancel(t *testing.T) {
 // yield NO clean Done, and StreamChat must terminate (the channel closes) rather
 // than hang. Before the fix Timeout was dead config and this would block forever.
 func TestInteractive_StreamChat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
-	fake := &fakeMCPSession{blockOnCtx: true} // Next blocks until the turn ctx is done
+	fake := &fakeTurnSession{blockOnCtx: true} // Next blocks until the turn ctx is done
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{
 			Binding: codexBinding("gpt-5-codex", nil),
 			Timeout: 20 * time.Millisecond, // the per-turn deadline under test
 		},
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 
 	// A background ctx with NO deadline of its own: the ONLY bound is p.Timeout, so
@@ -568,13 +568,13 @@ func TestInteractive_StreamChat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
 // HANG / REGRESSION — the Chat fold honours the per-turn deadline too: a wedged
 // turn returns a context.DeadlineExceeded error (no partial result), not a hang.
 func TestInteractive_Chat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
-	fake := &fakeMCPSession{blockOnCtx: true}
+	fake := &fakeTurnSession{blockOnCtx: true}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{
 			Binding: codexBinding("gpt-5-codex", nil),
 			Timeout: 20 * time.Millisecond,
 		},
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 
 	resp, err := p.Chat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})
@@ -587,10 +587,10 @@ func TestInteractive_Chat_PerTurnTimeout_KillsWedgedTurn(t *testing.T) {
 // turn with a terminal frame completes cleanly, proving the wrap degrades to the
 // parent ctx (procenv.WithTimeout no-op) rather than spuriously cancelling.
 func TestInteractive_StreamChat_ZeroTimeout_NoSpuriousDeadline(t *testing.T) {
-	fake := &fakeMCPSession{events: []turnEvent{tokenEv("hi"), doneEv("conv-1", 1, 1)}}
+	fake := &fakeTurnSession{events: []turnEvent{tokenEv("hi"), doneEv("conv-1", 1, 1)}}
 	p := newInteractiveProviderWithSession(
 		InteractiveConfig{Binding: codexBinding("gpt-5-codex", nil)}, // Timeout zero
-		func() mcpSession { return fake },
+		func() turnSession { return fake },
 	)
 
 	ch, err := p.StreamChat(context.Background(), engine.ChatRequest{Prompt: "go", WorkDir: "/tmp/ws"})

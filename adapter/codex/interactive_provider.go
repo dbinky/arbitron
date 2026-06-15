@@ -14,10 +14,10 @@ import (
 
 // InteractiveConfig configures an InteractiveProvider — the conversational codex
 // backend that runs each interactive turn over `codex exec --json` (fresh) /
-// `codex exec resume --json` (resume) via the mcpSession seam. It is the
+// `codex exec resume --json` (resume) via the turnSession seam. It is the
 // interactive sibling of codex.Config: it shares the same construction inputs
 // (binding, binary, per-turn timeout, capability rules, response cap), and it owns
-// NO Runner (the mcpSession factory wraps the subprocess runner seam — real
+// NO Runner (the turnSession factory wraps the subprocess runner seam — real
 // codex exec in prod, a fake in tests).
 //
 // SECURITY: like the exec Config there is no per-provider credential — codex is
@@ -46,7 +46,7 @@ type InteractiveConfig struct {
 }
 
 // InteractiveProvider implements engine.ChatProvider (Chat + StreamChat) by
-// running one codex interview turn over the mcpSession seam, folding the turn
+// running one codex interview turn over the turnSession seam, folding the turn
 // stream into ChatChunks, and round-tripping the conversation id for resume.
 //
 // It holds NO in-memory session state between turns (spawn-per-turn): the
@@ -65,9 +65,9 @@ type InteractiveConfig struct {
 // turn or transport break yields a terminal Error chunk and NEVER a clean Done.
 type InteractiveProvider struct {
 	core
-	// newSession builds one mcpSession per turn (real execSession in prod, a fake
+	// newSession builds one turnSession per turn (real execSession in prod, a fake
 	// in tests). It mirrors codex.Config.Runner's subprocess injection seam.
-	newSession func() mcpSession
+	newSession func() turnSession
 }
 
 var _ engine.ChatProvider = (*InteractiveProvider)(nil)
@@ -85,15 +85,15 @@ func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider {
 	p := &InteractiveProvider{
 		core: newCore(interactiveCoreConfig(cfg)),
 	}
-	p.newSession = func() mcpSession { return newExecSession(&p.core) }
+	p.newSession = func() turnSession { return newExecSession(&p.core) }
 	return p
 }
 
 // newInteractiveProviderWithSession is the in-package test seam: it injects a
-// mcpSession factory (the fake transport) instead of the real stdio session,
+// turnSession factory (the fake transport) instead of the real stdio session,
 // mirroring how codex.Config.Runner accepts a fake runner. External callers use
 // NewInteractiveProvider and get the real session.
-func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() mcpSession) *InteractiveProvider {
+func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() turnSession) *InteractiveProvider {
 	return &InteractiveProvider{
 		core:       newCore(interactiveCoreConfig(cfg)),
 		newSession: newSession,
@@ -102,7 +102,7 @@ func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() 
 
 // interactiveCoreConfig projects an InteractiveConfig onto the exec adapters'
 // Config so the shared core is built by the SAME newCore path — the interactive
-// provider owns no Runner (the mcpSession factory replaces that seam), so it is
+// provider owns no Runner (the turnSession factory replaces that seam), so it is
 // left at its zero value (nil → the production os/exec runner, used by the version
 // probe AND the `codex exec` turns). MaxResponseBytes IS wired through (the exec
 // stream is a real stdout pipe that a runaway turn could flood).
@@ -119,7 +119,7 @@ func interactiveCoreConfig(cfg InteractiveConfig) Config {
 // startTurn performs the shared fail-closed prelude for both Chat and StreamChat:
 // it guards an empty WorkDir, resolves the model (req.Model overrides the binding
 // model) and the floored effort, derives the per-turn deadline, and starts ONE
-// codex turn over a fresh mcpSession. An empty WorkDir, empty model, or a failed
+// codex turn over a fresh turnSession. An empty WorkDir, empty model, or a failed
 // Start yields NO stream (no half-open turn) — the error is returned before any
 // events flow.
 //

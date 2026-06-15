@@ -12,48 +12,48 @@ import (
 // the stream never silently stops without a terminal signal).
 var errStreamDone = errors.New("codex: turn stream done")
 
-// mcpSession is one codex mcp-server conversation turn over stdio. It is the
+// turnSession is one codex interview turn over `codex exec[ resume]`. It is the
 // narrow, codex-shaped transport seam the interactive provider depends on: the
-// real impl (Task 1.2) wraps the mcp-go stdio client driving `codex mcp-server`;
-// the fake replays canned frames. It references NO domain/engine type — it is a
-// pure adapter-local port, consumed only by the Phase-2 provider, which alone
-// imports engine (hexagonal).
+// real impl (execSession) drives the `codex exec` subprocess; the fake replays
+// canned frames. It references NO domain/engine type — it is a pure adapter-local
+// port, consumed only by the interactive provider, which alone imports engine
+// (hexagonal).
 //
 // SECURITY / fail-closed: the real impl launches under the subscription env
 // codexEnv() builds (NO OPENAI_API_KEY, HOME/CODEX_HOME preserved) and gates on
 // the memoized version probe, so a missing or incompatible binary fails closed
 // before any conversation starts — exactly the posture of the exec path.
-type mcpSession interface {
+type turnSession interface {
 	// Start begins a NEW codex conversation (cfg.ResumeID == "") OR resumes an
 	// existing one (cfg.ResumeID != ""). It sends the prompt and returns a
-	// turnStream the caller folds. A failed launch / broken stdio yields a typed
+	// turnStream the caller folds. A failed launch / broken stream yields a typed
 	// error and NO stream (no half-open turn).
 	Start(ctx context.Context, cfg turnConfig) (turnStream, error)
 }
 
 // turnConfig carries everything one interview turn needs to start: the model,
-// the prompt (delivered over the protocol — never argv/logs), the working
-// directory, the optional resume id, the provider's approval policy, and an
-// optional reasoning-effort hint. It deliberately holds value types only (no
-// domain dependency).
+// the prompt (delivered over stdin — never argv/logs), the working directory, the
+// optional resume id, and an optional reasoning-effort hint. It deliberately holds
+// value types only (no domain dependency).
 //
-// SECURITY: Prompt rides the protocol body, never the command line; WorkDir is
+// SECURITY: Prompt rides stdin (RunSpec.Stdin), never the command line; WorkDir is
 // the codex sandbox root and must be set by the provider (an empty cwd would
 // inherit the engine launch directory, which holds arbitron.db / config.yaml —
 // the same invariant ErrWorkDirRequired guards on the exec path).
 type turnConfig struct {
 	// Model is the codex model id for this turn.
 	Model string
-	// Prompt is the turn's user prompt, delivered over the protocol body.
+	// Prompt is the turn's user prompt, delivered via stdin (RunSpec.Stdin).
 	Prompt string
 	// WorkDir is the codex sandbox root / cwd for this turn. Required.
 	WorkDir string
 	// ResumeID is the codex conversation id to resume; "" starts a new
 	// conversation.
 	ResumeID string
-	// Effort is an optional reasoning-effort hint, applied only if the codex
-	// surface accepts it; "" applies nothing. (Not emitted on the mcp-server path —
-	// codex 0.139's start tool has no verified top-level effort arg.)
+	// Effort is an optional reasoning-effort hint emitted on a FRESH turn as
+	// `-c model_reasoning_effort=<e>` (buildInteractiveExecArgs); "" emits nothing.
+	// It is immutable across a conversation: a resume turn drops it, since codex
+	// carries the effort from the persisted on-disk session.
 	Effort string
 }
 

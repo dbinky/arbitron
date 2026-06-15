@@ -11,7 +11,7 @@ import (
 
 // The fake must satisfy the port — a downstream rename of either side is caught
 // here at compile time.
-var _ mcpSession = (*fakeMCPSession)(nil)
+var _ turnSession = (*fakeTurnSession)(nil)
 
 // The stream the fake returns must also satisfy the port — catches a missing
 // method if turnStream ever grows beyond Next.
@@ -38,8 +38,8 @@ func drainStream(t *testing.T, ctx context.Context, s turnStream) ([]turnEvent, 
 
 // HAPPY — a script [token "Hi", token " there", done{SessionID:"c1"}] replays in
 // order via Next, and gotCfg captures the prompt + workdir handed to Start.
-func TestFakeMCPSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
-	f := &fakeMCPSession{events: []turnEvent{
+func TestFakeTurnSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
+	f := &fakeTurnSession{events: []turnEvent{
 		{Kind: turnText, Text: "Hi"},
 		{Kind: turnText, Text: " there"},
 		{Kind: turnDone, SessionID: "c1", TokensIn: 7, TokensOut: 3},
@@ -75,8 +75,8 @@ func TestFakeMCPSession_HappyPath_ReplaysEventsInOrder(t *testing.T) {
 
 // SUCCESS — ResumeID + Effort set on the turnConfig are recorded by Start so
 // argument-threading assertions can read them back.
-func TestFakeMCPSession_Success_RecordsResumeAndEffort(t *testing.T) {
-	f := &fakeMCPSession{
+func TestFakeTurnSession_Success_RecordsResumeAndEffort(t *testing.T) {
+	f := &fakeTurnSession{
 		events: []turnEvent{{Kind: turnDone, SessionID: "c2"}},
 	}
 
@@ -96,9 +96,9 @@ func TestFakeMCPSession_Success_RecordsResumeAndEffort(t *testing.T) {
 
 // FAILURE — a turnFailed terminal event surfaces its error from Next (a failed
 // turn is never a clean done).
-func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {
+func TestFakeTurnSession_Failure_TurnFailedSurfacesError(t *testing.T) {
 	turnErr := errors.New("turn.failed: model refused")
-	f := &fakeMCPSession{events: []turnEvent{
+	f := &fakeTurnSession{events: []turnEvent{
 		{Kind: turnText, Text: "partial"},
 		{Kind: turnFailed, Err: turnErr},
 	}}
@@ -125,9 +125,9 @@ func TestFakeMCPSession_Failure_TurnFailedSurfacesError(t *testing.T) {
 }
 
 // ERROR — startErr makes Start fail closed: (nil, err) with no stream.
-func TestFakeMCPSession_Error_StartErrYieldsNoStream(t *testing.T) {
-	startErr := errors.New("codex mcp-server: launch failed")
-	f := &fakeMCPSession{startErr: startErr}
+func TestFakeTurnSession_Error_StartErrYieldsNoStream(t *testing.T) {
+	startErr := errors.New("codex exec: launch failed")
+	f := &fakeTurnSession{startErr: startErr}
 
 	stream, err := f.Start(context.Background(), turnConfig{Prompt: "p", WorkDir: "/w"})
 	require.Error(t, err)
@@ -142,8 +142,8 @@ func TestFakeMCPSession_Error_StartErrYieldsNoStream(t *testing.T) {
 // EDGE — boundary conditions:
 //   - an empty script reports terminal completion immediately (no block);
 //   - blockOnCtx + a cancelled ctx makes Next return the context error.
-func TestFakeMCPSession_Edge_EmptyScriptTerminatesImmediately(t *testing.T) {
-	f := &fakeMCPSession{} // no events
+func TestFakeTurnSession_Edge_EmptyScriptTerminatesImmediately(t *testing.T) {
+	f := &fakeTurnSession{} // no events
 
 	stream, err := f.Start(context.Background(), turnConfig{Prompt: "p", WorkDir: "/w"})
 	require.NoError(t, err)
@@ -153,8 +153,8 @@ func TestFakeMCPSession_Edge_EmptyScriptTerminatesImmediately(t *testing.T) {
 	assert.Equal(t, turnEvent{}, ev)
 }
 
-func TestFakeMCPSession_Edge_BlockOnCtxReturnsContextError(t *testing.T) {
-	f := &fakeMCPSession{blockOnCtx: true, events: []turnEvent{{Kind: turnDone}}}
+func TestFakeTurnSession_Edge_BlockOnCtxReturnsContextError(t *testing.T) {
+	f := &fakeTurnSession{blockOnCtx: true, events: []turnEvent{{Kind: turnDone}}}
 
 	stream, err := f.Start(context.Background(), turnConfig{Prompt: "p", WorkDir: "/w"})
 	require.NoError(t, err)

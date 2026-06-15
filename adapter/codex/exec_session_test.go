@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 // The real exec session must satisfy the port — a rename of either side breaks
 // the build here.
-var _ mcpSession = (*execSession)(nil)
+var _ turnSession = (*execSession)(nil)
 
 // --- buildInteractiveExecArgs: fresh vs resume -----------------------------
 
@@ -171,27 +172,8 @@ func execLines(threadID, text string, in, out int) []string {
 		`{"type":"thread.started","thread_id":"` + threadID + `"}`,
 		`{"type":"turn.started"}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"` + text + `"}}`,
-		`{"type":"turn.completed","usage":{"input_tokens":` + itoa(in) + `,"output_tokens":` + itoa(out) + `}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":` + strconv.Itoa(in) + `,"output_tokens":` + strconv.Itoa(out) + `}}`,
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	if neg {
-		b = append([]byte{'-'}, b...)
-	}
-	return string(b)
 }
 
 // HAPPY — Start folds the exec stream into a turnText (the agent_message) then a
@@ -396,7 +378,7 @@ func TestEventStream_Happy_DrainsThenDone(t *testing.T) {
 	ch <- turnEvent{Kind: turnText, Text: "b"}
 	ch <- turnEvent{Kind: turnDone, SessionID: "c1"}
 	close(ch)
-	s := newEventStream(ch, &terminalError{})
+	s := newEventStream(ch)
 
 	ev, err := s.Next(context.Background())
 	require.NoError(t, err)
@@ -414,7 +396,7 @@ func TestEventStream_Happy_DrainsThenDone(t *testing.T) {
 
 func TestEventStream_Edge_ContextCancelled(t *testing.T) {
 	ch := make(chan turnEvent) // never fed
-	s := newEventStream(ch, &terminalError{})
+	s := newEventStream(ch)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -422,14 +404,14 @@ func TestEventStream_Edge_ContextCancelled(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-func TestEventStream_Error_CloseErrSurfaces(t *testing.T) {
-	transportErr := errors.New("codex exec: stdio closed")
+// EDGE — a closed (drained) channel reports the clean errStreamDone sentinel: the
+// exec transport surfaces faults in-band as turnFailed events, so a channel close
+// is always a clean done (there is no out-of-band transport error to record).
+func TestEventStream_Edge_CloseReportsStreamDone(t *testing.T) {
 	ch := make(chan turnEvent)
 	close(ch)
-	term := &terminalError{}
-	term.set(transportErr)
-	s := newEventStream(ch, term)
+	s := newEventStream(ch)
 
 	_, err := s.Next(context.Background())
-	assert.ErrorIs(t, err, transportErr)
+	assert.ErrorIs(t, err, errStreamDone)
 }

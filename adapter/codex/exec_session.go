@@ -41,19 +41,18 @@ const (
 	execNetworkOff = "sandbox_workspace_write.network_access=false"
 )
 
-// execSession is the production mcpSession for the codex INTERACTIVE path. Despite
-// the historical port name (mcpSession), it drives `codex exec --json` (a fresh
-// conversation) and `codex exec resume <id> --json` (a turn-by-turn resume), NOT
-// `codex mcp-server`.
+// execSession is the production turnSession for the codex INTERACTIVE path. It
+// drives `codex exec --json` (a fresh conversation) and `codex exec resume <id>
+// --json` (a turn-by-turn resume).
 //
 // exec is the correct transport now that the interactive posture is workspace-write
 // with no approval/elicitation loop: `codex exec resume` resumes a conversation
 // from its ON-DISK rollout, so the engine's spawn-per-turn model (a fresh process
 // per human turn, the conversation id round-tripped through the engine/DB) works
-// across server restarts and long WAITs — exactly like `claude --resume`. The
-// mcp-server `codex-reply` tool, by contrast, resumes only conversations live in
-// the SAME process ("Session not found for thread_id" cross-process), which
-// spawn-per-turn can never satisfy.
+// across server restarts and long WAITs — exactly like `claude --resume`. A live
+// in-process resume (codex's `codex-reply`), by contrast, can resume only
+// conversations live in the SAME process ("Session not found for thread_id"
+// cross-process), which spawn-per-turn can never satisfy.
 //
 // Spawn-per-turn: each Start launches a fresh `codex exec[ resume]` subprocess,
 // folds its JSONL event stream (parse.go's verified decodeLine + foldEvent) into
@@ -62,13 +61,14 @@ const (
 // SECURITY / fail-closed: it launches under codexEnv() (NO OPENAI_API_KEY,
 // HOME/CODEX_HOME preserved), gates on the shared memoized version probe before any
 // turn, delivers the prompt via STDIN (never argv), and confines writes to the
-// WorkDir worktree via -s workspace-write. An empty WorkDir or model fails closed
+// WorkDir worktree via -s workspace-write plus a pinned writable_roots / network-off
+// posture (see buildInteractiveExecArgs). An empty WorkDir or model fails closed
 // with zero events.
 type execSession struct {
 	core *core
 }
 
-var _ mcpSession = (*execSession)(nil)
+var _ turnSession = (*execSession)(nil)
 
 // newExecSession builds a session bound to the shared core (resolved binary,
 // memoized probe, timeout, response cap). It is the single construction seam for
@@ -117,7 +117,7 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 	// transcript content (it only gives up, with a slog.Warn, once ctx is done).
 	events := make(chan turnEvent, 64)
 	go foldExecStream(ctx, lines, wait, events, slog.Default())
-	return newEventStream(events, &terminalError{}), nil
+	return newEventStream(events), nil
 }
 
 // buildInteractiveExecArgs assembles the `codex exec[ resume]` argv for one
@@ -278,59 +278,41 @@ func sendTurnEvent(ctx context.Context, events chan<- turnEvent, ev turnEvent, l
 	}
 }
 
-// terminalError holds a turn's terminal transport error, written before the events
-// channel closes and read only after the close — so the channel close establishes
-// the happens-before edge and no mutex is needed. A nil value means the stream
-// drained to a clean errStreamDone (the exec path's turnFailed events carry turn
-// faults; term is reserved for an out-of-band transport break).
-type terminalError struct {
-	err error
-}
-
-func (t *terminalError) set(err error) { t.err = err }
-
-// get returns the recorded terminal error, or the clean errStreamDone sentinel.
-func (t *terminalError) get() error {
-	if t != nil && t.err != nil {
-		return t.err
-	}
-	return errStreamDone
-}
-
 // eventStream is the turnStream backing the real session: it drains the buffered
 // turnEvent channel the fold goroutine feeds, honours ctx cancellation, and reports
-// the terminal errStreamDone (or a recorded transport error) once the channel
-// closes. The thin subprocess glue (Start) wires this to the live run; the stream
-// itself is pure.
+// the terminal errStreamDone once the channel closes. The thin subprocess glue
+// (Start) wires this to the live run; the stream itself is pure.
+//
+// The exec transport surfaces every fault IN-BAND as a turnFailed event (see
+// foldExecStream); it has no out-of-band transport break to record, so the channel
+// close alone signals "done" and its happens-before edge needs no extra error field.
 type eventStream struct {
 	events <-chan turnEvent
-	term   *terminalError
-	// done caches the terminal error once the channel has drained, so repeated Next
-	// calls keep returning it rather than reading a closed channel as a zero event.
-	done error
+	// done latches errStreamDone once the channel has drained, so repeated Next calls
+	// keep returning it rather than reading a closed channel as a zero event.
+	done bool
 }
 
-// newEventStream builds a stream over the given event channel. term carries any
-// terminal transport error (set before the channel closes); a nil term, or a nil
-// recorded error, reports the clean errStreamDone sentinel at drain time.
-func newEventStream(events <-chan turnEvent, term *terminalError) *eventStream {
-	return &eventStream{events: events, term: term}
+// newEventStream builds a stream over the given event channel. Once the channel
+// closes, Next reports the clean errStreamDone sentinel.
+func newEventStream(events <-chan turnEvent) *eventStream {
+	return &eventStream{events: events}
 }
 
 // Next returns the next buffered event, the terminal errStreamDone once the channel
-// closes (or a recorded transport error), or the context error on
-// cancellation/timeout — never a silently dropped frame.
+// closes, or the context error on cancellation/timeout — never a silently dropped
+// frame.
 func (s *eventStream) Next(ctx context.Context) (turnEvent, error) {
-	if s.done != nil {
-		return turnEvent{}, s.done
+	if s.done {
+		return turnEvent{}, errStreamDone
 	}
 	select {
 	case <-ctx.Done():
 		return turnEvent{}, ctx.Err()
 	case ev, ok := <-s.events:
 		if !ok {
-			s.done = s.term.get()
-			return turnEvent{}, s.done
+			s.done = true
+			return turnEvent{}, errStreamDone
 		}
 		return ev, nil
 	}
