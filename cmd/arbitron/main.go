@@ -839,21 +839,22 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// unknown backends fail closed.
 	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
 	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{
-		// Codex (subscription-only `codex mcp-server`): binary auto-resolved from
+		// Codex (subscription-only): each interactive turn runs `codex exec --json`
+		// (fresh) / `codex exec resume --json` (resume); binary auto-resolved from
 		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
 		// wedged turn). The interactive posture is codex's own workspace-write sandbox
-		// — writes are confined to the turn's WorkDir worktree (see startToolRequest),
-		// so codex's sandbox is the containment, with no per-mutation approval loop.
-		// There is no MaxResponseBytes: the JSON-RPC event-frame transport has no raw
-		// stdout byte pipe to cap (the deadline is the bound that applies).
-		Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		// — writes are confined to the turn's WorkDir worktree (see
+		// buildInteractiveExecArgs), so codex's sandbox is the containment, with no
+		// per-mutation approval loop. MaxResponseBytes caps the exec stdout pipe.
+		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
 		// profile-editing Phase 3: the binding's resolved effort rides the protocol
 		// body via these rules on the interactive_agent streaming path too.
 		CapabilityRules: capabilityRules,
 	})
-	// The codex mcp-server protocol (tool names, arg keys, event vocabulary,
-	// workspace-write posture) is VERIFIED against codex-cli 0.139. The codex
-	// interactive arm stays behind an explicit operator opt-in
+	// The codex exec protocol (sandbox posture, event vocabulary, exec-resume) is
+	// VERIFIED against codex-cli 0.139. The codex interactive arm stays behind an
+	// explicit operator opt-in
 	// (ARBITRON_CODEX_INTERACTIVE_VERIFIED): default off → the codex backend is
 	// absent from the stream map and the selector fails closed
 	// (ErrUnsupportedAgentBackend), so a host without a compatible codex binary
@@ -864,7 +865,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
 		agentStreams[workflow.BackendCodex] = codexInteractive
 		logger.Warn("codex interactive provider ENABLED via " + codexInteractiveVerifiedEnv +
-			" — codex mcp-server protocol verified against codex-cli 0.139 (workspace-write sandbox)")
+			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox)")
 	} else {
 		logger.Info("codex interactive provider disabled; set " + codexInteractiveVerifiedEnv +
 			"=true to enable the codex interactive_agent backend")

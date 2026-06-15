@@ -13,17 +13,12 @@ import (
 )
 
 // InteractiveConfig configures an InteractiveProvider — the conversational codex
-// backend that runs over the mcpSession transport seam (not `codex exec`). It is
-// the interactive sibling of codex.Config: it shares the same construction
-// inputs (binding, binary, per-turn timeout, capability rules), and it owns NO
-// Runner (the mcpSession factory replaces the subprocess runner seam — real stdio
-// in prod, fake in tests).
-//
-// Unlike codex.Config there is deliberately NO MaxResponseBytes: the exec path
-// enforces a stdout byte cap on a raw pipe, but the interactive turn streams
-// discrete JSON-RPC event frames over the mcp-go transport (no raw byte pipe to
-// cap), so a byte counter here would be a knob nothing reads — a lying contract.
-// The per-turn deadline (Timeout) is the bound that matters on this path.
+// backend that runs each interactive turn over `codex exec --json` (fresh) /
+// `codex exec resume --json` (resume) via the mcpSession seam. It is the
+// interactive sibling of codex.Config: it shares the same construction inputs
+// (binding, binary, per-turn timeout, capability rules, response cap), and it owns
+// NO Runner (the mcpSession factory wraps the subprocess runner seam — real
+// codex exec in prod, a fake in tests).
 //
 // SECURITY: like the exec Config there is no per-provider credential — codex is
 // subscription-only (env.go), so Binding.RevealKey is never consulted and no API
@@ -44,6 +39,10 @@ type InteractiveConfig struct {
 	// exec path uses, so interactive and exec never disagree on the effective
 	// value. A zero-value (Empty) ruleset emits nothing.
 	CapabilityRules provider.CapabilityRules
+	// MaxResponseBytes caps per-turn `codex exec` stdout (0 means no cap; production
+	// wires cfg.LLM.MaxResponseBytes). The exec stream is a real stdout pipe, so
+	// this bounds a runaway turn alongside the per-turn deadline.
+	MaxResponseBytes int64
 }
 
 // InteractiveProvider implements engine.ChatProvider (Chat + StreamChat) by
@@ -57,16 +56,16 @@ type InteractiveConfig struct {
 //
 // SECURITY / fail-closed: it shares the exec adapters' core (binding, binary
 // resolution, memoized version probe), so a missing/incompatible binary or an
-// empty WorkDir fails closed with zero events; the prompt rides the protocol
-// body (never argv); and no OPENAI_API_KEY ever enters env/argv. The turn runs
-// under codex's workspace-write sandbox (confined to the WorkDir worktree — see
-// startToolRequest), so codex's own sandbox is the write containment; there is no
-// per-mutation approval loop. A failed turn or transport break yields a terminal
-// Error chunk and NEVER a clean Done.
+// empty WorkDir fails closed with zero events; the prompt rides stdin (never
+// argv); and no OPENAI_API_KEY ever enters env/argv. The turn runs under codex's
+// workspace-write sandbox (confined to the WorkDir worktree — see
+// buildInteractiveExecArgs), so codex's own sandbox is the write containment;
+// there is no per-mutation approval loop. A failed turn or transport break yields
+// a terminal Error chunk and NEVER a clean Done.
 type InteractiveProvider struct {
 	core
-	// newSession builds one mcpSession per turn (real mcpStdioSession in prod, a
-	// fake in tests). It mirrors codex.Config.Runner's subprocess injection seam.
+	// newSession builds one mcpSession per turn (real execSession in prod, a fake
+	// in tests). It mirrors codex.Config.Runner's subprocess injection seam.
 	newSession func() mcpSession
 }
 
@@ -75,8 +74,8 @@ var _ engine.ChatProvider = (*InteractiveProvider)(nil)
 // NewInteractiveProvider constructs an InteractiveProvider from cfg. It builds
 // the shared core via newCore exactly as the exec adapters do (binding/binary
 // resolution + the memoized version probe), so construction and compatibility
-// cannot drift. A nil session factory defaults to the real mcpStdioSession
-// (Task 1.2) built from the core — the composition root (Phase 3) calls this.
+// cannot drift. A nil session factory defaults to the real execSession built from
+// the core — the composition root (Phase 3) calls this.
 func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider {
 	// Build the provider with the shared core inlined into the literal (a move, not
 	// a copy of the lock-bearing core — see the exec adapters' &Provider{core:
@@ -85,7 +84,7 @@ func NewInteractiveProvider(cfg InteractiveConfig) *InteractiveProvider {
 	p := &InteractiveProvider{
 		core: newCore(interactiveCoreConfig(cfg)),
 	}
-	p.newSession = func() mcpSession { return newMCPStdioSession(&p.core) }
+	p.newSession = func() mcpSession { return newExecSession(&p.core) }
 	return p
 }
 
@@ -103,16 +102,16 @@ func newInteractiveProviderWithSession(cfg InteractiveConfig, newSession func() 
 // interactiveCoreConfig projects an InteractiveConfig onto the exec adapters'
 // Config so the shared core is built by the SAME newCore path — the interactive
 // provider owns no Runner (the mcpSession factory replaces that seam), so it is
-// left at its zero value (nil → the production os/exec runner, used only by the
-// version probe). MaxResponseBytes is deliberately left at its zero value: the
-// exec stdout byte cap has no meaning on the JSON-RPC event-frame transport, so
-// the interactive path never sets it (see InteractiveConfig).
+// left at its zero value (nil → the production os/exec runner, used by the version
+// probe AND the `codex exec` turns). MaxResponseBytes IS wired through (the exec
+// stream is a real stdout pipe that a runaway turn could flood).
 func interactiveCoreConfig(cfg InteractiveConfig) Config {
 	return Config{
-		Binding:         cfg.Binding,
-		BinaryPath:      cfg.BinaryPath,
-		Timeout:         cfg.Timeout,
-		CapabilityRules: cfg.CapabilityRules,
+		Binding:          cfg.Binding,
+		BinaryPath:       cfg.BinaryPath,
+		Timeout:          cfg.Timeout,
+		CapabilityRules:  cfg.CapabilityRules,
+		MaxResponseBytes: cfg.MaxResponseBytes,
 	}
 }
 
