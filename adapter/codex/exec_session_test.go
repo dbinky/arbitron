@@ -19,31 +19,75 @@ var _ mcpSession = (*execSession)(nil)
 // --- buildInteractiveExecArgs: fresh vs resume -----------------------------
 
 // HAPPY — a fresh turn builds `codex exec --json --skip-git-repo-check -s
-// workspace-write -m <model> --cd <wd>`; the prompt is NOT an arg (it rides stdin).
+// workspace-write -c sandbox_workspace_write.writable_roots=["<wd>"]
+// -c sandbox_workspace_write.network_access=false -m <model> --cd <wd>`; the
+// prompt is NOT an arg (it rides stdin).
+//
+// SECURITY (Must Fix #1): the two -c overrides are the SOLE containment now that
+// the approval subsystem is deleted. Bare `-s workspace-write` was VERIFIED against
+// codex-cli 0.139 to leave writes to the cwd PARENT chain and /tmp open and reads
+// fully unconfined; pinning writable_roots to ONLY the WorkDir closes the
+// cross-worktree write escape, and network_access=false pins egress off.
 func TestBuildInteractiveExecArgs_Happy_Fresh(t *testing.T) {
 	args, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "interview me", WorkDir: "/work"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"exec", "--json", "--skip-git-repo-check",
 		"-s", "workspace-write",
+		"-c", `sandbox_workspace_write.writable_roots=["/work"]`,
+		"-c", "sandbox_workspace_write.network_access=false",
 		"-m", "gpt-5", "--cd", "/work",
 	}, args)
 	assert.NotContains(t, args, "interview me", "the prompt must never reach argv — it rides stdin")
 }
 
 // SUCCESS — a resume turn targets `codex exec resume <id> --json
-// --skip-git-repo-check -`; the "-" makes codex read the prompt from stdin, and
-// NEITHER -s NOR -m is re-sent (they carry from the persisted session).
+// --skip-git-repo-check -c sandbox_workspace_write.writable_roots=["<wd>"]
+// -c sandbox_workspace_write.network_access=false -`; the "-" makes codex read the
+// prompt from stdin, and NEITHER -s NOR -m is re-sent (codex exec resume rejects
+// both — VERIFIED).
+//
+// SECURITY (Must Fix #1): resume re-asserts the SAME posture via -c (which resume
+// DOES accept, unlike -s). Resume confines writes against the PROCESS cwd
+// (RunSpec.Dir == WorkDir — resume rejects --cd too), so the resume-cwd invariant
+// is load-bearing for containment, not just rollout resolution.
 func TestBuildInteractiveExecArgs_Success_Resume(t *testing.T) {
 	args, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "continue", WorkDir: "/work", ResumeID: "conv-abc"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"exec", "resume", "conv-abc",
-		"--json", "--skip-git-repo-check", "-",
+		"--json", "--skip-git-repo-check",
+		"-c", `sandbox_workspace_write.writable_roots=["/work"]`,
+		"-c", "sandbox_workspace_write.network_access=false",
+		"-",
 	}, args)
 	assert.NotContains(t, args, "-s", "resume must NOT re-send the sandbox flag (codex exec resume rejects it)")
 	assert.NotContains(t, args, "-m", "resume must NOT re-send the model (it carries from the session)")
+	assert.NotContains(t, args, "--cd", "resume must NOT send --cd (codex exec resume rejects it); the process cwd is RunSpec.Dir")
 	assert.NotContains(t, args, "continue", "the prompt must never reach argv on resume either")
+}
+
+// SECURITY (Must Fix #1) — both fresh AND resume turns must carry the writable_roots
+// pin and the network-off override, because the sandbox is the SOLE containment
+// after the approval subsystem was deleted. A bare `-s workspace-write` was proven
+// (against codex-cli 0.139) NOT to confine writes to the worktree.
+func TestBuildInteractiveExecArgs_Security_PostureOnBothPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  turnConfig
+	}{
+		{"fresh", turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/sandbox/root"}},
+		{"resume", turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/sandbox/root", ResumeID: "conv-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args, err := buildInteractiveExecArgs(tc.cfg)
+			require.NoError(t, err)
+			assert.Contains(t, args, `sandbox_workspace_write.writable_roots=["/sandbox/root"]`,
+				"writable_roots must be pinned to ONLY the WorkDir on the %s path", tc.name)
+			assert.Contains(t, args, "sandbox_workspace_write.network_access=false",
+				"network egress must be pinned off on the %s path", tc.name)
+		})
+	}
 }
 
 // SUCCESS — a non-empty effort rides the fresh turn as `-c model_reasoning_effort=<v>`.
@@ -54,11 +98,15 @@ func TestBuildInteractiveExecArgs_Success_Effort(t *testing.T) {
 	assert.Contains(t, args, "model_reasoning_effort=high")
 }
 
-// EDGE — an empty effort emits no `-c` pair (default/empty effort passes nothing).
+// EDGE — an empty effort emits no model_reasoning_effort override (default/empty
+// effort passes nothing). The -c flag is still present for the security posture
+// overrides (writable_roots + network_access); only the effort key is absent.
 func TestBuildInteractiveExecArgs_Edge_NoEffort(t *testing.T) {
 	args, err := buildInteractiveExecArgs(turnConfig{Model: "gpt-5", Prompt: "p", WorkDir: "/w"})
 	require.NoError(t, err)
-	assert.NotContains(t, args, "-c")
+	for _, a := range args {
+		assert.NotContains(t, a, codexEffortConfigKey, "no effort must emit no model_reasoning_effort override")
+	}
 }
 
 // ERROR — a fresh turn with an empty model fails closed (never a default-model run).
@@ -74,6 +122,44 @@ func TestBuildInteractiveExecArgs_Edge_ResumeNeedsNoModel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "resume", args[1])
 	assert.Equal(t, "conv-1", args[2])
+}
+
+// CONTRACT (Should Fix #1) — Effort is IMMUTABLE across a conversation: a resume
+// turn that sets Effort silently drops it (codex carries the effort from the
+// persisted on-disk session). Asserting it here converts the unstated assumption
+// into a documented, tested contract.
+func TestBuildInteractiveExecArgs_Contract_ResumeDropsEffort(t *testing.T) {
+	args, err := buildInteractiveExecArgs(turnConfig{Prompt: "p", WorkDir: "/w", ResumeID: "conv-1", Effort: "high"})
+	require.NoError(t, err)
+	assert.NotContains(t, args, codexEffortConfigKey+"=high",
+		"resume must NOT emit effort — it is immutable across a conversation and carried by the persisted session")
+}
+
+// CONTRACT (Should Fix #1) — the resume-cwd invariant: Start MUST pass cfg.WorkDir
+// as the process cwd (RunSpec.Dir) on a resume turn, because `codex exec resume`
+// rejects --cd and resolves BOTH the on-disk rollout AND the workspace-write sandbox
+// against the process cwd. If the resume process cwd ever diverged from the
+// originating turn's WorkDir, codex would resolve the wrong tree (silent, confusing)
+// and the writable_roots pin would confine against the wrong root.
+func TestExecSession_Contract_ResumePassesWorkDirAsProcessCwd(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: execLines("conv-2", "ok", 1, 1)},
+	}}
+	c := newCore(Config{BinaryPath: "/x/codex", Runner: mr})
+	s := newExecSession(&c)
+
+	stream, err := s.Start(context.Background(), turnConfig{
+		Prompt: "more", WorkDir: "/work/instance-A", ResumeID: "conv-1",
+	})
+	require.NoError(t, err)
+	_, _ = drainStream(t, context.Background(), stream)
+
+	require.Len(t, mr.calls, 2)
+	assert.Equal(t, "/work/instance-A", mr.calls[1].Dir,
+		"resume's process cwd (RunSpec.Dir) MUST be the WorkDir — codex resume resolves the rollout + sandbox against it")
+	assert.NotContains(t, mr.calls[1].Args, "--cd",
+		"resume must not pass --cd (codex exec resume rejects it); the WorkDir rides RunSpec.Dir")
 }
 
 // --- execSession.Start: folds the exec JSONL stream into turnEvents ---------
@@ -136,7 +222,12 @@ func TestExecSession_Happy_FoldsStreamAndArgs(t *testing.T) {
 	// The exec invocation is the SECOND runner call (calls[0] is the version probe).
 	require.Len(t, mr.calls, 2)
 	exec := mr.calls[1]
-	assert.Equal(t, []string{"exec", "--json", "--skip-git-repo-check", "-s", "workspace-write", "-m", "gpt-5", "--cd", "/w"}, exec.Args)
+	assert.Equal(t, []string{
+		"exec", "--json", "--skip-git-repo-check", "-s", "workspace-write",
+		"-c", `sandbox_workspace_write.writable_roots=["/w"]`,
+		"-c", "sandbox_workspace_write.network_access=false",
+		"-m", "gpt-5", "--cd", "/w",
+	}, exec.Args)
 	assert.Equal(t, "hi", exec.Stdin, "the prompt must be delivered via stdin")
 }
 
@@ -159,7 +250,12 @@ func TestExecSession_Success_Resume(t *testing.T) {
 	assert.Equal(t, turnDone, events[1].Kind)
 
 	require.Len(t, mr.calls, 2)
-	assert.Equal(t, []string{"exec", "resume", "conv-1", "--json", "--skip-git-repo-check", "-"}, mr.calls[1].Args)
+	assert.Equal(t, []string{
+		"exec", "resume", "conv-1", "--json", "--skip-git-repo-check",
+		"-c", `sandbox_workspace_write.writable_roots=["/w"]`,
+		"-c", "sandbox_workspace_write.network_access=false",
+		"-",
+	}, mr.calls[1].Args)
 	assert.Equal(t, "more", mr.calls[1].Stdin)
 }
 

@@ -58,10 +58,11 @@ type InteractiveConfig struct {
 // resolution, memoized version probe), so a missing/incompatible binary or an
 // empty WorkDir fails closed with zero events; the prompt rides stdin (never
 // argv); and no OPENAI_API_KEY ever enters env/argv. The turn runs under codex's
-// workspace-write sandbox (confined to the WorkDir worktree — see
-// buildInteractiveExecArgs), so codex's own sandbox is the write containment;
-// there is no per-mutation approval loop. A failed turn or transport break yields
-// a terminal Error chunk and NEVER a clean Done.
+// workspace-write sandbox with writable_roots pinned to the WorkDir worktree and
+// network egress off (see buildInteractiveExecArgs), so codex's own sandbox is the
+// write/egress containment; there is no per-mutation approval loop. NOTE: the
+// sandbox does NOT confine READS — see docs/specs/codex-backend-spec.md. A failed
+// turn or transport break yields a terminal Error chunk and NEVER a clean Done.
 type InteractiveProvider struct {
 	core
 	// newSession builds one mcpSession per turn (real execSession in prod, a fake

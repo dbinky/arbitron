@@ -832,9 +832,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// sandbox POSTURE is backend-defined (each provider's own implementation
 	// detail), NOT uniformly tool-enabled: claude-code → the claude-cli stream
 	// adapter (tool-enabled / autonomous), codex → the codex INTERACTIVE provider
-	// (codex `mcp-server`, subscription-only): a workspace-write sandbox confined to
-	// the run's WorkDir worktree (NOT `codex exec`, which is the autonomous batch
-	// posture). An empty agent backend is floored to the SAME deployment default the
+	// (`codex exec` / `codex exec resume`, subscription-only): a workspace-write
+	// sandbox with writable_roots pinned to the run's WorkDir worktree and network
+	// egress off (the autonomous batch arm runs the SAME `codex exec` binary under
+	// the fully-open bypass posture). An empty agent backend is floored to the SAME deployment default the
 	// batch AgentCallExecutor uses (cfg.LLM.DefaultAgentBackend); opencode and
 	// unknown backends fail closed.
 	claudeStreamAgent := claudecli.NewStreamAgentAdapter(agentCfg)
@@ -842,10 +843,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// Codex (subscription-only): each interactive turn runs `codex exec --json`
 		// (fresh) / `codex exec resume --json` (resume); binary auto-resolved from
 		// PATH, the per-turn timeout reuses the shared LLM timeout floor (bounding a
-		// wedged turn). The interactive posture is codex's own workspace-write sandbox
-		// — writes are confined to the turn's WorkDir worktree (see
-		// buildInteractiveExecArgs), so codex's sandbox is the containment, with no
-		// per-mutation approval loop. MaxResponseBytes caps the exec stdout pipe.
+		// wedged turn). The interactive posture is codex's workspace-write sandbox with
+		// writable_roots pinned to the turn's WorkDir worktree and network egress off
+		// (see buildInteractiveExecArgs), so codex's sandbox is the write/egress
+		// containment, with no per-mutation approval loop (reads are NOT confined).
+		// MaxResponseBytes caps the exec stdout pipe.
 		Timeout:          time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		MaxResponseBytes: cfg.LLM.MaxResponseBytes,
 		// profile-editing Phase 3: the binding's resolved effort rides the protocol
@@ -865,7 +867,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if codexInteractiveVerified(os.Getenv(codexInteractiveVerifiedEnv)) {
 		agentStreams[workflow.BackendCodex] = codexInteractive
 		logger.Warn("codex interactive provider ENABLED via " + codexInteractiveVerifiedEnv +
-			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox)")
+			" — codex exec protocol verified against codex-cli 0.139 (workspace-write sandbox, writable_roots pinned to WorkDir, network egress off; reads NOT confined — transcripts may contain host secrets)")
 	} else {
 		logger.Info("codex interactive provider disabled; set " + codexInteractiveVerifiedEnv +
 			"=true to enable the codex interactive_agent backend")

@@ -23,6 +23,22 @@ const (
 	// execStdinPromptArg is the "-" placeholder that makes `codex exec resume` read
 	// the prompt from stdin (so a resume prompt stays off argv, like a fresh turn).
 	execStdinPromptArg = "-"
+	// execConfigFlag is codex's `-c key=value` config override. It is accepted by
+	// BOTH `codex exec` AND `codex exec resume` (unlike -s, which resume rejects),
+	// so it is the one mechanism that can re-assert the sandbox posture on resume.
+	execConfigFlag = "-c"
+	// execWritableRootsKeyPrefix pins codex's workspace-write writable roots to a
+	// single root (the WorkDir). SECURITY: a bare `-s workspace-write` was VERIFIED
+	// against codex-cli 0.139 to also permit writes to the cwd PARENT chain and
+	// /tmp; under the production layout (<base>/instances/<id>/) that lets one turn
+	// write into a SIBLING instance's workspace. Pinning writable_roots to ONLY the
+	// WorkDir closes that cross-worktree write escape. (Reads remain unconfined —
+	// see codex-backend-spec.md; the worktree must hold no secrets.)
+	execWritableRootsKeyPrefix = "sandbox_workspace_write.writable_roots="
+	// execNetworkOff pins workspace-write network egress off. SECURITY: without it,
+	// a prompt-injected interview turn could exfiltrate the worktree (or any
+	// readable host file) over the network; pinning it off removes that channel.
+	execNetworkOff = "sandbox_workspace_write.network_access=false"
 )
 
 // execSession is the production mcpSession for the codex INTERACTIVE path. Despite
@@ -110,18 +126,42 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 // reads stdin), and a resume turn supplies the "-" placeholder that makes codex read
 // the prompt from stdin.
 //
-//	fresh:  codex exec --json --skip-git-repo-check -s workspace-write -m <model> --cd <workdir> [-c model_reasoning_effort=<e>]
-//	resume: codex exec resume <id> --json --skip-git-repo-check -
+//	fresh:  codex exec --json --skip-git-repo-check -s workspace-write -c writable_roots=["<wd>"] -c network_access=false -m <model> --cd <workdir> [-c model_reasoning_effort=<e>]
+//	resume: codex exec resume <id> --json --skip-git-repo-check -c writable_roots=["<wd>"] -c network_access=false -
 //
-// Resume carries the model + sandbox from the persisted on-disk session, so it
-// re-sends neither (`codex exec resume` rejects -s and needs no -m). A fresh turn
-// with an empty model fails closed (ErrModelRequired) — never a default-model run.
+// SECURITY (Must Fix #1): the approval subsystem is deleted, so the sandbox is the
+// SOLE containment. A bare `-s workspace-write` was VERIFIED against codex-cli 0.139
+// NOT to confine writes to the worktree (writes to the cwd parent chain and /tmp
+// succeed; reads are fully unconfined). So BOTH paths pin writable_roots to ONLY the
+// WorkDir and pin network egress off, via -c overrides. Resume re-asserts the SAME
+// posture rather than trusting the persisted session to carry it: `codex exec resume`
+// rejects -s and --cd (VERIFIED) but ACCEPTS -c.
+//
+// RESUME-CWD INVARIANT (Should Fix #1): resume sends neither --cd (rejected) nor the
+// writable_roots-defining cwd as anything but the PROCESS cwd, so the resume process
+// cwd (RunSpec.Dir == cfg.WorkDir) MUST equal the originating turn's WorkDir — codex
+// resolves both the on-disk rollout AND the workspace-write sandbox against it. The
+// engine round-trips the same WorkDir per instance, so this holds; Start passes
+// cfg.WorkDir as RunSpec.Dir on every turn (tested), making the invariant explicit.
+//
+// Resume carries the model from the persisted on-disk session, so it re-sends none
+// (`codex exec resume` needs no -m). A fresh turn with an empty model fails closed
+// (ErrModelRequired) — never a default-model run. Effort is emitted only on the
+// FRESH path: it is immutable across a conversation (codex carries it from the
+// persisted session on resume), so a resume turn that sets Effort intentionally
+// drops it.
 func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
+	posture := []string{
+		execConfigFlag, execWritableRootsKeyPrefix + writableRootsValue(cfg.WorkDir),
+		execConfigFlag, execNetworkOff,
+	}
 	if cfg.ResumeID != "" {
-		return []string{
+		args := []string{
 			execSubcommand, execResumeSubcommand, cfg.ResumeID,
-			jsonFlag, execSkipGitRepoCheckFlag, execStdinPromptArg,
-		}, nil
+			jsonFlag, execSkipGitRepoCheckFlag,
+		}
+		args = append(args, posture...)
+		return append(args, execStdinPromptArg), nil
 	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
@@ -130,12 +170,24 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 	args := []string{
 		execSubcommand, jsonFlag, execSkipGitRepoCheckFlag,
 		execSandboxFlag, execSandboxWorkspaceWrite,
-		modelFlag, model, cdFlag, cfg.WorkDir,
 	}
+	args = append(args, posture...)
+	args = append(args, modelFlag, model, cdFlag, cfg.WorkDir)
 	if cfg.Effort != "" {
-		args = append(args, "-c", codexEffortConfigKey+"="+cfg.Effort)
+		args = append(args, execConfigFlag, codexEffortConfigKey+"="+cfg.Effort)
 	}
 	return args, nil
+}
+
+// writableRootsValue renders the codex `-c sandbox_workspace_write.writable_roots`
+// value: a TOML array with the single WorkDir root. codex parses the -c value as
+// TOML, so the root is a quoted TOML string. WorkDir is an arbitron-allocated
+// absolute path (no embedded quotes in practice); a defensive backslash-escape keeps
+// the TOML well-formed regardless.
+func writableRootsValue(workDir string) string {
+	escaped := strings.ReplaceAll(workDir, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `["` + escaped + `"]`
 }
 
 // foldExecStream folds the `codex exec --json` JSONL line stream into turnEvents on
