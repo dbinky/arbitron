@@ -125,6 +125,19 @@ func TestBuildInteractiveExecArgs_Edge_ResumeNeedsNoModel(t *testing.T) {
 	assert.Equal(t, "conv-1", args[2])
 }
 
+// HYGIENE (Consider #3) — a resume turn with a blank/whitespace ResumeID fails
+// closed before the malformed id reaches argv (a non-blank id passes verbatim).
+func TestBuildInteractiveExecArgs_Hygiene_BlankResumeIDFailsClosed(t *testing.T) {
+	for _, id := range []string{" ", "\t", "   \n"} {
+		_, err := buildInteractiveExecArgs(turnConfig{Prompt: "p", WorkDir: "/w", ResumeID: id})
+		assert.ErrorIs(t, err, ErrMalformedResumeID, "blank ResumeID %q must fail closed", id)
+	}
+	// A non-blank id is accepted and passed through verbatim.
+	args, err := buildInteractiveExecArgs(turnConfig{Prompt: "p", WorkDir: "/w", ResumeID: "conv-abc"})
+	require.NoError(t, err)
+	assert.Equal(t, "conv-abc", args[2])
+}
+
 // CONTRACT (Should Fix #1) — Effort is IMMUTABLE across a conversation: a resume
 // turn that sets Effort silently drops it (codex carries the effort from the
 // persisted on-disk session). Asserting it here converts the unstated assumption

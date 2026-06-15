@@ -2,12 +2,19 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
 	"github.com/arbitron/arbitron/adapter/claudecli"
 )
+
+// ErrMalformedResumeID is returned by buildInteractiveExecArgs when a resume turn
+// carries a blank/whitespace ResumeID — it fails closed before a malformed id can
+// reach `codex exec resume <id>` argv (hygiene, not an injection guard: there is no
+// shell, and ResumeID is a codex-issued id round-tripped through the engine/DB).
+var ErrMalformedResumeID = errors.New("codex: ResumeID is blank or malformed")
 
 // exec-subcommand vocabulary for the interactive path (VERIFIED against
 // codex-cli 0.139 by driving live `codex exec` / `codex exec resume` turns).
@@ -156,8 +163,17 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 		execConfigFlag, execNetworkOff,
 	}
 	if cfg.ResumeID != "" {
+		// Hygiene guard (Consider #3): ResumeID is a codex-issued conversation id
+		// round-tripped through the engine/DB (not user free-text) and there is no
+		// shell, so this is not an injection fix — it rejects a malformed (blank /
+		// whitespace) id BEFORE it reaches argv, where codex would otherwise error
+		// confusingly. A non-blank id passes through verbatim.
+		resumeID := strings.TrimSpace(cfg.ResumeID)
+		if resumeID == "" {
+			return nil, ErrMalformedResumeID
+		}
 		args := []string{
-			execSubcommand, execResumeSubcommand, cfg.ResumeID,
+			execSubcommand, execResumeSubcommand, resumeID,
 			jsonFlag, execSkipGitRepoCheckFlag,
 		}
 		args = append(args, posture...)
