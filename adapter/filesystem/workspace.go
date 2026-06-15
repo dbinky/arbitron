@@ -49,6 +49,13 @@ func (w *WorkspaceManagerAdapter) instanceDir(instanceID uuid.UUID) string {
 // EnsureInstanceDir creates the instance directory if needed and returns it.
 // Both the per-instance directory and the parent instances/ directory are
 // created (and chmodded) with mode 0o700.
+//
+// ISOLATION INVARIANT (PR #39 Should Fix #3): the returned path is always a fresh,
+// per-instance directory under basePath/instances/<UUID>/ — an arbitron-allocated
+// DISPOSABLE worktree, never a user checkout. The interactive codex turn runs with
+// --skip-git-repo-check inside this WorkDir and pins its workspace-write
+// writable_roots to it, so this layer (not a caller's "non-empty" check) is where
+// the worktree-isolation guarantee is established and asserted (see workspace_test.go).
 func (w *WorkspaceManagerAdapter) EnsureInstanceDir(instanceID uuid.UUID) (string, error) {
 	dir := w.instanceDir(instanceID)
 	if err := os.MkdirAll(dir, instanceDirMode); err != nil {

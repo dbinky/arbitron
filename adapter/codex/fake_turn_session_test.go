@@ -4,24 +4,19 @@ import (
 	"context"
 )
 
-// fakeMCPSession is a hand-driven mcpSession that replays a scripted sequence of
-// turnEvents and, at Start time, hands each scripted approvalRequest to the
-// caller's cfg.Approver (recording every returned approvalDecision). It mirrors
-// fake_runner_test.go's philosophy — no live codex, no subprocess, no network —
-// and is the substrate for every later interactive-provider test.
+// fakeTurnSession is a hand-driven turnSession that replays a scripted sequence of
+// turnEvents. It mirrors fake_runner_test.go's philosophy — no live codex, no
+// subprocess, no network — and is the substrate for every later
+// interactive-provider test.
 //
 // Like the runner fake it is fail-closed by construction: a startErr makes Start
 // return no stream, and an empty script makes Next report the terminal outcome
 // immediately rather than blocking.
-type fakeMCPSession struct {
+type fakeTurnSession struct {
 	// events is the scripted turnEvent sequence Next replays in order. When it is
 	// exhausted (or empty), Next reports terminal completion via io.EOF-style
 	// handling driven by the event kinds.
 	events []turnEvent
-	// approvals are the canned approvalRequests handed to cfg.Approver at Start
-	// time, in order, before any event is replayed (an approval can therefore
-	// arrive before the first token).
-	approvals []approvalRequest
 	// startErr, when set, makes Start fail closed: it returns (nil, startErr) and
 	// no stream is produced.
 	startErr error
@@ -34,28 +29,15 @@ type fakeMCPSession struct {
 	gotCfg turnConfig
 	// startCalled records whether Start was invoked.
 	startCalled bool
-	// decisions records, in order, each approvalDecision the Approver returned for
-	// the scripted approvals — so a later test can assert the policy's verdicts.
-	decisions []approvalDecision
 }
 
-// Start records cfg, fails closed on startErr, then surfaces every scripted
-// approvalRequest to cfg.Approver (recording each decision) before returning a
-// stream that replays the scripted events.
-func (f *fakeMCPSession) Start(ctx context.Context, cfg turnConfig) (turnStream, error) {
+// Start records cfg, fails closed on startErr, then returns a stream that replays
+// the scripted events.
+func (f *fakeTurnSession) Start(ctx context.Context, cfg turnConfig) (turnStream, error) {
 	f.startCalled = true
 	f.gotCfg = cfg
 	if f.startErr != nil {
 		return nil, f.startErr
-	}
-	// Surface every approval request to the provider's policy BEFORE any event,
-	// recording the decision — the transport never auto-allows internally.
-	for _, req := range f.approvals {
-		var dec approvalDecision
-		if cfg.Approver != nil {
-			dec = cfg.Approver(req)
-		}
-		f.decisions = append(f.decisions, dec)
 	}
 	return &fakeTurnStream{events: f.events, blockOnCtx: f.blockOnCtx}, nil
 }

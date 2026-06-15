@@ -124,4 +124,56 @@ func TestWorkspaceManager(t *testing.T) {
 		assert.Equal(t, int64(0), bytesTotal)
 		assert.Equal(t, 0, files)
 	})
+
+	// SECURITY (PR #39 Should Fix #3): the interactive codex turn runs codex with
+	// --skip-git-repo-check inside the allocated WorkDir, so the worktree-isolation
+	// guarantee — that WorkDir is an arbitron-allocated DISPOSABLE directory under
+	// the managed base, distinct from any user checkout — must hold at the
+	// ALLOCATION layer (a non-empty check is not an isolation check). These assert
+	// the structural invariants EnsureInstanceDir provides.
+	t.Run("allocated WorkDir is a fresh, empty, arbitron-owned per-instance dir", func(t *testing.T) {
+		base := t.TempDir()
+		wm, err := NewWorkspaceManager(base)
+		require.NoError(t, err)
+		id := uuid.New()
+
+		dir, err := wm.EnsureInstanceDir(id)
+		require.NoError(t, err)
+
+		// Isolation invariant 1: the WorkDir lives UNDER the managed base/instances/
+		// root — it is never an arbitrary path a caller could point at a user checkout.
+		instancesRoot := filepath.Join(base, "instances")
+		rel, relErr := filepath.Rel(instancesRoot, dir)
+		require.NoError(t, relErr)
+		assert.False(t, filepath.IsAbs(rel), "WorkDir must be under base/instances/")
+		assert.NotContains(t, rel, "..", "WorkDir must not escape the instances/ root")
+
+		// Isolation invariant 2: the leaf is the instance UUID — a disposable,
+		// per-instance name, not a shared or user-chosen directory.
+		assert.Equal(t, id.String(), filepath.Base(dir))
+
+		// Isolation invariant 3: a freshly allocated worktree is EMPTY — it carries
+		// no pre-existing user files or .git checkout the codex turn could mutate.
+		entries, readErr := os.ReadDir(dir)
+		require.NoError(t, readErr)
+		assert.Empty(t, entries, "a freshly allocated worktree must be empty (no user checkout)")
+	})
+
+	t.Run("distinct instances get distinct, non-overlapping worktrees", func(t *testing.T) {
+		base := t.TempDir()
+		wm, err := NewWorkspaceManager(base)
+		require.NoError(t, err)
+
+		a, err := wm.EnsureInstanceDir(uuid.New())
+		require.NoError(t, err)
+		b, err := wm.EnsureInstanceDir(uuid.New())
+		require.NoError(t, err)
+
+		// Two instances must NEVER share a worktree, and neither may be an ancestor
+		// of the other — so the codex writable_roots pin (one instance's WorkDir)
+		// cannot reach a sibling instance's tree.
+		assert.NotEqual(t, a, b)
+		assert.NotEqual(t, a, filepath.Dir(b), "one instance's worktree must not be the parent of another's")
+		assert.NotEqual(t, b, filepath.Dir(a), "one instance's worktree must not be the parent of another's")
+	})
 }

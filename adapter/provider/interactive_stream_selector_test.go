@@ -111,7 +111,7 @@ func TestInteractiveStreamSelector_AgentKind_Codex(t *testing.T) {
 
 // TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider verifies
 // that the REAL codex interactive provider — the exact *codex.InteractiveProvider
-// the composition root (main.go §12c) now wires as the codex agentStreams entry —
+// the composition root (main.go initDomain) now wires as the codex agentStreams entry —
 // satisfies engine.ChatProvider and routes through the selector on the codex
 // backend. The other routing tests use an identity sentinel, which proves the
 // dispatch logic but NOT that the wired type is a valid ChatProvider; this test
@@ -121,9 +121,9 @@ func TestInteractiveStreamSelector_AgentKind_Codex_RealInteractiveProvider(t *te
 	fakeSelector := &fakeChatProviderSelector{returns: &sentinelChatProvider{name: "chat"}}
 	claude, _, _ := streamsByBackend()
 
-	// Construct the real interactive provider exactly as main.go §12c does, and
+	// Construct the real interactive provider exactly as initDomain does, and
 	// route the codex backend to it (claude-code keeps its sentinel).
-	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
 	var _ engine.ChatProvider = codexInteractive // it is the wired ChatProvider
 	m := map[string]engine.ChatProvider{
 		workflow.BackendClaudeCode: claude,
@@ -277,10 +277,10 @@ func TestInteractiveStreamSelector_AgentKind_BackendAbsentFromMap(t *testing.T) 
 
 // PAIRED (FA#17) — dual-arm isolation: the SAME codex backend routes to two
 // DISTINCT, TYPE-INCOMPATIBLE implementations. The batch factory arm returns
-// *codex.Provider (agent_call, autonomous `codex exec`); the interactive stream
-// arm returns *codex.InteractiveProvider (interactive_agent, `codex mcp-server`
-// with approval policy). They must be different objects and different types —
-// no shared state, no accidental cross-routing.
+// *codex.Provider (agent_call, autonomous `codex exec` bypass posture); the
+// interactive stream arm returns *codex.InteractiveProvider (interactive_agent,
+// `codex exec[ resume]` under a pinned workspace-write sandbox). They must be
+// different objects and different types — no shared state, no accidental cross-routing.
 //
 // Using the REAL *codex.InteractiveProvider (not a sentinel) closes the gap that
 // all other vocabulary tests use a sentinel for the stream side: this test proves
@@ -289,7 +289,7 @@ func TestInteractiveStreamSelector_CodexDualArm_DistinctTypes(t *testing.T) {
 	f := newBackendFactory(t)
 
 	// Wire the real interactive provider exactly as the composition root does.
-	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{WritableRoot: "docs"})
+	codexInteractive := codex.NewInteractiveProvider(codex.InteractiveConfig{})
 	m := map[string]engine.ChatProvider{
 		workflow.BackendClaudeCode: &sentinelChatProvider{name: "claude-stream"},
 		workflow.BackendCodex:      codexInteractive,
