@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -46,6 +47,15 @@ type conversationHandler struct {
 	queueMgr      QueueManager
 	interventions instance.InterventionRepository // optional; nil-safe attribution
 	audit         AuditRecorder                   // optional; nil-safe domain audit event
+
+	// turnsInFlight serializes interactive turns per instance. A resumed turn
+	// drives a single stateful provider session (e.g. `claude --resume`), which
+	// claude-cli cannot run concurrently — a second overlapping send queues the
+	// prompt and no-ops the session, permanently wedging the node. The set holds
+	// instance IDs whose turn is currently executing; a concurrent send is
+	// rejected with ErrInteractiveTurnInProgress rather than starting a second
+	// concurrent resume. The zero value is ready to use.
+	turnsInFlight sync.Map // map[uuid.UUID]struct{}
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -133,6 +143,17 @@ func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context,
 // (sending only the new user message), streams the response, and detects
 // session completion via the result sentinel block.
 func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error {
+	// 0. Serialize turns per instance. A turn resumes a single stateful provider
+	// session (claude --resume); two overlapping sends would drive that session
+	// concurrently, which claude-cli mishandles (it queues the prompt and the
+	// session no-ops), permanently wedging the node. Reject the overlapping send
+	// instead of starting a second concurrent resume. The guard is released when
+	// this turn returns, so sequential turns are unaffected.
+	if _, inFlight := h.turnsInFlight.LoadOrStore(instanceID, struct{}{}); inFlight {
+		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	}
+	defer h.turnsInFlight.Delete(instanceID)
+
 	// 1. Load and validate instance state.
 	inst, nodeID, nodeConfig, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {

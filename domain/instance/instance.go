@@ -17,8 +17,14 @@ var (
 	ErrNotQueued          = errors.New("instance is not queued")
 	ErrNotWaiting         = errors.New("instance is not waiting")
 	ErrNotInteractiveWait = errors.New("instance is not in interactive wait state")
-	ErrCannotCancel       = errors.New("instance cannot be cancelled")
-	ErrCannotRerun        = errors.New("instance cannot be rerun")
+	// ErrInteractiveTurnInProgress is returned when a message is sent to an
+	// interactive session that already has a turn in flight. Interactive turns
+	// resume a single stateful provider session (e.g. `claude --resume`), which
+	// is not safe to drive concurrently; overlapping sends are rejected rather
+	// than corrupting the session.
+	ErrInteractiveTurnInProgress = errors.New("instance already has an interactive turn in progress")
+	ErrCannotCancel              = errors.New("instance cannot be cancelled")
+	ErrCannotRerun               = errors.New("instance cannot be rerun")
 )
 
 // State represents the lifecycle state of a workflow instance.
