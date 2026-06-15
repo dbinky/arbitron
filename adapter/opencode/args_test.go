@@ -25,6 +25,7 @@ func TestMapProviderID(t *testing.T) {
 		{"openai", "openai"},
 		{"openrouter", "openrouter"},
 		{"ollama", "ollama"},
+		{"ollama-cloud", "ollama"},
 		{"bedrock", "amazon-bedrock"},
 		{"amazon-bedrock", "amazon-bedrock"},
 		{"azure", "azure"},

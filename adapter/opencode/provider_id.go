@@ -25,6 +25,14 @@ var providerIDMap = map[string]string{
 	"litellm":                 "openai",
 	"openrouter":              "openrouter",
 	"ollama":                  "ollama",
+	// "ollama-cloud" is an accepted ollama-family alias that Canonicalize
+	// deliberately does NOT collapse to "ollama" (the domain keeps them distinct so
+	// cloud Ollama can never inherit local Ollama's loopback carve-out in
+	// url_policy). So, like the chat factory (adapter/provider) and probe factory
+	// (adapter/probe) which both list providerOllamaCloud explicitly, this map must
+	// carry the alias too — otherwise an opencode agent binding on a cloud-Ollama
+	// connection fails closed at launch ("no env mapping for provider").
+	"ollama-cloud": "ollama",
 	provider.CanonicalBedrock: "amazon-bedrock",
 	provider.CanonicalAzure:   "azure",
 }

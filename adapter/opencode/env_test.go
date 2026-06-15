@@ -204,6 +204,11 @@ func TestOpencodeEnv_AliasedProvidersResolveEnv(t *testing.T) {
 		{name: "azure-openai alias", provider: "azure-openai", keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
 		{name: "azure-foundry alias", provider: "azure-foundry", keyVar: "AZURE_OPENAI_API_KEY", baseURLVar: "AZURE_OPENAI_ENDPOINT"},
 		{name: "cased+spaced anthropic", provider: "  Anthropic-API ", keyVar: "ANTHROPIC_API_KEY", baseURLVar: "ANTHROPIC_BASE_URL"},
+		// ollama-cloud is an accepted ollama-family alias (the chat + probe
+		// factories list it explicitly); a CLOUD ollama connection carries a key,
+		// so it takes the single-key path → OLLAMA_API_KEY + OLLAMA_BASE_URL. It
+		// previously failed closed at launch because providerIDMap omitted the alias.
+		{name: "ollama-cloud alias", provider: "ollama-cloud", keyVar: "OLLAMA_API_KEY", baseURLVar: "OLLAMA_BASE_URL"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
