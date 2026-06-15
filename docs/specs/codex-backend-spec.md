@@ -129,3 +129,65 @@ install or log in to Codex.
 - **Output-format dependence.** Interactive streaming and structured-result
   extraction depend on Codex's machine-readable output; the design phase will
   pin the exact mechanism and a fallback for format drift.
+
+### 8.1 Interactive (`interactive_agent`) codex posture — PR #39
+
+The `interactive_agent` codex path does **not** use the autonomous `--yolo`
+(`--dangerously-bypass-approvals-and-sandbox`) posture above. It also no longer
+has a per-mutation approval gate: codex-cli 0.139 + mcp-go 0.53 cannot carry
+codex's non-standard elicitation approval payload, so the in-process approval
+subsystem was removed. The deliberate, documented posture is now
+**workspace-write with no per-mutation gate** — the SAME trust level as the
+autonomous batch path in "can run any command / edit any file it is allowed to
+touch," NOT the prior docs/-scoped interview posture.
+
+Each interactive turn runs (verified against codex-cli 0.139, macOS Seatbelt):
+
+```
+codex exec --json --skip-git-repo-check -s workspace-write \
+  -c sandbox_workspace_write.writable_roots=["<WorkDir>"] \
+  -c sandbox_workspace_write.network_access=false \
+  -m <model> --cd <WorkDir>
+# resume re-asserts the SAME -c overrides (resume accepts -c, rejects -s and --cd)
+```
+
+What `workspace-write` does and does NOT restrict on 0.139 (probed empirically):
+
+- **Writes** — confined to `cwd` plus `sandbox_workspace_write.writable_roots`.
+  A BARE `-s workspace-write` was probed to ALSO permit writes to the cwd PARENT
+  chain and `/tmp`; under the `<base>/instances/<id>/` layout that would let one
+  turn write into a SIBLING instance's worktree. The adapter therefore pins
+  `writable_roots` to ONLY the per-instance `WorkDir`, which closes the
+  cross-worktree write escape. `$HOME` writes are blocked by codex regardless.
+- **Network egress** — `workspace-write` permits egress by default; the adapter
+  pins `network_access=false`, so a prompt-injected turn cannot exfiltrate over
+  the network. Verified blocked.
+- **Command execution** — NOT restricted: codex auto-runs every model-decided
+  command (`approval-policy=never` on a non-interactive `exec`), bounded only by
+  the filesystem-write and network confinement above.
+- **Reads** — NOT confined. The turn can read any host-readable file, including
+  `$HOME` dotfiles and `~/.codex` (HOME/CODEX_HOME are preserved by `codexEnv()`
+  for subscription auth). **Consequence:** an `interactive_agent` transcript may
+  contain host secrets the model read and echoed, so transcripts must be
+  access-controlled, and the WorkDir worktree must not itself hold secrets.
+
+Resume confines against the resume process cwd (codex `exec resume` rejects
+`--cd`), so the resume process cwd MUST equal the originating turn's WorkDir; the
+engine round-trips the same per-instance WorkDir, and the adapter asserts it.
+
+**Per-turn response cap.** `MaxResponseBytes` (production: `cfg.LLM.MaxResponseBytes`,
+default 256 MiB) rides the exec stdout pipe on BOTH fresh and resume turns. It is a
+cumulative-stdout HARD cap: a turn whose stdout crosses it is killed and surfaced as
+a terminal turn failure (wrapping `...response exceeded MaxResponseBytes`, kept
+distinct and greppable from a model error). 256 MiB is generous for a normal
+spec-writing interview turn; it exists to bound a runaway flood, mirroring the batch
+agent path. Operators tuning the cap down for short chat replies should note that an
+interactive interview turn can legitimately be large.
+
+**No token streaming (known limitation).** codex `exec --json` 0.139 delivers each
+assistant reply as a whole `agent_message` item (`item.completed`), not incremental
+`*_delta` events, so an interactive codex turn arrives as ONE whole chunk after the
+turn completes — it is NOT token-streamed like the claude path. The user sees no
+output until the turn finishes (which can be minutes), so a long turn reads as a
+silent wait, not a hang. If a future codex emits an `agent_message_delta`, the fold
+in `foldExecStream`/`parse.go` can be extended to stream it.
