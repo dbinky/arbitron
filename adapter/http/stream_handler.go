@@ -14,6 +14,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 )
 
@@ -240,6 +241,16 @@ func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *webs
 			clientMsg = "Session not found"
 		case errors.Is(handlerErr, instance.ErrNotInteractiveWait):
 			clientMsg = "No active interactive session"
+		case errors.Is(handlerErr, instance.ErrInteractiveTurnInProgress):
+			clientMsg = "A turn is already in progress; wait for the current response before sending again."
+			// Not a server fault — a benign double-send/retry. Log at Warn (never
+			// slog.Error, so it doesn't page on-call) with instanceID + caller for
+			// abuse/retry-storm visibility.
+			caller := "unknown"
+			if id, ok := identity.FromContext(ctx); ok {
+				caller = id.UserID.String()
+			}
+			slog.Warn("interactive turn-in-progress rejected", "instanceID", instanceID, "type", msg.Type, "caller", caller)
 		default:
 			clientMsg = "An error occurred processing your request"
 			slog.Error("interactive handler error", "instanceID", instanceID, "type", msg.Type, "error", handlerErr)
@@ -319,4 +330,3 @@ func (h *StreamHandler) sendInteractiveHistory(ctx context.Context, conn *websoc
 		slog.Warn("stream: failed to send interactive.history", "instanceId", inst.ID, "error", err)
 	}
 }
-

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -46,6 +47,19 @@ type conversationHandler struct {
 	queueMgr      QueueManager
 	interventions instance.InterventionRepository // optional; nil-safe attribution
 	audit         AuditRecorder                   // optional; nil-safe domain audit event
+
+	// turnInProgress enforces at most one in-flight interactive operation per
+	// instance by mutual exclusion *with rejection* — overlapping calls are
+	// refused, not queued/serialized. A turn drives a single stateful provider
+	// session (e.g. `claude --resume`), which claude-cli cannot run concurrently:
+	// a second overlapping send queues the prompt and no-ops the session,
+	// permanently wedging the node. The set holds instance IDs with an operation
+	// currently executing; both HandleMessage and EndSession acquire it (after
+	// their auth/state gate) and a concurrent caller gets ErrInteractiveTurnInProgress
+	// rather than a second concurrent resume. Does NOT cover the wider
+	// EndSession/completeSession variable-rewrite race — see dbinky/arbitron#38.
+	// The zero value is ready to use.
+	turnInProgress sync.Map // map[uuid.UUID]struct{}
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -133,11 +147,26 @@ func (h *conversationHandler) recordInteractiveIntervention(ctx context.Context,
 // (sending only the new user message), streams the response, and detects
 // session completion via the result sentinel block.
 func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error {
-	// 1. Load and validate instance state.
+	// 1. Load and validate instance state. This auth/state gate runs FIRST so an
+	// unauthorized caller (or a send to a non-waiting instance) gets the same
+	// ErrNotFound/ErrForbidden/ErrNotInteractiveWait it always would — it must not
+	// learn whether a turn is in flight (the guard below would otherwise leak that).
 	inst, nodeID, nodeConfig, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
 		return err
 	}
+
+	// 1a. Reject an overlapping turn for this instance. A turn resumes a single
+	// stateful provider session (claude --resume); a second concurrent send would
+	// drive that session concurrently, which claude-cli mishandles (it queues the
+	// prompt and the session no-ops), permanently wedging the node. Acquired only
+	// after the auth/state gate above and released when this turn returns, so
+	// sequential turns are unaffected. NOTE: this covers HandleMessage only;
+	// EndSession acquires the same guard separately.
+	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
+		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	}
+	defer h.turnInProgress.Delete(instanceID)
 
 	// 2. Load node execution record.
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
@@ -245,11 +274,19 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 // The output is returned to the caller so it can be sent in the HTTP response
 // before any state transition that might cause a race with the queue manager.
 func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error) {
-	// 1. Load and validate instance state.
+	// 1. Load and validate instance state (auth/state gate first).
 	inst, nodeID, _, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
+
+	// 1a. Reject if a turn is in flight: ending mid-turn would race HandleMessage's
+	// pending state transition + persist (a double-completion). Acquire the same
+	// per-instance guard HandleMessage uses, released when EndSession returns.
+	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
+		return nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	}
+	defer h.turnInProgress.Delete(instanceID)
 
 	// 2. Load node execution record.
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
