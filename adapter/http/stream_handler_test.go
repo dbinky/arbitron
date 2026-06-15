@@ -29,9 +29,9 @@ import (
 
 // mockConversationHandler records calls to HandleMessage and EndSession.
 type mockConversationHandler struct {
-	mu             sync.Mutex
-	handleCalls    []handleMessageCall
-	endCalls       []uuid.UUID
+	mu              sync.Mutex
+	handleCalls     []handleMessageCall
+	endCalls        []uuid.UUID
 	handleMessageFn func(ctx context.Context, instanceID uuid.UUID, content string) error
 	endSessionFn    func(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
 }
@@ -1605,4 +1605,47 @@ func TestStreamHandler_HistoryHydration_NodeExecNotFound_SkipsHistory(t *testing
 	require.NoError(t, json.Unmarshal(msg, &evtReceived))
 	// First event must be node_started, not interactive.history.
 	assert.Equal(t, "node_started", evtReceived["type"])
+}
+
+// Tests: a turn-in-progress rejection maps to a specific, client-actionable
+// message (so the UI can tell the user to wait), not the generic fallback.
+func TestStreamHandler_InteractiveSend_TurnInProgressReturnsActionableError(t *testing.T) {
+	instRepo := newMockInstanceRepo()
+	bus := eventbus.New()
+	convo := &mockConversationHandler{
+		handleMessageFn: func(_ context.Context, _ uuid.UUID, _ string) error {
+			return fmt.Errorf("conversation: %w", instance.ErrInteractiveTurnInProgress)
+		},
+	}
+
+	inst := testInstance(instance.StateRunning)
+	instRepo.instances[inst.ID] = inst
+
+	srv := newStreamTestServerWithConvo(instRepo, bus, convo)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/instances/" + inst.ID.String() + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	time.Sleep(50 * time.Millisecond)
+
+	msg := `{"type":"interactive.send","content":"hello"}`
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(msg)))
+
+	_, rawMsg, err := conn.Read(ctx)
+	require.NoError(t, err)
+
+	var evt map[string]any
+	require.NoError(t, json.Unmarshal(rawMsg, &evt))
+	assert.Equal(t, "interactive.error", evt["type"])
+	data, ok := evt["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, data["message"], "turn is already in progress",
+		"turn-in-progress must produce a specific, actionable message")
+	assert.NotEqual(t, "An error occurred processing your request", data["message"])
 }

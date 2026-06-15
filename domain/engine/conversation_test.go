@@ -1028,3 +1028,156 @@ func TestConversationHandler_HandleMessage_SequentialTurnsAllowedAfterRelease(t 
 	require.NoError(t, err)
 	assert.NotErrorIs(t, err, instance.ErrInteractiveTurnInProgress)
 }
+
+// Security: the auth/state gate in loadAndValidate must run BEFORE the in-flight
+// guard. Otherwise a caller who cannot even view the instance, sending during an
+// in-flight turn, would receive ErrInteractiveTurnInProgress — leaking that a
+// turn is active (a cross-boundary existence/activity oracle) and letting an
+// unauthorized caller perturb the owner's guard. The unauthorized caller must
+// get ErrNotFound and learn nothing about the session's state.
+func TestConversationHandler_HandleMessage_AuthRunsBeforeInFlightGuard(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		entered <- struct{}{}
+		<-release
+		ch := make(chan engine.ChatChunk, 1)
+		ch <- engine.ChatChunk{Done: true}
+		close(ch)
+		return ch, nil
+	}
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	// Owner holds a turn in flight.
+	ownerErr := make(chan error, 1)
+	go func() { ownerErr <- handler.HandleMessage(convoCtx(), instanceID, "owner turn") }()
+	<-entered
+
+	// A caller who cannot view the instance sends concurrently.
+	intruderCtx := identity.WithIdentity(context.Background(),
+		identity.Identity{UserID: uuid.New(), Username: "intruder", Role: identity.RoleUser})
+	err := handler.HandleMessage(intruderCtx, instanceID, "intruder")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, instance.ErrNotFound, "auth must run before the in-flight guard")
+	assert.NotErrorIs(t, err, instance.ErrInteractiveTurnInProgress,
+		"must not leak in-flight turn state to an unauthorized caller")
+
+	close(release)
+	require.NoError(t, <-ownerErr)
+}
+
+// EndSession must not race a turn that is still in flight: ending mid-turn would
+// transition the instance to queued while HandleMessage is still streaming and
+// about to persist, a double-completion race. EndSession acquires the same
+// per-instance guard and is rejected while a turn is in progress.
+func TestConversationHandler_EndSession_RejectedDuringInFlightTurn(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		entered <- struct{}{}
+		<-release
+		ch := make(chan engine.ChatChunk, 1)
+		ch <- engine.ChatChunk{Done: true}
+		close(ch)
+		return ch, nil
+	}
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	turnErr := make(chan error, 1)
+	go func() { turnErr <- handler.HandleMessage(convoCtx(), instanceID, "turn") }()
+	<-entered
+
+	_, err := handler.EndSession(convoCtx(), instanceID)
+	require.Error(t, err, "EndSession must be rejected while a turn is in flight")
+	assert.ErrorIs(t, err, instance.ErrInteractiveTurnInProgress)
+
+	close(release)
+	require.NoError(t, <-turnErr)
+}
+
+// Regression guard: the in-flight guard keys on instanceID, NOT a global lock —
+// two DIFFERENT instances must run turns concurrently. A future switch to a
+// single shared mutex (or a wrong key) would serialize all interactive sessions
+// and this would deadlock the second turn.
+func TestConversationHandler_HandleMessage_DifferentInstancesRunConcurrently(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instA := conversationTestSetup(t)
+
+	// Add a second waiting interactive instance sharing the same repos + handler.
+	instB := uuid.New()
+	nodeID := "interact"
+	instRepo.mu.Lock()
+	snap := instRepo.instances[instA].WorkflowSnapshot
+	instRepo.instances[instB] = &instance.Instance{
+		ID: instB, OwnerID: convoTestOwner, State: instance.StateWaiting,
+		CurrentNodeID: &nodeID, WorkflowSnapshot: snap, Variables: map[string]any{},
+	}
+	instRepo.mu.Unlock()
+	require.NoError(t, nodeExecRepo.Create(context.Background(), &instance.NodeExecution{
+		ID: uuid.New(), InstanceID: instB, NodeID: nodeID, Attempt: 1,
+		Status: instance.NodeStatusSucceeded,
+		LLMConversation: map[string]any{"nonce": testNonce, "messages": []map[string]any{
+			{"role": "user", "content": "init"}, {"role": "assistant", "content": "hi"}}},
+	}))
+
+	entered := make(chan struct{}, 4)
+	release := make(chan struct{})
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		entered <- struct{}{}
+		<-release
+		ch := make(chan engine.ChatChunk, 1)
+		ch <- engine.ChatChunk{Done: true}
+		close(ch)
+		return ch, nil
+	}
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	errA := make(chan error, 1)
+	errB := make(chan error, 1)
+	go func() { errA <- handler.HandleMessage(convoCtx(), instA, "a") }()
+	go func() { errB <- handler.HandleMessage(convoCtx(), instB, "b") }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			close(release)
+			t.Fatal("both different instances must reach the provider concurrently (per-instance keying)")
+		}
+	}
+	close(release)
+	require.NoError(t, <-errA)
+	require.NoError(t, <-errB)
+}
+
+// Regression guard: the guard is released even when a turn ERRORS (the defer must
+// not drift onto the success path). A failed turn that left the guard held would
+// permanently reject all later sends — re-creating the original wedge.
+func TestConversationHandler_HandleMessage_GuardReleasedAfterError(t *testing.T) {
+	instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr, instanceID := conversationTestSetup(t)
+
+	var calls int
+	llmProvider.streamCallFn = func(_ context.Context, _ engine.ChatRequest) (<-chan engine.ChatChunk, error) {
+		calls++
+		if calls == 1 {
+			return nil, fmt.Errorf("provider boom") // first turn fails
+		}
+		ch := make(chan engine.ChatChunk, 1)
+		ch <- engine.ChatChunk{Done: true}
+		close(ch)
+		return ch, nil
+	}
+	handler := buildConversationHandler(instRepo, nodeExecRepo, llmProvider, eventBus, queueMgr)
+
+	err1 := handler.HandleMessage(convoCtx(), instanceID, "first")
+	require.Error(t, err1)
+	assert.NotErrorIs(t, err1, instance.ErrInteractiveTurnInProgress)
+
+	// The guard must have been released despite the error, so the next send runs.
+	err2 := handler.HandleMessage(convoCtx(), instanceID, "second")
+	require.NoError(t, err2)
+	assert.NotErrorIs(t, err2, instance.ErrInteractiveTurnInProgress)
+}

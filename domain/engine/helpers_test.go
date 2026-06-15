@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -57,6 +58,7 @@ func agentSelector(p engine.AgentProvider) engine.AgentProviderSelector {
 // bindings and agentProv for agent-kind bindings, mirroring the real
 // adapter/provider InteractiveStreamSelector routing. A non-nil err short-circuits.
 type fakeStreamSelector struct {
+	mu        sync.Mutex // guards gotKind/gotModel for concurrent-turn tests
 	chatProv  engine.ChatProvider
 	agentProv engine.ChatProvider
 	err       error
@@ -65,8 +67,10 @@ type fakeStreamSelector struct {
 }
 
 func (s *fakeStreamSelector) StreamProviderFor(b provider.ResolvedBinding) (engine.ChatProvider, error) {
+	s.mu.Lock()
 	s.gotKind = b.Kind
 	s.gotModel = b.Model
+	s.mu.Unlock()
 	if s.err != nil {
 		return nil, s.err
 	}
