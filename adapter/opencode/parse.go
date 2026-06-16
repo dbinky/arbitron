@@ -15,19 +15,25 @@ const maxErrorSummaryLen = 512
 // consume. Each line is {type, timestamp, sessionID, part{...}} except `error`
 // which carries a top-level `error` object.
 //
-// Token semantics (per the 1.17.x adapter design,
-// docs/superpowers/specs/2026-06-15-opencode-1.17-adapter-modernization-design.md):
-//   - `text` events are WHOLE-MESSAGE, not streaming token deltas ("Token-by-token
-//     streaming — still whole-message"), so each carries a complete assistant
-//     message and is appended as one summary line + one assistant step.
-//   - `step_finish` tokens are PER-STEP (input/output for that step), not a running
-//     cumulative total, so they are SUMMED across steps for the mission total.
+// Event/token semantics — VERIFIED against opencode 1.17.x: a live-captured
+// `error` event (its envelope matches the Error struct below) plus the documented
+// `--format json` contract (sst/opencode issue #26855, which shows the real
+// step_start/text/step-finish lines). The envelope uses an underscore top-level
+// type (step_start, step_finish) wrapping a hyphenated part.type (step-start,
+// step-finish):
+//   - `text` events are WHOLE-MESSAGE (one completed text part carrying part.text),
+//     not per-token deltas, so each is appended as one summary line + one assistant
+//     step. (opencode does not stream token deltas to the JSON output.)
+//   - `step_finish` tokens are PER-STEP (input/output for that step, under
+//     part.tokens), NOT a running cumulative total, so they are SUMMED across steps.
 //
-// NOTE: these semantics are taken from the design doc; the plan's Step-1 capture of
-// a real /tmp/oc-success.ndjson transcript was not folded back into the repo, so the
-// assumptions are encoded as tests (parse_test.go) rather than verified against a
-// captured run. If a future real transcript shows deltas/cumulative, coalesce text
-// on the step boundary and stop summing step_finish.
+// KNOWN UPSTREAM LIMITATION (issue #26855): the run loop can observe
+// session.status=idle and exit BEFORE draining the final step-finish event to
+// stdout. Those complete totals live only in opencode's SQLite session DB, never
+// reach our stdout stream, and cannot be recovered here. TokensIn/TokensOut are
+// therefore a FLOOR (the final step may be missing) — acceptable for the "coarse;
+// subprocess accounting" contract on AgentResult, but downstream cost reporting
+// must not treat them as exact.
 type ocEvent struct {
 	Type string `json:"type"`
 	Part struct {

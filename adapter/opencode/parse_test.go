@@ -43,6 +43,30 @@ func TestParseOutput_JSON_ErrorSurfaced(t *testing.T) {
 	assert.Equal(t, "error", steps[0].Kind)
 }
 
+// TestParseOutput_RealErrorEventSurfacesOnlyMessage uses a real opencode 1.17.7
+// `error` event captured live from `opencode run --format json` (a 401 from the
+// provider). Its error.data carries leaky siblings — responseHeaders (incl.
+// set-cookie), responseBody, metadata, statusCode — alongside message. The parser
+// must surface ONLY error.data.message and never fold those siblings into the
+// user-facing summary/trace. This both pins the verified error envelope to a real
+// sample and regression-guards the provider-info-leak finding.
+func TestParseOutput_RealErrorEventSurfacesOnlyMessage(t *testing.T) {
+	const realLine = `{"type":"error","timestamp":1781643916663,"sessionID":"ses_12dbf4f15ffepbd5zQMdDrIKi7","error":{"name":"APIError","data":{"message":"invalid x-api-key","statusCode":401,"isRetryable":false,"responseHeaders":{"set-cookie":"_cfuvid=SECRET-COOKIE-VALUE; path=/; HttpOnly","cf-ray":"a0ccc58f8f9ce64e-DEN","server":"cloudflare"},"responseBody":"{\"type\":\"error\"}","metadata":{"internalHost":"prod-anthropic-7"}}}}`
+	summary, steps, tokIn, tokOut := parseOutput([]string{realLine})
+
+	assert.Equal(t, "invalid x-api-key", summary, "only error.data.message is surfaced")
+	require.Len(t, steps, 1)
+	assert.Equal(t, "error", steps[0].Kind)
+	assert.Equal(t, "invalid x-api-key", steps[0].Summary)
+	// The leaky siblings must never reach the user-facing summary/trace.
+	for _, leak := range []string{"SECRET-COOKIE-VALUE", "set-cookie", "cf-ray", "responseBody", "internalHost", "prod-anthropic-7", "401"} {
+		assert.NotContains(t, summary, leak, "leaky field %q must not appear in summary", leak)
+		assert.NotContains(t, steps[0].Summary, leak, "leaky field %q must not appear in trace step", leak)
+	}
+	assert.Zero(t, tokIn)
+	assert.Zero(t, tokOut)
+}
+
 func TestParseOutput_SkipsNonJSONAndEmpty(t *testing.T) {
 	summary, steps, tokIn, tok := parseOutput([]string{"", "   ", "not json at all", "[log] line"})
 	assert.Empty(t, summary)
@@ -51,12 +75,11 @@ func TestParseOutput_SkipsNonJSONAndEmpty(t *testing.T) {
 	assert.Zero(t, tok)
 }
 
-// TestParseOutput_TextEventsAreWholeMessage documents the WHOLE-MESSAGE assumption
-// for `text` events (design doc: "Token-by-token streaming — still whole-message").
-// A multi-paragraph reply arriving as ONE text event must yield ONE assistant step
-// and ONE summary block — NOT N delta steps, and NOT self-concatenated. If a future
-// real transcript shows opencode emits per-token deltas, this test will still pass
-// for the whole-message case but the parser must then coalesce on the step boundary.
+// TestParseOutput_TextEventsAreWholeMessage pins the WHOLE-MESSAGE contract for
+// `text` events (VERIFIED against opencode 1.17.x: it emits completed text parts,
+// not per-token deltas, to the --format json stream). A multi-paragraph reply
+// arriving as ONE text event must yield ONE assistant step and ONE summary block —
+// NOT N delta steps, and NOT self-concatenated.
 func TestParseOutput_TextEventsAreWholeMessage(t *testing.T) {
 	const para = "First paragraph.\n\nSecond paragraph spanning\nmultiple lines.\n\nThird."
 	b, err := json.Marshal(map[string]any{
@@ -72,11 +95,11 @@ func TestParseOutput_TextEventsAreWholeMessage(t *testing.T) {
 	assert.Equal(t, para, summary, "summary is the whole message, not self-concatenated fragments")
 }
 
-// TestParseOutput_StepFinishTokensArePerStep documents the PER-STEP token assumption:
-// each step_finish reports the tokens for THAT step, so a 3-step mission's total is
-// the SUM (not the last cumulative value, and not an N-squared over-count). If a real
-// transcript ever shows cumulative totals, the parser must switch to taking the last
-// step_finish instead of summing.
+// TestParseOutput_StepFinishTokensArePerStep pins the PER-STEP token contract
+// (VERIFIED against opencode 1.17.x / issue #26855: each step_finish reports the
+// tokens for THAT step under part.tokens). A 3-step mission's total is the SUM (not
+// the last cumulative value, and not an N-squared over-count). Note: per #26855 the
+// FINAL step_finish may be dropped from stdout, so the real-run sum is a floor.
 func TestParseOutput_StepFinishTokensArePerStep(t *testing.T) {
 	lines := []string{
 		`{"type":"step_finish","part":{"type":"step-finish","tokens":{"input":100,"output":10}}}`,
