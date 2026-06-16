@@ -57,12 +57,12 @@ func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]strin
 		emptyKey = procenv.EmptyKeyAllowBaseURLOnly
 	}
 	return procenv.CredentialEnv(ctx, procenv.CredentialSpec{
-		Runner:   fmt.Sprintf("opencode: provider %q", binding.Provider),
-		KeyVar:   d.credEnvVar,
+		Runner:     fmt.Sprintf("opencode: provider %q", binding.Provider),
+		KeyVar:     d.credEnvVar,
 		BaseURLVar: "",
-		BaseURL:  "",
-		Reveal:   binding.RevealKey,
-		EmptyKey: emptyKey,
+		BaseURL:    "",
+		Reveal:     binding.RevealKey,
+		EmptyKey:   emptyKey,
 	})
 }
 
