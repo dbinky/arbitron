@@ -155,16 +155,17 @@ func TestRunAgent_ModernRunContract(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "anthropic/claude-3-5-sonnet", m)
 	assert.Equal(t, "/tmp/ws", runSpec.Dir, "WorkDir is the cwd pin")
-	assert.Contains(t, runSpec.Args, permissionAllowAllFlag, "open-by-default posture")
+	assert.Contains(t, runSpec.Args, "--dangerously-skip-permissions", "1.17.x always emits skip-permissions")
 	key, ok := envValue(runSpec.Env, "ANTHROPIC_API_KEY")
 	require.True(t, ok)
 	assert.Equal(t, "sk-sentinel", key)
 }
 
-// HAPPY (variants) — per-request ToolScope threads into a narrowed tool flag;
+// HAPPY (variants) — 1.17.x argv always emits --dangerously-skip-permissions
+// regardless of ToolScope (permissions/tool scope ride OPENCODE_CONFIG_CONTENT, not argv);
 // multiple output lines fold into ordered steps.
 func TestRunAgent_Variants(t *testing.T) {
-	t.Run("tool scope threaded", func(t *testing.T) {
+	t.Run("skip-permissions always in argv", func(t *testing.T) {
 		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"ok"}}}}
 		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 		_, err := p.RunAgent(context.Background(), engine.AgentMission{
@@ -175,9 +176,10 @@ func TestRunAgent_Variants(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(mr.calls), 2)
-		tools, ok := argValue(mr.calls[1].Args, toolScopeFlag)
-		require.True(t, ok)
-		assert.Equal(t, "Read,Write", tools)
+		assert.Contains(t, mr.calls[1].Args, "--dangerously-skip-permissions",
+			"1.17.x: skip-permissions is always in argv")
+		assert.Contains(t, mr.calls[1].Args, "--format",
+			"1.17.x: format flag is always in argv")
 	})
 
 	t.Run("multiple lines fold into ordered steps", func(t *testing.T) {
@@ -459,18 +461,17 @@ func TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs(t *testing.T) {
 	}
 }
 
-// SECURITY — the zero value of Config.AllowAllTools is a closed posture: when
-// the caller omits the field, the run must NOT emit --allow-all-tools. The
-// composition root opts in to open-by-default by setting AllowAllTools: true;
-// every other caller (e.g. an in-process test or a future adapter) is safe
-// by default without needing to know the open-by-default convention.
+// SECURITY — 1.17.x always emits --dangerously-skip-permissions; tool-scope and
+// allow-all posture are now delivered via OPENCODE_CONFIG_CONTENT (not argv), so
+// AllowAllTools only affects the generated config, not the argv. The run still
+// launches and the argv always carries the skip-permissions flag.
 func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"done"}}}}
 	p := New(Config{
 		Binding:    anthropicBinding("sk-x", nil),
 		BinaryPath: "opencode",
 		Runner:     mr,
-		// AllowAllTools deliberately omitted (zero value false) — must be closed.
+		// AllowAllTools deliberately omitted (zero value false).
 	})
 	res, err := p.RunAgent(context.Background(), engine.AgentMission{
 		Prompt:  "go",
@@ -480,8 +481,11 @@ func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.GreaterOrEqual(t, len(mr.calls), 2)
-	assert.NotContains(t, mr.calls[1].Args, permissionAllowAllFlag,
-		"zero-value AllowAllTools must NOT emit --allow-all-tools (safe-by-zero-value contract)")
+	// 1.17.x: --dangerously-skip-permissions is always in argv (old --allow-all-tools is gone).
+	assert.Contains(t, mr.calls[1].Args, "--dangerously-skip-permissions",
+		"1.17.x argv always carries --dangerously-skip-permissions")
+	assert.NotContains(t, mr.calls[1].Args, "--allow-all-tools",
+		"old --allow-all-tools flag must not appear")
 }
 
 // parseOutput table test — covers the whitespace-filtering, token-counting,

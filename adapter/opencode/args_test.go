@@ -1,7 +1,6 @@
 package opencode
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,49 +9,6 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
-
-// ---------------------------------------------------------------------------
-// provider_id.go — mapProviderID
-// ---------------------------------------------------------------------------
-
-func TestMapProviderID(t *testing.T) {
-	cases := []struct {
-		arbitron string
-		want     string
-	}{
-		{"anthropic", "anthropic"},
-		{"anthropic-api", "anthropic"},
-		{"openai", "openai"},
-		{"openrouter", "openrouter"},
-		{"ollama", "ollama"},
-		{"ollama-cloud", "ollama"},
-		{"bedrock", "amazon-bedrock"},
-		{"amazon-bedrock", "amazon-bedrock"},
-		{"azure", "azure"},
-		{"azure-openai", "azure"},
-		{"azure-foundry", "azure"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.arbitron, func(t *testing.T) {
-			got, ok := mapProviderID(tc.arbitron)
-			require.True(t, ok, "provider %q must map", tc.arbitron)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-func TestMapProviderID_CaseAndWhitespaceInsensitive(t *testing.T) {
-	got, ok := mapProviderID("  Anthropic-API ")
-	require.True(t, ok)
-	assert.Equal(t, "anthropic", got)
-}
-
-func TestMapProviderID_UnknownFailsClosed(t *testing.T) {
-	for _, p := range []string{"", "mystery", "claude-cli"} {
-		_, ok := mapProviderID(p)
-		assert.False(t, ok, "provider %q must NOT map (fail-closed)", p)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // posture.go — buildPosture / Posture
@@ -95,7 +51,7 @@ func TestBuildPosture_AllowlistWithConfigDisabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// args.go — buildArgs
+// args.go — buildArgs (1.17.x contract)
 // ---------------------------------------------------------------------------
 
 // argValue finds the value following the first occurrence of flag in args.
@@ -106,6 +62,21 @@ func argValue(args []string, flag string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// HAPPY PATH — 1.17.x full argv contract: run <prompt> -m <provider>/<model>
+// --dangerously-skip-permissions --format json. Posture flags no longer in argv.
+func TestBuildArgs_1_17_Contract(t *testing.T) {
+	b := provider.ResolvedBinding{Provider: "ollama-cloud", Model: "deepseek-v4-flash"}
+	mission := engine.AgentMission{Prompt: "do the thing"}
+	args, err := buildArgs(mission, b, Posture{AllowedTools: []string{"Read"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"run", "do the thing",
+		"-m", "ollama-cloud/deepseek-v4-flash",
+		"--dangerously-skip-permissions",
+		"--format", "json",
+	}, args)
 }
 
 // HAPPY PATH — correct `run -m <provider>/<model>` argv per provider.
@@ -120,6 +91,7 @@ func TestBuildArgs_RunContractPerProvider(t *testing.T) {
 		{"openai", "gpt-4o", "openai/gpt-4o"},
 		{"openrouter", "meta-llama/llama-3", "openrouter/meta-llama/llama-3"},
 		{"ollama", "llama3", "ollama/llama3"},
+		{"ollama-cloud", "llama3", "ollama-cloud/llama3"},
 		{"bedrock", "anthropic.claude-3", "amazon-bedrock/anthropic.claude-3"},
 		{"azure-openai", "gpt-4o", "azure/gpt-4o"},
 	}
@@ -138,10 +110,9 @@ func TestBuildArgs_RunContractPerProvider(t *testing.T) {
 			m, ok := argValue(args, "-m")
 			require.True(t, ok, "-m flag must be present")
 			assert.Equal(t, tc.wantM, m)
-			// Legacy flags are gone.
-			joined := strings.Join(args, " ")
-			assert.NotContains(t, joined, "-p ")
-			assert.NotContains(t, joined, "-c ")
+			// Permissions/base-url flags are NOT in argv (they ride OPENCODE_CONFIG_CONTENT).
+			assert.Contains(t, args, "--dangerously-skip-permissions")
+			assert.Contains(t, args, "--format")
 		})
 	}
 }
@@ -163,6 +134,12 @@ func TestBuildArgs_EmptyModelRejected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrModelRequired)
 }
 
+// INPUT-VALIDATION / FAIL-CLOSED — empty model via new 1.17.x test name.
+func TestBuildArgs_EmptyModelFailsClosed(t *testing.T) {
+	_, err := buildArgs(engine.AgentMission{Prompt: "x"}, provider.ResolvedBinding{Provider: "ollama-cloud"}, Posture{})
+	require.ErrorIs(t, err, ErrModelRequired)
+}
+
 // INPUT-VALIDATION / FAIL-CLOSED — unknown provider yields no argv (fail closed).
 func TestBuildArgs_UnknownProviderFailsClosed(t *testing.T) {
 	b := bindingForArgs("mystery", "m", nil)
@@ -172,88 +149,22 @@ func TestBuildArgs_UnknownProviderFailsClosed(t *testing.T) {
 	assert.Nil(t, args, "no argv on unknown provider")
 }
 
+// INPUT-VALIDATION / FAIL-CLOSED — unknown provider via new 1.17.x test name.
+func TestBuildArgs_UnknownProviderFailsClosed_1_17(t *testing.T) {
+	_, err := buildArgs(engine.AgentMission{Prompt: "x"}, provider.ResolvedBinding{Provider: "mystery", Model: "m"}, Posture{})
+	require.ErrorIs(t, err, ErrUnknownProvider)
+}
+
 // SECURITY — control chars in a provider string must be %q-escaped in the error
 // message so they never reach logs as raw bytes (same property as the factory).
 func TestBuildArgs_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
 	b := bindingForArgs("foo\nmalicious", "m", nil)
-	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{})
 	require.ErrorIs(t, err, ErrUnknownProvider)
 	assert.NotContains(t, err.Error(), "\n",
 		"raw newline must not appear in the error message")
 	assert.Contains(t, err.Error(), `\n`,
 		"escaped \\n should appear via %q-quoted provider string")
-}
-
-// SECURITY — default allow-all posture grants broad tools/permissions in the argv.
-func TestBuildArgs_AllowAllEmitsBroadPermissions(t *testing.T) {
-	b := bindingForArgs("anthropic", "anthropic/m", nil)
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
-	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.Contains(t, joined, permissionAllowAllFlag,
-		"allow-all posture must emit the broad-permission flag")
-}
-
-// SECURITY — a per-profile AllowedTools allowlist measurably narrows the emitted
-// tool scope: only the named tools appear, and the allow-all flag does not.
-func TestBuildArgs_AllowlistNarrowsToolScope(t *testing.T) {
-	b := bindingForArgs("anthropic", "anthropic/m", []string{"Read", "Write"})
-	posture := buildPosture(b, true) // config default allow-all, but profile narrows
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, posture)
-	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.NotContains(t, joined, permissionAllowAllFlag, "narrowed run must not be allow-all")
-	tools, ok := argValue(args, toolScopeFlag)
-	require.True(t, ok, "narrowed run must emit the tool-scope flag")
-	assert.Equal(t, "Read,Write", tools)
-}
-
-// SECURITY — mission.ToolScope (the per-request scope) narrows when set, even
-// without a per-profile allowlist; it takes precedence over the posture allowlist.
-func TestBuildArgs_MissionToolScopeNarrows(t *testing.T) {
-	b := bindingForArgs("anthropic", "anthropic/m", nil)
-	args, err := buildArgs(
-		engine.AgentMission{Prompt: "x", WorkDir: "/ws", ToolScope: []string{"Read"}},
-		b,
-		Posture{AllowAll: true},
-	)
-	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.NotContains(t, joined, permissionAllowAllFlag)
-	tools, ok := argValue(args, toolScopeFlag)
-	require.True(t, ok)
-	assert.Equal(t, "Read", tools)
-}
-
-// PRECEDENCE — mission.ToolScope wins over posture.AllowedTools when both are
-// set. The per-request scope (knob c) always overrides the per-profile restriction
-// (knob b), matching the claudecli ToolScope-over-global precedence.
-func TestBuildArgs_MissionToolScopeWinsOverProfileAllowlist(t *testing.T) {
-	b := bindingForArgs("anthropic", "anthropic/m", []string{"Read"}) // profile: only Read
-	posture := buildPosture(b, false)                                  // => AllowedTools=["Read"]
-	args, err := buildArgs(
-		engine.AgentMission{Prompt: "x", WorkDir: "/ws", ToolScope: []string{"Read", "Write", "BashTool"}},
-		b,
-		posture,
-	)
-	require.NoError(t, err)
-	tools, ok := argValue(args, toolScopeFlag)
-	require.True(t, ok, "tool-scope flag must be present when mission.ToolScope is set")
-	// Mission scope has 3 tools; if profile won we would see only "Read".
-	assert.Equal(t, "Read,Write,BashTool", tools,
-		"mission.ToolScope must win over posture.AllowedTools when both are non-empty")
-	assert.NotContains(t, strings.Join(args, " "), permissionAllowAllFlag)
-}
-
-// EDGE-CASE — config-disabled allow-all with no allowlist emits neither the
-// allow-all flag nor a tool-scope flag (opencode's own default permissioning applies).
-func TestBuildArgs_NoAllowAllNoAllowlist(t *testing.T) {
-	b := bindingForArgs("anthropic", "anthropic/m", nil)
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: false})
-	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.NotContains(t, joined, permissionAllowAllFlag)
-	assert.NotContains(t, joined, toolScopeFlag)
 }
 
 // SECURITY — no secret material is ever referenced by buildArgs; the argv is
@@ -263,7 +174,8 @@ func TestBuildArgs_NoSecretsInArgv(t *testing.T) {
 	b := bindingForArgs("anthropic", "anthropic/m", nil)
 	args, err := buildArgs(engine.AgentMission{Prompt: "do work", WorkDir: "/ws"}, b, Posture{AllowAll: true})
 	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.NotContains(t, joined, "ANTHROPIC_API_KEY")
-	assert.NotContains(t, joined, "AWS_SECRET_ACCESS_KEY")
+	for _, a := range args {
+		assert.NotContains(t, a, "ANTHROPIC_API_KEY")
+		assert.NotContains(t, a, "AWS_SECRET_ACCESS_KEY")
+	}
 }
