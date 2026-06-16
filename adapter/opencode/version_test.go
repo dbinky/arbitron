@@ -58,4 +58,34 @@ func TestProbeVersion_Newer(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// BOUNDARY — 0.4.45 is rejected: the 0.x line used a different CLI contract.
+func TestProbeVersion_0_4_45_Rejected(t *testing.T) {
+	fr := versionRunner("opencode 0.4.45", nil)
+	err := probeVersion(context.Background(), fr, "opencode")
+	require.Error(t, err, "0.4.45 (old contract) must be rejected")
+	assert.ErrorIs(t, err, ErrIncompatibleOpencode)
+}
+
+// BOUNDARY — 1.16.9 is rejected: below the 1.17.0 floor.
+func TestProbeVersion_1_16_9_Rejected(t *testing.T) {
+	fr := versionRunner("opencode 1.16.9", nil)
+	err := probeVersion(context.Background(), fr, "opencode")
+	require.Error(t, err, "1.16.9 (below floor) must be rejected")
+	assert.ErrorIs(t, err, ErrIncompatibleOpencode)
+}
+
+// BOUNDARY — 1.17.0 is the exact floor and must be accepted.
+func TestProbeVersion_1_17_0_Accepted(t *testing.T) {
+	fr := versionRunner("opencode 1.17.0", nil)
+	err := probeVersion(context.Background(), fr, "opencode")
+	require.NoError(t, err, "1.17.0 (floor) must be accepted")
+}
+
+// BOUNDARY — 1.17.7 is above the floor and must be accepted.
+func TestProbeVersion_1_17_7_Accepted(t *testing.T) {
+	fr := versionRunner("opencode 1.17.7", nil)
+	err := probeVersion(context.Background(), fr, "opencode")
+	require.NoError(t, err, "1.17.7 must be accepted")
+}
+
 var _ claudecli.CommandRunner = (*fakeRunner)(nil)
