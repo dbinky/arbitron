@@ -127,7 +127,11 @@ func TestProviderImplementsPort(t *testing.T) {
 func TestRunAgent_ModernRunContract(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{
 		compatibleProbe(),
-		{lines: []string{"Working.", "Edited hello.txt.", "Done: goodbye."}},
+		{lines: []string{
+			`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"Working."}}`,
+			`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"Edited hello.txt."}}`,
+			`{"type":"text","timestamp":3,"sessionID":"ses_x","part":{"type":"text","text":"Done: goodbye."}}`,
+		}},
 	}}
 	p := New(Config{
 		Binding:       anthropicBinding("sk-sentinel", nil),
@@ -183,7 +187,11 @@ func TestRunAgent_Variants(t *testing.T) {
 	})
 
 	t.Run("multiple lines fold into ordered steps", func(t *testing.T) {
-		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"line one", "line two", "line three"}}}}
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+			`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"line one"}}`,
+			`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"line two"}}`,
+			`{"type":"text","timestamp":3,"sessionID":"ses_x","part":{"type":"text","text":"line three"}}`,
+		}}}}
 		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 		res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 		require.NoError(t, err)
@@ -532,8 +540,8 @@ func TestRunAgent_InjectsConfigContentAndCred(t *testing.T) {
 	}
 }
 
-// parseOutput table test — covers the whitespace-filtering, token-counting,
-// and step-folding logic directly so the pure function's contract is auditable.
+// parseOutput table test — covers the JSON-event parsing logic directly so
+// the pure function's contract is auditable against the 1.17.x NDJSON schema.
 func TestParseOutput(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -550,32 +558,40 @@ func TestParseOutput(t *testing.T) {
 			wantTokensOut: 0,
 		},
 		{
-			name:          "whitespace-only lines are filtered, not folded into steps",
-			lines:         []string{"", "   ", "\t"},
+			name:          "non-JSON and whitespace-only lines are skipped",
+			lines:         []string{"", "   ", "\t", "[log] some line"},
 			wantSummary:   "",
 			wantStepCount: 0,
 			wantTokensOut: 0,
 		},
 		{
-			name:          "content lines produce one step per line",
-			lines:         []string{"line one", "line two"},
+			name: "two text events produce two assistant steps",
+			lines: []string{
+				`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"line one"}}`,
+				`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"line two"}}`,
+			},
 			wantSummary:   "line one\nline two",
 			wantStepCount: 2,
-			wantTokensOut: 4, // 2 words each
+			wantTokensOut: 0,
 		},
 		{
-			name:          "mixed blank and content lines: blanks dropped from steps",
-			lines:         []string{"first", "", "second", "   "},
-			wantSummary:   "first\nsecond",
-			wantStepCount: 2,
-			wantTokensOut: 2,
+			name: "step_finish tokens accumulate",
+			lines: []string{
+				`{"type":"step_finish","timestamp":1,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":10}}}`,
+				`{"type":"step_finish","timestamp":2,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":7}}}`,
+			},
+			wantSummary:   "",
+			wantStepCount: 0,
+			wantTokensOut: 17,
 		},
 		{
-			name:          "multi-word lines accumulate coarse token count",
-			lines:         []string{"one two three four five"},
-			wantSummary:   "one two three four five",
+			name: "tool_use events produce tool steps",
+			lines: []string{
+				`{"type":"tool_use","timestamp":1,"sessionID":"ses_x","part":{"type":"tool","tool":"bash"}}`,
+			},
+			wantSummary:   "",
 			wantStepCount: 1,
-			wantTokensOut: 5,
+			wantTokensOut: 0,
 		},
 	}
 
@@ -585,9 +601,6 @@ func TestParseOutput(t *testing.T) {
 			assert.Equal(t, tc.wantSummary, summary)
 			assert.Len(t, steps, tc.wantStepCount)
 			assert.Equal(t, tc.wantTokensOut, tokensOut)
-			for _, s := range steps {
-				assert.Equal(t, "assistant", s.Kind)
-			}
 		})
 	}
 }

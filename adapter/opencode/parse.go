@@ -1,33 +1,71 @@
 package opencode
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
-// parseOutput maps opencode's headless stdout lines into an AgentResult.
-//
-// The installed v0.0.55 binary's `-f text` mode emits the final assistant
-// message as plain text lines. We therefore:
-//   - fold each non-empty line into an AgentStep (Kind "assistant") for the
-//     trace, in order;
-//   - join the lines as the Summary (best-effort final text);
-//   - account tokens COARSELY (whitespace-word count of the output as TokensOut;
-//     TokensIn is left to the caller's prompt accounting / zero) since this
-//     build emits no structured usage in text mode.
-//
-// Parsing is tolerant: empty / whitespace-only output yields an empty Summary
-// and no Steps, never an error or panic. SessionID is always empty in the
-// single-shot contract.
+// ocEvent is the subset of opencode 1.17.x `--format json` NDJSON events we
+// consume. Each line is {type, timestamp, sessionID, part{...}} except `error`
+// which carries a top-level `error` object.
+type ocEvent struct {
+	Type string `json:"type"`
+	Part struct {
+		Type   string `json:"type"`
+		Text   string `json:"text"`
+		Tool   string `json:"tool"`
+		Tokens struct {
+			Output int `json:"output"`
+		} `json:"tokens"`
+	} `json:"part"`
+	Error *struct {
+		Name string `json:"name"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	} `json:"error"`
+}
+
+// parseOutput folds opencode's `--format json` NDJSON stream into an AgentResult.
+// Non-JSON lines (human log output) are skipped. `text` events accumulate into the
+// summary and an assistant step; `tool_use` events become tool steps; `step_finish`
+// token usage sums into tokensOut; an `error` event is surfaced into a step and,
+// when there is no assistant text, into the summary. Tolerant: junk/empty yields an
+// empty result, never a panic.
 func parseOutput(lines []string) (summary string, steps []agentStep, tokensOut int) {
-	kept := make([]string, 0, len(lines))
+	var texts []string
 	for _, l := range lines {
-		if strings.TrimSpace(l) == "" {
+		s := strings.TrimSpace(l)
+		if s == "" || s[0] != '{' {
 			continue
 		}
-		kept = append(kept, l)
-		steps = append(steps, agentStep{Kind: "assistant", Summary: l})
-		tokensOut += len(strings.Fields(l))
+		var ev ocEvent
+		if err := json.Unmarshal([]byte(s), &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "text":
+			if ev.Part.Text != "" {
+				texts = append(texts, ev.Part.Text)
+				steps = append(steps, agentStep{Kind: "assistant", Summary: ev.Part.Text})
+			}
+		case "tool_use":
+			if ev.Part.Tool != "" {
+				steps = append(steps, agentStep{Kind: "tool", Summary: ev.Part.Tool})
+			}
+		case "step_finish":
+			tokensOut += ev.Part.Tokens.Output
+		case "error":
+			if ev.Error != nil {
+				msg := ev.Error.Data.Message
+				steps = append(steps, agentStep{Kind: "error", Summary: msg})
+				if len(texts) == 0 && msg != "" {
+					texts = append(texts, msg)
+				}
+			}
+		}
 	}
-	summary = strings.Join(kept, "\n")
-	return summary, steps, tokensOut
+	return strings.Join(texts, "\n"), steps, tokensOut
 }
 
 // agentStep mirrors engine.AgentStep so parse.go stays independent of the
