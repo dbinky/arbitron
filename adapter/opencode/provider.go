@@ -115,6 +115,15 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, fmt.Errorf("opencode: build env: %w", err)
 	}
 
+	// Generate the per-run opencode config (permission + provider routing) and
+	// inject it inline via OPENCODE_CONFIG_CONTENT — no file written, no
+	// collision with a target repo's own opencode.json. Fail-closed before launch.
+	cfgJSON, err := buildConfig(p.binding, buildPosture(p.binding, p.allowAllTools))
+	if err != nil {
+		return nil, fmt.Errorf("opencode: build config: %w", err)
+	}
+	env = append(env, "OPENCODE_CONFIG_CONTENT="+cfgJSON)
+
 	// Version probe (memoized): an incompatible/missing binary fails closed here,
 	// before the run launches.
 	if err := p.ensureCompatible(ctx); err != nil {

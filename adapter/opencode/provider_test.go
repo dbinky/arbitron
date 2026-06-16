@@ -488,6 +488,50 @@ func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
 		"old --allow-all-tools flag must not appear")
 }
 
+// SECURITY — OPENCODE_CONFIG_CONTENT (permission + provider routing) is injected
+// into the run subprocess env; the API key travels only via the credential env var,
+// never in argv.
+func TestRunAgent_InjectsConfigContentAndCred(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: []string{"Done."}},
+	}}
+	p := New(Config{
+		Binding: provider.ResolvedBinding{
+			Provider:     "ollama-cloud",
+			Model:        "ollama-cloud/deepseek-v4-flash",
+			AllowedTools: []string{"Read", "Bash"},
+			RevealKey:    func(_ context.Context) (string, error) { return "sk-secret", nil },
+		},
+		BinaryPath: "opencode",
+		Runner:     mr,
+	})
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "hi",
+		WorkDir: t.TempDir(),
+		Model:   "ollama-cloud/deepseek-v4-flash",
+	})
+	require.NoError(t, err)
+
+	// calls[0] is the version probe; calls[1] is the run.
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	runEnv := mr.calls[1].Env
+
+	cfg, ok := envValue(runEnv, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, ok, "OPENCODE_CONFIG_CONTENT must be set in the run subprocess env")
+	assert.Contains(t, cfg, `"permission"`)
+	assert.Contains(t, cfg, `"read":"allow"`)
+
+	key, ok := envValue(runEnv, "OLLAMA_API_KEY")
+	require.True(t, ok, "OLLAMA_API_KEY must be set in the run subprocess env")
+	assert.Equal(t, "sk-secret", key)
+
+	// The secret must never appear in argv.
+	for _, a := range mr.calls[1].Args {
+		assert.NotContains(t, a, "sk-secret", "API key must never appear in argv")
+	}
+}
+
 // parseOutput table test — covers the whitespace-filtering, token-counting,
 // and step-folding logic directly so the pure function's contract is auditable.
 func TestParseOutput(t *testing.T) {
