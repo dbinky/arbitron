@@ -1,6 +1,15 @@
 package opencode
 
-import "github.com/arbitron/arbitron/domain/provider"
+import (
+	"errors"
+
+	"github.com/arbitron/arbitron/domain/provider"
+)
+
+// ErrUnknownProvider is returned when a ResolvedBinding names a provider that
+// has no entry in the descriptor table. Callers fail closed: no env, no args,
+// no subprocess launch.
+var ErrUnknownProvider = errors.New("opencode: no env mapping for provider")
 
 // providerDescriptor is the per-provider opencode 1.17.x contract: the `-m`
 // prefix, the credential env var carrying the secret (empty for keyless/aws),

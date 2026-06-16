@@ -27,7 +27,9 @@ func TestBuildArgs_LiteLLMRoutesViaOpenAI(t *testing.T) {
 	assert.Contains(t, strings.Join(args, " "), "-m openai/gpt-4o")
 }
 
-// happy — a litellm binding's env carries OPENAI_BASE_URL + OPENAI_API_KEY.
+// happy — a litellm binding's env carries OPENAI_API_KEY but NO base-URL var.
+// opencode 1.17.x ignores *_BASE_URL on its routing path; the base URL will
+// be delivered via a generated OPENCODE_CONFIG_CONTENT JSON.
 func TestOpencodeEnv_LiteLLMUsesOpenAIVars(t *testing.T) {
 	b := provider.ResolvedBinding{
 		Provider:  "litellm",
@@ -37,8 +39,8 @@ func TestOpencodeEnv_LiteLLMUsesOpenAIVars(t *testing.T) {
 	env, err := opencodeEnv(context.Background(), b)
 	require.NoError(t, err)
 	joined := strings.Join(env, "\n")
-	assert.Contains(t, joined, "OPENAI_BASE_URL=https://litellm:4000")
 	assert.Contains(t, joined, "OPENAI_API_KEY=sk")
+	assert.NotContains(t, joined, "OPENAI_BASE_URL=", "base URL must not be in env on 1.17.x")
 }
 
 // boundary — a litellm model already in openai/<model> form is not double-prefixed.

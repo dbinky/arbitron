@@ -2,7 +2,7 @@
 // `opencode run <prompt> -m <provider>/<model>` contract with per-provider auth
 // injected via the subprocess env (never argv/logs) and an open-by-default
 // permission posture. See args.go (run contract), posture.go (permissions),
-// env_providers.go (auth table), and version.go (binary version probe).
+// providers.go (descriptor table), and version.go (binary version probe).
 package opencode
 
 import (
@@ -20,65 +20,50 @@ import (
 // raised BEFORE any secret is revealed.
 var ErrBedrockConfig = errors.New("opencode: bedrock requires region and access-key-id in Extras")
 
-// keylessProviders may authenticate with no key (local self-hosted endpoints).
-// SECURITY: this allowlist restricts keyless launches so non-self-hosted
-// providers cannot run unauthenticated even if a binding omits its RevealKey.
-var keylessProviders = map[string]bool{"ollama": true}
-
-// opencodeEnv returns procenv.BaseEnv() with the provider-keyed credential
-// variables appended for the opencode subprocess. The secret is fetched from
+// opencodeEnv returns procenv.BaseEnv() with the provider credential variable
+// appended for the opencode subprocess. The secret is fetched from
 // binding.RevealKey(ctx) at call time and placed ONLY in the returned child env;
 // it is never logged or written to a file.
+//
+// opencode 1.17.x ignores *_BASE_URL env vars on its routing path — base URLs
+// are delivered via a generated OPENCODE_CONFIG_CONTENT JSON in a later task.
+// This function therefore sets ONLY the credential env var, never a base-URL var.
 //
 // On any error (unknown provider, missing bedrock config, RevealKey failure,
 // base-name collision) NO env is produced (nil is returned alongside the error)
 // so the caller cannot launch with a partial env.
 func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
-	// Route the env lookup through the SAME mapProviderID normalization that
-	// buildArgs uses for `-m <provider>/<model>`, so args and env share one
-	// vocabulary. The env table is keyed by opencode provider ids, so a raw
-	// alias (bedrock, anthropic-api, azure-openai/foundry) or a cased/spaced
-	// variant must be canonicalized first or it fails closed at launch.
-	opencodeID, ok := mapProviderID(binding.Provider)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
-	}
-	entry, ok := providerEnvEntryFor(opencodeID)
+	d, ok := descriptorFor(binding.Provider)
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
 	}
 
 	// AWS-quartet providers (bedrock) take a dedicated builder.
-	if entry.aws {
+	if d.aws {
 		return bedrockEnv(ctx, binding)
 	}
 
-	// Provider-specific policy: only the keyless allowlist (e.g. local Ollama)
-	// may launch without a key, and then only against an explicit BaseURL. Every
-	// other provider must present a non-empty key (fail closed). The shared
-	// fail-closed skeleton in procenv.CredentialEnv enforces the rest of the
-	// contract (base-name collision rejection, reveal-first, strip-then-append
-	// the base-url var, partial-env-NOT-emitted on reveal error) so opencode and
-	// claudecli cannot drift.
-	keyless := keylessProviders[opencodeID]
-	emptyKey := procenv.EmptyKeyReject
-	if keyless {
-		emptyKey = procenv.EmptyKeyAllowBaseURLOnly
+	// Keyless providers with no credential env var (local ollama) need only the
+	// base env — no key to inject, no base-URL var (that moves to config).
+	if d.credEnvVar == "" && d.keyless {
+		return procenv.BaseEnv(), nil
 	}
 
-	env, err := procenv.CredentialEnv(ctx, procenv.CredentialSpec{
-		Runner:                    fmt.Sprintf("opencode: provider %q", binding.Provider),
-		KeyVar:                    entry.keyVar,
-		BaseURLVar:                entry.baseURLVar,
-		BaseURL:                   binding.BaseURL,
-		Reveal:                    binding.RevealKey,
-		EmptyKey:                  emptyKey,
-		RequireBaseURLWhenKeyless: keyless,
-	})
-	if err != nil {
-		return nil, err
+	// All other providers: inject only the credential key var.
+	// BaseURLVar and BaseURL are intentionally empty — opencode 1.17.x does not
+	// honour *_BASE_URL on its routing path; the base URL will be in config.
+	emptyKey := procenv.EmptyKeyReject
+	if d.keyless {
+		emptyKey = procenv.EmptyKeyAllowBaseURLOnly
 	}
-	return env, nil
+	return procenv.CredentialEnv(ctx, procenv.CredentialSpec{
+		Runner:   fmt.Sprintf("opencode: provider %q", binding.Provider),
+		KeyVar:   d.credEnvVar,
+		BaseURLVar: "",
+		BaseURL:  "",
+		Reveal:   binding.RevealKey,
+		EmptyKey: emptyKey,
+	})
 }
 
 // bedrockEnv builds the AWS credential quartet for a bedrock binding. region and
