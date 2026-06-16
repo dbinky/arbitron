@@ -12,7 +12,9 @@ import "github.com/arbitron/arbitron/domain/provider"
 //     (per-profile narrowing, the operator's knob (b)).
 //   - AllowAll false, AllowedTools nil => allow-all disabled by config and no
 //     per-profile allowlist (the most restrictive posture the operator can
-//     reach without a profile change, knob (a)).
+//     reach without a profile change, knob (a)). buildPermissionBlock maps this
+//     to an explicit {"*":"deny"} so it stays closed under
+//     --dangerously-skip-permissions rather than falling open to opencode's default.
 type Posture struct {
 	// AllowAll grants every tool/permission for the run when true.
 	AllowAll bool

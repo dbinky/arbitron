@@ -2,7 +2,6 @@ package opencode
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -20,20 +19,17 @@ const (
 	formatJSON    = "json"
 )
 
-// buildArgs builds the 1.17.x `opencode run` argv. Permissions/base-url are NOT
-// here — they ride OPENCODE_CONFIG_CONTENT (config.go). Fail-closed: unknown
-// provider or empty model returns (nil, err) with NO launch.
+// buildArgs builds the 1.17.x `opencode run` argv from an already-resolved
+// descriptor (RunAgent resolves the provider once and threads it down).
+// Permissions/base-url are NOT here — they ride OPENCODE_CONFIG_CONTENT
+// (config.go). Fail-closed: an empty model returns (nil, err) with NO launch.
 //
 // The WorkDir is NOT an arg: it is the process cwd (RunSpec.Dir), the
 // {{workspace}} pin; the empty-WorkDir guard lives in provider.go.
 //
 // SECURITY: only model/provider/prompt strings reach argv here; secrets are
 // env-only (env.go), never argv or logs.
-func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding, _ Posture) ([]string, error) {
-	d, ok := descriptorFor(binding.Provider)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
-	}
+func buildArgs(mission engine.AgentMission, binding provider.ResolvedBinding, d providerDescriptor) ([]string, error) {
 	if strings.TrimSpace(binding.Model) == "" {
 		return nil, ErrModelRequired
 	}

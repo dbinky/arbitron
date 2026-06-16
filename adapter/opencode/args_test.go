@@ -69,7 +69,7 @@ func argValue(args []string, flag string) (string, bool) {
 func TestBuildArgs_1_17_Contract(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "ollama-cloud", Model: "deepseek-v4-flash"}
 	mission := engine.AgentMission{Prompt: "do the thing"}
-	args, err := buildArgs(mission, b, Posture{AllowedTools: []string{"Read"}})
+	args, err := buildArgs(mission, b, mustDesc(t, b.Provider))
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"run", "do the thing",
@@ -101,7 +101,7 @@ func TestBuildArgs_RunContractPerProvider(t *testing.T) {
 			args, err := buildArgs(
 				engine.AgentMission{Prompt: "do it", WorkDir: "/ws"},
 				b,
-				Posture{AllowAll: true},
+				mustDesc(t, b.Provider),
 			)
 			require.NoError(t, err)
 			require.GreaterOrEqual(t, len(args), 1)
@@ -120,7 +120,7 @@ func TestBuildArgs_RunContractPerProvider(t *testing.T) {
 // HAPPY PATH — a binding.Model already in provider/model form is not double-prefixed.
 func TestBuildArgs_ModelAlreadyPrefixed(t *testing.T) {
 	b := bindingForArgs("anthropic", "anthropic/claude-3-5-sonnet", nil)
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, mustDesc(t, b.Provider))
 	require.NoError(t, err)
 	m, _ := argValue(args, "-m")
 	assert.Equal(t, "anthropic/claude-3-5-sonnet", m, "must not become anthropic/anthropic/...")
@@ -129,50 +129,31 @@ func TestBuildArgs_ModelAlreadyPrefixed(t *testing.T) {
 // INPUT-VALIDATION — empty model is rejected.
 func TestBuildArgs_EmptyModelRejected(t *testing.T) {
 	b := bindingForArgs("anthropic", "", nil)
-	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, mustDesc(t, b.Provider))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrModelRequired)
 }
 
 // INPUT-VALIDATION / FAIL-CLOSED — empty model via new 1.17.x test name.
 func TestBuildArgs_EmptyModelFailsClosed(t *testing.T) {
-	_, err := buildArgs(engine.AgentMission{Prompt: "x"}, provider.ResolvedBinding{Provider: "ollama-cloud"}, Posture{})
+	b := provider.ResolvedBinding{Provider: "ollama-cloud"}
+	_, err := buildArgs(engine.AgentMission{Prompt: "x"}, b, mustDesc(t, b.Provider))
 	require.ErrorIs(t, err, ErrModelRequired)
 }
 
-// INPUT-VALIDATION / FAIL-CLOSED — unknown provider yields no argv (fail closed).
-func TestBuildArgs_UnknownProviderFailsClosed(t *testing.T) {
-	b := bindingForArgs("mystery", "m", nil)
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrUnknownProvider)
-	assert.Nil(t, args, "no argv on unknown provider")
-}
-
-// INPUT-VALIDATION / FAIL-CLOSED — unknown provider via new 1.17.x test name.
-func TestBuildArgs_UnknownProviderFailsClosed_1_17(t *testing.T) {
-	_, err := buildArgs(engine.AgentMission{Prompt: "x"}, provider.ResolvedBinding{Provider: "mystery", Model: "m"}, Posture{})
-	require.ErrorIs(t, err, ErrUnknownProvider)
-}
-
-// SECURITY — control chars in a provider string must be %q-escaped in the error
-// message so they never reach logs as raw bytes (same property as the factory).
-func TestBuildArgs_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
-	b := bindingForArgs("foo\nmalicious", "m", nil)
-	_, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{})
-	require.ErrorIs(t, err, ErrUnknownProvider)
-	assert.NotContains(t, err.Error(), "\n",
-		"raw newline must not appear in the error message")
-	assert.Contains(t, err.Error(), `\n`,
-		"escaped \\n should appear via %q-quoted provider string")
-}
+// NOTE: unknown-provider fail-closed for the run argv now lives at the RunAgent
+// level (provider.go resolves the descriptor ONCE and threads it down), so the
+// former TestBuildArgs_UnknownProvider* cases moved to provider_test.go
+// (TestRunAgent_UnknownProviderFailsClosed and
+// TestRunAgent_UnknownProviderControlCharsSafelyQuoted). buildArgs now takes an
+// already-resolved descriptor and cannot see an unknown provider.
 
 // SECURITY — no secret material is ever referenced by buildArgs; the argv is
 // model/provider/prompt only. A binding whose RevealKey would yield a secret
 // must not surface that secret in argv.
 func TestBuildArgs_NoSecretsInArgv(t *testing.T) {
 	b := bindingForArgs("anthropic", "anthropic/m", nil)
-	args, err := buildArgs(engine.AgentMission{Prompt: "do work", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	args, err := buildArgs(engine.AgentMission{Prompt: "do work", WorkDir: "/ws"}, b, mustDesc(t, b.Provider))
 	require.NoError(t, err)
 	for _, a := range args {
 		assert.NotContains(t, a, "ANTHROPIC_API_KEY")

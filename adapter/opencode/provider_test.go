@@ -293,6 +293,27 @@ func TestRunAgent_UnknownProviderFailsClosed(t *testing.T) {
 	assert.Empty(t, mr.calls, "fail-closed: never a silent tool-less run")
 }
 
+// SECURITY — control chars in a provider string must be %q-escaped in the
+// unknown-provider error so they never reach logs as raw bytes. RunAgent now owns
+// the single descriptor resolution, so this property is asserted here (relocated
+// from the per-builder args/env tests). No subprocess launches.
+func TestRunAgent_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
+	mr := &multiRunner{}
+	binding := provider.ResolvedBinding{
+		Provider:  "foo\nmalicious",
+		Model:     "m",
+		RevealKey: func(context.Context) (string, error) { return "k", nil },
+	}
+	p := New(Config{Binding: binding, BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "m"})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.ErrorIs(t, err, ErrUnknownProvider)
+	assert.NotContains(t, err.Error(), "\n", "raw newline must not appear in the error message")
+	assert.Contains(t, err.Error(), `\n`, "escaped \\n should appear via %q-quoted provider string")
+	assert.Empty(t, mr.calls, "fail-closed: never a launch on unknown provider")
+}
+
 // SECURITY — the version probe is memoized: a second mission does NOT re-probe.
 func TestRunAgent_ProbeMemoized(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{
@@ -548,6 +569,7 @@ func TestParseOutput(t *testing.T) {
 		lines         []string
 		wantSummary   string
 		wantStepCount int
+		wantTokensIn  int
 		wantTokensOut int
 	}{
 		{
@@ -555,6 +577,7 @@ func TestParseOutput(t *testing.T) {
 			lines:         nil,
 			wantSummary:   "",
 			wantStepCount: 0,
+			wantTokensIn:  0,
 			wantTokensOut: 0,
 		},
 		{
@@ -562,6 +585,7 @@ func TestParseOutput(t *testing.T) {
 			lines:         []string{"", "   ", "\t", "[log] some line"},
 			wantSummary:   "",
 			wantStepCount: 0,
+			wantTokensIn:  0,
 			wantTokensOut: 0,
 		},
 		{
@@ -572,16 +596,18 @@ func TestParseOutput(t *testing.T) {
 			},
 			wantSummary:   "line one\nline two",
 			wantStepCount: 2,
+			wantTokensIn:  0,
 			wantTokensOut: 0,
 		},
 		{
-			name: "step_finish tokens accumulate",
+			name: "step_finish per-step tokens accumulate (input and output)",
 			lines: []string{
-				`{"type":"step_finish","timestamp":1,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":10}}}`,
-				`{"type":"step_finish","timestamp":2,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":7}}}`,
+				`{"type":"step_finish","timestamp":1,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"input":40,"output":10}}}`,
+				`{"type":"step_finish","timestamp":2,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"input":25,"output":7}}}`,
 			},
 			wantSummary:   "",
 			wantStepCount: 0,
+			wantTokensIn:  65,
 			wantTokensOut: 17,
 		},
 		{
@@ -591,15 +617,17 @@ func TestParseOutput(t *testing.T) {
 			},
 			wantSummary:   "",
 			wantStepCount: 1,
+			wantTokensIn:  0,
 			wantTokensOut: 0,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			summary, steps, tokensOut := parseOutput(tc.lines)
+			summary, steps, tokensIn, tokensOut := parseOutput(tc.lines)
 			assert.Equal(t, tc.wantSummary, summary)
 			assert.Len(t, steps, tc.wantStepCount)
+			assert.Equal(t, tc.wantTokensIn, tokensIn)
 			assert.Equal(t, tc.wantTokensOut, tokensOut)
 		})
 	}
