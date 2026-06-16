@@ -89,14 +89,20 @@ func TestAcceptance_03_BothAgentBackends(t *testing.T) {
 			"the open-weight model is routed to the opencode provider id")
 		assert.NotEmpty(t, opencodeSpec.Dir, "opencode runs in cmd.Dir = the instance {{workspace}}")
 
-		// ENV-INJECTION: the connection key + base-url reach the opencode
-		// subprocess as provider-keyed env vars (delivery half of #7).
+		// ENV-INJECTION: the connection key reaches the opencode subprocess as a
+		// provider-keyed env var (delivery half of #7). In opencode 1.17.x the
+		// base-URL is NOT a standalone env var — it rides OPENCODE_CONFIG_CONTENT
+		// as a provider block so opencode can route the call correctly.
 		key, ok := envValue(opencodeSpec.Env, "OPENROUTER_API_KEY")
 		require.True(t, ok, "the opencode env carries the provider-keyed API key")
 		assert.Equal(t, opencodeKey, key, "the env-injected key is the connection's sealed key")
-		baseURL, ok := envValue(opencodeSpec.Env, "OPENROUTER_BASE_URL")
-		require.True(t, ok, "the opencode env carries the provider base-url")
-		assert.Equal(t, "https://openweight.example/v1", baseURL)
+		_, hasBaseURLEnv := envValue(opencodeSpec.Env, "OPENROUTER_BASE_URL")
+		assert.False(t, hasBaseURLEnv,
+			"opencode 1.17.x must NOT set OPENROUTER_BASE_URL in env (base URL rides OPENCODE_CONFIG_CONTENT)")
+		cfg, hasCfg := envValue(opencodeSpec.Env, "OPENCODE_CONFIG_CONTENT")
+		require.True(t, hasCfg, "the opencode env carries the provider base-url via OPENCODE_CONFIG_CONTENT")
+		assert.Contains(t, cfg, "https://openweight.example/v1",
+			"OPENCODE_CONFIG_CONTENT must embed the connection base URL")
 		// The base allowlist is preserved.
 		_, hasPath := envValue(opencodeSpec.Env, "PATH")
 		assert.True(t, hasPath, "base allowlist PATH preserved in the injected env")
