@@ -45,7 +45,7 @@ func (r *opencodeCaptureRunner) Run(_ context.Context, spec claudecli.RunSpec) (
 	r.calls++
 	ch := make(chan string, 2)
 	if r.calls == 1 {
-		ch <- "opencode 0.4.0" // compatible version line for the probe
+		ch <- "opencode 1.17.7" // compatible version line for the probe (1.17.x contract)
 	} else {
 		r.spec = spec
 		ch <- "Done." // canned run output
@@ -329,12 +329,14 @@ func TestBackendSlice_RevealKeyFailure_ExecuteErrors(t *testing.T) {
 		"no subprocess must be launched after a RevealKey failure (no partial-env launch)")
 }
 
-// TestBackendSlice_OpencodeWithLiteLLM_UsesOpenAIVars asserts that the opencode
-// path with a LiteLLM connection carries OPENAI_BASE_URL + OPENAI_API_KEY in
-// the subprocess env — NOT ANTHROPIC_*. This is the end-to-end verification of
-// opencode's provider-ID mapping (litellm → openai) reaching the real adapter
-// through the full executor + factory chain.
-func TestBackendSlice_OpencodeWithLiteLLM_UsesOpenAIVars(t *testing.T) {
+// TestBackendSlice_OpencodeWithLiteLLM_RoutesViaConfig asserts that the
+// opencode path with a LiteLLM connection carries OPENAI_API_KEY in the
+// subprocess env (credential only), and the base URL is delivered via
+// OPENCODE_CONFIG_CONTENT (not a *_BASE_URL env var). This is the end-to-end
+// verification of opencode 1.17.x: provider-ID mapping (litellm → OPENAI_API_KEY
+// credential) + config-content routing (baseURL in provider block) reaching the
+// real adapter through the full executor + factory chain.
+func TestBackendSlice_OpencodeWithLiteLLM_RoutesViaConfig(t *testing.T) {
 	profile, store := litellmProfile("agent-opencode-litellm", "opencode")
 	resolver := newSliceResolver(t, []provider.Profile{profile}, store)
 
@@ -348,12 +350,20 @@ func TestBackendSlice_OpencodeWithLiteLLM_UsesOpenAIVars(t *testing.T) {
 	require.GreaterOrEqual(t, opencodeR.calls, 2,
 		"opencode runner must be called twice: version probe + run")
 	joined := strings.Join(opencodeR.spec.Env, "\n")
-	assert.Contains(t, joined, "OPENAI_BASE_URL=https://litellm.internal:4000",
-		"litellm binding must map to OPENAI_BASE_URL in the opencode subprocess env")
+	// 1.17.x: OPENAI_API_KEY is the credential env var for litellm (not ANTHROPIC_*)
 	assert.Contains(t, joined, "OPENAI_API_KEY=sk-litellm-key",
 		"litellm key must appear as OPENAI_API_KEY (not ANTHROPIC_API_KEY) in opencode env")
 	assert.NotContains(t, joined, "ANTHROPIC_API_KEY",
 		"ANTHROPIC_API_KEY must not appear in the opencode subprocess env for a litellm binding")
+	// 1.17.x: base URL is NOT in a *_BASE_URL env var; it rides OPENCODE_CONFIG_CONTENT
+	assert.NotContains(t, joined, "OPENAI_BASE_URL=",
+		"base URL must not be a standalone env var on 1.17.x (rides OPENCODE_CONFIG_CONTENT)")
+	// OPENCODE_CONFIG_CONTENT must carry the litellm provider block with the base URL
+	cfg, hasCfg := envValue(opencodeR.spec.Env, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, hasCfg, "OPENCODE_CONFIG_CONTENT must be set for litellm routing")
+	assert.Contains(t, cfg, "litellm", "OPENCODE_CONFIG_CONTENT must name the litellm provider")
+	assert.Contains(t, cfg, "https://litellm.internal:4000",
+		"OPENCODE_CONFIG_CONTENT must embed the litellm base URL")
 }
 
 // TestBackendSlice_BackendOrthogonal_AnthropicAPI_RoutesViaClaudeCLI asserts
@@ -391,4 +401,17 @@ func TestBackendSlice_BackendOrthogonal_AnthropicAPI_RoutesViaClaudeCLI(t *testi
 	joined := strings.Join(claudeR.spec.Env, "\n")
 	assert.Contains(t, joined, "ANTHROPIC_BASE_URL=https://api.anthropic.com",
 		"anthropic-api base URL must be injected via the per-binding claude-cli env")
+}
+
+// --- test helpers ------------------------------------------------------------
+
+// envValue returns the value of name=... in env, and whether it was present.
+func envValue(env []string, name string) (string, bool) {
+	prefix := name + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return strings.TrimPrefix(e, prefix), true
+		}
+	}
+	return "", false
 }

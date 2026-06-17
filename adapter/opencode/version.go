@@ -11,11 +11,14 @@ import (
 	"github.com/arbitron/arbitron/adapter/claudecli"
 )
 
-// minOpencodeVersion is the minimum modern (SST) opencode release with a stable
-// `run -m provider/model` contract and config-driven permissions. Earlier builds
-// (e.g. the legacy v0.0.55 Go variant) lack `run`/`-m` and are rejected.
-// Package: npm install -g opencode-ai (>= 0.4.0). Binary name: `opencode`.
-const minOpencodeVersion = "0.4.0"
+// minOpencodeVersion is the minimum opencode release with the 1.17.x `run`
+// contract this adapter targets. The 0.x line is REJECTED: its `run` CLI took
+// `--allow-all-tools`/`--allowed-tools` (removed in 1.x), honored per-provider
+// base-URL env vars (ignored on 1.x's routing path), and emitted a different
+// output format. 1.x drives permissions/base-urls via config (OPENCODE_CONFIG_CONTENT)
+// and `--dangerously-skip-permissions`. Verified against opencode-ai 1.17.7.
+// Package: npm install -g opencode-ai (>= 1.17.0). Binary name: `opencode`.
+const minOpencodeVersion = "1.17.0"
 
 // ErrIncompatibleOpencode is returned when the resolved opencode binary is older
 // than minOpencodeVersion or reports an unparseable version.

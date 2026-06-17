@@ -500,7 +500,8 @@ func openAgentBinding() provider.ResolvedBinding {
 	}
 }
 
-// Default-true Deps => opencode runs open-by-default (allow-all flag emitted).
+// Default-true Deps => opencode runs open-by-default (1.17.x: --dangerously-skip-permissions
+// is always in argv; the AllowAll posture is delivered via OPENCODE_CONFIG_CONTENT).
 func TestFactory_AgentProviderFor_OpenByDefault(t *testing.T) {
 	rr := &recRunner{}
 	f := adapterprovider.NewFactory(adapterprovider.Deps{Runner: rr, OpencodeAllowAllTools: true})
@@ -511,7 +512,15 @@ func TestFactory_AgentProviderFor_OpenByDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(rr.calls), 2)
 	runArgs := strings.Join(rr.calls[1].Args, " ")
-	assert.Contains(t, runArgs, "--allow-all-tools", "OpencodeAllowAllTools=true must be open-by-default")
+	// 1.17.x: --allow-all-tools is replaced by --dangerously-skip-permissions (always in argv).
+	assert.Contains(t, runArgs, "--dangerously-skip-permissions",
+		"OpencodeAllowAllTools=true must emit --dangerously-skip-permissions in 1.17.x argv")
+	assert.NotContains(t, runArgs, "--allow-all-tools",
+		"old --allow-all-tools must not appear in 1.17.x argv")
+	// The AllowAll posture rides OPENCODE_CONFIG_CONTENT as {"*":"allow"}.
+	cfg, hasCfg := envValueSlice(rr.calls[1].Env, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, hasCfg, "OPENCODE_CONFIG_CONTENT must be set")
+	assert.Contains(t, cfg, `"*":"allow"`, "AllowAll posture must be in OPENCODE_CONFIG_CONTENT")
 }
 
 // OpencodeAllowAllTools=false disables the allow-all posture.
@@ -530,9 +539,10 @@ func TestFactory_AgentProviderFor_AllowAllDisabled(t *testing.T) {
 
 // Per-profile AllowedTools (knob b) narrows end-to-end through the factory path.
 // Even when OpencodeAllowAllTools=true (knob a), a non-empty binding.AllowedTools
-// must suppress --allow-all-tools and emit --allowed-tools with the named tools.
+// must suppress allow-all and deliver the scoped permission block via
+// OPENCODE_CONFIG_CONTENT (1.17.x: tool scope moves from argv to config).
 // This exercises the full chain: Factory.AgentProviderFor → opencode.buildPosture
-// → buildArgs → subprocess argv, verifying the two knobs compose correctly.
+// → buildConfig → OPENCODE_CONFIG_CONTENT env var, verifying the two knobs compose.
 func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
 	rr := &recRunner{}
 	b := openAgentBinding()
@@ -546,12 +556,23 @@ func TestFactory_AgentProviderFor_PerProfileAllowlistNarrows(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(rr.calls), 2)
 	runArgs := strings.Join(rr.calls[1].Args, " ")
+	// 1.17.x argv: --allow-all-tools and --allowed-tools are both gone; only
+	// --dangerously-skip-permissions is emitted (tool scope lives in config).
 	assert.NotContains(t, runArgs, "--allow-all-tools",
 		"per-profile AllowedTools must suppress allow-all even when OpencodeAllowAllTools=true")
-	assert.Contains(t, runArgs, "--allowed-tools",
-		"per-profile AllowedTools must emit the tool-scope flag in the run argv")
-	assert.Contains(t, runArgs, "Read,Write",
-		"per-profile AllowedTools must name the permitted tools in the run argv")
+	assert.NotContains(t, runArgs, "--allowed-tools",
+		"1.17.x: --allowed-tools is removed from argv; scope is in OPENCODE_CONFIG_CONTENT")
+	assert.Contains(t, runArgs, "--dangerously-skip-permissions",
+		"1.17.x always emits --dangerously-skip-permissions")
+	// Scoped permission block in OPENCODE_CONFIG_CONTENT: {"*":"deny","read":"allow","write":"allow"}.
+	cfg, hasCfg := envValueSlice(rr.calls[1].Env, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, hasCfg, "OPENCODE_CONFIG_CONTENT must be set for scoped allowlist")
+	assert.Contains(t, cfg, `"*":"deny"`,
+		"per-profile AllowedTools must produce a deny-default permission block")
+	assert.Contains(t, cfg, `"read":"allow"`,
+		"Read must appear as 'read':'allow' in the permission block")
+	assert.Contains(t, cfg, `"write":"allow"`,
+		"Write must appear as 'write':'allow' in the permission block")
 }
 
 // profile-editing Phase 3: when ClaudeChatConfig is supplied, ChatProviderFor
@@ -582,9 +603,10 @@ func TestFactory_ChatProviderFor_ClaudeChatConfigExplicitProvider(t *testing.T) 
 }
 
 // seam (posture config knob a + knob b): per-profile AllowedTools (knob b) must
-// emit --allowed-tools even when OpencodeAllowAllTools=false (knob a). Both
-// controls can be independently active; knob b narrows regardless of knob a's
-// global switch. This exercises the composition of the two knobs via the factory.
+// deliver a scoped permission block in OPENCODE_CONFIG_CONTENT even when
+// OpencodeAllowAllTools=false (knob a). Both controls can be independently active;
+// knob b narrows regardless of knob a's global switch. This exercises the
+// composition of the two knobs via the factory (1.17.x: tool scope in config).
 func TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled(t *testing.T) {
 	rr := &recRunner{}
 	b := openAgentBinding()
@@ -598,10 +620,31 @@ func TestFactory_AgentProviderFor_AllowlistWinsWhenGlobalAllowAllDisabled(t *tes
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(rr.calls), 2)
 	runArgs := strings.Join(rr.calls[1].Args, " ")
+	// 1.17.x: neither --allow-all-tools nor --allowed-tools appear in argv.
 	assert.NotContains(t, runArgs, "--allow-all-tools",
 		"global allow-all disabled: --allow-all-tools must NOT be emitted")
-	assert.Contains(t, runArgs, "--allowed-tools",
-		"per-profile AllowedTools must emit --allowed-tools even when global allow-all is disabled")
-	assert.Contains(t, runArgs, "Read",
-		"per-profile AllowedTools must name the permitted tools in the argv")
+	assert.NotContains(t, runArgs, "--allowed-tools",
+		"1.17.x: --allowed-tools is removed from argv; scope is in OPENCODE_CONFIG_CONTENT")
+	assert.Contains(t, runArgs, "--dangerously-skip-permissions",
+		"1.17.x always emits --dangerously-skip-permissions")
+	// per-profile AllowedTools produces the scoped permission block in OPENCODE_CONFIG_CONTENT.
+	cfg, hasCfg := envValueSlice(rr.calls[1].Env, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, hasCfg, "OPENCODE_CONFIG_CONTENT must be set for scoped allowlist")
+	assert.Contains(t, cfg, `"*":"deny"`,
+		"per-profile AllowedTools must produce a deny-default permission block")
+	assert.Contains(t, cfg, `"read":"allow"`,
+		"Read must appear as 'read':'allow' in the permission block")
+}
+
+// --- test helpers ------------------------------------------------------------
+
+// envValueSlice returns the value of name=... in env, and whether it was present.
+func envValueSlice(env []string, name string) (string, bool) {
+	prefix := name + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return strings.TrimPrefix(e, prefix), true
+		}
+	}
+	return "", false
 }

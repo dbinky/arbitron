@@ -127,7 +127,11 @@ func TestProviderImplementsPort(t *testing.T) {
 func TestRunAgent_ModernRunContract(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{
 		compatibleProbe(),
-		{lines: []string{"Working.", "Edited hello.txt.", "Done: goodbye."}},
+		{lines: []string{
+			`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"Working."}}`,
+			`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"Edited hello.txt."}}`,
+			`{"type":"text","timestamp":3,"sessionID":"ses_x","part":{"type":"text","text":"Done: goodbye."}}`,
+		}},
 	}}
 	p := New(Config{
 		Binding:       anthropicBinding("sk-sentinel", nil),
@@ -155,16 +159,17 @@ func TestRunAgent_ModernRunContract(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "anthropic/claude-3-5-sonnet", m)
 	assert.Equal(t, "/tmp/ws", runSpec.Dir, "WorkDir is the cwd pin")
-	assert.Contains(t, runSpec.Args, permissionAllowAllFlag, "open-by-default posture")
+	assert.Contains(t, runSpec.Args, "--dangerously-skip-permissions", "1.17.x always emits skip-permissions")
 	key, ok := envValue(runSpec.Env, "ANTHROPIC_API_KEY")
 	require.True(t, ok)
 	assert.Equal(t, "sk-sentinel", key)
 }
 
-// HAPPY (variants) — per-request ToolScope threads into a narrowed tool flag;
+// HAPPY (variants) — 1.17.x argv always emits --dangerously-skip-permissions
+// regardless of ToolScope (permissions/tool scope ride OPENCODE_CONFIG_CONTENT, not argv);
 // multiple output lines fold into ordered steps.
 func TestRunAgent_Variants(t *testing.T) {
-	t.Run("tool scope threaded", func(t *testing.T) {
+	t.Run("skip-permissions always in argv", func(t *testing.T) {
 		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"ok"}}}}
 		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 		_, err := p.RunAgent(context.Background(), engine.AgentMission{
@@ -175,13 +180,18 @@ func TestRunAgent_Variants(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(mr.calls), 2)
-		tools, ok := argValue(mr.calls[1].Args, toolScopeFlag)
-		require.True(t, ok)
-		assert.Equal(t, "Read,Write", tools)
+		assert.Contains(t, mr.calls[1].Args, "--dangerously-skip-permissions",
+			"1.17.x: skip-permissions is always in argv")
+		assert.Contains(t, mr.calls[1].Args, "--format",
+			"1.17.x: format flag is always in argv")
 	})
 
 	t.Run("multiple lines fold into ordered steps", func(t *testing.T) {
-		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"line one", "line two", "line three"}}}}
+		mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+			`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"line one"}}`,
+			`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"line two"}}`,
+			`{"type":"text","timestamp":3,"sessionID":"ses_x","part":{"type":"text","text":"line three"}}`,
+		}}}}
 		p := New(Config{Binding: anthropicBinding("k", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
 		res, err := p.RunAgent(context.Background(), engine.AgentMission{Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m"})
 		require.NoError(t, err)
@@ -459,18 +469,17 @@ func TestRunAgent_BedrockAWSSecretsAbsentFromArgvAndLogs(t *testing.T) {
 	}
 }
 
-// SECURITY — the zero value of Config.AllowAllTools is a closed posture: when
-// the caller omits the field, the run must NOT emit --allow-all-tools. The
-// composition root opts in to open-by-default by setting AllowAllTools: true;
-// every other caller (e.g. an in-process test or a future adapter) is safe
-// by default without needing to know the open-by-default convention.
+// SECURITY — 1.17.x always emits --dangerously-skip-permissions; tool-scope and
+// allow-all posture are now delivered via OPENCODE_CONFIG_CONTENT (not argv), so
+// AllowAllTools only affects the generated config, not the argv. The run still
+// launches and the argv always carries the skip-permissions flag.
 func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
 	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{"done"}}}}
 	p := New(Config{
 		Binding:    anthropicBinding("sk-x", nil),
 		BinaryPath: "opencode",
 		Runner:     mr,
-		// AllowAllTools deliberately omitted (zero value false) — must be closed.
+		// AllowAllTools deliberately omitted (zero value false).
 	})
 	res, err := p.RunAgent(context.Background(), engine.AgentMission{
 		Prompt:  "go",
@@ -480,12 +489,59 @@ func TestRunAgent_ZeroAllowAllToolsIsClosedPosture(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.GreaterOrEqual(t, len(mr.calls), 2)
-	assert.NotContains(t, mr.calls[1].Args, permissionAllowAllFlag,
-		"zero-value AllowAllTools must NOT emit --allow-all-tools (safe-by-zero-value contract)")
+	// 1.17.x: --dangerously-skip-permissions is always in argv (old --allow-all-tools is gone).
+	assert.Contains(t, mr.calls[1].Args, "--dangerously-skip-permissions",
+		"1.17.x argv always carries --dangerously-skip-permissions")
+	assert.NotContains(t, mr.calls[1].Args, "--allow-all-tools",
+		"old --allow-all-tools flag must not appear")
 }
 
-// parseOutput table test — covers the whitespace-filtering, token-counting,
-// and step-folding logic directly so the pure function's contract is auditable.
+// SECURITY — OPENCODE_CONFIG_CONTENT (permission + provider routing) is injected
+// into the run subprocess env; the API key travels only via the credential env var,
+// never in argv.
+func TestRunAgent_InjectsConfigContentAndCred(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{
+		compatibleProbe(),
+		{lines: []string{"Done."}},
+	}}
+	p := New(Config{
+		Binding: provider.ResolvedBinding{
+			Provider:     "ollama-cloud",
+			Model:        "ollama-cloud/deepseek-v4-flash",
+			AllowedTools: []string{"Read", "Bash"},
+			RevealKey:    func(_ context.Context) (string, error) { return "sk-secret", nil },
+		},
+		BinaryPath: "opencode",
+		Runner:     mr,
+	})
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt:  "hi",
+		WorkDir: t.TempDir(),
+		Model:   "ollama-cloud/deepseek-v4-flash",
+	})
+	require.NoError(t, err)
+
+	// calls[0] is the version probe; calls[1] is the run.
+	require.GreaterOrEqual(t, len(mr.calls), 2)
+	runEnv := mr.calls[1].Env
+
+	cfg, ok := envValue(runEnv, "OPENCODE_CONFIG_CONTENT")
+	require.True(t, ok, "OPENCODE_CONFIG_CONTENT must be set in the run subprocess env")
+	assert.Contains(t, cfg, `"permission"`)
+	assert.Contains(t, cfg, `"read":"allow"`)
+
+	key, ok := envValue(runEnv, "OLLAMA_API_KEY")
+	require.True(t, ok, "OLLAMA_API_KEY must be set in the run subprocess env")
+	assert.Equal(t, "sk-secret", key)
+
+	// The secret must never appear in argv.
+	for _, a := range mr.calls[1].Args {
+		assert.NotContains(t, a, "sk-secret", "API key must never appear in argv")
+	}
+}
+
+// parseOutput table test — covers the JSON-event parsing logic directly so
+// the pure function's contract is auditable against the 1.17.x NDJSON schema.
 func TestParseOutput(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -502,32 +558,40 @@ func TestParseOutput(t *testing.T) {
 			wantTokensOut: 0,
 		},
 		{
-			name:          "whitespace-only lines are filtered, not folded into steps",
-			lines:         []string{"", "   ", "\t"},
+			name:          "non-JSON and whitespace-only lines are skipped",
+			lines:         []string{"", "   ", "\t", "[log] some line"},
 			wantSummary:   "",
 			wantStepCount: 0,
 			wantTokensOut: 0,
 		},
 		{
-			name:          "content lines produce one step per line",
-			lines:         []string{"line one", "line two"},
+			name: "two text events produce two assistant steps",
+			lines: []string{
+				`{"type":"text","timestamp":1,"sessionID":"ses_x","part":{"type":"text","text":"line one"}}`,
+				`{"type":"text","timestamp":2,"sessionID":"ses_x","part":{"type":"text","text":"line two"}}`,
+			},
 			wantSummary:   "line one\nline two",
 			wantStepCount: 2,
-			wantTokensOut: 4, // 2 words each
+			wantTokensOut: 0,
 		},
 		{
-			name:          "mixed blank and content lines: blanks dropped from steps",
-			lines:         []string{"first", "", "second", "   "},
-			wantSummary:   "first\nsecond",
-			wantStepCount: 2,
-			wantTokensOut: 2,
+			name: "step_finish tokens accumulate",
+			lines: []string{
+				`{"type":"step_finish","timestamp":1,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":10}}}`,
+				`{"type":"step_finish","timestamp":2,"sessionID":"ses_x","part":{"type":"step-finish","tokens":{"output":7}}}`,
+			},
+			wantSummary:   "",
+			wantStepCount: 0,
+			wantTokensOut: 17,
 		},
 		{
-			name:          "multi-word lines accumulate coarse token count",
-			lines:         []string{"one two three four five"},
-			wantSummary:   "one two three four five",
+			name: "tool_use events produce tool steps",
+			lines: []string{
+				`{"type":"tool_use","timestamp":1,"sessionID":"ses_x","part":{"type":"tool","tool":"bash"}}`,
+			},
+			wantSummary:   "",
 			wantStepCount: 1,
-			wantTokensOut: 5,
+			wantTokensOut: 0,
 		},
 	}
 
@@ -537,9 +601,6 @@ func TestParseOutput(t *testing.T) {
 			assert.Equal(t, tc.wantSummary, summary)
 			assert.Len(t, steps, tc.wantStepCount)
 			assert.Equal(t, tc.wantTokensOut, tokensOut)
-			for _, s := range steps {
-				assert.Equal(t, "assistant", s.Kind)
-			}
 		})
 	}
 }
