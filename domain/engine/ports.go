@@ -89,12 +89,17 @@ type AgentMission struct {
 
 // AgentResult holds the outcome of an agentic mission.
 type AgentResult struct {
-	Summary   string      // result/summary text
-	Steps     []AgentStep // step events (tool calls, edits) for the trace
-	Model     string
-	TokensIn  int // coarse; subprocess accounting
-	TokensOut int
-	SessionID string
+	Summary string      // result/summary text
+	Steps   []AgentStep // step events (tool calls, edits) for the trace
+	Model   string
+	// DroppedTools are requested tools the backend could not map to a native
+	// tool and silently trimmed from the effective allowlist. Surfaced so the
+	// (security-relevant) narrowing of the tool posture is observable in the
+	// trace, not only in backend logs. Nil/empty when nothing was dropped.
+	DroppedTools []string
+	TokensIn     int // coarse; subprocess accounting
+	TokensOut    int
+	SessionID    string
 }
 
 // AgentStep is a single step event emitted during an agentic mission.

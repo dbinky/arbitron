@@ -16,7 +16,7 @@ import (
 // its own opencode provider block, not the openai shim).
 func TestBuildArgs_LiteLLMRoutesViaLiteLLM(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "litellm", Model: "gpt-4o"}
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, mustDesc(t, b.Provider))
 	require.NoError(t, err)
 	assert.Contains(t, strings.Join(args, " "), "-m litellm/gpt-4o")
 }
@@ -30,7 +30,7 @@ func TestOpencodeEnv_LiteLLMUsesOpenAIVars(t *testing.T) {
 		BaseURL:   "https://litellm:4000",
 		RevealKey: func(context.Context) (string, error) { return "sk", nil },
 	}
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 	joined := strings.Join(env, "\n")
 	assert.Contains(t, joined, "OPENAI_API_KEY=sk")
@@ -40,7 +40,7 @@ func TestOpencodeEnv_LiteLLMUsesOpenAIVars(t *testing.T) {
 // boundary — a litellm model already in litellm/<model> form is not double-prefixed.
 func TestBuildArgs_LiteLLMModelAlreadyPrefixed(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: "litellm", Model: "litellm/gpt-4o"}
-	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, Posture{AllowAll: true})
+	args, err := buildArgs(engine.AgentMission{Prompt: "x", WorkDir: "/ws"}, b, mustDesc(t, b.Provider))
 	require.NoError(t, err)
 	j := strings.Join(args, " ")
 	assert.Contains(t, j, "-m litellm/gpt-4o")

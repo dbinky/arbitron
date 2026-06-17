@@ -34,7 +34,7 @@ func TestOpencodeEnv_SetsCredentialOnly(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := bindingWithKey(tc.provider, "https://base.example/v1", "sentinel-key", nil)
-			env, err := opencodeEnv(context.Background(), b)
+			env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 			require.NoError(t, err)
 			got, ok := envValue(env, tc.keyVar)
 			require.True(t, ok, "expected %s set", tc.keyVar)
@@ -53,7 +53,7 @@ func TestOpencodeEnv_SetsCredentialOnly(t *testing.T) {
 // OLLAMA_API_KEY (base URL routing moves to config, not env).
 func TestOpencodeEnv_KeylessLocalOllamaAllowed(t *testing.T) {
 	b := provider.ResolvedBinding{Provider: " Ollama ", BaseURL: "http://localhost:11434/v1", RevealKey: nil}
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err, "local ollama is keyless")
 	for _, e := range env {
 		assert.NotContains(t, e, "OLLAMA_API_KEY=")
@@ -70,7 +70,7 @@ func TestOpencodeEnv_BedrockQuartetUnchanged(t *testing.T) {
 		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKIA-X"},
 		RevealKey: func(_ context.Context) (string, error) { return "raw-secret", nil },
 	}
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 	id, _ := envValue(env, "AWS_ACCESS_KEY_ID")
 	assert.Equal(t, "AKIA-X", id)
@@ -78,13 +78,11 @@ func TestOpencodeEnv_BedrockQuartetUnchanged(t *testing.T) {
 	assert.Equal(t, "raw-secret", secret)
 }
 
-// TestOpencodeEnv_UnknownProviderFailsClosed verifies that an unrecognised
-// provider fails closed with ErrUnknownProvider.
-func TestOpencodeEnv_UnknownProviderFailsClosed(t *testing.T) {
-	b := provider.ResolvedBinding{Provider: "mystery"}
-	_, err := opencodeEnv(context.Background(), b)
-	require.ErrorIs(t, err, ErrUnknownProvider)
-}
+// NOTE: opencodeEnv now takes an already-resolved descriptor (RunAgent resolves
+// the provider ONCE and threads it to args/env/config). Unknown-provider
+// fail-closed therefore lives at the RunAgent level — see provider_test.go
+// (TestRunAgent_UnknownProviderFailsClosed and the control-char %q variant) and
+// descriptorFor (providers_test.go) — not here.
 
 // ---------------------------------------------------------------------------
 // bedrock AWS-quartet path (unchanged by base-URL removal)
@@ -112,7 +110,7 @@ func bedrockBinding(region, accessKeyID, sealedPayload string, err error) provid
 // (no session token): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION.
 func TestOpencodeEnv_BedrockBareSecret(t *testing.T) {
 	b := bedrockBinding("us-east-1", "AKIA-TEST", "raw-secret-key", nil)
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	id, ok := envValue(env, "AWS_ACCESS_KEY_ID")
@@ -133,7 +131,7 @@ func TestOpencodeEnv_BedrockBareSecret(t *testing.T) {
 func TestOpencodeEnv_BedrockComposite(t *testing.T) {
 	payload := `{"secret":"composite-secret","session_token":"sess-123"}`
 	b := bedrockBinding("eu-west-1", "AKIA-2", payload, nil)
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	secret, _ := envValue(env, "AWS_SECRET_ACCESS_KEY")
@@ -152,7 +150,7 @@ func TestOpencodeEnv_BedrockMissingExtras(t *testing.T) {
 		{"us-east-1", ""},
 	} {
 		b := bedrockBinding(tc.region, tc.id, "secret", nil)
-		env, err := opencodeEnv(context.Background(), b)
+		env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrBedrockConfig)
 		assert.Nil(t, env, "no partial env on missing bedrock config")
@@ -162,7 +160,7 @@ func TestOpencodeEnv_BedrockMissingExtras(t *testing.T) {
 // ERROR — bedrock RevealKey failure aborts with no env.
 func TestOpencodeEnv_BedrockRevealError(t *testing.T) {
 	b := bedrockBinding("us-east-1", "AKIA", "", errors.New("decrypt boom"))
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decrypt boom")
 	assert.Nil(t, env)
@@ -180,7 +178,7 @@ func TestOpencodeEnv_BedrockSecretsNotLogged(t *testing.T) {
 
 	payload := `{"secret":"` + secret + `","session_token":"` + sess + `"}`
 	b := bedrockBinding("us-east-1", "AKIA", payload, nil)
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	assert.NotContains(t, buf.String(), secret)
@@ -198,7 +196,7 @@ func TestOpencodeEnv_BedrockAliasResolvesAWSQuartet(t *testing.T) {
 		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKIA-ALIAS"},
 		RevealKey: func(_ context.Context) (string, error) { return "raw-secret", nil },
 	}
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err, "bedrock alias must route to the AWS-quartet builder")
 
 	id, ok := envValue(env, "AWS_ACCESS_KEY_ID")
@@ -216,7 +214,7 @@ func TestOpencodeEnv_BedrockAliasResolvesAWSQuartet(t *testing.T) {
 // it exercises the awssig parsing step at the credential seam.
 func TestOpencodeEnv_BedrockEmptyRevealPropagatesMissingSecret(t *testing.T) {
 	b := bedrockBinding("us-east-1", "AKIA", "", nil) // RevealKey returns ("", nil)
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err, "empty sealed credential must fail via awssig.ErrMissingSecret")
 	assert.ErrorIs(t, err, awssig.ErrMissingSecret,
 		"error chain must include awssig.ErrMissingSecret from the ParseCredential seam")
@@ -230,7 +228,7 @@ func TestOpencodeEnv_BedrockNilRevealKey(t *testing.T) {
 		Extras:    map[string]string{"region": "us-east-1", "access-key-id": "AKIA"},
 		RevealKey: nil,
 	}
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no RevealKey")
 	assert.Nil(t, env)
@@ -244,33 +242,10 @@ func TestOpencodeEnv_BedrockNilRevealKey(t *testing.T) {
 // error) must still fail, because running without a key is unacceptable.
 func TestOpencodeEnv_EmptyKeyFromRevealRejectsNonKeyless(t *testing.T) {
 	b := bindingWithKey("anthropic", "https://api.anthropic.com", "", nil) // key=""
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err, "empty key from RevealKey must be rejected for non-keyless provider")
 	assert.Contains(t, err.Error(), "requires a key")
 	assert.Nil(t, env)
-}
-
-// Error — unknown provider → ErrUnknownProvider; empty provider too.
-func TestOpencodeEnv_UnknownProvider(t *testing.T) {
-	for _, prov := range []string{"mystery", ""} {
-		b := bindingWithKey(prov, "https://x", "sentinel", nil)
-		env, err := opencodeEnv(context.Background(), b)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrUnknownProvider)
-		assert.Nil(t, env)
-	}
-}
-
-// SECURITY — control chars in a provider string must be %q-escaped in the env
-// error so they never reach logs as raw bytes (same property as buildArgs / factory).
-func TestOpencodeEnv_UnknownProviderControlCharsSafelyQuoted(t *testing.T) {
-	b := bindingWithKey("foo\nmalicious", "https://x", "sentinel", nil)
-	_, err := opencodeEnv(context.Background(), b)
-	require.ErrorIs(t, err, ErrUnknownProvider)
-	assert.NotContains(t, err.Error(), "\n",
-		"raw newline must not appear in the error message")
-	assert.Contains(t, err.Error(), `\n`,
-		"escaped \\n should appear via %q-quoted provider string")
 }
 
 // Failure — RevealKey returns an error → the helper returns it and produces
@@ -279,7 +254,7 @@ func TestOpencodeEnv_RevealKeyError(t *testing.T) {
 	wantErr := errors.New("decrypt failed")
 	b := bindingWithKey("anthropic", "https://x", "", wantErr)
 
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
 	assert.Nil(t, env, "no env should be produced on RevealKey error")
@@ -295,7 +270,7 @@ func TestOpencodeEnv_NilRevealKey_Errors(t *testing.T) {
 		RevealKey: nil, // no key function
 	}
 
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.Error(t, err, "nil RevealKey must return an error, not panic")
 	assert.Nil(t, env, "no env must be produced when RevealKey is nil")
 }
@@ -305,7 +280,7 @@ func TestOpencodeEnv_NilRevealKey_Errors(t *testing.T) {
 func TestOpencodeEnv_HappyPath(t *testing.T) {
 	b := bindingWithKey("anthropic", "https://api.anthropic.com", "sk-sentinel-123", nil)
 
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	key, ok := envValue(env, "ANTHROPIC_API_KEY")
@@ -321,7 +296,7 @@ func TestOpencodeEnv_HappyPath(t *testing.T) {
 func TestOpencodeEnv_AppendsAfterBaseEnv(t *testing.T) {
 	b := bindingWithKey("anthropic", "https://x", "sentinel", nil)
 
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	base := procenv.BaseEnv()
@@ -345,7 +320,7 @@ func TestOpencodeEnv_KeyAbsentFromLogs(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	b := bindingWithKey("anthropic", "https://x", sentinel, nil)
-	env, err := opencodeEnv(context.Background(), b)
+	env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 	require.NoError(t, err)
 
 	// The key reaches the child env...
@@ -379,7 +354,7 @@ func TestOpencodeEnv_NonKeylessEmptyKeyFailsClosed(t *testing.T) {
 	for _, prov := range []string{"anthropic", "openai", "openrouter"} {
 		t.Run(prov, func(t *testing.T) {
 			b := bindingWithKey(prov, "https://base", "", nil) // RevealKey returns ("", nil)
-			env, err := opencodeEnv(context.Background(), b)
+			env, err := opencodeEnv(context.Background(), mustDesc(t, b.Provider), b)
 			require.Error(t, err, "empty revealed key must fail closed for a non-keyless provider")
 			assert.Contains(t, err.Error(), "requires a key")
 			assert.Nil(t, env, "no partial env when the key is empty for a non-keyless provider")

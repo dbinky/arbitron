@@ -2,14 +2,16 @@ package opencode
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/arbitron/arbitron/domain/provider"
 )
 
 // ErrUnknownProvider is returned when a ResolvedBinding names a provider that
 // has no entry in the descriptor table. Callers fail closed: no env, no args,
-// no subprocess launch.
-var ErrUnknownProvider = errors.New("opencode: no env mapping for provider")
+// no subprocess launch. The message is provider-neutral because the same failure
+// surfaces on the argv (`-m`), config-path, and env builders, not just env.
+var ErrUnknownProvider = errors.New("opencode: unsupported provider")
 
 // providerDescriptor is the per-provider opencode 1.17.x contract: the `-m`
 // prefix, the credential env var carrying the secret (empty for keyless/aws),
@@ -47,4 +49,25 @@ var providerDescriptors = map[string]providerDescriptor{
 func descriptorFor(arbitronProvider string) (providerDescriptor, bool) {
 	d, ok := providerDescriptors[provider.Canonicalize(arbitronProvider)]
 	return d, ok
+}
+
+// validateDescriptors asserts the descriptor table contains no fail-OPEN auth
+// combinations. In opencodeEnv, `keyless` alone selects EmptyKeyAllowBaseURLOnly
+// (launch unauthenticated) vs EmptyKeyReject (fail closed), so a row that sets
+// `keyless:true` alongside a non-empty `credEnvVar` would let a provider that is
+// supposed to require a key launch with NO credential — an auth-bypass-class
+// misconfiguration. Likewise an `aws` row must not also carry a `credEnvVar`
+// (the AWS quartet path ignores it). This is a static-table invariant; it is
+// asserted by a test (providers_test.go) so an illegal row cannot ship. Returns
+// nil when the table is well-formed.
+func validateDescriptors() error {
+	for id, d := range providerDescriptors {
+		if d.keyless && d.credEnvVar != "" {
+			return fmt.Errorf("descriptor %q: keyless rows must not set credEnvVar (fail-open auth bypass): %q", id, d.credEnvVar)
+		}
+		if d.aws && d.credEnvVar != "" {
+			return fmt.Errorf("descriptor %q: aws rows must not set credEnvVar: %q", id, d.credEnvVar)
+		}
+	}
+	return nil
 }

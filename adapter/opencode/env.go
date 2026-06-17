@@ -32,12 +32,7 @@ var ErrBedrockConfig = errors.New("opencode: bedrock requires region and access-
 // On any error (unknown provider, missing bedrock config, RevealKey failure,
 // base-name collision) NO env is produced (nil is returned alongside the error)
 // so the caller cannot launch with a partial env.
-func opencodeEnv(ctx context.Context, binding provider.ResolvedBinding) ([]string, error) {
-	d, ok := descriptorFor(binding.Provider)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, binding.Provider)
-	}
-
+func opencodeEnv(ctx context.Context, d providerDescriptor, binding provider.ResolvedBinding) ([]string, error) {
 	// AWS-quartet providers (bedrock) take a dedicated builder.
 	if d.aws {
 		return bedrockEnv(ctx, binding)

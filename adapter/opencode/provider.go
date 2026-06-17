@@ -100,17 +100,28 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, ErrWorkDirRequired
 	}
 
-	// Build args FIRST so an unknown provider / empty model fails closed with NO
-	// launch (never a silent tool-less run). buildArgs names the provider in the
-	// error; we add the node/model context here.
-	args, err := buildArgs(mission, p.binding, buildPosture(p.binding, p.allowAllTools))
+	// Resolve the provider descriptor ONCE and thread it to the three builders
+	// (args/env/config), so an unknown provider has a single fail-closed point and
+	// the builders cannot disagree about a provider string. This fails closed with
+	// NO launch (never a silent tool-less run).
+	d, ok := descriptorFor(p.binding.Provider)
+	if !ok {
+		return nil, fmt.Errorf("opencode agent (provider %q, model %q): %w: %q",
+			p.binding.Provider, mission.Model, ErrUnknownProvider, p.binding.Provider)
+	}
+
+	// Resolve the run posture ONCE (consumed by buildConfig below).
+	posture := buildPosture(p.binding, p.allowAllTools)
+
+	// Build args FIRST so an empty model fails closed with NO launch.
+	args, err := buildArgs(mission, p.binding, d)
 	if err != nil {
 		return nil, fmt.Errorf("opencode agent (provider %q, model %q): %w", p.binding.Provider, mission.Model, err)
 	}
 
 	// Build the credential env BEFORE any subprocess so a RevealKey / config
 	// failure aborts before launch (no partial-env, no probe).
-	env, err := opencodeEnv(ctx, p.binding)
+	env, err := opencodeEnv(ctx, d, p.binding)
 	if err != nil {
 		return nil, fmt.Errorf("opencode: build env: %w", err)
 	}
@@ -118,7 +129,9 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 	// Generate the per-run opencode config (permission + provider routing) and
 	// inject it inline via OPENCODE_CONFIG_CONTENT — no file written, no
 	// collision with a target repo's own opencode.json. Fail-closed before launch.
-	cfgJSON, err := buildConfig(p.binding, buildPosture(p.binding, p.allowAllTools))
+	// droppedTools (requested tools with no opencode equivalent) is surfaced in
+	// the AgentResult/trace below so the trimming is observable.
+	cfgJSON, droppedTools, err := buildConfig(d, p.binding, posture)
 	if err != nil {
 		return nil, fmt.Errorf("opencode: build config: %w", err)
 	}
@@ -164,19 +177,29 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		return nil, fmt.Errorf("opencode: mission failed: %w", waitErr)
 	}
 
-	summary, steps, tokensOut := parseOutput(collected)
-	engineSteps := make([]engine.AgentStep, 0, len(steps))
+	summary, steps, tokensIn, tokensOut := parseOutput(collected)
+	engineSteps := make([]engine.AgentStep, 0, len(steps)+1)
+	// Surface a silently-narrowed tool posture as the FIRST trace step so the
+	// drop is observable in the trace, not only in backend logs (it was also
+	// logged at Warn in buildConfig).
+	if len(droppedTools) > 0 {
+		engineSteps = append(engineSteps, engine.AgentStep{
+			Kind:    "system",
+			Summary: fmt.Sprintf("dropped unmapped tools (effective tool posture narrowed): %v", droppedTools),
+		})
+	}
 	for _, s := range steps {
 		engineSteps = append(engineSteps, engine.AgentStep{Kind: s.Kind, Summary: s.Summary})
 	}
 
 	return &engine.AgentResult{
-		Summary:   summary,
-		Steps:     engineSteps,
-		Model:     mission.Model,
-		TokensOut: tokensOut,
-		// TokensIn left zero (coarse subprocess accounting; text mode emits no
-		// structured usage). SessionID empty per the single-shot contract.
+		Summary:      summary,
+		Steps:        engineSteps,
+		Model:        mission.Model,
+		DroppedTools: droppedTools,
+		TokensIn:     tokensIn,
+		TokensOut:    tokensOut,
+		// SessionID empty per the single-shot contract.
 	}, nil
 }
 
