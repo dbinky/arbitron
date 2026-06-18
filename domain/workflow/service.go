@@ -46,6 +46,10 @@ type PublishedStore interface {
 	PublisherLookup
 	Upsert(ctx context.Context, name string, publisher uuid.UUID, sourceName string, visibility Visibility, department string) error
 	Delete(ctx context.Context, name string) error
+	// SetWorkflowID links a publication record to the stable workflow identity
+	// (published_workflows.workflow_id). It is invoked after a successful publish
+	// once the shared name's registry id is known. A Nil id is a no-op.
+	SetWorkflowID(ctx context.Context, name string, id uuid.UUID) error
 }
 
 // WorkflowService resolves storage scope and authorization from the context
@@ -514,15 +518,35 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 	// Register the shared name's identity if it is not already registered. A
 	// re-publish (overwrite) by the same publisher keeps its existing shared row,
 	// so an ErrAlreadyExists here is the reconciled state, not a failure. The
-	// published_workflows store remains the publisher-overwrite authority.
+	// published_workflows store remains the publisher-overwrite authority. The
+	// resolved/allocated id is then linked onto the publication record so the
+	// published_workflows row references the workflow by its stable identity.
 	if s.registry != nil {
-		if _, rerr := s.registry.ResolveID(ctx, publishedName); errors.Is(rerr, ErrNotFound) {
+		publishedID, rerr := s.registry.ResolveID(ctx, publishedName)
+		if errors.Is(rerr, ErrNotFound) {
+			publishedID = uuid.New()
 			if regErr := s.registry.Register(ctx, RegistryEntry{
-				ID:    uuid.New(),
+				ID:    publishedID,
 				Name:  publishedName,
 				Scope: ScopeShared,
-			}); regErr != nil && !errors.Is(regErr, ErrAlreadyExists) {
-				return regErr
+			}); regErr != nil {
+				if !errors.Is(regErr, ErrAlreadyExists) {
+					return regErr
+				}
+				// A concurrent publish just registered it; adopt the existing id.
+				if adopted, aerr := s.registry.ResolveID(ctx, publishedName); aerr == nil {
+					publishedID = adopted
+				}
+			}
+		} else if rerr != nil {
+			return rerr
+		}
+		// Link the publication record to the stable id (best-effort within the
+		// publish transaction's success path: the tree + record are already in
+		// place, so a stamp failure surfaces loudly rather than corrupting state).
+		if publishedID != uuid.Nil {
+			if setErr := s.published.SetWorkflowID(ctx, publishedName, publishedID); setErr != nil {
+				return fmt.Errorf("linking publication %q to workflow id: %w", publishedName, setErr)
 			}
 		}
 	}

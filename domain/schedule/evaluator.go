@@ -56,6 +56,15 @@ type Alerter interface {
 	Alert(ctx context.Context, s Schedule, t notification.Type) error
 }
 
+// WorkflowResolver is the narrow id->name seam the evaluator uses at fire time:
+// it resolves a schedule's stable WorkflowID to the workflow's CURRENT name, so
+// a rename between create and fire still targets the right definition.
+// workflow.WorkflowRegistry satisfies it. When unwired (nil), the evaluator
+// fires by the retained WorkflowName label, preserving today's behavior.
+type WorkflowResolver interface {
+	ResolveName(ctx context.Context, id uuid.UUID) (string, error)
+}
+
 // DefaultInterval is the evaluator's tick cadence: coarse enough to be cheap,
 // fine enough for minute-granularity cron.
 const DefaultInterval = 30 * time.Second
@@ -70,6 +79,7 @@ type Evaluator struct {
 	active   ActiveRunChecker
 	idents   IdentityResolver
 	alerter  Alerter
+	resolver WorkflowResolver // optional; id->name resolution at fire time
 	clock    Clock
 	interval time.Duration
 	logger   *slog.Logger
@@ -94,6 +104,11 @@ func WithInterval(d time.Duration) Option { return func(e *Evaluator) { e.interv
 
 // WithLogger sets the logger (default slog.Default).
 func WithLogger(l *slog.Logger) Option { return func(e *Evaluator) { e.logger = l } }
+
+// WithResolver wires the id->name resolver consulted at fire time so a schedule
+// keyed by a stable WorkflowID fires the workflow's CURRENT name even after a
+// rename. When unset, the evaluator fires by the retained WorkflowName label.
+func WithResolver(r WorkflowResolver) Option { return func(e *Evaluator) { e.resolver = r } }
 
 // NewEvaluator constructs an Evaluator. The clock defaults to realClock and the
 // interval to DefaultInterval unless overridden via options.
@@ -195,12 +210,25 @@ func (e *Evaluator) fireOne(ctx context.Context, s Schedule, fireTime time.Time)
 		}
 		return
 	}
+	// Resolve the workflow to fire by its STABLE id (id->current name) so a rename
+	// between create and fire still targets the right definition. Fall back to the
+	// retained WorkflowName label when the schedule has no id (legacy) or the id no
+	// longer resolves (the workflow was deleted — the name path then surfaces the
+	// definitive workflow.ErrNotFound from the trigger, taking the deleted-workflow
+	// branch below).
+	fireName := s.WorkflowName
+	if e.resolver != nil && s.WorkflowID != uuid.Nil {
+		if name, rerr := e.resolver.ResolveName(ctx, s.WorkflowID); rerr == nil {
+			fireName = name
+		}
+	}
+
 	scheduleID := s.ID
 	fireCtx := instance.WithOrigin(identity.WithIdentity(ctx, id), instance.Origin{
 		Source:     instance.OriginSchedule,
 		ScheduleID: &scheduleID,
 	})
-	_, _, err = e.trigger.TriggerWithDepartment(fireCtx, s.WorkflowName, s.Variables, "normal", s.Department)
+	_, _, err = e.trigger.TriggerWithDepartment(fireCtx, fireName, s.Variables, "normal", s.Department)
 	if err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			// Deleted workflow: alert and advance position so the schedule does not

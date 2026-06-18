@@ -806,6 +806,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// mode's fixed identity is admin, for which CanSeePublication returns true,
 	// so local-mode openness is preserved.
 	eng.SetPublisherLookup(publishedRepo)
+	// 12a-1c. Wire the name<->id resolver so triggered instances carry the stable
+	// workflow id (and reruns re-resolve the current name after a rename). The
+	// workflow identity repo satisfies the engine's narrow WorkflowResolver.
+	eng.SetWorkflowResolver(identityRepo)
 	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
@@ -837,6 +841,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
 		scheduleAlerter,
 		schedule.WithLogger(logger),
+		// Resolve the schedule's stable WorkflowID to the workflow's CURRENT name at
+		// fire time so a rename cannot break a running schedule.
+		schedule.WithResolver(identityRepo),
 	)
 	// Build the shared run-now fire core from the SAME collaborators the
 	// evaluator uses (engine Trigger, instance-repo ActiveRunChecker, identity
@@ -851,6 +858,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleRepo,
 		scheduleCanTrigger{publishers: publishedRepo},
 		schedule.WithFirer(scheduleRunner),
+		// Stamp the schedule's stable WorkflowID (name->id) at create time so a
+		// later rename cannot break it; the evaluator fires by id->current name.
+		schedule.WithResolverID(identityRepo),
 	)
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles

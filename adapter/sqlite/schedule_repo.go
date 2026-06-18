@@ -32,7 +32,7 @@ func NewScheduleRepo(db *sql.DB) *ScheduleRepo {
 	return &ScheduleRepo{db: db}
 }
 
-const scheduleColumns = `id, workflow_name, cron_expr, timezone, creator_id, department, enabled, variables, last_fired_at, created_at, updated_at`
+const scheduleColumns = `id, workflow_id, workflow_name, cron_expr, timezone, creator_id, department, enabled, variables, last_fired_at, created_at, updated_at`
 
 func boolToInt(b bool) int {
 	if b {
@@ -46,10 +46,11 @@ func (r *ScheduleRepo) Create(ctx context.Context, s *schedule.Schedule) error {
 	if err != nil {
 		return fmt.Errorf("marshalling schedule variables: %w", err)
 	}
-	const q = `INSERT INTO schedules (id, workflow_name, cron_expr, timezone, creator_id, department, enabled, variables)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	const q = `INSERT INTO schedules (id, workflow_id, workflow_name, cron_expr, timezone, creator_id, department, enabled, variables)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = r.db.ExecContext(ctx, q,
 		uuidToString(s.ID),
+		workflowIDToNullString(s.WorkflowID),
 		s.WorkflowName,
 		s.CronExpr,
 		schedule.NormalizeTimezone(s.Timezone),
@@ -115,10 +116,11 @@ func (r *ScheduleRepo) Update(ctx context.Context, s *schedule.Schedule) error {
 		return fmt.Errorf("marshalling schedule variables: %w", err)
 	}
 	const q = `UPDATE schedules
-SET workflow_name = ?, cron_expr = ?, timezone = ?, department = ?, enabled = ?, variables = ?,
+SET workflow_id = ?, workflow_name = ?, cron_expr = ?, timezone = ?, department = ?, enabled = ?, variables = ?,
     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
 WHERE id = ?`
 	_, err = r.db.ExecContext(ctx, q,
+		workflowIDToNullString(s.WorkflowID),
 		s.WorkflowName,
 		s.CronExpr,
 		schedule.NormalizeTimezone(s.Timezone),
@@ -191,13 +193,17 @@ func (r *ScheduleRepo) scanSchedule(row scanner) (*schedule.Schedule, error) {
 		idStr, workflowName, cronExpr, timezone, creatorIDStr, department string
 		enabledInt                                                        int
 		varsJSON, createdStr, updatedStr                                  string
-		lastFired                                                         sql.NullString
+		workflowID, lastFired                                             sql.NullString
 	)
-	if err := row.Scan(&idStr, &workflowName, &cronExpr, &timezone, &creatorIDStr, &department,
+	if err := row.Scan(&idStr, &workflowID, &workflowName, &cronExpr, &timezone, &creatorIDStr, &department,
 		&enabledInt, &varsJSON, &lastFired, &createdStr, &updatedStr); err != nil {
 		return nil, err
 	}
 	id, err := parseUUID(idStr)
+	if err != nil {
+		return nil, err
+	}
+	wfID, err := nullStringToWorkflowID(workflowID)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +232,7 @@ func (r *ScheduleRepo) scanSchedule(row scanner) (*schedule.Schedule, error) {
 	}
 	return &schedule.Schedule{
 		ID:           id,
+		WorkflowID:   wfID,
 		WorkflowName: workflowName,
 		CronExpr:     cronExpr,
 		Timezone:     timezone,

@@ -85,6 +85,20 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 	}
 	inst.CreatedAt = createdAt
 	inst.UpdatedAt = updatedAt
+
+	// Stamp the stable workflow_id (migration 017) when the run carries one. The
+	// generated CreateInstance query predates the column, so this is a separate,
+	// hand-written UPDATE rather than a blanket sqlc regeneration (which would
+	// corrupt the hand-curated generated/ tree). A Nil id (legacy/local-mode run)
+	// leaves the column NULL — exactly the backfill's "dangling label" state.
+	if inst.WorkflowID != uuid.Nil {
+		if _, err := r.db.ExecContext(ctx,
+			`UPDATE instances SET workflow_id = ? WHERE id = ?`,
+			inst.WorkflowID.String(), uuidToString(inst.ID),
+		); err != nil {
+			return fmt.Errorf("stamping workflow_id on instance: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -96,7 +110,38 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 		}
 		return nil, fmt.Errorf("getting instance: %w", err)
 	}
-	return rowToInstance(row)
+	inst, err := rowToInstance(row)
+	if err != nil {
+		return nil, err
+	}
+	// Read the stable workflow_id (migration 017) separately: the generated
+	// GetInstance query predates the column. A NULL (legacy/local-mode run) yields
+	// uuid.Nil. This hand-written read avoids a blanket sqlc regeneration.
+	wfID, err := r.workflowID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	inst.WorkflowID = wfID
+	return inst, nil
+}
+
+// workflowID reads the nullable workflow_id column for an instance. A NULL
+// (legacy run, or local mode with no registry) maps to uuid.Nil.
+func (r *InstanceRepo) workflowID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var ns sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT workflow_id FROM instances WHERE id = ?`, uuidToString(id),
+	).Scan(&ns); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return uuid.Nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
+		}
+		return uuid.Nil, fmt.Errorf("reading instance workflow_id: %w", err)
+	}
+	wfID, err := nullStringToWorkflowID(ns)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing instance workflow_id: %w", err)
+	}
+	return wfID, nil
 }
 
 func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {

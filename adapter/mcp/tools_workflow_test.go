@@ -974,6 +974,9 @@ func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
 	delete(p.pub, name)
 	return nil
 }
+func (p *fakePublishedStore) SetWorkflowID(_ context.Context, _ string, _ uuid.UUID) error {
+	return nil
+}
 
 // newPublishServer builds an MCP server whose WorkflowSvc is backed by a real
 // filesystem repo (temp dir) and the given publisher store, so the publish/copy

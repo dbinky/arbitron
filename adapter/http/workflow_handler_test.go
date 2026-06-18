@@ -2055,6 +2055,9 @@ func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
 	delete(p.pub, name)
 	return nil
 }
+func (p *fakePublishedStore) SetWorkflowID(_ context.Context, _ string, _ uuid.UUID) error {
+	return nil
+}
 
 // publishHandler builds a WorkflowHandler whose service is backed by the given
 // repo and publisher store.

@@ -132,6 +132,10 @@ func (r *fakeRepo) CopyTree(_ context.Context, src workflow.Scope, srcName strin
 // fakePublishers is a fake PublishedStore (lookup + write).
 type fakePublishers struct {
 	pub map[string]workflow.Publication
+	// workflowIDs records the stable id linked to each publication via
+	// SetWorkflowID, so publish tests can assert the publication references the
+	// workflow by id.
+	workflowIDs map[string]uuid.UUID
 	// upsertErr, when set, makes Upsert fail so the Publish compensation paths are
 	// observable.
 	upsertErr error
@@ -161,6 +165,14 @@ func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.U
 
 func (p *fakePublishers) Delete(_ context.Context, name string) error {
 	delete(p.pub, name)
+	return nil
+}
+
+func (p *fakePublishers) SetWorkflowID(_ context.Context, name string, id uuid.UUID) error {
+	if p.workflowIDs == nil {
+		p.workflowIDs = map[string]uuid.UUID{}
+	}
+	p.workflowIDs[name] = id
 	return nil
 }
 
