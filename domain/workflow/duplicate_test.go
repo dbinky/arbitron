@@ -253,3 +253,42 @@ func TestService_Duplicate_Shared_LandsInCallerPrivate(t *testing.T) {
 	_, stillShared := repo.bucket(workflow.Shared())["shared-wf"]
 	assert.True(t, stillShared, "shared original intact")
 }
+
+// --- Robustness: Register failure rollback failure does not mask Register error ---
+
+// TestService_Duplicate_RollbackFails_RegisterErrorStillReturned verifies that
+// when registry.Register fails AND the rollback (delete copied folder) also
+// fails, the original Register error is still returned. The rollback failure
+// is absorbed (best-effort, `_ =` pattern) so the caller sees the root cause.
+// An orphan folder may remain; the registry is consistent (no row added).
+func TestService_Duplicate_RollbackFails_RegisterErrorStillReturned(t *testing.T) {
+	owner := uuid.New()
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	adminCtx := ctxWith(owner, true)
+
+	// Seed "alpha".
+	idA := uuid.New()
+	w := wf("alpha")
+	w.ID = idA
+	inner.bucket(workflow.Private(owner))["alpha"] = w
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: idA, Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: owner,
+	}))
+
+	// Wrap the repo so that deleting "alpha-copy" (the rollback target) also fails.
+	repo := &errOnDeleteNameRepo{inner: inner, failName: "alpha-copy"}
+
+	regErr := errors.New("registry unavailable")
+	reg.failReg = regErr
+
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+
+	err := svc.Duplicate(adminCtx, "alpha", "alpha-copy")
+	require.ErrorIs(t, err, regErr,
+		"registry.Register error must be returned even when rollback also fails")
+
+	// Registry has only the original row (no orphan row from the failed Duplicate).
+	assert.Equal(t, 1, reg.count(), "no registry row added for failed duplicate")
+}

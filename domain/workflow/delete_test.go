@@ -392,3 +392,49 @@ func TestService_Delete_NoRegistry_LocalMode(t *testing.T) {
 	_, ok := repo.bucket(workflow.Private(owner))["mine"]
 	assert.False(t, ok, "local-mode delete removes the private folder")
 }
+
+// --- Robustness: Delete is idempotent after a partial failure ---
+
+// TestService_Delete_RetryAfterFolderFailure_Succeeds verifies that a Delete
+// interrupted after step 4 (publication removed) but before step 5 (folder)
+// can be retried successfully. The second attempt skips step 4 (publication
+// already gone), removes the folder, and removes the registry row cleanly.
+func TestService_Delete_RetryAfterFolderFailure_Succeeds(t *testing.T) {
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	inner := newFakeRepo()
+	admin := uuid.New()
+	publisher := uuid.New()
+
+	// Shared, published, registered workflow.
+	id := uuid.New()
+	sw := wf("alpha")
+	sw.ID = id
+	inner.bucket(workflow.Shared())["alpha"] = sw
+	require.NoError(t, reg.Register(context.Background(), workflow.RegistryEntry{
+		ID: id, Name: "alpha", Scope: workflow.ScopeShared,
+	}))
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", publisher, "src", workflow.VisibilityPublic, ""))
+
+	// First attempt: folder delete blocked → partial Delete (publication removed, folder+registry intact).
+	failRepo := &errOnDeleteNameRepo{inner: inner, failName: "alpha"}
+	svc := workflow.NewWorkflowService(failRepo, pubs)
+	svc.SetRegistry(reg)
+	svc.SetActiveInstanceCounter(newFakeActiveCounter())
+
+	require.Error(t, svc.Delete(ctxWith(admin, true), "alpha"),
+		"first Delete must fail due to folder error")
+
+	// Second attempt: use the repo without the error injection — must succeed.
+	svc2 := workflow.NewWorkflowService(inner, pubs)
+	svc2.SetRegistry(reg)
+	svc2.SetActiveInstanceCounter(newFakeActiveCounter())
+
+	require.NoError(t, svc2.Delete(ctxWith(admin, true), "alpha"),
+		"retry after partial failure must succeed (idempotent publication step)")
+
+	_, folderStill := inner.bucket(workflow.Shared())["alpha"]
+	assert.False(t, folderStill, "folder removed on retry")
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.ErrorIs(t, regErr, workflow.ErrNotFound, "registry row removed on retry")
+}

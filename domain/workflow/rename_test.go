@@ -494,3 +494,43 @@ func TestService_Rename_TargetIsSharedName_AlreadyExists(t *testing.T) {
 	assert.Equal(t, idShared, gotShared, "shared entry unchanged")
 	assert.Equal(t, before, reg.count(), "registry count unchanged")
 }
+
+// --- Robustness: rollback failure during step-5 does not mask registry error ---
+
+// TestService_Rename_RollbackFails_RegistryErrorStillReturned verifies that
+// when registry.Rename fails AND the rollback (delete new folder) also fails,
+// the original registry error is still returned. The rollback failure is
+// absorbed (best-effort) so the caller sees the root cause, not a secondary
+// error. An orphan folder may remain, but the registry is consistent.
+func TestService_Rename_RollbackFails_RegistryErrorStillReturned(t *testing.T) {
+	owner := uuid.New()
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	adminCtx := ctxWith(owner, true)
+
+	// Seed "alpha".
+	idA := uuid.New()
+	w := wf("alpha")
+	w.ID = idA
+	inner.bucket(workflow.Private(owner))["alpha"] = w
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: idA, Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: owner,
+	}))
+
+	// Wrap the repo so that deleting "beta" (the rollback target) also fails.
+	repo := &errOnDeleteNameRepo{inner: inner, failName: "beta"}
+	renameErr := errors.New("registry write failed")
+	reg.failRename = renameErr
+
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+
+	err := svc.Rename(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, renameErr,
+		"registry.Rename error must be returned even when rollback also fails")
+
+	// Registry still resolves "alpha" (rename never committed).
+	gotID, rerr := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, rerr)
+	assert.Equal(t, idA, gotID, "source registry row unchanged")
+}
