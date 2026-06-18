@@ -148,6 +148,9 @@ type fakePublishers struct {
 	// deleteErr, when set, makes Delete return the error so that
 	// Delete/Unpublish publication-removal failure paths are exercisable.
 	deleteErr error
+	// publisherOfErr, when set, makes PublisherOf return the error so that
+	// the Publish cross-scope collision check failure path is exercisable.
+	publisherOfErr error
 }
 
 func newFakePublishers() *fakePublishers {
@@ -155,6 +158,9 @@ func newFakePublishers() *fakePublishers {
 }
 
 func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	if p.publisherOfErr != nil {
+		return uuid.Nil, false, p.publisherOfErr
+	}
 	pub, ok := p.pub[name]
 	return pub.Publisher, ok, nil
 }

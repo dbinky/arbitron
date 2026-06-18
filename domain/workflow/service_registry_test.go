@@ -517,4 +517,85 @@ func TestService_Publish_PrivateNameTaken_AlreadyExists(t *testing.T) {
 	assert.False(t, isPub, "no publication record on cross-scope collision")
 }
 
+// TestService_Publish_CrossScopeCheck_PublisherOfError_Propagates verifies that
+// a PublisherOf error inside the cross-scope collision check propagates from
+// Publish before any write occurs. This covers the case where the publication
+// store is unavailable at collision-check time.
+func TestService_Publish_CrossScopeCheck_PublisherOfError_Propagates(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	publisher := uuid.New()
+	pubCtx := ctxWith(publisher, true)
+	repo.bucket(workflow.Private(publisher))["src"] = wf("src")
+
+	// Register "alpha" as private so the ResolveID check fires (not ErrNotFound).
+	alphaID := uuid.New()
+	require.NoError(t, reg.Register(pubCtx, workflow.RegistryEntry{
+		ID: alphaID, Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: uuid.New(),
+	}))
+
+	lookupErr := errors.New("publication store unavailable")
+	pubs.publisherOfErr = lookupErr
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+
+	err := svc.Publish(pubCtx, "src", "alpha", workflow.VisibilityPublic, "")
+	require.ErrorIs(t, err, lookupErr,
+		"PublisherOf error in the cross-scope check must propagate from Publish")
+
+	// No shared folder written.
+	_, hasShared := repo.bucket(workflow.Shared())["alpha"]
+	assert.False(t, hasShared, "no shared folder when cross-scope check errors")
+}
+
+// TestService_Publish_NoRegistry_CrossScopeNotChecked verifies that in local
+// (no-registry) mode, Publish does NOT enforce cross-scope name uniqueness —
+// the registry is the uniqueness authority; without it, local mode allows any
+// publish. This is the documented non-goal for unconfigured deployments.
+func TestService_Publish_NoRegistry_CrossScopeNotChecked(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	publisher := uuid.New()
+	pubCtx := ctxWith(publisher, true)
+	repo.bucket(workflow.Private(publisher))["src"] = wf("src")
+
+	// No registry wired.
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Publish(pubCtx, "src", "alpha", workflow.VisibilityPublic, "")
+	require.NoError(t, err,
+		"no-registry mode must allow publish regardless of cross-scope collisions")
+}
+
+// TestService_Publish_SamePublisher_CrossScopeCheckPasses verifies that the
+// cross-scope check does NOT block a legitimate re-publish by the same publisher.
+// When ResolveID returns an existing (shared-scope) entry and PublisherOf
+// confirms the same publisher, the check passes through to WriteAndRecord's
+// overwrite path.
+func TestService_Publish_SamePublisher_CrossScopeCheckPasses(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	publisher := uuid.New()
+	pubCtx := ctxWith(publisher, true)
+	repo.bucket(workflow.Private(publisher))["src"] = wf("src")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+
+	// First publish.
+	require.NoError(t, svc.Publish(pubCtx, "src", "alpha", workflow.VisibilityPublic, ""),
+		"first publish must succeed")
+
+	// Seed updated private source so re-publish has something to copy.
+	repo.bucket(workflow.Private(publisher))["src"] = wf("src")
+
+	// Re-publish by the same publisher must NOT be blocked by the cross-scope check.
+	err := svc.Publish(pubCtx, "src", "alpha", workflow.VisibilityPublic, "")
+	require.NoError(t, err,
+		"re-publish by the same publisher must not be blocked by the cross-scope collision check")
+}
+
 var _ = errors.Is

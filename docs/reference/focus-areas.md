@@ -20,7 +20,7 @@ that area. A red `make test` preempts everything until green.
 | 6 | Guarded Delete + Unpublish (`delete.go`, `CountActiveByWorkflowID` guard, teardown order, history preserved) | [x] | [x] | done |
 | 7 | Duplicate / Edit-shared / Archive / Transfer (`admin_ops.go`, `adminSharedWrite`, `ArchiveChecker`) | [x] | [x] | done |
 | 8 | Audit emits + `ListByTarget` + MCP tool surface (`tools_workflow.go`, audit repo, action constants) | [x] | [x] | done |
-| 9 | Global name-uniqueness invariant (create/rename/duplicate/publish all reject collisions consistently) | [x] | [ ] | |
+| 9 | Global name-uniqueness invariant (create/rename/duplicate/publish all reject collisions consistently) | [x] | [x] | done |
 | 10 | Non-transactional FS+SQLite cross-store integrity & rollback (rename/delete/transfer ordering, no half-state) | [ ] | [ ] | |
 | 11 | Admin authorization fail-closed (every lifecycle op gated; MCP surfaces forbidden correctly; local-mode admin) | [ ] | [ ] | |
 | 12 | Archived-state enforcement (trigger refuses archived; archived still listable/editable; idempotent toggle) | [ ] | [ ] | |
