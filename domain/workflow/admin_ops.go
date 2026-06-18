@@ -87,7 +87,7 @@ func (s *WorkflowService) Duplicate(ctx context.Context, name, newName string) e
 		}
 	}
 
-	s.audit.Record(ctx, audit.ActionWorkflowCreate, newName, auditDetail(map[string]string{
+	s.audit.Record(ctx, audit.ActionWorkflowDuplicate, newName, auditDetail(map[string]string{
 		"duplicatedFrom": name,
 	}))
 	return nil

@@ -59,3 +59,14 @@ func (s *Service) Record(ctx context.Context, action, target, detail string) {
 			"action", action, "target", target, "error", err)
 	}
 }
+
+// ListByTarget returns every audit event recorded against target (e.g. a
+// workflow name), newest first. A nil Service or nil store yields an empty
+// slice and no error, so the query surface is harmless in local/unconfigured
+// deployments.
+func (s *Service) ListByTarget(ctx context.Context, target string) ([]Event, error) {
+	if s == nil || s.store == nil {
+		return []Event{}, nil
+	}
+	return s.store.ListByTarget(ctx, target)
+}

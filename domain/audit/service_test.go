@@ -27,6 +27,18 @@ func (f *fakeStore) Append(_ context.Context, ev audit.Event) error {
 func (f *fakeStore) ListByActor(_ context.Context, _ string, _ int) ([]audit.Event, error) {
 	return f.events, nil
 }
+func (f *fakeStore) ListByTarget(_ context.Context, target string) ([]audit.Event, error) {
+	if f.failErr != nil {
+		return nil, f.failErr
+	}
+	out := make([]audit.Event, 0)
+	for _, ev := range f.events {
+		if ev.Target == target {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
 
 func TestService_Record_StampsActorFromContext(t *testing.T) {
 	store := &fakeStore{}
@@ -88,6 +100,34 @@ func TestService_SetLogger_NilArgPreservesLogger(t *testing.T) {
 		// Store fails → code tries to log; must not dereference a nil logger.
 		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
 	})
+}
+
+// TestService_ListByTarget_DelegatesToStore verifies the service forwards a
+// target-scoped query to the store and returns its events.
+func TestService_ListByTarget_DelegatesToStore(t *testing.T) {
+	store := &fakeStore{events: []audit.Event{
+		{ID: uuid.New(), Action: audit.ActionWorkflowRename, Target: "alpha"},
+		{ID: uuid.New(), Action: audit.ActionWorkflowDelete, Target: "beta"},
+	}}
+	svc := audit.NewService(store)
+	got, err := svc.ListByTarget(context.Background(), "alpha")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "alpha", got[0].Target)
+}
+
+// TestService_ListByTarget_NilStore_EmptyNoError verifies a nil/unconfigured
+// service returns an empty slice (not an error), so the query surface is
+// harmless in local mode.
+func TestService_ListByTarget_NilStore_EmptyNoError(t *testing.T) {
+	var svc *audit.Service
+	got, err := svc.ListByTarget(context.Background(), "alpha")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	got, err = audit.NewService(nil).ListByTarget(context.Background(), "alpha")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 // TestService_Record_TwoCallsProduceDifferentIDs verifies that each Record

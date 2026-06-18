@@ -45,7 +45,26 @@ func (r *AuditRepo) ListByActor(ctx context.Context, actorID string, limit int) 
 		return nil, fmt.Errorf("listing audit events: %w", err)
 	}
 	defer rows.Close()
+	return scanAuditEvents(rows)
+}
 
+// ListByTarget returns every event recorded against target (e.g. a workflow
+// name), newest first. Hand-written query (no sqlc), mirroring ListByActor but
+// keyed on the target column with no limit — a single workflow's audit trail is
+// bounded by its lifecycle ops, not by retention.
+func (r *AuditRepo) ListByTarget(ctx context.Context, target string) ([]audit.Event, error) {
+	const q = `SELECT id, occurred_at, actor_id, action, target, detail
+	           FROM audit_events WHERE target = ? ORDER BY occurred_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, target)
+	if err != nil {
+		return nil, fmt.Errorf("listing audit events by target: %w", err)
+	}
+	defer rows.Close()
+	return scanAuditEvents(rows)
+}
+
+// scanAuditEvents materializes the shared SELECT row shape into events.
+func scanAuditEvents(rows *sql.Rows) ([]audit.Event, error) {
 	out := make([]audit.Event, 0)
 	for rows.Next() {
 		var idStr, occurredStr, actor, action, target, detail string

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/google/uuid"
 )
@@ -99,6 +100,13 @@ func (s *WorkflowService) Rename(ctx context.Context, name, newName string) erro
 	if err := s.repo.Delete(ctx, scope, name); err != nil {
 		return fmt.Errorf("removing old workflow folder %q after rename: %w", name, err)
 	}
+
+	// Best-effort audit of the successful rename, carrying the before/after names
+	// (target is the new name, the workflow's current identity).
+	s.audit.Record(ctx, audit.ActionWorkflowRename, newName, auditDetail(map[string]string{
+		"from": name,
+		"to":   newName,
+	}))
 	return nil
 }
 

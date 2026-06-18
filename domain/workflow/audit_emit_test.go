@@ -22,6 +22,15 @@ func (r *recordingStore) Append(_ context.Context, ev audit.Event) error {
 func (r *recordingStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
 	return r.events, nil
 }
+func (r *recordingStore) ListByTarget(_ context.Context, target string) ([]audit.Event, error) {
+	out := make([]audit.Event, 0)
+	for _, ev := range r.events {
+		if ev.Target == target {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
 
 func TestService_Publish_EmitsAuditEvent(t *testing.T) {
 	repo := newFakeRepo()
@@ -197,11 +206,174 @@ func TestService_Copy_AdminOverride_EmitsAuditEvent(t *testing.T) {
 // FA #31: best-effort audit — SetVisibility still succeeds on store failure
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Phase 3 Task 4: lifecycle ops emit one audit event each on success
+// ---------------------------------------------------------------------------
+
+// TestService_Rename_EmitsAuditEvent verifies an admin Rename records exactly
+// one workflow.rename event carrying the before/after names.
+func TestService_Rename_EmitsAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+
+	require.NoError(t, svc.Rename(adminCtx, "alpha", "beta"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowRename, store.events[0].Action)
+	assert.Equal(t, "beta", store.events[0].Target)
+	assert.Contains(t, store.events[0].Detail, "alpha")
+	assert.Contains(t, store.events[0].Detail, "beta")
+}
+
+// TestService_Delete_EmitsAuditEvent verifies an admin Delete records exactly
+// one workflow.delete event for the removed workflow.
+func TestService_Delete_EmitsAuditEvent(t *testing.T) {
+	svc, repo, reg, _, _ := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	owner := uuid.New()
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.Delete(ctxWith(owner, true), "alpha"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowDelete, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+}
+
+// TestService_Unpublish_EmitsAuditEvent verifies an admin Unpublish records
+// exactly one workflow.unpublish event.
+func TestService_Unpublish_EmitsAuditEvent(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	store := &recordingStore{}
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetAudit(audit.NewService(store))
+	admin := uuid.New()
+	publisher := uuid.New()
+	repo.bucket(workflow.Shared())["alpha"] = wf("alpha")
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", publisher, "src", workflow.VisibilityPublic, ""))
+
+	require.NoError(t, svc.Unpublish(ctxWith(admin, true), "alpha"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowUnpublish, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+}
+
+// TestService_Duplicate_EmitsAuditEvent verifies an admin Duplicate records
+// exactly one workflow.duplicate event naming the source.
+func TestService_Duplicate_EmitsAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, _, _ := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.Duplicate(ctxWith(owner, true), "alpha", "beta"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowDuplicate, store.events[0].Action)
+	assert.Equal(t, "beta", store.events[0].Target)
+	assert.Contains(t, store.events[0].Detail, "alpha")
+}
+
+// TestService_Archive_EmitsAuditEvent verifies an admin Archive records exactly
+// one workflow.archive event.
+func TestService_Archive_EmitsAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, _, _ := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.Archive(ctxWith(owner, true), "alpha"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowArchive, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+}
+
+// TestService_Unarchive_EmitsAuditEvent verifies an admin Unarchive records
+// exactly one workflow.unarchive event.
+func TestService_Unarchive_EmitsAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, _, _ := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.Unarchive(ctxWith(owner, true), "alpha"))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowUnarchive, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+}
+
+// TestService_TransferOwnership_EmitsAuditEvent verifies an admin transfer of a
+// private workflow records exactly one workflow.transfer_ownership event with
+// the from/to owners.
+func TestService_TransferOwnership_EmitsAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	newOwner := uuid.New()
+	svc, repo, reg, _, _ := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.TransferOwnership(ctxWith(owner, true), "alpha", newOwner))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowTransfer, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+	assert.Contains(t, store.events[0].Detail, newOwner.String())
+}
+
+// TestService_AdminEditShared_EmitsEditSharedEvent verifies that when an admin
+// edits a shared-only workflow in place (the adminSharedWrite escape hatch),
+// exactly one workflow.edit_shared event is recorded.
+func TestService_AdminEditShared_EmitsEditSharedEvent(t *testing.T) {
+	repo := newFakeRepo()
+	store := &recordingStore{}
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetAudit(audit.NewService(store))
+	admin := uuid.New()
+
+	// A shared-only workflow (no private copy): the admin's Update lands in place.
+	repo.bucket(workflow.Shared())["alpha"] = wf("alpha")
+
+	require.NoError(t, svc.Update(ctxWith(admin, true), "alpha", wf("alpha")))
+
+	require.Len(t, store.events, 1)
+	assert.Equal(t, audit.ActionWorkflowEditShared, store.events[0].Action)
+	assert.Equal(t, "alpha", store.events[0].Target)
+}
+
+// TestService_NonAdminSharedWrite_NoEditSharedEvent verifies a non-admin write
+// to a shared-only workflow is rejected (ErrSharedReadOnly) and records nothing.
+func TestService_NonAdminSharedWrite_NoEditSharedEvent(t *testing.T) {
+	repo := newFakeRepo()
+	store := &recordingStore{}
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetAudit(audit.NewService(store))
+	user := uuid.New()
+	repo.bucket(workflow.Shared())["alpha"] = wf("alpha")
+
+	err := svc.Update(ctxWith(user, false), "alpha", wf("alpha"))
+	require.ErrorIs(t, err, workflow.ErrSharedReadOnly)
+	assert.Empty(t, store.events)
+}
+
 // failingStore returns an error on every Append, simulating an unavailable DB.
 type failingStore struct{ err error }
 
-func (f *failingStore) Append(_ context.Context, _ audit.Event) error    { return f.err }
+func (f *failingStore) Append(_ context.Context, _ audit.Event) error { return f.err }
 func (f *failingStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
+	return nil, f.err
+}
+func (f *failingStore) ListByTarget(context.Context, string) ([]audit.Event, error) {
 	return nil, f.err
 }
 

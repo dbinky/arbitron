@@ -146,6 +146,7 @@ type domainStack struct {
 	eng                 *engine.Engine
 	workflowRepo        workflow.WorkflowRepository
 	workflowSvc         *workflow.WorkflowService
+	auditSvc            *audit.Service
 	publishedRepo       *adaptsqlite.PublishedWorkflowRepo
 	instanceRepo        instance.InstanceRepository
 	nodeExecRepo        instance.NodeExecutionRepository
@@ -245,6 +246,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
 		WorkflowSvc:         ds.workflowSvc,
+		AuditSvc:            ds.auditSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
@@ -1036,6 +1038,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		eng:                 eng,
 		workflowRepo:        workflowRepo,
 		workflowSvc:         workflowSvc,
+		auditSvc:            auditSvc,
 		publishedRepo:       publishedRepo,
 		instanceRepo:        instanceRepo,
 		nodeExecRepo:        nodeExecRepo,

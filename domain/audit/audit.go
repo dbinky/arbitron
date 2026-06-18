@@ -21,6 +21,9 @@ const (
 	ActionWorkflowArchive          = "workflow.archive"
 	ActionWorkflowUnarchive        = "workflow.unarchive"
 	ActionWorkflowTransfer         = "workflow.transfer_ownership"
+	ActionWorkflowRename           = "workflow.rename"
+	ActionWorkflowDuplicate        = "workflow.duplicate"
+	ActionWorkflowEditShared       = "workflow.edit_shared"
 	ActionAdminOverride            = "admin.override"
 	// ActionLeadIntervention is emitted when a department lead (not an admin)
 	// intervenes on a run they do not own. Declared here, the single home for the
@@ -46,4 +49,7 @@ type EventStore interface {
 	// ListByActor returns the most recent events for an actor (newest first),
 	// capped at limit. Used by tests and any future audit-view surface.
 	ListByActor(ctx context.Context, actorID string, limit int) ([]Event, error)
+	// ListByTarget returns every event recorded against a target (e.g. a workflow
+	// name), newest first. Used by the workflow audit-trail query surface.
+	ListByTarget(ctx context.Context, target string) ([]Event, error)
 }

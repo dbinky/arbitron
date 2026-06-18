@@ -207,7 +207,14 @@ func (s *WorkflowService) adminSharedWrite(ctx context.Context, id identity.Iden
 		return fmt.Errorf("%w: %s", ErrSharedReadOnly, name)
 	}
 	// Admin edit-in-place against the shared scope.
-	return sharedWrite(ctx, Shared())
+	if err := sharedWrite(ctx, Shared()); err != nil {
+		return err
+	}
+	// Best-effort audit of the admin in-place shared edit (nil-safe).
+	s.audit.Record(ctx, audit.ActionWorkflowEditShared, name, auditDetail(map[string]string{
+		"scope": ScopeLabelShared,
+	}))
+	return nil
 }
 
 // Create writes a new workflow in the caller's private scope.
