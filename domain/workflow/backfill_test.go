@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -96,4 +97,56 @@ func TestBackfillRegistry_NoRegistry_NoOp(t *testing.T) {
 	repo.bucket(workflow.Private(owner))["p1"] = w
 
 	require.NoError(t, svc.BackfillRegistry(ctxWith(owner, false)))
+}
+
+// TestBackfillRegistry_AlreadyExistsOnRegister verifies that when a concurrent
+// backfill or lazy Load races ahead and claims a workflow name between our
+// ResolveID check and our Register call (returning ErrAlreadyExists), the
+// backfill treats that as a reconciled state — it continues to subsequent
+// workflows rather than propagating the error. This is the production scenario
+// where startup backfill and the first user Load overlap.
+func TestBackfillRegistry_AlreadyExistsOnRegister(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	owner := uuid.New()
+
+	// Two id-less workflows that need registration.
+	for _, n := range []string{"p1", "p2"} {
+		w := wf(n)
+		w.ID = uuid.Nil
+		repo.bucket(workflow.Private(owner))[n] = w
+	}
+
+	// Simulate the concurrent process: every Register call returns ErrAlreadyExists
+	// (the concurrent load/backfill already claimed the name).
+	reg.failReg = workflow.ErrAlreadyExists
+
+	err := svc.BackfillRegistry(ctxWith(owner, false))
+	assert.NoError(t, err, "ErrAlreadyExists on Register must be treated as reconciled, not a fatal error")
+	// Neither workflow was registered by THIS backfill run; the concurrent process
+	// owns them. Registry count stays zero from this run's perspective.
+	assert.Equal(t, 0, reg.count(), "concurrent claims consumed both registrations")
+}
+
+// TestBackfillRegistry_RegisterErrorPropagates verifies that a non-ErrAlreadyExists
+// error from Register aborts the backfill immediately and surfaces the wrapped error.
+func TestBackfillRegistry_RegisterErrorPropagates(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	owner := uuid.New()
+
+	w := wf("p1")
+	w.ID = uuid.Nil
+	repo.bucket(workflow.Private(owner))["p1"] = w
+
+	boom := errors.New("registry unavailable")
+	reg.failReg = boom
+
+	err := svc.BackfillRegistry(ctxWith(owner, false))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom, "a non-AlreadyExists Register failure must abort and propagate the error")
 }
