@@ -339,69 +339,49 @@ func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityF
 
 // Load returns a workflow visible to the caller (private first, then shared).
 //
-// Lazy backfill: when a registry is wired and the loaded definition has no id, an
-// id is allocated, persisted into the (writable) folder and registered, so legacy
-// id-less workflows migrate transparently on first load and keep a stable id
-// across reloads. Only the caller's own private workflows are persisted in place
-// (shared workflows are read-only and are reconciled by the startup backfill).
+// Load is contractually a QUERY: when a registry is wired and the loaded
+// definition has no id, an id is resolved-or-allocated purely IN MEMORY and
+// returned — Load never INSERTs a registry row or rewrites the folder as a side
+// effect of a read. That keeps a reader-role caller (or a read-only DB) from
+// getting a write error on a pure read, and keeps a read storm on a legacy
+// id-less workflow from funnelling N concurrent Loads into folder+registry writes
+// (a SQLite write-contention hotspot). The DURABLE write is owned by the startup
+// BackfillRegistry, which registers and persists the id once.
 func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	wf, scope, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
+	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
 	if err != nil {
 		return nil, err
 	}
 	if s.registry != nil && wf.ID == uuid.Nil {
-		if err := s.ensureID(ctx, scope, name, wf); err != nil {
+		resolvedID, err := s.resolveOrAllocateID(ctx, name)
+		if err != nil {
 			return nil, err
 		}
+		wf.ID = resolvedID
 	}
 	return wf, nil
 }
 
-// ensureID backfills a missing id on an already-loaded definition: it adopts an
-// existing registry id for the name if one is present, otherwise allocates and
-// registers a new one. The id is mutated onto wf and, for the caller's own
-// private scope, persisted back into the folder so it is stable across reloads.
-// A nil registry makes this a no-op (handled by the caller).
-func (s *WorkflowService) ensureID(ctx context.Context, scope Scope, name string, wf *Workflow) error {
-	// Adopt an existing registry id for this name, if any (e.g. registered by the
-	// startup backfill while the folder stayed id-less).
-	if existing, err := s.registry.ResolveID(ctx, name); err == nil {
-		wf.ID = existing
-	} else if errors.Is(err, ErrNotFound) {
-		// No row yet: allocate and register one.
-		wf.ID = uuid.New()
-		if regErr := s.registry.Register(ctx, RegistryEntry{
-			ID:      wf.ID,
-			Name:    name,
-			Scope:   scope.Kind,
-			OwnerID: scope.OwnerID,
-		}); regErr != nil {
-			// A concurrent backfill may have just inserted the row; adopt it.
-			if errors.Is(regErr, ErrAlreadyExists) {
-				if adopted, rerr := s.registry.ResolveID(ctx, name); rerr == nil {
-					wf.ID = adopted
-				} else {
-					return rerr
-				}
-			} else {
-				return regErr
-			}
-		}
-	} else {
-		return err
+// resolveOrAllocateID returns a stable id for an already-loaded id-less
+// definition WITHOUT persisting anything: it adopts the registry id for the name
+// when one already exists (e.g. registered by the startup BackfillRegistry),
+// otherwise allocates a fresh id in memory and returns it. It does NOT Register
+// the row or rewrite the folder — a read must not write. The durable write is the
+// startup backfill's job; a transient pre-backfill load simply surfaces an
+// allocated id that becomes stable once the backfill runs.
+func (s *WorkflowService) resolveOrAllocateID(ctx context.Context, name string) (uuid.UUID, error) {
+	existing, err := s.registry.ResolveID(ctx, name)
+	if err == nil {
+		return existing, nil
 	}
-	// Persist the id back into the folder, but only for the caller's own private
-	// workflow (shared is read-only here; startup backfill persists shared ids).
-	if scope.Kind == ScopePrivate {
-		if err := s.repo.Update(ctx, scope, name, wf); err != nil {
-			return err
-		}
+	if errors.Is(err, ErrNotFound) {
+		return uuid.New(), nil
 	}
-	return nil
+	return uuid.Nil, err
 }
 
 // resolveID returns the stable id registered for name (name→id). It is the

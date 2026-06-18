@@ -25,6 +25,7 @@ type fakeRegistry struct {
 	failRename      error // when set, Rename returns this error (to probe rename rollback)
 	failList        error // when set, List returns this error
 	failResolve     error // when set, Resolve returns this error (to probe scope-resolution failure paths)
+	failResolveID   error // when set, ResolveID returns this error (to probe read-path resolve failure)
 	failSetArchived error // when set, SetArchived returns this error (to probe archive failure path)
 	failSetOwner    error // when set, SetOwner returns this error (to probe transfer rollback)
 }
@@ -66,6 +67,9 @@ func (r *fakeRegistry) Resolve(_ context.Context, name string) (workflow.Registr
 func (r *fakeRegistry) ResolveID(_ context.Context, name string) (uuid.UUID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failResolveID != nil {
+		return uuid.Nil, r.failResolveID
+	}
 	e, ok := r.byName[name]
 	if !ok {
 		return uuid.Nil, workflow.ErrNotFound
@@ -334,12 +338,13 @@ func TestService_Create_CaseSensitiveNames(t *testing.T) {
 	assert.Equal(t, 2, reg.count())
 }
 
-// --- Lazy backfill on load ---
+// --- Resolve-or-allocate id on load (Should Fix #3: no write on the read path) ---
 
-// TestService_Load_LazyBackfill_StableAcrossReloads verifies that loading an
-// id-less workflow assigns+persists a stable id and registers it, and that a
-// reload returns the same id.
-func TestService_Load_LazyBackfill_StableAcrossReloads(t *testing.T) {
+// TestService_Load_ResolveOrAllocate_DoesNotWrite verifies that loading an
+// id-less workflow resolves-or-allocates the id PURELY IN MEMORY: Load returns a
+// non-nil id but does NOT register a registry row or rewrite the folder. A read
+// must not write — the durable write is owned by the startup BackfillRegistry.
+func TestService_Load_ResolveOrAllocate_DoesNotWrite(t *testing.T) {
 	repo := newFakeRepo()
 	reg := newFakeRegistry()
 	svc := workflow.NewWorkflowService(repo, nil)
@@ -354,20 +359,43 @@ func TestService_Load_LazyBackfill_StableAcrossReloads(t *testing.T) {
 
 	loaded, err := svc.Load(ctx, "legacy")
 	require.NoError(t, err)
-	require.NotEqual(t, uuid.Nil, loaded.ID, "lazy backfill assigned an id")
-	firstID := loaded.ID
+	require.NotEqual(t, uuid.Nil, loaded.ID, "Load surfaces an allocated id in memory")
 
-	// The id was persisted to the folder and registered.
-	assert.Equal(t, firstID, repo.bucket(workflow.Private(owner))["legacy"].ID)
-	regID, err := reg.ResolveID(ctx, "legacy")
-	require.NoError(t, err)
-	assert.Equal(t, firstID, regID)
+	// No DURABLE write happened on the read path: no registry row was inserted.
+	// (The startup BackfillRegistry owns the durable write; a read must not write.)
+	assert.Equal(t, 0, reg.count(), "Load must NOT register a registry row on the read path")
+	_, regErr := reg.ResolveID(ctx, "legacy")
+	assert.ErrorIs(t, regErr, workflow.ErrNotFound, "no registry row was inserted by a read")
+}
 
-	// Reload yields the SAME id (no re-allocation).
-	reloaded, err := svc.Load(ctx, "legacy")
+// TestService_Load_AdoptsBackfilledID verifies that once the startup backfill has
+// registered the name, Load adopts that durable id (stable across reloads) rather
+// than allocating a new one.
+func TestService_Load_AdoptsBackfilledID(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	owner := uuid.New()
+	ctx := ctxWith(owner, false)
+
+	legacy := wf("legacy")
+	legacy.ID = uuid.Nil
+	repo.bucket(workflow.Private(owner))["legacy"] = legacy
+
+	// Simulate the startup backfill having registered the durable id.
+	backfilledID := uuid.New()
+	require.NoError(t, reg.Register(ctx, workflow.RegistryEntry{
+		ID: backfilledID, Name: "legacy", Scope: workflow.ScopePrivate, OwnerID: owner,
+	}))
+
+	first, err := svc.Load(ctx, "legacy")
 	require.NoError(t, err)
-	assert.Equal(t, firstID, reloaded.ID, "id stable across reloads")
-	assert.Equal(t, 1, reg.count(), "no duplicate registry rows on reload")
+	assert.Equal(t, backfilledID, first.ID, "Load adopts the backfilled durable id")
+
+	second, err := svc.Load(ctx, "legacy")
+	require.NoError(t, err)
+	assert.Equal(t, backfilledID, second.ID, "the adopted id is stable across reloads")
 }
 
 // TestService_Load_BackfillAdoptsExistingRow verifies that if a registry row
@@ -451,33 +479,31 @@ func TestService_Create_RollbackDeleteFails_CreateErrorStillReturned(t *testing.
 	assert.Equal(t, 1, reg.count(), "orphan row remains because delete failed")
 }
 
-// --- Error: ensureID path D (folder Update fails during lazy backfill) ---
+// --- Error: a non-ErrNotFound resolve failure on the read path propagates ---
 
-// TestService_Load_EnsureID_UpdateFailurePropagates verifies that when the
-// folder persistence step (repo.Update) inside ensureID fails, Load propagates
-// the error and does not return a half-initialised workflow with a freshly
-// allocated id that was never durably written.
-func TestService_Load_EnsureID_UpdateFailurePropagates(t *testing.T) {
-	inner := newFakeRepo()
+// TestService_Load_ResolveError_Propagates verifies that when the registry
+// ResolveID returns a non-ErrNotFound error during the read-path id resolution,
+// Load surfaces it (rather than masking it as a fresh allocation). No write is
+// attempted on the read path.
+func TestService_Load_ResolveError_Propagates(t *testing.T) {
+	repo := newFakeRepo()
 	reg := newFakeRegistry()
 	owner := uuid.New()
 	ctx := ctxWith(owner, false)
 
-	// Seed an id-less (legacy) workflow in the inner repo.
 	legacy := wf("legacy")
 	legacy.ID = uuid.Nil
-	inner.bucket(workflow.Private(owner))["legacy"] = legacy
+	repo.bucket(workflow.Private(owner))["legacy"] = legacy
 
-	// Wrap inner with a repo that intercepts Update and returns a fixed error.
-	updateErr := errors.New("disk full")
-	repo := &errOnUpdateRepo{fakeRepo: inner, err: updateErr}
+	resolveErr := errors.New("registry unavailable")
+	reg.failResolveID = resolveErr
 
 	svc := workflow.NewWorkflowService(repo, nil)
 	svc.SetRegistry(reg)
 
 	_, err := svc.Load(ctx, "legacy")
-	require.ErrorIs(t, err, updateErr,
-		"Load must propagate the Update error so the caller knows the id was not durably persisted")
+	require.ErrorIs(t, err, resolveErr,
+		"a non-ErrNotFound resolve error must propagate from the read-path id resolution")
 }
 
 // errOnUpdateRepo wraps fakeRepo and injects an error on every Update call.
