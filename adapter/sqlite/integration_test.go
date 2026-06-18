@@ -336,6 +336,42 @@ func TestMigration007_InterventionsTableExists(t *testing.T) {
 	assert.Equal(t, "idx_instance_interventions_instance", idx)
 }
 
+// TestMigration016_WorkflowIdentitySchemaExists verifies that migration 016
+// creates the workflow_identity table and its index, and that the UNIQUE(name)
+// constraint — which is the authoritative global-uniqueness rule per the spec —
+// is enforced at the database level.
+func TestMigration016_WorkflowIdentitySchemaExists(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Table must exist.
+	var tblName string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_identity'").Scan(&tblName))
+	assert.Equal(t, "workflow_identity", tblName)
+
+	// Owner index must exist.
+	var idxName string
+	require.NoError(t, db.DB.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_workflow_identity_owner'").Scan(&idxName))
+	assert.Equal(t, "idx_workflow_identity_owner", idxName)
+
+	// UNIQUE(name) is the authoritative global-uniqueness rule: verify it is
+	// enforced at the SQL level, not only by application code.
+	id1 := uuid.New().String()
+	id2 := uuid.New().String()
+	_, err := db.DB.Exec(
+		`INSERT INTO workflow_identity (id, name, scope) VALUES (?, ?, 'private')`,
+		id1, "collision-test")
+	require.NoError(t, err)
+
+	_, err = db.DB.Exec(
+		`INSERT INTO workflow_identity (id, name, scope) VALUES (?, ?, 'shared')`,
+		id2, "collision-test")
+	require.Error(t, err, "UNIQUE(name) must prevent a second row with the same name")
+	assert.Contains(t, err.Error(), "UNIQUE constraint failed",
+		"SQLite must surface the constraint name in the error message")
+}
+
 func TestInterventionRepo_CreateAndList(t *testing.T) {
 	db := setupTestDB(t)
 	userRepo := NewUserRepo(db.DB)

@@ -12,7 +12,7 @@ that area. A red `make test` preempts everything until green.
 
 | # | Focus Area | Pass 1 | Pass 2 | Status |
 |---|---|---|---|---|
-| 1 | Stable identity registry (`domain/workflow/registry.go`, `adapter/sqlite/workflow_identity_repo.go`, migration 016 — id allocation, name↔id, `UNIQUE(name)`) | [ ] | [ ] | |
+| 1 | Stable identity registry (`domain/workflow/registry.go`, `adapter/sqlite/workflow_identity_repo.go`, migration 016 — id allocation, name↔id, `UNIQUE(name)`) | [x] | [ ] | |
 | 2 | Service identity integration + backfill (`service.go` register/uniqueness/resolve, `backfill.go`, `main.go` wiring) | [ ] | [ ] | |
 | 3 | Reference columns + backfill (migration 017, `ref_backfill*` — instances/schedules/publications `workflow_id`) | [ ] | [ ] | |
 | 4 | Trigger / cron / publish by id (`engine.go` resolver+stamp, schedule evaluator/service, publish link) | [ ] | [ ] | |

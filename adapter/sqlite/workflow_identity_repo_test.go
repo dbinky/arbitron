@@ -203,6 +203,34 @@ func TestWorkflowIdentity_IsArchived(t *testing.T) {
 	assert.ErrorIs(t, err, workflow.ErrNotFound)
 }
 
+// TestWorkflowIdentity_SetArchivedToggle verifies the archive flag can be
+// toggled: true → false → true, with IsArchived reflecting each transition.
+// The unarchive direction (SetArchived false) is distinct from the archive
+// direction and must be explicitly exercised.
+func TestWorkflowIdentity_SetArchivedToggle(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+	e := workflow.RegistryEntry{ID: uuid.New(), Name: "wf", Scope: workflow.ScopePrivate, OwnerID: uuid.New()}
+	require.NoError(t, repo.Register(ctx, e))
+
+	// Archive.
+	require.NoError(t, repo.SetArchived(ctx, e.ID, true))
+	got, err := repo.IsArchived(ctx, "wf")
+	require.NoError(t, err)
+	assert.True(t, got, "archived after SetArchived(true)")
+
+	// Unarchive.
+	require.NoError(t, repo.SetArchived(ctx, e.ID, false))
+	got, err = repo.IsArchived(ctx, "wf")
+	require.NoError(t, err)
+	assert.False(t, got, "unarchived after SetArchived(false)")
+
+	// Re-archive (idempotent second archive).
+	require.NoError(t, repo.SetArchived(ctx, e.ID, true))
+	got, err = repo.IsArchived(ctx, "wf")
+	require.NoError(t, err)
+	assert.True(t, got, "re-archived after second SetArchived(true)")
+}
+
 // --- Edge ------------------------------------------------------------------
 
 // TestWorkflowIdentity_ConcurrentRegisterSameName verifies the UNIQUE(name)
