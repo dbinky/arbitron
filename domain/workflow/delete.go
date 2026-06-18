@@ -33,17 +33,17 @@ func scopeLabel(k ScopeKind) string {
 //     are protected. An admin delete service that cannot count live runs is not
 //     operable.
 //
-// Only the LOCAL path (no registry wired, which also has no registry id to count
-// by) skips the guard — there is no stable id, no counter, and no shared store of
-// live runs to protect against.
+// Only the LOCAL path (the LocalRegistry Null-Object, which also has no durable
+// registry id to count by) skips the guard — there is no stable id, no counter,
+// and no shared store of live runs to protect against.
 func (s *Service) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name string) error {
 	if s.activeInstances == nil {
-		if s.registry != nil {
+		if !s.localMode() {
 			// Server/admin path with a half-wired stack: refuse rather than silently
 			// skip the running-instance guard.
 			return fmt.Errorf("%w: active-instance counter not wired for %q", ErrMisconfiguredGuard, name)
 		}
-		return nil // local/unconfigured mode: no registry id to count by.
+		return nil // local mode: no durable registry id to count by.
 	}
 	active, err := s.activeInstances.CountActiveByWorkflowID(ctx, id)
 	if err != nil {
@@ -76,28 +76,29 @@ func (s *Service) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name
 //  6. Remove the registry row LAST, so a partial failure never leaves a dangling
 //     id whose folder is already gone (the registry row is the identity authority).
 //
-// When no registry is wired (MCP/local mode), Delete falls back to the prior
-// behavior: an admin-gated delete of the caller's private folder (with the shared
-// scope still surfaced via translateWrite for an informative error).
+// SINGLE PATH: the registry field is unconditionally populated (the real identity
+// registry in server mode, the LocalRegistry Null-Object in local mode), so Delete
+// has no local-mode branch. In local mode the Null-Object's Resolve yields the
+// caller's private scope (mapping a shared-only name to ErrSharedReadOnly and an
+// unknown name to ErrNotFound), the guard is skipped (no durable id to count by),
+// the publication step is a no-op (no published store), and the id-targeted
+// registry Delete is a no-op — so the steps collapse to the prior admin-gated
+// delete of the caller's private folder.
 func (s *Service) Delete(ctx context.Context, name string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
 
-	// Local/unconfigured mode: no global identity to coordinate. Delete the
-	// caller's private folder, mapping a shared-only name to an informative error.
-	if s.registry == nil {
-		id, err := caller(ctx)
-		if err != nil {
-			return err
-		}
-		return s.translateWrite(ctx, name, s.repo.Delete(ctx, Private(id.UserID), name))
-	}
-
-	// Resolve the stable id and the scope (which folder to remove) in one lookup.
+	// SINGLE PATH for both modes: the registry field is unconditionally populated
+	// (the real identity registry in server mode, the LocalRegistry Null-Object in
+	// local mode), so there is no local-mode branch here. In local mode
+	// LocalRegistry.Resolve reproduces the prior private-folder semantics (a
+	// shared-only name maps to ErrSharedReadOnly, an unknown name to ErrNotFound)
+	// and its id-targeted Delete is a no-op, so the steps below collapse to "delete
+	// the caller's private folder".
 	id, scope, err := s.resolveIDScope(ctx, name)
 	if err != nil {
-		return err // ErrNotFound propagates
+		return err // ErrNotFound / ErrSharedReadOnly propagate
 	}
 
 	// Guard: refuse while non-terminal instances carry this id. History (terminal
@@ -178,11 +179,11 @@ func (s *Service) Unpublish(ctx context.Context, name string) error {
 	}
 
 	// Step 1: resolve the shared name's registry id (pre-flight for the guard and
-	// step 5). When no registry is wired (local/unconfigured mode) or the entry is
+	// step 5). In local mode (the LocalRegistry Null-Object) or when the entry is
 	// missing, sharedID stays Nil — the guard is then skipped (no id to count by)
 	// and step 5 is skipped.
 	var sharedID uuid.UUID
-	if s.registry != nil {
+	if !s.localMode() {
 		if id, rerr := s.registry.ResolveID(ctx, name); rerr == nil {
 			sharedID = id
 		} else if !errors.Is(rerr, ErrNotFound) {
@@ -210,8 +211,10 @@ func (s *Service) Unpublish(ctx context.Context, name string) error {
 
 	// Step 5: remove the shared registry row LAST so a re-publish under the same
 	// name is possible. Without this, the cross-scope uniqueness check in Publish
-	// would see the lingering registry entry and reject the re-publish.
-	if s.registry != nil && sharedID != uuid.Nil {
+	// would see the lingering registry entry and reject the re-publish. sharedID is
+	// non-Nil only in server mode (it stays Nil in local mode), so this is skipped
+	// in local mode.
+	if sharedID != uuid.Nil {
 		if err := s.registry.Delete(ctx, sharedID); err != nil {
 			return fmt.Errorf("removing shared registry row for %q: %w", name, err)
 		}

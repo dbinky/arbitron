@@ -24,7 +24,7 @@ import (
 // A nil registry or nil reference backfiller makes this a no-op
 // (local/unconfigured deployments).
 func (s *Service) BackfillReferences(ctx context.Context) error {
-	if s.registry == nil || s.refBackfiller == nil {
+	if s.localMode() || s.refBackfiller == nil {
 		return nil
 	}
 
@@ -69,7 +69,7 @@ func (s *Service) BackfillReferences(ctx context.Context) error {
 // folder on the same boot; SweepOrphans therefore focuses on the dangling-id
 // shape that the registry-side backfill cannot see.
 func (s *Service) SweepOrphans(ctx context.Context) error {
-	if s.registry == nil || s.refBackfiller == nil {
+	if s.localMode() || s.refBackfiller == nil {
 		return nil
 	}
 

@@ -21,7 +21,7 @@ import (
 //
 // A nil registry makes this a no-op (local/unconfigured deployments).
 func (s *Service) BackfillRegistry(ctx context.Context) error {
-	if s.registry == nil {
+	if s.localMode() {
 		return nil
 	}
 	id, err := caller(ctx)

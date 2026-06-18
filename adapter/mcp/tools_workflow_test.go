@@ -34,6 +34,10 @@ type stubWorkflowRepo struct {
 	writeFileFn  func(ctx context.Context, name, path string, content []byte) error
 	deleteFileFn func(ctx context.Context, name, path string) error
 	listFilesFn  func(ctx context.Context, name string) ([]string, error)
+	// existsFn drives Exists per scope+name; nil means "nothing exists". Local-mode
+	// Delete resolves the caller's private scope via Exists before removing, so a
+	// delete test must report the workflow as existing in the expected scope.
+	existsFn func(scope workflow.Scope, name string) bool
 }
 
 func (s *stubWorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workflow.WorkflowSummary, error) {
@@ -101,7 +105,10 @@ func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope
 	return nil
 }
 
-func (s *stubWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
+func (s *stubWorkflowRepo) Exists(_ context.Context, scope workflow.Scope, name string) (bool, error) {
+	if s.existsFn != nil {
+		return s.existsFn(scope, name), nil
+	}
 	return false, nil
 }
 
@@ -473,6 +480,10 @@ func TestWorkflowDelete(t *testing.T) {
 	t.Run("happy path deletes workflow", func(t *testing.T) {
 		var capturedName string
 		repo := &stubWorkflowRepo{
+			// Local-mode Delete resolves the caller's private scope first.
+			existsFn: func(scope workflow.Scope, name string) bool {
+				return scope.Kind == workflow.ScopePrivate && name == "to-delete"
+			},
 			deleteFn: func(_ context.Context, name string) error {
 				capturedName = name
 				return nil
@@ -511,8 +522,10 @@ func TestWorkflowDelete(t *testing.T) {
 	// "shared and read-only" message — not a generic internal error.
 	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
 		repo := &stubWorkflowRepo{
-			deleteFn: func(_ context.Context, _ string) error {
-				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			// "pub" exists ONLY in the shared scope: local-mode Delete maps it to
+			// ErrSharedReadOnly (shared workflows are read-only in local mode).
+			existsFn: func(scope workflow.Scope, name string) bool {
+				return scope.Kind == workflow.ScopeShared && name == "pub"
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})

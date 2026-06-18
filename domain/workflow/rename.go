@@ -50,9 +50,9 @@ func (s *Service) Rename(ctx context.Context, name, newName string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
-	if s.registry == nil {
-		// Rename is a registry-coordinated lifecycle op; without a registry there is
-		// no global identity to move (local/unconfigured mode does not expose it).
+	if s.localMode() {
+		// Rename is a registry-coordinated lifecycle op; without a global identity
+		// store there is nothing to move (local/unconfigured mode does not expose it).
 		return fmt.Errorf("%w: workflow renaming is not configured", ErrUnauthorized)
 	}
 

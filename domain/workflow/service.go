@@ -138,8 +138,14 @@ func auditDetail(m map[string]string) string {
 // NewWorkflowService builds a Service over the given repository and an
 // optional publisher lookup (nil is allowed — shared list entries then carry no
 // publisher). When the lookup also satisfies PublishedStore, Publish is enabled.
+//
+// The registry field is UNCONDITIONALLY populated: it defaults to the local-mode
+// LocalRegistry Null-Object so there is a SINGLE Delete path (no nil-branch). A
+// server/admin deployment overrides it with the real identity registry via
+// SetRegistry; the registry-coordinated ops detect the Null-Object via
+// localMode() and preserve their prior local behavior.
 func NewWorkflowService(repo Repository, publishers PublisherLookup) *Service {
-	s := &Service{repo: repo, publishers: publishers}
+	s := &Service{repo: repo, publishers: publishers, registry: NewLocalRegistry(repo)}
 	if store, ok := publishers.(PublishedStore); ok {
 		s.published = store
 	}
@@ -230,7 +236,7 @@ func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 	if err != nil {
 		return err
 	}
-	if s.registry == nil {
+	if s.localMode() {
 		return s.repo.Create(ctx, Private(id.UserID), name, wf)
 	}
 
@@ -356,7 +362,7 @@ func (s *Service) Load(ctx context.Context, name string) (*Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.registry != nil && wf.ID == uuid.Nil {
+	if !s.localMode() && wf.ID == uuid.Nil {
 		resolvedID, err := s.resolveOrAllocateID(ctx, name)
 		if err != nil {
 			return nil, err
@@ -551,7 +557,7 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 	// publication record exists for it, the name is registered as a private
 	// workflow in another scope — reject the cross-scope collision before writing
 	// anything.
-	if s.registry != nil {
+	if !s.localMode() {
 		if _, rerr := s.registry.ResolveID(ctx, publishedName); rerr == nil {
 			_, isPub, perr := s.published.PublisherOf(ctx, publishedName)
 			if perr != nil {
@@ -590,7 +596,7 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 	// published_workflows store remains the publisher-overwrite authority. The
 	// resolved/allocated id is then linked onto the publication record so the
 	// published_workflows row references the workflow by its stable identity.
-	if s.registry != nil {
+	if !s.localMode() {
 		publishedID, rerr := s.registry.ResolveID(ctx, publishedName)
 		if errors.Is(rerr, ErrNotFound) {
 			publishedID = uuid.New()

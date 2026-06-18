@@ -34,7 +34,7 @@ func (s *Service) Duplicate(ctx context.Context, name, newName string) error {
 	if err != nil {
 		return err
 	}
-	if s.registry == nil {
+	if s.localMode() {
 		return fmt.Errorf("%w: workflow duplication is not configured", ErrUnauthorized)
 	}
 
@@ -108,7 +108,7 @@ func (s *Service) setArchived(ctx context.Context, name string, archived bool) e
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
-	if s.registry == nil {
+	if s.localMode() {
 		return fmt.Errorf("%w: workflow archiving is not configured", ErrUnauthorized)
 	}
 	id, err := s.registry.ResolveID(ctx, name)
@@ -143,7 +143,7 @@ func (s *Service) TransferOwnership(ctx context.Context, name string, newOwnerID
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
-	if s.registry == nil {
+	if s.localMode() {
 		return fmt.Errorf("%w: workflow ownership transfer is not configured", ErrUnauthorized)
 	}
 

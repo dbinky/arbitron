@@ -1531,6 +1531,9 @@ func TestWorkflowHandler_Update(t *testing.T) {
 func TestWorkflowHandler_Delete(t *testing.T) {
 	t.Run("deletes workflow and returns 204", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
+		// The handler runs in local mode (LocalRegistry), so Delete resolves the
+		// caller's private scope first; seed the private workflow so it exists.
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
@@ -1573,6 +1576,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 	t.Run("returns 500 for unexpected repo error", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"} // private exists
 		repo.deleteFn = func(_ context.Context, _ string) error {
 			return fmt.Errorf("disk full")
 		}
@@ -1590,9 +1594,9 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 	// Failure: deleting a shared-only workflow returns 409 Conflict, not 404.
 	t.Run("returns 409 when workflow is shared-only", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
-		repo.deleteFn = func(_ context.Context, _ string) error {
-			return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
-		}
+		// Name exists ONLY in the shared scope: local-mode Delete resolves it to
+		// ErrSharedReadOnly (shared workflows are read-only in local mode).
+		repo.shared["pub"] = &workflow.Workflow{Name: "pub"}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/pub", nil)
@@ -1632,6 +1636,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 	// rather than a server fault.
 	t.Run("returns 409 when workflow has running instances", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"} // private exists
 		repo.deleteFn = func(_ context.Context, _ string) error {
 			return fmt.Errorf("%w: test-wf (1 active)", workflow.ErrHasRunningInstances)
 		}
