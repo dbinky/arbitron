@@ -61,12 +61,22 @@ func (s *Service) Record(ctx context.Context, action, target, detail string) {
 }
 
 // ListByTarget returns every audit event recorded against target (e.g. a
-// workflow name), newest first. A nil Service or nil store yields an empty
-// slice and no error, so the query surface is harmless in local/unconfigured
-// deployments.
+// workflow name), newest first. The audit trail is a privileged FORENSIC surface,
+// so the admin gate lives HERE in the domain service (not only in the MCP
+// adapter): a future transport — an HTTP audit route, a new tool — cannot forget
+// to gate it. A non-admin (or unauthenticated) caller is refused with
+// identity.ErrForbidden, the canonical sentinel the adapters map to 403.
+//
+// A nil Service or nil store yields an empty slice and no error, so the query
+// surface stays harmless in local/unconfigured deployments (there is nothing to
+// leak); the gate applies once the service is operational.
 func (s *Service) ListByTarget(ctx context.Context, target string) ([]Event, error) {
 	if s == nil || s.store == nil {
 		return []Event{}, nil
+	}
+	id, ok := identity.FromContext(ctx)
+	if !ok || !id.IsAdmin() {
+		return nil, identity.ErrForbidden
 	}
 	return s.store.ListByTarget(ctx, target)
 }
