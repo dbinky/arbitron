@@ -139,7 +139,9 @@ func TestWorkflowIdentity_RegisterDuplicateName(t *testing.T) {
 }
 
 // TestWorkflowIdentity_RenameToExistingName verifies Rename onto a name already
-// held by another row returns ErrAlreadyExists (duplicate-rename edge).
+// held by another row returns ErrAlreadyExists (duplicate-rename edge). Both the
+// source (b) and the target (a) must be left completely intact — the failed rename
+// must not mutate either row.
 func TestWorkflowIdentity_RenameToExistingName(t *testing.T) {
 	repo, ctx := newWorkflowIdentityRepo(t)
 	a := workflow.RegistryEntry{ID: uuid.New(), Name: "a", Scope: workflow.ScopePrivate, OwnerID: uuid.New()}
@@ -151,9 +153,14 @@ func TestWorkflowIdentity_RenameToExistingName(t *testing.T) {
 	assert.ErrorIs(t, err, workflow.ErrAlreadyExists)
 
 	// b keeps its original name.
-	gotName, err := repo.ResolveName(ctx, b.ID)
+	gotBName, err := repo.ResolveName(ctx, b.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "b", gotName)
+	assert.Equal(t, "b", gotBName, "source entry (b) is intact after failed rename")
+
+	// a is also intact — its id is unchanged.
+	gotAID, err := repo.ResolveID(ctx, "a")
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, gotAID, "target entry (a) is intact after failed rename")
 }
 
 // --- Error -----------------------------------------------------------------
@@ -273,4 +280,59 @@ func TestWorkflowIdentity_ConcurrentRegisterSameName(t *testing.T) {
 	// The winner is resolvable.
 	_, err := repo.ResolveID(ctx, "race")
 	assert.NoError(t, err)
+}
+
+// TestWorkflowIdentity_ConcurrentRenameSameTarget verifies that when two goroutines
+// race to rename different workflows to the same target name, exactly one wins and
+// the other gets ErrAlreadyExists. After the race, no entries are lost or
+// duplicated: the total count is still 2, and "gamma" resolves to exactly one of
+// the original IDs.
+func TestWorkflowIdentity_ConcurrentRenameSameTarget(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+
+	alpha := workflow.RegistryEntry{ID: uuid.New(), Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: uuid.New()}
+	beta := workflow.RegistryEntry{ID: uuid.New(), Name: "beta", Scope: workflow.ScopePrivate, OwnerID: uuid.New()}
+	require.NoError(t, repo.Register(ctx, alpha))
+	require.NoError(t, repo.Register(ctx, beta))
+
+	const goroutines = 2
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+	ids := []uuid.UUID{alpha.ID, beta.ID}
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = repo.Rename(ctx, ids[i], "gamma")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var ok, dup int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, workflow.ErrAlreadyExists):
+			dup++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	assert.Equal(t, 1, ok, "exactly one rename must win")
+	assert.Equal(t, goroutines-1, dup, "the loser must get ErrAlreadyExists")
+
+	// "gamma" exists and maps to one of the original IDs.
+	gammaID, err := repo.ResolveID(ctx, "gamma")
+	require.NoError(t, err)
+	assert.True(t, gammaID == alpha.ID || gammaID == beta.ID,
+		"gamma must resolve to one of the original workflow IDs")
+
+	// No entries were lost or duplicated.
+	all, err := repo.List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, all, 2, "total entry count unchanged after concurrent rename")
 }
