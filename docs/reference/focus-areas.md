@@ -16,7 +16,7 @@ that area. A red `make test` preempts everything until green.
 | 2 | Service identity integration + backfill (`service.go` register/uniqueness/resolve, `backfill.go`, `main.go` wiring) | [x] | [x] | done |
 | 3 | Reference columns + backfill (migration 017, `ref_backfill*` — instances/schedules/publications `workflow_id`) | [x] | [x] | done |
 | 4 | Trigger / cron / publish by id (`engine.go` resolver+stamp, schedule evaluator/service, publish link) | [x] | [x] | done |
-| 5 | Admin gate + Rename (`requireAdmin`, `rename.go` — folder move + registry + rollback) | [x] | [ ] | |
+| 5 | Admin gate + Rename (`requireAdmin`, `rename.go` — folder move + registry + rollback) | [x] | [x] | done |
 | 6 | Guarded Delete + Unpublish (`delete.go`, `CountActiveByWorkflowID` guard, teardown order, history preserved) | [ ] | [ ] | |
 | 7 | Duplicate / Edit-shared / Archive / Transfer (`admin_ops.go`, `adminSharedWrite`, `ArchiveChecker`) | [ ] | [ ] | |
 | 8 | Audit emits + `ListByTarget` + MCP tool surface (`tools_workflow.go`, audit repo, action constants) | [ ] | [ ] | |

@@ -287,6 +287,133 @@ func (r *errOnDeleteNameRepo) CopyTree(ctx context.Context, src workflow.Scope, 
 	return r.inner.CopyTree(ctx, src, srcName, dst, dstName, overwrite)
 }
 
+// --- Robustness: CopyTree failure leaves everything untouched ---
+
+// TestService_Rename_CopyTreeFails_NothingMoved verifies that a CopyTree
+// failure (step 4) aborts Rename before any registry mutation happens. Both the
+// old folder and the registry row are unchanged, and no partial state is left.
+func TestService_Rename_CopyTreeFails_NothingMoved(t *testing.T) {
+	owner := uuid.New()
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(inner, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	require.NoError(t, svc.Create(adminCtx, "alpha", wf("alpha")))
+	idA, err := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, err)
+
+	copyErr := errors.New("filesystem full")
+	failRepo := &errOnCopyTreeRepo{fakeRepo: inner, err: copyErr}
+	svcFail := workflow.NewWorkflowService(failRepo, nil)
+	svcFail.SetRegistry(reg)
+
+	err = svcFail.Rename(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, copyErr, "CopyTree error must propagate")
+
+	// Registry unchanged: old name still resolves to the original id.
+	gotID, err := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, err)
+	assert.Equal(t, idA, gotID, "registry must be unchanged after CopyTree failure")
+
+	// New folder must not exist.
+	_, hasBeta := inner.bucket(workflow.Private(owner))["beta"]
+	assert.False(t, hasBeta, "no new folder when CopyTree fails")
+}
+
+// errOnCopyTreeRepo wraps fakeRepo and returns a fixed error from CopyTree.
+type errOnCopyTreeRepo struct {
+	*fakeRepo
+	err error
+}
+
+func (r *errOnCopyTreeRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string, _ workflow.Scope, _ string, _ bool) error {
+	return r.err
+}
+
+// --- Robustness: label update failure (step 6) is surfaced ---
+
+// TestService_Rename_LabelUpdateFails_ErrorSurfaced verifies that a repo.Update
+// failure during the workflow.json label-update step (step 6) is surfaced as an
+// error. By that point the registry + new folder are consistent; the error
+// informs the operator that the label is stale and can be corrected by a
+// re-publish or manual fix.
+//
+// NOTE: the standard fakeRepo.CopyTree already stamps cp.Name = dstName (a
+// convenience short-cut). In the REAL filesystem adapter CopyTree copies bytes
+// verbatim, so workflow.json retains the source name. To exercise step 6 (the
+// label update) we use realLabelCopyRepo, which mirrors real-FS behavior by
+// preserving the source name in the copy and then injects a hard Update failure.
+func TestService_Rename_LabelUpdateFails_ErrorSurfaced(t *testing.T) {
+	owner := uuid.New()
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(inner, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	require.NoError(t, svc.Create(adminCtx, "alpha", wf("alpha")))
+
+	updateErr := errors.New("disk write failed")
+	failRepo := &realLabelCopyRepo{fakeRepo: inner, updateErr: updateErr}
+	svcFail := workflow.NewWorkflowService(failRepo, nil)
+	svcFail.SetRegistry(reg)
+
+	err := svcFail.Rename(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, updateErr, "label-update failure must propagate from Rename")
+
+	// Registry already resolved the new name (Rename succeeded before step 6).
+	_, regErr := reg.ResolveID(adminCtx, "beta")
+	require.NoError(t, regErr, "registry must already have the new name at point of Update failure")
+}
+
+// realLabelCopyRepo wraps fakeRepo with two behavioural changes that together
+// let us exercise Rename's step-6 (label update) failure:
+//
+//  1. CopyTree preserves the source workflow name in the copied entry (as the
+//     real filesystem adapter does — workflow.json is copied verbatim, so the
+//     copied folder still carries the old name until step 6 updates it).
+//  2. Update always returns updateErr (to inject the step-6 failure).
+type realLabelCopyRepo struct {
+	*fakeRepo
+	updateErr error
+}
+
+func (r *realLabelCopyRepo) CopyTree(_ context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool) error {
+	wfSrc, ok := r.bucket(src)[srcName]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, exists := r.bucket(dst)[dstName]; exists && !overwrite {
+		return workflow.ErrAlreadyExists
+	}
+	cp := *wfSrc
+	// Deliberately do NOT update cp.Name: the real FS copies bytes verbatim.
+	r.bucket(dst)[dstName] = &cp
+	return nil
+}
+
+func (r *realLabelCopyRepo) Update(_ context.Context, _ workflow.Scope, _ string, _ *workflow.Workflow) error {
+	return r.updateErr
+}
+
+// --- Edge: same-name rename returns ErrAlreadyExists ---
+
+// TestService_Rename_SameName_AlreadyExists documents the behavior when the
+// caller requests renaming a workflow to its current name. The uniqueness check
+// (step 3) sees the current name already in the registry and returns
+// ErrAlreadyExists. No folder move happens. This is conservative but
+// self-consistent: the name IS already "taken" by the workflow itself.
+func TestService_Rename_SameName_AlreadyExists(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+
+	err := svc.Rename(adminCtx, "alpha", "alpha")
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"renaming to the current name must return ErrAlreadyExists (conservative uniqueness check)")
+}
+
 // --- Edge: rename a SHARED workflow ---
 
 // TestService_Rename_Shared_MovesSharedFolder_KeepsPublication verifies renaming
