@@ -2,6 +2,7 @@ package schedule_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -143,6 +144,42 @@ func (t *deletedAwareTrigger) firedFor(name string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.fired[name]
+}
+
+// errOnResolveName is a WorkflowResolver whose ResolveName always returns a fixed
+// error, to probe the "transient error swallowed on fire" evaluator contract.
+type errOnResolveName struct{ err error }
+
+func (r *errOnResolveName) ResolveName(_ context.Context, _ uuid.UUID) (string, error) {
+	return "", r.err
+}
+
+// --- error: a transient resolver error must not prevent the schedule from firing. ---
+
+// TestEvaluator_TransientResolverError_FallsBackToLabel verifies that when
+// ResolveName returns a non-ErrNotFound error (e.g. a DB timeout), the evaluator
+// falls back to the retained WorkflowName label and still fires. The fire must
+// not be dropped or the error propagated — the resolver is best-effort.
+func TestEvaluator_TransientResolverError_FallsBackToLabel(t *testing.T) {
+	creator := uuid.New()
+	idA := uuid.New()
+	s := dueSchedule(creator, "")
+	s.WorkflowID = idA
+	s.WorkflowName = "original"
+	repo := newEvalRepo(s)
+
+	res := &errOnResolveName{err: errors.New("registry timeout")}
+	tr := &fakeTrigger{}
+	al := &fakeAlerter{}
+	clk := &fakeClock{t: time.Date(2026, 6, 8, 9, 30, 0, 0, time.UTC)}
+	ev := schedule.NewEvaluator(repo, tr, &fakeActive{}, &fakeIdents{}, al,
+		schedule.WithClock(clk), schedule.WithResolver(res))
+
+	require.NoError(t, ev.Tick(context.Background()))
+
+	assert.Equal(t, 1, tr.callCount(), "a transient resolver error must not prevent the fire")
+	assert.Equal(t, "original", tr.lastWF,
+		"transient resolver error falls back to the retained WorkflowName label")
 }
 
 // --- edge: a legacy Nil-id schedule fires by its WorkflowName label. ---

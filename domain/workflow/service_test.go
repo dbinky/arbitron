@@ -139,6 +139,9 @@ type fakePublishers struct {
 	// upsertErr, when set, makes Upsert fail so the Publish compensation paths are
 	// observable.
 	upsertErr error
+	// setWorkflowIDErr, when set, makes SetWorkflowID return the error so the
+	// Publish id-link failure path is exercisable.
+	setWorkflowIDErr error
 }
 
 func newFakePublishers() *fakePublishers {
@@ -169,6 +172,9 @@ func (p *fakePublishers) Delete(_ context.Context, name string) error {
 }
 
 func (p *fakePublishers) SetWorkflowID(_ context.Context, name string, id uuid.UUID) error {
+	if p.setWorkflowIDErr != nil {
+		return p.setWorkflowIDErr
+	}
 	if p.workflowIDs == nil {
 		p.workflowIDs = map[string]uuid.UUID{}
 	}

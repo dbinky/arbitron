@@ -2,6 +2,7 @@ package schedule_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/schedule"
@@ -23,6 +24,14 @@ func (r resolverByName) ResolveID(_ context.Context, name string) (uuid.UUID, er
 		return uuid.Nil, workflow.ErrNotFound
 	}
 	return id, nil
+}
+
+// errOnResolveID is a schedule.WorkflowResolverID that always returns a fixed
+// error from ResolveID, to probe the "transient error swallowed at Create" path.
+type errOnResolveID struct{ err error }
+
+func (r errOnResolveID) ResolveID(_ context.Context, _ string) (uuid.UUID, error) {
+	return uuid.Nil, r.err
 }
 
 // --- happy: Create resolves name->id and stamps WorkflowID. ---
@@ -57,6 +66,27 @@ func TestService_Create_UnresolvedName_NilWorkflowID(t *testing.T) {
 	})
 	require.NoError(t, err, "an unresolved name must not fail Create (best-effort id stamp)")
 	assert.Equal(t, uuid.Nil, got.WorkflowID, "an unresolved name leaves WorkflowID Nil")
+}
+
+// --- error: a transient resolver error leaves WorkflowID Nil without failing Create. ---
+
+// TestService_Create_TransientResolverError_NilWorkflowID verifies that a
+// non-ErrNotFound error from ResolveID (e.g. a DB timeout) is silently swallowed
+// by Create — the id stamp is best-effort. The schedule is created with Nil
+// WorkflowID and fires by name until a backfill or re-create stamps the id.
+func TestService_Create_TransientResolverError_NilWorkflowID(t *testing.T) {
+	repo := newSvcRepo()
+	res := errOnResolveID{err: errors.New("registry timeout")}
+	svc := schedule.NewService(repo, &fakeCanTrigger{allow: true}, schedule.WithResolverID(res))
+
+	got, err := svc.Create(ctxAs(user()), schedule.CreateInput{
+		WorkflowName: "report",
+		CronExpr:     "0 9 * * *",
+		Timezone:     "UTC",
+	})
+	require.NoError(t, err, "a transient resolver error must not fail Create (best-effort id stamp)")
+	assert.Equal(t, uuid.Nil, got.WorkflowID,
+		"transient resolver error leaves WorkflowID Nil — same behaviour as ErrNotFound")
 }
 
 // --- edge: no resolver wired (local mode) leaves WorkflowID Nil. ---

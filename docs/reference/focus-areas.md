@@ -15,7 +15,7 @@ that area. A red `make test` preempts everything until green.
 | 1 | Stable identity registry (`domain/workflow/registry.go`, `adapter/sqlite/workflow_identity_repo.go`, migration 016 — id allocation, name↔id, `UNIQUE(name)`) | [x] | [x] | done |
 | 2 | Service identity integration + backfill (`service.go` register/uniqueness/resolve, `backfill.go`, `main.go` wiring) | [x] | [x] | done |
 | 3 | Reference columns + backfill (migration 017, `ref_backfill*` — instances/schedules/publications `workflow_id`) | [x] | [x] | done |
-| 4 | Trigger / cron / publish by id (`engine.go` resolver+stamp, schedule evaluator/service, publish link) | [x] | [ ] | |
+| 4 | Trigger / cron / publish by id (`engine.go` resolver+stamp, schedule evaluator/service, publish link) | [x] | [x] | done |
 | 5 | Admin gate + Rename (`requireAdmin`, `rename.go` — folder move + registry + rollback) | [ ] | [ ] | |
 | 6 | Guarded Delete + Unpublish (`delete.go`, `CountActiveByWorkflowID` guard, teardown order, history preserved) | [ ] | [ ] | |
 | 7 | Duplicate / Edit-shared / Archive / Transfer (`admin_ops.go`, `adminSharedWrite`, `ArchiveChecker`) | [ ] | [ ] | |
