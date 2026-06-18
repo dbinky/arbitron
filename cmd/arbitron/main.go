@@ -474,6 +474,24 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
 	workflowSvc.SetAudit(auditSvc)
+	// Workflow identity registry: stable per-workflow ids + global name uniqueness
+	// + name<->id resolution. The SQLite repo's UNIQUE(name) is the authority; the
+	// folder store stays name-keyed for the definition body (mirrors the audit
+	// wiring above — a sibling repo injected via a setter).
+	identityRepo := adaptsqlite.NewWorkflowIdentityRepo(db)
+	workflowSvc.SetRegistry(identityRepo)
+	// One-time startup reconciliation: register any unregistered (legacy id-less)
+	// workflow under the default user's private scope and the shared scope. Run
+	// under an admin system identity so the scan can persist backfilled ids. It is
+	// idempotent and best-effort: a failure is logged, not fatal, since per-user
+	// private workflows are also backfilled lazily on first load.
+	backfillCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: flatMigrateUser,
+		Role:   identity.RoleAdmin,
+	})
+	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
+		logger.Warn("workflow registry backfill incomplete", "error", err)
+	}
 
 	// 7. Create the chat + agent providers based on config.
 	//

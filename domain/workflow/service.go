@@ -63,6 +63,17 @@ type WorkflowService struct {
 	// stats is the optional execution-statistics read port. When unset (nil),
 	// Stats reports the feature is unavailable rather than panicking.
 	stats StatsReader
+	// registry is the optional workflow identity/uniqueness port. When unset
+	// (nil), the service behaves exactly as before: purely name-addressed, no id
+	// allocation, no global-uniqueness enforcement (local/unconfigured mode).
+	registry WorkflowRegistry
+}
+
+// SetRegistry wires the workflow identity registry (id allocation + global name
+// uniqueness + name↔id resolution). When unset (nil), create/publish/load behave
+// as before — name-addressed only, with no id assignment or uniqueness checks.
+func (s *WorkflowService) SetRegistry(r WorkflowRegistry) {
+	s.registry = r
 }
 
 // SetAudit wires the best-effort audit emitter. When unset (nil), no audit
@@ -128,12 +139,43 @@ func (s *WorkflowService) translateWrite(ctx context.Context, name string, err e
 }
 
 // Create writes a new workflow in the caller's private scope.
+//
+// When a registry is wired, identity is allocated and uniqueness enforced FIRST:
+// a stable id is assigned to the definition and the registry row is inserted
+// before the folder is written, so a duplicate name is rejected (ErrAlreadyExists)
+// WITHOUT writing any folder. If the folder write then fails, the registry row is
+// rolled back so the two stores do not diverge. With no registry (local mode),
+// this is the prior pure name-addressed create.
 func (s *WorkflowService) Create(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
-	return s.repo.Create(ctx, Private(id.UserID), name, wf)
+	if s.registry == nil {
+		return s.repo.Create(ctx, Private(id.UserID), name, wf)
+	}
+
+	// Allocate identity, then claim the name in the registry FIRST. The registry's
+	// UNIQUE(name) is the global-uniqueness authority; on a duplicate this returns
+	// ErrAlreadyExists and we abort before touching the folder.
+	if wf.ID == uuid.Nil {
+		wf.ID = uuid.New()
+	}
+	if err := s.registry.Register(ctx, RegistryEntry{
+		ID:      wf.ID,
+		Name:    name,
+		Scope:   ScopePrivate,
+		OwnerID: id.UserID,
+	}); err != nil {
+		return err
+	}
+	if err := s.repo.Create(ctx, Private(id.UserID), name, wf); err != nil {
+		// Folder write failed after the registry claim; roll the row back so a
+		// future create of the same name is not blocked by an orphan row.
+		_ = s.registry.Delete(ctx, wf.ID)
+		return err
+	}
+	return nil
 }
 
 // Update replaces an existing workflow in the caller's private scope. An
@@ -212,13 +254,81 @@ func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityF
 }
 
 // Load returns a workflow visible to the caller (private first, then shared).
+//
+// Lazy backfill: when a registry is wired and the loaded definition has no id, an
+// id is allocated, persisted into the (writable) folder and registered, so legacy
+// id-less workflows migrate transparently on first load and keep a stable id
+// across reloads. Only the caller's own private workflows are persisted in place
+// (shared workflows are read-only and are reconciled by the startup backfill).
 func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
 	}
-	wf, _, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
-	return wf, err
+	wf, scope, err := LoadVisibleFiltered(ctx, s.repo, id.UserID, name, s.auditingFilter(id))
+	if err != nil {
+		return nil, err
+	}
+	if s.registry != nil && wf.ID == uuid.Nil {
+		if err := s.ensureID(ctx, scope, name, wf); err != nil {
+			return nil, err
+		}
+	}
+	return wf, nil
+}
+
+// ensureID backfills a missing id on an already-loaded definition: it adopts an
+// existing registry id for the name if one is present, otherwise allocates and
+// registers a new one. The id is mutated onto wf and, for the caller's own
+// private scope, persisted back into the folder so it is stable across reloads.
+// A nil registry makes this a no-op (handled by the caller).
+func (s *WorkflowService) ensureID(ctx context.Context, scope Scope, name string, wf *Workflow) error {
+	// Adopt an existing registry id for this name, if any (e.g. registered by the
+	// startup backfill while the folder stayed id-less).
+	if existing, err := s.registry.ResolveID(ctx, name); err == nil {
+		wf.ID = existing
+	} else if errors.Is(err, ErrNotFound) {
+		// No row yet: allocate and register one.
+		wf.ID = uuid.New()
+		if regErr := s.registry.Register(ctx, RegistryEntry{
+			ID:      wf.ID,
+			Name:    name,
+			Scope:   scope.Kind,
+			OwnerID: scope.OwnerID,
+		}); regErr != nil {
+			// A concurrent backfill may have just inserted the row; adopt it.
+			if errors.Is(regErr, ErrAlreadyExists) {
+				if adopted, rerr := s.registry.ResolveID(ctx, name); rerr == nil {
+					wf.ID = adopted
+				} else {
+					return rerr
+				}
+			} else {
+				return regErr
+			}
+		}
+	} else {
+		return err
+	}
+	// Persist the id back into the folder, but only for the caller's own private
+	// workflow (shared is read-only here; startup backfill persists shared ids).
+	if scope.Kind == ScopePrivate {
+		if err := s.repo.Update(ctx, scope, name, wf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveID returns the stable id registered for name (name→id). It is the
+// internal name↔id seam later phases use; ErrNotFound when no row matches.
+func (s *WorkflowService) resolveID(ctx context.Context, name string) (uuid.UUID, error) {
+	return s.registry.ResolveID(ctx, name)
+}
+
+// resolveName returns the current name for id (id→name); ErrNotFound when unknown.
+func (s *WorkflowService) resolveName(ctx context.Context, id uuid.UUID) (string, error) {
+	return s.registry.ResolveName(ctx, id)
 }
 
 // LoadAs loads a specific user's private workflow. A caller may always load
@@ -390,6 +500,21 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 	})
 	if err != nil {
 		return err
+	}
+	// Register the shared name's identity if it is not already registered. A
+	// re-publish (overwrite) by the same publisher keeps its existing shared row,
+	// so an ErrAlreadyExists here is the reconciled state, not a failure. The
+	// published_workflows store remains the publisher-overwrite authority.
+	if s.registry != nil {
+		if _, rerr := s.registry.ResolveID(ctx, publishedName); errors.Is(rerr, ErrNotFound) {
+			if regErr := s.registry.Register(ctx, RegistryEntry{
+				ID:    uuid.New(),
+				Name:  publishedName,
+				Scope: ScopeShared,
+			}); regErr != nil && !errors.Is(regErr, ErrAlreadyExists) {
+				return regErr
+			}
+		}
 	}
 	// Best-effort audit of the successful publish (nil-safe per audit.Service).
 	s.audit.Record(ctx, audit.ActionWorkflowPublish, publishedName, auditDetail(map[string]string{
