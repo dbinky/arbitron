@@ -67,6 +67,10 @@ type WorkflowService struct {
 	// (nil), the service behaves exactly as before: purely name-addressed, no id
 	// allocation, no global-uniqueness enforcement (local/unconfigured mode).
 	registry WorkflowRegistry
+	// refBackfiller is the optional port BackfillReferences uses to stamp stable
+	// workflow ids onto the name-keyed reference tables. When unset (nil),
+	// BackfillReferences is a no-op.
+	refBackfiller ReferenceBackfiller
 }
 
 // SetRegistry wires the workflow identity registry (id allocation + global name
@@ -74,6 +78,12 @@ type WorkflowService struct {
 // as before — name-addressed only, with no id assignment or uniqueness checks.
 func (s *WorkflowService) SetRegistry(r WorkflowRegistry) {
 	s.registry = r
+}
+
+// SetReferenceBackfiller wires the reference-table backfill port used by
+// BackfillReferences. When unset (nil), BackfillReferences is a no-op.
+func (s *WorkflowService) SetReferenceBackfiller(b ReferenceBackfiller) {
+	s.refBackfiller = b
 }
 
 // SetAudit wires the best-effort audit emitter. When unset (nil), no audit

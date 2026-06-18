@@ -492,6 +492,15 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
 		logger.Warn("workflow registry backfill incomplete", "error", err)
 	}
+	// One-time reference backfill: stamp each reference row's resolved workflow id
+	// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
+	// the registry rows the BackfillRegistry above just reconciled, so it runs
+	// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
+	// are Warn-logged, not fatal.
+	workflowSvc.SetReferenceBackfiller(adaptsqlite.NewReferenceBackfiller(db))
+	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
+		logger.Warn("workflow reference backfill incomplete", "error", err)
+	}
 
 	// 7. Create the chat + agent providers based on config.
 	//

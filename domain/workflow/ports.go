@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 // WorkflowRepository defines the port for loading and listing workflow definitions.
@@ -30,4 +32,22 @@ type WorkflowRepository interface {
 	// already exists unless overwrite is true, in which case it replaces dst
 	// atomically. It fails with ErrNotFound if the source does not exist.
 	CopyTree(ctx context.Context, src Scope, srcName string, dst Scope, dstName string, overwrite bool) error
+}
+
+// ReferenceBackfiller is the port the one-time BackfillReferences uses to attach
+// stable workflow ids to the reference tables (instances, schedules,
+// published_workflows) that today key a workflow purely by name. It owns the SQL;
+// the domain service owns the name->id resolution policy.
+//
+// A nil backfiller makes BackfillReferences a no-op (local/unconfigured mode).
+type ReferenceBackfiller interface {
+	// UnresolvedReferenceNames returns the distinct workflow names that appear in
+	// any reference table with a NULL workflow_id. Resolved (non-NULL) rows are
+	// excluded so the operation is idempotent.
+	UnresolvedReferenceNames(ctx context.Context) ([]string, error)
+	// SetReferenceID stamps workflow_id = id on every reference row whose
+	// workflow_name equals name AND whose workflow_id is currently NULL, across all
+	// three tables. Rows already carrying an id are left untouched. It reports the
+	// total number of rows updated.
+	SetReferenceID(ctx context.Context, name string, id uuid.UUID) (int64, error)
 }
