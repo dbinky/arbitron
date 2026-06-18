@@ -67,6 +67,43 @@ func TestService_Duplicate_RegisterFails_RollsBackFolder(t *testing.T) {
 	assert.Equal(t, 1, reg.count(), "registry unchanged (no orphan row)")
 }
 
+// --- Error: stamp Update fails after Register — error surfaced, inconsistent state ---
+
+// TestService_Duplicate_StampUpdateFails_ErrorSurfaced verifies that a
+// repo.Update failure during the id-stamp step (step 6) is surfaced as an error.
+// At that point the registry row and the folder ALREADY exist (the stamp is
+// best-effort within the success path); the folder carries the source id rather
+// than the new id. The caller sees the error and must reconcile the inconsistency.
+func TestService_Duplicate_StampUpdateFails_ErrorSurfaced(t *testing.T) {
+	owner := uuid.New()
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	setupSvc := workflow.NewWorkflowService(inner, nil)
+	setupSvc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+	require.NoError(t, setupSvc.Create(adminCtx, "alpha", wf("alpha")))
+
+	updateErr := errors.New("disk write failed")
+	repo := &errOnUpdateRepo{fakeRepo: inner, err: updateErr}
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+
+	err := svc.Duplicate(adminCtx, "alpha", "alpha-copy")
+	require.ErrorIs(t, err, updateErr,
+		"stamp Update failure must propagate from Duplicate")
+
+	// Registry row was committed before the stamp step (partial success state).
+	srcID, _ := reg.ResolveID(adminCtx, "alpha")
+	copyID, regErr := reg.ResolveID(adminCtx, "alpha-copy")
+	require.NoError(t, regErr, "registry row was committed before the stamp failure")
+	assert.NotEqual(t, uuid.Nil, copyID, "copy has a non-zero registry id")
+	assert.NotEqual(t, srcID, copyID, "copy id is distinct from the source id")
+
+	// Copied folder exists in the repo.
+	_, ok := inner.bucket(workflow.Private(owner))["alpha-copy"]
+	assert.True(t, ok, "copied folder exists despite stamp failure (partial success)")
+}
+
 // --- Error: non-admin is forbidden ---
 
 // TestService_Duplicate_NonAdmin_Forbidden verifies a non-admin caller is

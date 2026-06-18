@@ -70,6 +70,33 @@ func TestService_Archive_NonAdmin_Forbidden(t *testing.T) {
 	assert.False(t, archivedOf(t, reg, adminCtx, "alpha"), "flag unchanged")
 }
 
+// TestService_Unarchive_NoRegistry_Unauthorized verifies that Unarchive, like
+// Archive, returns ErrUnauthorized when the registry is not wired.
+func TestService_Unarchive_NoRegistry_Unauthorized(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
+	err := svc.Unarchive(ctxWith(uuid.New(), true), "alpha")
+	require.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"Unarchive without a registry must return ErrUnauthorized")
+}
+
+// TestService_Unarchive_SetArchivedFails_Propagates verifies that when
+// registry.SetArchived returns an error during Unarchive, the error propagates
+// and the flag remains archived.
+func TestService_Unarchive_SetArchivedFails_Propagates(t *testing.T) {
+	owner := uuid.New()
+	svc, _, reg, adminCtx, idA := renameSvc(t, owner)
+	require.NoError(t, reg.SetArchived(adminCtx, idA, true))
+
+	archErr := errors.New("registry write failed")
+	reg.failSetArchived = archErr
+
+	err := svc.Unarchive(adminCtx, "alpha")
+	require.ErrorIs(t, err, archErr, "SetArchived error must propagate from Unarchive")
+
+	reg.failSetArchived = nil // clear to allow List for the assertion
+	assert.True(t, archivedOf(t, reg, adminCtx, "alpha"), "flag must remain archived after Unarchive error")
+}
+
 func TestService_Unarchive_NonAdmin_Forbidden(t *testing.T) {
 	owner := uuid.New()
 	svc, _, reg, adminCtx, idA := renameSvc(t, owner)

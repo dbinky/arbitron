@@ -181,6 +181,60 @@ func TestService_Transfer_UnknownName_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrNotFound)
 }
 
+// --- Error: Shared workflow SetOwner fails → error propagates ---
+
+// TestService_Transfer_Shared_SetOwnerFails_Propagates verifies that when
+// registry.SetOwner fails on a shared-scope transfer, the error is surfaced.
+// Unlike the private-scope path there is no folder to roll back — the registry
+// mutation is the only side-effect, so the error propagates without compensation.
+func TestService_Transfer_Shared_SetOwnerFails_Propagates(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	sharedID := uuid.New()
+	shared := wf("shared-wf")
+	shared.ID = sharedID
+	repo.bucket(workflow.Shared())["shared-wf"] = shared
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: sharedID, Name: "shared-wf", Scope: workflow.ScopeShared,
+	}))
+
+	ownerErr := errors.New("registry write failed")
+	reg.failSetOwner = ownerErr
+
+	err := svc.TransferOwnership(adminCtx, "shared-wf", uuid.New())
+	require.ErrorIs(t, err, ownerErr,
+		"SetOwner failure on shared transfer must propagate")
+
+	// Shared folder untouched (no folder move in the shared path).
+	_, stillShared := repo.bucket(workflow.Shared())["shared-wf"]
+	assert.True(t, stillShared, "shared folder unaffected by SetOwner failure")
+}
+
+// --- Error: scopeOf List fails → propagates before folder move ---
+
+// TestService_Transfer_ScopeListFails_Propagates verifies that when
+// registry.List fails inside scopeOf, TransferOwnership propagates the error
+// without moving any folder.
+func TestService_Transfer_ScopeListFails_Propagates(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, _ := renameSvc(t, owner)
+
+	listErr := errors.New("registry list unavailable")
+	reg.failList = listErr
+
+	err := svc.TransferOwnership(adminCtx, "alpha", uuid.New())
+	require.ErrorIs(t, err, listErr,
+		"registry.List failure in scopeOf must propagate from TransferOwnership")
+
+	_, folderStill := repo.bucket(workflow.Private(owner))["alpha"]
+	assert.True(t, folderStill, "folder must remain when scopeOf List fails")
+}
+
 // --- Edge: a SHARED workflow updates owner without a folder move ---
 
 // TestService_Transfer_Shared_NoFolderMove verifies transferring a shared
