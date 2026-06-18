@@ -20,7 +20,7 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
-	workflows        workflow.WorkflowRepository
+	workflows        workflow.Repository
 	instances        instance.InstanceRepository
 	nodeExecutions   instance.NodeExecutionRepository
 	snapshots        instance.VariableSnapshotRepository
@@ -38,6 +38,7 @@ type Engine struct {
 	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager WorkspaceManager
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
+	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
 	wg               sync.WaitGroup
@@ -45,7 +46,7 @@ type Engine struct {
 
 // NewEngine constructs a new Engine with all required dependencies.
 func NewEngine(
-	workflows workflow.WorkflowRepository,
+	workflows workflow.Repository,
 	instances instance.InstanceRepository,
 	nodeExecutions instance.NodeExecutionRepository,
 	snapshots instance.VariableSnapshotRepository,
@@ -123,6 +124,38 @@ func (e *Engine) SetAuditRecorder(r AuditRecorder) {
 // triggerable (local/read-only mode), preserving today's behavior.
 func (e *Engine) SetPublisherLookup(p workflow.PublisherLookup) {
 	e.publishers = p
+}
+
+// IDResolver is the narrow workflow-identity seam the engine uses to stamp a
+// stable workflow id on a triggered instance, to re-resolve the current name of
+// a workflow on rerun (so a rename between the original run and the rerun still
+// targets the right definition), and to refuse triggering an archived workflow.
+// workflow.Registry satisfies it.
+//
+// IsArchived is part of the contract — NOT an optional layered capability —
+// precisely so a resolver that cannot report archived state is a COMPILE error
+// rather than a runtime type-assertion that silently disables archive-blocking
+// under any wrapping decorator. When the resolver is unset (nil, local/
+// unconfigured mode), the engine behaves as before: instances carry a Nil
+// WorkflowID, rerun resolves by the retained WorkflowName label, and no archive
+// check runs.
+type IDResolver interface {
+	ResolveID(ctx context.Context, name string) (uuid.UUID, error)
+	ResolveName(ctx context.Context, id uuid.UUID) (string, error)
+	// IsArchived reports whether the workflow registered under name is archived.
+	// A lookup error must NOT be swallowed by the caller: the trigger path fails
+	// CLOSED (refuses the trigger) on error, because the archived flag is a
+	// deliberate "do not run this" invariant.
+	IsArchived(ctx context.Context, name string) (bool, error)
+}
+
+// SetWorkflowResolver wires the workflow-identity resolver used to stamp
+// instances with a stable WorkflowID at trigger time, to re-resolve the current
+// name on rerun, and to refuse archived triggers. When unset (nil), instances
+// carry a Nil WorkflowID, rerun falls back to the retained WorkflowName label,
+// and no archive check runs (local/unconfigured mode).
+func (e *Engine) SetWorkflowResolver(r IDResolver) {
+	e.resolver = r
 }
 
 // recordIntervention writes an audit row and publishes instance.intervened when
@@ -261,6 +294,28 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
 
+	// Refuse to trigger an archived workflow. IsArchived is part of the resolver
+	// contract (no runtime type assertion), so the check engages whenever a
+	// resolver is wired (the SQLite registry; local mode has no resolver and so
+	// cannot — and need not — block). It runs AFTER the visibility-gated load so a
+	// caller who cannot see the workflow still gets not-found (existence is not
+	// leaked via the archived path), and BEFORE any instance is built so an
+	// archived trigger creates nothing.
+	//
+	// FAIL CLOSED: the archived flag is a deliberate "do not run this" invariant,
+	// so an IsArchived lookup error refuses the trigger rather than running an
+	// possibly-archived workflow. A transient registry outage blocks the trigger
+	// (surfaced loudly) instead of silently defeating the invariant.
+	if e.resolver != nil {
+		archived, aerr := e.resolver.IsArchived(ctx, workflowName)
+		if aerr != nil {
+			return uuid.Nil, false, fmt.Errorf("checking archived state of %q: %w", workflowName, aerr)
+		}
+		if archived {
+			return uuid.Nil, false, fmt.Errorf("%w: %s", workflow.ErrArchived, workflowName)
+		}
+	}
+
 	// Stamp the run's audience from the resolved publication (private when the
 	// workflow has no publication record), applying the validated per-trigger
 	// department override. A system trigger (no context identity) yields a
@@ -350,9 +405,23 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		scheduleID = o.ScheduleID
 	}
 
+	// Resolve the stable workflow id (name->id) so the run carries an identity
+	// reference that survives a later rename/edit. The registry is authoritative;
+	// when it is unwired or has no row for this name, fall back to the id carried
+	// in the loaded definition (the lazy backfill stamps it onto the folder), or
+	// uuid.Nil for a fully legacy workflow. Resolution NEVER fails the trigger —
+	// WorkflowName + WorkflowSnapshot remain the display + execution authority.
+	workflowID := wf.ID
+	if e.resolver != nil {
+		if rid, rerr := e.resolver.ResolveID(ctx, workflowName); rerr == nil {
+			workflowID = rid
+		}
+	}
+
 	inst := &instance.Instance{
 		ID:                uuid.New(),
 		OwnerID:           ownerID,
+		WorkflowID:        workflowID,
 		WorkflowName:      workflowName,
 		WorkflowSnapshot:  wfSnapshot,
 		Department:        st.Department,
@@ -1400,6 +1469,19 @@ func (e *Engine) Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, er
 		return uuid.Nil, fmt.Errorf("instance %s has no original variables recorded", instanceID)
 	}
 
+	// Resolve the workflow to rerun by its STABLE id first (id->current name), so
+	// a rename between the original run and the rerun still targets the right
+	// definition. Fall back to the retained WorkflowName label when the source
+	// instance has no id (a legacy NULL-id run) or the id no longer resolves (the
+	// workflow was deleted/unregistered — the name path then surfaces the
+	// definitive not-found from the loader).
+	rerunName := inst.WorkflowName
+	if e.resolver != nil && inst.WorkflowID != uuid.Nil {
+		if name, rerr := e.resolver.ResolveName(ctx, inst.WorkflowID); rerr == nil {
+			rerunName = name
+		}
+	}
+
 	// Forward the request ctx into Trigger so the new instance is owned by the
 	// acting caller (Phase 3 Task 7's triggerOwner resolves the identity from ctx,
 	// falling back to the default user for system triggers). The new instance is
@@ -1409,7 +1491,7 @@ func (e *Engine) Rerun(ctx context.Context, instanceID uuid.UUID) (uuid.UUID, er
 	// dismissal rows, so the rerun is inherently un-dismissed for every user.
 	// The original instance's historical dismissal (if any) is intentionally
 	// left intact. No dismissal bookkeeping is needed here.
-	id, _, err := e.Trigger(ctx, inst.WorkflowName, inst.OriginalVariables, string(inst.Priority))
+	id, _, err := e.Trigger(ctx, rerunName, inst.OriginalVariables, string(inst.Priority))
 	if err != nil {
 		return id, err
 	}

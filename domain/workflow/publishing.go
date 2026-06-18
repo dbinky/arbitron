@@ -40,7 +40,7 @@ type PublishRequest struct {
 // is NOT rolled back if recording fails. A name published by a different user is
 // rejected with ErrUnauthorized.
 //
-// Both WorkflowService.Publish and the samples seeder route through this helper
+// Both Service.Publish and the samples seeder route through this helper
 // so the invariant lives in exactly one place.
 func WriteAndRecord(ctx context.Context, store PublishedStore, req PublishRequest) error {
 	if store == nil {

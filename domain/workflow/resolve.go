@@ -22,7 +22,7 @@ type SharedVisibilityFilter func(ctx context.Context, name string) (bool, error)
 // (private first, then shared), returning the first hit and the scope it
 // came from. ErrNotFound if neither has it. A non-ErrNotFound error from any
 // probe is returned immediately (not masked by the shared fallback).
-func LoadVisible(ctx context.Context, repo WorkflowRepository, owner uuid.UUID, name string) (*Workflow, Scope, error) {
+func LoadVisible(ctx context.Context, repo Repository, owner uuid.UUID, name string) (*Workflow, Scope, error) {
 	return LoadVisibleFiltered(ctx, repo, owner, name, nil)
 }
 
@@ -30,7 +30,7 @@ func LoadVisible(ctx context.Context, repo WorkflowRepository, owner uuid.UUID, 
 // through to the shared scope, requires the filter to approve the name. A
 // disapproved shared workflow returns ErrNotFound — never revealing that a
 // department workflow exists to an outsider.
-func LoadVisibleFiltered(ctx context.Context, repo WorkflowRepository, owner uuid.UUID, name string, filter SharedVisibilityFilter) (*Workflow, Scope, error) {
+func LoadVisibleFiltered(ctx context.Context, repo Repository, owner uuid.UUID, name string, filter SharedVisibilityFilter) (*Workflow, Scope, error) {
 	for _, s := range ReadScopes(owner) {
 		if s.Kind == ScopeShared && filter != nil {
 			ok, err := filter(ctx, name)
@@ -55,14 +55,14 @@ func LoadVisibleFiltered(ctx context.Context, repo WorkflowRepository, owner uui
 // ListFilesVisible lists files for a workflow from the caller's visible scopes
 // (private first, then shared), returning the first scope that has the
 // workflow. ErrNotFound if neither has it.
-func ListFilesVisible(ctx context.Context, repo WorkflowRepository, owner uuid.UUID, name string) ([]string, Scope, error) {
+func ListFilesVisible(ctx context.Context, repo Repository, owner uuid.UUID, name string) ([]string, Scope, error) {
 	return ListFilesVisibleFiltered(ctx, repo, owner, name, nil)
 }
 
 // ListFilesVisibleFiltered behaves like ListFilesVisible but applies the shared
 // visibility filter when falling through to the shared scope; a disapproved
 // shared workflow returns ErrNotFound (no existence leak).
-func ListFilesVisibleFiltered(ctx context.Context, repo WorkflowRepository, owner uuid.UUID, name string, filter SharedVisibilityFilter) ([]string, Scope, error) {
+func ListFilesVisibleFiltered(ctx context.Context, repo Repository, owner uuid.UUID, name string, filter SharedVisibilityFilter) ([]string, Scope, error) {
 	for _, s := range ReadScopes(owner) {
 		if s.Kind == ScopeShared && filter != nil {
 			ok, err := filter(ctx, name)

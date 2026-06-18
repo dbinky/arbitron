@@ -27,7 +27,14 @@ var (
 // Schedule is a recurring trigger: it starts WorkflowName on a cron + timezone,
 // attributed to CreatorID (the run's owner + department source).
 type Schedule struct {
-	ID           uuid.UUID
+	ID uuid.UUID
+	// WorkflowID is the stable identity of the scheduled workflow (resolved
+	// name->id at create time via the workflow registry). It is uuid.Nil for a
+	// schedule created before id-references existed, or when no registry is wired
+	// (local mode). At fire time the evaluator resolves WorkflowID->current name
+	// so a rename cannot break a running schedule; WorkflowName is RETAINED as the
+	// human-facing display label and the fall-back when WorkflowID is Nil.
+	WorkflowID   uuid.UUID
 	WorkflowName string
 	CronExpr     string    // standard 5-field cron, validated via robfig/cron
 	Timezone     string    // IANA name; "" normalizes to "UTC"
@@ -51,6 +58,7 @@ func (s Schedule) WireMap() map[string]any {
 	}
 	return map[string]any{
 		"id":           s.ID.String(),
+		"workflowId":   s.WorkflowID.String(),
 		"workflowName": s.WorkflowName,
 		"cronExpr":     s.CronExpr,
 		"timezone":     s.Timezone,

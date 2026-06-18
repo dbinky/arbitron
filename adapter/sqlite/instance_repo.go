@@ -70,6 +70,13 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		Visibility:        string(visibility),
 		TriggerSource:     string(triggerSource),
 		ScheduleID:        scheduleIDToNullString(inst.ScheduleID),
+		// Stamp the stable workflow_id (migration 017) in the SAME INSERT. Folding
+		// it into the generated query (rather than a follow-up UPDATE) is atomic:
+		// there is no crash window in which the row exists with workflow_id=NULL,
+		// which would make a live run invisible to the delete-while-running guard
+		// (CountActiveByWorkflowID keys on workflow_id). A Nil id (legacy/local-mode
+		// run) maps to NULL — the backfill's "dangling label" state.
+		WorkflowID: workflowIDToNullString(inst.WorkflowID),
 	})
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -96,7 +103,11 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 		}
 		return nil, fmt.Errorf("getting instance: %w", err)
 	}
-	return rowToInstance(row)
+	inst, err := rowToInstance(row)
+	if err != nil {
+		return nil, err
+	}
+	return inst, nil
 }
 
 func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
@@ -335,7 +346,7 @@ func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, rec
 //
 // AUTHORIZATION: this method performs NO caller/owner/visibility scoping — it is
 // a dumb data accessor. The access decision (CanSeePublication / ownership) lives
-// in workflow.WorkflowService.Stats, which gates the name before delegating here.
+// in workflow.Service.Stats, which gates the name before delegating here.
 // Do NOT add a per-caller predicate to this query; keep the boundary in the
 // domain service (hexagonal architecture).
 //
@@ -400,6 +411,27 @@ func (r *InstanceRepo) HasActiveRun(ctx context.Context, workflowName string, ow
 	return exists != 0, nil
 }
 
+// CountActiveByWorkflowID returns how many non-terminal instances carry the
+// stable workflowID. "Active" is any state other than completed/failed/cancelled
+// (i.e. queued/running/waiting/paused), mirroring HasActiveRun's vocabulary. It is
+// the admin Delete guard's primitive (workflow-management Phase 3): a workflow
+// with live runs cannot be deleted. It keys on workflow_id (migration 017), not
+// the human-facing workflow_name, so a rename does not hide live runs.
+//
+// It is a hand-written query (the generated GetInstance/List predate the
+// workflow_id column) to avoid a blanket sqlc regeneration of the hand-curated
+// generated/ tree, matching the Create/Get workflow_id handling above.
+func (r *InstanceRepo) CountActiveByWorkflowID(ctx context.Context, workflowID uuid.UUID) (int, error) {
+	const q = `SELECT COUNT(*) FROM instances
+  WHERE workflow_id = ?
+    AND state IN ('queued','running','waiting','paused')`
+	var n int
+	if err := r.db.QueryRowContext(ctx, q, uuidToString(workflowID)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting active instances for workflow %q: %w", workflowID, err)
+	}
+	return n, nil
+}
+
 // rowToInstance converts a sqlc-generated Instance row into a domain Instance.
 // This is a package-level function so both InstanceRepo and QueueRepo can use
 // it without hidden coupling between the two repos.
@@ -453,10 +485,17 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
+	// Stable workflow_id (migration 017) folded into the GetInstance query. A NULL
+	// (legacy run, or local mode with no registry) maps to uuid.Nil.
+	workflowID, err := nullStringToWorkflowID(row.WorkflowID)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
 
 	return &instance.Instance{
 		ID:                id,
 		OwnerID:           ownerID,
+		WorkflowID:        workflowID,
 		WorkflowName:      row.WorkflowName,
 		WorkflowSnapshot:  snapshot,
 		Department:        nullStringToString(row.Department),

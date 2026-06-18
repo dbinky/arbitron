@@ -16,7 +16,7 @@ import (
 // user. Each sample is seeded at most once (tracked via the Ledger).
 type Seeder struct {
 	source    SampleSource
-	repo      workflow.WorkflowRepository
+	repo      workflow.Repository
 	published workflow.PublishedStore
 	ledger    Ledger
 	owner     uuid.UUID
@@ -24,7 +24,7 @@ type Seeder struct {
 }
 
 // NewSeeder constructs a Seeder. owner owns the seeded publications.
-func NewSeeder(source SampleSource, repo workflow.WorkflowRepository, published workflow.PublishedStore, ledger Ledger, owner uuid.UUID, logger *slog.Logger) *Seeder {
+func NewSeeder(source SampleSource, repo workflow.Repository, published workflow.PublishedStore, ledger Ledger, owner uuid.UUID, logger *slog.Logger) *Seeder {
 	return &Seeder{source: source, repo: repo, published: published, ledger: ledger, owner: owner, logger: logger}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/arbitron/arbitron/adapter/filesystem"
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -33,6 +34,10 @@ type stubWorkflowRepo struct {
 	writeFileFn  func(ctx context.Context, name, path string, content []byte) error
 	deleteFileFn func(ctx context.Context, name, path string) error
 	listFilesFn  func(ctx context.Context, name string) ([]string, error)
+	// existsFn drives Exists per scope+name; nil means "nothing exists". Local-mode
+	// Delete resolves the caller's private scope via Exists before removing, so a
+	// delete test must report the workflow as existing in the expected scope.
+	existsFn func(scope workflow.Scope, name string) bool
 }
 
 func (s *stubWorkflowRepo) List(ctx context.Context, scope workflow.Scope) ([]workflow.WorkflowSummary, error) {
@@ -100,7 +105,10 @@ func (s *stubWorkflowRepo) SaveNodePositions(_ context.Context, _ workflow.Scope
 	return nil
 }
 
-func (s *stubWorkflowRepo) Exists(_ context.Context, _ workflow.Scope, _ string) (bool, error) {
+func (s *stubWorkflowRepo) Exists(_ context.Context, scope workflow.Scope, name string) (bool, error) {
+	if s.existsFn != nil {
+		return s.existsFn(scope, name), nil
+	}
 	return false, nil
 }
 
@@ -472,13 +480,18 @@ func TestWorkflowDelete(t *testing.T) {
 	t.Run("happy path deletes workflow", func(t *testing.T) {
 		var capturedName string
 		repo := &stubWorkflowRepo{
+			// Local-mode Delete resolves the caller's private scope first.
+			existsFn: func(scope workflow.Scope, name string) bool {
+				return scope.Kind == workflow.ScopePrivate && name == "to-delete"
+			},
 			deleteFn: func(_ context.Context, name string) error {
 				capturedName = name
 				return nil
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "to-delete"})
+		// workflow_delete is admin-gated (workflow-management Phase 3 Task 2).
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "to-delete"})
 
 		assert.False(t, result.IsError)
 		assert.Equal(t, "to-delete", capturedName)
@@ -498,7 +511,7 @@ func TestWorkflowDelete(t *testing.T) {
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "ghost"})
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "ghost"})
 
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
@@ -509,12 +522,14 @@ func TestWorkflowDelete(t *testing.T) {
 	// "shared and read-only" message — not a generic internal error.
 	t.Run("shared-only workflow returns tool error", func(t *testing.T) {
 		repo := &stubWorkflowRepo{
-			deleteFn: func(_ context.Context, _ string) error {
-				return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
+			// "pub" exists ONLY in the shared scope: local-mode Delete maps it to
+			// ErrSharedReadOnly (shared workflows are read-only in local mode).
+			existsFn: func(scope workflow.Scope, name string) bool {
+				return scope.Kind == workflow.ScopeShared && name == "pub"
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "pub"})
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "pub"})
 
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
@@ -974,6 +989,9 @@ func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
 	delete(p.pub, name)
 	return nil
 }
+func (p *fakePublishedStore) SetWorkflowID(_ context.Context, _ string, _ uuid.UUID) error {
+	return nil
+}
 
 // newPublishServer builds an MCP server whose WorkflowSvc is backed by a real
 // filesystem repo (temp dir) and the given publisher store, so the publish/copy
@@ -1213,4 +1231,612 @@ func TestWorkflowTool_SetVisibility_InvalidName(t *testing.T) {
 
 func ctxWithMCPIdentity() context.Context {
 	return identity.WithIdentity(context.Background(), identity.Identity{UserID: mcpTestUserID, Username: "tester", Role: identity.RoleUser})
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 Task 4: lifecycle MCP tools (rename/unpublish/duplicate/archive/
+// unarchive/transfer_ownership/audit)
+// ---------------------------------------------------------------------------
+
+// memRegistry is an in-memory workflow.Registry for the lifecycle MCP
+// tool tests (the admin ops require a wired registry).
+type memRegistry struct {
+	byID   map[uuid.UUID]workflow.RegistryEntry
+	byName map[string]uuid.UUID
+}
+
+func newMemRegistry() *memRegistry {
+	return &memRegistry{byID: map[uuid.UUID]workflow.RegistryEntry{}, byName: map[string]uuid.UUID{}}
+}
+
+func (r *memRegistry) Register(_ context.Context, e workflow.RegistryEntry) error {
+	if _, ok := r.byName[e.Name]; ok {
+		return workflow.ErrAlreadyExists
+	}
+	r.byID[e.ID] = e
+	r.byName[e.Name] = e.ID
+	return nil
+}
+
+func (r *memRegistry) Resolve(_ context.Context, name string) (workflow.RegistryEntry, error) {
+	if id, ok := r.byName[name]; ok {
+		return r.byID[id], nil
+	}
+	return workflow.RegistryEntry{}, workflow.ErrNotFound
+}
+
+func (r *memRegistry) ResolveID(_ context.Context, name string) (uuid.UUID, error) {
+	if id, ok := r.byName[name]; ok {
+		return id, nil
+	}
+	return uuid.Nil, workflow.ErrNotFound
+}
+
+func (r *memRegistry) ResolveName(_ context.Context, id uuid.UUID) (string, error) {
+	if e, ok := r.byID[id]; ok {
+		return e.Name, nil
+	}
+	return "", workflow.ErrNotFound
+}
+
+func (r *memRegistry) Rename(_ context.Context, id uuid.UUID, newName string) error {
+	e, ok := r.byID[id]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	if _, taken := r.byName[newName]; taken {
+		return workflow.ErrAlreadyExists
+	}
+	delete(r.byName, e.Name)
+	e.Name = newName
+	r.byID[id] = e
+	r.byName[newName] = id
+	return nil
+}
+
+func (r *memRegistry) SetArchived(_ context.Context, id uuid.UUID, archived bool) error {
+	e, ok := r.byID[id]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	e.Archived = archived
+	r.byID[id] = e
+	return nil
+}
+
+func (r *memRegistry) SetOwner(_ context.Context, id, owner uuid.UUID) error {
+	e, ok := r.byID[id]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	e.OwnerID = owner
+	r.byID[id] = e
+	return nil
+}
+
+func (r *memRegistry) Delete(_ context.Context, id uuid.UUID) error {
+	e, ok := r.byID[id]
+	if !ok {
+		return workflow.ErrNotFound
+	}
+	delete(r.byID, id)
+	delete(r.byName, e.Name)
+	return nil
+}
+
+func (r *memRegistry) List(_ context.Context) ([]workflow.RegistryEntry, error) {
+	out := make([]workflow.RegistryEntry, 0, len(r.byID))
+	for _, e := range r.byID {
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// memActiveCounter is an in-memory workflow.ActiveInstanceCounter; active maps a
+// workflow id to its non-terminal instance count.
+type memActiveCounter struct{ active map[uuid.UUID]int }
+
+func (c *memActiveCounter) CountActiveByWorkflowID(_ context.Context, id uuid.UUID) (int, error) {
+	return c.active[id], nil
+}
+
+// recordingMCPStore is an in-memory audit.EventStore for the workflow_audit tool
+// tests.
+type recordingMCPStore struct{ events []audit.Event }
+
+func (s *recordingMCPStore) Append(_ context.Context, ev audit.Event) error {
+	s.events = append(s.events, ev)
+	return nil
+}
+func (s *recordingMCPStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
+	return s.events, nil
+}
+func (s *recordingMCPStore) ListByTarget(_ context.Context, target string) ([]audit.Event, error) {
+	out := make([]audit.Event, 0)
+	// Newest-first: iterate in reverse insertion order.
+	for i := len(s.events) - 1; i >= 0; i-- {
+		if s.events[i].Target == target {
+			out = append(out, s.events[i])
+		}
+	}
+	return out, nil
+}
+
+// lifecycleFixture bundles the lifecycle MCP server and its backing stores.
+type lifecycleFixture struct {
+	srv     *adaptmcp.Server
+	repo    *filesystem.WorkflowRepo
+	reg     *memRegistry
+	counter *memActiveCounter
+	store   *recordingMCPStore
+}
+
+// newLifecycleServer builds an MCP server whose WorkflowSvc is registry-backed
+// (the admin lifecycle ops require it), with an active-instance counter, a
+// published store, and an audit store wired for the workflow_audit tool.
+func newLifecycleServer(t *testing.T) *lifecycleFixture {
+	t.Helper()
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	reg := newMemRegistry()
+	counter := &memActiveCounter{active: map[uuid.UUID]int{}}
+	store := &recordingMCPStore{}
+	pubStore := &fakePublishedStore{pub: map[string]workflow.Publication{}}
+
+	svc := workflow.NewWorkflowService(repo, pubStore)
+	svc.SetRegistry(reg)
+	svc.SetActiveInstanceCounter(counter)
+	svc.SetAudit(audit.NewService(store))
+
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		AuditSvc:    audit.NewService(store),
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+	return &lifecycleFixture{srv: srv, repo: repo, reg: reg, counter: counter, store: store}
+}
+
+// seedRegisteredPrivate creates a registered private workflow owned by owner and
+// returns its stable id.
+func (f *lifecycleFixture) seedRegisteredPrivate(t *testing.T, owner uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	w := sampleManifest(name)
+	w.ID = id
+	require.NoError(t, f.repo.Create(ctxWithMCPIdentity(), workflow.Private(owner), name, w))
+	require.NoError(t, f.reg.Register(context.Background(), workflow.RegistryEntry{
+		ID: id, Name: name, Scope: workflow.ScopePrivate, OwnerID: owner,
+	}))
+	return id
+}
+
+// --- workflow_rename ---
+
+func TestWorkflowTool_Rename_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "beta"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	_, err := f.reg.ResolveID(context.Background(), "beta")
+	require.NoError(t, err)
+}
+
+func TestWorkflowTool_Rename_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callTool(t, f.srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Rename_TakenName(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	f.seedRegisteredPrivate(t, mcpTestUserID, "beta")
+
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "already exists")
+}
+
+func TestWorkflowTool_Rename_InvalidName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "../escape"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid")
+}
+
+func TestWorkflowTool_Rename_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "ghost", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Rename_MissingName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "name is required")
+}
+
+func TestWorkflowTool_Rename_MissingNewName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "newName is required")
+}
+
+// --- workflow_unpublish ---
+
+func TestWorkflowTool_Unpublish_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	// Publish a private source first so there is a real publication record + shared
+	// folder for Unpublish to remove (admin may publish to public).
+	require.NoError(t, f.repo.Create(ctxWithMCPIdentity(), workflow.Private(mcpTestUserID), "src", sampleManifest("src")))
+	require.False(t, callToolAdmin(t, f.srv, "workflow_publish", map[string]any{
+		"name": "src", "publishedName": "pub", "visibility": "public",
+	}).IsError)
+
+	result := callToolAdmin(t, f.srv, "workflow_unpublish", map[string]any{"name": "pub"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	ok, err := f.repo.Exists(ctxWithMCPIdentity(), workflow.Shared(), "pub")
+	require.NoError(t, err)
+	assert.False(t, ok, "shared folder removed")
+}
+
+func TestWorkflowTool_Unpublish_UnknownName_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_unpublish", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Unpublish_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callTool(t, f.srv, "workflow_unpublish", map[string]any{"name": "pub"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+// TestWorkflowTool_Unpublish_NoPublishers_NotAuthorized verifies that the MCP
+// Unpublish handler surfaces ErrUnauthorized as "not authorized" when the
+// server has no publishers store configured (local/unconfigured mode).
+func TestWorkflowTool_Unpublish_NoPublishers_NotAuthorized(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil) // nil publishers → ErrUnauthorized
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_unpublish", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized",
+		"ErrUnauthorized (no publishers configured) must surface as 'not authorized' via mapLifecycleError")
+}
+
+// --- workflow_duplicate ---
+
+func TestWorkflowTool_Duplicate_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callToolAdmin(t, f.srv, "workflow_duplicate", map[string]any{"name": "alpha", "newName": "alpha-copy"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	_, err := f.reg.ResolveID(context.Background(), "alpha-copy")
+	require.NoError(t, err)
+}
+
+func TestWorkflowTool_Duplicate_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callTool(t, f.srv, "workflow_duplicate", map[string]any{"name": "alpha", "newName": "alpha-copy"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Duplicate_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_duplicate", map[string]any{"name": "ghost", "newName": "copy"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Duplicate_TakenName(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	f.seedRegisteredPrivate(t, mcpTestUserID, "taken")
+
+	result := callToolAdmin(t, f.srv, "workflow_duplicate", map[string]any{"name": "alpha", "newName": "taken"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "already exists")
+}
+
+// --- workflow_archive / workflow_unarchive ---
+
+func TestWorkflowTool_Archive_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	id := f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callToolAdmin(t, f.srv, "workflow_archive", map[string]any{"name": "alpha"})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.True(t, f.reg.byID[id].Archived)
+}
+
+func TestWorkflowTool_Archive_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callTool(t, f.srv, "workflow_archive", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Unarchive_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	id := f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	require.NoError(t, f.reg.SetArchived(context.Background(), id, true))
+
+	result := callToolAdmin(t, f.srv, "workflow_unarchive", map[string]any{"name": "alpha"})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.False(t, f.reg.byID[id].Archived)
+}
+
+func TestWorkflowTool_Unarchive_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callTool(t, f.srv, "workflow_unarchive", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Archive_UnknownName_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_archive", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Unarchive_UnknownName_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_unarchive", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found",
+		"ErrNotFound from Unarchive must surface as 'not found' via mapLifecycleError")
+}
+
+// --- workflow_transfer_ownership ---
+
+func TestWorkflowTool_TransferOwnership_HappyPath(t *testing.T) {
+	f := newLifecycleServer(t)
+	id := f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	newOwner := uuid.New()
+
+	result := callToolAdmin(t, f.srv, "workflow_transfer_ownership", map[string]any{
+		"name": "alpha", "newOwner": newOwner.String(),
+	})
+	assert.False(t, result.IsError, extractText(t, result))
+	assert.Equal(t, newOwner, f.reg.byID[id].OwnerID)
+}
+
+func TestWorkflowTool_TransferOwnership_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callTool(t, f.srv, "workflow_transfer_ownership", map[string]any{
+		"name": "alpha", "newOwner": uuid.New().String(),
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_TransferOwnership_BadOwnerID(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	result := callToolAdmin(t, f.srv, "workflow_transfer_ownership", map[string]any{
+		"name": "alpha", "newOwner": "not-a-uuid",
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "newOwner")
+}
+
+func TestWorkflowTool_TransferOwnership_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_transfer_ownership", map[string]any{
+		"name": "ghost", "newOwner": mcpTestUserID.String(),
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// --- workflow_delete admin-gated + running guard ---
+
+func TestWorkflowTool_Delete_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	result := callTool(t, f.srv, "workflow_delete", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Delete_RunningInstances_Error(t *testing.T) {
+	f := newLifecycleServer(t)
+	id := f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	f.counter.active[id] = 1 // one live run
+
+	result := callToolAdmin(t, f.srv, "workflow_delete", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "running instances")
+}
+
+func TestWorkflowTool_Delete_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_delete", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// TestWorkflowTool_Rename_NoRegistry_NotAuthorized verifies that when the
+// server has no registry configured (local mode), the lifecycle ops that
+// require a registry return "not authorized" (ErrUnauthorized) at the MCP
+// surface — distinct from ErrForbidden (wrong caller) but still "not
+// authorized" to the API consumer.
+func TestWorkflowTool_Rename_NoRegistry_NotAuthorized(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil) // no registry
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized",
+		"ErrUnauthorized from unconfigured registry must surface as 'not authorized'")
+}
+
+// --- workflow_audit ---
+
+func TestWorkflowTool_Audit_HappyPath_NewestFirst(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+
+	// Two ops against "alpha" → two audit events, newest first.
+	require.False(t, callToolAdmin(t, f.srv, "workflow_archive", map[string]any{"name": "alpha"}).IsError)
+	require.False(t, callToolAdmin(t, f.srv, "workflow_unarchive", map[string]any{"name": "alpha"}).IsError)
+
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	var events []audit.Event
+	require.NoError(t, json.Unmarshal([]byte(extractText(t, result)), &events))
+	require.Len(t, events, 2)
+	assert.Equal(t, audit.ActionWorkflowUnarchive, events[0].Action, "newest event first")
+	assert.Equal(t, audit.ActionWorkflowArchive, events[1].Action)
+}
+
+func TestWorkflowTool_Audit_UnknownWorkflow_EmptyList(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{"name": "ghost"})
+	assert.False(t, result.IsError, extractText(t, result))
+
+	var events []audit.Event
+	require.NoError(t, json.Unmarshal([]byte(extractText(t, result)), &events))
+	assert.Empty(t, events)
+}
+
+func TestWorkflowTool_Audit_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callTool(t, f.srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Audit_MissingName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "name is required")
+}
+
+func TestWorkflowTool_Audit_InvalidName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{"name": "../escape"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid workflow name")
+}
+
+// errMCPStore is an audit.EventStore that fails every operation.
+type errMCPStore struct{ err error }
+
+func (e *errMCPStore) Append(context.Context, audit.Event) error { return e.err }
+func (e *errMCPStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
+	return nil, e.err
+}
+func (e *errMCPStore) ListByTarget(context.Context, string) ([]audit.Event, error) {
+	return nil, e.err
+}
+
+func TestWorkflowTool_Audit_NoAuditSvc_Error(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(newMemRegistry())
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		AuditSvc:    nil, // deliberately absent
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not available")
+}
+
+func TestWorkflowTool_Audit_StoreError_Error(t *testing.T) {
+	storeErr := errors.New("db unavailable")
+	store := &errMCPStore{err: storeErr}
+
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(newMemRegistry())
+	svc.SetAudit(audit.NewService(store))
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		AuditSvc:    audit.NewService(store),
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "failed to query audit trail")
+}
+
+// --- registration ---
+
+// TestRegisterWorkflowTools_RegistersLifecycleTools enumerates the lifecycle
+// tools added in Phase 3 Task 4 and asserts each is registered.
+func TestRegisterWorkflowTools_RegistersLifecycleTools(t *testing.T) {
+	f := newLifecycleServer(t)
+	want := []string{
+		"workflow_rename",
+		"workflow_unpublish",
+		"workflow_duplicate",
+		"workflow_archive",
+		"workflow_unarchive",
+		"workflow_transfer_ownership",
+		"workflow_audit",
+		"workflow_delete",
+	}
+	for _, name := range want {
+		t.Run(name, func(t *testing.T) {
+			// A registered tool returns a (possibly error) result; an unregistered
+			// tool yields a JSON-RPC "tool not found" with an empty result content.
+			result := callToolAdmin(t, f.srv, name, map[string]any{"name": "alpha", "newName": "beta", "newOwner": uuid.New().String()})
+			require.NotNil(t, result)
+			require.NotEmpty(t, result.Content, "tool %q must be registered (non-empty result)", name)
+		})
+	}
 }

@@ -91,8 +91,16 @@ func VisibilityFromWorkflow(workflowVisibility string) Visibility {
 
 // Instance is a single execution of a workflow definition.
 type Instance struct {
-	ID               uuid.UUID
-	OwnerID          uuid.UUID
+	ID      uuid.UUID
+	OwnerID uuid.UUID
+	// WorkflowID is the stable identity of the workflow this run was triggered
+	// from (resolved name->id at trigger time via the workflow registry). It is
+	// uuid.Nil for legacy runs created before id-references existed, or when no
+	// registry is wired (local mode). WorkflowName is RETAINED as the human-facing
+	// display label; WorkflowSnapshot remains the authority for execution. A rerun
+	// resolves by WorkflowID (id->current name), falling back to WorkflowName when
+	// the id is Nil.
+	WorkflowID       uuid.UUID
 	WorkflowName     string
 	WorkflowSnapshot map[string]any
 	// Department is the department this run was stamped under at trigger time

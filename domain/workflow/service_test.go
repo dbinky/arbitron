@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRepo is an in-memory WorkflowRepository keyed by (scopeKey, name) so the
+// fakeRepo is an in-memory Repository keyed by (scopeKey, name) so the
 // service's scope routing is observable.
 type fakeRepo struct {
 	// store[scopeKey][name] = *Workflow
@@ -132,9 +132,25 @@ func (r *fakeRepo) CopyTree(_ context.Context, src workflow.Scope, srcName strin
 // fakePublishers is a fake PublishedStore (lookup + write).
 type fakePublishers struct {
 	pub map[string]workflow.Publication
+	// workflowIDs records the stable id linked to each publication via
+	// SetWorkflowID, so publish tests can assert the publication references the
+	// workflow by id.
+	workflowIDs map[string]uuid.UUID
 	// upsertErr, when set, makes Upsert fail so the Publish compensation paths are
 	// observable.
 	upsertErr error
+	// setWorkflowIDErr, when set, makes SetWorkflowID return the error so the
+	// Publish id-link failure path is exercisable.
+	setWorkflowIDErr error
+	// pubLookupErr, when set, makes PublicationOf return the error so that
+	// Delete/Unpublish lookup-failure paths are exercisable.
+	pubLookupErr error
+	// deleteErr, when set, makes Delete return the error so that
+	// Delete/Unpublish publication-removal failure paths are exercisable.
+	deleteErr error
+	// publisherOfErr, when set, makes PublisherOf return the error so that
+	// the Publish cross-scope collision check failure path is exercisable.
+	publisherOfErr error
 }
 
 func newFakePublishers() *fakePublishers {
@@ -142,11 +158,17 @@ func newFakePublishers() *fakePublishers {
 }
 
 func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
+	if p.publisherOfErr != nil {
+		return uuid.Nil, false, p.publisherOfErr
+	}
 	pub, ok := p.pub[name]
 	return pub.Publisher, ok, nil
 }
 
 func (p *fakePublishers) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	if p.pubLookupErr != nil {
+		return workflow.Publication{}, false, p.pubLookupErr
+	}
 	pub, ok := p.pub[name]
 	return pub, ok, nil
 }
@@ -160,7 +182,21 @@ func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.U
 }
 
 func (p *fakePublishers) Delete(_ context.Context, name string) error {
+	if p.deleteErr != nil {
+		return p.deleteErr
+	}
 	delete(p.pub, name)
+	return nil
+}
+
+func (p *fakePublishers) SetWorkflowID(_ context.Context, name string, id uuid.UUID) error {
+	if p.setWorkflowIDErr != nil {
+		return p.setWorkflowIDErr
+	}
+	if p.workflowIDs == nil {
+		p.workflowIDs = map[string]uuid.UUID{}
+	}
+	p.workflowIDs[name] = id
 	return nil
 }
 
@@ -499,52 +535,43 @@ func TestService_Copy_DuplicatePrivateName_AlreadyExists(t *testing.T) {
 // Delete
 // ---------------------------------------------------------------------------
 
-// Happy path: Delete removes a workflow from the caller's private scope.
+// Happy path (local mode, no registry): Delete removes a workflow from the
+// caller's private scope. Delete is admin-gated (Phase 3 Task 2); local mode
+// seeds an admin identity, so an admin caller deletes their private folder.
 func TestService_Delete_TargetsPrivate(t *testing.T) {
 	repo := newFakeRepo()
 	svc := workflow.NewWorkflowService(repo, nil)
 	owner := uuid.New()
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(owner), "mine", wf("mine")))
 
-	require.NoError(t, svc.Delete(ctxWith(owner, false), "mine"))
+	require.NoError(t, svc.Delete(ctxWith(owner, true), "mine"))
 
 	_, ok := repo.bucket(workflow.Private(owner))["mine"]
 	assert.False(t, ok, "workflow must be removed from private scope after delete")
 }
 
-// Failure: deleting a shared-only workflow returns ErrSharedReadOnly (not ErrNotFound).
-func TestService_Delete_SharedOnly_ReturnsSharedReadOnly(t *testing.T) {
-	repo := newFakeRepo()
-	svc := workflow.NewWorkflowService(repo, nil)
-	owner := uuid.New()
-	require.NoError(t, repo.Create(context.Background(), workflow.Shared(), "pub", wf("pub")))
-
-	err := svc.Delete(ctxWith(owner, false), "pub")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, workflow.ErrSharedReadOnly)
-	assert.NotErrorIs(t, err, workflow.ErrNotFound)
-}
-
-// Error: no identity in context is rejected.
+// Error: no identity in context is rejected. Delete is admin-gated, so a missing
+// identity maps to ErrForbidden (the requireAdmin gate), not ErrUnauthenticated.
 func TestService_Delete_NoIdentity_Rejected(t *testing.T) {
 	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
 
 	err := svc.Delete(context.Background(), "w")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, identity.ErrUnauthenticated)
+	assert.ErrorIs(t, err, workflow.ErrForbidden)
 }
 
-// Failure: deleting a workflow that exists in neither scope returns ErrNotFound.
+// Failure: deleting a workflow that exists in neither scope returns ErrNotFound
+// (local mode, no registry — falls back to the private folder delete).
 func TestService_Delete_Nowhere_ReturnsNotFound(t *testing.T) {
 	svc := workflow.NewWorkflowService(newFakeRepo(), nil)
 
-	err := svc.Delete(ctxWith(uuid.New(), false), "ghost")
+	err := svc.Delete(ctxWith(uuid.New(), true), "ghost")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound)
 }
 
-// Edge: Delete only removes the caller's private copy; another user's private
-// copy with the same name is untouched.
+// Edge: in local mode Delete only removes the caller's private copy; another
+// user's private copy with the same name is untouched.
 func TestService_Delete_OnlyAffectsCallerPrivate(t *testing.T) {
 	repo := newFakeRepo()
 	svc := workflow.NewWorkflowService(repo, nil)
@@ -553,7 +580,7 @@ func TestService_Delete_OnlyAffectsCallerPrivate(t *testing.T) {
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(a), "shared-name", wf("shared-name")))
 	require.NoError(t, repo.Create(context.Background(), workflow.Private(b), "shared-name", wf("shared-name")))
 
-	require.NoError(t, svc.Delete(ctxWith(a, false), "shared-name"))
+	require.NoError(t, svc.Delete(ctxWith(a, true), "shared-name"))
 
 	_, aGone := repo.bucket(workflow.Private(a))["shared-name"]
 	assert.False(t, aGone, "caller a's copy removed")

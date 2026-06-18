@@ -5,9 +5,29 @@ import (
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Success: a Workflow's stable ID round-trips through JSON under the "id" key,
+// so the durable identity persists in workflow.json across reloads.
+func TestWorkflow_ID_JSONRoundTrip(t *testing.T) {
+	id := uuid.New()
+	wf := workflow.Workflow{ID: id, Name: "triage"}
+
+	data, err := json.Marshal(wf)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	assert.Equal(t, id.String(), raw["id"])
+
+	var back workflow.Workflow
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.Equal(t, id, back.ID)
+	assert.Equal(t, "triage", back.Name)
+}
 
 // Happy path: the new agent_call node kind constant carries its wire value.
 func TestNodeTypeAgentCall_Value(t *testing.T) {

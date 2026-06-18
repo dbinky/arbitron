@@ -67,9 +67,9 @@ type TriggerService interface {
 	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error)
 }
 
-// WorkflowService is an alias retained for the EngineService composition in
+// Service is an alias retained for the EngineService composition in
 // server.go; it carries the Trigger method the engine satisfies.
-type WorkflowService = TriggerService
+type Service = TriggerService
 
 // workflowStatsReader is a consumer-side interface for reading workflow
 // execution statistics. It avoids importing the full InstanceRepository and
@@ -80,8 +80,8 @@ type workflowStatsReader interface {
 
 // WorkflowHandler handles REST API requests for workflow operations.
 type WorkflowHandler struct {
-	repo           workflow.WorkflowRepository
-	wfSvc          *workflow.WorkflowService
+	repo           workflow.Repository
+	wfSvc          *workflow.Service
 	service        TriggerService
 	fileReader     engine.FileReader
 	stats          workflowStatsReader
@@ -100,7 +100,7 @@ func (h *WorkflowHandler) SetConnectionChecker(cc workflow.ConnectionChecker) {
 // An optional workflow.ProfileChecker may be supplied as the final argument to
 // enable model_profile validation; when omitted (or nil), the model_profile
 // validation pass is skipped.
-func NewWorkflowHandler(repo workflow.WorkflowRepository, service TriggerService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
+func NewWorkflowHandler(repo workflow.Repository, service TriggerService, fileReader engine.FileReader, stats workflowStatsReader, profileChecker ...workflow.ProfileChecker) *WorkflowHandler {
 	var pc workflow.ProfileChecker
 	if len(profileChecker) > 0 {
 		pc = profileChecker[0]
@@ -121,11 +121,11 @@ func NewWorkflowHandler(repo workflow.WorkflowRepository, service TriggerService
 	}
 }
 
-// SetWorkflowService overrides the internally-constructed WorkflowService, e.g.
+// SetWorkflowService overrides the internally-constructed Service, e.g.
 // to wire a real PublisherLookup once the published_workflows repo exists. The
 // stats read port is re-applied to the injected service so the gated Stats path
 // keeps working through the production (publisher-aware) service.
-func (h *WorkflowHandler) SetWorkflowService(svc *workflow.WorkflowService) {
+func (h *WorkflowHandler) SetWorkflowService(svc *workflow.Service) {
 	if svc != nil {
 		if h.stats != nil {
 			svc.SetStatsReader(h.stats)
@@ -548,7 +548,18 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		// Map the admin-lifecycle sentinels to the SAME statuses the MCP adapter's
+		// mapLifecycleError uses, so the two transports agree on the service
+		// contract: an authz denial is 403 (not a 500 that corrupts alerting and
+		// invites retries) and a running-instance refusal is a 409 conflict.
+		switch {
+		case errors.Is(err, workflow.ErrForbidden), errors.Is(err, workflow.ErrUnauthorized):
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		case errors.Is(err, workflow.ErrHasRunningInstances):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

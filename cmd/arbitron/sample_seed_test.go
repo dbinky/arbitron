@@ -27,7 +27,8 @@ func (p *recordingPublished) Upsert(_ context.Context, name string, _ uuid.UUID,
 	p.names = append(p.names, name)
 	return nil
 }
-func (p *recordingPublished) Delete(context.Context, string) error { return nil }
+func (p *recordingPublished) Delete(context.Context, string) error                   { return nil }
+func (p *recordingPublished) SetWorkflowID(context.Context, string, uuid.UUID) error { return nil }
 func (p *recordingPublished) PublisherOf(context.Context, string) (uuid.UUID, bool, error) {
 	return uuid.Nil, false, nil
 }
