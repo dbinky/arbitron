@@ -1664,6 +1664,71 @@ func TestWorkflowTool_Audit_NonAdmin_Forbidden(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "not authorized")
 }
 
+func TestWorkflowTool_Audit_MissingName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "name is required")
+}
+
+func TestWorkflowTool_Audit_InvalidName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_audit", map[string]any{"name": "../escape"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "invalid workflow name")
+}
+
+// errMCPStore is an audit.EventStore that fails every operation.
+type errMCPStore struct{ err error }
+
+func (e *errMCPStore) Append(context.Context, audit.Event) error { return e.err }
+func (e *errMCPStore) ListByActor(context.Context, string, int) ([]audit.Event, error) {
+	return nil, e.err
+}
+func (e *errMCPStore) ListByTarget(context.Context, string) ([]audit.Event, error) {
+	return nil, e.err
+}
+
+func TestWorkflowTool_Audit_NoAuditSvc_Error(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(newMemRegistry())
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		AuditSvc:    nil, // deliberately absent
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not available")
+}
+
+func TestWorkflowTool_Audit_StoreError_Error(t *testing.T) {
+	storeErr := errors.New("db unavailable")
+	store := &errMCPStore{err: storeErr}
+
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(newMemRegistry())
+	svc.SetAudit(audit.NewService(store))
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		AuditSvc:    audit.NewService(store),
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_audit", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "failed to query audit trail")
+}
+
 // --- registration ---
 
 // TestRegisterWorkflowTools_RegistersLifecycleTools enumerates the lifecycle

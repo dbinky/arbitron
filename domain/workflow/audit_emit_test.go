@@ -423,6 +423,44 @@ func TestService_Archive_AuditStoreFailure_OperationSucceeds(t *testing.T) {
 		"Archive must succeed when the audit store fails — audit is best-effort")
 }
 
+// TestService_Rename_AuditStoreFailure_OperationSucceeds verifies that an audit
+// store failure does not propagate from Rename. Audit is best-effort: the folder
+// move and registry update must complete regardless of audit-DB health.
+func TestService_Rename_AuditStoreFailure_OperationSucceeds(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+	svc.SetAudit(audit.NewService(&failingStore{err: errors.New("db unavailable")}))
+
+	require.NoError(t, svc.Rename(adminCtx, "alpha", "beta"),
+		"Rename must succeed when the audit store fails — audit is best-effort")
+}
+
+// TestService_Delete_AuditStoreFailure_OperationSucceeds verifies that an audit
+// store failure does not propagate from Delete. The folder and registry must be
+// removed regardless of audit-DB health.
+func TestService_Delete_AuditStoreFailure_OperationSucceeds(t *testing.T) {
+	svc, repo, reg, _, _ := deleteSvc(t)
+	svc.SetAudit(audit.NewService(&failingStore{err: errors.New("db unavailable")}))
+	owner := uuid.New()
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.Delete(ctxWith(owner, true), "alpha"),
+		"Delete must succeed when the audit store fails — audit is best-effort")
+}
+
+// TestService_Transfer_AuditStoreFailure_OperationSucceeds verifies that an
+// audit store failure does not propagate from TransferOwnership.
+func TestService_Transfer_AuditStoreFailure_OperationSucceeds(t *testing.T) {
+	owner := uuid.New()
+	newOwner := uuid.New()
+	svc, repo, reg, _, _ := deleteSvc(t)
+	svc.SetAudit(audit.NewService(&failingStore{err: errors.New("db unavailable")}))
+	seedPrivateRegistered(t, repo, reg, owner, "alpha")
+
+	require.NoError(t, svc.TransferOwnership(ctxWith(owner, true), "alpha", newOwner),
+		"TransferOwnership must succeed when the audit store fails — audit is best-effort")
+}
+
 // TestService_SetVisibility_AuditStoreFailure_OperationSucceeds verifies that
 // a store failure during Record() inside SetVisibility does NOT propagate to
 // the caller. Audit is best-effort and void — the mutation must still succeed.
