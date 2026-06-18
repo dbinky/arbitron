@@ -179,3 +179,40 @@ func TestService_Archive_StillLoadableAndEditable(t *testing.T) {
 	loaded.Description = "edited while archived"
 	require.NoError(t, svc.Update(adminCtx, "alpha", loaded), "archived workflow remains editable")
 }
+
+// TestService_Archive_StillListable verifies archiving does not remove the
+// workflow from List results — archived workflows must remain discoverable so
+// admins can find and manage them. The trigger path is the only blocked action.
+func TestService_Archive_StillListable(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+
+	require.NoError(t, svc.Archive(adminCtx, "alpha"))
+
+	summaries, err := svc.List(adminCtx)
+	require.NoError(t, err, "List must not fail after archiving")
+
+	names := make([]string, 0, len(summaries))
+	for _, s := range summaries {
+		names = append(names, s.Name)
+	}
+	assert.Contains(t, names, "alpha", "archived workflow must still appear in List")
+}
+
+// TestService_Archive_CanStillDuplicate verifies that archiving a workflow does
+// not prevent it from being duplicated. The archive flag only gates triggering;
+// it does not block admin lifecycle management operations.
+func TestService_Archive_CanStillDuplicate(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, _ := renameSvc(t, owner)
+
+	require.NoError(t, svc.Archive(adminCtx, "alpha"))
+
+	err := svc.Duplicate(adminCtx, "alpha", "alpha-copy")
+	require.NoError(t, err, "archived workflow must remain duplicatable")
+
+	_, hasCopy := repo.bucket(workflow.Private(owner))["alpha-copy"]
+	assert.True(t, hasCopy, "copy folder created")
+	_, regErr := reg.ResolveID(adminCtx, "alpha-copy")
+	assert.NoError(t, regErr, "copy registered in registry")
+}
