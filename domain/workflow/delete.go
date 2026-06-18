@@ -17,6 +17,27 @@ func scopeLabel(k ScopeKind) string {
 	return ScopeLabelPrivate
 }
 
+// guardNoActiveInstances refuses an admin lifecycle op (Delete, Unpublish) while
+// any non-terminal instance still carries the workflow's stable id, returning
+// ErrHasRunningInstances. It is the single guard both ops share so the
+// running-instance invariant cannot drift between them. The guard FAILS CLOSED: a
+// counter error propagates (the op is refused) rather than being treated as "no
+// active runs". When no ActiveInstanceCounter is wired (local/unconfigured mode,
+// which also has no registry id to count by) the guard is skipped.
+func (s *WorkflowService) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name string) error {
+	if s.activeInstances == nil {
+		return nil
+	}
+	active, err := s.activeInstances.CountActiveByWorkflowID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("counting active instances for %q: %w", name, err)
+	}
+	if active > 0 {
+		return fmt.Errorf("%w: %s (%d active)", ErrHasRunningInstances, name, active)
+	}
+	return nil
+}
+
 // Delete permanently removes a workflow (admin-only). It is the registry-aware,
 // guarded counterpart to the prior private-scope delete: it works for SHARED
 // workflows too (relaxing the shared-read-only rule for this admin op) and
@@ -65,14 +86,8 @@ func (s *WorkflowService) Delete(ctx context.Context, name string) error {
 	// Guard: refuse while non-terminal instances carry this id. History (terminal
 	// instance rows + audit) is preserved either way — the guard only blocks; it
 	// never deletes instance rows.
-	if s.activeInstances != nil {
-		active, cerr := s.activeInstances.CountActiveByWorkflowID(ctx, id)
-		if cerr != nil {
-			return fmt.Errorf("counting active instances for %q: %w", name, cerr)
-		}
-		if active > 0 {
-			return fmt.Errorf("%w: %s (%d active)", ErrHasRunningInstances, name, active)
-		}
+	if err := s.guardNoActiveInstances(ctx, id, name); err != nil {
+		return err
 	}
 
 	// Remove the publication record first (if the name is published). Idempotent:
@@ -114,12 +129,21 @@ func (s *WorkflowService) Delete(ctx context.Context, name string) error {
 // Unpublishing a name that is not published returns ErrNotFound (there is nothing
 // to unpublish).
 //
+// GUARD: like Delete, Unpublish is refused with ErrHasRunningInstances while any
+// non-terminal instance still carries the shared workflow's stable id. Unpublish
+// removes the shared registry row that Rerun resolves WorkflowID->name through
+// (and the anchor the archived-trigger refusal resolves against), so allowing it
+// while runs are live would silently degrade rerun resolution for every
+// historical instance. The guard keeps Unpublish symmetric with Delete (option a
+// of PR #44 Must Fix #5).
+//
 // CROSS-STORE ORDERING:
 //  1. Resolve the shared name's registry id (so we can remove it in step 4).
-//  2. Remove the publication record.
-//  3. Remove the shared folder (ErrNotFound is idempotent).
-//  4. Remove the registry row LAST, matching Delete's ordering: the registry is
-//     the identity authority; removing it last means a failure at step 4 leaves a
+//  2. Guard on non-terminal instances → ErrHasRunningInstances (nothing removed).
+//  3. Remove the publication record.
+//  4. Remove the shared folder (ErrNotFound is idempotent).
+//  5. Remove the registry row LAST, matching Delete's ordering: the registry is
+//     the identity authority; removing it last means a failure at step 5 leaves a
 //     dangling id whose folder is already gone, which is preferable to a reachable
 //     id that blocks re-publish under the same name.
 func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
@@ -136,9 +160,10 @@ func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: %s is not published", ErrNotFound, name)
 	}
 
-	// Step 1: resolve the shared name's registry id (pre-flight for step 4).
-	// When no registry is wired (local/unconfigured mode) or the entry is missing,
-	// sharedID stays Nil and step 4 is skipped.
+	// Step 1: resolve the shared name's registry id (pre-flight for the guard and
+	// step 5). When no registry is wired (local/unconfigured mode) or the entry is
+	// missing, sharedID stays Nil — the guard is then skipped (no id to count by)
+	// and step 5 is skipped.
 	var sharedID uuid.UUID
 	if s.registry != nil {
 		if id, rerr := s.registry.ResolveID(ctx, name); rerr == nil {
@@ -148,17 +173,25 @@ func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
 		}
 	}
 
-	// Step 2: remove the publication record.
+	// Step 2: refuse while non-terminal instances carry this id (symmetric with
+	// Delete). Skipped when sharedID is Nil (no id to count by).
+	if sharedID != uuid.Nil {
+		if err := s.guardNoActiveInstances(ctx, sharedID, name); err != nil {
+			return err
+		}
+	}
+
+	// Step 3: remove the publication record.
 	if err := s.published.Delete(ctx, name); err != nil {
 		return fmt.Errorf("removing publication for %q: %w", name, err)
 	}
 
-	// Step 3: remove the shared folder (ErrNotFound is idempotent).
+	// Step 4: remove the shared folder (ErrNotFound is idempotent).
 	if err := s.repo.Delete(ctx, Shared(), name); err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("removing shared folder %q: %w", name, err)
 	}
 
-	// Step 4: remove the shared registry row LAST so a re-publish under the same
+	// Step 5: remove the shared registry row LAST so a re-publish under the same
 	// name is possible. Without this, the cross-scope uniqueness check in Publish
 	// would see the lingering registry entry and reject the re-publish.
 	if s.registry != nil && sharedID != uuid.Nil {
