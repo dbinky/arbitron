@@ -1635,6 +1635,35 @@ func TestWorkflowTool_Delete_RunningInstances_Error(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "running instances")
 }
 
+func TestWorkflowTool_Delete_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_delete", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+// TestWorkflowTool_Rename_NoRegistry_NotAuthorized verifies that when the
+// server has no registry configured (local mode), the lifecycle ops that
+// require a registry return "not authorized" (ErrUnauthorized) at the MCP
+// surface — distinct from ErrForbidden (wrong caller) but still "not
+// authorized" to the API consumer.
+func TestWorkflowTool_Rename_NoRegistry_NotAuthorized(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil) // no registry
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_rename", map[string]any{"name": "alpha", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized",
+		"ErrUnauthorized from unconfigured registry must surface as 'not authorized'")
+}
+
 // --- workflow_audit ---
 
 func TestWorkflowTool_Audit_HappyPath_NewestFirst(t *testing.T) {
