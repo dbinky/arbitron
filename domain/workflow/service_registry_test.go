@@ -21,6 +21,7 @@ type fakeRegistry struct {
 	byName  map[string]workflow.RegistryEntry
 	byID    map[uuid.UUID]string
 	failReg error // when set, Register returns this error (to probe rollback)
+	failDel error // when set, Delete returns this error (to probe partial rollback)
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -111,6 +112,9 @@ func (r *fakeRegistry) SetOwner(_ context.Context, id, owner uuid.UUID) error {
 func (r *fakeRegistry) Delete(_ context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failDel != nil {
+		return r.failDel
+	}
 	name, ok := r.byID[id]
 	if !ok {
 		return workflow.ErrNotFound
@@ -349,6 +353,82 @@ func TestService_Load_NoRegistry_StillWorks(t *testing.T) {
 	loaded, err := svc.Load(ctx, "legacy")
 	require.NoError(t, err)
 	assert.Equal(t, uuid.Nil, loaded.ID)
+}
+
+// --- Error: rollback delete also fails ---
+
+// TestService_Create_RollbackDeleteFails_CreateErrorStillReturned verifies the
+// cross-store partial failure contract: if the folder write fails AND the
+// compensating registry Delete also fails, Create still returns the original
+// folder write error. The delete error is silently swallowed (the `_ =` in
+// service.go is intentional — the orphan row is an operational concern, not a
+// caller concern) and must not replace the actionable folder error.
+func TestService_Create_RollbackDeleteFails_CreateErrorStillReturned(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	owner := uuid.New()
+	ctx := ctxWith(owner, false)
+
+	// Pre-seed the folder so that the repo.Create step returns ErrAlreadyExists
+	// (simulates a filesystem collision independent of the registry).
+	repo.bucket(workflow.Private(owner))["w"] = wf("w")
+
+	// Make the rollback Delete return an error too.
+	delErr := errors.New("registry delete unavailable")
+	reg.failDel = delErr
+
+	err := svc.Create(ctx, "w", wf("w"))
+
+	// The caller must see the folder error, not the delete error.
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"Create must return the folder-write error even when rollback Delete also fails")
+	assert.False(t, errors.Is(err, delErr),
+		"the rollback delete error must not surface to the caller")
+
+	// The registry retains the orphan row (rollback failed), but the contract is
+	// that Create returns the write error regardless.
+	assert.Equal(t, 1, reg.count(), "orphan row remains because delete failed")
+}
+
+// --- Error: ensureID path D (folder Update fails during lazy backfill) ---
+
+// TestService_Load_EnsureID_UpdateFailurePropagates verifies that when the
+// folder persistence step (repo.Update) inside ensureID fails, Load propagates
+// the error and does not return a half-initialised workflow with a freshly
+// allocated id that was never durably written.
+func TestService_Load_EnsureID_UpdateFailurePropagates(t *testing.T) {
+	inner := newFakeRepo()
+	reg := newFakeRegistry()
+	owner := uuid.New()
+	ctx := ctxWith(owner, false)
+
+	// Seed an id-less (legacy) workflow in the inner repo.
+	legacy := wf("legacy")
+	legacy.ID = uuid.Nil
+	inner.bucket(workflow.Private(owner))["legacy"] = legacy
+
+	// Wrap inner with a repo that intercepts Update and returns a fixed error.
+	updateErr := errors.New("disk full")
+	repo := &errOnUpdateRepo{fakeRepo: inner, err: updateErr}
+
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+
+	_, err := svc.Load(ctx, "legacy")
+	require.ErrorIs(t, err, updateErr,
+		"Load must propagate the Update error so the caller knows the id was not durably persisted")
+}
+
+// errOnUpdateRepo wraps fakeRepo and injects an error on every Update call.
+type errOnUpdateRepo struct {
+	*fakeRepo
+	err error
+}
+
+func (r *errOnUpdateRepo) Update(ctx context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
+	return r.err
 }
 
 var _ = errors.Is
