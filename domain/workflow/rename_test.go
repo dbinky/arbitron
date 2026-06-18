@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -24,6 +25,22 @@ func renameSvc(t *testing.T, owner uuid.UUID) (*workflow.WorkflowService, *fakeR
 	id, err := reg.ResolveID(adminCtx, "alpha")
 	require.NoError(t, err)
 	return svc, repo, reg, adminCtx, id
+}
+
+// --- Error: no registry configured → ErrUnauthorized ---
+
+// TestService_Rename_NoRegistry_Unauthorized verifies that Rename returns
+// ErrUnauthorized (not ErrForbidden) when the registry is not configured. An
+// admin-authenticated context can still be rejected with a distinct "not
+// configured" sentinel so callers can surface a helpful error message.
+func TestService_Rename_NoRegistry_Unauthorized(t *testing.T) {
+	owner := uuid.New()
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil) // no registry
+	adminCtx := ctxWith(owner, true)
+
+	err := svc.Rename(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"Rename without a registry must return ErrUnauthorized (operation not configured)")
 }
 
 // --- Error: non-admin is forbidden ---
@@ -150,6 +167,124 @@ func TestService_Rename_UnknownSource_NotFound(t *testing.T) {
 
 	err := svc.Rename(adminCtx, "ghost", "beta")
 	require.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// --- Error: registry.Rename fails → new folder rolled back ---
+
+// TestService_Rename_RegistryRenameFails_RollsBackNewFolder verifies the
+// cross-store half-rename prevention: when the folder CopyTree succeeds but
+// registry.Rename then fails, the just-created new folder is deleted (the
+// compensating rollback in step 5 of rename.go). The caller sees the registry
+// error, and the state is left clean: old folder present, new folder absent,
+// registry still resolves the original name.
+func TestService_Rename_RegistryRenameFails_RollsBackNewFolder(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, idA := renameSvc(t, owner)
+
+	renameErr := errors.New("registry unavailable")
+	reg.failRename = renameErr
+
+	err := svc.Rename(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, renameErr, "registry.Rename error must propagate")
+
+	// Old folder still present — no move happened.
+	_, hasAlpha := repo.bucket(workflow.Private(owner))["alpha"]
+	assert.True(t, hasAlpha, "source folder must still exist after rollback")
+
+	// New folder was rolled back — must not exist.
+	_, hasBeta := repo.bucket(workflow.Private(owner))["beta"]
+	assert.False(t, hasBeta, "new folder must be deleted by the rollback")
+
+	// Registry is unchanged: old name still resolves to the same id.
+	gotID, err2 := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, err2)
+	assert.Equal(t, idA, gotID, "registry must still resolve old name after rollback")
+	assert.Equal(t, 1, reg.count(), "exactly one registry row (no orphan)")
+}
+
+// TestService_Rename_OldFolderDeleteFails_ErrorSurfaced verifies that a failure
+// to delete the old folder (step 7) is surfaced as an error. At that point the
+// registry + new folder are already authoritative; the stale old folder is
+// cosmetic (Load resolves via the new name). The error is returned so operators
+// can clean up the orphan.
+func TestService_Rename_OldFolderDeleteFails_ErrorSurfaced(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	// Seed "alpha" and manually mark its bucket entry so repo.Delete will fail by
+	// removing it before the Rename call (simulating the pre-delete state then
+	// injecting the failure via a wrapping repo). Instead, use a thin wrapper that
+	// fails Delete for the specific name "alpha" after the first call.
+	require.NoError(t, svc.Create(adminCtx, "alpha", wf("alpha")))
+
+	// Inject a Delete failure for the OLD folder by wrapping the repo. We use the
+	// errOnDeleteNameRepo wrapper already known in this test package.
+	failRepo := &errOnDeleteNameRepo{inner: repo, failName: "alpha"}
+	svcFail := workflow.NewWorkflowService(failRepo, nil)
+	svcFail.SetRegistry(reg)
+
+	err := svcFail.Rename(adminCtx, "alpha", "beta")
+	require.Error(t, err, "old-folder delete failure must surface as an error")
+
+	// New folder is present and registry resolves the new name — the rename's
+	// identity side completed successfully.
+	_, hasBeta := repo.bucket(workflow.Private(owner))["beta"]
+	assert.True(t, hasBeta, "new folder is present (rename identity side succeeded)")
+	gotID, regErr := reg.ResolveID(adminCtx, "beta")
+	require.NoError(t, regErr)
+	assert.NotEqual(t, uuid.Nil, gotID, "registry resolves the new name")
+
+	// Old folder is also still present (the delete failed).
+	_, hasAlpha := repo.bucket(workflow.Private(owner))["alpha"]
+	assert.True(t, hasAlpha, "old folder is still present (the delete failed)")
+}
+
+// errOnDeleteNameRepo wraps a WorkflowRepository and returns a fixed error from
+// Delete when the workflow name matches failName.
+type errOnDeleteNameRepo struct {
+	inner    *fakeRepo
+	failName string
+}
+
+func (r *errOnDeleteNameRepo) Load(ctx context.Context, s workflow.Scope, name string) (*workflow.Workflow, error) {
+	return r.inner.Load(ctx, s, name)
+}
+func (r *errOnDeleteNameRepo) List(ctx context.Context, s workflow.Scope) ([]workflow.WorkflowSummary, error) {
+	return r.inner.List(ctx, s)
+}
+func (r *errOnDeleteNameRepo) SaveNodePositions(ctx context.Context, s workflow.Scope, name string, positions map[string]workflow.NodePosition) error {
+	return r.inner.SaveNodePositions(ctx, s, name, positions)
+}
+func (r *errOnDeleteNameRepo) Create(ctx context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
+	return r.inner.Create(ctx, s, name, wf)
+}
+func (r *errOnDeleteNameRepo) Update(ctx context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
+	return r.inner.Update(ctx, s, name, wf)
+}
+func (r *errOnDeleteNameRepo) Delete(ctx context.Context, s workflow.Scope, name string) error {
+	if name == r.failName {
+		return errors.New("disk full")
+	}
+	return r.inner.Delete(ctx, s, name)
+}
+func (r *errOnDeleteNameRepo) WriteFile(ctx context.Context, s workflow.Scope, name, path string, data []byte) error {
+	return r.inner.WriteFile(ctx, s, name, path, data)
+}
+func (r *errOnDeleteNameRepo) DeleteFile(ctx context.Context, s workflow.Scope, name, path string) error {
+	return r.inner.DeleteFile(ctx, s, name, path)
+}
+func (r *errOnDeleteNameRepo) ListFiles(ctx context.Context, s workflow.Scope, name string) ([]string, error) {
+	return r.inner.ListFiles(ctx, s, name)
+}
+func (r *errOnDeleteNameRepo) Exists(ctx context.Context, s workflow.Scope, name string) (bool, error) {
+	return r.inner.Exists(ctx, s, name)
+}
+func (r *errOnDeleteNameRepo) CopyTree(ctx context.Context, src workflow.Scope, srcName string, dst workflow.Scope, dstName string, overwrite bool) error {
+	return r.inner.CopyTree(ctx, src, srcName, dst, dstName, overwrite)
 }
 
 // --- Edge: rename a SHARED workflow ---

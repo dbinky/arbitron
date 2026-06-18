@@ -17,11 +17,12 @@ import (
 // duplicate name with ErrAlreadyExists; the id-targeted operations report
 // ErrNotFound for an unknown id.
 type fakeRegistry struct {
-	mu      sync.Mutex
-	byName  map[string]workflow.RegistryEntry
-	byID    map[uuid.UUID]string
-	failReg error // when set, Register returns this error (to probe rollback)
-	failDel error // when set, Delete returns this error (to probe partial rollback)
+	mu         sync.Mutex
+	byName     map[string]workflow.RegistryEntry
+	byID       map[uuid.UUID]string
+	failReg    error // when set, Register returns this error (to probe rollback)
+	failDel    error // when set, Delete returns this error (to probe partial rollback)
+	failRename error // when set, Rename returns this error (to probe rename rollback)
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -68,6 +69,9 @@ func (r *fakeRegistry) ResolveName(_ context.Context, id uuid.UUID) (string, err
 func (r *fakeRegistry) Rename(_ context.Context, id uuid.UUID, newName string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failRename != nil {
+		return r.failRename
+	}
 	old, ok := r.byID[id]
 	if !ok {
 		return workflow.ErrNotFound
