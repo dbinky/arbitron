@@ -187,6 +187,34 @@ func TestService_Duplicate_UnknownSource_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrNotFound)
 }
 
+// TestService_Duplicate_TargetIsSharedName_AlreadyExists verifies that
+// duplicating to a name already registered as shared is rejected globally —
+// UNIQUE(name) in the registry applies across scopes.
+func TestService_Duplicate_TargetIsSharedName_AlreadyExists(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	// Seed private "alpha" (the duplicate source).
+	require.NoError(t, svc.Create(adminCtx, "alpha", wf("alpha")))
+
+	// Seed shared "shared-pub" in the registry (the collision target).
+	sharedID := uuid.New()
+	repo.bucket(workflow.Shared())["shared-pub"] = wf("shared-pub")
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: sharedID, Name: "shared-pub", Scope: workflow.ScopeShared,
+	}))
+	before := reg.count()
+
+	err := svc.Duplicate(adminCtx, "alpha", "shared-pub")
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"duplicate to a shared-scope registered name must return ErrAlreadyExists")
+	assert.Equal(t, before, reg.count(), "no new registry row")
+}
+
 // --- Edge: duplicate of a SHARED workflow lands in the caller's private space ---
 
 // TestService_Duplicate_Shared_LandsInCallerPrivate verifies duplicating a shared

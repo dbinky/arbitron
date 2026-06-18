@@ -567,6 +567,25 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 		return fmt.Errorf("%w: %s", ErrNotFound, privateName)
 	}
 
+	// Global uniqueness: if the registry already holds publishedName but no
+	// publication record exists for it, the name is registered as a private
+	// workflow in another scope — reject the cross-scope collision before writing
+	// anything.
+	if s.registry != nil {
+		if _, rerr := s.registry.ResolveID(ctx, publishedName); rerr == nil {
+			_, isPub, perr := s.published.PublisherOf(ctx, publishedName)
+			if perr != nil {
+				return perr
+			}
+			if !isPub {
+				return fmt.Errorf("%w: %s", ErrAlreadyExists, publishedName)
+			}
+			// isPub=true: WriteAndRecord will handle same/different publisher.
+		} else if !errors.Is(rerr, ErrNotFound) {
+			return rerr
+		}
+	}
+
 	// The write-tree + record-publication + rollback + idempotency invariant lives
 	// in WriteAndRecord; Publish supplies the private-source copy as its write step.
 	err = WriteAndRecord(ctx, s.published, PublishRequest{

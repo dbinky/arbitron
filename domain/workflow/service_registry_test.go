@@ -249,6 +249,35 @@ func TestService_Create_DuplicateName_NoFolderWritten(t *testing.T) {
 	assert.Equal(t, 1, reg.count(), "only one registry row")
 }
 
+// TestService_Create_SharedNameTaken_AlreadyExists verifies that a private
+// Create is rejected when the name is already registered as a SHARED workflow.
+// UNIQUE(name) in the registry enforces global uniqueness across scopes.
+func TestService_Create_SharedNameTaken_AlreadyExists(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	owner := uuid.New()
+	ctx := ctxWith(owner, false)
+
+	// Seed a shared-scope entry directly.
+	sharedID := uuid.New()
+	repo.bucket(workflow.Shared())["shared-wf"] = wf("shared-wf")
+	require.NoError(t, reg.Register(ctx, workflow.RegistryEntry{
+		ID: sharedID, Name: "shared-wf", Scope: workflow.ScopeShared,
+	}))
+
+	// Create a PRIVATE workflow with the same name → must fail globally.
+	err := svc.Create(ctx, "shared-wf", wf("shared-wf"))
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"private create must be rejected when the name is already registered as shared")
+
+	// No private folder was written.
+	_, ok := repo.bucket(workflow.Private(owner))["shared-wf"]
+	assert.False(t, ok, "no private folder on a cross-scope name collision")
+	assert.Equal(t, 1, reg.count(), "registry count unchanged")
+}
+
 // --- Error ---
 
 // TestService_Create_RegistryFailure_RollsBack verifies that if the folder write
@@ -445,6 +474,47 @@ type errOnUpdateRepo struct {
 
 func (r *errOnUpdateRepo) Update(ctx context.Context, s workflow.Scope, name string, wf *workflow.Workflow) error {
 	return r.err
+}
+
+// TestService_Publish_PrivateNameTaken_AlreadyExists verifies the global
+// uniqueness invariant for Publish: if the desired publishedName is already
+// registered in the registry under a PRIVATE scope, Publish must return
+// ErrAlreadyExists rather than silently linking the shared publication to the
+// private workflow's id. This is a cross-scope collision.
+func TestService_Publish_PrivateNameTaken_AlreadyExists(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	publisher := uuid.New()
+	privateOwner := uuid.New()
+
+	// Seed private "alpha" (registered as private).
+	privID := uuid.New()
+	w := wf("alpha")
+	w.ID = privID
+	repo.bucket(workflow.Private(privateOwner))["alpha"] = w
+	ctx := ctxWith(privateOwner, false)
+	require.NoError(t, reg.Register(ctx, workflow.RegistryEntry{
+		ID: privID, Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: privateOwner,
+	}))
+
+	// Publisher has a private "src" workflow they want to publish as "alpha".
+	// Use admin=true to pass authorization (focus is on the name-collision check).
+	pubCtx := ctxWith(publisher, true)
+	repo.bucket(workflow.Private(publisher))["src"] = wf("src")
+
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+
+	err := svc.Publish(pubCtx, "src", "alpha", workflow.VisibilityPublic, "")
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"publishing to a name already registered as private must return ErrAlreadyExists")
+
+	// No shared folder or publication record should be written.
+	_, hasShared := repo.bucket(workflow.Shared())["alpha"]
+	assert.False(t, hasShared, "no shared folder on cross-scope collision")
+	_, isPub, _ := pubs.PublicationOf(ctx, "alpha")
+	assert.False(t, isPub, "no publication record on cross-scope collision")
 }
 
 var _ = errors.Is

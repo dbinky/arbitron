@@ -451,3 +451,46 @@ func TestService_Rename_Shared_MovesSharedFolder_KeepsPublication(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, "shared-new", name)
 }
+
+// --- Cross-scope uniqueness: rename target is a SHARED name ---
+
+// TestService_Rename_TargetIsSharedName_AlreadyExists verifies the global
+// uniqueness invariant: even if the collision is in a different scope (shared
+// vs private), renaming to a name that is already registered anywhere must
+// return ErrAlreadyExists and leave both entries untouched.
+func TestService_Rename_TargetIsSharedName_AlreadyExists(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	// Seed private "alpha" (the rename source).
+	idPriv := uuid.New()
+	w := wf("alpha")
+	w.ID = idPriv
+	repo.bucket(workflow.Private(owner))["alpha"] = w
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: idPriv, Name: "alpha", Scope: workflow.ScopePrivate, OwnerID: owner,
+	}))
+
+	// Seed shared "shared-pub" (the rename target) in the registry.
+	idShared := uuid.New()
+	repo.bucket(workflow.Shared())["shared-pub"] = wf("shared-pub")
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: idShared, Name: "shared-pub", Scope: workflow.ScopeShared,
+	}))
+	before := reg.count()
+
+	err := svc.Rename(adminCtx, "alpha", "shared-pub")
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists,
+		"renaming to a shared-scope registered name must return ErrAlreadyExists")
+
+	// Both entries untouched.
+	gotPriv, _ := reg.ResolveID(adminCtx, "alpha")
+	assert.Equal(t, idPriv, gotPriv, "private entry unchanged")
+	gotShared, _ := reg.ResolveID(adminCtx, "shared-pub")
+	assert.Equal(t, idShared, gotShared, "shared entry unchanged")
+	assert.Equal(t, before, reg.count(), "registry count unchanged")
+}
