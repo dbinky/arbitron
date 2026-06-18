@@ -171,6 +171,23 @@ func (r *WorkflowIdentityRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// IsArchived reports whether the workflow registered under name is archived. It
+// is the engine's optional archive-check seam (engine.ArchiveChecker): the
+// trigger path consults it to refuse archived workflows. An unknown name returns
+// workflow.ErrNotFound. The query is hand-written (no generated code) to keep the
+// curated generated/ tree untouched.
+func (r *WorkflowIdentityRepo) IsArchived(ctx context.Context, name string) (bool, error) {
+	var archived int64
+	err := r.db.QueryRowContext(ctx, `SELECT archived FROM workflow_identity WHERE name = ?`, name).Scan(&archived)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("workflow %q: %w", name, workflow.ErrNotFound)
+		}
+		return false, fmt.Errorf("reading archived flag for workflow %q: %w", name, err)
+	}
+	return archived != 0, nil
+}
+
 func (r *WorkflowIdentityRepo) List(ctx context.Context) ([]workflow.RegistryEntry, error) {
 	rows, err := r.queries.ListWorkflowIdentities(ctx)
 	if err != nil {

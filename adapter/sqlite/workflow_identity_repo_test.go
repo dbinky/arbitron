@@ -183,6 +183,26 @@ func TestWorkflowIdentity_MutateMissing(t *testing.T) {
 	assert.ErrorIs(t, repo.Delete(ctx, id), workflow.ErrNotFound)
 }
 
+// TestWorkflowIdentity_IsArchived verifies the engine archive-check seam reflects
+// the SetArchived state and maps an unknown name to ErrNotFound.
+func TestWorkflowIdentity_IsArchived(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+	e := workflow.RegistryEntry{ID: uuid.New(), Name: "wf", Scope: workflow.ScopePrivate, OwnerID: uuid.New()}
+	require.NoError(t, repo.Register(ctx, e))
+
+	got, err := repo.IsArchived(ctx, "wf")
+	require.NoError(t, err)
+	assert.False(t, got, "freshly registered workflow is not archived")
+
+	require.NoError(t, repo.SetArchived(ctx, e.ID, true))
+	got, err = repo.IsArchived(ctx, "wf")
+	require.NoError(t, err)
+	assert.True(t, got, "archived flag reflected")
+
+	_, err = repo.IsArchived(ctx, "missing")
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
 // --- Edge ------------------------------------------------------------------
 
 // TestWorkflowIdentity_ConcurrentRegisterSameName verifies the UNIQUE(name)

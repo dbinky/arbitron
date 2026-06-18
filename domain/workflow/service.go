@@ -174,6 +174,42 @@ func (s *WorkflowService) translateWrite(ctx context.Context, name string, err e
 	return err
 }
 
+// adminSharedWrite is the admin-only escape hatch from the shared-read-only rule.
+// It runs the caller's PRIVATE-scope write first (privateErr is its result). When
+// that write failed only because the name has no private copy but DOES exist in
+// the shared scope, the resolution depends on the caller's role:
+//
+//   - admin: the write is re-applied to the SHARED scope (edit-in-place), so an
+//     admin can fix a published workflow without first copying it private.
+//   - non-admin: the prior ErrSharedReadOnly is returned unchanged — the shared
+//     scope stays read-only for everyone else.
+//
+// Any private write that succeeded, or failed for a reason other than
+// not-found-but-shared-exists, is returned verbatim (translateWrite's mapping is
+// preserved for the non-admin/no-shared cases). sharedWrite performs the actual
+// shared-scope mutation (Update/WriteFile/SaveNodePositions against Shared()).
+//
+// An in-flight instance is unaffected: it executes from its own snapshot, so a
+// shared edit only changes what FUTURE triggers load.
+func (s *WorkflowService) adminSharedWrite(ctx context.Context, id identity.Identity, name string, privateErr error, sharedWrite func(context.Context, Scope) error) error {
+	if privateErr == nil {
+		return nil // the private write already succeeded
+	}
+	if !errors.Is(privateErr, ErrNotFound) {
+		return privateErr
+	}
+	sharedExists, existsErr := s.repo.Exists(ctx, Shared(), name)
+	if existsErr != nil || !sharedExists {
+		return privateErr // no shared copy: a genuine not-found
+	}
+	if !id.IsAdmin() {
+		// Shared copy exists but the caller is not an admin: read-only, as before.
+		return fmt.Errorf("%w: %s", ErrSharedReadOnly, name)
+	}
+	// Admin edit-in-place against the shared scope.
+	return sharedWrite(ctx, Shared())
+}
+
 // Create writes a new workflow in the caller's private scope.
 //
 // When a registry is wired, identity is allocated and uniqueness enforced FIRST:
@@ -214,32 +250,46 @@ func (s *WorkflowService) Create(ctx context.Context, name string, wf *Workflow)
 	return nil
 }
 
-// Update replaces an existing workflow in the caller's private scope. An
-// attempt to edit a shared-only workflow returns ErrSharedReadOnly.
+// Update replaces an existing workflow. It targets the caller's private scope;
+// when there is no private copy but a SHARED copy exists, a non-admin gets
+// ErrSharedReadOnly while an ADMIN edits the shared copy in place (see
+// adminSharedWrite). An in-flight instance is unaffected — it runs from its
+// snapshot — so a shared edit only changes what future triggers load.
 func (s *WorkflowService) Update(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
-	return s.translateWrite(ctx, name, s.repo.Update(ctx, Private(id.UserID), name, wf))
+	privateErr := s.repo.Update(ctx, Private(id.UserID), name, wf)
+	return s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
+		return s.repo.Update(ctx, scope, name, wf)
+	})
 }
 
-// SaveNodePositions persists node layout in the caller's private scope.
+// SaveNodePositions persists node layout in the caller's private scope (an admin
+// may target a shared-only workflow in place; see adminSharedWrite).
 func (s *WorkflowService) SaveNodePositions(ctx context.Context, name string, p map[string]NodePosition) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
-	return s.translateWrite(ctx, name, s.repo.SaveNodePositions(ctx, Private(id.UserID), name, p))
+	privateErr := s.repo.SaveNodePositions(ctx, Private(id.UserID), name, p)
+	return s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
+		return s.repo.SaveNodePositions(ctx, scope, name, p)
+	})
 }
 
-// WriteFile writes a file into the caller's private workflow directory.
+// WriteFile writes a file into the caller's private workflow directory (an admin
+// may target a shared-only workflow in place; see adminSharedWrite).
 func (s *WorkflowService) WriteFile(ctx context.Context, name, rel string, content []byte) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
 	}
-	return s.translateWrite(ctx, name, s.repo.WriteFile(ctx, Private(id.UserID), name, rel, content))
+	privateErr := s.repo.WriteFile(ctx, Private(id.UserID), name, rel, content)
+	return s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
+		return s.repo.WriteFile(ctx, scope, name, rel, content)
+	})
 }
 
 // DeleteFile removes a file from the caller's private workflow directory.

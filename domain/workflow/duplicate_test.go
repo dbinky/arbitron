@@ -1,0 +1,133 @@
+package workflow_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- Error: non-admin is forbidden ---
+
+// TestService_Duplicate_NonAdmin_Forbidden verifies a non-admin caller is
+// rejected with ErrForbidden and nothing is copied or registered.
+func TestService_Duplicate_NonAdmin_Forbidden(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, _, _ := renameSvc(t, owner)
+
+	userCtx := ctxWith(owner, false)
+	err := svc.Duplicate(userCtx, "alpha", "alpha-copy")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+
+	_, hasCopy := repo.bucket(workflow.Private(owner))["alpha-copy"]
+	assert.False(t, hasCopy, "nothing copied for a non-admin")
+	assert.Equal(t, 1, reg.count(), "no new registry row")
+}
+
+// TestService_Duplicate_NoIdentity_Forbidden verifies a context with no identity
+// is forbidden.
+func TestService_Duplicate_NoIdentity_Forbidden(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, _, _ := renameSvc(t, owner)
+
+	err := svc.Duplicate(context.Background(), "alpha", "alpha-copy")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+}
+
+// --- Happy path ---
+
+// TestService_Duplicate_CopiesToRequesterPrivateWithNewID verifies an admin
+// duplicate copies the definition into the REQUESTER's private space under a NEW
+// id and registers the new name, leaving the original untouched.
+func TestService_Duplicate_CopiesToRequesterPrivateWithNewID(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, idA := renameSvc(t, owner)
+
+	require.NoError(t, svc.Duplicate(adminCtx, "alpha", "alpha-copy"))
+
+	// The copy lives in the admin requester's private space.
+	copy, hasCopy := repo.bucket(workflow.Private(owner))["alpha-copy"]
+	require.True(t, hasCopy, "copy present in requester's private space")
+	assert.Equal(t, "alpha-copy", copy.Name, "copy carries the new name")
+
+	// A NEW registry id was allocated for the copy (distinct from the original).
+	copyID, err := reg.ResolveID(adminCtx, "alpha-copy")
+	require.NoError(t, err)
+	assert.NotEqual(t, uuid.Nil, copyID, "copy has a non-zero id")
+	assert.NotEqual(t, idA, copyID, "copy id differs from the original")
+	assert.Equal(t, copyID, copy.ID, "persisted folder id matches the registry id")
+
+	// The original is untouched and both names are registered.
+	gotA, err := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, err)
+	assert.Equal(t, idA, gotA, "original id unchanged")
+	assert.Equal(t, 2, reg.count(), "both names registered")
+}
+
+// --- Failure: target name already exists ---
+
+// TestService_Duplicate_ExistingName_AlreadyExists verifies duplicating to a name
+// already held by another entry returns ErrAlreadyExists and copies nothing.
+func TestService_Duplicate_ExistingName_AlreadyExists(t *testing.T) {
+	owner := uuid.New()
+	svc, _, reg, adminCtx, _ := renameSvc(t, owner)
+
+	require.NoError(t, svc.Create(adminCtx, "beta", wf("beta")))
+	before := reg.count()
+
+	err := svc.Duplicate(adminCtx, "alpha", "beta")
+	require.ErrorIs(t, err, workflow.ErrAlreadyExists)
+	assert.Equal(t, before, reg.count(), "no new row on a duplicate name")
+}
+
+// TestService_Duplicate_UnknownSource_NotFound verifies duplicating a name that
+// does not resolve returns ErrNotFound.
+func TestService_Duplicate_UnknownSource_NotFound(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+
+	err := svc.Duplicate(adminCtx, "ghost", "ghost-copy")
+	require.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// --- Edge: duplicate of a SHARED workflow lands in the caller's private space ---
+
+// TestService_Duplicate_Shared_LandsInCallerPrivate verifies duplicating a shared
+// workflow copies it into the admin caller's PRIVATE space (not shared), with a
+// fresh id, leaving the shared original intact.
+func TestService_Duplicate_Shared_LandsInCallerPrivate(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, nil)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	sharedID := uuid.New()
+	shared := wf("shared-wf")
+	shared.ID = sharedID
+	repo.bucket(workflow.Shared())["shared-wf"] = shared
+	require.NoError(t, reg.Register(adminCtx, workflow.RegistryEntry{
+		ID: sharedID, Name: "shared-wf", Scope: workflow.ScopeShared,
+	}))
+
+	require.NoError(t, svc.Duplicate(adminCtx, "shared-wf", "my-copy"))
+
+	// The copy is private to the caller, not shared.
+	_, inShared := repo.bucket(workflow.Shared())["my-copy"]
+	assert.False(t, inShared, "copy is NOT placed in the shared scope")
+	cp, inPrivate := repo.bucket(workflow.Private(owner))["my-copy"]
+	require.True(t, inPrivate, "copy lives in the caller's private space")
+
+	copyID, err := reg.ResolveID(adminCtx, "my-copy")
+	require.NoError(t, err)
+	assert.NotEqual(t, sharedID, copyID, "copy gets a fresh id")
+	assert.Equal(t, copyID, cp.ID)
+
+	// Shared original untouched.
+	_, stillShared := repo.bucket(workflow.Shared())["shared-wf"]
+	assert.True(t, stillShared, "shared original intact")
+}

@@ -59,4 +59,10 @@ var (
 	// waiting, or paused) carrying its stable id. Deletion would orphan a live run,
 	// so the operation is rejected until those runs reach a terminal state.
 	ErrHasRunningInstances = errors.New("workflow has running instances")
+
+	// ErrArchived indicates a trigger was refused because the workflow is archived.
+	// An archived workflow remains listable and editable (and the in-flight runs it
+	// already spawned continue), but new triggers are rejected until it is
+	// unarchived.
+	ErrArchived = errors.New("workflow is archived")
 )

@@ -137,6 +137,18 @@ type WorkflowResolver interface {
 	ResolveName(ctx context.Context, id uuid.UUID) (string, error)
 }
 
+// ArchiveChecker is the OPTIONAL archived-state seam, layered on the resolver:
+// when the wired WorkflowResolver also implements it, the trigger path consults
+// it to refuse archived workflows (workflow.ErrArchived) before building any
+// instance. workflow.WorkflowRegistry's SQLite adapter satisfies it. A resolver
+// that does NOT implement it (local/unconfigured mode, or a name-only resolver)
+// simply never blocks — the engine cannot learn the archived state and triggers
+// proceed exactly as before (best-effort, consistent with how id resolution is
+// already best-effort on the trigger path).
+type ArchiveChecker interface {
+	IsArchived(ctx context.Context, name string) (bool, error)
+}
+
 // SetWorkflowResolver wires the name<->id resolver used to stamp instances with
 // a stable WorkflowID at trigger time and to re-resolve the current name on
 // rerun. When unset (nil), instances carry a Nil WorkflowID and rerun falls back
@@ -279,6 +291,18 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
+	}
+
+	// Refuse to trigger an archived workflow. The check is best-effort and only
+	// engages when the wired resolver also exposes the archived state (the SQLite
+	// registry does); a resolver without the seam (local mode) cannot block. It
+	// runs AFTER the visibility-gated load so a caller who cannot see the workflow
+	// still gets not-found (existence is not leaked via the archived path), and
+	// BEFORE any instance is built so an archived trigger creates nothing.
+	if ac, ok := e.resolver.(ArchiveChecker); ok {
+		if archived, aerr := ac.IsArchived(ctx, workflowName); aerr == nil && archived {
+			return uuid.Nil, false, fmt.Errorf("%w: %s", workflow.ErrArchived, workflowName)
+		}
 	}
 
 	// Stamp the run's audience from the resolved publication (private when the
