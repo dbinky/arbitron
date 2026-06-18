@@ -330,6 +330,53 @@ func TestService_Delete_PublishedShared_ClearsPublication(t *testing.T) {
 	assert.False(t, published, "publication record cleared")
 }
 
+// --- Error: folder deletion fails (step 5) — publication already removed, registry intact ---
+
+// TestService_Delete_FolderDeleteFails_PublicationAlreadyRemoved verifies the
+// cross-store ordering for Delete when the folder deletion (step 5) fails:
+// the publication record is already removed (step 4 succeeded), but the
+// registry row survives (step 6 never ran). The error is surfaced so the
+// operator knows the Delete was incomplete and can retry.
+func TestService_Delete_FolderDeleteFails_PublicationAlreadyRemoved(t *testing.T) {
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	inner := newFakeRepo()
+	admin := uuid.New()
+	publisher := uuid.New()
+
+	// A shared, published workflow.
+	id := uuid.New()
+	sw := wf("alpha")
+	sw.ID = id
+	inner.bucket(workflow.Shared())["alpha"] = sw
+	require.NoError(t, reg.Register(context.Background(), workflow.RegistryEntry{
+		ID: id, Name: "alpha", Scope: workflow.ScopeShared,
+	}))
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", publisher, "src", workflow.VisibilityPublic, ""))
+
+	// Wrap the repo so that deleting "alpha" fails (simulates a disk error).
+	repo := &errOnDeleteNameRepo{inner: inner, failName: "alpha"}
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+	counter := newFakeActiveCounter()
+	svc.SetActiveInstanceCounter(counter)
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.Error(t, err, "folder delete failure must surface from Delete (step 5)")
+
+	// Publication was removed before the folder delete (step 4 completed).
+	_, isPub, _ := pubs.PublicationOf(context.Background(), "alpha")
+	assert.False(t, isPub, "publication record removed even though step 5 failed")
+
+	// Folder still present (delete failed).
+	_, folderStill := inner.bucket(workflow.Shared())["alpha"]
+	assert.True(t, folderStill, "shared folder remains after step-5 failure")
+
+	// Registry row intact (step 6 never ran).
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row intact when folder delete fails")
+}
+
 // --- Edge: no registry wired (local mode) falls back to private folder delete ---
 
 // TestService_Delete_NoRegistry_LocalMode verifies that without a wired registry

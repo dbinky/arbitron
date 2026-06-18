@@ -162,6 +162,37 @@ func TestService_Unpublish_PublicationDeleteError_Propagates(t *testing.T) {
 // Unpublish succeeds even when the shared folder was already removed (e.g. by a
 // prior partial delete). The publication record is the authoritative state;
 // ErrNotFound from the shared folder delete is swallowed as idempotent.
+// TestService_Unpublish_SharedFolderDeleteFails_ErrorSurfaced verifies the
+// cross-store ordering for Unpublish when the shared folder deletion fails:
+// the publication record is already removed (step 1 succeeded), but the
+// shared folder remains on disk. The error is surfaced so the operator can
+// reconcile the dangling folder.
+func TestService_Unpublish_SharedFolderDeleteFails_ErrorSurfaced(t *testing.T) {
+	pubs := newFakePublishers()
+	inner := newFakeRepo()
+	admin := uuid.New()
+	publisher := uuid.New()
+
+	// Seed publication record and shared folder.
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", publisher, "src", workflow.VisibilityPublic, ""))
+	inner.bucket(workflow.Shared())["alpha"] = wf("alpha")
+
+	// Wrap the repo so deleting "alpha" returns an error.
+	repo := &errOnDeleteNameRepo{inner: inner, failName: "alpha"}
+	svc := workflow.NewWorkflowService(repo, pubs)
+
+	err := svc.Unpublish(ctxWith(admin, true), "alpha")
+	require.Error(t, err, "shared folder delete failure must be surfaced from Unpublish")
+
+	// Publication record was removed before the folder delete.
+	_, isPub, _ := pubs.PublicationOf(context.Background(), "alpha")
+	assert.False(t, isPub, "publication record removed even though folder delete failed")
+
+	// Shared folder still present.
+	_, folderStill := inner.bucket(workflow.Shared())["alpha"]
+	assert.True(t, folderStill, "shared folder remains after failed delete")
+}
+
 func TestService_Unpublish_SharedFolderMissing_StillSucceeds(t *testing.T) {
 	repo := newFakeRepo()
 	pubs := newFakePublishers()
