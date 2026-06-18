@@ -216,3 +216,21 @@ func TestService_Archive_CanStillDuplicate(t *testing.T) {
 	_, regErr := reg.ResolveID(adminCtx, "alpha-copy")
 	assert.NoError(t, regErr, "copy registered in registry")
 }
+
+// --- Edge: archive flag follows the stable id through a rename ---
+
+// TestService_Archive_FlagFollowsRename verifies that the archived flag is still
+// true after a workflow is renamed. The flag lives on the identity record (keyed
+// by stable UUID), so renaming the workflow must not silently clear it.
+func TestService_Archive_FlagFollowsRename(t *testing.T) {
+	owner := uuid.New()
+	svc, _, reg, adminCtx, _ := renameSvc(t, owner)
+
+	require.NoError(t, svc.Archive(adminCtx, "alpha"))
+	assert.True(t, archivedOf(t, reg, adminCtx, "alpha"), "archived before rename")
+
+	require.NoError(t, svc.Rename(adminCtx, "alpha", "alpha-renamed"))
+
+	assert.True(t, archivedOf(t, reg, adminCtx, "alpha-renamed"),
+		"archived flag must follow the stable UUID through rename")
+}

@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -81,4 +82,37 @@ func TestTrigger_ResolverWithoutArchiveCheck_NeverBlocks(t *testing.T) {
 
 	_, _, err := h.engine.Trigger(ctxAs(caller), "alpha", nil, "normal")
 	require.NoError(t, err)
+}
+
+// --- Edge: IsArchived error is swallowed (best-effort check) ---
+
+// TestTrigger_IsArchivedError_TriggerProceeds verifies that when the archive
+// checker's IsArchived returns an error the engine treats it as "cannot
+// determine archived state" and proceeds with the trigger. This is the
+// best-effort contract: a transient registry outage must not block all
+// workflow execution.
+func TestTrigger_IsArchivedError_TriggerProceeds(t *testing.T) {
+	h := newTriggerHarness()
+	caller := uuid.New()
+	id := uuid.New()
+
+	// An erroring archiveResolver: IsArchived returns a non-nil error.
+	res := &errArchiveResolver{fakeResolverByName: newFakeResolverByName()}
+	res.register("alpha", id)
+	h.engine.SetWorkflowResolver(res)
+	h.repo.put(workflow.Private(caller), sharedWf("alpha"))
+
+	_, _, err := h.engine.Trigger(ctxAs(caller), "alpha", nil, "normal")
+	require.NoError(t, err,
+		"IsArchived error must be swallowed — the trigger must proceed (best-effort archive check)")
+}
+
+// errArchiveResolver implements ArchiveChecker but always returns an error from
+// IsArchived, simulating a transient registry unavailability.
+type errArchiveResolver struct {
+	*fakeResolverByName
+}
+
+func (r *errArchiveResolver) IsArchived(_ context.Context, _ string) (bool, error) {
+	return false, errors.New("registry unavailable")
 }
