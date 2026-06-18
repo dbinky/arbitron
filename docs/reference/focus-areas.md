@@ -31,7 +31,7 @@ that area. A red `make test` preempts everything until green.
 
 | # | Pair | Pass | Status |
 |---|---|---|---|
-| 13 | Rename + References (a renamed workflow's instances/schedules/publications still resolve via id) | [ ] | |
+| 13 | Rename + References (a renamed workflow's instances/schedules/publications still resolve via id) | [x] | done |
 | 14 | Delete-guard + Instance state vocabulary (the non-terminal set matches `HasActiveRun`; no false guard) | [ ] | |
 | 15 | Publish/Unpublish + shared folder & publication record (consistency; private copy survives unpublish) | [ ] | |
 | 16 | MCP handlers + service sentinel mapping (all ops map ErrForbidden/AlreadyExists/HasRunningInstances/Archived/NotFound) | [ ] | |
