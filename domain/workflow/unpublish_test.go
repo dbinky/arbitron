@@ -219,3 +219,45 @@ func TestService_Unpublish_SharedFolderMissing_StillSucceeds(t *testing.T) {
 	_, published, _ := pubs.PublicationOf(context.Background(), "alpha")
 	assert.False(t, published, "publication record removed even when the folder was already missing")
 }
+
+// --- Edge: registry.Delete fails during Unpublish — error surfaced, prior steps already committed ---
+
+// TestService_Unpublish_RegistryDeleteFails_ErrorSurfaced verifies that when
+// registry.Delete fails (the last step of Unpublish), the error is surfaced.
+// By that point the publication record and shared folder are already removed;
+// the registry row is the only remnant (dangling id). The operator must
+// reconcile. This mirrors the Delete.step-6 failure contract.
+func TestService_Unpublish_RegistryDeleteFails_ErrorSurfaced(t *testing.T) {
+	owner := uuid.New()
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	reg := newFakeRegistry()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+	adminCtx := ctxWith(owner, true)
+
+	// Seed the publication and shared folder.
+	require.NoError(t, svc.Create(adminCtx, "src", wf("src")))
+	require.NoError(t, svc.Publish(adminCtx, "src", "pub", workflow.VisibilityPublic, ""))
+
+	// Inject a registry.Delete failure.
+	regDelErr := errors.New("registry write failed")
+	reg.failDel = regDelErr
+
+	err := svc.Unpublish(adminCtx, "pub")
+	require.ErrorIs(t, err, regDelErr,
+		"registry.Delete failure during Unpublish must be surfaced as an error")
+
+	// Publication record already removed (step before registry.Delete).
+	_, isPub, _ := pubs.PublicationOf(context.Background(), "pub")
+	assert.False(t, isPub, "publication record already removed before registry.Delete failure")
+
+	// Shared folder already removed.
+	_, folderStill := repo.bucket(workflow.Shared())["pub"]
+	assert.False(t, folderStill, "shared folder already removed before registry.Delete failure")
+
+	// Registry row still present (dangling — Delete failed at the last step).
+	reg.failDel = nil // clear to allow the lookup
+	_, regErr := reg.ResolveID(adminCtx, "pub")
+	assert.NoError(t, regErr, "registry row is the dangling remnant after registry.Delete failure")
+}

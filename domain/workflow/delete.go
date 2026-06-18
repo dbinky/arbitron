@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/arbitron/arbitron/domain/audit"
+	"github.com/google/uuid"
 )
 
 // scopeLabel maps a ScopeKind to its human-facing audit label.
@@ -110,13 +111,21 @@ func (s *WorkflowService) Delete(ctx context.Context, name string) error {
 }
 
 // Unpublish removes a workflow from the shared workspace (admin-only): it deletes
-// the published_workflows record and the shared/<name> folder. Any private copy of
-// the same name is left intact (only the shared scope is touched). Relaxes the
-// shared-read-only rule for this admin op.
+// the published_workflows record, the shared/<name> folder, and the shared name's
+// registry entry. Any private copy of the same name is left intact (only the shared
+// scope is touched). Relaxes the shared-read-only rule for this admin op.
 //
 // Unpublishing a name that is not published returns ErrNotFound (there is nothing
-// to unpublish). The publication record is removed before the folder so a partial
-// failure does not leave an unreferenced shared folder claimed by a stale record.
+// to unpublish).
+//
+// CROSS-STORE ORDERING:
+//  1. Resolve the shared name's registry id (so we can remove it in step 4).
+//  2. Remove the publication record.
+//  3. Remove the shared folder (ErrNotFound is idempotent).
+//  4. Remove the registry row LAST, matching Delete's ordering: the registry is
+//     the identity authority; removing it last means a failure at step 4 leaves a
+//     dangling id whose folder is already gone, which is preferable to a reachable
+//     id that blocks re-publish under the same name.
 func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
@@ -131,12 +140,35 @@ func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: %s is not published", ErrNotFound, name)
 	}
 
-	// Remove the publication record, then the shared folder.
+	// Step 1: resolve the shared name's registry id (pre-flight for step 4).
+	// When no registry is wired (local/unconfigured mode) or the entry is missing,
+	// sharedID stays Nil and step 4 is skipped.
+	var sharedID uuid.UUID
+	if s.registry != nil {
+		if id, rerr := s.registry.ResolveID(ctx, name); rerr == nil {
+			sharedID = id
+		} else if !errors.Is(rerr, ErrNotFound) {
+			return fmt.Errorf("resolving shared registry id for %q: %w", name, rerr)
+		}
+	}
+
+	// Step 2: remove the publication record.
 	if err := s.published.Delete(ctx, name); err != nil {
 		return fmt.Errorf("removing publication for %q: %w", name, err)
 	}
+
+	// Step 3: remove the shared folder (ErrNotFound is idempotent).
 	if err := s.repo.Delete(ctx, Shared(), name); err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("removing shared folder %q: %w", name, err)
+	}
+
+	// Step 4: remove the shared registry row LAST so a re-publish under the same
+	// name is possible. Without this, the cross-scope uniqueness check in Publish
+	// would see the lingering registry entry and reject the re-publish.
+	if s.registry != nil && sharedID != uuid.Nil {
+		if err := s.registry.Delete(ctx, sharedID); err != nil {
+			return fmt.Errorf("removing shared registry row for %q: %w", name, err)
+		}
 	}
 
 	// Best-effort audit (nil-safe per audit.Service).
