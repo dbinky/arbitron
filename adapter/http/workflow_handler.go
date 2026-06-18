@@ -548,7 +548,18 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}
-		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		// Map the admin-lifecycle sentinels to the SAME statuses the MCP adapter's
+		// mapLifecycleError uses, so the two transports agree on the service
+		// contract: an authz denial is 403 (not a 500 that corrupts alerting and
+		// invites retries) and a running-instance refusal is a 409 conflict.
+		switch {
+		case errors.Is(err, workflow.ErrForbidden), errors.Is(err, workflow.ErrUnauthorized):
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		case errors.Is(err, workflow.ErrHasRunningInstances):
+			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
+		default:
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -211,6 +211,16 @@ func withAdminIdentity(r *http.Request) *http.Request {
 	}))
 }
 
+// withNonAdminIdentity attaches an authenticated but non-admin identity, so an
+// admin-gated domain op returns workflow.ErrForbidden.
+func withNonAdminIdentity(r *http.Request) *http.Request {
+	return r.WithContext(identity.WithIdentity(r.Context(), identity.Identity{
+		UserID:   testUserID,
+		Username: "member",
+		Role:     identity.RoleUser,
+	}))
+}
+
 func withChiURLParam(r *http.Request, key, value string) *http.Request {
 	rctx := chi.RouteContext(r.Context())
 	if rctx == nil {
@@ -1587,6 +1597,48 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/pub", nil)
 		req = withChiURLParam(req, "name", "pub")
+		req = withAdminIdentity(req)
+		w := httptest.NewRecorder()
+		h.Delete(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "CONFLICT", resp.Code)
+	})
+
+	// Security (Should Fix #4): an authz denial maps to 403, not 500, so the HTTP
+	// surface agrees with the MCP adapter's mapLifecycleError. The service returns
+	// ErrForbidden when a non-admin attempts the admin-gated delete.
+	t.Run("returns 403 when delete is forbidden", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		// No admin identity → the domain service's requireAdmin returns ErrForbidden.
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
+		req = withChiURLParam(req, "name", "test-wf")
+		req = withNonAdminIdentity(req)
+		w := httptest.NewRecorder()
+		h.Delete(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "FORBIDDEN", resp.Code)
+	})
+
+	// Security (Should Fix #4): a running-instance refusal maps to 409 Conflict,
+	// not 500 — matching the MCP adapter and signalling a retryable conflict
+	// rather than a server fault.
+	t.Run("returns 409 when workflow has running instances", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		repo.deleteFn = func(_ context.Context, _ string) error {
+			return fmt.Errorf("%w: test-wf (1 active)", workflow.ErrHasRunningInstances)
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
+		req = withChiURLParam(req, "name", "test-wf")
 		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
