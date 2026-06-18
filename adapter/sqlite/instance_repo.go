@@ -346,7 +346,7 @@ func (r *InstanceRepo) SetWebhookReceived(ctx context.Context, id uuid.UUID, rec
 //
 // AUTHORIZATION: this method performs NO caller/owner/visibility scoping — it is
 // a dumb data accessor. The access decision (CanSeePublication / ownership) lives
-// in workflow.WorkflowService.Stats, which gates the name before delegating here.
+// in workflow.Service.Stats, which gates the name before delegating here.
 // Do NOT add a per-caller predicate to this query; keep the boundary in the
 // domain service (hexagonal architecture).
 //

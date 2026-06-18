@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// WorkflowIdentityRepo implements workflow.WorkflowRegistry over SQLite. The
+// WorkflowIdentityRepo implements workflow.Registry over SQLite. The
 // workflow_identity table's UNIQUE(name) constraint is the authoritative
 // global-uniqueness rule; each row resolves name<->id. A UNIQUE violation maps to
 // workflow.ErrAlreadyExists and a missing row to workflow.ErrNotFound.
@@ -21,7 +21,7 @@ type WorkflowIdentityRepo struct {
 }
 
 // Compile-time assertion that WorkflowIdentityRepo satisfies the domain port.
-var _ workflow.WorkflowRegistry = (*WorkflowIdentityRepo)(nil)
+var _ workflow.Registry = (*WorkflowIdentityRepo)(nil)
 
 // NewWorkflowIdentityRepo creates a WorkflowIdentityRepo over the given database.
 func NewWorkflowIdentityRepo(db *sql.DB) *WorkflowIdentityRepo {

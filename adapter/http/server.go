@@ -27,10 +27,10 @@ import (
 // interactive login well within budget.
 const authRateLimitPerMinute = 20
 
-// EngineService combines both WorkflowService and InstanceService interfaces.
+// EngineService combines both Service and InstanceService interfaces.
 // The concrete engine.Engine satisfies both.
 type EngineService interface {
-	WorkflowService
+	Service
 	InstanceService
 }
 
@@ -53,11 +53,11 @@ type QueueManagerPort interface {
 // the previous 14-parameter function signature.
 type RouterDeps struct {
 	Service   EngineService
-	Workflows workflow.WorkflowRepository
+	Workflows workflow.Repository
 	// WorkflowSvc resolves storage scope/authorization from the request identity
 	// for the workflow CRUD/list/load handlers. Optional: when nil, a default
 	// service over Workflows (no publisher lookup) is constructed by the handler.
-	WorkflowSvc *workflow.WorkflowService
+	WorkflowSvc *workflow.Service
 	Instances   instance.InstanceRepository
 	NodeExecs   instance.NodeExecutionRepository
 	Snapshots   instance.VariableSnapshotRepository
@@ -140,7 +140,7 @@ type RouterDeps struct {
 // Deprecated: Use NewRouterFromDeps instead.
 func NewRouter(
 	svc EngineService,
-	workflows workflow.WorkflowRepository,
+	workflows workflow.Repository,
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
 	snapshots instance.VariableSnapshotRepository,

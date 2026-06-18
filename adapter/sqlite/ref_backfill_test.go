@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// refBackfillFixture wires a WorkflowService with a real SQLite-backed identity
+// refBackfillFixture wires a Service with a real SQLite-backed identity
 // registry plus a ReferenceBackfiller over the same db, returning the pieces a
 // test needs to seed rows and run BackfillReferences.
 type refBackfillFixture struct {
 	db       testDB
 	registry *WorkflowIdentityRepo
-	svc      *workflow.WorkflowService
+	svc      *workflow.Service
 	ctx      context.Context
 }
 
@@ -27,7 +27,7 @@ func newRefBackfillFixture(t *testing.T) refBackfillFixture {
 	reg := NewWorkflowIdentityRepo(db.DB)
 	backfiller := NewReferenceBackfiller(db.DB)
 
-	// A WorkflowService whose only wired dependency for this path is the registry
+	// A Service whose only wired dependency for this path is the registry
 	// + the reference backfiller. repo/publishers are nil; BackfillReferences does
 	// not touch them.
 	svc := workflow.NewWorkflowService(nil, nil)

@@ -144,8 +144,8 @@ type domainStack struct {
 	logCloser           io.Closer
 	db                  *sql.DB
 	eng                 *engine.Engine
-	workflowRepo        workflow.WorkflowRepository
-	workflowSvc         *workflow.WorkflowService
+	workflowRepo        workflow.Repository
+	workflowSvc         *workflow.Service
 	auditSvc            *audit.Service
 	publishedRepo       *adaptsqlite.PublishedWorkflowRepo
 	instanceRepo        instance.InstanceRepository
@@ -439,7 +439,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	logger.Info("flat-store migration complete", "defaultUser", flatMigrateUser)
 	// PublishedWorkflowRepo is the authority for the shared workspace's
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
-	// WorkflowService uses to tag shared list entries with their publisher.
+	// Service uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
 	// One-time, marker-guarded seeding of bundled sample workflows into the
 	// shared scope (public, owned by the default user). Runs after the published
@@ -462,7 +462,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// none appeared and how to fix it (set samples.sourcedir).
 		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
 	}
-	// WorkflowService resolves storage scope/authorization from the request
+	// Service resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
 	// The workflow-stats read path is gated by the service's visibility predicate

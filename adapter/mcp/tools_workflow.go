@@ -21,9 +21,9 @@ func callerOwner(ctx context.Context) uuid.UUID {
 	return identity.MustFromContext(ctx).UserID
 }
 
-// workflowSvc returns the WorkflowService for the workflow_* tools, building a
+// workflowSvc returns the Service for the workflow_* tools, building a
 // default one over the repository when Deps.WorkflowSvc is unset.
-func workflowSvc(srv *Server) *workflow.WorkflowService {
+func workflowSvc(srv *Server) *workflow.Service {
 	if srv.deps.WorkflowSvc != nil {
 		return srv.deps.WorkflowSvc
 	}

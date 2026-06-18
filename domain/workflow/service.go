@@ -19,7 +19,7 @@ import (
 const MaxStatsWindow = 366 * 24 * time.Hour
 
 // StatsReader reads execution statistics for a single workflow over a time
-// range. It is the narrow read port the WorkflowService delegates to AFTER the
+// range. It is the narrow read port the Service delegates to AFTER the
 // visibility gate has approved the caller; the reader itself performs no
 // authorization (the service layer is the authorization boundary, not the repo).
 type StatsReader interface {
@@ -49,7 +49,7 @@ type PublisherLookup interface {
 }
 
 // PublishedStore is the read+write authority for the shared workspace's
-// publication records, used by Publish/SetVisibility. A WorkflowService
+// publication records, used by Publish/SetVisibility. A Service
 // constructed with only a PublisherLookup (no write side) supports List/Load
 // but rejects Publish.
 type PublishedStore interface {
@@ -62,13 +62,13 @@ type PublishedStore interface {
 	SetWorkflowID(ctx context.Context, name string, id uuid.UUID) error
 }
 
-// WorkflowService resolves storage scope and authorization from the context
+// Service resolves storage scope and authorization from the context
 // identity, per the Phase 1 decision that authz lives in domain services.
 // Create/Update/Delete always target the caller's private scope; reads try the
 // caller's private space first then shared; shared workflows are read-only
 // except via publish.
-type WorkflowService struct {
-	repo       WorkflowRepository
+type Service struct {
+	repo       Repository
 	publishers PublisherLookup // may be nil
 	// published is the write side, set when the supplied lookup also implements
 	// PublishedStore; nil disables Publish.
@@ -80,7 +80,7 @@ type WorkflowService struct {
 	// registry is the optional workflow identity/uniqueness port. When unset
 	// (nil), the service behaves exactly as before: purely name-addressed, no id
 	// allocation, no global-uniqueness enforcement (local/unconfigured mode).
-	registry WorkflowRegistry
+	registry Registry
 	// refBackfiller is the optional port BackfillReferences uses to stamp stable
 	// workflow ids onto the name-keyed reference tables. When unset (nil),
 	// BackfillReferences is a no-op.
@@ -95,32 +95,32 @@ type WorkflowService struct {
 // SetActiveInstanceCounter wires the non-terminal-instance counter consulted by
 // the admin Delete guard. When unset (nil), Delete does not guard against running
 // instances (local/unconfigured mode, which also has no workflow id to count by).
-func (s *WorkflowService) SetActiveInstanceCounter(c ActiveInstanceCounter) {
+func (s *Service) SetActiveInstanceCounter(c ActiveInstanceCounter) {
 	s.activeInstances = c
 }
 
 // SetRegistry wires the workflow identity registry (id allocation + global name
 // uniqueness + name↔id resolution). When unset (nil), create/publish/load behave
 // as before — name-addressed only, with no id assignment or uniqueness checks.
-func (s *WorkflowService) SetRegistry(r WorkflowRegistry) {
+func (s *Service) SetRegistry(r Registry) {
 	s.registry = r
 }
 
 // SetReferenceBackfiller wires the reference-table backfill port used by
 // BackfillReferences. When unset (nil), BackfillReferences is a no-op.
-func (s *WorkflowService) SetReferenceBackfiller(b ReferenceBackfiller) {
+func (s *Service) SetReferenceBackfiller(b ReferenceBackfiller) {
 	s.refBackfiller = b
 }
 
 // SetAudit wires the best-effort audit emitter. When unset (nil), no audit
 // events are recorded (local/unconfigured deployments behave as today).
-func (s *WorkflowService) SetAudit(a *audit.Service) {
+func (s *Service) SetAudit(a *audit.Service) {
 	s.audit = a
 }
 
 // SetStatsReader wires the execution-statistics read port consulted by Stats.
 // When unset (nil), Stats returns ErrStatsUnavailable.
-func (s *WorkflowService) SetStatsReader(r StatsReader) {
+func (s *Service) SetStatsReader(r StatsReader) {
 	s.stats = r
 }
 
@@ -135,11 +135,11 @@ func auditDetail(m map[string]string) string {
 	return string(b)
 }
 
-// NewWorkflowService builds a WorkflowService over the given repository and an
+// NewWorkflowService builds a Service over the given repository and an
 // optional publisher lookup (nil is allowed — shared list entries then carry no
 // publisher). When the lookup also satisfies PublishedStore, Publish is enabled.
-func NewWorkflowService(repo WorkflowRepository, publishers PublisherLookup) *WorkflowService {
-	s := &WorkflowService{repo: repo, publishers: publishers}
+func NewWorkflowService(repo Repository, publishers PublisherLookup) *Service {
+	s := &Service{repo: repo, publishers: publishers}
 	if store, ok := publishers.(PublishedStore); ok {
 		s.published = store
 	}
@@ -160,7 +160,7 @@ func caller(ctx context.Context) (identity.Identity, error) {
 // translateWrite maps a private-scope ErrNotFound into ErrSharedReadOnly when
 // the name exists in the shared scope, so an attempt to mutate a shared-only
 // workflow is informative rather than a bare not-found.
-func (s *WorkflowService) translateWrite(ctx context.Context, name string, err error) error {
+func (s *Service) translateWrite(ctx context.Context, name string, err error) error {
 	if !errors.Is(err, ErrNotFound) {
 		return err
 	}
@@ -191,7 +191,7 @@ func (s *WorkflowService) translateWrite(ctx context.Context, name string, err e
 //
 // An in-flight instance is unaffected: it executes from its own snapshot, so a
 // shared edit only changes what FUTURE triggers load.
-func (s *WorkflowService) adminSharedWrite(ctx context.Context, id identity.Identity, name string, privateErr error, sharedWrite func(context.Context, Scope) error) error {
+func (s *Service) adminSharedWrite(ctx context.Context, id identity.Identity, name string, privateErr error, sharedWrite func(context.Context, Scope) error) error {
 	if privateErr == nil {
 		return nil // the private write already succeeded
 	}
@@ -225,7 +225,7 @@ func (s *WorkflowService) adminSharedWrite(ctx context.Context, id identity.Iden
 // WITHOUT writing any folder. If the folder write then fails, the registry row is
 // rolled back so the two stores do not diverge. With no registry (local mode),
 // this is the prior pure name-addressed create.
-func (s *WorkflowService) Create(ctx context.Context, name string, wf *Workflow) error {
+func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -262,7 +262,7 @@ func (s *WorkflowService) Create(ctx context.Context, name string, wf *Workflow)
 // ErrSharedReadOnly while an ADMIN edits the shared copy in place (see
 // adminSharedWrite). An in-flight instance is unaffected — it runs from its
 // snapshot — so a shared edit only changes what future triggers load.
-func (s *WorkflowService) Update(ctx context.Context, name string, wf *Workflow) error {
+func (s *Service) Update(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -275,7 +275,7 @@ func (s *WorkflowService) Update(ctx context.Context, name string, wf *Workflow)
 
 // SaveNodePositions persists node layout in the caller's private scope (an admin
 // may target a shared-only workflow in place; see adminSharedWrite).
-func (s *WorkflowService) SaveNodePositions(ctx context.Context, name string, p map[string]NodePosition) error {
+func (s *Service) SaveNodePositions(ctx context.Context, name string, p map[string]NodePosition) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -288,7 +288,7 @@ func (s *WorkflowService) SaveNodePositions(ctx context.Context, name string, p 
 
 // WriteFile writes a file into the caller's private workflow directory (an admin
 // may target a shared-only workflow in place; see adminSharedWrite).
-func (s *WorkflowService) WriteFile(ctx context.Context, name, rel string, content []byte) error {
+func (s *Service) WriteFile(ctx context.Context, name, rel string, content []byte) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -300,7 +300,7 @@ func (s *WorkflowService) WriteFile(ctx context.Context, name, rel string, conte
 }
 
 // DeleteFile removes a file from the caller's private workflow directory.
-func (s *WorkflowService) DeleteFile(ctx context.Context, name, rel string) error {
+func (s *Service) DeleteFile(ctx context.Context, name, rel string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -312,7 +312,7 @@ func (s *WorkflowService) DeleteFile(ctx context.Context, name, rel string) erro
 // publisher lookup is configured (local/read-only ⇒ all shared visible). When a
 // shared read is granted ONLY because the caller is admin, a best-effort
 // admin.override audit event is recorded against the shared name.
-func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityFilter {
+func (s *Service) auditingFilter(id identity.Identity) SharedVisibilityFilter {
 	if s.publishers == nil {
 		return nil
 	}
@@ -347,7 +347,7 @@ func (s *WorkflowService) auditingFilter(id identity.Identity) SharedVisibilityF
 // id-less workflow from funnelling N concurrent Loads into folder+registry writes
 // (a SQLite write-contention hotspot). The DURABLE write is owned by the startup
 // BackfillRegistry, which registers and persists the id once.
-func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, error) {
+func (s *Service) Load(ctx context.Context, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -373,7 +373,7 @@ func (s *WorkflowService) Load(ctx context.Context, name string) (*Workflow, err
 // the row or rewrite the folder — a read must not write. The durable write is the
 // startup backfill's job; a transient pre-backfill load simply surfaces an
 // allocated id that becomes stable once the backfill runs.
-func (s *WorkflowService) resolveOrAllocateID(ctx context.Context, name string) (uuid.UUID, error) {
+func (s *Service) resolveOrAllocateID(ctx context.Context, name string) (uuid.UUID, error) {
 	existing, err := s.registry.ResolveID(ctx, name)
 	if err == nil {
 		return existing, nil
@@ -386,18 +386,18 @@ func (s *WorkflowService) resolveOrAllocateID(ctx context.Context, name string) 
 
 // resolveID returns the stable id registered for name (name→id). It is the
 // internal name↔id seam later phases use; ErrNotFound when no row matches.
-func (s *WorkflowService) resolveID(ctx context.Context, name string) (uuid.UUID, error) {
+func (s *Service) resolveID(ctx context.Context, name string) (uuid.UUID, error) {
 	return s.registry.ResolveID(ctx, name)
 }
 
 // resolveName returns the current name for id (id→name); ErrNotFound when unknown.
-func (s *WorkflowService) resolveName(ctx context.Context, id uuid.UUID) (string, error) {
+func (s *Service) resolveName(ctx context.Context, id uuid.UUID) (string, error) {
 	return s.registry.ResolveName(ctx, id)
 }
 
 // LoadAs loads a specific user's private workflow. A caller may always load
 // their own; loading another user's private workflow requires admin.
-func (s *WorkflowService) LoadAs(ctx context.Context, owner uuid.UUID, name string) (*Workflow, error) {
+func (s *Service) LoadAs(ctx context.Context, owner uuid.UUID, name string) (*Workflow, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -409,7 +409,7 @@ func (s *WorkflowService) LoadAs(ctx context.Context, owner uuid.UUID, name stri
 }
 
 // ListFiles lists files for a workflow visible to the caller (private then shared).
-func (s *WorkflowService) ListFiles(ctx context.Context, name string) ([]string, error) {
+func (s *Service) ListFiles(ctx context.Context, name string) ([]string, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -421,7 +421,7 @@ func (s *WorkflowService) ListFiles(ctx context.Context, name string) ([]string,
 // List returns the caller's private workflows (scope=private) concatenated with
 // all shared workflows (scope=shared, publisher filled when a lookup is set).
 // A private and shared workflow sharing a name both appear, distinguished by scope.
-func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
+func (s *Service) List(ctx context.Context) ([]WorkflowSummary, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -485,7 +485,7 @@ func (s *WorkflowService) List(ctx context.Context) ([]WorkflowSummary, error) {
 // The from/to window is validated (rejecting an inverted range or one wider than
 // MaxStatsWindow) before any aggregation runs, as defense-in-depth against
 // unbounded scans.
-func (s *WorkflowService) Stats(ctx context.Context, name string, from, to time.Time) (*instance.WorkflowStats, error) {
+func (s *Service) Stats(ctx context.Context, name string, from, to time.Time) (*instance.WorkflowStats, error) {
 	id, err := caller(ctx)
 	if err != nil {
 		return nil, err
@@ -526,7 +526,7 @@ func (s *WorkflowService) Stats(ctx context.Context, name string, from, to time.
 //     has already replaced a previously-good shared copy. If Upsert then fails we
 //     must NOT delete — that would destroy the shared copy entirely (data loss).
 //     The error is surfaced loudly so the operator can retry the record.
-func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
+func (s *Service) Publish(ctx context.Context, privateName, publishedName string, visibility Visibility, department string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -629,7 +629,7 @@ func (s *WorkflowService) Publish(ctx context.Context, privateName, publishedNam
 
 // Copy duplicates a shared workflow into the caller's private scope. The copy
 // is fully independent — no back-link to the shared original.
-func (s *WorkflowService) Copy(ctx context.Context, sharedName, newPrivateName string) error {
+func (s *Service) Copy(ctx context.Context, sharedName, newPrivateName string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err
@@ -707,7 +707,7 @@ func authorizePublish(id identity.Identity, visibility Visibility, department, o
 // must be the original publisher, a lead of the relevant department, or an
 // admin; the target level is gated by the same rules as Publish (member→own
 // department, lead/admin→public). An unknown publication is ErrNotFound.
-func (s *WorkflowService) SetVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
+func (s *Service) SetVisibility(ctx context.Context, publishedName string, visibility Visibility, department string) error {
 	id, err := caller(ctx)
 	if err != nil {
 		return err

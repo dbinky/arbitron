@@ -20,7 +20,7 @@ import (
 // Engine is the core workflow execution engine. It orchestrates the loading,
 // validation, and step-by-step execution of workflow graphs.
 type Engine struct {
-	workflows        workflow.WorkflowRepository
+	workflows        workflow.Repository
 	instances        instance.InstanceRepository
 	nodeExecutions   instance.NodeExecutionRepository
 	snapshots        instance.VariableSnapshotRepository
@@ -46,7 +46,7 @@ type Engine struct {
 
 // NewEngine constructs a new Engine with all required dependencies.
 func NewEngine(
-	workflows workflow.WorkflowRepository,
+	workflows workflow.Repository,
 	instances instance.InstanceRepository,
 	nodeExecutions instance.NodeExecutionRepository,
 	snapshots instance.VariableSnapshotRepository,

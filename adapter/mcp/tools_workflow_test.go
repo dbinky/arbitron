@@ -1225,7 +1225,7 @@ func ctxWithMCPIdentity() context.Context {
 // unarchive/transfer_ownership/audit)
 // ---------------------------------------------------------------------------
 
-// memRegistry is an in-memory workflow.WorkflowRegistry for the lifecycle MCP
+// memRegistry is an in-memory workflow.Registry for the lifecycle MCP
 // tool tests (the admin ops require a wired registry).
 type memRegistry struct {
 	byID   map[uuid.UUID]workflow.RegistryEntry

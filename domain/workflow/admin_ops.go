@@ -26,7 +26,7 @@ import (
 //     copied folder so the two stores do not diverge.
 //  6. Stamp the new id onto the copied folder's workflow.json so the copy carries
 //     its own identity (best-effort within the success path).
-func (s *WorkflowService) Duplicate(ctx context.Context, name, newName string) error {
+func (s *Service) Duplicate(ctx context.Context, name, newName string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -92,19 +92,19 @@ func (s *WorkflowService) Duplicate(ctx context.Context, name, newName string) e
 // Archive marks a workflow archived (admin-only): it stays listable and editable,
 // and its in-flight instances continue, but new triggers are refused
 // (engine returns ErrArchived). Archiving an already-archived workflow is a no-op.
-func (s *WorkflowService) Archive(ctx context.Context, name string) error {
+func (s *Service) Archive(ctx context.Context, name string) error {
 	return s.setArchived(ctx, name, true)
 }
 
 // Unarchive clears the archived flag (admin-only), making the workflow triggerable
 // again. Unarchiving an already-active workflow is a no-op.
-func (s *WorkflowService) Unarchive(ctx context.Context, name string) error {
+func (s *Service) Unarchive(ctx context.Context, name string) error {
 	return s.setArchived(ctx, name, false)
 }
 
 // setArchived is the shared archive/unarchive implementation: admin-gated,
 // registry-coordinated, idempotent (SetArchived to the same value is harmless).
-func (s *WorkflowService) setArchived(ctx context.Context, name string, archived bool) error {
+func (s *Service) setArchived(ctx context.Context, name string, archived bool) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (s *WorkflowService) setArchived(ctx context.Context, name string, archived
 //  4. SetOwner. On failure, roll back the copied folder (no half-transfer).
 //  5. Delete the old-owner folder. A delete failure leaves a cosmetic stale
 //     folder (the registry + new folder are authoritative) and is surfaced.
-func (s *WorkflowService) TransferOwnership(ctx context.Context, name string, newOwnerID uuid.UUID) error {
+func (s *Service) TransferOwnership(ctx context.Context, name string, newOwnerID uuid.UUID) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}

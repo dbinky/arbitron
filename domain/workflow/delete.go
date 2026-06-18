@@ -36,7 +36,7 @@ func scopeLabel(k ScopeKind) string {
 // Only the LOCAL path (no registry wired, which also has no registry id to count
 // by) skips the guard — there is no stable id, no counter, and no shared store of
 // live runs to protect against.
-func (s *WorkflowService) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name string) error {
+func (s *Service) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name string) error {
 	if s.activeInstances == nil {
 		if s.registry != nil {
 			// Server/admin path with a half-wired stack: refuse rather than silently
@@ -79,7 +79,7 @@ func (s *WorkflowService) guardNoActiveInstances(ctx context.Context, id uuid.UU
 // When no registry is wired (MCP/local mode), Delete falls back to the prior
 // behavior: an admin-gated delete of the caller's private folder (with the shared
 // scope still surfaced via translateWrite for an informative error).
-func (s *WorkflowService) Delete(ctx context.Context, name string) error {
+func (s *Service) Delete(ctx context.Context, name string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (s *WorkflowService) Delete(ctx context.Context, name string) error {
 //     the identity authority; removing it last means a failure at step 5 leaves a
 //     dangling id whose folder is already gone, which is preferable to a reachable
 //     id that blocks re-publish under the same name.
-func (s *WorkflowService) Unpublish(ctx context.Context, name string) error {
+func (s *Service) Unpublish(ctx context.Context, name string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}

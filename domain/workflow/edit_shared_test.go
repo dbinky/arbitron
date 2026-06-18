@@ -12,7 +12,7 @@ import (
 // sharedEditSvc builds a service with a registry holding a shared workflow
 // "shared-wf" (no private copy). It returns the service, repo, registry, and the
 // shared workflow's stable id.
-func sharedEditSvc(t *testing.T) (*workflow.WorkflowService, *fakeRepo, *fakeRegistry, uuid.UUID) {
+func sharedEditSvc(t *testing.T) (*workflow.Service, *fakeRepo, *fakeRegistry, uuid.UUID) {
 	t.Helper()
 	repo := newFakeRepo()
 	reg := newFakeRegistry()

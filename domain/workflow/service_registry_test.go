@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRegistry is an in-memory workflow.WorkflowRegistry keyed by name, with the
+// fakeRegistry is an in-memory workflow.Registry keyed by name, with the
 // same UNIQUE(name) semantics as the SQLite implementation: Register rejects a
 // duplicate name with ErrAlreadyExists; the id-targeted operations report
 // ErrNotFound for an unknown id.

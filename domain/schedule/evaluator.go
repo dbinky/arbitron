@@ -59,7 +59,7 @@ type Alerter interface {
 // WorkflowResolver is the narrow id->name seam the evaluator uses at fire time:
 // it resolves a schedule's stable WorkflowID to the workflow's CURRENT name, so
 // a rename between create and fire still targets the right definition.
-// workflow.WorkflowRegistry satisfies it. When unwired (nil), the evaluator
+// workflow.Registry satisfies it. When unwired (nil), the evaluator
 // fires by the retained WorkflowName label, preserving today's behavior.
 type WorkflowResolver interface {
 	ResolveName(ctx context.Context, id uuid.UUID) (string, error)

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRepo is an in-memory WorkflowRepository keyed by (scopeKey, name) so the
+// fakeRepo is an in-memory Repository keyed by (scopeKey, name) so the
 // service's scope routing is observable.
 type fakeRepo struct {
 	// store[scopeKey][name] = *Workflow

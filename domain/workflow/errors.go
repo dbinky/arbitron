@@ -51,7 +51,7 @@ var (
 	ErrInvalidStatsRange = errors.New("invalid stats range")
 
 	// ErrStatsUnavailable indicates the stats read port was not configured on the
-	// WorkflowService (a composition/wiring error, not a caller error).
+	// Service (a composition/wiring error, not a caller error).
 	ErrStatsUnavailable = errors.New("stats not available")
 
 	// ErrHasRunningInstances indicates an admin Delete was refused because the

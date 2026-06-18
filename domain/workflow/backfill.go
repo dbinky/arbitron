@@ -11,7 +11,7 @@ import (
 // BackfillRegistry is the one-time startup reconciliation between the name-keyed
 // folder store and the identity registry. It scans the caller's visible scopes
 // (the caller's private space and the shared space — the scopes the
-// WorkflowRepository can enumerate) and, for every workflow that is not yet
+// Repository can enumerate) and, for every workflow that is not yet
 // registered, allocates+persists a stable id and inserts a registry row.
 //
 // It is idempotent: a workflow that already has an id (or already has a registry
@@ -20,7 +20,7 @@ import (
 // and are reconciled lazily on their first Load (see Load → ensureID).
 //
 // A nil registry makes this a no-op (local/unconfigured deployments).
-func (s *WorkflowService) BackfillRegistry(ctx context.Context) error {
+func (s *Service) BackfillRegistry(ctx context.Context) error {
 	if s.registry == nil {
 		return nil
 	}
@@ -37,7 +37,7 @@ func (s *WorkflowService) BackfillRegistry(ctx context.Context) error {
 }
 
 // backfillScope registers every unregistered workflow in a single scope.
-func (s *WorkflowService) backfillScope(ctx context.Context, scope Scope) error {
+func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 	summaries, err := s.repo.List(ctx, scope)
 	if err != nil {
 		return fmt.Errorf("backfill: listing %s scope: %w", scopeName(scope), err)

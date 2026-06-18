@@ -203,7 +203,7 @@ func (r *errOnPrivateListFilesRepo) ListFiles(_ context.Context, s workflow.Scop
 	return nil, workflow.ErrNotFound
 }
 
-// baseRepo is a no-op implementation of WorkflowRepository embedded by error
+// baseRepo is a no-op implementation of Repository embedded by error
 // injection fakes so they only need to override the one method under test.
 type baseRepo struct{}
 

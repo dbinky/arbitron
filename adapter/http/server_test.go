@@ -48,7 +48,7 @@ func authedRouter(next http.Handler) http.Handler {
 // Full router integration mocks
 // ---------------------------------------------------------------------------
 
-// routerMockService implements both WorkflowService and InstanceService.
+// routerMockService implements both Service and InstanceService.
 type routerMockService struct {
 	triggerFn func(workflowName string, variables map[string]any, priority string) (uuid.UUID, bool, error)
 	listFn    func() ([]instance.InstanceSummary, error)

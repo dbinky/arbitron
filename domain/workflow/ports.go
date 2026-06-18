@@ -6,10 +6,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// WorkflowRepository defines the port for loading and listing workflow definitions.
+// Repository defines the port for loading and listing workflow definitions.
 // Implementations must wrap the sentinel errors defined in errors.go (via
 // fmt.Errorf %w) so that the HTTP adapter's errors.Is-based error mapping works.
-type WorkflowRepository interface {
+type Repository interface {
 	Load(ctx context.Context, scope Scope, name string) (*Workflow, error)
 	List(ctx context.Context, scope Scope) ([]WorkflowSummary, error)
 	SaveNodePositions(ctx context.Context, scope Scope, name string, positions map[string]NodePosition) error

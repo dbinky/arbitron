@@ -14,10 +14,10 @@ import (
 // fakeRefBackfiller is an in-memory ReferenceBackfiller used to probe the
 // domain BackfillReferences logic without a real database.
 type fakeRefBackfiller struct {
-	names    []string            // returned by UnresolvedReferenceNames
-	namesErr error               // when set, UnresolvedReferenceNames returns this error
+	names    []string             // returned by UnresolvedReferenceNames
+	namesErr error                // when set, UnresolvedReferenceNames returns this error
 	setIDs   map[string]uuid.UUID // records name→id passed to SetReferenceID
-	setErr   error               // when set, ALL SetReferenceID calls return this error
+	setErr   error                // when set, ALL SetReferenceID calls return this error
 }
 
 func newFakeRefBackfiller(names ...string) *fakeRefBackfiller {
@@ -203,7 +203,7 @@ func TestBackfillReferences_SetReferenceIDError_Propagates(t *testing.T) {
 
 // --- Helpers ---
 
-// errOnResolveRegistry wraps a WorkflowRegistry and returns a fixed error from
+// errOnResolveRegistry wraps a Registry and returns a fixed error from
 // ResolveID, to test the non-ErrNotFound resolve-failure path without needing
 // the real SQLite backend.
 type errOnResolveRegistry struct {

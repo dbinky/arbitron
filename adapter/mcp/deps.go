@@ -63,11 +63,11 @@ type BackendHealthChecker interface {
 //   - EventBus, QueueManager, QueueRepo, Notifications, ConversationHandler
 type Deps struct {
 	Engine    EngineService
-	Workflows workflow.WorkflowRepository
+	Workflows workflow.Repository
 	// WorkflowSvc resolves storage scope/authorization from the calling user's
 	// identity for the workflow_* tools. Optional: when nil, a default service
 	// over Workflows (no publisher lookup) is constructed lazily.
-	WorkflowSvc *workflow.WorkflowService
+	WorkflowSvc *workflow.Service
 	Instances   instance.InstanceRepository
 	NodeExecs   instance.NodeExecutionRepository
 	Snapshots   instance.VariableSnapshotRepository
@@ -127,7 +127,7 @@ type Deps struct {
 	// a nil logger falls back to slog.Default().
 	Logger *slog.Logger
 	// AuditSvc powers the workflow_audit tool's target-scoped audit-trail query.
-	// It is the same best-effort audit service the WorkflowService records through,
+	// It is the same best-effort audit service the Service records through,
 	// so the query reads exactly what the lifecycle ops wrote. Optional: when nil,
 	// the workflow_audit tool reports the audit trail as unavailable.
 	AuditSvc *audit.Service

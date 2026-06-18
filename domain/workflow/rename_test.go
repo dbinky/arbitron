@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// renameSvc builds a WorkflowService with a wired registry and an admin-seeded
+// renameSvc builds a Service with a wired registry and an admin-seeded
 // private workflow "alpha" owned by owner. It returns the service, the repo, the
 // registry, the admin context, and the stable id assigned to "alpha".
-func renameSvc(t *testing.T, owner uuid.UUID) (*workflow.WorkflowService, *fakeRepo, *fakeRegistry, context.Context, uuid.UUID) {
+func renameSvc(t *testing.T, owner uuid.UUID) (*workflow.Service, *fakeRepo, *fakeRegistry, context.Context, uuid.UUID) {
 	t.Helper()
 	repo := newFakeRepo()
 	reg := newFakeRegistry()
@@ -243,7 +243,7 @@ func TestService_Rename_OldFolderDeleteFails_ErrorSurfaced(t *testing.T) {
 	assert.True(t, hasAlpha, "old folder is still present (the delete failed)")
 }
 
-// errOnDeleteNameRepo wraps a WorkflowRepository and returns a fixed error from
+// errOnDeleteNameRepo wraps a Repository and returns a fixed error from
 // Delete when the workflow name matches failName.
 type errOnDeleteNameRepo struct {
 	inner    *fakeRepo

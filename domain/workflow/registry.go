@@ -17,7 +17,7 @@ type RegistryEntry struct {
 	Archived bool
 }
 
-// WorkflowRegistry is the authoritative source of workflow identity and global
+// Registry is the authoritative source of workflow identity and global
 // name uniqueness. The filesystem definition store stays name-keyed and holds the
 // definition body; the registry resolves name↔id and enforces UNIQUE(name).
 //
@@ -25,7 +25,7 @@ type RegistryEntry struct {
 // held by another entry. ResolveID, ResolveName, and the id-targeted mutators
 // (Rename, SetArchived, SetOwner, Delete) return ErrNotFound when no entry
 // matches.
-type WorkflowRegistry interface {
+type Registry interface {
 	// Register inserts a new identity row. Returns ErrAlreadyExists if the name
 	// is already registered.
 	Register(ctx context.Context, e RegistryEntry) error

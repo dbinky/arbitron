@@ -16,7 +16,7 @@ import (
 // rejected with ErrForbidden (the canonical identity sentinel, so the adapters
 // map it to 403 uniformly). Local/unconfigured mode seeds an admin identity, so
 // it passes there too.
-func (s *WorkflowService) requireAdmin(ctx context.Context) error {
+func (s *Service) requireAdmin(ctx context.Context) error {
 	id, ok := identity.FromContext(ctx)
 	if !ok || !id.IsAdmin() {
 		return ErrForbidden
@@ -46,7 +46,7 @@ func (s *WorkflowService) requireAdmin(ctx context.Context) error {
 //     rolls back through the copy-delete envelope (delete new), so no half-rename
 //     leaves the old folder, the new folder, and a moved registry all diverging.
 //     Finally the old folder is removed.
-func (s *WorkflowService) Rename(ctx context.Context, name, newName string) error {
+func (s *Service) Rename(ctx context.Context, name, newName string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func (s *WorkflowService) Rename(ctx context.Context, name, newName string) erro
 //
 // The mutation MUST perform any folder relabel BEFORE the durable registry commit
 // so that a relabel failure is still inside the rollback envelope (Rename step-6).
-func (s *WorkflowService) copyThenSwap(ctx context.Context, srcScope Scope, srcName string, dstScope Scope, dstName string, mutate func(context.Context) error) error {
+func (s *Service) copyThenSwap(ctx context.Context, srcScope Scope, srcName string, dstScope Scope, dstName string, mutate func(context.Context) error) error {
 	if err := s.repo.CopyTree(ctx, srcScope, srcName, dstScope, dstName, false); err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (s *WorkflowService) copyThenSwap(ctx context.Context, srcScope Scope, srcN
 // ResolveID→scopeOf TOCTOU (a concurrent rename/delete between the two reads
 // previously yielded a mid-op ErrNotFound on an id that had just resolved).
 // ErrNotFound propagates when the name is unknown.
-func (s *WorkflowService) resolveIDScope(ctx context.Context, name string) (uuid.UUID, Scope, error) {
+func (s *Service) resolveIDScope(ctx context.Context, name string) (uuid.UUID, Scope, error) {
 	e, err := s.registry.Resolve(ctx, name)
 	if err != nil {
 		return uuid.Nil, Scope{}, err // ErrNotFound propagates

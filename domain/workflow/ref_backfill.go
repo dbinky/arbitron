@@ -23,7 +23,7 @@ import (
 //
 // A nil registry or nil reference backfiller makes this a no-op
 // (local/unconfigured deployments).
-func (s *WorkflowService) BackfillReferences(ctx context.Context) error {
+func (s *Service) BackfillReferences(ctx context.Context) error {
 	if s.registry == nil || s.refBackfiller == nil {
 		return nil
 	}
@@ -68,7 +68,7 @@ func (s *WorkflowService) BackfillReferences(ctx context.Context) error {
 // already reconciled by BackfillRegistry, which registers any unregistered
 // folder on the same boot; SweepOrphans therefore focuses on the dangling-id
 // shape that the registry-side backfill cannot see.
-func (s *WorkflowService) SweepOrphans(ctx context.Context) error {
+func (s *Service) SweepOrphans(ctx context.Context) error {
 	if s.registry == nil || s.refBackfiller == nil {
 		return nil
 	}

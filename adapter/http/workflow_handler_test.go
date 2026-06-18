@@ -22,8 +22,8 @@ import (
 )
 
 // ensure mock repos implement the interface at compile time
-var _ workflow.WorkflowRepository = (*mockWorkflowRepo)(nil)
-var _ workflow.WorkflowRepository = (*errWorkflowRepo)(nil)
+var _ workflow.Repository = (*mockWorkflowRepo)(nil)
+var _ workflow.Repository = (*errWorkflowRepo)(nil)
 
 // ---------------------------------------------------------------------------
 // Mocks for WorkflowHandler

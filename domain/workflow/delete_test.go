@@ -46,7 +46,7 @@ func (c *fakeActiveCounter) CountActiveByWorkflowID(_ context.Context, workflowI
 
 // deleteSvc wires a service with a registry + active-instance counter, the
 // server-mode composition the admin Delete guard requires.
-func deleteSvc(t *testing.T) (*workflow.WorkflowService, *fakeRepo, *fakeRegistry, *fakePublishers, *fakeActiveCounter) {
+func deleteSvc(t *testing.T) (*workflow.Service, *fakeRepo, *fakeRegistry, *fakePublishers, *fakeActiveCounter) {
 	t.Helper()
 	repo := newFakeRepo()
 	reg := newFakeRegistry()
