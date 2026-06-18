@@ -1,6 +1,8 @@
 // Package workflow defines the domain types for workflow definitions.
 package workflow
 
+import "github.com/google/uuid"
+
 // NodeType identifies the kind of processing a workflow node performs.
 type NodeType string
 
@@ -56,6 +58,11 @@ func IsValidAgentBackend(b string) bool {
 
 // Workflow is the top-level definition of a directed graph of processing nodes.
 type Workflow struct {
+	// ID is the workflow's stable, durable identity (persisted in workflow.json).
+	// The Name is the human-facing label and may change; the ID never does. It is
+	// omitted from JSON when zero so legacy id-less definitions stay valid until
+	// backfilled.
+	ID                   uuid.UUID     `json:"id,omitempty"`
 	Name                 string        `json:"name"`
 	Description          string        `json:"description"`
 	Author               string        `json:"author"`
