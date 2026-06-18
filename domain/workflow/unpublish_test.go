@@ -234,6 +234,7 @@ func TestService_Unpublish_RegistryDeleteFails_ErrorSurfaced(t *testing.T) {
 	reg := newFakeRegistry()
 	svc := workflow.NewWorkflowService(repo, pubs)
 	svc.SetRegistry(reg)
+	svc.SetActiveInstanceCounter(newFakeActiveCounter()) // server path: counter wired
 	adminCtx := ctxWith(owner, true)
 
 	// Seed the publication and shared folder.

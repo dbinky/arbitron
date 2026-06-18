@@ -60,6 +60,8 @@ func TestPublishSeam_UnpublishRemovesSharedPreservesPrivate(t *testing.T) {
 	svc.SetRegistry(reg)
 	adminCtx := ctxWith(owner, true)
 
+	svc.SetActiveInstanceCounter(newFakeActiveCounter()) // server path: counter wired
+
 	require.NoError(t, svc.Create(adminCtx, "mine", wf("mine")))
 	require.NoError(t, svc.Publish(adminCtx, "mine", "shared-mine", workflow.VisibilityPublic, ""))
 	require.NoError(t, svc.Unpublish(adminCtx, "shared-mine"))
@@ -92,6 +94,8 @@ func TestPublishSeam_RegistryConsistency(t *testing.T) {
 	svc := workflow.NewWorkflowService(repo, pubs)
 	svc.SetRegistry(reg)
 	adminCtx := ctxWith(owner, true)
+
+	svc.SetActiveInstanceCounter(newFakeActiveCounter()) // server path: counter wired
 
 	require.NoError(t, svc.Create(adminCtx, "mine", wf("mine")))
 	privateID, err := reg.ResolveID(adminCtx, "mine")

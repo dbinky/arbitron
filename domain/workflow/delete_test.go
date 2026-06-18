@@ -177,29 +177,34 @@ func TestService_Delete_NoIdentity_Forbidden(t *testing.T) {
 	require.ErrorIs(t, err, workflow.ErrForbidden)
 }
 
-// --- Edge: no active-instance counter wired — guard is skipped ---
+// --- Error: registry wired but no counter — guard FAILS CLOSED (Must Fix #4) ---
 
-// TestService_Delete_NoCounter_GuardSkipped verifies that when no
-// ActiveInstanceCounter is wired (server mode misconfiguration), the guard is
-// skipped and Delete proceeds. The guard is a defence-in-depth check; the
-// absence of the counter is treated as "no guard" rather than "block all
-// deletes".
-func TestService_Delete_NoCounter_GuardSkipped(t *testing.T) {
+// TestService_Delete_RegistryWiredButNoCounter_FailsClosed verifies that when a
+// registry IS wired (server/admin mode) but the ActiveInstanceCounter is NOT,
+// Delete REFUSES rather than silently skipping the running-instance guard. A
+// guard gated by the conjunction of two independently-optional collaborators that
+// fails open on misconfiguration is worse than no guard, because the operator
+// believes they are protected. An admin delete service that cannot count live
+// runs must not perform a delete (it is effectively not operable), and nothing is
+// removed.
+func TestService_Delete_RegistryWiredButNoCounter_FailsClosed(t *testing.T) {
 	repo := newFakeRepo()
 	reg := newFakeRegistry()
 	pubs := newFakePublishers()
 	svc := workflow.NewWorkflowService(repo, pubs)
 	svc.SetRegistry(reg)
-	// Deliberately omit SetActiveInstanceCounter.
+	// Deliberately omit SetActiveInstanceCounter — a half-wired admin stack.
 
 	admin := uuid.New()
 	seedPrivateRegistered(t, repo, reg, admin, "alpha")
 
-	require.NoError(t, svc.Delete(ctxWith(admin, true), "alpha"),
-		"a nil counter must not block Delete — the guard is skipped")
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.Error(t, err, "a registry-wired service with no counter must refuse Delete (fail closed)")
 
 	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
-	assert.False(t, folderStill, "folder removed when guard is skipped")
+	assert.True(t, folderStill, "folder must remain when the guard cannot run")
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row must remain when the guard cannot run")
 }
 
 // --- Error: publication lookup (PublicationOf) returns an error ---

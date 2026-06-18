@@ -65,4 +65,13 @@ var (
 	// already spawned continue), but new triggers are rejected until it is
 	// unarchived.
 	ErrArchived = errors.New("workflow is archived")
+
+	// ErrMisconfiguredGuard indicates a server/admin-path lifecycle op (Delete,
+	// Unpublish) was refused because its running-instance guard could not run: a
+	// registry is wired but no ActiveInstanceCounter is, so the service cannot
+	// confirm there are no live runs. The op FAILS CLOSED rather than silently
+	// skipping the guard — a half-wired admin stack must not perform an unguarded
+	// delete. It is a composition/wiring error (an operator fix), not a caller
+	// error.
+	ErrMisconfiguredGuard = errors.New("running-instance guard is not configured")
 )

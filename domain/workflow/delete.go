@@ -20,13 +20,30 @@ func scopeLabel(k ScopeKind) string {
 // guardNoActiveInstances refuses an admin lifecycle op (Delete, Unpublish) while
 // any non-terminal instance still carries the workflow's stable id, returning
 // ErrHasRunningInstances. It is the single guard both ops share so the
-// running-instance invariant cannot drift between them. The guard FAILS CLOSED: a
-// counter error propagates (the op is refused) rather than being treated as "no
-// active runs". When no ActiveInstanceCounter is wired (local/unconfigured mode,
-// which also has no registry id to count by) the guard is skipped.
+// running-instance invariant cannot drift between them.
+//
+// FAIL-CLOSED on every misconfiguration of the SERVER/admin path (when a registry
+// is wired):
+//   - a counter error propagates (the op is refused), never treated as "no runs";
+//   - a MISSING counter (registry wired but no ActiveInstanceCounter) is itself
+//     refused with ErrMisconfiguredGuard. This is Must Fix #4: one safety
+//     invariant must not be gated by the conjunction of two independently-optional
+//     collaborators that fails open — a guard that silently no-ops on
+//     misconfiguration is worse than no guard, because the operator believes they
+//     are protected. An admin delete service that cannot count live runs is not
+//     operable.
+//
+// Only the LOCAL path (no registry wired, which also has no registry id to count
+// by) skips the guard — there is no stable id, no counter, and no shared store of
+// live runs to protect against.
 func (s *WorkflowService) guardNoActiveInstances(ctx context.Context, id uuid.UUID, name string) error {
 	if s.activeInstances == nil {
-		return nil
+		if s.registry != nil {
+			// Server/admin path with a half-wired stack: refuse rather than silently
+			// skip the running-instance guard.
+			return fmt.Errorf("%w: active-instance counter not wired for %q", ErrMisconfiguredGuard, name)
+		}
+		return nil // local/unconfigured mode: no registry id to count by.
 	}
 	active, err := s.activeInstances.CountActiveByWorkflowID(ctx, id)
 	if err != nil {
