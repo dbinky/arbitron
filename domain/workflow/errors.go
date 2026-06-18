@@ -1,6 +1,16 @@
 package workflow
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/arbitron/arbitron/domain/identity"
+)
+
+// ErrForbidden: the caller is authenticated but not an admin. Aliased to the
+// canonical identity.ErrForbidden (the same consolidation UserService does) so an
+// errors.Is across package boundaries matches and the adapters map 403 uniformly.
+// It gates the admin-only workflow lifecycle operations (Rename, etc.).
+var ErrForbidden = identity.ErrForbidden
 
 // Sentinel errors for workflow repository operations. Adapters use errors.Is
 // to classify domain errors without relying on error message strings.
