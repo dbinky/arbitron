@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -100,6 +101,59 @@ func TestService_Unpublish_NoPublishers_Unauthorized(t *testing.T) {
 	err := svc.Unpublish(ctxWith(uuid.New(), true), "alpha")
 	require.ErrorIs(t, err, workflow.ErrUnauthorized,
 		"Unpublish without a publishers store must return ErrUnauthorized")
+}
+
+// --- Error: publication lookup (PublicationOf) returns an error ---
+
+// TestService_Unpublish_PublicationLookupError_Propagates verifies that when
+// published.PublicationOf returns an error (e.g. the publication store is
+// temporarily unavailable), Unpublish propagates the error. The operation must
+// be fail-closed: a lookup error is not treated as "not published."
+func TestService_Unpublish_PublicationLookupError_Propagates(t *testing.T) {
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(newFakeRepo(), pubs)
+	admin := uuid.New()
+
+	lookupErr := errors.New("publication store unreachable")
+	pubs.pubLookupErr = lookupErr
+
+	err := svc.Unpublish(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, lookupErr,
+		"PublicationOf error must propagate from Unpublish")
+}
+
+// --- Error: publication delete (published.Delete) fails ---
+
+// TestService_Unpublish_PublicationDeleteError_Propagates verifies that when
+// published.Delete fails, Unpublish surfaces the error and leaves both the
+// publication record and the shared folder intact. The record is removed first
+// per the ordering invariant; if that step fails, the shared folder is never
+// touched.
+func TestService_Unpublish_PublicationDeleteError_Propagates(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	admin := uuid.New()
+	owner := uuid.New()
+
+	repo.bucket(workflow.Shared())["alpha"] = wf("alpha")
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", owner, "src", workflow.VisibilityPublic, ""))
+
+	delErr := errors.New("publication delete failed")
+	pubs.deleteErr = delErr
+
+	err := svc.Unpublish(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, delErr,
+		"published.Delete error must propagate from Unpublish")
+
+	// Shared folder must remain — repo.Delete was never called.
+	_, sharedStill := repo.bucket(workflow.Shared())["alpha"]
+	assert.True(t, sharedStill, "shared folder must remain when publication delete fails")
+
+	// Publication record must remain — Delete returned early.
+	pubs.deleteErr = nil // clear to allow the lookup to reach the map
+	_, pubStill, _ := pubs.PublicationOf(context.Background(), "alpha")
+	assert.True(t, pubStill, "publication record must remain after a failed delete")
 }
 
 // --- Edge: shared folder already absent — Unpublish still succeeds ---

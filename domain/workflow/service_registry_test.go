@@ -23,6 +23,7 @@ type fakeRegistry struct {
 	failReg    error // when set, Register returns this error (to probe rollback)
 	failDel    error // when set, Delete returns this error (to probe partial rollback)
 	failRename error // when set, Rename returns this error (to probe rename rollback)
+	failList   error // when set, List returns this error (to probe scopeOf failure paths)
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -131,6 +132,9 @@ func (r *fakeRegistry) Delete(_ context.Context, id uuid.UUID) error {
 func (r *fakeRegistry) List(_ context.Context) ([]workflow.RegistryEntry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failList != nil {
+		return nil, r.failList
+	}
 	out := make([]workflow.RegistryEntry, 0, len(r.byName))
 	for _, e := range r.byName {
 		out = append(out, e)

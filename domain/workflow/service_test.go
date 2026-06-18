@@ -142,6 +142,12 @@ type fakePublishers struct {
 	// setWorkflowIDErr, when set, makes SetWorkflowID return the error so the
 	// Publish id-link failure path is exercisable.
 	setWorkflowIDErr error
+	// pubLookupErr, when set, makes PublicationOf return the error so that
+	// Delete/Unpublish lookup-failure paths are exercisable.
+	pubLookupErr error
+	// deleteErr, when set, makes Delete return the error so that
+	// Delete/Unpublish publication-removal failure paths are exercisable.
+	deleteErr error
 }
 
 func newFakePublishers() *fakePublishers {
@@ -154,6 +160,9 @@ func (p *fakePublishers) PublisherOf(_ context.Context, name string) (uuid.UUID,
 }
 
 func (p *fakePublishers) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	if p.pubLookupErr != nil {
+		return workflow.Publication{}, false, p.pubLookupErr
+	}
 	pub, ok := p.pub[name]
 	return pub, ok, nil
 }
@@ -167,6 +176,9 @@ func (p *fakePublishers) Upsert(_ context.Context, name string, publisher uuid.U
 }
 
 func (p *fakePublishers) Delete(_ context.Context, name string) error {
+	if p.deleteErr != nil {
+		return p.deleteErr
+	}
 	delete(p.pub, name)
 	return nil
 }

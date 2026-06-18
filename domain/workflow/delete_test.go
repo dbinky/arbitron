@@ -202,6 +202,76 @@ func TestService_Delete_NoCounter_GuardSkipped(t *testing.T) {
 	assert.False(t, folderStill, "folder removed when guard is skipped")
 }
 
+// --- Error: publication lookup (PublicationOf) returns an error ---
+
+// TestService_Delete_PublicationLookupError_Propagates verifies that when
+// published.PublicationOf returns an error (e.g. the publication store is
+// temporarily unavailable), Delete propagates the error and leaves both the
+// folder and the registry row intact. The guard is fail-closed: a lookup error
+// must never be silently treated as "not published."
+func TestService_Delete_PublicationLookupError_Propagates(t *testing.T) {
+	svc, repo, reg, pubs, _ := deleteSvc(t)
+	admin := uuid.New()
+	seedPrivateRegistered(t, repo, reg, admin, "alpha")
+
+	lookupErr := errors.New("publication store unreachable")
+	pubs.pubLookupErr = lookupErr
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, lookupErr, "PublicationOf error must propagate from Delete")
+
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.True(t, folderStill, "folder must remain when publication lookup fails")
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row must remain when publication lookup fails")
+}
+
+// --- Error: publication delete (published.Delete) fails at step 4 ---
+
+// TestService_Delete_PublicationDeleteError_Propagates verifies that when
+// published.Delete fails (step 4), Delete surfaces the error and leaves both
+// the folder (step 5) and the registry row (step 6) untouched. Aborting at
+// step 4 prevents an orphaned folder that no registry row can locate.
+func TestService_Delete_PublicationDeleteError_Propagates(t *testing.T) {
+	svc, repo, reg, pubs, _ := deleteSvc(t)
+	admin := uuid.New()
+	publisher := uuid.New()
+	seedPrivateRegistered(t, repo, reg, admin, "alpha")
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", publisher, "src", workflow.VisibilityPublic, ""))
+
+	delErr := errors.New("publication delete failed")
+	pubs.deleteErr = delErr
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, delErr, "published.Delete error must propagate from Delete (step 4)")
+
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.True(t, folderStill, "folder must remain when step 4 publication delete fails")
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row must remain when step 4 fails")
+}
+
+// --- Error: registry.List fails inside scopeOf ---
+
+// TestService_Delete_ScopeListFails_Propagates verifies that when registry.List
+// fails inside scopeOf (the call that determines which folder scope to remove),
+// Delete propagates the error and leaves the folder intact. Without the scope
+// nothing can be safely removed.
+func TestService_Delete_ScopeListFails_Propagates(t *testing.T) {
+	svc, repo, reg, _, _ := deleteSvc(t)
+	admin := uuid.New()
+	seedPrivateRegistered(t, repo, reg, admin, "alpha")
+
+	listErr := errors.New("registry list unavailable")
+	reg.failList = listErr
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, listErr, "registry.List error in scopeOf must propagate from Delete")
+
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.True(t, folderStill, "folder must remain when scopeOf List fails")
+}
+
 // --- Error: non-admin rejected ---
 
 // TestService_Delete_NonAdmin_Forbidden verifies a non-admin caller is rejected
