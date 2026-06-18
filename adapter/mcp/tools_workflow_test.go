@@ -1485,6 +1485,26 @@ func TestWorkflowTool_Unpublish_NonAdmin_Forbidden(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "not authorized")
 }
 
+// TestWorkflowTool_Unpublish_NoPublishers_NotAuthorized verifies that the MCP
+// Unpublish handler surfaces ErrUnauthorized as "not authorized" when the
+// server has no publishers store configured (local/unconfigured mode).
+func TestWorkflowTool_Unpublish_NoPublishers_NotAuthorized(t *testing.T) {
+	repo := filesystem.NewWorkflowRepo(t.TempDir())
+	svc := workflow.NewWorkflowService(repo, nil) // nil publishers → ErrUnauthorized
+	deps := &adaptmcp.Deps{
+		Workflows:   repo,
+		WorkflowSvc: svc,
+		FileReader:  &stubFileReader{},
+	}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterWorkflowTools(srv)
+
+	result := callToolAdmin(t, srv, "workflow_unpublish", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized",
+		"ErrUnauthorized (no publishers configured) must surface as 'not authorized' via mapLifecycleError")
+}
+
 // --- workflow_duplicate ---
 
 func TestWorkflowTool_Duplicate_HappyPath(t *testing.T) {
@@ -1568,6 +1588,14 @@ func TestWorkflowTool_Archive_UnknownName_NotFound(t *testing.T) {
 	result := callToolAdmin(t, f.srv, "workflow_archive", map[string]any{"name": "ghost"})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Unarchive_UnknownName_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_unarchive", map[string]any{"name": "ghost"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found",
+		"ErrNotFound from Unarchive must surface as 'not found' via mapLifecycleError")
 }
 
 // --- workflow_transfer_ownership ---
