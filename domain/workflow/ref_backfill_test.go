@@ -39,6 +39,15 @@ func (f *fakeRefBackfiller) SetReferenceID(_ context.Context, name string, id uu
 	return 1, nil
 }
 
+// ReferencedWorkflowIDs / ClearReferenceID complete the port for the orphan
+// sweep; this fake exercises BackfillReferences only, so they are inert here.
+func (f *fakeRefBackfiller) ReferencedWorkflowIDs(_ context.Context) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (f *fakeRefBackfiller) ClearReferenceID(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
+
 // --- Happy path ---
 
 // TestBackfillReferences_NilRegistry_NoOp verifies that BackfillReferences is

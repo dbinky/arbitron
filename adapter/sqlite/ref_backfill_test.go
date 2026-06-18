@@ -259,3 +259,57 @@ func TestRefBackfill_UnresolvedNamesDeduplicatedAcrossTables(t *testing.T) {
 	assert.Len(t, names, 2, "UNION must return each name exactly once")
 	assert.ElementsMatch(t, []string{"multi", "pub-only"}, names)
 }
+
+// --- Orphan sweep (PR #44 Consider #2) ---
+
+// stampInstanceWorkflowID forces a non-NULL workflow_id onto an instance row,
+// simulating a stamped reference whose identity may later be deleted.
+func (f refBackfillFixture) stampInstanceWorkflowID(t *testing.T, instID string, wfID uuid.UUID) {
+	t.Helper()
+	_, err := f.db.DB.Exec(`UPDATE instances SET workflow_id = ? WHERE id = ?`, wfID.String(), instID)
+	require.NoError(t, err)
+}
+
+// TestSweepOrphans_DanglingInstanceID_ClearedToNull verifies the startup orphan
+// sweep reconciles an instance whose non-NULL workflow_id no longer resolves in
+// the registry back to NULL (the accepted dangling-label state), while leaving a
+// still-valid reference untouched.
+func TestSweepOrphans_DanglingInstanceID_ClearedToNull(t *testing.T) {
+	f := newRefBackfillFixture(t)
+
+	// A live identity + an instance referencing it.
+	liveID := f.registerWorkflow(t, "live")
+	liveInst := f.insertInstance(t, "live")
+	f.stampInstanceWorkflowID(t, liveInst, liveID)
+
+	// A dangling reference: a workflow_id with no registry row.
+	danglingID := uuid.New()
+	danglingInst := f.insertInstance(t, "ghost")
+	f.stampInstanceWorkflowID(t, danglingInst, danglingID)
+
+	require.NoError(t, f.svc.SweepOrphans(f.ctx))
+
+	// The dangling reference is reconciled to NULL.
+	assert.Nil(t, f.instanceWorkflowID(t, danglingInst),
+		"a dangling workflow_id must be reconciled to NULL")
+	// The live reference is untouched.
+	if got := f.instanceWorkflowID(t, liveInst); assert.NotNil(t, got) {
+		assert.Equal(t, liveID.String(), *got, "a valid reference must be left intact")
+	}
+}
+
+// TestSweepOrphans_NoDangling_NoOp verifies that with only valid references the
+// sweep changes nothing and is idempotent.
+func TestSweepOrphans_NoDangling_NoOp(t *testing.T) {
+	f := newRefBackfillFixture(t)
+	liveID := f.registerWorkflow(t, "live")
+	liveInst := f.insertInstance(t, "live")
+	f.stampInstanceWorkflowID(t, liveInst, liveID)
+
+	require.NoError(t, f.svc.SweepOrphans(f.ctx))
+	require.NoError(t, f.svc.SweepOrphans(f.ctx)) // idempotent second run
+
+	if got := f.instanceWorkflowID(t, liveInst); assert.NotNil(t, got) {
+		assert.Equal(t, liveID.String(), *got)
+	}
+}

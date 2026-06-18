@@ -506,6 +506,14 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
 		logger.Warn("workflow reference backfill incomplete", "error", err)
 	}
+	// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
+	// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
+	// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
+	// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
+	// stamped ids are considered.
+	if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
+		logger.Warn("workflow orphan sweep incomplete", "error", err)
+	}
 
 	// 7. Create the chat + agent providers based on config.
 	//

@@ -64,6 +64,80 @@ SELECT name          FROM published_workflows WHERE workflow_id IS NULL`
 	return names, nil
 }
 
+// ReferencedWorkflowIDs returns the distinct NON-NULL workflow_id values present
+// across the three reference tables. The startup orphan-sweep resolves each
+// against the registry; an id with no registry row is a dangling reference.
+func (r *ReferenceBackfiller) ReferencedWorkflowIDs(ctx context.Context) ([]uuid.UUID, error) {
+	const q = `
+SELECT workflow_id FROM instances           WHERE workflow_id IS NOT NULL
+UNION
+SELECT workflow_id FROM schedules           WHERE workflow_id IS NOT NULL
+UNION
+SELECT workflow_id FROM published_workflows WHERE workflow_id IS NOT NULL`
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("listing referenced workflow ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var idStr string
+		if err := rows.Scan(&idStr); err != nil {
+			return nil, fmt.Errorf("scanning referenced workflow id: %w", err)
+		}
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing referenced workflow id %q: %w", idStr, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating referenced workflow ids: %w", err)
+	}
+	return ids, nil
+}
+
+// ClearReferenceID resets workflow_id to NULL on every reference row currently
+// carrying id, across all three tables, in a single transaction — reconciling a
+// dangling reference to the accepted "dangling label" NULL state. Returns the
+// total rows updated.
+func (r *ReferenceBackfiller) ClearReferenceID(ctx context.Context, id uuid.UUID) (int64, error) {
+	idStr := id.String()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("beginning orphan-clear transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	stmts := []struct {
+		table string
+		query string
+	}{
+		{"instances", `UPDATE instances SET workflow_id = NULL WHERE workflow_id = ?`},
+		{"schedules", `UPDATE schedules SET workflow_id = NULL WHERE workflow_id = ?`},
+		{"published_workflows", `UPDATE published_workflows SET workflow_id = NULL WHERE workflow_id = ?`},
+	}
+
+	var total int64
+	for _, s := range stmts {
+		res, err := tx.ExecContext(ctx, s.query, idStr)
+		if err != nil {
+			return 0, fmt.Errorf("clearing workflow_id on %s for %s: %w", s.table, idStr, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("counting cleared %s rows for %s: %w", s.table, idStr, err)
+		}
+		total += n
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("committing orphan-clear for %s: %w", idStr, err)
+	}
+	return total, nil
+}
+
 // SetReferenceID stamps workflow_id = id on every reference row whose name matches
 // AND whose workflow_id is currently NULL, across all three tables, in a single
 // transaction. The NULL guard means a row already carrying an id is left

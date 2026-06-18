@@ -50,4 +50,15 @@ type ReferenceBackfiller interface {
 	// three tables. Rows already carrying an id are left untouched. It reports the
 	// total number of rows updated.
 	SetReferenceID(ctx context.Context, name string, id uuid.UUID) (int64, error)
+
+	// ReferencedWorkflowIDs returns the distinct NON-NULL workflow_id values that
+	// appear in any reference table. The startup orphan-sweep resolves each against
+	// the registry; an id with no registry row is a DANGLING reference (the identity
+	// was deleted out from under historical rows) and is reconciled to NULL.
+	ReferencedWorkflowIDs(ctx context.Context) ([]uuid.UUID, error)
+	// ClearReferenceID resets workflow_id to NULL on every reference row currently
+	// carrying id, across all three tables, reconciling a dangling reference to the
+	// accepted "dangling label" NULL state (migration 016/017). It reports the total
+	// number of rows updated.
+	ClearReferenceID(ctx context.Context, id uuid.UUID) (int64, error)
 }
