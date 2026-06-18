@@ -1525,6 +1525,8 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
 		req = withChiURLParam(req, "name", "test-wf")
+		// Delete is admin-gated (workflow-management Phase 3 Task 2).
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1540,6 +1542,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/unknown", nil)
 		req = withChiURLParam(req, "name", "unknown")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1567,6 +1570,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
 		req = withChiURLParam(req, "name", "test-wf")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1583,6 +1587,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/pub", nil)
 		req = withChiURLParam(req, "name", "pub")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 

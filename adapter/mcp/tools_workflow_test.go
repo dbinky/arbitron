@@ -478,7 +478,8 @@ func TestWorkflowDelete(t *testing.T) {
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "to-delete"})
+		// workflow_delete is admin-gated (workflow-management Phase 3 Task 2).
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "to-delete"})
 
 		assert.False(t, result.IsError)
 		assert.Equal(t, "to-delete", capturedName)
@@ -498,7 +499,7 @@ func TestWorkflowDelete(t *testing.T) {
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "ghost"})
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "ghost"})
 
 		assert.True(t, result.IsError)
 		text := extractText(t, result)
@@ -514,7 +515,7 @@ func TestWorkflowDelete(t *testing.T) {
 			},
 		}
 		srv := newWorkflowServer(repo, &stubFileReader{})
-		result := callTool(t, srv, "workflow_delete", map[string]any{"name": "pub"})
+		result := callToolAdmin(t, srv, "workflow_delete", map[string]any{"name": "pub"})
 
 		assert.True(t, result.IsError)
 		text := extractText(t, result)

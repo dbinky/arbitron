@@ -445,6 +445,27 @@ func (r *InstanceRepo) HasActiveRun(ctx context.Context, workflowName string, ow
 	return exists != 0, nil
 }
 
+// CountActiveByWorkflowID returns how many non-terminal instances carry the
+// stable workflowID. "Active" is any state other than completed/failed/cancelled
+// (i.e. queued/running/waiting/paused), mirroring HasActiveRun's vocabulary. It is
+// the admin Delete guard's primitive (workflow-management Phase 3): a workflow
+// with live runs cannot be deleted. It keys on workflow_id (migration 017), not
+// the human-facing workflow_name, so a rename does not hide live runs.
+//
+// It is a hand-written query (the generated GetInstance/List predate the
+// workflow_id column) to avoid a blanket sqlc regeneration of the hand-curated
+// generated/ tree, matching the Create/Get workflow_id handling above.
+func (r *InstanceRepo) CountActiveByWorkflowID(ctx context.Context, workflowID uuid.UUID) (int, error) {
+	const q = `SELECT COUNT(*) FROM instances
+  WHERE workflow_id = ?
+    AND state IN ('queued','running','waiting','paused')`
+	var n int
+	if err := r.db.QueryRowContext(ctx, q, uuidToString(workflowID)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting active instances for workflow %q: %w", workflowID, err)
+	}
+	return n, nil
+}
+
 // rowToInstance converts a sqlc-generated Instance row into a domain Instance.
 // This is a package-level function so both InstanceRepo and QueueRepo can use
 // it without hidden coupling between the two repos.

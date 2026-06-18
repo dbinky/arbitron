@@ -15,6 +15,8 @@ import (
 const (
 	ActionWorkflowPublish          = "workflow.publish"
 	ActionWorkflowVisibilityChange = "workflow.visibility_change"
+	ActionWorkflowDelete           = "workflow.delete"
+	ActionWorkflowUnpublish        = "workflow.unpublish"
 	ActionAdminOverride            = "admin.override"
 	// ActionLeadIntervention is emitted when a department lead (not an admin)
 	// intervenes on a run they do not own. Declared here, the single home for the

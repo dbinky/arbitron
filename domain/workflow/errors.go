@@ -53,4 +53,10 @@ var (
 	// ErrStatsUnavailable indicates the stats read port was not configured on the
 	// WorkflowService (a composition/wiring error, not a caller error).
 	ErrStatsUnavailable = errors.New("stats not available")
+
+	// ErrHasRunningInstances indicates an admin Delete was refused because the
+	// workflow still has one or more non-terminal instances (queued, running,
+	// waiting, or paused) carrying its stable id. Deletion would orphan a live run,
+	// so the operation is rejected until those runs reach a terminal state.
+	ErrHasRunningInstances = errors.New("workflow has running instances")
 )

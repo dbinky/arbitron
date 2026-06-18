@@ -26,6 +26,16 @@ type StatsReader interface {
 	Stats(ctx context.Context, workflowName string, from time.Time, to time.Time) (*instance.WorkflowStats, error)
 }
 
+// ActiveInstanceCounter reports how many non-terminal instances carry a given
+// stable workflow id. It is the narrow read port the admin Delete guard consults
+// to refuse deletion of a workflow with live runs. "Non-terminal" is any state
+// other than completed/failed/cancelled (i.e. queued/running/waiting/paused). A
+// nil counter disables the guard (local/unconfigured mode, where the registry —
+// and thus the workflow id — is also absent).
+type ActiveInstanceCounter interface {
+	CountActiveByWorkflowID(ctx context.Context, workflowID uuid.UUID) (int, error)
+}
+
 // PublisherLookup resolves the publication record for a shared workflow name,
 // including its visibility level. Backed by the published_workflows repo. A nil
 // lookup yields no publications (local/read-only mode treats shared as public).
@@ -75,6 +85,18 @@ type WorkflowService struct {
 	// workflow ids onto the name-keyed reference tables. When unset (nil),
 	// BackfillReferences is a no-op.
 	refBackfiller ReferenceBackfiller
+	// activeInstances is the optional read port the admin Delete guard consults to
+	// refuse deletion while non-terminal instances carry the workflow id. When
+	// unset (nil), the guard is skipped (local/unconfigured mode has no registry
+	// id to count by).
+	activeInstances ActiveInstanceCounter
+}
+
+// SetActiveInstanceCounter wires the non-terminal-instance counter consulted by
+// the admin Delete guard. When unset (nil), Delete does not guard against running
+// instances (local/unconfigured mode, which also has no workflow id to count by).
+func (s *WorkflowService) SetActiveInstanceCounter(c ActiveInstanceCounter) {
+	s.activeInstances = c
 }
 
 // SetRegistry wires the workflow identity registry (id allocation + global name
@@ -200,15 +222,6 @@ func (s *WorkflowService) Update(ctx context.Context, name string, wf *Workflow)
 		return err
 	}
 	return s.translateWrite(ctx, name, s.repo.Update(ctx, Private(id.UserID), name, wf))
-}
-
-// Delete removes a workflow from the caller's private scope.
-func (s *WorkflowService) Delete(ctx context.Context, name string) error {
-	id, err := caller(ctx)
-	if err != nil {
-		return err
-	}
-	return s.translateWrite(ctx, name, s.repo.Delete(ctx, Private(id.UserID), name))
 }
 
 // SaveNodePositions persists node layout in the caller's private scope.
