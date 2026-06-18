@@ -8,6 +8,22 @@
 --
 -- published_workflows keys the workflow by its `name` column (its PRIMARY KEY), so
 -- it gains workflow_id the same way.
+--
+-- REFERENTIAL INTEGRITY (load-bearing): these workflow_id columns are
+-- APP-MAINTAINED, NULLABLE LABELS — they are intentionally NOT SQL FOREIGN KEYs to
+-- workflow_identity(id). The workflow_identity registry (migration 016) is the
+-- identity authority. Three reasons the FK is omitted rather than just unwritten:
+--   1. ON DELETE SET NULL would NULL a LIVE instance's workflow_id behind the
+--      delete-while-running guard's back (the guard counts active runs by
+--      workflow_id), defeating the very invariant this column exists to support.
+--   2. ON DELETE RESTRICT would block legitimate identity cleanup behind historical
+--      rows that only need the label for display/rerun-fallback.
+--   3. Flipping the per-connection foreign_keys PRAGMA for these three columns only
+--      is an inconsistent landmine for every future migration.
+-- Therefore an orphan (workflow_id referencing a deleted identity) is an ACCEPTED
+-- TRANSIENT state: it reads back as a dangling label, never breaks a running
+-- instance, and is reconciled at startup (BackfillReferences and the boot-sweep).
+-- A reader must treat a NULL/dangling workflow_id as "label only", not as a bug.
 ALTER TABLE instances           ADD COLUMN workflow_id TEXT;  -- NULL until backfilled
 ALTER TABLE schedules           ADD COLUMN workflow_id TEXT;  -- NULL until backfilled
 ALTER TABLE published_workflows ADD COLUMN workflow_id TEXT;  -- NULL until backfilled

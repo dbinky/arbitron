@@ -4,6 +4,18 @@
 -- the definition body; this table holds identity + uniqueness only.
 --
 -- owner_id is nullable: a shared/published entry has no single private owner.
+--
+-- REFERENTIAL INTEGRITY (load-bearing — see migration 017): this table is the
+-- IDENTITY AUTHORITY. The workflow_id columns added to instances/schedules/
+-- published_workflows in 017 are app-maintained, NULLABLE label references; they
+-- are deliberately NOT declared as SQL FOREIGN KEYs to workflow_identity(id).
+-- A real FK with ON DELETE SET NULL would NULL a LIVE instance's workflow_id
+-- behind the delete-while-running guard's back (the guard keys on workflow_id),
+-- which is a worse failure than the transient orphan it would "fix"; and toggling
+-- the per-connection foreign_keys PRAGMA for only these columns is an inconsistent
+-- landmine for future migrations. Instead, an orphaned reference (workflow_id
+-- pointing at a deleted identity) reads back as NULL and is an ACCEPTED TRANSIENT
+-- state, reconciled at startup (BackfillReferences / boot-sweep), not a bug.
 
 CREATE TABLE IF NOT EXISTS workflow_identity (
     id         TEXT PRIMARY KEY,
