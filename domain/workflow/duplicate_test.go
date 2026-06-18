@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -9,6 +10,62 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// --- Error: non-admin is forbidden ---
+
+// --- Error: no registry configured → ErrUnauthorized ---
+
+// TestService_Duplicate_NoRegistry_Unauthorized verifies that without a wired
+// registry (local mode), Duplicate returns ErrUnauthorized. The admin gate passes;
+// the "not configured" check fires with a distinct sentinel so callers can surface
+// a helpful message.
+func TestService_Duplicate_NoRegistry_Unauthorized(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil) // no registry
+	err := svc.Duplicate(ctxWith(uuid.New(), true), "alpha", "alpha-copy")
+	require.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"Duplicate without a registry must return ErrUnauthorized")
+}
+
+// --- Error: CopyTree fails — no registry row written ---
+
+// TestService_Duplicate_CopyTreeFails_NothingRegistered verifies that when
+// CopyTree fails (e.g. destination folder already exists), Duplicate propagates
+// the error without creating a registry row. The uniqueness check passes (the name
+// is not yet in the registry), but the filesystem-level collision aborts the op
+// before Register is called.
+func TestService_Duplicate_CopyTreeFails_NothingRegistered(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, _ := renameSvc(t, owner)
+
+	// Pre-seed a folder at the destination (independent of the registry check).
+	repo.bucket(workflow.Private(owner))["alpha-copy"] = wf("alpha-copy")
+	before := reg.count()
+
+	err := svc.Duplicate(adminCtx, "alpha", "alpha-copy")
+	require.Error(t, err, "CopyTree failure must propagate from Duplicate")
+	assert.Equal(t, before, reg.count(), "no registry row on CopyTree failure")
+}
+
+// --- Error: Register fails → copied folder rolled back ---
+
+// TestService_Duplicate_RegisterFails_RollsBackFolder verifies the cross-store
+// ordering: when registry.Register fails (step 5), Duplicate rolls back the
+// already-copied folder so the two stores do not diverge. The caller sees the
+// Register error; no orphan folder is left behind.
+func TestService_Duplicate_RegisterFails_RollsBackFolder(t *testing.T) {
+	owner := uuid.New()
+	svc, repo, reg, adminCtx, _ := renameSvc(t, owner)
+
+	regErr := errors.New("registry unavailable")
+	reg.failReg = regErr
+
+	err := svc.Duplicate(adminCtx, "alpha", "alpha-copy")
+	require.ErrorIs(t, err, regErr, "Register error must propagate from Duplicate")
+
+	_, folderStill := repo.bucket(workflow.Private(owner))["alpha-copy"]
+	assert.False(t, folderStill, "copied folder must be rolled back when Register fails")
+	assert.Equal(t, 1, reg.count(), "registry unchanged (no orphan row)")
+}
 
 // --- Error: non-admin is forbidden ---
 

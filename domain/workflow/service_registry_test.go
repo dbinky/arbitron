@@ -17,13 +17,15 @@ import (
 // duplicate name with ErrAlreadyExists; the id-targeted operations report
 // ErrNotFound for an unknown id.
 type fakeRegistry struct {
-	mu         sync.Mutex
-	byName     map[string]workflow.RegistryEntry
-	byID       map[uuid.UUID]string
-	failReg    error // when set, Register returns this error (to probe rollback)
-	failDel    error // when set, Delete returns this error (to probe partial rollback)
-	failRename error // when set, Rename returns this error (to probe rename rollback)
-	failList   error // when set, List returns this error (to probe scopeOf failure paths)
+	mu              sync.Mutex
+	byName          map[string]workflow.RegistryEntry
+	byID            map[uuid.UUID]string
+	failReg         error // when set, Register returns this error (to probe rollback)
+	failDel         error // when set, Delete returns this error (to probe partial rollback)
+	failRename      error // when set, Rename returns this error (to probe rename rollback)
+	failList        error // when set, List returns this error (to probe scopeOf failure paths)
+	failSetArchived error // when set, SetArchived returns this error (to probe archive failure path)
+	failSetOwner    error // when set, SetOwner returns this error (to probe transfer rollback)
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -91,6 +93,9 @@ func (r *fakeRegistry) Rename(_ context.Context, id uuid.UUID, newName string) e
 func (r *fakeRegistry) SetArchived(_ context.Context, id uuid.UUID, archived bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failSetArchived != nil {
+		return r.failSetArchived
+	}
 	name, ok := r.byID[id]
 	if !ok {
 		return workflow.ErrNotFound
@@ -104,6 +109,9 @@ func (r *fakeRegistry) SetArchived(_ context.Context, id uuid.UUID, archived boo
 func (r *fakeRegistry) SetOwner(_ context.Context, id, owner uuid.UUID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.failSetOwner != nil {
+		return r.failSetOwner
+	}
 	name, ok := r.byID[id]
 	if !ok {
 		return workflow.ErrNotFound

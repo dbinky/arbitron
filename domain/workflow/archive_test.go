@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -23,6 +24,37 @@ func archivedOf(t *testing.T, reg *fakeRegistry, ctx context.Context, name strin
 	}
 	t.Fatalf("registry has no entry for %q", name)
 	return false
+}
+
+// --- Error: no registry configured → ErrUnauthorized ---
+
+// TestService_Archive_NoRegistry_Unauthorized verifies that without a wired
+// registry, Archive returns ErrUnauthorized. The admin gate passes; the "not
+// configured" check fires with a distinct sentinel from ErrForbidden.
+func TestService_Archive_NoRegistry_Unauthorized(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil) // no registry
+	err := svc.Archive(ctxWith(uuid.New(), true), "alpha")
+	require.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"Archive without a registry must return ErrUnauthorized")
+}
+
+// --- Error: SetArchived fails → error propagates, flag unchanged ---
+
+// TestService_Archive_SetArchivedFails_Propagates verifies that when
+// registry.SetArchived returns an error, Archive surfaces it and the archived
+// flag remains unchanged.
+func TestService_Archive_SetArchivedFails_Propagates(t *testing.T) {
+	owner := uuid.New()
+	svc, _, reg, adminCtx, _ := renameSvc(t, owner)
+
+	archErr := errors.New("registry write failed")
+	reg.failSetArchived = archErr
+
+	err := svc.Archive(adminCtx, "alpha")
+	require.ErrorIs(t, err, archErr, "SetArchived error must propagate from Archive")
+
+	reg.failSetArchived = nil // clear to allow List for the assertion
+	assert.False(t, archivedOf(t, reg, adminCtx, "alpha"), "archived flag unchanged after SetArchived error")
 }
 
 // --- Error: non-admin is forbidden ---
