@@ -377,6 +377,52 @@ func (f *failingStore) ListByTarget(context.Context, string) ([]audit.Event, err
 	return nil, f.err
 }
 
+// --- No event on operation failure ---
+
+// TestService_Rename_FailedRename_NoAuditEvent verifies that a rejected Rename
+// (non-admin caller → ErrForbidden) does not emit any audit event. Only
+// successful mutations are audited.
+func TestService_Rename_FailedRename_NoAuditEvent(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, _, _ := renameSvc(t, owner)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+
+	err := svc.Rename(ctxWith(owner, false), "alpha", "beta")
+	require.Error(t, err)
+	assert.Empty(t, store.events, "failed Rename must not emit an audit event")
+}
+
+// TestService_Delete_GuardRefusal_NoAuditEvent verifies that a Delete rejected
+// by the running-instances guard does not emit an audit event. The guard
+// refuses before any mutation takes place.
+func TestService_Delete_GuardRefusal_NoAuditEvent(t *testing.T) {
+	svc, repo, reg, _, counter := deleteSvc(t)
+	store := &recordingStore{}
+	svc.SetAudit(audit.NewService(store))
+	admin := uuid.New()
+	idA := seedPrivateRegistered(t, repo, reg, admin, "alpha")
+	counter.seed(idA, "running")
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, workflow.ErrHasRunningInstances)
+	assert.Empty(t, store.events, "guard-refused Delete must not emit an audit event")
+}
+
+// --- Audit best-effort for lifecycle ops ---
+
+// TestService_Archive_AuditStoreFailure_OperationSucceeds verifies that a
+// failure in the audit store does not propagate from Archive. Audit is
+// best-effort: a transient DB outage must not block admin ops.
+func TestService_Archive_AuditStoreFailure_OperationSucceeds(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, adminCtx, _ := renameSvc(t, owner)
+	svc.SetAudit(audit.NewService(&failingStore{err: errors.New("db unavailable")}))
+
+	require.NoError(t, svc.Archive(adminCtx, "alpha"),
+		"Archive must succeed when the audit store fails — audit is best-effort")
+}
+
 // TestService_SetVisibility_AuditStoreFailure_OperationSucceeds verifies that
 // a store failure during Record() inside SetVisibility does NOT propagate to
 // the caller. Audit is best-effort and void — the mutation must still succeed.

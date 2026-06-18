@@ -1431,6 +1431,27 @@ func TestWorkflowTool_Rename_InvalidName(t *testing.T) {
 	assert.Contains(t, extractText(t, result), "invalid")
 }
 
+func TestWorkflowTool_Rename_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "ghost", "newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
+}
+
+func TestWorkflowTool_Rename_MissingName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"newName": "beta"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "name is required")
+}
+
+func TestWorkflowTool_Rename_MissingNewName(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_rename", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "newName is required")
+}
+
 // --- workflow_unpublish ---
 
 func TestWorkflowTool_Unpublish_HappyPath(t *testing.T) {
@@ -1484,6 +1505,13 @@ func TestWorkflowTool_Duplicate_NonAdmin_Forbidden(t *testing.T) {
 	result := callTool(t, f.srv, "workflow_duplicate", map[string]any{"name": "alpha", "newName": "alpha-copy"})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
+func TestWorkflowTool_Duplicate_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_duplicate", map[string]any{"name": "ghost", "newName": "copy"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
 }
 
 func TestWorkflowTool_Duplicate_TakenName(t *testing.T) {
@@ -1576,6 +1604,15 @@ func TestWorkflowTool_TransferOwnership_BadOwnerID(t *testing.T) {
 	})
 	assert.True(t, result.IsError)
 	assert.Contains(t, extractText(t, result), "newOwner")
+}
+
+func TestWorkflowTool_TransferOwnership_NotFound(t *testing.T) {
+	f := newLifecycleServer(t)
+	result := callToolAdmin(t, f.srv, "workflow_transfer_ownership", map[string]any{
+		"name": "ghost", "newOwner": mcpTestUserID.String(),
+	})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not found")
 }
 
 // --- workflow_delete admin-gated + running guard ---
