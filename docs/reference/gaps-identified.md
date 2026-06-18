@@ -26,7 +26,15 @@ if found wanting):_
 
 ## Fixed Previously
 
-_None yet._
+- **Unpublish did not remove the shared registry entry (Area 15).**
+  `Unpublish` removed the publication record and the shared folder but omitted
+  `registry.Delete` on the shared name's `workflow_identity` row. The lingering
+  row caused the cross-scope collision check (added in Area 9) to return
+  `ErrAlreadyExists` on any re-publish under the same name after an unpublish.
+  Fixed by adding step 4 (`registry.Delete` last, matching `Delete`'s ordering)
+  to `Unpublish` in `domain/workflow/delete.go`. Covered by three seam tests in
+  `domain/workflow/publish_unpublish_seam_test.go` and a registry-delete-failure
+  regression test in `domain/workflow/unpublish_test.go`.
 
 ## Won't Fix (Beyond Current Scope)
 
