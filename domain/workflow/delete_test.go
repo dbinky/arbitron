@@ -2,6 +2,7 @@ package workflow_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -113,6 +114,92 @@ func TestService_Delete_RemovesFolderAndRegistry(t *testing.T) {
 	// History preserved: the completed instance row is untouched by Delete.
 	assert.Contains(t, counter.history[idA], "completed",
 		"past instance/audit rows must be preserved (history)")
+}
+
+// --- Error: guard counter returns an error ---
+
+// TestService_Delete_CounterError_Propagates verifies that an error from
+// CountActiveByWorkflowID (e.g. the instance store is unreachable) propagates
+// from Delete and leaves everything in place. The guard must never silently
+// allow a delete when it cannot confirm there are no active runs.
+func TestService_Delete_CounterError_Propagates(t *testing.T) {
+	svc, repo, reg, _, counter := deleteSvc(t)
+	admin := uuid.New()
+	idA := seedPrivateRegistered(t, repo, reg, admin, "alpha")
+	_ = idA
+
+	counterErr := errors.New("instance store unreachable")
+	counter.err = counterErr
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, counterErr, "counter error must propagate from Delete guard")
+
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.True(t, folderStill, "folder must remain when the guard returns an error")
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row must remain when the guard returns an error")
+}
+
+// --- Error: registry.Delete fails (step 6) — dangling id ---
+
+// TestService_Delete_RegistryDeleteFails_Surfaced verifies that a failure of
+// registry.Delete (step 6, the last step) is surfaced as an error. By that
+// point the folder is already gone (step 5 completed), so the registry row
+// remains as a dangling id that the operator must reconcile. The error is
+// surfaced loudly rather than swallowed.
+func TestService_Delete_RegistryDeleteFails_Surfaced(t *testing.T) {
+	svc, repo, reg, _, _ := deleteSvc(t)
+	admin := uuid.New()
+	seedPrivateRegistered(t, repo, reg, admin, "alpha")
+
+	delErr := errors.New("registry write failed")
+	reg.failDel = delErr
+
+	err := svc.Delete(ctxWith(admin, true), "alpha")
+	require.ErrorIs(t, err, delErr, "registry.Delete error must be surfaced from Delete (step 6)")
+
+	// Folder is already gone (step 5 completed before step 6 failed).
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.False(t, folderStill, "folder is removed before the registry.Delete failure (step 5 ran)")
+
+	// Registry row is still present — dangling id; operator must reconcile.
+	_, regErr := reg.ResolveID(context.Background(), "alpha")
+	assert.NoError(t, regErr, "registry row remains after step-6 failure (dangling id)")
+}
+
+// --- Error: no identity ---
+
+// TestService_Delete_NoIdentity_Forbidden verifies a context with no identity
+// is rejected by requireAdmin with ErrForbidden.
+func TestService_Delete_NoIdentity_Forbidden(t *testing.T) {
+	svc, _, _, _, _ := deleteSvc(t)
+	err := svc.Delete(context.Background(), "alpha")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+}
+
+// --- Edge: no active-instance counter wired — guard is skipped ---
+
+// TestService_Delete_NoCounter_GuardSkipped verifies that when no
+// ActiveInstanceCounter is wired (server mode misconfiguration), the guard is
+// skipped and Delete proceeds. The guard is a defence-in-depth check; the
+// absence of the counter is treated as "no guard" rather than "block all
+// deletes".
+func TestService_Delete_NoCounter_GuardSkipped(t *testing.T) {
+	repo := newFakeRepo()
+	reg := newFakeRegistry()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	svc.SetRegistry(reg)
+	// Deliberately omit SetActiveInstanceCounter.
+
+	admin := uuid.New()
+	seedPrivateRegistered(t, repo, reg, admin, "alpha")
+
+	require.NoError(t, svc.Delete(ctxWith(admin, true), "alpha"),
+		"a nil counter must not block Delete — the guard is skipped")
+
+	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
+	assert.False(t, folderStill, "folder removed when guard is skipped")
 }
 
 // --- Error: non-admin rejected ---

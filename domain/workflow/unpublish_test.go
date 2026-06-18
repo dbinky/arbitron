@@ -87,3 +87,42 @@ func TestService_Unpublish_NotPublished_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound)
 }
+
+// --- Error: no publishers store wired → ErrUnauthorized ---
+
+// TestService_Unpublish_NoPublishers_Unauthorized verifies that Unpublish
+// returns ErrUnauthorized when the published-workflows store is not wired
+// (local/unconfigured mode). The admin gate passes; the "not configured" check
+// follows, using a distinct sentinel from ErrForbidden so callers can surface a
+// helpful message.
+func TestService_Unpublish_NoPublishers_Unauthorized(t *testing.T) {
+	svc := workflow.NewWorkflowService(newFakeRepo(), nil) // nil publishers
+	err := svc.Unpublish(ctxWith(uuid.New(), true), "alpha")
+	require.ErrorIs(t, err, workflow.ErrUnauthorized,
+		"Unpublish without a publishers store must return ErrUnauthorized")
+}
+
+// --- Edge: shared folder already absent — Unpublish still succeeds ---
+
+// TestService_Unpublish_SharedFolderMissing_StillSucceeds verifies that
+// Unpublish succeeds even when the shared folder was already removed (e.g. by a
+// prior partial delete). The publication record is the authoritative state;
+// ErrNotFound from the shared folder delete is swallowed as idempotent.
+func TestService_Unpublish_SharedFolderMissing_StillSucceeds(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	admin := uuid.New()
+	owner := uuid.New()
+
+	// Publication record exists but the shared folder is absent.
+	require.NoError(t, pubs.Upsert(context.Background(), "alpha", owner, "src", workflow.VisibilityPublic, ""))
+	// Deliberately do NOT seed repo.bucket(workflow.Shared())["alpha"].
+
+	err := svc.Unpublish(ctxWith(admin, true), "alpha")
+	require.NoError(t, err,
+		"Unpublish must succeed when the shared folder is already absent (ErrNotFound is idempotent)")
+
+	_, published, _ := pubs.PublicationOf(context.Background(), "alpha")
+	assert.False(t, published, "publication record removed even when the folder was already missing")
+}
