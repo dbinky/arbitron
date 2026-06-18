@@ -200,3 +200,62 @@ func TestRefBackfill_ExistingIDUntouchedAndCoexists(t *testing.T) {
 	assert.Nil(t, f.instanceWorkflowID(t, ghost), "unresolved legacy row coexists as NULL")
 	assert.NotNil(t, f.instanceWorkflowID(t, resolvable), "resolvable NULL-id row is backfilled")
 }
+
+// Robustness: a workflow run many times (multiple instances + schedules for the
+// same name) must have ALL of its NULL rows stamped in a single backfill call.
+// This is the dominant real-world scenario: Phase-2 is deployed against a DB
+// that already has hundreds of instance rows per workflow name.
+func TestRefBackfill_MultipleNullRowsSameName(t *testing.T) {
+	f := newRefBackfillFixture(t)
+	idA := f.registerWorkflow(t, "heavy-wf")
+
+	// 3 instances for "heavy-wf" — typical for a frequently-run workflow.
+	inst1 := f.insertInstance(t, "heavy-wf")
+	inst2 := f.insertInstance(t, "heavy-wf")
+	inst3 := f.insertInstance(t, "heavy-wf")
+	// 2 schedules — workflow enabled on multiple crons.
+	sched1 := f.insertSchedule(t, "heavy-wf")
+	sched2 := f.insertSchedule(t, "heavy-wf")
+	// 1 publication.
+	f.insertPublication(t, "heavy-wf")
+
+	require.NoError(t, f.svc.BackfillReferences(f.ctx))
+
+	for _, id := range []string{inst1, inst2, inst3} {
+		got := f.instanceWorkflowID(t, id)
+		if assert.NotNil(t, got, "instance %s must be stamped", id) {
+			assert.Equal(t, idA.String(), *got)
+		}
+	}
+	for _, id := range []string{sched1, sched2} {
+		got := f.scheduleWorkflowID(t, id)
+		if assert.NotNil(t, got, "schedule %s must be stamped", id) {
+			assert.Equal(t, idA.String(), *got)
+		}
+	}
+	if got := f.publicationWorkflowID(t, "heavy-wf"); assert.NotNil(t, got) {
+		assert.Equal(t, idA.String(), *got, "publication must be stamped")
+	}
+}
+
+// Robustness: when the same workflow name has NULL rows in multiple reference
+// tables, UnresolvedReferenceNames must return it only once (UNION semantics).
+// If it returned duplicate names, BackfillReferences would call SetReferenceID
+// redundantly — not harmful (idempotent), but indicative of a SQL regression.
+func TestRefBackfill_UnresolvedNamesDeduplicatedAcrossTables(t *testing.T) {
+	f := newRefBackfillFixture(t)
+
+	// "multi" appears in both instances and schedules with a NULL workflow_id.
+	f.insertInstance(t, "multi")
+	f.insertSchedule(t, "multi")
+	// "pub-only" appears only in published_workflows.
+	f.insertPublication(t, "pub-only")
+
+	backfiller := NewReferenceBackfiller(f.db.DB)
+	names, err := backfiller.UnresolvedReferenceNames(f.ctx)
+	require.NoError(t, err)
+
+	// UNION must deduplicate "multi" even though it appears in two tables.
+	assert.Len(t, names, 2, "UNION must return each name exactly once")
+	assert.ElementsMatch(t, []string{"multi", "pub-only"}, names)
+}
