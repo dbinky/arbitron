@@ -332,20 +332,21 @@ func (r *errOnCopyTreeRepo) CopyTree(_ context.Context, _ workflow.Scope, _ stri
 	return r.err
 }
 
-// --- Robustness: label update failure (step 6) is surfaced ---
+// --- Correctness (Must Fix #6): label update happens BEFORE registry commit ---
 
-// TestService_Rename_LabelUpdateFails_ErrorSurfaced verifies that a repo.Update
-// failure during the workflow.json label-update step (step 6) is surfaced as an
-// error. By that point the registry + new folder are consistent; the error
-// informs the operator that the label is stale and can be corrected by a
-// re-publish or manual fix.
+// TestService_Rename_LabelUpdateFails_RollsBackBeforeIdentityCommit verifies the
+// step-6 fix: the workflow.json label is updated to newName BEFORE registry.Rename
+// commits identity. A label-update failure therefore rolls back through the
+// copy-delete envelope (the new folder is deleted) and leaves the registry
+// pointing at the OLD name — no two-folder half-state in which old folder, new
+// folder, AND a moved registry all diverge (which would make Load(oldName) find a
+// folder whose registry row is gone).
 //
-// NOTE: the standard fakeRepo.CopyTree already stamps cp.Name = dstName (a
-// convenience short-cut). In the REAL filesystem adapter CopyTree copies bytes
-// verbatim, so workflow.json retains the source name. To exercise step 6 (the
-// label update) we use realLabelCopyRepo, which mirrors real-FS behavior by
-// preserving the source name in the copy and then injects a hard Update failure.
-func TestService_Rename_LabelUpdateFails_ErrorSurfaced(t *testing.T) {
+// NOTE: the standard fakeRepo.CopyTree stamps cp.Name = dstName (a convenience
+// short-cut). The real filesystem adapter copies bytes verbatim, so workflow.json
+// retains the source name until the relabel step. realLabelCopyRepo mirrors that
+// real-FS behavior and injects a hard Update failure to exercise the relabel.
+func TestService_Rename_LabelUpdateFails_RollsBackBeforeIdentityCommit(t *testing.T) {
 	owner := uuid.New()
 	inner := newFakeRepo()
 	reg := newFakeRegistry()
@@ -354,18 +355,30 @@ func TestService_Rename_LabelUpdateFails_ErrorSurfaced(t *testing.T) {
 	adminCtx := ctxWith(owner, true)
 
 	require.NoError(t, svc.Create(adminCtx, "alpha", wf("alpha")))
+	idA, err := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, err)
 
 	updateErr := errors.New("disk write failed")
 	failRepo := &realLabelCopyRepo{fakeRepo: inner, updateErr: updateErr}
 	svcFail := workflow.NewWorkflowService(failRepo, nil)
 	svcFail.SetRegistry(reg)
 
-	err := svcFail.Rename(adminCtx, "alpha", "beta")
+	err = svcFail.Rename(adminCtx, "alpha", "beta")
 	require.ErrorIs(t, err, updateErr, "label-update failure must propagate from Rename")
 
-	// Registry already resolved the new name (Rename succeeded before step 6).
-	_, regErr := reg.ResolveID(adminCtx, "beta")
-	require.NoError(t, regErr, "registry must already have the new name at point of Update failure")
+	// Registry STILL resolves the OLD name — identity was NOT committed before the
+	// relabel failure (the step-6 fix: relabel precedes registry.Rename).
+	gotID, regErr := reg.ResolveID(adminCtx, "alpha")
+	require.NoError(t, regErr, "registry must still resolve the OLD name after a relabel failure")
+	assert.Equal(t, idA, gotID, "the id is unchanged; identity was never moved")
+	_, newErr := reg.ResolveID(adminCtx, "beta")
+	assert.ErrorIs(t, newErr, workflow.ErrNotFound, "registry must NOT have committed the new name")
+
+	// New folder rolled back through the copy-delete envelope; old folder intact.
+	_, hasBeta := inner.bucket(workflow.Private(owner))["beta"]
+	assert.False(t, hasBeta, "new folder must be rolled back when the relabel fails")
+	_, hasAlpha := inner.bucket(workflow.Private(owner))["alpha"]
+	assert.True(t, hasAlpha, "old folder must remain (Load still resolves via the old name)")
 }
 
 // realLabelCopyRepo wraps fakeRepo with two behavioural changes that together

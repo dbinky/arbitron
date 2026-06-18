@@ -38,14 +38,10 @@ func (s *WorkflowService) Duplicate(ctx context.Context, name, newName string) e
 		return fmt.Errorf("%w: workflow duplication is not configured", ErrUnauthorized)
 	}
 
-	// Resolve the source identity + scope (which folder to copy FROM).
-	srcID, err := s.registry.ResolveID(ctx, name)
+	// Resolve the source identity + scope (which folder to copy FROM) in one lookup.
+	_, srcScope, err := s.resolveIDScope(ctx, name)
 	if err != nil {
 		return err // ErrNotFound propagates
-	}
-	srcScope, err := s.scopeOf(ctx, srcID, name)
-	if err != nil {
-		return err
 	}
 
 	// Uniqueness: the target name must be free globally.
@@ -151,13 +147,9 @@ func (s *WorkflowService) TransferOwnership(ctx context.Context, name string, ne
 		return fmt.Errorf("%w: workflow ownership transfer is not configured", ErrUnauthorized)
 	}
 
-	id, err := s.registry.ResolveID(ctx, name)
+	id, scope, err := s.resolveIDScope(ctx, name)
 	if err != nil {
 		return err // ErrNotFound propagates
-	}
-	scope, err := s.scopeOf(ctx, id, name)
-	if err != nil {
-		return err
 	}
 
 	// Shared workflow: reassign the owner/publisher attribution only — there is no
@@ -181,15 +173,14 @@ func (s *WorkflowService) TransferOwnership(ctx context.Context, name string, ne
 		return nil
 	}
 	dstScope := Private(newOwnerID)
-	if err := s.repo.CopyTree(ctx, scope, name, dstScope, name, false); err != nil {
+	// Same move-with-rollback envelope as Rename: copy → SetOwner (rolls back the
+	// copy on failure) → delete the old folder. No folder relabel here (the name is
+	// unchanged; only the owner moves).
+	if err := s.copyThenSwap(ctx, scope, name, dstScope, name,
+		func(ctx context.Context) error {
+			return s.registry.SetOwner(ctx, id, newOwnerID)
+		}); err != nil {
 		return err
-	}
-	if err := s.registry.SetOwner(ctx, id, newOwnerID); err != nil {
-		_ = s.repo.Delete(ctx, dstScope, name)
-		return err
-	}
-	if err := s.repo.Delete(ctx, scope, name); err != nil {
-		return fmt.Errorf("removing old owner's folder %q after transfer: %w", name, err)
 	}
 
 	s.audit.Record(ctx, audit.ActionWorkflowTransfer, name, auditDetail(map[string]string{

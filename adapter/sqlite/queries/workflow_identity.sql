@@ -5,6 +5,10 @@ VALUES (?, ?, ?, ?, ?);
 -- name: ResolveWorkflowID :one
 SELECT id FROM workflow_identity WHERE name = ?;
 
+-- name: ResolveWorkflowEntry :one
+SELECT id, name, scope, owner_id, archived
+FROM workflow_identity WHERE name = ?;
+
 -- name: ResolveWorkflowName :one
 SELECT name FROM workflow_identity WHERE id = ?;
 

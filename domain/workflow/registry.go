@@ -29,6 +29,12 @@ type WorkflowRegistry interface {
 	// Register inserts a new identity row. Returns ErrAlreadyExists if the name
 	// is already registered.
 	Register(ctx context.Context, e RegistryEntry) error
+	// Resolve returns the full registry entry (id, scope, owner, archived) for
+	// name in a SINGLE indexed lookup, or ErrNotFound. It replaces the prior
+	// ResolveID-then-List-scan: one lookup removes the O(n) scan AND the
+	// time-of-check/time-of-use race in which a concurrent rename/delete between
+	// the two reads yielded a mid-op ErrNotFound on an id that just resolved.
+	Resolve(ctx context.Context, name string) (RegistryEntry, error)
 	// ResolveID returns the id registered for name, or ErrNotFound.
 	ResolveID(ctx context.Context, name string) (uuid.UUID, error)
 	// ResolveName returns the current name for id, or ErrNotFound.

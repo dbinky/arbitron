@@ -215,24 +215,24 @@ func TestService_Transfer_Shared_SetOwnerFails_Propagates(t *testing.T) {
 	assert.True(t, stillShared, "shared folder unaffected by SetOwner failure")
 }
 
-// --- Error: scopeOf List fails → propagates before folder move ---
+// --- Error: scope Resolve fails → propagates before folder move ---
 
-// TestService_Transfer_ScopeListFails_Propagates verifies that when
-// registry.List fails inside scopeOf, TransferOwnership propagates the error
-// without moving any folder.
-func TestService_Transfer_ScopeListFails_Propagates(t *testing.T) {
+// TestService_Transfer_ScopeResolveFails_Propagates verifies that when
+// registry.Resolve fails during id+scope resolution, TransferOwnership
+// propagates the error without moving any folder.
+func TestService_Transfer_ScopeResolveFails_Propagates(t *testing.T) {
 	owner := uuid.New()
 	svc, repo, reg, adminCtx, _ := renameSvc(t, owner)
 
-	listErr := errors.New("registry list unavailable")
-	reg.failList = listErr
+	resolveErr := errors.New("registry resolve unavailable")
+	reg.failResolve = resolveErr
 
 	err := svc.TransferOwnership(adminCtx, "alpha", uuid.New())
-	require.ErrorIs(t, err, listErr,
-		"registry.List failure in scopeOf must propagate from TransferOwnership")
+	require.ErrorIs(t, err, resolveErr,
+		"registry.Resolve failure must propagate from TransferOwnership")
 
 	_, folderStill := repo.bucket(workflow.Private(owner))["alpha"]
-	assert.True(t, folderStill, "folder must remain when scopeOf List fails")
+	assert.True(t, folderStill, "folder must remain when scope resolution fails")
 }
 
 // --- Edge: a SHARED workflow updates owner without a folder move ---

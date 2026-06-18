@@ -32,19 +32,20 @@ func (s *WorkflowService) requireAdmin(ctx context.Context) error {
 //
 // CROSS-STORE MOVE ORDERING (mirrors adapter/sqlite/department_renamer + Publish):
 // the folder and the registry are two separate stores with no shared transaction.
+// The move-with-rollback envelope (copy → mutate-registry-with-rollback → delete
+// source) lives in copyThenSwap, shared with Transfer-private so the commit-point
+// discipline is asserted in ONE tested home.
 //
 //  1. requireAdmin.
-//  2. Resolve id := registry.ResolveID(name); ErrNotFound if the name is unknown.
+//  2. Resolve id + scope in a single lookup; ErrNotFound if the name is unknown.
 //  3. Uniqueness: if newName already resolves to an existing entry → ErrAlreadyExists
 //     (nothing is moved).
-//  4. CopyTree(old → new) within the SAME scope (private of the owner, or shared).
-//  5. registry.Rename(id, newName). If this fails, ROLL BACK the copy (delete new)
-//     and return — no half-rename leaving two folders and a stale registry.
-//  6. Update the new folder's workflow.json label to newName (best-effort within
-//     the success path; the folder + registry are already consistent).
-//  7. Delete the old folder. If this fails the registry+new folder are already
-//     correct, so the error is surfaced (the stale old folder is cosmetic, not a
-//     correctness break — Load resolves via the new name).
+//  4. copyThenSwap(old → new): copy the folder, then — BEFORE the registry commits
+//     identity — update the new folder's workflow.json label to newName, then
+//     registry.Rename. A failure of EITHER the label update or the registry rename
+//     rolls back through the copy-delete envelope (delete new), so no half-rename
+//     leaves the old folder, the new folder, and a moved registry all diverging.
+//     Finally the old folder is removed.
 func (s *WorkflowService) Rename(ctx context.Context, name, newName string) error {
 	if err := s.requireAdmin(ctx); err != nil {
 		return err
@@ -55,14 +56,10 @@ func (s *WorkflowService) Rename(ctx context.Context, name, newName string) erro
 		return fmt.Errorf("%w: workflow renaming is not configured", ErrUnauthorized)
 	}
 
-	// Resolve the source identity and its scope (which folder to move).
-	id, err := s.registry.ResolveID(ctx, name)
+	// Resolve the source identity and its scope (which folder to move) in one lookup.
+	id, scope, err := s.resolveIDScope(ctx, name)
 	if err != nil {
 		return err // ErrNotFound propagates
-	}
-	scope, err := s.scopeOf(ctx, id, name)
-	if err != nil {
-		return err
 	}
 
 	// Uniqueness: the target name must not already be held by another entry.
@@ -72,33 +69,24 @@ func (s *WorkflowService) Rename(ctx context.Context, name, newName string) erro
 		return err
 	}
 
-	// 4. Copy the folder old -> new within the same scope.
-	if err := s.repo.CopyTree(ctx, scope, name, scope, newName, false); err != nil {
-		return err
-	}
-
-	// 5. Rename the registry entry. On failure, roll back the copy (no half-rename).
-	if err := s.registry.Rename(ctx, id, newName); err != nil {
-		_ = s.repo.Delete(ctx, scope, newName)
-		return err
-	}
-
-	// 6. Update the workflow.json label inside the new folder so it matches its
-	// name. Read-modify-write through the repo; on failure the registry+folder are
-	// already consistent, so surface the error rather than rolling back identity.
-	if wf, lerr := s.repo.Load(ctx, scope, newName); lerr == nil {
-		if wf.Name != newName {
-			wf.Name = newName
-			if uerr := s.repo.Update(ctx, scope, newName, wf); uerr != nil {
-				return fmt.Errorf("updating renamed workflow %q label: %w", newName, uerr)
+	// Move the folder old -> new within the same scope, relabel BEFORE committing
+	// identity, then commit the registry rename — all under the rollback envelope.
+	if err := s.copyThenSwap(ctx, scope, name, scope, newName,
+		func(ctx context.Context) error {
+			// Relabel the new folder's workflow.json to newName BEFORE registry.Rename
+			// commits identity, so a relabel failure rolls back the copy (Rename
+			// step-6 fix: never return after identity commit but before source cleanup).
+			if wf, lerr := s.repo.Load(ctx, scope, newName); lerr == nil {
+				if wf.Name != newName {
+					wf.Name = newName
+					if uerr := s.repo.Update(ctx, scope, newName, wf); uerr != nil {
+						return fmt.Errorf("updating renamed workflow %q label: %w", newName, uerr)
+					}
+				}
 			}
-		}
-	}
-
-	// 7. Delete the old folder. The registry + new folder are authoritative now;
-	// a delete failure leaves a cosmetic stale folder but not a correctness break.
-	if err := s.repo.Delete(ctx, scope, name); err != nil {
-		return fmt.Errorf("removing old workflow folder %q after rename: %w", name, err)
+			return s.registry.Rename(ctx, id, newName)
+		}); err != nil {
+		return err
 	}
 
 	// Best-effort audit of the successful rename, carrying the before/after names
@@ -110,22 +98,53 @@ func (s *WorkflowService) Rename(ctx context.Context, name, newName string) erro
 	return nil
 }
 
-// scopeOf resolves the storage scope (private-of-owner or shared) for the
-// registry entry id, so a rename moves the folder in the correct place. The
-// WorkflowRegistry exposes scope/owner only on the full entries from List, so it
-// is matched there by id.
-func (s *WorkflowService) scopeOf(ctx context.Context, id uuid.UUID, name string) (Scope, error) {
-	entries, err := s.registry.List(ctx)
+// copyThenSwap is the shared cross-store "move a workflow folder with rollback"
+// envelope used by Rename and Transfer-private. The folder store and the registry
+// are separate stores with no shared transaction, so the commit-point discipline
+// lives here ONCE rather than re-asserted in prose at each call site:
+//
+//  1. CopyTree(src → dst). On failure, return (nothing has changed).
+//  2. mutate: the caller's registry/label mutation (the identity commit point,
+//     plus any pre-commit folder relabel). On ANY failure, ROLL BACK the copied
+//     dst folder so the two stores never diverge into a half-move.
+//  3. Delete the src folder. After the identity commit the registry + dst folder
+//     are authoritative, so a src-delete failure leaves only a COSMETIC stale
+//     folder (Load resolves via dst) and is surfaced for the operator to reconcile.
+//
+// The mutation MUST perform any folder relabel BEFORE the durable registry commit
+// so that a relabel failure is still inside the rollback envelope (Rename step-6).
+func (s *WorkflowService) copyThenSwap(ctx context.Context, srcScope Scope, srcName string, dstScope Scope, dstName string, mutate func(context.Context) error) error {
+	if err := s.repo.CopyTree(ctx, srcScope, srcName, dstScope, dstName, false); err != nil {
+		return err
+	}
+	if err := mutate(ctx); err != nil {
+		_ = s.repo.Delete(ctx, dstScope, dstName) // roll back the copy: no half-move
+		return err
+	}
+	if err := s.repo.Delete(ctx, srcScope, srcName); err != nil {
+		return fmt.Errorf("removing source workflow folder %q after move: %w", srcName, err)
+	}
+	return nil
+}
+
+// resolveIDScope resolves the stable id AND storage scope (private-of-owner or
+// shared) for name in a SINGLE registry lookup. It replaces the prior
+// ResolveID-then-List-scan: one indexed Resolve removes the O(n) scan and the
+// ResolveID→scopeOf TOCTOU (a concurrent rename/delete between the two reads
+// previously yielded a mid-op ErrNotFound on an id that had just resolved).
+// ErrNotFound propagates when the name is unknown.
+func (s *WorkflowService) resolveIDScope(ctx context.Context, name string) (uuid.UUID, Scope, error) {
+	e, err := s.registry.Resolve(ctx, name)
 	if err != nil {
-		return Scope{}, err
+		return uuid.Nil, Scope{}, err // ErrNotFound propagates
 	}
-	for _, e := range entries {
-		if e.ID == id {
-			if e.Scope == ScopeShared {
-				return Shared(), nil
-			}
-			return Private(e.OwnerID), nil
-		}
+	return e.ID, entryScope(e), nil
+}
+
+// entryScope maps a registry entry to its storage scope.
+func entryScope(e RegistryEntry) Scope {
+	if e.Scope == ScopeShared {
+		return Shared()
 	}
-	return Scope{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+	return Private(e.OwnerID)
 }

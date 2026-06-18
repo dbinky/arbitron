@@ -43,6 +43,49 @@ func TestWorkflowIdentity_RegisterThenResolve(t *testing.T) {
 	assert.Equal(t, "triage", gotName)
 }
 
+// TestWorkflowIdentity_Resolve_ReturnsFullEntry verifies Resolve(name) returns
+// the full entry (id, scope, owner, archived) in a single lookup.
+func TestWorkflowIdentity_Resolve_ReturnsFullEntry(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+	owner := uuid.New()
+	e := workflow.RegistryEntry{
+		ID:      uuid.New(),
+		Name:    "triage",
+		Scope:   workflow.ScopePrivate,
+		OwnerID: owner,
+	}
+	require.NoError(t, repo.Register(ctx, e))
+
+	got, err := repo.Resolve(ctx, "triage")
+	require.NoError(t, err)
+	assert.Equal(t, e.ID, got.ID)
+	assert.Equal(t, "triage", got.Name)
+	assert.Equal(t, workflow.ScopePrivate, got.Scope)
+	assert.Equal(t, owner, got.OwnerID)
+	assert.False(t, got.Archived)
+}
+
+// TestWorkflowIdentity_Resolve_SharedZeroOwner verifies Resolve maps a shared
+// entry's NULL owner column back to the zero UUID.
+func TestWorkflowIdentity_Resolve_SharedZeroOwner(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+	e := workflow.RegistryEntry{ID: uuid.New(), Name: "shared-wf", Scope: workflow.ScopeShared}
+	require.NoError(t, repo.Register(ctx, e))
+
+	got, err := repo.Resolve(ctx, "shared-wf")
+	require.NoError(t, err)
+	assert.Equal(t, workflow.ScopeShared, got.Scope)
+	assert.Equal(t, uuid.Nil, got.OwnerID, "shared entry resolves to a zero owner")
+}
+
+// TestWorkflowIdentity_Resolve_UnknownNotFound verifies an unknown name maps to
+// workflow.ErrNotFound.
+func TestWorkflowIdentity_Resolve_UnknownNotFound(t *testing.T) {
+	repo, ctx := newWorkflowIdentityRepo(t)
+	_, err := repo.Resolve(ctx, "ghost")
+	assert.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
 // --- Success ---------------------------------------------------------------
 
 // TestWorkflowIdentity_ListReturnsEntries verifies List returns the registered

@@ -105,6 +105,32 @@ func (q *Queries) RenameWorkflow(ctx context.Context, arg RenameWorkflowParams) 
 	return result.RowsAffected()
 }
 
+const resolveWorkflowEntry = `-- name: ResolveWorkflowEntry :one
+SELECT id, name, scope, owner_id, archived
+FROM workflow_identity WHERE name = ?
+`
+
+type ResolveWorkflowEntryRow struct {
+	ID       string
+	Name     string
+	Scope    string
+	OwnerID  sql.NullString
+	Archived int64
+}
+
+func (q *Queries) ResolveWorkflowEntry(ctx context.Context, name string) (ResolveWorkflowEntryRow, error) {
+	row := q.db.QueryRowContext(ctx, resolveWorkflowEntry, name)
+	var i ResolveWorkflowEntryRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Scope,
+		&i.OwnerID,
+		&i.Archived,
+	)
+	return i, err
+}
+
 const resolveWorkflowID = `-- name: ResolveWorkflowID :one
 SELECT id FROM workflow_identity WHERE name = ?
 `

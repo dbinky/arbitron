@@ -56,14 +56,10 @@ func (s *WorkflowService) Delete(ctx context.Context, name string) error {
 		return s.translateWrite(ctx, name, s.repo.Delete(ctx, Private(id.UserID), name))
 	}
 
-	// Resolve the stable id and the scope (which folder to remove).
-	id, err := s.registry.ResolveID(ctx, name)
+	// Resolve the stable id and the scope (which folder to remove) in one lookup.
+	id, scope, err := s.resolveIDScope(ctx, name)
 	if err != nil {
 		return err // ErrNotFound propagates
-	}
-	scope, err := s.scopeOf(ctx, id, name)
-	if err != nil {
-		return err
 	}
 
 	// Guard: refuse while non-terminal instances carry this id. History (terminal

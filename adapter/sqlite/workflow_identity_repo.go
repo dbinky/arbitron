@@ -89,6 +89,35 @@ func (r *WorkflowIdentityRepo) Register(ctx context.Context, e workflow.Registry
 	return nil
 }
 
+// Resolve returns the full registry entry for name in a single indexed lookup
+// (workflow_identity.name is UNIQUE). An unknown name returns workflow.ErrNotFound.
+// It replaces the prior ResolveID-then-List-scan, removing the O(n) scan and the
+// ResolveID→scopeOf TOCTOU.
+func (r *WorkflowIdentityRepo) Resolve(ctx context.Context, name string) (workflow.RegistryEntry, error) {
+	row, err := r.queries.ResolveWorkflowEntry(ctx, name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return workflow.RegistryEntry{}, fmt.Errorf("workflow %q: %w", name, workflow.ErrNotFound)
+		}
+		return workflow.RegistryEntry{}, fmt.Errorf("resolving entry for workflow %q: %w", name, err)
+	}
+	id, err := uuid.Parse(row.ID)
+	if err != nil {
+		return workflow.RegistryEntry{}, fmt.Errorf("parsing id %q for workflow %q: %w", row.ID, name, err)
+	}
+	owner, err := ownerFromNullString(row.OwnerID)
+	if err != nil {
+		return workflow.RegistryEntry{}, err
+	}
+	return workflow.RegistryEntry{
+		ID:       id,
+		Name:     row.Name,
+		Scope:    scopeFromString(row.Scope),
+		OwnerID:  owner,
+		Archived: row.Archived != 0,
+	}, nil
+}
+
 func (r *WorkflowIdentityRepo) ResolveID(ctx context.Context, name string) (uuid.UUID, error) {
 	idStr, err := r.queries.ResolveWorkflowID(ctx, name)
 	if err != nil {

@@ -205,6 +205,9 @@ type errOnResolveRegistry struct {
 func (r *errOnResolveRegistry) Register(ctx context.Context, e workflow.RegistryEntry) error {
 	return r.inner.Register(ctx, e)
 }
+func (r *errOnResolveRegistry) Resolve(_ context.Context, _ string) (workflow.RegistryEntry, error) {
+	return workflow.RegistryEntry{}, r.resolveErr
+}
 func (r *errOnResolveRegistry) ResolveID(_ context.Context, _ string) (uuid.UUID, error) {
 	return uuid.Nil, r.resolveErr
 }

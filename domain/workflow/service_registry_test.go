@@ -23,7 +23,8 @@ type fakeRegistry struct {
 	failReg         error // when set, Register returns this error (to probe rollback)
 	failDel         error // when set, Delete returns this error (to probe partial rollback)
 	failRename      error // when set, Rename returns this error (to probe rename rollback)
-	failList        error // when set, List returns this error (to probe scopeOf failure paths)
+	failList        error // when set, List returns this error
+	failResolve     error // when set, Resolve returns this error (to probe scope-resolution failure paths)
 	failSetArchived error // when set, SetArchived returns this error (to probe archive failure path)
 	failSetOwner    error // when set, SetOwner returns this error (to probe transfer rollback)
 }
@@ -47,6 +48,19 @@ func (r *fakeRegistry) Register(_ context.Context, e workflow.RegistryEntry) err
 	r.byName[e.Name] = e
 	r.byID[e.ID] = e.Name
 	return nil
+}
+
+func (r *fakeRegistry) Resolve(_ context.Context, name string) (workflow.RegistryEntry, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failResolve != nil {
+		return workflow.RegistryEntry{}, r.failResolve
+	}
+	e, ok := r.byName[name]
+	if !ok {
+		return workflow.RegistryEntry{}, workflow.ErrNotFound
+	}
+	return e, nil
 }
 
 func (r *fakeRegistry) ResolveID(_ context.Context, name string) (uuid.UUID, error) {

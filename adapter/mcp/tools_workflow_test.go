@@ -1245,6 +1245,13 @@ func (r *memRegistry) Register(_ context.Context, e workflow.RegistryEntry) erro
 	return nil
 }
 
+func (r *memRegistry) Resolve(_ context.Context, name string) (workflow.RegistryEntry, error) {
+	if id, ok := r.byName[name]; ok {
+		return r.byID[id], nil
+	}
+	return workflow.RegistryEntry{}, workflow.ErrNotFound
+}
+
 func (r *memRegistry) ResolveID(_ context.Context, name string) (uuid.UUID, error) {
 	if id, ok := r.byName[name]; ok {
 		return id, nil

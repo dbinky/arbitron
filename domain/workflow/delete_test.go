@@ -251,25 +251,25 @@ func TestService_Delete_PublicationDeleteError_Propagates(t *testing.T) {
 	assert.NoError(t, regErr, "registry row must remain when step 4 fails")
 }
 
-// --- Error: registry.List fails inside scopeOf ---
+// --- Error: registry.Resolve fails during scope resolution ---
 
-// TestService_Delete_ScopeListFails_Propagates verifies that when registry.List
-// fails inside scopeOf (the call that determines which folder scope to remove),
-// Delete propagates the error and leaves the folder intact. Without the scope
-// nothing can be safely removed.
-func TestService_Delete_ScopeListFails_Propagates(t *testing.T) {
+// TestService_Delete_ScopeResolveFails_Propagates verifies that when
+// registry.Resolve fails during the single-lookup id+scope resolution, Delete
+// propagates the error and leaves the folder intact. Without the scope nothing
+// can be safely removed.
+func TestService_Delete_ScopeResolveFails_Propagates(t *testing.T) {
 	svc, repo, reg, _, _ := deleteSvc(t)
 	admin := uuid.New()
 	seedPrivateRegistered(t, repo, reg, admin, "alpha")
 
-	listErr := errors.New("registry list unavailable")
-	reg.failList = listErr
+	resolveErr := errors.New("registry resolve unavailable")
+	reg.failResolve = resolveErr
 
 	err := svc.Delete(ctxWith(admin, true), "alpha")
-	require.ErrorIs(t, err, listErr, "registry.List error in scopeOf must propagate from Delete")
+	require.ErrorIs(t, err, resolveErr, "registry.Resolve error must propagate from Delete")
 
 	_, folderStill := repo.bucket(workflow.Private(admin))["alpha"]
-	assert.True(t, folderStill, "folder must remain when scopeOf List fails")
+	assert.True(t, folderStill, "folder must remain when scope resolution fails")
 }
 
 // --- Error: non-admin rejected ---
