@@ -38,7 +38,7 @@ type Engine struct {
 	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager WorkspaceManager
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
-	resolver         WorkflowResolver         // optional; name<->id resolution for stable workflow references
+	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
 	wg               sync.WaitGroup
@@ -126,34 +126,35 @@ func (e *Engine) SetPublisherLookup(p workflow.PublisherLookup) {
 	e.publishers = p
 }
 
-// WorkflowResolver is the narrow name<->id seam the engine uses to stamp a
-// stable workflow id on a triggered instance and to re-resolve the current name
-// of a workflow on rerun (so a rename between the original run and the rerun
-// still targets the right definition). workflow.WorkflowRegistry satisfies it.
-// When unset (nil), the engine behaves exactly as before: instances carry a Nil
-// WorkflowID and rerun resolves by the retained WorkflowName label.
-type WorkflowResolver interface {
+// IDResolver is the narrow workflow-identity seam the engine uses to stamp a
+// stable workflow id on a triggered instance, to re-resolve the current name of
+// a workflow on rerun (so a rename between the original run and the rerun still
+// targets the right definition), and to refuse triggering an archived workflow.
+// workflow.Registry satisfies it.
+//
+// IsArchived is part of the contract — NOT an optional layered capability —
+// precisely so a resolver that cannot report archived state is a COMPILE error
+// rather than a runtime type-assertion that silently disables archive-blocking
+// under any wrapping decorator. When the resolver is unset (nil, local/
+// unconfigured mode), the engine behaves as before: instances carry a Nil
+// WorkflowID, rerun resolves by the retained WorkflowName label, and no archive
+// check runs.
+type IDResolver interface {
 	ResolveID(ctx context.Context, name string) (uuid.UUID, error)
 	ResolveName(ctx context.Context, id uuid.UUID) (string, error)
-}
-
-// ArchiveChecker is the OPTIONAL archived-state seam, layered on the resolver:
-// when the wired WorkflowResolver also implements it, the trigger path consults
-// it to refuse archived workflows (workflow.ErrArchived) before building any
-// instance. workflow.WorkflowRegistry's SQLite adapter satisfies it. A resolver
-// that does NOT implement it (local/unconfigured mode, or a name-only resolver)
-// simply never blocks — the engine cannot learn the archived state and triggers
-// proceed exactly as before (best-effort, consistent with how id resolution is
-// already best-effort on the trigger path).
-type ArchiveChecker interface {
+	// IsArchived reports whether the workflow registered under name is archived.
+	// A lookup error must NOT be swallowed by the caller: the trigger path fails
+	// CLOSED (refuses the trigger) on error, because the archived flag is a
+	// deliberate "do not run this" invariant.
 	IsArchived(ctx context.Context, name string) (bool, error)
 }
 
-// SetWorkflowResolver wires the name<->id resolver used to stamp instances with
-// a stable WorkflowID at trigger time and to re-resolve the current name on
-// rerun. When unset (nil), instances carry a Nil WorkflowID and rerun falls back
-// to the retained WorkflowName label (local/unconfigured mode).
-func (e *Engine) SetWorkflowResolver(r WorkflowResolver) {
+// SetWorkflowResolver wires the workflow-identity resolver used to stamp
+// instances with a stable WorkflowID at trigger time, to re-resolve the current
+// name on rerun, and to refuse archived triggers. When unset (nil), instances
+// carry a Nil WorkflowID, rerun falls back to the retained WorkflowName label,
+// and no archive check runs (local/unconfigured mode).
+func (e *Engine) SetWorkflowResolver(r IDResolver) {
 	e.resolver = r
 }
 
@@ -293,14 +294,24 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
 	}
 
-	// Refuse to trigger an archived workflow. The check is best-effort and only
-	// engages when the wired resolver also exposes the archived state (the SQLite
-	// registry does); a resolver without the seam (local mode) cannot block. It
-	// runs AFTER the visibility-gated load so a caller who cannot see the workflow
-	// still gets not-found (existence is not leaked via the archived path), and
-	// BEFORE any instance is built so an archived trigger creates nothing.
-	if ac, ok := e.resolver.(ArchiveChecker); ok {
-		if archived, aerr := ac.IsArchived(ctx, workflowName); aerr == nil && archived {
+	// Refuse to trigger an archived workflow. IsArchived is part of the resolver
+	// contract (no runtime type assertion), so the check engages whenever a
+	// resolver is wired (the SQLite registry; local mode has no resolver and so
+	// cannot — and need not — block). It runs AFTER the visibility-gated load so a
+	// caller who cannot see the workflow still gets not-found (existence is not
+	// leaked via the archived path), and BEFORE any instance is built so an
+	// archived trigger creates nothing.
+	//
+	// FAIL CLOSED: the archived flag is a deliberate "do not run this" invariant,
+	// so an IsArchived lookup error refuses the trigger rather than running an
+	// possibly-archived workflow. A transient registry outage blocks the trigger
+	// (surfaced loudly) instead of silently defeating the invariant.
+	if e.resolver != nil {
+		archived, aerr := e.resolver.IsArchived(ctx, workflowName)
+		if aerr != nil {
+			return uuid.Nil, false, fmt.Errorf("checking archived state of %q: %w", workflowName, aerr)
+		}
+		if archived {
 			return uuid.Nil, false, fmt.Errorf("%w: %s", workflow.ErrArchived, workflowName)
 		}
 	}

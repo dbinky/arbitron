@@ -67,15 +67,16 @@ func TestTrigger_NotArchived_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// --- Edge: a resolver with no archive-check seam never blocks (local mode) ---
+// --- Edge: a non-archived workflow with a wired resolver never blocks ---
 
-// TestTrigger_ResolverWithoutArchiveCheck_NeverBlocks verifies a plain resolver
-// that does not implement the archive-check seam triggers normally (best-effort:
-// the engine cannot know the archived state, so it does not block).
-func TestTrigger_ResolverWithoutArchiveCheck_NeverBlocks(t *testing.T) {
+// TestTrigger_NotArchivedResolver_NeverBlocks verifies a wired resolver that
+// reports the workflow as not-archived triggers normally. IsArchived is part of
+// the IDResolver contract, so the check always runs when a resolver is wired —
+// it simply permits a not-archived workflow.
+func TestTrigger_NotArchivedResolver_NeverBlocks(t *testing.T) {
 	h := newTriggerHarness()
 	caller := uuid.New()
-	res := newFakeResolverByName() // no IsArchived method
+	res := newFakeResolverByName() // IsArchived reports not-archived
 	res.register("alpha", uuid.New())
 	h.engine.SetWorkflowResolver(res)
 	h.repo.put(workflow.Private(caller), sharedWf("alpha"))
@@ -84,31 +85,32 @@ func TestTrigger_ResolverWithoutArchiveCheck_NeverBlocks(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// --- Edge: IsArchived error is swallowed (best-effort check) ---
+// --- Error: IsArchived error fails CLOSED (refuses the trigger) ---
 
-// TestTrigger_IsArchivedError_TriggerProceeds verifies that when the archive
-// checker's IsArchived returns an error the engine treats it as "cannot
-// determine archived state" and proceeds with the trigger. This is the
-// best-effort contract: a transient registry outage must not block all
-// workflow execution.
-func TestTrigger_IsArchivedError_TriggerProceeds(t *testing.T) {
+// TestTrigger_IsArchivedError_FailsClosed verifies that when IsArchived returns
+// an error the engine REFUSES the trigger and creates no instance. The archived
+// flag is a deliberate "do not run this" invariant, so an inability to confirm
+// the archived state must not silently run a possibly-archived workflow: the
+// trigger fails closed and the error is surfaced.
+func TestTrigger_IsArchivedError_FailsClosed(t *testing.T) {
 	h := newTriggerHarness()
 	caller := uuid.New()
 	id := uuid.New()
 
-	// An erroring archiveResolver: IsArchived returns a non-nil error.
+	// An erroring resolver: IsArchived returns a non-nil error.
 	res := &errArchiveResolver{fakeResolverByName: newFakeResolverByName()}
 	res.register("alpha", id)
 	h.engine.SetWorkflowResolver(res)
 	h.repo.put(workflow.Private(caller), sharedWf("alpha"))
 
 	_, _, err := h.engine.Trigger(ctxAs(caller), "alpha", nil, "normal")
-	require.NoError(t, err,
-		"IsArchived error must be swallowed — the trigger must proceed (best-effort archive check)")
+	require.Error(t, err,
+		"IsArchived error must fail closed — the trigger is refused (do-not-run invariant)")
+	assert.Empty(t, h.instances.instances, "no instance created when the archive check errors")
 }
 
-// errArchiveResolver implements ArchiveChecker but always returns an error from
-// IsArchived, simulating a transient registry unavailability.
+// errArchiveResolver always returns an error from IsArchived, simulating a
+// transient registry unavailability on the archive-check seam.
 type errArchiveResolver struct {
 	*fakeResolverByName
 }

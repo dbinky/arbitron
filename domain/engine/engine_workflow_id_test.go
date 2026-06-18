@@ -68,6 +68,12 @@ func (r *fakeResolverByName) ResolveName(_ context.Context, id uuid.UUID) (strin
 	return name, nil
 }
 
+// IsArchived satisfies the engine.IDResolver archive seam. The base fake never
+// archives anything; archiveResolver overrides this to mark names archived.
+func (r *fakeResolverByName) IsArchived(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
 // deregister removes both directions of an id mapping, simulating a workflow
 // being deleted from the registry after the original run was stamped with its id.
 func (r *fakeResolverByName) deregister(id uuid.UUID) {
@@ -93,6 +99,12 @@ func (r *errOnResolveIDResolver) ResolveID(_ context.Context, _ string) (uuid.UU
 
 func (r *errOnResolveIDResolver) ResolveName(_ context.Context, _ uuid.UUID) (string, error) {
 	return "", workflow.ErrNotFound
+}
+
+// IsArchived reports not-archived so this probe isolates the ResolveID-error
+// path (the archive check must not interfere with the id-stamping contract).
+func (r *errOnResolveIDResolver) IsArchived(_ context.Context, _ string) (bool, error) {
+	return false, nil
 }
 
 // --- Step 1/2 (happy): Trigger resolves name->id and stamps WorkflowID. ---
