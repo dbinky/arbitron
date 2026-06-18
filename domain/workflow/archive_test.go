@@ -107,6 +107,20 @@ func TestService_Unarchive_NonAdmin_Forbidden(t *testing.T) {
 	assert.True(t, archivedOf(t, reg, adminCtx, "alpha"), "flag unchanged")
 }
 
+func TestService_Archive_NoIdentity_Forbidden(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, _, _ := renameSvc(t, owner)
+	err := svc.Archive(context.Background(), "alpha")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+}
+
+func TestService_Unarchive_NoIdentity_Forbidden(t *testing.T) {
+	owner := uuid.New()
+	svc, _, _, _, _ := renameSvc(t, owner)
+	err := svc.Unarchive(context.Background(), "alpha")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+}
+
 // --- Happy path ---
 
 // TestService_Archive_SetsFlag verifies an admin archive sets the registry flag,

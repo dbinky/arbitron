@@ -78,6 +78,14 @@ func TestService_Unpublish_NonAdmin_Forbidden(t *testing.T) {
 	assert.True(t, published, "publication must remain after a rejected unpublish")
 }
 
+func TestService_Unpublish_NoIdentity_Forbidden(t *testing.T) {
+	repo := newFakeRepo()
+	pubs := newFakePublishers()
+	svc := workflow.NewWorkflowService(repo, pubs)
+	err := svc.Unpublish(context.Background(), "alpha")
+	require.ErrorIs(t, err, workflow.ErrForbidden)
+}
+
 // --- Failure: unpublishing a non-published workflow ---
 
 // TestService_Unpublish_NotPublished_NotFound verifies that unpublishing a name

@@ -360,11 +360,8 @@ func workflowDeleteHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).Delete(ctx, name); err != nil {
-			if errors.Is(err, workflow.ErrSharedReadOnly) {
-				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
-			}
-			if errors.Is(err, workflow.ErrNotFound) {
-				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			if result, mapped := mapLifecycleError(name, err); mapped {
+				return result, nil
 			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to delete workflow: %s", err)), nil
 		}

@@ -1617,6 +1617,14 @@ func TestWorkflowTool_TransferOwnership_NotFound(t *testing.T) {
 
 // --- workflow_delete admin-gated + running guard ---
 
+func TestWorkflowTool_Delete_NonAdmin_Forbidden(t *testing.T) {
+	f := newLifecycleServer(t)
+	f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
+	result := callTool(t, f.srv, "workflow_delete", map[string]any{"name": "alpha"})
+	assert.True(t, result.IsError)
+	assert.Contains(t, extractText(t, result), "not authorized")
+}
+
 func TestWorkflowTool_Delete_RunningInstances_Error(t *testing.T) {
 	f := newLifecycleServer(t)
 	id := f.seedRegisteredPrivate(t, mcpTestUserID, "alpha")
