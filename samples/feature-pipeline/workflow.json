@@ -141,7 +141,7 @@
       "type": "interactive_agent",
       "config": {
         "templateFile": "templates/brainstorm-spec.md",
-        "model_profile": "interviewer",
+        "model_profile": "interviewer-codex",
         "outputSchema": {
           "properties": {
             "slug": {
@@ -192,7 +192,7 @@
       "type": "interactive_agent",
       "config": {
         "templateFile": "templates/brainstorm-design.md",
-        "model_profile": "interviewer",
+        "model_profile": "interviewer-opus-high",
         "outputSchema": {
           "properties": {
             "design_paths": {
@@ -248,7 +248,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/align-designs.md",
-        "model_profile": "planner",
+        "model_profile": "planner-opus-medium",
         "timeoutSeconds": 1800
       },
       "label": "Align designs",
@@ -264,7 +264,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/produce-plans.md",
-        "model_profile": "planner",
+        "model_profile": "planner-opus-medium",
         "timeoutSeconds": 3600
       },
       "label": "Produce plans",
@@ -280,7 +280,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/align-plans.md",
-        "model_profile": "planner",
+        "model_profile": "planner-opus-medium",
         "timeoutSeconds": 1800
       },
       "label": "Align plans",
@@ -312,7 +312,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/baseline-tests.md",
-        "model_profile": "planner",
+        "model_profile": "planner-opus-medium",
         "timeoutSeconds": 3600
       },
       "label": "Capture test baseline",
@@ -344,7 +344,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/impl-task.md",
-        "model_profile": "coder",
+        "model_profile": "coder-kimi",
         "timeoutSeconds": 3600
       },
       "label": "Implement next task",
@@ -360,7 +360,7 @@
       "type": "llm_call",
       "config": {
         "templateFile": "templates/impl-assess.md",
-        "model_profile": "assessor",
+        "model_profile": "assessor-opus-low",
         "outputSchema": {
           "properties": {
             "all_tasks_complete": {
@@ -442,7 +442,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/seed-ralph.md",
-        "model_profile": "planner",
+        "model_profile": "planner-opus-medium",
         "timeoutSeconds": 1800
       },
       "label": "Seed ralph files",
@@ -458,7 +458,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/refine.md",
-        "model_profile": "coder",
+        "model_profile": "coder-ds4",
         "timeoutSeconds": 3600
       },
       "label": "Refine (ralph pass)",
@@ -474,7 +474,7 @@
       "type": "llm_call",
       "config": {
         "templateFile": "templates/refine-assess.md",
-        "model_profile": "assessor",
+        "model_profile": "assessor-sonnet-high",
         "outputSchema": {
           "properties": {
             "done": {
