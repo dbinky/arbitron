@@ -1,6 +1,6 @@
 {
   "name": "feature-pipeline",
-  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, implement task-by-task (TDD), refine via the native ralph loop, and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
+  "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, checkpoint-push the plans, record a branch-point test baseline, implement task-by-task (TDD), refine via the native ralph loop (gating on no NEW failures vs the baseline, with a stagnation backstop), and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
   "author": "arbitron",
   "defaultErrorBehavior": {
     "type": "retry",
@@ -24,7 +24,7 @@
     {
       "name": "spec_only",
       "type": "boolean",
-      "description": "Stop after spec + design brainstorm.",
+      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed — before implementation begins. The plans are checkpoint-pushed on both paths.",
       "default": false,
       "required": false
     },
@@ -55,6 +55,13 @@
       "description": "Ralph loop counter.",
       "default": 0,
       "required": false
+    },
+    {
+      "name": "no_progress_streak",
+      "type": "number",
+      "description": "Consecutive ralph passes that made no forward progress; the refine loop exits when this reaches 2 (stagnation backstop).",
+      "default": 0,
+      "required": false
     }
   ],
   "nodes": [
@@ -71,7 +78,7 @@
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 0
       }
     },
@@ -106,7 +113,7 @@
       "description": "Lift init-workspace outputs to top-level vars for clean downstream references.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 160
       }
     },
@@ -125,7 +132,7 @@
       "description": "In-app notification that the pipeline has started.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 320
       }
     },
@@ -156,7 +163,7 @@
       "description": "Interactive agent spec brainstorm; writes spec to disk and emits {slug, spec_path}.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 480
       }
     },
@@ -176,7 +183,7 @@
       "description": "After the spec brainstorm, set the global slug to the resolved feature slug the agent used, so designs/plans/templates all use one consistent slug.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 640
       }
     },
@@ -210,7 +217,7 @@
       "description": "Interactive agent design brainstorm; writes design docs to disk and emits {slug, design_paths}.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
+        "x": 250,
         "y": 800
       }
     },
@@ -229,11 +236,11 @@
         "defaultOutput": "continue"
       },
       "label": "Spec only?",
-      "description": "If spec_only, stop after designs; else continue to the automated pipeline.",
+      "description": "Gate AFTER planning + checkpoint push: if spec_only, stop with the spec/designs/plans pushed; else continue to baseline capture and the implementation loop.",
       "errorBehavior": {},
       "position": {
-        "x": 200,
-        "y": 960
+        "x": 250,
+        "y": 1600
       }
     },
     {
@@ -248,8 +255,8 @@
       "description": "Read spec + designs; fix alignment in place; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 1120
+        "x": 250,
+        "y": 960
       }
     },
     {
@@ -264,8 +271,8 @@
       "description": "Write detailed TDD task plans for each design phase; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 1280
+        "x": 250,
+        "y": 1120
       }
     },
     {
@@ -280,8 +287,56 @@
       "description": "Align spec+designs+plans; fix in place; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
+        "x": 250,
+        "y": 1280
+      }
+    },
+    {
+      "id": "checkpoint-push",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push plans",
+      "description": "Push the feature branch after the spec/design/plan phase so that expensive interactive+planning work survives a later crash/cancel/logout instead of living only in the instance worktree.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
         "y": 1440
+      }
+    },
+    {
+      "id": "baseline-tests",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/baseline-tests.md",
+        "model_profile": "planner",
+        "timeoutSeconds": 3600
+      },
+      "label": "Capture test baseline",
+      "description": "Before any implementation, detect and run the project's test suite(s) (mixed languages -> possibly several) and write {{workspace}}/test-baseline.json recording which tests already fail at the branch point.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1760
+      }
+    },
+    {
+      "id": "record-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-baseline.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Record baseline vars",
+      "description": "Lift {{workspace}}/test-baseline.json into structured vars (test_baseline, test_commands, baseline_summary) so the ralph loop gates on NEW failures vs this baseline rather than a fully green suite.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1920
       }
     },
     {
@@ -296,8 +351,8 @@
       "description": "Implement the next incomplete plan task, strict TDD, commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 1600
+        "x": 250,
+        "y": 2080
       }
     },
     {
@@ -330,8 +385,8 @@
       "description": "Emit {all_tasks_complete, tasks_remaining, notes}.",
       "errorBehavior": {},
       "position": {
-        "x": -131.8134188716155,
-        "y": 1748.8001670239805
+        "x": 0,
+        "y": 2240
       }
     },
     {
@@ -351,7 +406,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1920
+        "y": 2400
       }
     },
     {
@@ -378,8 +433,8 @@
       "description": "Exit when all tasks complete OR iteration cap reached; else loop.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 2080
+        "x": 250,
+        "y": 2560
       }
     },
     {
@@ -394,8 +449,8 @@
       "description": "Generate RALPH.md/focus-areas.md/gaps-identified.md; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 2240
+        "x": 250,
+        "y": 2720
       }
     },
     {
@@ -410,8 +465,8 @@
       "description": "Smallest correct improvement toward focus areas; run tests; update tracking files; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 2400
+        "x": 250,
+        "y": 2880
       }
     },
     {
@@ -427,21 +482,29 @@
             },
             "notes": {
               "type": "string"
+            },
+            "progressed": {
+              "type": "boolean"
+            },
+            "consecutive_no_progress": {
+              "type": "number"
             }
           },
           "required": [
             "done",
-            "notes"
+            "notes",
+            "progressed",
+            "consecutive_no_progress"
           ],
           "type": "object"
         }
       },
       "label": "Assess refinement",
-      "description": "Emit {done, notes}.",
+      "description": "Emit {done, notes, progressed, consecutive_no_progress}; done gates on no NEW failures vs the baseline (not a green suite), and consecutive_no_progress drives the stagnation exit.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2560
+        "y": 3040
       }
     },
     {
@@ -453,6 +516,11 @@
             "variable": "ralph_iteration",
             "operation": "increment",
             "value": 1
+          },
+          {
+            "variable": "no_progress_streak",
+            "operation": "set",
+            "value": "{{refine-assess.consecutive_no_progress}}"
           }
         ]
       },
@@ -461,7 +529,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2720
+        "y": 3200
       }
     },
     {
@@ -476,6 +544,12 @@
             "output": "exit"
           },
           {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 2,
+            "output": "exit"
+          },
+          {
             "field": "ralph_iteration",
             "operator": "gte",
             "value": "{{max_ralph_iterations}}",
@@ -485,11 +559,11 @@
         "defaultOutput": "loop"
       },
       "label": "Refine loop or exit",
-      "description": "Exit when done OR ralph cap reached; else loop.",
+      "description": "Exit when done, OR stagnated (2 consecutive no-progress passes), OR ralph cap reached; else loop.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 2880
+        "x": 250,
+        "y": 3360
       }
     },
     {
@@ -500,12 +574,12 @@
         "interpreter": "/bin/sh",
         "timeoutSeconds": 300
       },
-      "label": "Push \u0026 open PR",
+      "label": "Push & open PR",
       "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open).",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 3040
+        "x": 250,
+        "y": 3520
       }
     },
     {
@@ -523,8 +597,8 @@
       "description": "In-app notification that the PR is open.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 3200
+        "x": 250,
+        "y": 3680
       }
     },
     {
@@ -543,8 +617,8 @@
       "description": "Terminal node for the --spec-only path.",
       "errorBehavior": {},
       "position": {
-        "x": 330,
-        "y": 1120
+        "x": 520,
+        "y": 1600
       }
     },
     {
@@ -563,8 +637,8 @@
       "description": "Terminal node. Records final status so the walk ends cleanly.",
       "errorBehavior": {},
       "position": {
-        "x": 70,
-        "y": 3360
+        "x": 250,
+        "y": 3840
       }
     }
   ],
@@ -591,7 +665,7 @@
     },
     {
       "source": "brainstorm-design",
-      "target": "spec-only?"
+      "target": "align-designs"
     },
     {
       "source": "spec-only?",
@@ -600,7 +674,7 @@
     },
     {
       "source": "spec-only?",
-      "target": "align-designs",
+      "target": "baseline-tests",
       "output": "continue"
     },
     {
@@ -613,6 +687,18 @@
     },
     {
       "source": "align-plans",
+      "target": "checkpoint-push"
+    },
+    {
+      "source": "checkpoint-push",
+      "target": "spec-only?"
+    },
+    {
+      "source": "baseline-tests",
+      "target": "record-baseline"
+    },
+    {
+      "source": "record-baseline",
       "target": "impl-task"
     },
     {
