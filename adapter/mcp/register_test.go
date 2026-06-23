@@ -37,6 +37,14 @@ var expectedTools = []string{
 	"workflow_publish",
 	"workflow_set_visibility",
 	"workflow_copy",
+	// Admin-gated lifecycle operations (workflow-management Phase 3 Task 4) (7)
+	"workflow_rename",
+	"workflow_unpublish",
+	"workflow_duplicate",
+	"workflow_archive",
+	"workflow_unarchive",
+	"workflow_transfer_ownership",
+	"workflow_audit",
 	// Instance operations (9)
 	"instance_list",
 	"instance_get",

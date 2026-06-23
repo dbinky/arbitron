@@ -1,6 +1,16 @@
 package workflow
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/arbitron/arbitron/domain/identity"
+)
+
+// ErrForbidden: the caller is authenticated but not an admin. Aliased to the
+// canonical identity.ErrForbidden (the same consolidation UserService does) so an
+// errors.Is across package boundaries matches and the adapters map 403 uniformly.
+// It gates the admin-only workflow lifecycle operations (Rename, etc.).
+var ErrForbidden = identity.ErrForbidden
 
 // Sentinel errors for workflow repository operations. Adapters use errors.Is
 // to classify domain errors without relying on error message strings.
@@ -41,6 +51,27 @@ var (
 	ErrInvalidStatsRange = errors.New("invalid stats range")
 
 	// ErrStatsUnavailable indicates the stats read port was not configured on the
-	// WorkflowService (a composition/wiring error, not a caller error).
+	// Service (a composition/wiring error, not a caller error).
 	ErrStatsUnavailable = errors.New("stats not available")
+
+	// ErrHasRunningInstances indicates an admin Delete was refused because the
+	// workflow still has one or more non-terminal instances (queued, running,
+	// waiting, or paused) carrying its stable id. Deletion would orphan a live run,
+	// so the operation is rejected until those runs reach a terminal state.
+	ErrHasRunningInstances = errors.New("workflow has running instances")
+
+	// ErrArchived indicates a trigger was refused because the workflow is archived.
+	// An archived workflow remains listable and editable (and the in-flight runs it
+	// already spawned continue), but new triggers are rejected until it is
+	// unarchived.
+	ErrArchived = errors.New("workflow is archived")
+
+	// ErrMisconfiguredGuard indicates a server/admin-path lifecycle op (Delete,
+	// Unpublish) was refused because its running-instance guard could not run: a
+	// registry is wired but no ActiveInstanceCounter is, so the service cannot
+	// confirm there are no live runs. The op FAILS CLOSED rather than silently
+	// skipping the guard — a half-wired admin stack must not perform an unguarded
+	// delete. It is a composition/wiring error (an operator fix), not a caller
+	// error.
+	ErrMisconfiguredGuard = errors.New("running-instance guard is not configured")
 )

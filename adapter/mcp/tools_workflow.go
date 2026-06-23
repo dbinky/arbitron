@@ -10,6 +10,7 @@ import (
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -20,9 +21,9 @@ func callerOwner(ctx context.Context) uuid.UUID {
 	return identity.MustFromContext(ctx).UserID
 }
 
-// workflowSvc returns the WorkflowService for the workflow_* tools, building a
+// workflowSvc returns the Service for the workflow_* tools, building a
 // default one over the repository when Deps.WorkflowSvc is unset.
-func workflowSvc(srv *Server) *workflow.WorkflowService {
+func workflowSvc(srv *Server) *workflow.Service {
 	if srv.deps.WorkflowSvc != nil {
 		return srv.deps.WorkflowSvc
 	}
@@ -157,6 +158,89 @@ func RegisterWorkflowTools(srv *Server) {
 		),
 		workflowCopyHandler(srv),
 	)
+
+	// --- Admin-gated lifecycle tools (workflow-management Phase 3) ---
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_rename",
+			gomcp.WithDescription("Rename a workflow (admin only); references keyed by id are preserved"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Current workflow name")),
+			gomcp.WithString("newName", gomcp.Required(), gomcp.Description("New workflow name")),
+		),
+		workflowRenameHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_unpublish",
+			gomcp.WithDescription("Remove a workflow from the shared workspace (admin only); any private copy is kept"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Published workflow name to unpublish")),
+		),
+		workflowUnpublishHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_duplicate",
+			gomcp.WithDescription("Duplicate a workflow into your private workspace with a new identity (admin only)"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Source workflow name")),
+			gomcp.WithString("newName", gomcp.Required(), gomcp.Description("New private workflow name")),
+		),
+		workflowDuplicateHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_archive",
+			gomcp.WithDescription("Archive a workflow (admin only); it stays editable but refuses new triggers"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name to archive")),
+		),
+		workflowArchiveHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_unarchive",
+			gomcp.WithDescription("Clear a workflow's archived flag (admin only), making it triggerable again"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name to unarchive")),
+		),
+		workflowUnarchiveHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_transfer_ownership",
+			gomcp.WithDescription("Reassign a workflow's owner to another user (admin only)"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
+			gomcp.WithString("newOwner", gomcp.Required(), gomcp.Description("New owner user id (UUID)")),
+		),
+		workflowTransferOwnershipHandler(srv),
+	)
+
+	srv.AddTool(
+		gomcp.NewTool("workflow_audit",
+			gomcp.WithDescription("List the audit trail for a workflow, newest first (admin only)"),
+			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name to query the audit trail for")),
+		),
+		workflowAuditHandler(srv),
+	)
+}
+
+// mapLifecycleError maps the admin lifecycle service sentinels to a tool error,
+// or returns (nil, false) when err is not one of them so the caller can apply a
+// tool-specific default. ErrForbidden/ErrUnauthorized both surface as "not
+// authorized" (the admin gate); the rest carry their own message.
+func mapLifecycleError(name string, err error) (*gomcp.CallToolResult, bool) {
+	switch {
+	case errors.Is(err, workflow.ErrForbidden), errors.Is(err, workflow.ErrUnauthorized):
+		return gomcp.NewToolResultError(fmt.Sprintf("not authorized: %s", err)), true
+	case errors.Is(err, workflow.ErrNotFound):
+		return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), true
+	case errors.Is(err, workflow.ErrAlreadyExists):
+		return gomcp.NewToolResultError(fmt.Sprintf("name already exists: %s", err)), true
+	case errors.Is(err, workflow.ErrHasRunningInstances):
+		return gomcp.NewToolResultError(fmt.Sprintf("workflow has running instances: %s", err)), true
+	case errors.Is(err, workflow.ErrArchived):
+		return gomcp.NewToolResultError(fmt.Sprintf("workflow is archived: %s", err)), true
+	case errors.Is(err, workflow.ErrSharedReadOnly):
+		return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), true
+	}
+	return nil, false
 }
 
 func workflowListHandler(srv *Server) server.ToolHandlerFunc {
@@ -276,11 +360,8 @@ func workflowDeleteHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).Delete(ctx, name); err != nil {
-			if errors.Is(err, workflow.ErrSharedReadOnly) {
-				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
-			}
-			if errors.Is(err, workflow.ErrNotFound) {
-				return gomcp.NewToolResultError(fmt.Sprintf("workflow not found: %s", name)), nil
+			if result, mapped := mapLifecycleError(name, err); mapped {
+				return result, nil
 			}
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to delete workflow: %s", err)), nil
 		}
@@ -552,5 +633,176 @@ func workflowCopyHandler(srv *Server) server.ToolHandlerFunc {
 			}
 		}
 		return MarshalResult(map[string]string{"status": "copied", "name": newName})
+	}
+}
+
+func workflowRenameHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		newName, _ := args["newName"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if newName == "" {
+			return gomcp.NewToolResultError("newName is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if !safeWorkflowName(newName) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid new name: %s", newName)), nil
+		}
+		if err := workflowSvc(srv).Rename(ctx, name, newName); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to rename workflow: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "renamed", "name": newName})
+	}
+}
+
+func workflowUnpublishHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if err := workflowSvc(srv).Unpublish(ctx, name); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to unpublish workflow: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "unpublished", "name": name})
+	}
+}
+
+func workflowDuplicateHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		newName, _ := args["newName"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if newName == "" {
+			return gomcp.NewToolResultError("newName is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if !safeWorkflowName(newName) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid new name: %s", newName)), nil
+		}
+		if err := workflowSvc(srv).Duplicate(ctx, name, newName); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to duplicate workflow: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "duplicated", "name": newName})
+	}
+}
+
+func workflowArchiveHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if err := workflowSvc(srv).Archive(ctx, name); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to archive workflow: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "archived", "name": name})
+	}
+}
+
+func workflowUnarchiveHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		if err := workflowSvc(srv).Unarchive(ctx, name); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to unarchive workflow: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "unarchived", "name": name})
+	}
+}
+
+func workflowTransferOwnershipHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		newOwner, _ := args["newOwner"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if newOwner == "" {
+			return gomcp.NewToolResultError("newOwner is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		newOwnerID, err := uuid.Parse(newOwner)
+		if err != nil {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid newOwner: %s is not a valid user id", newOwner)), nil
+		}
+		if err := workflowSvc(srv).TransferOwnership(ctx, name, newOwnerID); err != nil {
+			if res, ok := mapLifecycleError(name, err); ok {
+				return res, nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to transfer ownership: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "ownership_transferred", "name": name, "newOwner": newOwner})
+	}
+}
+
+func workflowAuditHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		args := request.GetArguments()
+		name, _ := args["name"].(string)
+		if name == "" {
+			return gomcp.NewToolResultError("name is required"), nil
+		}
+		if !safeWorkflowName(name) {
+			return gomcp.NewToolResultError(fmt.Sprintf("invalid workflow name: %s", name)), nil
+		}
+		// Admin-only: the audit trail is a forensic surface, gated like the other
+		// lifecycle tools (the service-side ops are admin-only, so reads match).
+		if !identity.MustFromContext(ctx).IsAdmin() {
+			return gomcp.NewToolResultError("not authorized: workflow audit trail is admin-only"), nil
+		}
+		if srv.deps.AuditSvc == nil {
+			return gomcp.NewToolResultError("audit trail is not available"), nil
+		}
+		events, err := srv.deps.AuditSvc.ListByTarget(ctx, name)
+		if err != nil {
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to query audit trail: %s", err)), nil
+		}
+		if events == nil {
+			events = []audit.Event{}
+		}
+		return MarshalResult(events)
 	}
 }

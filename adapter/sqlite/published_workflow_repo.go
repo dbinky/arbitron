@@ -28,12 +28,32 @@ type PublishedWorkflow struct {
 // PublishedWorkflowRepo is the authority for the unique-name and
 // publisher-only-overwrite rules backing the shared workspace.
 type PublishedWorkflowRepo struct {
+	db      *sql.DB
 	queries *generated.Queries
 }
 
 // NewPublishedWorkflowRepo creates a PublishedWorkflowRepo over the given DB.
 func NewPublishedWorkflowRepo(db *sql.DB) *PublishedWorkflowRepo {
-	return &PublishedWorkflowRepo{queries: generated.New(db)}
+	return &PublishedWorkflowRepo{db: db, queries: generated.New(db)}
+}
+
+// SetWorkflowID links a publication record to the stable workflow identity
+// (published_workflows.workflow_id, added in migration 017). It is invoked by
+// the publish path once the shared name's registry id is known. A Nil id is a
+// no-op (nothing to link). The generated UpsertPublishedWorkflow query predates
+// the column, so this is a separate, hand-written UPDATE rather than a blanket
+// sqlc regeneration (which would corrupt the hand-curated generated/ tree).
+func (r *PublishedWorkflowRepo) SetWorkflowID(ctx context.Context, name string, id uuid.UUID) error {
+	if id == uuid.Nil {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE published_workflows SET workflow_id = ? WHERE name = ?`,
+		id.String(), name,
+	); err != nil {
+		return fmt.Errorf("linking published %q to workflow id: %w", name, err)
+	}
+	return nil
 }
 
 // PublisherOf implements workflow.PublisherLookup.

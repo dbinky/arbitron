@@ -22,8 +22,8 @@ import (
 )
 
 // ensure mock repos implement the interface at compile time
-var _ workflow.WorkflowRepository = (*mockWorkflowRepo)(nil)
-var _ workflow.WorkflowRepository = (*errWorkflowRepo)(nil)
+var _ workflow.Repository = (*mockWorkflowRepo)(nil)
+var _ workflow.Repository = (*errWorkflowRepo)(nil)
 
 // ---------------------------------------------------------------------------
 // Mocks for WorkflowHandler
@@ -208,6 +208,16 @@ func withAdminIdentity(r *http.Request) *http.Request {
 		UserID:   testUserID,
 		Username: "admin",
 		Role:     identity.RoleAdmin,
+	}))
+}
+
+// withNonAdminIdentity attaches an authenticated but non-admin identity, so an
+// admin-gated domain op returns workflow.ErrForbidden.
+func withNonAdminIdentity(r *http.Request) *http.Request {
+	return r.WithContext(identity.WithIdentity(r.Context(), identity.Identity{
+		UserID:   testUserID,
+		Username: "member",
+		Role:     identity.RoleUser,
 	}))
 }
 
@@ -1521,10 +1531,15 @@ func TestWorkflowHandler_Update(t *testing.T) {
 func TestWorkflowHandler_Delete(t *testing.T) {
 	t.Run("deletes workflow and returns 204", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
+		// The handler runs in local mode (LocalRegistry), so Delete resolves the
+		// caller's private scope first; seed the private workflow so it exists.
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
 		req = withChiURLParam(req, "name", "test-wf")
+		// Delete is admin-gated (workflow-management Phase 3 Task 2).
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1540,6 +1555,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/unknown", nil)
 		req = withChiURLParam(req, "name", "unknown")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1560,6 +1576,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 	t.Run("returns 500 for unexpected repo error", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"} // private exists
 		repo.deleteFn = func(_ context.Context, _ string) error {
 			return fmt.Errorf("disk full")
 		}
@@ -1567,6 +1584,7 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
 		req = withChiURLParam(req, "name", "test-wf")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -1576,13 +1594,57 @@ func TestWorkflowHandler_Delete(t *testing.T) {
 	// Failure: deleting a shared-only workflow returns 409 Conflict, not 404.
 	t.Run("returns 409 when workflow is shared-only", func(t *testing.T) {
 		repo := newCrudWorkflowRepo()
-		repo.deleteFn = func(_ context.Context, _ string) error {
-			return fmt.Errorf("%w: pub", workflow.ErrSharedReadOnly)
-		}
+		// Name exists ONLY in the shared scope: local-mode Delete resolves it to
+		// ErrSharedReadOnly (shared workflows are read-only in local mode).
+		repo.shared["pub"] = &workflow.Workflow{Name: "pub"}
 		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
 
 		req := httptest.NewRequest(http.MethodDelete, "/workflows/pub", nil)
 		req = withChiURLParam(req, "name", "pub")
+		req = withAdminIdentity(req)
+		w := httptest.NewRecorder()
+		h.Delete(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "CONFLICT", resp.Code)
+	})
+
+	// Security (Should Fix #4): an authz denial maps to 403, not 500, so the HTTP
+	// surface agrees with the MCP adapter's mapLifecycleError. The service returns
+	// ErrForbidden when a non-admin attempts the admin-gated delete.
+	t.Run("returns 403 when delete is forbidden", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		// No admin identity → the domain service's requireAdmin returns ErrForbidden.
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
+		req = withChiURLParam(req, "name", "test-wf")
+		req = withNonAdminIdentity(req)
+		w := httptest.NewRecorder()
+		h.Delete(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "FORBIDDEN", resp.Code)
+	})
+
+	// Security (Should Fix #4): a running-instance refusal maps to 409 Conflict,
+	// not 500 — matching the MCP adapter and signalling a retryable conflict
+	// rather than a server fault.
+	t.Run("returns 409 when workflow has running instances", func(t *testing.T) {
+		repo := newCrudWorkflowRepo()
+		repo.workflows["test-wf"] = &workflow.Workflow{Name: "test-wf"} // private exists
+		repo.deleteFn = func(_ context.Context, _ string) error {
+			return fmt.Errorf("%w: test-wf (1 active)", workflow.ErrHasRunningInstances)
+		}
+		h := adapthttp.NewWorkflowHandler(repo, &mockWorkflowService{}, newMockFileReader(), nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/workflows/test-wf", nil)
+		req = withChiURLParam(req, "name", "test-wf")
+		req = withAdminIdentity(req)
 		w := httptest.NewRecorder()
 		h.Delete(w, req)
 
@@ -2053,6 +2115,9 @@ func (p *fakePublishedStore) Upsert(_ context.Context, name string, publisher uu
 }
 func (p *fakePublishedStore) Delete(_ context.Context, name string) error {
 	delete(p.pub, name)
+	return nil
+}
+func (p *fakePublishedStore) SetWorkflowID(_ context.Context, _ string, _ uuid.UUID) error {
 	return nil
 }
 

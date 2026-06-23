@@ -107,7 +107,8 @@ func (p *fakePublished) Upsert(_ context.Context, name string, pub uuid.UUID, so
 	p.calls = append(p.calls, pubCall{name, source, pub, vis, dept})
 	return nil
 }
-func (p *fakePublished) Delete(context.Context, string) error { return nil }
+func (p *fakePublished) Delete(context.Context, string) error                   { return nil }
+func (p *fakePublished) SetWorkflowID(context.Context, string, uuid.UUID) error { return nil }
 func (p *fakePublished) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
 	if id, ok := p.publisherOf[name]; ok {
 		return id, true, nil

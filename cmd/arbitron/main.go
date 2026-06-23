@@ -144,8 +144,9 @@ type domainStack struct {
 	logCloser           io.Closer
 	db                  *sql.DB
 	eng                 *engine.Engine
-	workflowRepo        workflow.WorkflowRepository
-	workflowSvc         *workflow.WorkflowService
+	workflowRepo        workflow.Repository
+	workflowSvc         *workflow.Service
+	auditSvc            *audit.Service
 	publishedRepo       *adaptsqlite.PublishedWorkflowRepo
 	instanceRepo        instance.InstanceRepository
 	nodeExecRepo        instance.NodeExecutionRepository
@@ -245,6 +246,7 @@ func (ds *domainStack) mcpDeps() *adaptmcp.Deps {
 		Engine:              ds.eng,
 		Workflows:           ds.workflowRepo,
 		WorkflowSvc:         ds.workflowSvc,
+		AuditSvc:            ds.auditSvc,
 		Instances:           ds.instanceRepo,
 		NodeExecs:           ds.nodeExecRepo,
 		Snapshots:           ds.snapshotRepo,
@@ -437,7 +439,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	logger.Info("flat-store migration complete", "defaultUser", flatMigrateUser)
 	// PublishedWorkflowRepo is the authority for the shared workspace's
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
-	// WorkflowService uses to tag shared list entries with their publisher.
+	// Service uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
 	// One-time, marker-guarded seeding of bundled sample workflows into the
 	// shared scope (public, owned by the default user). Runs after the published
@@ -460,13 +462,16 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		// none appeared and how to fix it (set samples.sourcedir).
 		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
 	}
-	// WorkflowService resolves storage scope/authorization from the request
+	// Service resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
 	// The workflow-stats read path is gated by the service's visibility predicate
 	// (CanSeePublication / ownership); wire the instance repo behind that boundary
 	// so GET /workflows/{name}/stats cannot read across user/department scopes.
 	workflowSvc.SetStatsReader(instanceRepo)
+	// Admin Delete guard: refuse deletion while non-terminal instances carry the
+	// workflow id. The instance repo counts them by stable id (migration 017).
+	workflowSvc.SetActiveInstanceCounter(instanceRepo)
 	// Best-effort audit emitter for publish/visibility/admin-override events. The
 	// engine is wired to this same auditSvc below (Phase 3 task 5) via
 	// eng.SetAuditRecorder(auditSvc), once eng exists — a single engine seam.
@@ -474,6 +479,41 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	auditSvc := audit.NewService(auditRepo)
 	auditSvc.SetLogger(logger)
 	workflowSvc.SetAudit(auditSvc)
+	// Workflow identity registry: stable per-workflow ids + global name uniqueness
+	// + name<->id resolution. The SQLite repo's UNIQUE(name) is the authority; the
+	// folder store stays name-keyed for the definition body (mirrors the audit
+	// wiring above — a sibling repo injected via a setter).
+	identityRepo := adaptsqlite.NewWorkflowIdentityRepo(db)
+	workflowSvc.SetRegistry(identityRepo)
+	// One-time startup reconciliation: register any unregistered (legacy id-less)
+	// workflow under the default user's private scope and the shared scope. Run
+	// under an admin system identity so the scan can persist backfilled ids. It is
+	// idempotent and best-effort: a failure is logged, not fatal, since per-user
+	// private workflows are also backfilled lazily on first load.
+	backfillCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: flatMigrateUser,
+		Role:   identity.RoleAdmin,
+	})
+	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
+		logger.Warn("workflow registry backfill incomplete", "error", err)
+	}
+	// One-time reference backfill: stamp each reference row's resolved workflow id
+	// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
+	// the registry rows the BackfillRegistry above just reconciled, so it runs
+	// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
+	// are Warn-logged, not fatal.
+	workflowSvc.SetReferenceBackfiller(adaptsqlite.NewReferenceBackfiller(db))
+	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
+		logger.Warn("workflow reference backfill incomplete", "error", err)
+	}
+	// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
+	// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
+	// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
+	// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
+	// stamped ids are considered.
+	if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
+		logger.Warn("workflow orphan sweep incomplete", "error", err)
+	}
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -779,6 +819,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// mode's fixed identity is admin, for which CanSeePublication returns true,
 	// so local-mode openness is preserved.
 	eng.SetPublisherLookup(publishedRepo)
+	// 12a-1c. Wire the name<->id resolver so triggered instances carry the stable
+	// workflow id (and reruns re-resolve the current name after a rename). The
+	// workflow identity repo satisfies the engine's narrow WorkflowResolver.
+	eng.SetWorkflowResolver(identityRepo)
 	// 12a-2. Create the per-user dismissal repo and wire it to the engine so
 	// Retry resurfaces dismissed items on their new outcome.
 	dismissalRepo := adaptsqlite.NewDismissalRepo(db)
@@ -810,6 +854,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
 		scheduleAlerter,
 		schedule.WithLogger(logger),
+		// Resolve the schedule's stable WorkflowID to the workflow's CURRENT name at
+		// fire time so a rename cannot break a running schedule.
+		schedule.WithResolver(identityRepo),
 	)
 	// Build the shared run-now fire core from the SAME collaborators the
 	// evaluator uses (engine Trigger, instance-repo ActiveRunChecker, identity
@@ -824,6 +871,9 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduleRepo,
 		scheduleCanTrigger{publishers: publishedRepo},
 		schedule.WithFirer(scheduleRunner),
+		// Stamp the schedule's stable WorkflowID (name->id) at create time so a
+		// later rename cannot break it; the evaluator fires by id->current name.
+		schedule.WithResolverID(identityRepo),
 	)
 
 	// 12c. Build the profile-aware interactive stream selector: chat profiles
@@ -996,6 +1046,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		eng:                 eng,
 		workflowRepo:        workflowRepo,
 		workflowSvc:         workflowSvc,
+		auditSvc:            auditSvc,
 		publishedRepo:       publishedRepo,
 		instanceRepo:        instanceRepo,
 		nodeExecRepo:        nodeExecRepo,

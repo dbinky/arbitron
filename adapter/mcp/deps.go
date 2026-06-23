@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/audit"
 	"github.com/arbitron/arbitron/domain/config"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
@@ -62,11 +63,11 @@ type BackendHealthChecker interface {
 //   - EventBus, QueueManager, QueueRepo, Notifications, ConversationHandler
 type Deps struct {
 	Engine    EngineService
-	Workflows workflow.WorkflowRepository
+	Workflows workflow.Repository
 	// WorkflowSvc resolves storage scope/authorization from the calling user's
 	// identity for the workflow_* tools. Optional: when nil, a default service
 	// over Workflows (no publisher lookup) is constructed lazily.
-	WorkflowSvc *workflow.WorkflowService
+	WorkflowSvc *workflow.Service
 	Instances   instance.InstanceRepository
 	NodeExecs   instance.NodeExecutionRepository
 	Snapshots   instance.VariableSnapshotRepository
@@ -125,6 +126,11 @@ type Deps struct {
 	// connection tools log the connection NAME only, never the api_key. Optional:
 	// a nil logger falls back to slog.Default().
 	Logger *slog.Logger
+	// AuditSvc powers the workflow_audit tool's target-scoped audit-trail query.
+	// It is the same best-effort audit service the Service records through,
+	// so the query reads exactly what the lifecycle ops wrote. Optional: when nil,
+	// the workflow_audit tool reports the audit trail as unavailable.
+	AuditSvc *audit.Service
 	// BackendHealth is the shared, TTL-cached backend-health component (codex
 	// install/login readiness) constructed once in the composition root and
 	// injected into BOTH the MCP server and the HTTP SystemHandler, so the cache

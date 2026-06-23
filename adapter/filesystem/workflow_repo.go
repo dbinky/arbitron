@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// Compile-time assertion: WorkflowRepo satisfies workflow.WorkflowRepository.
-var _ workflow.WorkflowRepository = (*WorkflowRepo)(nil)
+// Compile-time assertion: WorkflowRepo satisfies workflow.Repository.
+var _ workflow.Repository = (*WorkflowRepo)(nil)
 
 // userScopeDirMode is the permission applied to the per-user partition root
 // (and its users/ parent). It mirrors workspace.go's per-instance dir mode:
@@ -23,7 +23,7 @@ var _ workflow.WorkflowRepository = (*WorkflowRepo)(nil)
 // world-readable.
 const userScopeDirMode os.FileMode = 0o700
 
-// WorkflowRepo implements workflow.WorkflowRepository by reading workflow
+// WorkflowRepo implements workflow.Repository by reading workflow
 // definitions from the local filesystem. Workflows live under a scope root:
 // basePath/users/<ownerID>/<name>/ for private workspaces and
 // basePath/shared/<name>/ for the shared (published) space. Each workflow

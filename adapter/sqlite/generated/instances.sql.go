@@ -27,9 +27,9 @@ func (q *Queries) ClearWaitingUntil(ctx context.Context, arg ClearWaitingUntilPa
 }
 
 const createInstance = `-- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id
 `
 
 type CreateInstanceParams struct {
@@ -46,6 +46,7 @@ type CreateInstanceParams struct {
 	Visibility        string
 	TriggerSource     string
 	ScheduleID        sql.NullString
+	WorkflowID        sql.NullString
 }
 
 func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) (Instance, error) {
@@ -63,6 +64,7 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		arg.Visibility,
 		arg.TriggerSource,
 		arg.ScheduleID,
+		arg.WorkflowID,
 	)
 	var i Instance
 	err := row.Scan(
@@ -88,12 +90,13 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.Visibility,
 		&i.TriggerSource,
 		&i.ScheduleID,
+		&i.WorkflowID,
 	)
 	return i, err
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id FROM instances WHERE id = ?
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE id = ?
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) {
@@ -122,6 +125,7 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 		&i.Visibility,
 		&i.TriggerSource,
 		&i.ScheduleID,
+		&i.WorkflowID,
 	)
 	return i, err
 }

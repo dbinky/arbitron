@@ -70,6 +70,7 @@ type Instance struct {
 	Visibility        string
 	TriggerSource     string
 	ScheduleID        sql.NullString
+	WorkflowID        sql.NullString
 }
 
 type InstanceDismissal struct {

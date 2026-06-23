@@ -13,7 +13,7 @@ const (
 	ScopeShared
 )
 
-// Scope selects the storage root a WorkflowRepository operation acts on.
+// Scope selects the storage root a Repository operation acts on.
 // For ScopeShared the OwnerID field is ignored.
 type Scope struct {
 	Kind    ScopeKind

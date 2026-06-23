@@ -27,6 +27,18 @@ func (f *fakeStore) Append(_ context.Context, ev audit.Event) error {
 func (f *fakeStore) ListByActor(_ context.Context, _ string, _ int) ([]audit.Event, error) {
 	return f.events, nil
 }
+func (f *fakeStore) ListByTarget(_ context.Context, target string) ([]audit.Event, error) {
+	if f.failErr != nil {
+		return nil, f.failErr
+	}
+	out := make([]audit.Event, 0)
+	for _, ev := range f.events {
+		if ev.Target == target {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
 
 func TestService_Record_StampsActorFromContext(t *testing.T) {
 	store := &fakeStore{}
@@ -88,6 +100,63 @@ func TestService_SetLogger_NilArgPreservesLogger(t *testing.T) {
 		// Store fails → code tries to log; must not dereference a nil logger.
 		svc.Record(context.Background(), audit.ActionWorkflowPublish, "x", "")
 	})
+}
+
+// adminCtx returns a context carrying an admin identity (the authorized caller
+// for the forensic ListByTarget surface).
+func adminCtx() context.Context {
+	return identity.WithIdentity(context.Background(), identity.Identity{UserID: uuid.New(), Role: identity.RoleAdmin})
+}
+
+// TestService_ListByTarget_DelegatesToStore verifies an admin caller's
+// target-scoped query is forwarded to the store and its events returned.
+func TestService_ListByTarget_DelegatesToStore(t *testing.T) {
+	store := &fakeStore{events: []audit.Event{
+		{ID: uuid.New(), Action: audit.ActionWorkflowRename, Target: "alpha"},
+		{ID: uuid.New(), Action: audit.ActionWorkflowDelete, Target: "beta"},
+	}}
+	svc := audit.NewService(store)
+	got, err := svc.ListByTarget(adminCtx(), "alpha")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "alpha", got[0].Target)
+}
+
+// TestService_ListByTarget_NonAdmin_Forbidden verifies the domain-side authz
+// gate (Consider #1, option a): a non-admin caller is refused with
+// identity.ErrForbidden BEFORE the store is queried, so a future transport that
+// forgets to gate cannot leak the forensic audit trail.
+func TestService_ListByTarget_NonAdmin_Forbidden(t *testing.T) {
+	store := &fakeStore{events: []audit.Event{
+		{ID: uuid.New(), Action: audit.ActionWorkflowRename, Target: "alpha"},
+	}}
+	svc := audit.NewService(store)
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: uuid.New(), Role: identity.RoleUser})
+
+	_, err := svc.ListByTarget(ctx, "alpha")
+	assert.ErrorIs(t, err, identity.ErrForbidden, "non-admin must be refused by the domain service")
+}
+
+// TestService_ListByTarget_NoIdentity_Forbidden verifies a context with no
+// identity is also refused (the gate fails closed on an unauthenticated caller).
+func TestService_ListByTarget_NoIdentity_Forbidden(t *testing.T) {
+	svc := audit.NewService(&fakeStore{})
+	_, err := svc.ListByTarget(context.Background(), "alpha")
+	assert.ErrorIs(t, err, identity.ErrForbidden, "missing identity must be refused")
+}
+
+// TestService_ListByTarget_NilStore_EmptyNoError verifies a nil/unconfigured
+// service returns an empty slice (not an error) for an authorized admin caller,
+// so the query surface is harmless in local mode.
+func TestService_ListByTarget_NilStore_EmptyNoError(t *testing.T) {
+	var svc *audit.Service
+	got, err := svc.ListByTarget(adminCtx(), "alpha")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	got, err = audit.NewService(nil).ListByTarget(adminCtx(), "alpha")
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 // TestService_Record_TwoCallsProduceDifferentIDs verifies that each Record

@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// scopeAwareRepo is a workflow.WorkflowRepository keyed by (scope, name) so the
+// scopeAwareRepo is a workflow.Repository keyed by (scope, name) so the
 // Trigger scope-resolution tests can observe private-vs-shared visibility.
 type scopeAwareRepo struct {
 	mu    sync.Mutex
@@ -93,10 +93,10 @@ func (r *scopeAwareRepo) CopyTree(_ context.Context, _ workflow.Scope, _ string,
 // triggerHarness wires an engine whose Enqueue records the owner and leaves the
 // instance queued (does not run it), so Trigger's snapshot/owner are inspectable.
 type triggerHarness struct {
-	repo         *scopeAwareRepo
-	instances    *mockInstanceRepo
-	users        *mockUserRepo
-	engine       *engine.Engine
+	repo          *scopeAwareRepo
+	instances     *mockInstanceRepo
+	users         *mockUserRepo
+	engine        *engine.Engine
 	enqueuedOwner uuid.UUID
 }
 

@@ -90,10 +90,26 @@ type UpdateInput struct {
 type Service struct {
 	repo       ScheduleRepository
 	canTrigger CanTrigger
+	resolver   WorkflowResolverID // optional; name->id resolution at create time
 	now        func() time.Time
 	bounds     Bounds
 	firer      Firer        // optional; nil => run-now unavailable
 	logger     *slog.Logger // audit seam for run-now (defaults to slog.Default)
+}
+
+// WorkflowResolverID is the narrow name->id seam Create uses to stamp a stable
+// WorkflowID on a new schedule so a later rename cannot break it. The workflow
+// registry satisfies it. When unwired (nil), schedules carry a Nil WorkflowID
+// and the evaluator fires by the retained WorkflowName label (local mode).
+type WorkflowResolverID interface {
+	ResolveID(ctx context.Context, name string) (uuid.UUID, error)
+}
+
+// WithResolverID wires the name->id resolver consulted by Create. When unset, a
+// schedule carries a Nil WorkflowID. (Named distinctly from the Evaluator's
+// WithResolver — an id->name Option — to avoid a package-level collision.)
+func WithResolverID(r WorkflowResolverID) ServiceOption {
+	return func(s *Service) { s.resolver = r }
 }
 
 // Firer starts a schedule's workflow immediately, out of cron cadence. The
@@ -224,6 +240,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Schedule, error) 
 	}
 	if err := s.assertCanTrigger(ctx, c, in.WorkflowName); err != nil {
 		return Schedule{}, err
+	}
+	// Stamp the stable workflow id (name->id) so a later rename cannot break the
+	// schedule. Best-effort: an unwired resolver, or a name with no registry row,
+	// leaves WorkflowID Nil and the evaluator fires by the WorkflowName label.
+	if s.resolver != nil {
+		if id, rerr := s.resolver.ResolveID(ctx, in.WorkflowName); rerr == nil {
+			sched.WorkflowID = id
+		}
 	}
 	if err := s.repo.Create(ctx, &sched); err != nil {
 		return Schedule{}, err

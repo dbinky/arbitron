@@ -111,6 +111,25 @@ func nullStringToScheduleID(ns sql.NullString) (*uuid.UUID, error) {
 	return &id, nil
 }
 
+// workflowIDToNullString maps a stable workflow UUID to a nullable SQL string:
+// uuid.Nil (no id reference — legacy or local mode) => SQL NULL; a value => its
+// canonical UUID string. It is the inverse of nullStringToWorkflowID.
+func workflowIDToNullString(id uuid.UUID) sql.NullString {
+	if id == uuid.Nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: id.String(), Valid: true}
+}
+
+// nullStringToWorkflowID maps a nullable workflow_id column back to a uuid.UUID:
+// NULL (or empty) => uuid.Nil; otherwise the parsed UUID.
+func nullStringToWorkflowID(ns sql.NullString) (uuid.UUID, error) {
+	if !ns.Valid || ns.String == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(ns.String)
+}
+
 func intPtrToNullInt64(i *int) sql.NullInt64 {
 	if i == nil {
 		return sql.NullInt64{}

@@ -22,7 +22,7 @@ import (
 // Mock implementations
 // ---------------------------------------------------------------------------
 
-// mockWorkflowRepo implements workflow.WorkflowRepository
+// mockWorkflowRepo implements workflow.Repository
 type mockWorkflowRepo struct {
 	mu        sync.Mutex
 	workflows map[string]*workflow.Workflow

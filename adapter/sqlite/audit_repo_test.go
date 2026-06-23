@@ -147,6 +147,72 @@ func TestAuditRepo_ListByActor_Empty(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TestAuditRepo_ListByTarget_NewestFirst verifies the ORDER BY occurred_at DESC
+// guarantee for the target-scoped query: the most recent event for a workflow
+// name must be first.
+func TestAuditRepo_ListByTarget_NewestFirst(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAuditRepo(db.DB)
+	ctx := context.Background()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	target := "alpha"
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: base.Add(-2 * time.Second), ActorID: "u1",
+		Action: audit.ActionWorkflowCreate, Target: target,
+	}))
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: base.Add(-1 * time.Second), ActorID: "u2",
+		Action: audit.ActionWorkflowRename, Target: target,
+	}))
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: base, ActorID: "u3",
+		Action: audit.ActionWorkflowDelete, Target: target,
+	}))
+
+	got, err := repo.ListByTarget(ctx, target)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, audit.ActionWorkflowDelete, got[0].Action, "newest event must be first")
+	assert.Equal(t, audit.ActionWorkflowRename, got[1].Action)
+	assert.Equal(t, audit.ActionWorkflowCreate, got[2].Action)
+}
+
+// TestAuditRepo_ListByTarget_TargetIsolation verifies events for one workflow
+// name do not appear in another's list.
+func TestAuditRepo_ListByTarget_TargetIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAuditRepo(db.DB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: time.Now().UTC(), ActorID: "u1",
+		Action: audit.ActionWorkflowRename, Target: "alpha",
+	}))
+	require.NoError(t, repo.Append(ctx, audit.Event{
+		ID: uuid.New(), OccurredAt: time.Now().UTC(), ActorID: "u2",
+		Action: audit.ActionWorkflowDelete, Target: "beta",
+	}))
+
+	got, err := repo.ListByTarget(ctx, "alpha")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "alpha", got[0].Target)
+}
+
+// TestAuditRepo_ListByTarget_Empty verifies querying a target with no events
+// returns an empty (non-nil) slice and no error.
+func TestAuditRepo_ListByTarget_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAuditRepo(db.DB)
+	ctx := context.Background()
+
+	got, err := repo.ListByTarget(ctx, "nobody")
+	require.NoError(t, err)
+	assert.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
 // TestAuditRepo_ListByActor_ZeroLimit verifies that limit=0 returns nothing
 // without panicking. The SQL LIMIT 0 clause is valid and must produce an empty
 // result, not an error or a full table scan.
