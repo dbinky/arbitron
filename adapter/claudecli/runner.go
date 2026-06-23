@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"strings"
 )
@@ -212,10 +213,49 @@ func (b *tailBuf) Bytes() []byte {
 	return out
 }
 
-// decorateWithStderr augments err with a single-line summary derived from the
-// stderr tail. The full tail is intentionally NOT included to avoid leaking
-// secrets into log/Error chains; callers wanting the full tail should log it
-// separately. SECURITY redaction note from PR #8 thread 3291907729.
+// StderrError wraps a failed subprocess error with the captured stderr so that
+// two audiences get the right amount of detail:
+//
+//   - Error() exposes ONLY the redacted one-line Summary (PR #8 thread
+//     3291907729). This is what flows into the returned error chain, traces,
+//     and the DB, so it must not carry secrets the CLI may have echoed.
+//   - Tail carries the full bounded stderr for operator-only logging via
+//     LogStderrTail. It may contain secrets and must never enter the error
+//     chain — only logs.
+//
+// Unwrap exposes the underlying exit/read error so errors.Is keeps working
+// (e.g. against an exec.ExitError).
+type StderrError struct {
+	Err     error  // underlying exit or stdout-read error
+	Summary string // last non-empty stderr line, capped (safe to surface)
+	Tail    []byte // full bounded stderr tail (log-only; may contain secrets)
+}
+
+func (e *StderrError) Error() string {
+	if e.Summary == "" {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("%s (stderr: %s)", e.Err.Error(), e.Summary)
+}
+
+func (e *StderrError) Unwrap() error { return e.Err }
+
+// LogStderrTail logs the full captured stderr tail at Warn when err carries a
+// *StderrError with a non-empty tail. This is the ONLY sanctioned place the
+// full tail surfaces — operator logs, never the returned error chain. No-op for
+// any other error. adapter labels the source (e.g. "opencode", "codex").
+func LogStderrTail(adapter string, err error) {
+	var se *StderrError
+	if errors.As(err, &se) && len(se.Tail) > 0 {
+		slog.Warn(adapter+": subprocess stderr (full captured tail)",
+			slog.String("stderr", string(se.Tail)))
+	}
+}
+
+// decorateWithStderr wraps err in a *StderrError carrying both the redacted
+// one-line summary (surfaced via Error()) and the full bounded tail (recoverable
+// via errors.As, for LogStderrTail). When there is no usable stderr, err is
+// returned unchanged. SECURITY redaction note from PR #8 thread 3291907729.
 func decorateWithStderr(err error, tail *tailBuf) error {
 	if err == nil {
 		return nil
@@ -228,7 +268,7 @@ func decorateWithStderr(err error, tail *tailBuf) error {
 	if summary == "" {
 		return err
 	}
-	return fmt.Errorf("%w (stderr: %s)", err, summary)
+	return &StderrError{Err: err, Summary: summary, Tail: raw}
 }
 
 // stderrSummary extracts the last non-empty line of the stderr tail, capped

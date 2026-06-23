@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
 )
@@ -266,6 +267,37 @@ func TestRunAgent_Timeout(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// ERROR — on a timeout kill, the surfaced error must STILL be errors.Is
+// DeadlineExceeded AND carry the redacted stderr summary, with the full tail
+// logged for operators only. Regression guard against the silent stderr discard
+// on the timeout path.
+func TestRunAgent_TimeoutSurfacesStderr(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	killErr := &claudecli.StderrError{
+		Err:     errors.New("signal: killed"),
+		Summary: "codex: stream closed by provider",
+		Tail:    []byte("turn started\nprovider dropped stream\ncodex: stream closed by provider"),
+	}
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true, ctxWaitErr: killErr}}}
+	p := New(Config{Binding: codexBinding("gpt-5-codex", nil), BinaryPath: "codex", Runner: mr})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5-codex", Timeout: 10 * time.Millisecond,
+	})
+	require.Error(t, err)
+	assert.Nil(t, res)
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "timeout semantics must be preserved")
+	assert.Contains(t, err.Error(), "codex: stream closed by provider", "redacted stderr summary must be surfaced")
+
+	assert.Contains(t, buf.String(), "provider dropped stream", "full stderr tail must be logged")
+	assert.NotContains(t, err.Error(), "provider dropped stream", "full tail must not enter the error chain")
 }
 
 // EDGE — the provider-level Config.Timeout is the fallback when the mission

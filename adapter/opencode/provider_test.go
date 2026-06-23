@@ -70,6 +70,11 @@ type runScript struct {
 	waitErr    error
 	startErr   error
 	blockOnCtx bool
+	// ctxWaitErr, when set with blockOnCtx, is returned by wait() instead of the
+	// bare ctx.Err(). It mirrors production, where a timeout kill makes the real
+	// runner return a decorated *claudecli.StderrError (exit "signal: killed" +
+	// captured stderr) while runCtx is independently done.
+	ctxWaitErr error
 }
 
 func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -95,6 +100,9 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 	}()
 	wait := func() error {
 		if s.blockOnCtx {
+			if s.ctxWaitErr != nil {
+				return s.ctxWaitErr
+			}
 			return ctx.Err()
 		}
 		return s.waitErr
@@ -419,6 +427,39 @@ func TestRunAgent_KeyAbsentFromLogs(t *testing.T) {
 	for _, a := range runSpec.Args {
 		assert.NotContains(t, a, sentinel, "secret must never appear in argv")
 	}
+}
+
+// ERROR — on a timeout kill, the surfaced error must STILL be errors.Is
+// DeadlineExceeded (so callers can detect the timeout) AND carry the redacted
+// stderr summary (so the failure is debuggable instead of a bare deadline). The
+// full stderr tail goes to operator logs only. Regression guard for the
+// silent-discard that turned a hung ollama run into "context deadline exceeded".
+func TestRunAgent_TimeoutSurfacesStderr(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	killErr := &claudecli.StderrError{
+		Err:     errors.New("signal: killed"),
+		Summary: "ollama: upstream request timed out",
+		Tail:    []byte("retry 1 failed\nretry 2 failed\nollama: upstream request timed out"),
+	}
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {blockOnCtx: true, ctxWaitErr: killErr}}}
+	p := New(Config{Binding: anthropicBinding("sk-secret", nil), BinaryPath: "opencode", Runner: mr, AllowAllTools: true})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "anthropic/m", Timeout: 10 * time.Millisecond,
+	})
+	require.Error(t, err)
+	assert.Nil(t, res)
+
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "timeout semantics must be preserved")
+	assert.Contains(t, err.Error(), "ollama: upstream request timed out", "redacted stderr summary must be surfaced")
+
+	// Full tail is logged for operators but kept out of the error chain.
+	assert.Contains(t, buf.String(), "retry 1 failed", "full stderr tail must be logged")
+	assert.NotContains(t, err.Error(), "retry 1 failed", "full tail must not enter the error chain")
 }
 
 // bedrockAgentBinding builds a bedrock binding with a JSON composite sealed

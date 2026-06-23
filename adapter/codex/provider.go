@@ -205,10 +205,16 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		collected = append(collected, line)
 	}
 	if waitErr := wait(); waitErr != nil {
-		// Prefer a context error when the run context was cancelled / timed out so
-		// callers can errors.Is against context.Canceled/DeadlineExceeded.
+		// Log the full stderr tail (operator-only) before shaping the surfaced
+		// error, so a timeout/failure is debuggable even when the redacted
+		// summary alone is too terse. No-op unless waitErr carries a tail.
+		claudecli.LogStderrTail("codex", waitErr)
+		// On a cancel/timeout, keep the context error wrapped so callers can
+		// errors.Is against context.Canceled/DeadlineExceeded, but ALSO surface
+		// waitErr's redacted stderr summary — otherwise a hung run collapses to a
+		// bare "context deadline exceeded" with no clue why.
 		if ctxErr := runCtx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return nil, fmt.Errorf("codex: mission timed out (model %q): %w (%v)", model, ctxErr, waitErr)
 		}
 		return nil, fmt.Errorf("codex: mission failed (model %q): %w", model, waitErr)
 	}
