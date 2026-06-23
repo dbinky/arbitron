@@ -68,7 +68,7 @@
     {
       "config": {
         "templateFile": "architect-r1.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-codex-medium"
       },
       "description": "Ivory Tower Architect first pass; posts inline + general comments",
       "entrypoint": true,
@@ -84,7 +84,7 @@
     {
       "config": {
         "templateFile": "10x-r1.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-ds4-pro"
       },
       "description": "10x GSD Engineer first pass; replies to architect threads, adds practical findings",
       "errorBehavior": {},
@@ -99,7 +99,7 @@
     {
       "config": {
         "templateFile": "architect-r2.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-codex-medium"
       },
       "description": "Architect second pass; concedes or doubles down in existing threads only",
       "errorBehavior": {},
@@ -114,7 +114,7 @@
     {
       "config": {
         "templateFile": "10x-r2.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-ds4-pro"
       },
       "description": "10x second pass; final positions in existing threads",
       "errorBehavior": {},
@@ -129,7 +129,7 @@
     {
       "config": {
         "templateFile": "security.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-opus-high"
       },
       "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
       "errorBehavior": {},
@@ -144,7 +144,7 @@
     {
       "config": {
         "templateFile": "manager.md",
-        "model_profile": "reviewer"
+        "model_profile": "reviewer-sonnet-high"
       },
       "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
       "errorBehavior": {},
@@ -181,7 +181,7 @@
     {
       "config": {
         "templateFile": "senior-engineer.md",
-        "model_profile": "coder"
+        "model_profile": "coder-opus-medium"
       },
       "description": "Implements selected fix tier locally on the PR branch; does NOT push (manual review before push)",
       "errorBehavior": {},
