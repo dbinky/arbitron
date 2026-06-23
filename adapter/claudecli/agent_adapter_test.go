@@ -1,8 +1,10 @@
 package claudecli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -139,6 +141,36 @@ func TestAgentAdapterRunAgent(t *testing.T) {
 		assert.True(t, hasDeadline, "a per-mission timeout must set a context deadline")
 	})
 
+	// Error — a timeout kill must STILL be errors.Is DeadlineExceeded (so callers
+	// detect the timeout) AND carry the redacted stderr summary (so the failure
+	// is debuggable). The full tail is logged for operators only.
+	t.Run("timeout surfaces the captured stderr summary and preserves DeadlineExceeded", func(t *testing.T) {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		t.Cleanup(func() { slog.SetDefault(prev) })
+
+		br := &blockingRunner{waitErr: &StderrError{
+			Err:     errors.New("signal: killed"),
+			Summary: "anthropic: 529 overloaded",
+			Tail:    []byte("attempt 1 failed\nattempt 2 failed\nanthropic: 529 overloaded"),
+		}}
+		a := NewAgentAdapter(Config{BinaryPath: "claude", Runner: br})
+
+		_, err := a.RunAgent(context.Background(), engine.AgentMission{
+			Prompt:    "go",
+			WorkDir:   "/tmp/ws",
+			ToolScope: []string{"Read"},
+			Timeout:   20 * time.Millisecond,
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "timeout semantics must be preserved")
+		assert.Contains(t, err.Error(), "anthropic: 529 overloaded", "redacted stderr summary must be surfaced")
+
+		assert.Contains(t, buf.String(), "attempt 1 failed", "full stderr tail must be logged")
+		assert.NotContains(t, err.Error(), "attempt 1 failed", "full tail must not enter the error chain")
+	})
+
 	// Failure — is_error result.
 	t.Run("result event with is_error true returns an error", func(t *testing.T) {
 		fr := &fakeRunner{lines: []string{
@@ -271,8 +303,14 @@ func TestAgentAdapterRunAgent(t *testing.T) {
 // blockingRunner is a CommandRunner whose lines channel only closes when its
 // ctx is cancelled — it never emits a result event on its own. It records the
 // ctx it was handed so tests can assert a deadline was derived.
+//
+// waitErr, when set, is returned by wait() instead of the bare ctx.Err(). It
+// models production: a timeout kill makes the real runner return a decorated
+// *StderrError (exit "signal: killed" + captured stderr) while the run ctx is
+// independently done.
 type blockingRunner struct {
-	gotCtx context.Context
+	gotCtx  context.Context
+	waitErr error
 }
 
 func (b *blockingRunner) Run(ctx context.Context, _ RunSpec) (<-chan string, func() error, error) {
@@ -282,5 +320,10 @@ func (b *blockingRunner) Run(ctx context.Context, _ RunSpec) (<-chan string, fun
 		defer close(ch)
 		<-ctx.Done()
 	}()
-	return ch, func() error { return ctx.Err() }, nil
+	return ch, func() error {
+		if b.waitErr != nil {
+			return b.waitErr
+		}
+		return ctx.Err()
+	}, nil
 }

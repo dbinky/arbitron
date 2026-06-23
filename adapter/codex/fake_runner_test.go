@@ -61,6 +61,11 @@ type runScript struct {
 	waitErr    error
 	startErr   error
 	blockOnCtx bool
+	// ctxWaitErr, when set with blockOnCtx, is returned by wait() instead of the
+	// bare ctx.Err(). It mirrors production, where a timeout kill makes the real
+	// runner return a decorated *claudecli.StderrError (exit "signal: killed" +
+	// captured stderr) while runCtx is independently done.
+	ctxWaitErr error
 }
 
 func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan string, func() error, error) {
@@ -86,6 +91,9 @@ func (m *multiRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan s
 	}()
 	wait := func() error {
 		if s.blockOnCtx {
+			if s.ctxWaitErr != nil {
+				return s.ctxWaitErr
+			}
 			return ctx.Err()
 		}
 		return s.waitErr

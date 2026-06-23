@@ -2,6 +2,7 @@ package claudecli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -124,6 +125,35 @@ func TestExecRunner(t *testing.T) {
 		waitErr := wait()
 		require.Error(t, waitErr)
 		assert.Contains(t, waitErr.Error(), "something-broke")
+	})
+
+	t.Run("wait() error exposes the full stderr tail for operator logging", func(t *testing.T) {
+		// The surfaced Error() stays redacted to the last line (secret-safety,
+		// PR #8), but the full bounded tail must be recoverable via errors.As so
+		// providers can log it for debugging without leaking it into the error
+		// chain (which flows into traces/DB).
+		r := newExecRunner()
+		lines, wait, err := r.Run(context.Background(), RunSpec{
+			Bin:  "sh",
+			Args: []string{"-c", "printf 'retry-one\\nretry-two\\nlast-broke\\n' >&2; exit 1"},
+		})
+		require.NoError(t, err)
+		for range lines { //nolint:revive // drain
+		}
+		waitErr := wait()
+		require.Error(t, waitErr)
+
+		// Surfaced message: only the last non-empty line.
+		assert.Contains(t, waitErr.Error(), "last-broke")
+		assert.NotContains(t, waitErr.Error(), "retry-one", "earlier stderr lines must stay out of the error chain")
+
+		// Full tail recoverable for operator logging.
+		var se *StderrError
+		require.True(t, errors.As(waitErr, &se), "wait() error must carry a *StderrError")
+		assert.Contains(t, string(se.Tail), "retry-one")
+		assert.Contains(t, string(se.Tail), "last-broke")
+		// errors.Is still threads to the underlying exit error.
+		assert.Error(t, se.Unwrap())
 	})
 }
 

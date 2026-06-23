@@ -156,6 +156,16 @@ func collectResult(ctx context.Context, runner CommandRunner, spec RunSpec) (str
 		steps = append(steps, ev)
 	}
 	if waitErr := wait(); waitErr != nil {
+		// Log the full stderr tail (operator-only) before shaping the surfaced
+		// error; no-op unless waitErr carries a tail.
+		LogStderrTail("claudecli", waitErr)
+		// On a cancel/timeout, wrap the context error so callers can errors.Is
+		// against context.Canceled/DeadlineExceeded, while still surfacing
+		// waitErr's redacted stderr summary — otherwise a hung run reports only
+		// the exit signal with no timeout signal for callers to branch on.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return streamEvent{}, nil, fmt.Errorf("claudecli: mission timed out: %w (%v)", ctxErr, waitErr)
+		}
 		return streamEvent{}, nil, fmt.Errorf("claudecli: claude exited with error: %w", waitErr)
 	}
 	if parseErr != nil {
