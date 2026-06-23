@@ -264,7 +264,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/produce-plans.md",
-        "model_profile": "planner-opus-medium",
+        "model_profile": "coder-GLM",
         "timeoutSeconds": 3600
       },
       "label": "Produce plans",
@@ -312,7 +312,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/baseline-tests.md",
-        "model_profile": "planner-opus-medium",
+        "model_profile": "coder-GLM",
         "timeoutSeconds": 3600
       },
       "label": "Capture test baseline",
@@ -344,7 +344,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/impl-task.md",
-        "model_profile": "coder-kimi",
+        "model_profile": "coder-ds4-pro",
         "timeoutSeconds": 3600
       },
       "label": "Implement next task",

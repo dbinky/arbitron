@@ -181,7 +181,7 @@
     {
       "config": {
         "templateFile": "senior-engineer.md",
-        "model_profile": "coder-opus-medium"
+        "model_profile": "coder-GLM"
       },
       "description": "Implements selected fix tier locally on the PR branch; does NOT push (manual review before push)",
       "errorBehavior": {},

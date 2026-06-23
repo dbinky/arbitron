@@ -6,7 +6,7 @@ profiles stored in the arbitron DB**, NOT seedable from `config.yaml`: the confi
 would silently drop the effort levels below. If the profiles table is ever
 emptied/reseeded, recreate them with these exact axes (MCP `profile_create` /
 `arbitron` admin API). All reviewers use the read-only `gh`/`git` tool scope;
-only the implementer (`coder-opus-medium`) can edit code.
+only the implementer (`coder-GLM`) can edit code.
 
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
@@ -14,8 +14,12 @@ only the implementer (`coder-opus-medium`) can edit code.
 | reviewer-ds4-pro | agent | opencode (connection: ollama-cloud) | deepseek-v4-pro | default | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r1, 10x-r2 |
 | reviewer-opus-high | agent | claude-code | claude-opus-4-8 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | security |
 | reviewer-sonnet-high | agent | claude-code | claude-sonnet-4-6 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |
-| coder-opus-medium | agent | claude-code | claude-opus-4-8 | medium | Read,Write,Edit,Grep,Glob,Bash | senior-engineer |
+| coder-GLM | agent | opencode (connection: ollama-cloud) | glm-5.2 | default | Read,Write,Edit,Grep,Glob,Bash | senior-engineer |
 
-NOTE: `deepseek-v4-pro` uses the BARE model id (no `:cloud` tag) for the
-opencode/ollama-cloud path — the `:cloud` form is only for the `ollama run` CLI
-and would surface as a useless `exit status 1` through opencode.
+NOTE: `deepseek-v4-pro` and `glm-5.2` use the BARE model id (no `:cloud` tag) for
+the opencode/ollama-cloud path — the `:cloud` form is only for the `ollama run`
+CLI and would surface as a useless `exit status 1` through opencode.
+
+NOTE: senior-engineer was previously `coder-opus-medium` (claude-opus-4-8 medium,
+same coder tool scope); that profile still exists in the DB but is no longer
+referenced by this workflow.
