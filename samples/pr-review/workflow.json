@@ -1,12 +1,343 @@
 {
+  "name": "pr-review",
+  "description": "Multi-persona PR review pipeline. Clones the PR into an isolated per-instance workspace (never a local ~/Repos checkout), runs Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security, verifies every required persona actually posted (fail-loud on dropout), then Manager decides. Optionally a senior engineer auto-implements the selected fix tier; a verify-fix gate (build/tests + wired-and-fed provenance check) pushes to the PR branch only if the fixes are clean, else reports BLOCKED. Reviewers run a mandatory wired-and-fed provenance trace, not just a diff read.",
   "author": "arbitron",
   "defaultErrorBehavior": {
+    "type": "retry",
     "retries": 2,
-    "retryDelaySeconds": 30,
-    "type": "retry"
+    "retryDelaySeconds": 30
   },
-  "description": "Multi-persona PR review pipeline (Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security -> Manager) with optional senior-engineer auto-implement of selected fix tier. Intended to be triggered by a GitHub Action on PR open/update.",
+  "inputs": [
+    {
+      "name": "pr_number",
+      "type": "number",
+      "description": "GitHub PR number to review",
+      "required": true
+    },
+    {
+      "name": "repo",
+      "type": "string",
+      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron). Cloned fresh (shallow) from the remote into an isolated per-instance workspace; no local ~/Repos checkout is used.",
+      "required": true
+    },
+    {
+      "name": "fix_scope",
+      "type": "string",
+      "description": "Auto-implement tier. One of: must, must-should, all-but-defer, none. 'none' skips the senior-engineer node entirely.",
+      "default": "must-should",
+      "required": true
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init-pr-workspace",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/init-pr-workspace.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 600
+      },
+      "label": "Init PR workspace",
+      "description": "Shallow-clone {{repo}} from the remote into {{workspace}}/work and check out PR #{{pr_number}}; emit {work_dir, pr_branch, pr_head, base}. No ~/Repos is used.",
+      "errorBehavior": {},
+      "entrypoint": true,
+      "position": {
+        "x": 130,
+        "y": -320
+      }
+    },
+    {
+      "id": "promote-vars",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init-pr-workspace.work_dir}}"
+          },
+          {
+            "variable": "pr_branch",
+            "operation": "set",
+            "value": "{{init-pr-workspace.pr_branch}}"
+          },
+          {
+            "variable": "pr_head",
+            "operation": "set",
+            "value": "{{init-pr-workspace.pr_head}}"
+          },
+          {
+            "variable": "base",
+            "operation": "set",
+            "value": "{{init-pr-workspace.base}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift init-pr-workspace outputs (work_dir, pr_branch, pr_head, base) to top-level vars for the persona templates and commit-push.",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": -160
+      }
+    },
+    {
+      "id": "architect-r1",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "architect-r1.md",
+        "model_profile": "reviewer-codex-medium"
+      },
+      "label": "Architect R1",
+      "description": "Ivory Tower Architect first pass; posts inline + general comments; traces provenance/wiring of new structural pieces",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 0
+      }
+    },
+    {
+      "id": "10x-r1",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "10x-r1.md",
+        "model_profile": "reviewer-GLM"
+      },
+      "label": "10x R1",
+      "description": "10x GSD Engineer first pass; runs the wired-and-fed provenance trace, replies to architect threads, adds practical findings",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 160
+      }
+    },
+    {
+      "id": "architect-r2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "architect-r2.md",
+        "model_profile": "reviewer-codex-medium"
+      },
+      "label": "Architect R2",
+      "description": "Architect second pass; concedes or doubles down in existing threads only",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 320
+      }
+    },
+    {
+      "id": "10x-r2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "10x-r2.md",
+        "model_profile": "reviewer-GLM"
+      },
+      "label": "10x R2",
+      "description": "10x second pass; final positions in existing threads",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 480
+      }
+    },
+    {
+      "id": "security",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "security.md",
+        "model_profile": "reviewer-opus-high"
+      },
+      "label": "Security",
+      "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 640
+      }
+    },
+    {
+      "id": "verify-personas",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-personas.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify personas posted",
+      "description": "Deterministic fail-loud gate: count comments per required persona prefix (architect/10x/security); abort the run if any posted nothing, so the manager never synthesizes a partial panel.",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 720
+      }
+    },
+    {
+      "id": "manager",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "manager.md",
+        "model_profile": "reviewer-sonnet-high"
+      },
+      "label": "Manager",
+      "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 800
+      }
+    },
+    {
+      "id": "branch-on-scope",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "fix_scope",
+            "operator": "neq",
+            "value": "none",
+            "output": "implement"
+          }
+        ],
+        "defaultOutput": "skip"
+      },
+      "label": "Implement?",
+      "description": "Skip senior-engineer when fix_scope == 'none'",
+      "errorBehavior": {},
+      "position": {
+        "x": 130,
+        "y": 960
+      }
+    },
+    {
+      "id": "senior-engineer",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "senior-engineer.md",
+        "model_profile": "coder-GLM"
+      },
+      "label": "Senior Engineer",
+      "description": "Implements the selected fix tier in the isolated worktree and commits (wired-and-fed, no self-certified half-fixes); the verify-fix gate decides whether to push",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1120
+      }
+    },
+    {
+      "id": "verify-fix",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "verify-fix.md",
+        "model_profile": "coder-opus-medium",
+        "outputSchema": {
+          "properties": {
+            "blockers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "push_ok": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "push_ok",
+            "blockers",
+            "notes"
+          ],
+          "type": "object"
+        },
+        "timeoutSeconds": 2400
+      },
+      "label": "Verify fix (wired-and-fed gate)",
+      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits; emits {push_ok, blockers, notes}. Catches half-wired Musts and new regressions before they ship.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1280
+      }
+    },
+    {
+      "id": "fix-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "verify-fix.push_ok",
+            "operator": "eq",
+            "value": true,
+            "output": "push"
+          }
+        ],
+        "defaultOutput": "block"
+      },
+      "label": "Fixes clean?",
+      "description": "Push the fixes only if verify-fix passed; otherwise route to fix-blocked (no push).",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1440
+      }
+    },
+    {
+      "id": "commit-push",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/commit-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Commit & push fixes",
+      "description": "Commit any uncommitted senior-engineer fixes and push to the PR branch on the remote. Reached only when verify-fix passed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1600
+      }
+    },
+    {
+      "id": "fix-blocked",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/fix-blocked.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Fix blocked (not pushed)",
+      "description": "Reached when verify-fix failed: post a BLOCKED comment with the blockers and do NOT push; commits stay in the unpushed worktree.",
+      "errorBehavior": {},
+      "position": {
+        "x": 240,
+        "y": 1520
+      }
+    },
+    {
+      "id": "skipped",
+      "type": "transform",
+      "config": {},
+      "label": "Skipped (review-only)",
+      "description": "No-op terminal node reached when fix_scope == 'none'",
+      "errorBehavior": {},
+      "position": {
+        "x": 260,
+        "y": 1120
+      }
+    }
+  ],
   "edges": [
+    {
+      "source": "init-pr-workspace",
+      "target": "promote-vars"
+    },
+    {
+      "source": "promote-vars",
+      "target": "architect-r1"
+    },
     {
       "source": "architect-r1",
       "target": "10x-r1"
@@ -25,6 +356,10 @@
     },
     {
       "source": "security",
+      "target": "verify-personas"
+    },
+    {
+      "source": "verify-personas",
       "target": "manager"
     },
     {
@@ -32,178 +367,32 @@
       "target": "branch-on-scope"
     },
     {
-      "output": "implement",
       "source": "branch-on-scope",
-      "target": "senior-engineer"
+      "target": "senior-engineer",
+      "output": "implement"
     },
     {
-      "output": "skip",
       "source": "branch-on-scope",
-      "target": "skipped"
-    }
-  ],
-  "inputs": [
-    {
-      "description": "GitHub PR number to review",
-      "name": "pr_number",
-      "required": true,
-      "type": "number"
+      "target": "skipped",
+      "output": "skip"
     },
     {
-      "description": "GitHub repo in owner/name format (e.g. dbinky/arbitron). Must be cloned into ~/Repos/<owner>/<name> on the container host.",
-      "name": "repo",
-      "required": true,
-      "type": "string"
+      "source": "senior-engineer",
+      "target": "verify-fix"
     },
     {
-      "default": "must-should",
-      "description": "Auto-implement tier. One of: must, must-should, all-but-defer, none. 'none' skips the senior-engineer node entirely.",
-      "name": "fix_scope",
-      "required": true,
-      "type": "string"
-    }
-  ],
-  "name": "pr-review",
-  "nodes": [
-    {
-      "config": {
-        "templateFile": "architect-r1.md",
-        "model_profile": "reviewer-codex-medium"
-      },
-      "description": "Ivory Tower Architect first pass; posts inline + general comments",
-      "entrypoint": true,
-      "errorBehavior": {},
-      "id": "architect-r1",
-      "label": "Architect R1",
-      "position": {
-        "x": 130,
-        "y": 0
-      },
-      "type": "agent_call"
+      "source": "verify-fix",
+      "target": "fix-gate"
     },
     {
-      "config": {
-        "templateFile": "10x-r1.md",
-        "model_profile": "reviewer-ds4-pro"
-      },
-      "description": "10x GSD Engineer first pass; replies to architect threads, adds practical findings",
-      "errorBehavior": {},
-      "id": "10x-r1",
-      "label": "10x R1",
-      "position": {
-        "x": 130,
-        "y": 160
-      },
-      "type": "agent_call"
+      "source": "fix-gate",
+      "target": "commit-push",
+      "output": "push"
     },
     {
-      "config": {
-        "templateFile": "architect-r2.md",
-        "model_profile": "reviewer-codex-medium"
-      },
-      "description": "Architect second pass; concedes or doubles down in existing threads only",
-      "errorBehavior": {},
-      "id": "architect-r2",
-      "label": "Architect R2",
-      "position": {
-        "x": 130,
-        "y": 320
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "templateFile": "10x-r2.md",
-        "model_profile": "reviewer-ds4-pro"
-      },
-      "description": "10x second pass; final positions in existing threads",
-      "errorBehavior": {},
-      "id": "10x-r2",
-      "label": "10x R2",
-      "position": {
-        "x": 130,
-        "y": 480
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "templateFile": "security.md",
-        "model_profile": "reviewer-opus-high"
-      },
-      "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
-      "errorBehavior": {},
-      "id": "security",
-      "label": "Security",
-      "position": {
-        "x": 130,
-        "y": 640
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "templateFile": "manager.md",
-        "model_profile": "reviewer-sonnet-high"
-      },
-      "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
-      "errorBehavior": {},
-      "id": "manager",
-      "label": "Manager",
-      "position": {
-        "x": 130,
-        "y": 800
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {
-        "conditions": [
-          {
-            "field": "fix_scope",
-            "operator": "neq",
-            "output": "implement",
-            "value": "none"
-          }
-        ],
-        "defaultOutput": "skip"
-      },
-      "description": "Skip senior-engineer when fix_scope == 'none'",
-      "errorBehavior": {},
-      "id": "branch-on-scope",
-      "label": "Implement?",
-      "position": {
-        "x": 130,
-        "y": 960
-      },
-      "type": "conditional"
-    },
-    {
-      "config": {
-        "templateFile": "senior-engineer.md",
-        "model_profile": "coder-GLM"
-      },
-      "description": "Implements selected fix tier locally on the PR branch; does NOT push (manual review before push)",
-      "errorBehavior": {},
-      "id": "senior-engineer",
-      "label": "Senior Engineer",
-      "position": {
-        "x": 0,
-        "y": 1120
-      },
-      "type": "agent_call"
-    },
-    {
-      "config": {},
-      "description": "No-op terminal node reached when fix_scope == 'none'",
-      "errorBehavior": {},
-      "id": "skipped",
-      "label": "Skipped (review-only)",
-      "position": {
-        "x": 260,
-        "y": 1120
-      },
-      "type": "transform"
+      "source": "fix-gate",
+      "target": "fix-blocked",
+      "output": "block"
     }
   ]
 }

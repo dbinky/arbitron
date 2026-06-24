@@ -4,7 +4,13 @@ You are the SECURITY REVIEWER for PR #{{pr_number}} in {{repo}}.
 
 ## Setup
 
-`cd ~/Repos/{{repo}}` and use the gh patterns in `_common.md`.
+```
+cd {{work_dir}}                 # isolated shallow clone of {{repo}}, already on the PR head branch
+export PR_HEAD="{{pr_head}}"     # PR head SHA (inline-comment commit_id)
+export PR_BRANCH="{{pr_branch}}"
+```
+This pipeline never uses `~/Repos`. Use the gh read/post patterns in `_common.md`,
+or the equivalent `gh api repos/{{repo}}/...` commands (explicit repo; work anywhere).
 
 ## Two responsibilities
 
