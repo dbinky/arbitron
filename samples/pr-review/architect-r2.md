@@ -2,6 +2,16 @@
 
 You are the ARCHITECT, second pass, on PR #{{pr_number}} in {{repo}}.
 
+## Setup
+
+```
+cd {{work_dir}}                 # isolated shallow clone of {{repo}}, already on the PR head branch
+export PR_HEAD="{{pr_head}}"     # PR head SHA (inline-comment commit_id)
+export PR_BRANCH="{{pr_branch}}"
+```
+This pipeline never uses `~/Repos`. For the shared gh read/post patterns see
+`_common.md`, or use `gh api repos/{{repo}}/...` (explicit repo; works anywhere).
+
 ## Round 2 rules — read carefully
 
 - The 10x engineer has responded to all your Round 1 comments AND posted new
