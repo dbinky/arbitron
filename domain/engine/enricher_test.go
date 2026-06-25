@@ -313,4 +313,23 @@ func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {
 	assert.Equal(t, "Crashed step", got[0].FriendlyStep, "failed -> label from FailedNodeID")
 }
 
+// Security: the account identity must be the EMAIL only. The OIDC subject is an
+// opaque IdP identifier and must never be disclosed as a fallback when the email
+// is absent (it would leak the IdP subject to other viewers).
+func TestInstanceEnricher_AccountIdentity_NoSubjectFallback(t *testing.T) {
+	d := newEnricherDeps()
+	owner := uuid.New()
+	subject := "oidc|opaque-subject-123"
+	d.userRepo.users[owner] = instance.User{ID: owner, Username: "alice", Subject: &subject} // email nil
+	wf := workflow.Workflow{Name: "wf"}
+	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CreatedAt: time.Now()}
+	d.instRepo.instances[inst.ID] = inst
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst.CreatedAt}}
+
+	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "", got[0].Submitter.AccountIdentity, "subject must NOT be exposed as an account-identity fallback")
+}
+
 func strPtr(s string) *string { return &s }

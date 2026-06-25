@@ -228,14 +228,13 @@ func readWorkflowInputs(snapshot map[string]any) []instance.RunNameInput {
 	return inputs
 }
 
-// accountIdentity returns the email if present, else the subject, for the
-// shared-mode row detail. Empty when neither is set (local default user).
+// accountIdentity returns the user's email for the shared-mode row detail, or
+// empty when no email is set (local default user). The OIDC subject is an opaque
+// IdP identifier and is deliberately NOT used as a fallback: disclosing it would
+// leak the IdP subject to other viewers of public/department-peer runs.
 func accountIdentity(u instance.User) string {
 	if u.Email != nil && *u.Email != "" {
 		return *u.Email
-	}
-	if u.Subject != nil && *u.Subject != "" {
-		return *u.Subject
 	}
 	return ""
 }

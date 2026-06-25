@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
@@ -2295,8 +2296,85 @@ func TestInstanceHandler_List_EnrichedFields(t *testing.T) {
 	assert.Equal(t, "claude-code", row["backend"])
 	assert.Equal(t, float64(2), row["retryCount"])
 	assert.Equal(t, "alice", row["submitterName"])
-	assert.Equal(t, "alice@example.com", row["submitterIdentity"])
+	// Security: with no identity in context, the viewer is not the owner and not
+	// an admin, so the account identity (email) must be withheld.
+	_, hasIdentity := row["submitterIdentity"]
+	assert.False(t, hasIdentity, "non-owner/non-admin must NOT see submitterIdentity")
 	assert.Equal(t, false, row["dismissed"], "dismissed decoration preserved")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_RevealedToOwner(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "alice@example.com", resp[0]["submitterIdentity"], "owner sees the account identity")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_RevealedToAdmin(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "alice@example.com", resp[0]["submitterIdentity"], "admin sees the account identity")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_WithheldFromPeer(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	// A non-owning, non-admin peer (e.g. department/public viewer).
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: uuid.New(), Username: "bob", Role: identity.RoleUser}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	_, has := resp[0]["submitterIdentity"]
+	assert.False(t, has, "a non-owner peer must NOT see another user's account identity")
 }
 
 func TestInstanceHandler_List_EnrichedProvenanceProbe(t *testing.T) {

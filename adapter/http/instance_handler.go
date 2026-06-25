@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
@@ -247,19 +248,27 @@ type enrichedSummaryDTO struct {
 	FailedNodeID      *string `json:"failedNodeId,omitempty"`
 }
 
-func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary) enrichedSummaryDTO {
-	return enrichedSummaryDTO{
-		summaryDTO:        toSummaryDTO(e.InstanceSummary),
-		RunName:           e.RunName,
-		FriendlyStep:      e.FriendlyStep,
-		Model:             e.Model,
-		Backend:           e.Backend,
-		RetryCount:        e.RetryCount,
-		QueuePosition:     e.QueuePosition,
-		SubmitterName:     e.Submitter.Name,
-		SubmitterIdentity: e.Submitter.AccountIdentity,
-		FailedNodeID:      e.FailedNodeID,
+// toEnrichedSummaryDTO projects an enriched summary to its JSON DTO. The
+// submitter's account identity (email) is PII and is only included when
+// revealIdentity is true (the viewer owns the run or is an admin); otherwise it
+// is withheld so a public/department-peer viewer cannot read another user's
+// account email.
+func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary, revealIdentity bool) enrichedSummaryDTO {
+	dto := enrichedSummaryDTO{
+		summaryDTO:    toSummaryDTO(e.InstanceSummary),
+		RunName:       e.RunName,
+		FriendlyStep:  e.FriendlyStep,
+		Model:         e.Model,
+		Backend:       e.Backend,
+		RetryCount:    e.RetryCount,
+		QueuePosition: e.QueuePosition,
+		SubmitterName: e.Submitter.Name,
+		FailedNodeID:  e.FailedNodeID,
 	}
+	if revealIdentity {
+		dto.SubmitterIdentity = e.Submitter.AccountIdentity
+	}
+	return dto
 }
 
 // enrichedResponse is the enriched list-item JSON: the enriched DTO plus the
@@ -269,9 +278,9 @@ type enrichedResponse struct {
 	Dismissed bool `json:"dismissed"`
 }
 
-func toEnrichedResponse(e instance.EnrichedInstanceSummary, dismissed bool) enrichedResponse {
+func toEnrichedResponse(e instance.EnrichedInstanceSummary, dismissed bool, revealIdentity bool) enrichedResponse {
 	return enrichedResponse{
-		enrichedSummaryDTO: toEnrichedSummaryDTO(e),
+		enrichedSummaryDTO: toEnrichedSummaryDTO(e, revealIdentity),
 		Dismissed:          dismissed,
 	}
 }
@@ -412,13 +421,18 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The submitter's account identity (email) is PII: reveal it only to the run
+	// owner or an admin. An absent identity (hasViewer false) reveals nothing.
+	viewer, hasViewer := identity.FromContext(r.Context())
+
 	out := make([]enrichedResponse, 0, len(enriched))
 	for _, e := range enriched {
 		isDismissed := dismissedIDs[e.ID]
 		if isDismissed && !includeDismissed {
 			continue
 		}
-		out = append(out, toEnrichedResponse(e, isDismissed))
+		revealIdentity := hasViewer && (viewer.IsAdmin() || viewer.UserID == e.OwnerID)
+		out = append(out, toEnrichedResponse(e, isDismissed, revealIdentity))
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
