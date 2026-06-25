@@ -112,14 +112,14 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 			filters.WorkflowName = &wfName
 		}
 
-		summaries, err := srv.deps.Engine.ListInstances(ctx, filters)
+		enriched, err := srv.deps.Engine.ListEnriched(ctx, filters)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list instances: %s", err)), nil
 		}
-		if summaries == nil {
-			summaries = []instance.InstanceSummary{}
+		if enriched == nil {
+			enriched = []instance.EnrichedInstanceSummary{}
 		}
-		return MarshalResult(summaries)
+		return MarshalResult(enriched)
 	}
 }
 

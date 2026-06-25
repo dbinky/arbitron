@@ -23,6 +23,10 @@ import (
 type EngineService interface {
 	TriggerWithDepartment(ctx context.Context, workflowName string, variables map[string]any, priority string, department string) (uuid.UUID, bool, error)
 	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	// ListEnriched returns the authorized page with additive enriched fields
+	// (run name, submitter, friendly step, model, backend, retry count,
+	// queue position). Same authz as ListInstances.
+	ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)

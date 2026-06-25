@@ -15,7 +15,7 @@
 - Modify: `adapter/mcp/tools_instance.go:102-123` (switch `instanceListHandler` to `ListEnriched`)
 - Modify: `adapter/mcp/tools_instance_test.go` (extend `stubEngine` + add enriched assertion)
 
-- [ ] Step 1: Write the failing test asserting the MCP list tool returns enriched fields
+- [x] Step 1: Write the failing test asserting the MCP list tool returns enriched fields
 
 Append to `adapter/mcp/tools_instance_test.go`:
 
@@ -55,7 +55,7 @@ rg -n "func callTool|func toolResultText|func newTestServer" adapter/mcp/tools_i
 
 If the helpers are named differently (e.g. `callToolResult`, `resultText`), use those exact names in the test above.
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./adapter/mcp/ -run TestInstanceList_ReturnsEnrichedFields
@@ -63,7 +63,7 @@ go test ./adapter/mcp/ -run TestInstanceList_ReturnsEnrichedFields
 
 Expected: build failure — `undefined: eng.listEnrichedFn` (the `stubEngine` does not yet have a `ListEnriched` method), and the tool still calls `ListInstances` so the enriched fields are absent.
 
-- [ ] Step 3: Extend the `deps.Engine` interface and `stubEngine`
+- [x] Step 3: Extend the `deps.Engine` interface and `stubEngine`
 
 In `adapter/mcp/deps.go`, add to the `Engine` interface (after `ListInstances`):
 
@@ -107,7 +107,7 @@ If `stubEngine` is defined in a different test file (e.g. `adapter/mcp/parity_te
 rg -n "type stubEngine struct" adapter/mcp/
 ```
 
-- [ ] Step 4: Switch the `instanceListHandler` to call `ListEnriched`
+- [x] Step 4: Switch the `instanceListHandler` to call `ListEnriched`
 
 In `adapter/mcp/tools_instance.go`, replace the `instanceListHandler` body (lines 102-123) with:
 
@@ -137,7 +137,7 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 }
 ```
 
-- [ ] Step 5: Run the test, confirm it passes
+- [x] Step 5: Run the test, confirm it passes
 
 ```bash
 go test ./adapter/mcp/ -run TestInstanceList_ReturnsEnrichedFields
@@ -149,7 +149,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/adapter/mcp	0.00s
 ```
 
-- [ ] Step 6: Confirm the full test gate passes (the concrete `*engine.Engine` satisfies the widened `deps.Engine` interface because Task 4 added `ListEnriched` to it)
+- [x] Step 6: Confirm the full test gate passes (the concrete `*engine.Engine` satisfies the widened `deps.Engine` interface because Task 4 added `ListEnriched` to it)
 
 ```bash
 go build ./... && go test ./...
@@ -157,7 +157,7 @@ go build ./... && go test ./...
 
 Expected: no build errors; all package tests pass.
 
-- [ ] Step 7: Commit
+- [x] Step 7: Commit
 
 ```bash
 git add adapter/mcp/deps.go adapter/mcp/tools_instance.go adapter/mcp/tools_instance_test.go

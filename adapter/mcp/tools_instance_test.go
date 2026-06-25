@@ -79,6 +79,7 @@ type stubEngine struct {
 	capturedDepartment string
 	listFn             func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
 	capturedListCtx    context.Context
+	listEnrichedFn     func(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	getFn              func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	traceFn            func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	nodeTraceFn        func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
@@ -108,6 +109,21 @@ func (s *stubEngine) ListInstances(ctx context.Context, filters instance.ListFil
 		return s.listFn(ctx, filters)
 	}
 	return nil, nil
+}
+
+func (s *stubEngine) ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+	if s.listEnrichedFn != nil {
+		return s.listEnrichedFn(ctx, filters)
+	}
+	summaries, err := s.ListInstances(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]instance.EnrichedInstanceSummary, len(summaries))
+	for i, sm := range summaries {
+		out[i] = instance.EnrichedInstanceSummary{InstanceSummary: sm}
+	}
+	return out, nil
 }
 
 func (s *stubEngine) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
@@ -932,6 +948,40 @@ func TestInstanceGet_DepartmentAndVisibilityInResponse(t *testing.T) {
 		"department must appear in the instance_get response")
 	assert.Contains(t, text, "department",
 		"visibility value 'department' must appear in the instance_get response")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 / Task 6: MCP instance_list returns enriched fields
+// ---------------------------------------------------------------------------
+
+// TestInstanceList_ReturnsEnrichedFields verifies the MCP instance_list tool
+// flows through Engine.ListEnriched so MCP clients receive the same enriched
+// fields (run name, submitter, friendly step, model, backend, retry count) the
+// HTTP path returns.
+func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
+	id := uuid.New()
+	eng := &stubEngine{
+		listEnrichedFn: func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+			return []instance.EnrichedInstanceSummary{{
+				InstanceSummary: instance.InstanceSummary{ID: id, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+				RunName:         "MyTitle — wf",
+				Submitter:       instance.Submitter{Name: "alice"},
+				FriendlyStep:    "Generate",
+				Model:           "gpt-4o",
+				Backend:         "claude-code",
+				RetryCount:      2,
+			}}, nil
+		},
+	}
+	srv := newInstanceServer(&stubInstanceRepo{}, eng)
+
+	res := callTool(t, srv, "instance_list", nil)
+	require.False(t, res.IsError, "tool must not error")
+	body := extractText(t, res)
+	assert.Contains(t, body, "MyTitle — wf", "run name reaches the MCP result")
+	assert.Contains(t, body, "Generate", "friendly step reaches the MCP result")
+	assert.Contains(t, body, "gpt-4o", "model reaches the MCP result")
+	assert.Contains(t, body, "claude-code", "backend reaches the MCP result")
 }
 
 // ---------------------------------------------------------------------------
