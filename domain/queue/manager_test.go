@@ -32,6 +32,7 @@ type mockQueueRepo struct {
 	waitingWithWebhook     []instance.Instance
 	queuedList             []instance.Instance
 	listQueuedErr          error
+	listQueuedHook         func() // fired inside ListQueued, before returning (test seam)
 	countRunningErr        error
 	countRunningByOwnerErr error
 	nextEligibleErr        error
@@ -106,8 +107,14 @@ func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.In
 
 func (r *mockQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.queuedList, r.listQueuedErr
+	hook := r.listQueuedHook
+	list := r.queuedList
+	err := r.listQueuedErr
+	r.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return list, err
 }
 
 type mockInstanceRepo struct {

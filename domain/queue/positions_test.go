@@ -3,6 +3,7 @@ package queue_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,3 +146,52 @@ func TestQueuePositions_GlobalCapSaturated_NoDeferralByGlobalCap(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// TestQueuePositions_DoesNotHoldLockDuringDBRoundTrip proves the dispatch lock
+// is released before the DB round-trips (ListQueued + CountRunningByOwner). The
+// ListQueued hook calls a lock-acquiring manager method (UpdateConfig); if
+// QueuePositions still held m.mu during the DB call, that call would deadlock
+// and the test would time out. With the config snapshotted under the lock and
+// the DB I/O performed outside it, the concurrent call completes promptly.
+func TestQueuePositions_DoesNotHoldLockDuringDBRoundTrip(t *testing.T) {
+	ownerA := uuid.New()
+	now := time.Now().UTC().Truncate(time.Second)
+	repo := newMockQueueRepo()
+	repo.queuedList = []instance.Instance{
+		{ID: uuid.New(), OwnerID: ownerA, State: instance.StateQueued, Priority: instance.PriorityHigh, QueuedAt: &now},
+	}
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 0, PerUserCap: 0}}
+	mgr := queue.NewManager(repo, newMockInstanceRepo(), cfg, nil)
+
+	// During the DB round-trip, a concurrent lock-acquiring operation must be
+	// able to proceed. If QueuePositions held the lock here, this would block.
+	hookDone := make(chan struct{})
+	repo.listQueuedHook = func() {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mgr.UpdateConfig(10, 2) // needs m.mu
+		}()
+		wg.Wait()
+		close(hookDone)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := mgr.QueuePositions(context.Background())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("QueuePositions deadlocked: the dispatch lock was held across the DB round-trip")
+	}
+	select {
+	case <-hookDone:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent UpdateConfig did not complete during the DB round-trip")
+	}
+}

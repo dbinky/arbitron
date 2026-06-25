@@ -21,8 +21,14 @@ import (
 // whether the head would start, not the relative order); only the per-user
 // cap reorders.
 func (m *Manager) QueuePositions(ctx context.Context) (map[uuid.UUID]int, error) {
+	// Snapshot the config (perUserCap) UNDER the dispatch lock, then release it
+	// before any DB round-trip. Holding m.mu across ListQueued /
+	// CountRunningByOwner would serialize position queries against the hot
+	// dispatch path; the simulation only needs a consistent capacity snapshot,
+	// not the lock, while it does I/O.
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	perUserCap := m.config.Queue.PerUserCap
+	m.mu.Unlock()
 
 	src, err := m.queue.ListQueued(ctx)
 	if err != nil {
@@ -43,9 +49,9 @@ func (m *Manager) QueuePositions(ctx context.Context) (map[uuid.UUID]int, error)
 		return queueLess(queued[i], queued[j])
 	})
 
-	perUserCap := m.config.Queue.PerUserCap
 	// runningByOwner counts running instances per owner, used for the per-user
-	// cap deferral. Lazily computed per owner on first encounter.
+	// cap deferral. Lazily computed per owner on first encounter (DB I/O happens
+	// here, outside the dispatch lock).
 	runningByOwner := map[uuid.UUID]int{}
 
 	pos := 1
