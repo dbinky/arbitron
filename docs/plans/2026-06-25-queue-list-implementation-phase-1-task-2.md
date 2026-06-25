@@ -353,7 +353,7 @@ go build ./... && go test ./...
 
 Expected: no build errors; all package tests pass.
 
-- [ ] Step 9: Commit
+- [x] Step 9: Commit
 
 ```bash
 git add domain/instance/ports.go domain/instance/aggregate.go domain/instance/aggregate_test.go adapter/sqlite/node_execution_repo.go adapter/sqlite/node_execution_repo_aggregate_test.go adapter/http/instance_handler_test.go
