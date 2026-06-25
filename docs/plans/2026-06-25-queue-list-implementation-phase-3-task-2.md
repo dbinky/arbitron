@@ -14,7 +14,7 @@
 - Create: `dashboard/src/hooks/useDensityPreference.ts`
 - Create: `dashboard/src/hooks/useDensityPreference.test.ts`
 
-- [ ] Step 1: Write the failing test for the hook
+- [x] Step 1: Write the failing test for the hook
 
 Create `dashboard/src/hooks/useDensityPreference.test.ts`:
 
@@ -87,7 +87,7 @@ describe('useDensityPreference', () => {
 })
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/hooks/useDensityPreference.test.ts
@@ -95,7 +95,7 @@ cd dashboard && npx vitest run src/hooks/useDensityPreference.test.ts
 
 Expected: failure — `Failed to resolve import "./useDensityPreference"`.
 
-- [ ] Step 3: Implement the hook
+- [x] Step 3: Implement the hook
 
 Create `dashboard/src/hooks/useDensityPreference.ts`:
 
@@ -157,7 +157,7 @@ export function useDensityPreference(userId: string | null): {
 }
 ```
 
-- [ ] Step 4: Run the test, confirm it passes
+- [x] Step 4: Run the test, confirm it passes
 
 ```bash
 cd dashboard && npx vitest run src/hooks/useDensityPreference.test.ts
@@ -165,7 +165,7 @@ cd dashboard && npx vitest run src/hooks/useDensityPreference.test.ts
 
 Expected: all assertions pass.
 
-- [ ] Step 5: Run typecheck
+- [x] Step 5: Run typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit
