@@ -73,7 +73,14 @@ export default function QueueSection({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const columns = useMemo(() => visibleColumns(density), [density])
+  // In local mode every row renders "you" for the submitter, so sorting by the
+  // real submitterName would appear to do nothing — mark the column non-sortable
+  // there. In org/edge mode the real name is shown, so it stays sortable.
+  const columns = useMemo(() => {
+    const cols = visibleColumns(density)
+    if (authMode !== 'local') return cols
+    return cols.map((c) => (c.key === 'submitter' ? { ...c, sortable: false } : c))
+  }, [density, authMode])
 
   const sorted = useMemo(() => {
     if (sortKey === null) {

@@ -119,6 +119,32 @@ describe('QueueSection table rendering', () => {
   })
 })
 
+describe('QueueSection — submitter sortability by auth mode', () => {
+  it('submitter header is NOT sortable in local mode (every row renders "you")', () => {
+    renderSection({
+      instances: [summary({ id: 'a', submitterName: 'zed' }), summary({ id: 'b', submitterName: 'amy' })],
+      authMode: 'local',
+    })
+    const header = screen.getByRole('columnheader', { name: /submitter/i })
+    // Not sortable: clicking does not toggle aria-sort away from "none".
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-sort')).toBe('none')
+  })
+
+  it('submitter header IS sortable in org mode', () => {
+    renderSection({
+      instances: [summary({ id: 'a', submitterName: 'zed' }), summary({ id: 'b', submitterName: 'amy' })],
+      authMode: 'org',
+    })
+    const header = screen.getByRole('columnheader', { name: /submitter/i })
+    fireEvent.click(header)
+    expect(header.getAttribute('aria-sort')).toBe('ascending')
+    // Ascending by submitterName: amy before zed.
+    const bodyRows = screen.getAllByRole('row').slice(1)
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('b')
+  })
+})
+
 describe('QueueSection — dismissed row rendering', () => {
   it('renders a restore control for a dismissed terminal instance', () => {
     const onRestore = vi.fn()
