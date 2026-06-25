@@ -142,11 +142,13 @@ asserted at the wire, not only in a pure unit test.
   defaults. `QueueSection.tsx:27-34` (`defaultSortKey`) implements exactly the
   Phase 2 policy. No gap.
 
-## 10. Polish & spec-spirit sweep
+## 10. Polish & spec-spirit sweep — ✅ Complete
 
-- "you" rendering in local mode vs. display name + account identity (row detail) in
-  shared mode, keyed off `domain/identity.Mode` / `authMode`.
-- Long submitted titles, non-string `Variables`, terminal rows with no current step,
-  rows missing optional fields — all render placeholders, not crashes.
-- Last-error lazy-load in `RowDetailPanel` isolates failure to the open panel.
-- Confirm no spec non-goal crept in (no new queue actions, no execution changes).
+- Verified ✅: "you" rendering in local mode vs. display name + account identity
+  (row detail) in shared mode, keyed off `authMode` — `QueueTableRow.tsx:42-43`,
+  `RowDetailPanel.tsx:42-47`.
+- Verified ✅: all missing/optional fields render placeholders (`'—'`), not crashes
+  — `queueColumns.ts` accessors use `?? '—'` fallbacks; enricher degrades per-field.
+- Verified ✅: last-error lazy-load in `RowDetailPanel` isolates failure to the
+  open panel — `RowDetailPanel.test.tsx` covers fetch failure, absent failedNodeId.
+- Verified ✅: no spec non-goal crept in — no new queue actions, no execution changes.
