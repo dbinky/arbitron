@@ -19,7 +19,7 @@
 - Modify: `dashboard/src/components/QueueSection.module.css` (table styles)
 - Modify: `dashboard/src/components/QueueSection.test.tsx` (update for table + density)
 
-- [ ] Step 0: Add the `localDateTime` viewer-local formatter
+- [x] Step 0: Add the `localDateTime` viewer-local formatter
 
 The spec calls out a "submitted **local** time" column; the value on the wire is
 a UTC ISO timestamp, so the dashboard must render it in the viewer's local tz
@@ -57,7 +57,7 @@ describe('localDateTime', () => {
 })
 ```
 
-- [ ] Step 1: Write the failing test for `QueueTableRow`
+- [x] Step 1: Write the failing test for `QueueTableRow`
 
 Create `dashboard/src/components/QueueTableRow.test.tsx`:
 
@@ -153,7 +153,7 @@ describe('QueueTableRow', () => {
 })
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/components/QueueTableRow.test.tsx
@@ -161,7 +161,7 @@ cd dashboard && npx vitest run src/components/QueueTableRow.test.tsx
 
 Expected: failure — `Failed to resolve import "./QueueTableRow"`.
 
-- [ ] Step 3: Implement `QueueTableRow`
+- [x] Step 3: Implement `QueueTableRow`
 
 Create `dashboard/src/components/QueueTableRow.tsx`:
 
@@ -295,7 +295,7 @@ Create `dashboard/src/components/QueueTableRow.module.css`:
 }
 ```
 
-- [ ] Step 4: Run the QueueTableRow test, confirm it passes
+- [x] Step 4: Run the QueueTableRow test, confirm it passes
 
 ```bash
 cd dashboard && npx vitest run src/components/QueueTableRow.test.tsx
@@ -303,7 +303,7 @@ cd dashboard && npx vitest run src/components/QueueTableRow.test.tsx
 
 Expected: all assertions pass.
 
-- [ ] Step 5: Write the failing test for the extended `QueueSection` (table + density + default ordering)
+- [x] Step 5: Write the failing test for the extended `QueueSection` (table + density + default ordering)
 
 Replace `dashboard/src/components/QueueSection.test.tsx` with:
 
@@ -463,7 +463,7 @@ describe('QueueSection — dismissed row rendering', () => {
 })
 ```
 
-- [ ] Step 6: Run it, confirm it fails
+- [x] Step 6: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/components/QueueSection.test.tsx
@@ -471,7 +471,7 @@ cd dashboard && npx vitest run src/components/QueueSection.test.tsx
 
 Expected: failure — `QueueSection` still renders the old grid (`InstanceRow`), no `<table>`, no column headers.
 
-- [ ] Step 7: Rewrite `QueueSection` to render the table
+- [x] Step 7: Rewrite `QueueSection` to render the table
 
 Replace `dashboard/src/components/QueueSection.tsx` with:
 
@@ -725,7 +725,7 @@ Thread `onDismiss`/`onRestore` from `QueueSection` into each `QueueTableRow`. Ad
       ...
 ```
 
-- [ ] Step 8: Add the table styles to `QueueSection.module.css`
+- [x] Step 8: Add the table styles to `QueueSection.module.css`
 
 Append to `dashboard/src/components/QueueSection.module.css`:
 
@@ -759,7 +759,7 @@ Append to `dashboard/src/components/QueueSection.module.css`:
 }
 ```
 
-- [ ] Step 9: Run the QueueSection tests, confirm they pass
+- [x] Step 9: Run the QueueSection tests, confirm they pass
 
 ```bash
 cd dashboard && npx vitest run src/components/QueueSection.test.tsx src/components/QueueTableRow.test.tsx
@@ -767,7 +767,7 @@ cd dashboard && npx vitest run src/components/QueueSection.test.tsx src/componen
 
 Expected: all assertions pass.
 
-- [ ] Step 10: Run typecheck
+- [x] Step 10: Run typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit
@@ -775,7 +775,7 @@ cd dashboard && npx tsc --noEmit
 
 Expected: no type errors.
 
-- [ ] Step 11: Commit
+- [x] Step 11: Commit
 
 ```bash
 git add dashboard/src/utils/time.ts dashboard/src/utils/time.test.ts dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueTableRow.test.tsx dashboard/src/components/QueueSection.tsx dashboard/src/components/QueueSection.module.css dashboard/src/components/QueueSection.test.tsx

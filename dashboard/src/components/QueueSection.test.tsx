@@ -2,17 +2,19 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import QueueSection from './QueueSection'
-import type { InstanceSummary } from '../api/types'
+import type { EnrichedInstanceSummary } from '../api/types'
 
-function summary(overrides: Partial<InstanceSummary> = {}): InstanceSummary {
+function summary(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
     id: 'i1',
     ownerId: 'u1',
     workflowName: 'wf',
     state: 'failed',
     priority: 'normal',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    runName: 'run — wf',
+    retryCount: 0,
     ...overrides,
   }
 }
@@ -27,6 +29,8 @@ function renderSection(props: Partial<React.ComponentProps<typeof QueueSection>>
         countBg="red"
         countColor="red"
         timeMode="relative"
+        density="balanced"
+        authMode="local"
         {...props}
       />
     </MemoryRouter>,
@@ -37,8 +41,7 @@ describe('QueueSection dismiss-all', () => {
   it('renders [Dismiss All] when onDismissAll is provided', () => {
     const onDismissAll = vi.fn()
     renderSection({ onDismissAll })
-    const btn = screen.getByRole('button', { name: 'Dismiss All' })
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss All' }))
     expect(onDismissAll).toHaveBeenCalled()
   })
 
@@ -48,43 +51,80 @@ describe('QueueSection dismiss-all', () => {
   })
 })
 
-// Seam: verifies that sortInstances does NOT segregate dismissed items to the
-// bottom (or top) of the list. If someone inserted a dismissed-first/last key
-// into the sort comparator, a dismissed item with a more recent updatedAt
-// would no longer appear before the older non-dismissed item.
-describe('QueueSection — dismissed items interleaved in sort order', () => {
-  it('a dismissed item with a more recent updatedAt appears before an older non-dismissed item when sorted by time', () => {
-    const older = summary({ id: 'old', state: 'failed', dismissed: false, updatedAt: '2024-01-01T00:00:00Z' })
-    const newer = summary({ id: 'new', state: 'failed', dismissed: true,  updatedAt: '2024-06-01T00:00:00Z' })
+describe('QueueSection table rendering', () => {
+  it('renders a table with column headers from queueColumns', () => {
+    renderSection({ instances: [summary()] })
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /run/i })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /status/i })).toBeInTheDocument()
+  })
 
+  it('renders one row per instance', () => {
     renderSection({
-      instances: [older, newer],  // older first in input
-      timeMode: 'relative',
-      onDismiss: vi.fn(),
-      onRestore: vi.fn(),
+      instances: [summary({ id: 'a' }), summary({ id: 'b' })],
     })
+    const rows = screen.getAllByRole('row')
+    // 1 header row + 2 body rows
+    expect(rows.length).toBe(3)
+  })
 
-    // Change sort to "Time" (most-recently-updated first for relative mode).
-    fireEvent.click(screen.getByRole('button', { name: /^Time$/i }))
+  it('empty section shows the empty state', () => {
+    renderSection({ instances: [] })
+    expect(screen.getByText(/no instances/i)).toBeInTheDocument()
+  })
 
-    // Both rows render.
-    const rows = screen.getAllByRole('button', { name: /dismiss|restore/i })
-    // The Restore button belongs to the dismissed (newer) item; Dismiss to the older item.
-    // If sort is correct, Restore should appear first (newer item first) and Dismiss second.
-    expect(rows[0].getAttribute('aria-label')).toBe('Restore')
-    expect(rows[1].getAttribute('aria-label')).toBe('Dismiss')
+  it('default order for active section is elapsed desc (oldest createdAt first)', () => {
+    const older = summary({ id: 'old', state: 'running', createdAt: '2024-01-01T00:00:00Z' })
+    const newer = summary({ id: 'new', state: 'running', createdAt: '2024-06-01T00:00:00Z' })
+    renderSection({ instances: [newer, older], timeMode: 'elapsed' })
+    const bodyRows = screen.getAllByRole('row').slice(1) // skip header
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('old')
+    expect(bodyRows[1].getAttribute('data-row-id')).toBe('new')
+  })
+
+  it('default order for queued section is queue position ascending', () => {
+    const pos3 = summary({ id: 'p3', state: 'queued', queuePosition: 3 })
+    const pos1 = summary({ id: 'p1', state: 'queued', queuePosition: 1 })
+    renderSection({ instances: [pos3, pos1], timeMode: 'elapsed' })
+    const bodyRows = screen.getAllByRole('row').slice(1)
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('p1')
+    expect(bodyRows[1].getAttribute('data-row-id')).toBe('p3')
+  })
+
+  it('default order for terminal section is updatedAt desc (most-recent first)', () => {
+    const older = summary({ id: 'old', state: 'completed', updatedAt: '2024-01-01T00:00:00Z' })
+    const newer = summary({ id: 'new', state: 'completed', updatedAt: '2024-06-01T00:00:00Z' })
+    renderSection({ title: 'Completed', instances: [older, newer], timeMode: 'relative' })
+    const bodyRows = screen.getAllByRole('row').slice(1)
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('new')
+    expect(bodyRows[1].getAttribute('data-row-id')).toBe('old')
+  })
+
+  it('user re-sort by clicking a sortable header overrides the default order', () => {
+    const a = summary({ id: 'a', runName: 'A — wf', state: 'running' })
+    const b = summary({ id: 'b', runName: 'B — wf', state: 'running' })
+    renderSection({ instances: [a, b], timeMode: 'elapsed' })
+    fireEvent.click(screen.getByRole('columnheader', { name: /run/i }))
+    const bodyRows = screen.getAllByRole('row').slice(1)
+    // Ascending by runName: A before B
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('a')
+  })
+
+  it('density change hides dense-excluded columns', () => {
+    renderSection({ instances: [summary()], density: 'dense' })
+    // 'friendlyStep' is excluded in dense; its header should be absent
+    expect(screen.queryByRole('columnheader', { name: /step/i })).toBeNull()
   })
 })
 
 describe('QueueSection — dismissed row rendering', () => {
-  it('renders a restore control (not dismiss) for a dismissed terminal instance', () => {
+  it('renders a restore control for a dismissed terminal instance', () => {
     const onRestore = vi.fn()
     renderSection({
       instances: [summary({ id: 'i1', state: 'completed', dismissed: true })],
       onDismiss: vi.fn(),
       onRestore,
     })
-    expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
     const btn = screen.getByRole('button', { name: /restore/i })
     fireEvent.click(btn)
     expect(onRestore).toHaveBeenCalledWith('i1')
@@ -97,7 +137,6 @@ describe('QueueSection — dismissed row rendering', () => {
       onDismiss,
       onRestore: vi.fn(),
     })
-    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
     const btn = screen.getByRole('button', { name: /dismiss/i })
     fireEvent.click(btn)
     expect(onDismiss).toHaveBeenCalledWith('i2')
