@@ -27,9 +27,13 @@ compare to the baseline in `RALPH.md`.
   `eng.SetInstanceEnricher(instanceEnricher)` at `:783`, and
   `instanceEnricher.SetQueuePositionProvider(queueMgr)` at `:792` (real queue
   manager). `Engine.ListEnriched` calls `enricher.Enrich` at `domain/engine/engine.go:528`.
-- Open: confirm there is **no second `ListEnriched`-less code path** still serving
-  instances un-enriched in production (grep `\.List(` consumers in `adapter/http`
-  and `adapter/mcp`). The lean `summaryDTO` must not be what production returns.
+- Verified ✅: grep of `\.List(` in `adapter/http` and `adapter/mcp` shows the
+  only production instance-list path is `h.service.ListEnriched(...)` at
+  `adapter/http/instance_handler.go:384` and
+  `srv.deps.Engine.ListEnriched(ctx, filters)` at
+  `adapter/mcp/tools_instance.go:115`. The sole `instances.List` call is in
+  `DismissAll` (`instance_handler.go:629`), which needs raw IDs, not enriched
+  data — correct by design.
 
 ## 3. Provenance: HTTP and MCP both consume the enriched path (no nil/empty sink)
 
@@ -74,6 +78,9 @@ missing, add the equivalent for:
   empty instance still falls back to the short id (ladder's last rung).
 - **Submitter** — assert the sink shows the resolved `Username`/account identity from
   the real `UserRepository`, and degrades (not crashes) when the user is absent.
+  - **Fixed**: `TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent` at
+    `adapter/http/instance_list_enriched_e2e_test.go` proves absent user → empty
+    submitterName on the wire.
 - **Model / retry** — assert the sink carries `AggregateByInstances` output for an
   instance WITH node executions, and is empty/0 for a queued instance with none.
   - **Fixed**: `TestRouter_InstanceList_ModelRetryProvenanceProbe` + negative

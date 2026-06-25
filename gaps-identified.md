@@ -43,8 +43,11 @@ these are depth/hardening gaps, not "missing feature" gaps.
   `TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance` (negative control:
   queued instance with no executions → empty model, 0 retryCount) at
   `adapter/http/instance_list_enriched_e2e_test.go`.
+- **Fixed**: added `TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent`
+  (negative control: absent user → empty submitterName on the wire) at
+  `adapter/http/instance_list_enriched_e2e_test.go`.
 - Gap: audit/confirm the equivalent load-bearing assertion at the sink for **run
-  name, submitter, friendly step, backend, and density default**.
+  name, friendly step, backend, and density default**.
   Where a component is only covered by an over-mocked unit test, add a sink-level
   test (template: `adapter/http/instance_list_enriched_e2e_test.go`). List each one
   that is missing as a sub-item when found.

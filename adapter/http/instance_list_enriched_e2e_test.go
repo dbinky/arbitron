@@ -214,6 +214,63 @@ func TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance(t *testing.T) {
 	}
 }
 
+// TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent confirms that when
+// the user repository has no record for the instance owner, submitterName is
+// empty on the wire — the negative control for submitter wiring.
+func TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent(t *testing.T) {
+	owner := uuid.New()
+	nodeID := "n1"
+	now := time.Now()
+	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "Step"}}}
+	inst := &instance.Instance{
+		ID:               uuid.New(),
+		OwnerID:          owner,
+		WorkflowName:     "wf",
+		WorkflowSnapshot: snapshotMapForRouter(t, wf),
+		State:            instance.StateRunning,
+		CurrentNodeID:    &nodeID,
+		Variables:        map[string]any{},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	instRepo := newMockInstanceRepo()
+	instRepo.instances[inst.ID] = inst
+	nodeExecRepo := newMockNodeExecRepo()
+	snapRepo := newMockSnapshotRepo()
+	// No user seeded for owner — userRepo returns ErrNotFound.
+	userRepo := &probeUserRepo{users: map[uuid.UUID]instance.User{}}
+
+	eng := engine.NewEngine(
+		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
+		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
+		&probeQueueManager{}, &mockQueueRepoForRouter{},
+	)
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil))
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:   eng,
+		Instances: instRepo,
+		NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo,
+		Config:    &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	submitter, exists := resp[0]["submitterName"]
+	if exists {
+		assert.Equal(t, "", submitter, "absent user -> submitterName must be empty")
+	}
+}
+
 // TestRouter_InstanceList_EnricherAbsent_DegradesToShortID confirms that
 // WITHOUT the enricher wired, the runName is the short-id fallback (proving
 // the probe above is load-bearing — it fails when the wiring is inert).
