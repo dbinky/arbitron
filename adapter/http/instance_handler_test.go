@@ -132,12 +132,20 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 			continue
 		}
 		summaries = append(summaries, instance.InstanceSummary{
-			ID:           inst.ID,
-			WorkflowName: inst.WorkflowName,
-			State:        inst.State,
-			Priority:     inst.Priority,
-			CreatedAt:    inst.CreatedAt,
-			UpdatedAt:    inst.UpdatedAt,
+			ID:            inst.ID,
+			OwnerID:       inst.OwnerID,
+			WorkflowName:  inst.WorkflowName,
+			State:         inst.State,
+			Priority:      inst.Priority,
+			Department:    inst.Department,
+			Visibility:    inst.Visibility,
+			CurrentNodeID: inst.CurrentNodeID,
+			TriggerSource: inst.TriggerSource,
+			ScheduleID:    inst.ScheduleID,
+			CreatedAt:     inst.CreatedAt,
+			UpdatedAt:     inst.UpdatedAt,
+			CompletedAt:   inst.CompletedAt,
+			QueuedAt:      inst.QueuedAt,
 		})
 	}
 	// Apply limit/offset

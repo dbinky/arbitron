@@ -14,7 +14,7 @@
 - Modify: `cmd/arbitron/main.go:757-767` (construct enricher, set on engine)
 - Create: `adapter/http/instance_list_enriched_e2e_test.go` (router-level provenance probe)
 
-- [ ] Step 1: Write the failing router-level provenance probe
+- [x] Step 1: Write the failing router-level provenance probe
 
 Create `adapter/http/instance_list_enriched_e2e_test.go`:
 
@@ -244,7 +244,7 @@ var _ instance.QueueRepository = (*mockQueueRepoForRouter)(nil)
 
 Note: the `scopeAwareRepoForRouter`, `eventbusNoOpForRouter`, `mockQueueManagerForRouter`, and `mockQueueRepoForRouter` types above are redeclared in this file because the `http_test` package is distinct from `engine_test` and `server_test`'s private types. If any of these names already exist in the `http_test` package (check with `rg -n "type mockQueueManagerForRouter|type scopeAwareRepo" adapter/http/`), rename the ones in this file to avoid a collision (e.g. prefix with `enricherProbe`). The `eventbusNewNoOp` helper should instead reuse the real `eventbus.NewNoOp()` — import `github.com/arbitron/arbitron/adapter/eventbus` and replace the `eventbusNoOpForRouter` shim with `eventbus.NewNoOp()`. Adjust the import block accordingly and remove the shim type.
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./adapter/http/ -run TestRouter_InstanceList_Enricher
@@ -252,7 +252,7 @@ go test ./adapter/http/ -run TestRouter_InstanceList_Enricher
 
 Expected: the provenance probe FAILS — `runName` is the short-id fallback because the enricher is not yet wired at the composition root (the test constructs it explicitly, but `Engine.ListEnriched` is not yet the path the handler calls — the handler still calls `ListInstances` until Task 4's handler switch is in place). If Task 4 is already in place, the probe passes once the enricher is constructed in the test; the absent-enricher test confirms the probe is load-bearing. Fix any compile errors from the redeclared helper types first.
 
-- [ ] Step 3: Wire the enricher at the composition root
+- [x] Step 3: Wire the enricher at the composition root
 
 In `cmd/arbitron/main.go`, after the engine is constructed (after line 767, after the `NewEngine` call and before `eng.SetWorkspaceManager`), add:
 
@@ -265,7 +265,7 @@ In `cmd/arbitron/main.go`, after the engine is constructed (after line 767, afte
 	eng.SetInstanceEnricher(instanceEnricher)
 ```
 
-- [ ] Step 4: Confirm the build passes and the provenance probe passes
+- [x] Step 4: Confirm the build passes and the provenance probe passes
 
 ```bash
 go build ./... && go test ./adapter/http/ -run TestRouter_InstanceList_Enricher
@@ -273,7 +273,7 @@ go build ./... && go test ./adapter/http/ -run TestRouter_InstanceList_Enricher
 
 Expected: build succeeds; the provenance probe passes (`runName` is `"ProbeTitle — probe-wf"`); the absent-enricher test passes (`runName` is the degraded fallback).
 
-- [ ] Step 5: Confirm the full test gate passes
+- [x] Step 5: Confirm the full test gate passes
 
 ```bash
 go test ./...
@@ -281,7 +281,7 @@ go test ./...
 
 Expected: all package tests pass (existing router tests that decode the list into `[]instance.InstanceSummary` still work — the enriched JSON is a superset; existing handler tests use `mockInstanceService` which now has a `ListEnriched` fallback wrapping `ListInstances`).
 
-- [ ] Step 6: Commit
+- [x] Step 6: Commit
 
 ```bash
 git add cmd/arbitron/main.go adapter/http/instance_list_enriched_e2e_test.go
