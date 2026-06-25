@@ -76,6 +76,9 @@ missing, add the equivalent for:
   the real `UserRepository`, and degrades (not crashes) when the user is absent.
 - **Model / retry** — assert the sink carries `AggregateByInstances` output for an
   instance WITH node executions, and is empty/0 for a queued instance with none.
+  - **Fixed**: `TestRouter_InstanceList_ModelRetryProvenanceProbe` + negative
+    control `TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance` at
+    `adapter/http/instance_list_enriched_e2e_test.go`.
 - **Friendly step / backend** — assert the label/backend come from the real snapshot
   node, and are blank for terminal rows (see gap on backend in `gaps-identified.md`).
 - **Density preference** — a test proving the default is `balanced` and a persisted

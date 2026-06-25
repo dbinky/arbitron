@@ -38,8 +38,13 @@ these are depth/hardening gaps, not "missing feature" gaps.
   production input were nil/empty. Verified present for **queue position**
   (`adapter/http/instance_list_queue_position_e2e_test.go` + its negative-control
   `TestRouter_InstanceList_QueuePositionAbsentWhenProviderUnwired`).
+- **Fixed**: added `TestRouter_InstanceList_ModelRetryProvenanceProbe` (asserts
+  model, backend, retryCount on the wire with a seeded node execution) and
+  `TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance` (negative control:
+  queued instance with no executions → empty model, 0 retryCount) at
+  `adapter/http/instance_list_enriched_e2e_test.go`.
 - Gap: audit/confirm the equivalent load-bearing assertion at the sink for **run
-  name, submitter, model, retry count, friendly step, backend, and density default**.
+  name, submitter, friendly step, backend, and density default**.
   Where a component is only covered by an over-mocked unit test, add a sink-level
   test (template: `adapter/http/instance_list_enriched_e2e_test.go`). List each one
   that is missing as a sub-item when found.
