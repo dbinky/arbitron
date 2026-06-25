@@ -8,6 +8,12 @@ export interface ColumnDef {
   header: string
   /** Value accessor over an enriched row, returning a display string. */
   accessor: (row: EnrichedInstanceSummary) => string
+  /**
+   * Optional sort key accessor. When present, sorting compares this value
+   * (a number for date/numeric columns, e.g. a timestamp or a count) instead of
+   * the display string. Defaults to `accessor` (string compare) when omitted.
+   */
+  sortAccessor?: (row: EnrichedInstanceSummary) => string | number
   /** Whether the user can sort by this column. */
   sortable: boolean
   /** Densities in which this column is visible. */
@@ -43,6 +49,7 @@ export const COLUMNS: ColumnDef[] = [
     key: 'submittedAt',
     header: 'Submitted',
     accessor: (r) => r.createdAt,
+    sortAccessor: (r) => new Date(r.createdAt).getTime(),
     sortable: true,
     densities: ['expanded'],
   },
@@ -64,6 +71,7 @@ export const COLUMNS: ColumnDef[] = [
     key: 'elapsed',
     header: 'Elapsed',
     accessor: (r) => r.createdAt,
+    sortAccessor: (r) => new Date(r.createdAt).getTime(),
     sortable: true,
     densities: ALL_DENSITIES,
   },
@@ -71,6 +79,8 @@ export const COLUMNS: ColumnDef[] = [
     key: 'queuePosition',
     header: 'Queue',
     accessor: (r) => (r.queuePosition && r.queuePosition > 0 ? String(r.queuePosition) : '—'),
+    // Absent/zero position sorts last, not first.
+    sortAccessor: (r) => r.queuePosition ?? Number.MAX_SAFE_INTEGER,
     sortable: true,
     densities: ALL_DENSITIES,
   },
@@ -90,6 +100,7 @@ export const COLUMNS: ColumnDef[] = [
     key: 'retryCount',
     header: 'Retries',
     accessor: (r) => String(r.retryCount ?? 0),
+    sortAccessor: (r) => r.retryCount ?? 0,
     sortable: true,
     densities: ['expanded'],
   },

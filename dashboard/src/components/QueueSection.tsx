@@ -21,8 +21,6 @@ interface QueueSectionProps {
   onRestore?: (id: string) => void
 }
 
-const priorityOrder: Record<string, number> = { high: 0, normal: 1, low: 2 }
-
 /** defaultSortKey picks the initial sort column from the section's state mix. */
 function defaultSortKey(instances: EnrichedInstanceSummary[]): string {
   const states = new Set(instances.map((i) => i.state))
@@ -34,23 +32,15 @@ function defaultSortKey(instances: EnrichedInstanceSummary[]): string {
 }
 
 function compareRows(a: EnrichedInstanceSummary, b: EnrichedInstanceSummary, col: ColumnDef): number {
-  const va = col.accessor(a)
-  const vb = col.accessor(b)
-  if (col.key === 'elapsed' || col.key === 'updatedAt' || col.key === 'submittedAt') {
-    return new Date(va).getTime() - new Date(vb).getTime()
+  // A column's sortAccessor (when declared) yields the comparable value — a
+  // number for date/numeric columns, otherwise the display string accessor.
+  const get = col.sortAccessor ?? col.accessor
+  const va = get(a)
+  const vb = get(b)
+  if (typeof va === 'number' && typeof vb === 'number') {
+    return va - vb
   }
-  if (col.key === 'queuePosition') {
-    const pa = a.queuePosition ?? Number.MAX_SAFE_INTEGER
-    const pb = b.queuePosition ?? Number.MAX_SAFE_INTEGER
-    return pa - pb
-  }
-  if (col.key === 'retryCount') {
-    return (a.retryCount ?? 0) - (b.retryCount ?? 0)
-  }
-  if (col.key === 'priority') {
-    return (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1)
-  }
-  return va.localeCompare(vb)
+  return String(va).localeCompare(String(vb))
 }
 
 export default function QueueSection({

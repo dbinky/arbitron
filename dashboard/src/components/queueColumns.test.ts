@@ -47,6 +47,29 @@ describe('COLUMNS', () => {
   })
 })
 
+describe('sortAccessor', () => {
+  it('date/numeric columns declare a sortAccessor returning a sortable primitive', () => {
+    const elapsed = getColumn('elapsed')!
+    expect(typeof elapsed.sortAccessor).toBe('function')
+    // elapsed sorts by createdAt timestamp (a number), not a display string.
+    const v = elapsed.sortAccessor!(row({ createdAt: '2024-01-01T00:00:00Z' }))
+    expect(typeof v).toBe('number')
+
+    const queue = getColumn('queuePosition')!
+    expect(queue.sortAccessor!(row({ queuePosition: 5 }))).toBe(5)
+    // absent position sorts last (a large number), not 0.
+    expect(queue.sortAccessor!(row({ queuePosition: undefined }))).toBe(Number.MAX_SAFE_INTEGER)
+
+    const retries = getColumn('retryCount')!
+    expect(retries.sortAccessor!(row({ retryCount: 3 }))).toBe(3)
+  })
+
+  it('string columns have no sortAccessor (default to the string accessor)', () => {
+    const workflow = getColumn('workflow')!
+    expect(workflow.sortAccessor).toBeUndefined()
+  })
+})
+
 describe('visibleColumns', () => {
   it('balanced density shows the full set minus only secondary detail columns', () => {
     const cols = visibleColumns('balanced' as QueueDensity)
