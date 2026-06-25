@@ -30,5 +30,16 @@ SELECT * FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AN
 -- name: ListWaitingWithWebhook :many
 SELECT * FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL;
 
+-- name: ListQueued :many
+SELECT * FROM instances
+WHERE state = 'queued'
+ORDER BY
+  CASE priority
+    WHEN 'high' THEN 1
+    WHEN 'normal' THEN 2
+    WHEN 'low' THEN 3
+  END,
+  queued_at ASC;
+
 -- name: SetQueued :exec
 UPDATE instances SET state = 'queued', queued_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?;

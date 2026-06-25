@@ -120,50 +120,17 @@ func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Inst
 // (high → normal → low) then QueuedAt FIFO within a priority — the same
 // ordering NextEligible uses. An empty queue returns an empty slice.
 func (r *QueueRepo) ListQueued(ctx context.Context) ([]instance.Instance, error) {
-	query := `SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority,
-		variables, original_variables, current_node_id, failed_node_id,
-		created_at, updated_at, completed_at, queued_at, waiting_until,
-		webhook_token, webhook_secret_hash, webhook_received_at,
-		department, visibility, trigger_source, schedule_id, workflow_id
-		FROM instances WHERE state = 'queued' ORDER BY
-		CASE priority
-			WHEN 'high' THEN 1
-			WHEN 'normal' THEN 2
-			WHEN 'low' THEN 3
-		END,
-		queued_at ASC`
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.queries.ListQueued(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing queued instances: %w", err)
 	}
-	defer rows.Close()
-
-	instances := make([]instance.Instance, 0)
-	for rows.Next() {
-		inst, err := scanInstanceRow(rows)
+	instances := make([]instance.Instance, 0, len(rows))
+	for _, row := range rows {
+		inst, err := rowToInstance(row)
 		if err != nil {
 			return nil, err
 		}
 		instances = append(instances, *inst)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating queued instances: %w", err)
-	}
 	return instances, nil
-}
-
-// scanInstanceRow scans a full instance row from *sql.Rows into a domain
-// Instance, mirroring the generated Instance struct column order.
-func scanInstanceRow(rows *sql.Rows) (*instance.Instance, error) {
-	var i generated.Instance
-	if err := rows.Scan(
-		&i.ID, &i.OwnerID, &i.WorkflowName, &i.WorkflowSnapshot, &i.State, &i.Priority,
-		&i.Variables, &i.OriginalVariables, &i.CurrentNodeID, &i.FailedNodeID,
-		&i.CreatedAt, &i.UpdatedAt, &i.CompletedAt, &i.QueuedAt, &i.WaitingUntil,
-		&i.WebhookToken, &i.WebhookSecretHash, &i.WebhookReceivedAt,
-		&i.Department, &i.Visibility, &i.TriggerSource, &i.ScheduleID, &i.WorkflowID,
-	); err != nil {
-		return nil, fmt.Errorf("scanning instance row: %w", err)
-	}
-	return rowToInstance(i)
 }
