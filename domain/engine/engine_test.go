@@ -497,6 +497,10 @@ func (r *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, 
 	return nil, instance.ErrNotFound
 }
 
+func (r *mockUserRepo) UsersByID(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	return map[uuid.UUID]instance.User{}, nil
+}
+
 func (r *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }

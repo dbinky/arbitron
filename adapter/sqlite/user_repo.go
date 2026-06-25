@@ -69,6 +69,47 @@ func (r *UserRepo) GetByID(ctx context.Context, id uuid.UUID) (*instance.User, e
 	return toDomainUser(row.ID, row.Subject, row.Email, row.Username, row.Role)
 }
 
+// UsersByID batch-resolves users by ID in a single query using a parameterized
+// IN clause. An empty ids slice short-circuits to an empty map (no query). IDs
+// with no matching row are absent from the result. rows.Err is checked so a
+// mid-iteration failure surfaces (the enricher degrades the submitter field
+// rather than swallowing it silently).
+func (r *UserRepo) UsersByID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	out := make(map[uuid.UUID]instance.User, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = uuidToString(id)
+	}
+	query := `SELECT id, subject, email, username, role FROM users WHERE id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("batch-getting users by id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, username, role string
+		var subject, email sql.NullString
+		if err := rows.Scan(&id, &subject, &email, &username, &role); err != nil {
+			return nil, fmt.Errorf("scanning user row: %w", err)
+		}
+		u, err := toDomainUser(id, subject, email, username, role)
+		if err != nil {
+			return nil, fmt.Errorf("converting user row: %w", err)
+		}
+		out[u.ID] = *u
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating users by id: %w", err)
+	}
+	return out, nil
+}
+
 func (r *UserRepo) GetBySubject(ctx context.Context, subject string) (*instance.User, error) {
 	// SECURITY: an empty subject must never match the NULL-subject default user.
 	// In SQL `subject = ''` never matches a NULL row, but we short-circuit

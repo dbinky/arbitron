@@ -122,25 +122,20 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 	for i, s := range summaries {
 		row := instance.EnrichedInstanceSummary{InstanceSummary: s}
 
-		// Run name: needs the full instance for variables + snapshot + inputs.
-		// Best-effort: a Get failure degrades only the run name (the ladder
-		// still yields the short id from s.ID).
-		inst, instErr := e.instances.Get(ctx, s.ID)
-		if instErr != nil || inst == nil {
-			slog.Warn("enricher: instance load failed; run name degraded to short id", "instanceID", s.ID, "error", instErr)
-			row.RunName = instance.DeriveRunName(s.WorkflowName, nil, nil, s.ID)
-		} else {
-			inputs := readWorkflowInputs(inst.WorkflowSnapshot)
-			row.RunName = instance.DeriveRunName(inst.WorkflowName, inst.Variables, inputs, inst.ID)
+		// Run name + friendly step come from the summary's variables and workflow
+		// snapshot, which the ListInstances read-model now carries — no per-row
+		// instance load (avoids the N+1). When the snapshot is absent the ladder
+		// still yields the short id from s.ID.
+		inputs := readWorkflowInputs(s.WorkflowSnapshot)
+		row.RunName = instance.DeriveRunName(s.WorkflowName, s.Variables, inputs, s.ID)
 
-			// Friendly step + backend from the relevant node in the snapshot.
-			label, backend := e.resolveNodeFields(inst)
-			row.FriendlyStep = label
-			row.Backend = backend
+		// Friendly step + backend from the relevant node in the snapshot.
+		label, backend := e.resolveNodeFields(s)
+		row.FriendlyStep = label
+		row.Backend = backend
 
-			// FailedNodeID carried for the dashboard detail panel's lazy error load.
-			row.FailedNodeID = inst.FailedNodeID
-		}
+		// FailedNodeID carried for the dashboard detail panel's lazy error load.
+		row.FailedNodeID = s.FailedNodeID
 
 		// Submitter from the batched user map.
 		if u, ok := userMap[s.OwnerID]; ok {
@@ -163,38 +158,40 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 	return out, nil
 }
 
-// batchUsers resolves the distinct owner IDs to a user map. A missing or
-// errored user is absent from the map (the caller degrades the submitter
-// field). Distinct IDs are looked up once.
+// batchUsers resolves the distinct owner IDs to a user map in a single batched
+// query. The enricher owns deduplication (ownerSet is already distinct). A
+// repository error degrades the submitter field for the whole page (rows still
+// render) rather than failing the list; a missing user is simply absent.
 func (e *InstanceEnricher) batchUsers(ctx context.Context, ownerSet map[uuid.UUID]struct{}) map[uuid.UUID]instance.User {
 	out := make(map[uuid.UUID]instance.User, len(ownerSet))
-	if e.users == nil {
+	if e.users == nil || len(ownerSet) == 0 {
 		return out
 	}
+	ids := make([]uuid.UUID, 0, len(ownerSet))
 	for id := range ownerSet {
-		u, err := e.users.GetByID(ctx, id)
-		if err != nil {
-			slog.Warn("enricher: user lookup failed; submitter degraded", "ownerID", id, "error", err)
-			continue
-		}
-		out[id] = *u
+		ids = append(ids, id)
 	}
-	return out
+	users, err := e.users.UsersByID(ctx, ids)
+	if err != nil {
+		slog.Warn("enricher: batched user lookup failed; submitter degraded", "error", err)
+		return out
+	}
+	return users
 }
 
 // resolveNodeFields returns (label, backend) for the relevant node in the
-// instance's workflow snapshot. The relevant node is:
+// summary's workflow snapshot. The relevant node is:
 //   - CurrentNodeID when the instance is active (running/waiting/paused)
 //   - FailedNodeID when failed
 //   - none otherwise (completed/cancelled have no current step) -> ("", "")
 //
 // Best-effort: any parse/lookup failure also returns ("", "").
-func (e *InstanceEnricher) resolveNodeFields(inst *instance.Instance) (label, backend string) {
-	nodeID := relevantNodeID(inst)
+func (e *InstanceEnricher) resolveNodeFields(s instance.InstanceSummary) (label, backend string) {
+	nodeID := relevantNodeID(s)
 	if nodeID == "" {
 		return "", ""
 	}
-	node, err := FindNodeByID(inst.WorkflowSnapshot, nodeID)
+	node, err := FindNodeByID(s.WorkflowSnapshot, nodeID)
 	if err != nil {
 		return "", ""
 	}
@@ -212,12 +209,12 @@ func (e *InstanceEnricher) resolveNodeFields(inst *instance.Instance) (label, ba
 }
 
 // relevantNodeID picks the node whose label/backend the row should show.
-func relevantNodeID(inst *instance.Instance) string {
-	if inst.State == instance.StateFailed && inst.FailedNodeID != nil && *inst.FailedNodeID != "" {
-		return *inst.FailedNodeID
+func relevantNodeID(s instance.InstanceSummary) string {
+	if s.State == instance.StateFailed && s.FailedNodeID != nil && *s.FailedNodeID != "" {
+		return *s.FailedNodeID
 	}
-	if inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
-		return *inst.CurrentNodeID
+	if s.CurrentNodeID != nil && *s.CurrentNodeID != "" {
+		return *s.CurrentNodeID
 	}
 	// Terminal (completed/cancelled) rows have no *current* step (per the
 	// Phase-1 design provenance and the spec's "what step it is currently on"),

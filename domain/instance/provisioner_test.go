@@ -40,6 +40,9 @@ func (r *fakeProvUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) {
 func (r *fakeProvUserRepo) GetByID(context.Context, uuid.UUID) (*User, error) {
 	return nil, ErrNotFound
 }
+func (r *fakeProvUserRepo) UsersByID(context.Context, []uuid.UUID) (map[uuid.UUID]User, error) {
+	return map[uuid.UUID]User{}, nil
+}
 func (r *fakeProvUserRepo) GetBySubject(_ context.Context, subject string) (*User, error) {
 	if r.getErr != nil {
 		return nil, r.getErr

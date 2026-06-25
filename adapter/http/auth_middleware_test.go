@@ -41,6 +41,16 @@ func (r *fakeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User,
 	return nil, instance.ErrNotFound
 }
 
+func (r *fakeUserRepo) UsersByID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	out := make(map[uuid.UUID]instance.User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.byID[id]; ok {
+			out[id] = *u
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeUserRepo) GetBySubject(_ context.Context, subject string) (*instance.User, error) {
 	if subject == "" {
 		return nil, instance.ErrNotFound

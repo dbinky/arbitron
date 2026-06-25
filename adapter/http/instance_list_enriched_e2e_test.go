@@ -517,6 +517,15 @@ func (r *probeUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User
 	}
 	return &u, nil
 }
+func (r *probeUserRepo) UsersByID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	out := make(map[uuid.UUID]instance.User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.users[id]; ok {
+			out[id] = u
+		}
+	}
+	return out, nil
+}
 func (r *probeUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) { return uuid.Nil, nil }
 func (r *probeUserRepo) GetBySubject(context.Context, string) (*instance.User, error) {
 	return nil, instance.ErrNotFound

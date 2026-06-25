@@ -40,6 +40,15 @@ func (r *fakeUserSvcRepo) GetByID(_ context.Context, id uuid.UUID) (*User, error
 	}
 	return nil, ErrNotFound
 }
+func (r *fakeUserSvcRepo) UsersByID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]User, error) {
+	out := make(map[uuid.UUID]User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.byID[id]; ok {
+			out[id] = *u
+		}
+	}
+	return out, nil
+}
 func (r *fakeUserSvcRepo) GetBySubject(context.Context, string) (*User, error) {
 	return nil, ErrNotFound
 }

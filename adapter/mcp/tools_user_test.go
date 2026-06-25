@@ -34,6 +34,17 @@ func (r *memUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, 
 	}
 	return nil, instance.ErrNotFound
 }
+func (r *memUserRepo) UsersByID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[uuid.UUID]instance.User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.byID[id]; ok {
+			out[id] = *u
+		}
+	}
+	return out, nil
+}
 func (r *memUserRepo) GetBySubject(context.Context, string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }

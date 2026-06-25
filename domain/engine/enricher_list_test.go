@@ -70,7 +70,7 @@ func TestEngine_ListEnriched_AppliesAuthzThenEnriches(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "Step"}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, Variables: map[string]any{"title": "T"}, CreatedAt: time.Now()}
 	repo := &enricherListRepo{
-		summaries: []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}},
+		summaries: []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot}},
 		instances: map[uuid.UUID]*instance.Instance{inst.ID: inst},
 	}
 	nodeExecRepo := newMockNodeExecutionRepo()

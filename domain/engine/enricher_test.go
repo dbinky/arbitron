@@ -63,7 +63,7 @@ func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
 		ID: uuid.New(), InstanceID: inst.ID, NodeID: nodeID, Attempt: 2, LLMModel: &model, StartedAt: time.Now(),
 	})
 
-	summaries := []instance.InstanceSummary{{ID: inst.ID, WorkflowName: inst.WorkflowName, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, WorkflowName: inst.WorkflowName, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	enr := d.enricher()
 	got, err := enr.Enrich(context.Background(), summaries)
@@ -165,6 +165,15 @@ func (r *enricherUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.U
 	}
 	return &u, nil
 }
+func (r *enricherUserRepo) UsersByID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	out := make(map[uuid.UUID]instance.User, len(ids))
+	for _, id := range ids {
+		if u, ok := r.users[id]; ok {
+			out[id] = u
+		}
+	}
+	return out, nil
+}
 func (r *enricherUserRepo) GetDefaultUser(context.Context) (uuid.UUID, error) { return uuid.Nil, nil }
 func (r *enricherUserRepo) GetBySubject(context.Context, string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
@@ -196,7 +205,7 @@ func TestInstanceEnricher_UserLookupFails_SubmitterEmpty(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step"}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err, "user lookup failure degrades the field, not the list")
@@ -212,7 +221,7 @@ func TestInstanceEnricher_SnapshotMissingNode_FriendlyStepEmpty(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: "real-node", Label: "Real"}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: strPtr("missing-node"), CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: strPtr("missing-node"), CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: strPtr("missing-node"), CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
@@ -227,7 +236,7 @@ func TestInstanceEnricher_QueuedInstance_NoExecutions(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Inputs: []workflow.InputField{{Name: "title", Type: "string"}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateQueued, Variables: map[string]any{"title": "T"}, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateQueued, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, WorkflowName: "wf", State: instance.StateQueued, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
@@ -255,8 +264,8 @@ func TestInstanceEnricher_DuplicateOwnerIDs_DedupedToOneLookup(t *testing.T) {
 	d.instRepo.instances[inst2.ID] = inst2
 
 	summaries := []instance.InstanceSummary{
-		{ID: inst1.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst1.CreatedAt},
-		{ID: inst2.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst2.CreatedAt},
+		{ID: inst1.ID, OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, CreatedAt: inst1.CreatedAt, WorkflowSnapshot: inst1.WorkflowSnapshot},
+		{ID: inst2.ID, OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, CreatedAt: inst2.CreatedAt, WorkflowSnapshot: inst2.WorkflowSnapshot},
 	}
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
@@ -273,7 +282,7 @@ func TestInstanceEnricher_BackendUnset_EmptyBackend(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	// No defaultAgentBackend set -> empty cell (no fallback).
 	got, err := d.enricher().Enrich(context.Background(), summaries)
@@ -289,7 +298,7 @@ func TestInstanceEnricher_BackendUnset_ResolvesToDefault(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "claude-code")
 	got, err := enr.Enrich(context.Background(), summaries)
@@ -305,7 +314,7 @@ func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: failedNode, Label: "Crashed step"}, {ID: "other", Label: "Other"}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateFailed, FailedNodeID: &failedNode, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateFailed, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateFailed, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
@@ -344,7 +353,7 @@ func TestInstanceEnricher_AccountIdentity_NoSubjectFallback(t *testing.T) {
 	wf := workflow.Workflow{Name: "wf"}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
-	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst.CreatedAt}}
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
 
 	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)

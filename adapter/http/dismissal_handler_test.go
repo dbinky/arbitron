@@ -27,6 +27,9 @@ func (m *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) { re
 func (m *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }
+func (m *mockUserRepo) UsersByID(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	return map[uuid.UUID]instance.User{}, nil
+}
 func (m *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
 	return nil, instance.ErrNotFound
 }
@@ -213,6 +216,9 @@ func (e *errUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 // only calls GetDefaultUser); they exist to satisfy the Phase 6-expanded
 // interface and return the configured error / zero values.
 func (e *errUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
+	return nil, e.err
+}
+func (e *errUserRepo) UsersByID(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.User, error) {
 	return nil, e.err
 }
 func (e *errUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
