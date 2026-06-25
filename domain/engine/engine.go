@@ -524,8 +524,7 @@ func (e *Engine) ListEnriched(ctx context.Context, filters instance.ListFilters)
 		}
 		return out, nil
 	}
-	callerID, _ := identity.FromContext(ctx)
-	return e.enricher.Enrich(ctx, summaries, callerID)
+	return e.enricher.Enrich(ctx, summaries)
 }
 
 // GetInstance loads an instance the caller may view, else ErrNotFound. Both an

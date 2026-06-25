@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -81,10 +80,10 @@ func (e *InstanceEnricher) SetQueuePositionProvider(p QueuePositionProvider) {
 }
 
 // Enrich composes the additive fields for the given authorized page. The
-// callerID drives "you" vs display-name rendering in the HTTP layer (the
-// enricher resolves the display name; the HTTP layer decides the label from
-// mode). Returns the enriched rows in the same order as the input.
-func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.InstanceSummary, callerID identity.Identity) ([]instance.EnrichedInstanceSummary, error) {
+// enricher resolves the submitter's display name; the HTTP layer decides the
+// "you" vs display-name label from the auth mode. Returns the enriched rows in
+// the same order as the input.
+func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.InstanceSummary) ([]instance.EnrichedInstanceSummary, error) {
 	if len(summaries) == 0 {
 		return []instance.EnrichedInstanceSummary{}, nil
 	}

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/arbitron/arbitron/domain/engine"
-	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -67,7 +66,7 @@ func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
 	summaries := []instance.InstanceSummary{{ID: inst.ID, WorkflowName: inst.WorkflowName, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
 	enr := d.enricher()
-	got, err := enr.Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := enr.Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
@@ -199,7 +198,7 @@ func TestInstanceEnricher_UserLookupFails_SubmitterEmpty(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "self", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err, "user lookup failure degrades the field, not the list")
 	require.Len(t, got, 1)
 	assert.Equal(t, "", got[0].Submitter.Name)
@@ -215,7 +214,7 @@ func TestInstanceEnricher_SnapshotMissingNode_FriendlyStepEmpty(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: strPtr("missing-node"), CreatedAt: inst.CreatedAt}}
 
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	assert.Equal(t, "", got[0].FriendlyStep, "node not in snapshot -> empty, row still returned")
 	assert.NotEmpty(t, got[0].RunName, "run name still derived")
@@ -230,7 +229,7 @@ func TestInstanceEnricher_QueuedInstance_NoExecutions(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateQueued, CreatedAt: inst.CreatedAt}}
 
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	assert.Equal(t, "", got[0].Model, "queued: no model")
 	assert.Equal(t, 0, got[0].RetryCount, "queued: 0 retries")
@@ -240,7 +239,7 @@ func TestInstanceEnricher_QueuedInstance_NoExecutions(t *testing.T) {
 
 func TestInstanceEnricher_EmptyPage(t *testing.T) {
 	d := newEnricherDeps()
-	got, err := d.enricher().Enrich(context.Background(), nil, identity.Identity{UserID: uuid.New(), Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -259,7 +258,7 @@ func TestInstanceEnricher_DuplicateOwnerIDs_DedupedToOneLookup(t *testing.T) {
 		{ID: inst1.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst1.CreatedAt},
 		{ID: inst2.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst2.CreatedAt},
 	}
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Equal(t, "alice", got[0].Submitter.Name)
@@ -277,7 +276,7 @@ func TestInstanceEnricher_BackendUnset_EmptyBackend(t *testing.T) {
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
 	// No defaultAgentBackend set -> empty cell (no fallback).
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	assert.Equal(t, "", got[0].Backend, "BackendUnset with no default -> empty cell")
 }
@@ -293,7 +292,7 @@ func TestInstanceEnricher_BackendUnset_ResolvesToDefault(t *testing.T) {
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
 	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "claude-code")
-	got, err := enr.Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := enr.Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-code", got[0].Backend, "BackendUnset with defaultAgentBackend -> resolves to default")
 }
@@ -308,7 +307,7 @@ func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateFailed, CreatedAt: inst.CreatedAt}}
 
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	assert.Equal(t, "Crashed step", got[0].FriendlyStep, "failed -> label from FailedNodeID")
 }
@@ -347,7 +346,7 @@ func TestInstanceEnricher_AccountIdentity_NoSubjectFallback(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CreatedAt: inst.CreatedAt}}
 
-	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	got, err := d.enricher().Enrich(context.Background(), summaries)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "", got[0].Submitter.AccountIdentity, "subject must NOT be exposed as an account-identity fallback")
