@@ -14,7 +14,7 @@
 - Create: `domain/queue/positions.go`
 - Create: `domain/queue/positions_test.go`
 
-- [ ] Step 1: Write the failing test for the happy path (mixed priorities, distinct owners, no caps)
+- [x] Step 1: Write the failing test for the happy path (mixed priorities, distinct owners, no caps)
 
 Create `domain/queue/positions_test.go`:
 
@@ -168,7 +168,7 @@ func TestQueuePositions_GlobalCapSaturated_NoDeferralByGlobalCap(t *testing.T) {
 func ptrTime(t time.Time) *time.Time { return &t }
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./domain/queue/ -run TestQueuePositions
@@ -176,7 +176,7 @@ go test ./domain/queue/ -run TestQueuePositions
 
 Expected: build failure — `undefined: queue.Manager.QueuePositions`.
 
-- [ ] Step 3: Implement `QueuePositions`
+- [x] Step 3: Implement `QueuePositions`
 
 Create `domain/queue/positions.go`:
 
@@ -295,7 +295,7 @@ func priorityRank(p instance.Priority) int {
 }
 ```
 
-- [ ] Step 4: Run the tests, confirm they pass
+- [x] Step 4: Run the tests, confirm they pass
 
 ```bash
 go test ./domain/queue/ -run TestQueuePositions
@@ -307,7 +307,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/queue	0.00s
 ```
 
-- [ ] Step 5: Confirm the whole module builds
+- [x] Step 5: Confirm the whole module builds
 
 ```bash
 go build ./... && go test ./domain/queue/
@@ -315,7 +315,7 @@ go build ./... && go test ./domain/queue/
 
 Expected: no build errors; all queue tests pass.
 
-- [ ] Step 6: Commit
+- [x] Step 6: Commit
 
 ```bash
 git add domain/queue/positions.go domain/queue/positions_test.go
