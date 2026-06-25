@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router-dom'
 import QueueSection from './QueueSection'
 import type { EnrichedInstanceSummary } from '../api/types'
 
+vi.mock('../api/client', () => ({ api: { instances: { getNodeTrace: vi.fn() } } }))
+
 function summary(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
     id: 'i1',
@@ -150,5 +152,28 @@ describe('QueueSection — dismissed row rendering', () => {
     })
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
+  })
+})
+
+describe('QueueSection — row detail panel', () => {
+  it('renders the detail panel when a row is expanded', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.instances.getNodeTrace).mockResolvedValue({
+      id: 'e1', instanceId: 'i1', nodeId: 'fail-node', attempt: 1, status: 'failed',
+      error: { error: 'boom' }, startedAt: '2024-01-01T00:00:00Z',
+    } as any)
+    renderSection({
+      instances: [summary({ id: 'i1', state: 'failed', failedNodeId: 'fail-node' })],
+    })
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }))
+    expect(screen.getByTestId('row-detail-panel')).toBeInTheDocument()
+  })
+
+  it('collapses the detail panel on second expand click', () => {
+    renderSection({ instances: [summary({ id: 'i1' })] })
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }))
+    expect(screen.getByTestId('row-detail-panel')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /collapse/i }))
+    expect(screen.queryByTestId('row-detail-panel')).toBeNull()
   })
 })

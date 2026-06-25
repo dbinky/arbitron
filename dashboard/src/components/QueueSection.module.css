@@ -138,3 +138,11 @@
 .sortActive {
   color: var(--text-primary);
 }
+
+.detailRow {
+  background: var(--bg-surface);
+}
+
+.detailCell {
+  padding: 0;
+}

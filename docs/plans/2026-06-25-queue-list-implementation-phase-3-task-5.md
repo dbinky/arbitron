@@ -17,7 +17,7 @@
 - Modify: `dashboard/src/components/QueueSection.tsx` (render `RowDetailPanel` under the expanded row)
 - Modify: `dashboard/src/components/QueueSection.test.tsx` (add expand/detail assertion)
 
-- [ ] Step 1: Write the failing test for the detail panel
+- [x] Step 1: Write the failing test for the detail panel
 
 Create `dashboard/src/components/RowDetailPanel.test.tsx`:
 
@@ -123,7 +123,7 @@ describe('RowDetailPanel', () => {
 })
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/components/RowDetailPanel.test.tsx
@@ -131,7 +131,7 @@ cd dashboard && npx vitest run src/components/RowDetailPanel.test.tsx
 
 Expected: failure — `Failed to resolve import "./RowDetailPanel"`.
 
-- [ ] Step 3: Implement the `RowDetailPanel`
+- [x] Step 3: Implement the `RowDetailPanel`
 
 Create `dashboard/src/components/RowDetailPanel.tsx`:
 
@@ -259,7 +259,7 @@ Create `dashboard/src/components/RowDetailPanel.module.css`:
 }
 ```
 
-- [ ] Step 4: Run the RowDetailPanel test, confirm it passes
+- [x] Step 4: Run the RowDetailPanel test, confirm it passes
 
 ```bash
 cd dashboard && npx vitest run src/components/RowDetailPanel.test.tsx
@@ -267,7 +267,7 @@ cd dashboard && npx vitest run src/components/RowDetailPanel.test.tsx
 
 Expected: all assertions pass.
 
-- [ ] Step 5: Render `RowDetailPanel` under the expanded row in `QueueSection`
+- [x] Step 5: Render `RowDetailPanel` under the expanded row in `QueueSection`
 
 In `dashboard/src/components/QueueSection.tsx`, import the panel:
 
@@ -343,7 +343,7 @@ Add to `QueueSection.module.css`:
 }
 ```
 
-- [ ] Step 6: Add the expand/detail assertion to `QueueSection.test.tsx`
+- [x] Step 6: Add the expand/detail assertion to `QueueSection.test.tsx`
 
 Append to `dashboard/src/components/QueueSection.test.tsx`:
 
@@ -380,7 +380,7 @@ import { vi } from 'vitest'
 vi.mock('../api/client', () => ({ api: { instances: { getNodeTrace: vi.fn() } } }))
 ```
 
-- [ ] Step 7: Run all QueueSection + RowDetailPanel tests, confirm they pass
+- [x] Step 7: Run all QueueSection + RowDetailPanel tests, confirm they pass
 
 ```bash
 cd dashboard && npx vitest run src/components/QueueSection.test.tsx src/components/RowDetailPanel.test.tsx
@@ -388,7 +388,7 @@ cd dashboard && npx vitest run src/components/QueueSection.test.tsx src/componen
 
 Expected: all assertions pass.
 
-- [ ] Step 8: Run typecheck
+- [x] Step 8: Run typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit
@@ -396,7 +396,7 @@ cd dashboard && npx tsc --noEmit
 
 Expected: no type errors.
 
-- [ ] Step 9: Commit
+- [x] Step 9: Commit
 
 ```bash
 git add dashboard/src/components/RowDetailPanel.tsx dashboard/src/components/RowDetailPanel.module.css dashboard/src/components/RowDetailPanel.test.tsx dashboard/src/components/QueueSection.tsx dashboard/src/components/QueueSection.module.css dashboard/src/components/QueueSection.test.tsx

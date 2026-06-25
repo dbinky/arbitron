@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
 import { visibleColumns, type ColumnDef } from './queueColumns'
 import QueueTableRow from './QueueTableRow'
+import RowDetailPanel from './RowDetailPanel'
 import styles from './QueueSection.module.css'
 
 interface QueueSectionProps {
@@ -168,10 +169,9 @@ export default function QueueSection({
                   <th className={styles.th} aria-label="expand" />
                 </tr>
               </thead>
-              <tbody>
-                {sorted.map((inst) => (
+              {sorted.map((inst) => (
+                <tbody key={inst.id}>
                   <QueueTableRow
-                    key={inst.id}
                     row={inst}
                     columns={columns}
                     timeMode={timeMode}
@@ -182,8 +182,15 @@ export default function QueueSection({
                     onDismiss={onDismiss}
                     onRestore={onRestore}
                   />
-                ))}
-              </tbody>
+                  {expandedId === inst.id && (
+                    <tr className={styles.detailRow}>
+                      <td colSpan={columns.length + 1} className={styles.detailCell}>
+                        <RowDetailPanel row={inst} authMode={authMode} />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              ))}
             </table>
           )}
         </div>
