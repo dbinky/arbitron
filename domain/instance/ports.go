@@ -38,6 +38,11 @@ type QueueRepository interface {
 	SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
 	ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
 	ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
+	// ListQueued returns all currently-queued instances ordered by priority
+	// (high → normal → low) then QueuedAt FIFO within a priority — the same
+	// ordering NextEligible uses to pick the next item. An empty queue returns
+	// an empty slice, not an error.
+	ListQueued(ctx context.Context) ([]Instance, error)
 }
 
 // NodeExecutionRepository defines the port for persisting and querying node executions.

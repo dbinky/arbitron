@@ -190,6 +190,9 @@ func (r *mockWebhookQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instan
 func (r *mockWebhookQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
+func (r *mockWebhookQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 type mockWebhookQueueNotifier struct {
 	mu    sync.Mutex

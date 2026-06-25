@@ -590,6 +590,9 @@ func (r *mockQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Inst
 func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
+func (r *mockQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 // mockEventBus implements engine.EventBus
 type mockEventBus struct {

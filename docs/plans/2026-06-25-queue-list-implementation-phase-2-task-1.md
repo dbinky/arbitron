@@ -16,7 +16,7 @@
 - Create: `adapter/sqlite/queue_repo_list_queued_test.go`
 - Modify: `domain/queue/manager_test.go:26-103` (extend `mockQueueRepo`)
 
-- [ ] Step 1: Add `ListQueued` to the port and run to confirm the SQLite adapter no longer satisfies the interface
+- [x] Step 1: Add `ListQueued` to the port and run to confirm the SQLite adapter no longer satisfies the interface
 
 In `domain/instance/ports.go`, extend the `QueueRepository` interface (after `ListWaitingWithWebhook`):
 
@@ -47,7 +47,7 @@ go build ./...
 
 Expected: build failure — `*sqlite.QueueRepo` and every test mock of `QueueRepository` are missing `ListQueued`.
 
-- [ ] Step 2: Write the failing SQLite test
+- [x] Step 2: Write the failing SQLite test
 
 Create `adapter/sqlite/queue_repo_list_queued_test.go`:
 
@@ -132,7 +132,7 @@ func TestListQueued_ExcludesNonQueuedStates(t *testing.T) {
 }
 ```
 
-- [ ] Step 3: Implement the SQLite `ListQueued` method
+- [x] Step 3: Implement the SQLite `ListQueued` method
 
 In `adapter/sqlite/queue_repo.go`, add this method:
 
@@ -197,7 +197,7 @@ func scanInstanceRow(rows *sql.Rows) (*instance.Instance, error) {
 
 Add this helper to `adapter/sqlite/queue_repo.go` (or reuse it from `instance_repo.go` if a similar scanner already exists there — check with `rg -n "func.*scan.*Rows|rows.Scan" adapter/sqlite/instance_repo.go`). The `adapter/sqlite/generated` package must be imported (it already is in `queue_repo.go`). The `database/sql` package must be imported (it already is).
 
-- [ ] Step 4: Run the SQLite test, confirm it passes
+- [x] Step 4: Run the SQLite test, confirm it passes
 
 ```bash
 go test ./adapter/sqlite/ -run TestListQueued
@@ -209,7 +209,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.00s
 ```
 
-- [ ] Step 5: Extend every `QueueRepository` test mock with `ListQueued`
+- [x] Step 5: Extend every `QueueRepository` test mock with `ListQueued`
 
 The mocks are in:
 - `domain/queue/manager_test.go` (`mockQueueRepo`)
@@ -251,7 +251,7 @@ Find all of them:
 rg -n "func.*ListWaitingWithWebhook.*context.*\[\]instance.Instance" --type go | rg "_test\.go"
 ```
 
-- [ ] Step 6: Confirm the whole module builds and all tests pass
+- [x] Step 6: Confirm the whole module builds and all tests pass
 
 ```bash
 go build ./... && go test ./...

@@ -30,6 +30,8 @@ type mockQueueRepo struct {
 	setQueuedCalls         []uuid.UUID
 	waitingWithTimer       []instance.Instance
 	waitingWithWebhook     []instance.Instance
+	queuedList             []instance.Instance
+	listQueuedErr          error
 	countRunningErr        error
 	countRunningByOwnerErr error
 	nextEligibleErr        error
@@ -102,6 +104,12 @@ func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.In
 	return r.waitingWithWebhook, nil
 }
 
+func (r *mockQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.queuedList, r.listQueuedErr
+}
+
 type mockInstanceRepo struct {
 	mu           sync.Mutex
 	instances    map[uuid.UUID]*instance.Instance
@@ -153,7 +161,7 @@ func (r *mockInstanceRepo) SetFailed(_ context.Context, id uuid.UUID, failedNode
 	}
 	return nil
 }
-func (r *mockInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error        { return nil }
+func (r *mockInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error { return nil }
 func (r *mockInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }

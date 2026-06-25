@@ -207,6 +207,9 @@ func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]inst
 func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
+func (r *mockQueueRepoForRouter) ListQueued(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
 
 func newRouterTestDeps() (*mockWorkflowRepo, *mockInstanceRepo, *mockNodeExecRepo, *mockSnapshotRepo, *routerMockService, *mockFileReader, engine.EventBus, *config.Config, adapthttp.QueueManagerPort, instance.QueueRepository) {
 	wfRepo := newMockWorkflowRepo()
