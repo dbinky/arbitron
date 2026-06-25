@@ -81,7 +81,7 @@ func TestEngine_ListEnriched_AppliesAuthzThenEnriches(t *testing.T) {
 		newScopeAwareRepo(), repo, nodeExecRepo, newMockSnapshotRepo(),
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, nodeExecRepo, userRepo, nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, nodeExecRepo, userRepo, nil, ""))
 
 	got, err := eng.ListEnriched(userCtx(owner), instance.ListFilters{Limit: 10})
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestEngine_ListEnriched_NoIdentity_NotFound(t *testing.T) {
 		newScopeAwareRepo(), repo, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
 		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), nil, ""))
 
 	_, err := eng.ListEnriched(context.Background(), instance.ListFilters{})
 	require.Error(t, err)
@@ -113,7 +113,7 @@ func TestEngine_ListEnriched_RepoError_Propagates(t *testing.T) {
 		newScopeAwareRepo(), repo, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
 		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), nil, ""))
 
 	_, err := eng.ListEnriched(userCtx(uuid.New()), instance.ListFilters{})
 	require.Error(t, err)

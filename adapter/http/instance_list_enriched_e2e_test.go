@@ -62,7 +62,7 @@ func TestRouter_InstanceList_EnricherProvenanceProbe(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
 
 	// Inject an admin identity so the list is unconstrained (the instance is
 	// visible regardless of owner). The auth middleware is nil here; we pass
@@ -131,7 +131,7 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -185,7 +185,7 @@ func TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -246,7 +246,7 @@ func TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -268,6 +268,67 @@ func TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent(t *testing.T) {
 	submitter, exists := resp[0]["submitterName"]
 	if exists {
 		assert.Equal(t, "", submitter, "absent user -> submitterName must be empty")
+	}
+}
+
+// TestRouter_InstanceList_BackendUnset_EmptyOnWire confirms that a node with
+// BackendUnset yields an empty backend field on the wire — the negative control
+// for backend wiring.
+func TestRouter_InstanceList_BackendUnset_EmptyOnWire(t *testing.T) {
+	owner := uuid.New()
+	nodeID := "n1"
+	now := time.Now()
+	wf := workflow.Workflow{
+		Name:   "backend-wf",
+		Inputs: []workflow.InputField{{Name: "title", Type: "string"}},
+		Nodes:  []workflow.Node{{ID: nodeID, Label: "Step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}},
+	}
+	inst := &instance.Instance{
+		ID:               uuid.New(),
+		OwnerID:          owner,
+		WorkflowName:     "backend-wf",
+		WorkflowSnapshot: snapshotMapForRouter(t, wf),
+		State:            instance.StateRunning,
+		Priority:         instance.PriorityNormal,
+		CurrentNodeID:    &nodeID,
+		Variables:        map[string]any{"title": "BackendProbe"},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	instRepo := newMockInstanceRepo()
+	instRepo.instances[inst.ID] = inst
+	nodeExecRepo := newMockNodeExecRepo()
+	snapRepo := newMockSnapshotRepo()
+	userRepo := &probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}}
+
+	eng := engine.NewEngine(
+		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
+		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
+		&probeQueueManager{}, &mockQueueRepoForRouter{},
+	)
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:   eng,
+		Instances: instRepo,
+		NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo,
+		Config:    &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	backend, exists := resp[0]["backend"]
+	if exists {
+		assert.Equal(t, "", backend, "BackendUnset -> backend must be empty on the wire")
 	}
 }
 

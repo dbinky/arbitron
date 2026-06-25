@@ -114,10 +114,13 @@ asserted at the wire, not only in a pure unit test.
   the *effective* backend is not persisted on `NodeExecution`. So the model/backend
   column is **permanently blank for any node that inherits its backend** — a value
   the spec lists as a sortable column.
-- Open: this is NOT a tolerated no-op. Either (a) persist/derive the effective
-  backend so inheriting nodes show a real value, or (b) escalate it in
-  `gaps-identified.md` as a known spec limitation with rationale. Pick one; do not
-  leave it silently empty.
+- **Fixed**: `NewInstanceEnricher` now accepts a `defaultAgentBackend` parameter.
+  `resolveNodeFields` falls back to `e.defaultAgentBackend` when
+  `node.Config.Backend == BackendUnset`. The composition root
+  (`cmd/arbitron/main.go:782`) passes `cfg.LLM.DefaultAgentBackend`. Added
+  `TestInstanceEnricher_BackendUnset_ResolvesToDefault` proving the resolution.
+  The existing `TestInstanceEnricher_BackendUnset_EmptyBackend` still passes
+  (no default → empty cell).
 
 ## 9. Default ordering policy parity (Phase 2 design ↔ Phase 3 client sort)
 

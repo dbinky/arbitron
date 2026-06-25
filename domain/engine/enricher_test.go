@@ -32,7 +32,7 @@ func newEnricherDeps() *enricherTestDeps {
 }
 
 func (d *enricherTestDeps) enricher() *engine.InstanceEnricher {
-	return engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil)
+	return engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil, "")
 }
 
 func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
@@ -276,9 +276,26 @@ func TestInstanceEnricher_BackendUnset_EmptyBackend(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
+	// No defaultAgentBackend set -> empty cell (no fallback).
 	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
 	require.NoError(t, err)
-	assert.Equal(t, "", got[0].Backend, "BackendUnset -> empty cell (effective backend not persisted)")
+	assert.Equal(t, "", got[0].Backend, "BackendUnset with no default -> empty cell")
+}
+
+func TestInstanceEnricher_BackendUnset_ResolvesToDefault(t *testing.T) {
+	d := newEnricherDeps()
+	owner := uuid.New()
+	d.userRepo.users[owner] = instance.User{ID: owner, Username: "alice"}
+	nodeID := "n1"
+	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
+	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
+	d.instRepo.instances[inst.ID] = inst
+	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
+
+	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil, "claude-code")
+	got, err := enr.Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
+	require.NoError(t, err)
+	assert.Equal(t, "claude-code", got[0].Backend, "BackendUnset with defaultAgentBackend -> resolves to default")
 }
 
 func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {

@@ -11,17 +11,6 @@ these are depth/hardening gaps, not "missing feature" gaps.
 
 ## Open Issues
 
-### G1 — Backend column is permanently blank for nodes that inherit their backend
-- Where: `domain/engine/enricher.go:183` (`resolveNodeFields`) sets `backend` only
-  when `node.Config.Backend != workflow.BackendUnset`. The *effective* backend is
-  never persisted on `NodeExecution`, so an inheriting node (`BackendUnset == ""`)
-  yields an empty cell.
-- Impact: the spec lists "model/backend" as a sortable column; for any inheriting
-  node it is always empty — an under-fed production path, not a true "no value."
-- Action (do NOT mark "acceptable"): either derive/persist the effective backend so
-  the column is populated for inheriting nodes, OR escalate as a documented known
-  spec limitation with rationale. Add a test that pins whichever choice is made.
-
 ### G2 — Enricher does a per-row instance Get + per-row snapshot re-parse (N+1)
 - Where: `domain/engine/enricher.go:105` calls `e.instances.Get(ctx, s.ID)` once per
   row; `readWorkflowInputs` (`:206`) JSON-marshals then unmarshals the snapshot per
@@ -75,6 +64,21 @@ these are depth/hardening gaps, not "missing feature" gaps.
   and active-by-elapsed-desc defaults (so a regression in default order is caught).
 
 ## Fixed
+
+### G1 — Backend column is permanently blank for nodes that inherit their backend
+- Where: `domain/engine/enricher.go:183` (`resolveNodeFields`) sets `backend` only
+  when `node.Config.Backend != workflow.BackendUnset`. The *effective* backend is
+  never persisted on `NodeExecution`, so an inheriting node (`BackendUnset == ""`)
+  yields an empty cell.
+- Impact: the spec lists "model/backend" as a sortable column; for any inheriting
+  node it is always empty — an under-fed production path, not a true "no value."
+- **Fixed**: `NewInstanceEnricher` now accepts a `defaultAgentBackend` parameter.
+  `resolveNodeFields` falls back to `e.defaultAgentBackend` when
+  `node.Config.Backend == BackendUnset`. The composition root
+  (`cmd/arbitron/main.go:782`) passes `cfg.LLM.DefaultAgentBackend`. Added
+  `TestInstanceEnricher_BackendUnset_ResolvesToDefault` proving the resolution.
+  The existing `TestInstanceEnricher_BackendUnset_EmptyBackend` still passes
+  (no default → empty cell).
 
 ### G4 — Verify MCP enriched output has field parity with the HTTP/dashboard contract
 - Where: `adapter/mcp/tools_instance.go:115` returns `MarshalResult(enriched)`. A

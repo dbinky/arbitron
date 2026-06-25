@@ -26,26 +26,30 @@ type QueuePositionProvider interface {
 // only: each producer call is isolated, and a failure for one field degrades
 // only that field — the row still renders. It never fails the list.
 type InstanceEnricher struct {
-	instances instance.InstanceRepository
-	nodeExecs instance.NodeExecutionRepository
-	users     instance.UserRepository
-	queuePos  QueuePositionProvider // nil -> no position (Phase 2 wires this)
+	instances          instance.InstanceRepository
+	nodeExecs          instance.NodeExecutionRepository
+	users              instance.UserRepository
+	queuePos           QueuePositionProvider // nil -> no position (Phase 2 wires this)
+	defaultAgentBackend string               // deployment-wide fallback for BackendUnset nodes
 }
 
 // NewInstanceEnricher constructs the enricher with its collaborators. A nil
 // queuePos leaves the queue-position field at 0 (non-queued) until Phase 2
-// wires the real provider.
+// wires the real provider. defaultAgentBackend is the deployment-wide fallback
+// used when a node's Config.Backend is BackendUnset (inheriting).
 func NewInstanceEnricher(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
 	users instance.UserRepository,
 	queuePos QueuePositionProvider,
+	defaultAgentBackend string,
 ) *InstanceEnricher {
 	return &InstanceEnricher{
-		instances: instances,
-		nodeExecs: nodeExecs,
-		users:     users,
-		queuePos:  queuePos,
+		instances:          instances,
+		nodeExecs:          nodeExecs,
+		users:              users,
+		queuePos:           queuePos,
+		defaultAgentBackend: defaultAgentBackend,
 	}
 }
 
@@ -182,6 +186,8 @@ func (e *InstanceEnricher) resolveNodeFields(inst *instance.Instance) (label, ba
 	}
 	if node.Config.Backend != workflow.BackendUnset {
 		backend = node.Config.Backend
+	} else if e.defaultAgentBackend != "" {
+		backend = e.defaultAgentBackend
 	}
 	return label, backend
 }
