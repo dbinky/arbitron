@@ -16,7 +16,7 @@
 - Create: `dashboard/src/components/queueColumns.ts`
 - Create: `dashboard/src/components/queueColumns.test.ts`
 
-- [ ] Step 1: Add the `EnrichedInstanceSummary` type
+- [x] Step 1: Add the `EnrichedInstanceSummary` type
 
 In `dashboard/src/api/types.ts`, first add `ownerId` to the existing `InstanceSummary` interface (after `id`, line 19) — the backend now includes it (Phase 1 Task 4):
 
@@ -63,7 +63,7 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
 }
 ```
 
-- [ ] Step 1b: Switch the API client's `instances.list` to return enriched rows
+- [x] Step 1b: Switch the API client's `instances.list` to return enriched rows
 
 The list endpoint now returns the enriched shape (Phase 1 Task 4 switched the HTTP
 handler), so the TS client must expose it or `QueueView` (Task 6) cannot read
@@ -80,7 +80,7 @@ and add `EnrichedInstanceSummary` to the type import from `./types` at the top o
 lean `InstanceSummary` remains the base type; callers that only need lean fields
 still compile (enriched extends it).
 
-- [ ] Step 2: Write the failing test for the column definitions
+- [x] Step 2: Write the failing test for the column definitions
 
 Create `dashboard/src/components/queueColumns.test.ts`:
 
@@ -199,7 +199,7 @@ describe('accessors', () => {
 })
 ```
 
-- [ ] Step 3: Run it, confirm it fails
+- [x] Step 3: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/components/queueColumns.test.ts
@@ -207,7 +207,7 @@ cd dashboard && npx vitest run src/components/queueColumns.test.ts
 
 Expected: failure — `Failed to resolve import "./queueColumns"`.
 
-- [ ] Step 4: Implement the column definitions module
+- [x] Step 4: Implement the column definitions module
 
 Create `dashboard/src/components/queueColumns.ts`:
 
@@ -320,7 +320,7 @@ export function getColumn(key: string): ColumnDef | undefined {
 }
 ```
 
-- [ ] Step 5: Run the test, confirm it passes
+- [x] Step 5: Run the test, confirm it passes
 
 ```bash
 cd dashboard && npx vitest run src/components/queueColumns.test.ts
@@ -328,7 +328,7 @@ cd dashboard && npx vitest run src/components/queueColumns.test.ts
 
 Expected: all assertions pass.
 
-- [ ] Step 6: Run typecheck
+- [x] Step 6: Run typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit
@@ -336,7 +336,7 @@ cd dashboard && npx tsc --noEmit
 
 Expected: no type errors.
 
-- [ ] Step 7: Commit
+- [x] Step 7: Commit
 
 ```bash
 git add dashboard/src/api/types.ts dashboard/src/api/client.ts dashboard/src/components/queueColumns.ts dashboard/src/components/queueColumns.test.ts

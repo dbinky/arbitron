@@ -17,6 +17,7 @@ export type TriggerSource = 'manual' | 'schedule' | 'run_now'
 /** Lightweight instance representation returned by the list endpoint. */
 export interface InstanceSummary {
   id: string
+  ownerId: string
   workflowName: string
   state: InstanceState
   priority: Priority
@@ -31,6 +32,36 @@ export interface InstanceSummary {
   queuedAt?: string
   /** Whether the acting user has dismissed this instance from their view. */
   dismissed?: boolean
+}
+
+/** Density views for the queue list. */
+export type QueueDensity = 'balanced' | 'dense' | 'expanded'
+
+/**
+ * Enriched instance row returned by the list endpoint (Phase 1+2). Extends
+ * InstanceSummary with the additive fields the richer queue table shows.
+ * Every enriched field is best-effort: a missing field renders as a
+ * placeholder cell.
+ */
+export interface EnrichedInstanceSummary extends InstanceSummary {
+  /** Always present (derived server-side). */
+  runName: string
+  /** Resolved owner display name; empty when user lookup degraded. */
+  submitterName?: string
+  /** Account identity (email/subject) for shared-mode row details. */
+  submitterIdentity?: string
+  /** Friendly label of the current/failed node; empty when none. */
+  friendlyStep?: string
+  /** Latest LLM model used; empty for queued/script-only runs. */
+  model?: string
+  /** Configured agent backend of the relevant node; empty when unset. */
+  backend?: string
+  /** Max retry attempt across the instance's node executions. */
+  retryCount: number
+  /** 1-based priority-aware position for queued rows; 0/absent otherwise. */
+  queuePosition?: number
+  /** Failed node id, for the detail panel's lazy last-error load. Absent for non-failed rows. */
+  failedNodeId?: string
 }
 
 /** Full instance representation returned by the get endpoint. */
