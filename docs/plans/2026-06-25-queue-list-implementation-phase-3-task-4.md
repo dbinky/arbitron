@@ -11,12 +11,51 @@
 ### Task 4: Sortable table + QueueTableRow
 
 **Files:**
+- Modify: `dashboard/src/utils/time.ts` (add `localDateTime` viewer-local formatter)
 - Create: `dashboard/src/components/QueueTableRow.tsx`
 - Create: `dashboard/src/components/QueueTableRow.module.css`
 - Create: `dashboard/src/components/QueueTableRow.test.tsx`
 - Modify: `dashboard/src/components/QueueSection.tsx` (switch to table rendering using `queueColumns` + `QueueTableRow`)
 - Modify: `dashboard/src/components/QueueSection.module.css` (table styles)
 - Modify: `dashboard/src/components/QueueSection.test.tsx` (update for table + density)
+
+- [ ] Step 0: Add the `localDateTime` viewer-local formatter
+
+The spec calls out a "submitted **local** time" column; the value on the wire is
+a UTC ISO timestamp, so the dashboard must render it in the viewer's local tz
+(the design's "rendered in viewer-local tz client-side"). Append to
+`dashboard/src/utils/time.ts`:
+
+```ts
+/**
+ * Formats an ISO timestamp as a compact, viewer-local "YYYY-MM-DD HH:mm"
+ * string (local tz via Date's local getters). Returns the input unchanged if
+ * it is not a parseable date. Used for the "submitted local time" column and
+ * the row-detail "Submitted" field.
+ */
+export function localDateTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+```
+
+Add a quick unit test to `dashboard/src/utils/time.test.ts` (create if absent):
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { localDateTime } from './time'
+
+describe('localDateTime', () => {
+  it('formats an ISO timestamp as YYYY-MM-DD HH:mm', () => {
+    expect(localDateTime('2024-06-25T12:00:00Z')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+  })
+  it('returns the input unchanged for an unparseable value', () => {
+    expect(localDateTime('not-a-date')).toBe('not-a-date')
+  })
+})
+```
 
 - [ ] Step 1: Write the failing test for `QueueTableRow`
 
@@ -130,7 +169,7 @@ Create `dashboard/src/components/QueueTableRow.tsx`:
 import { useNavigate } from 'react-router-dom'
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
 import type { ColumnDef } from './queueColumns'
-import { elapsed } from '../utils/time'
+import { elapsed, relativeTime, localDateTime } from '../utils/time'
 import styles from './QueueTableRow.module.css'
 
 interface QueueTableRowProps {
@@ -167,7 +206,13 @@ export default function QueueTableRow({
       return rowVal.submitterName ?? '—'
     }
     if (col.key === 'elapsed') {
-      return timeMode === 'elapsed' ? elapsed(rowVal.createdAt) : rowVal.updatedAt
+      return timeMode === 'elapsed' ? elapsed(rowVal.createdAt) : relativeTime(rowVal.updatedAt)
+    }
+    if (col.key === 'submittedAt') {
+      // Spec: "submitted local time" — render the createdAt in the viewer's
+      // local tz, not the raw UTC ISO. The column accessor keeps the raw ISO
+      // so client-side sorting stays a stable date comparison.
+      return localDateTime(rowVal.createdAt)
     }
     return col.accessor(rowVal)
   }
@@ -355,6 +400,15 @@ describe('QueueSection table rendering', () => {
     expect(bodyRows[1].getAttribute('data-row-id')).toBe('p3')
   })
 
+  it('default order for terminal section is updatedAt desc (most-recent first)', () => {
+    const older = summary({ id: 'old', state: 'completed', updatedAt: '2024-01-01T00:00:00Z' })
+    const newer = summary({ id: 'new', state: 'completed', updatedAt: '2024-06-01T00:00:00Z' })
+    renderSection({ title: 'Completed', instances: [older, newer], timeMode: 'relative' })
+    const bodyRows = screen.getAllByRole('row').slice(1)
+    expect(bodyRows[0].getAttribute('data-row-id')).toBe('new')
+    expect(bodyRows[1].getAttribute('data-row-id')).toBe('old')
+  })
+
   it('user re-sort by clicking a sortable header overrides the default order', () => {
     const a = summary({ id: 'a', runName: 'A — wf', state: 'running' })
     const b = summary({ id: 'b', runName: 'B — wf', state: 'running' })
@@ -500,14 +554,26 @@ export default function QueueSection({
 
   const sorted = useMemo(() => {
     if (sortKey === null) {
-      // Default policy: active by elapsed desc (oldest first), queued by
-      // position asc, terminal by updatedAt desc (most-recent first).
+      // Default policy (Phase-2): active by elapsed desc (oldest createdAt
+      // first), pending by queue position asc (next-to-run on top), terminal
+      // by updatedAt desc (most-recent first). Computed directly, NOT via a
+      // visible column — the terminal key ('updatedAt') has no column, and the
+      // ordering must hold in every density (dense hides several columns).
       const key = defaultSortKey(instances)
-      const defCol = columns.find((c) => c.key === key) ?? columns[0]
-      if (!defCol) return instances
       const sortedCopy = [...instances]
-      sortedCopy.sort((a, b) => compareRows(a, b, defCol))
-      if (key === 'updatedAt') sortedCopy.reverse()
+      if (key === 'updatedAt') {
+        sortedCopy.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        return sortedCopy
+      }
+      if (key === 'queuePosition') {
+        sortedCopy.sort(
+          (a, b) =>
+            (a.queuePosition ?? Number.MAX_SAFE_INTEGER) - (b.queuePosition ?? Number.MAX_SAFE_INTEGER),
+        )
+        return sortedCopy
+      }
+      // 'elapsed' (active): oldest createdAt first (longest-running on top).
+      sortedCopy.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
       return sortedCopy
     }
     const col = columns.find((c) => c.key === sortKey)
@@ -712,6 +778,6 @@ Expected: no type errors.
 - [ ] Step 11: Commit
 
 ```bash
-git add dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueTableRow.test.tsx dashboard/src/components/QueueSection.tsx dashboard/src/components/QueueSection.module.css dashboard/src/components/QueueSection.test.tsx
+git add dashboard/src/utils/time.ts dashboard/src/utils/time.test.ts dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueTableRow.test.tsx dashboard/src/components/QueueSection.tsx dashboard/src/components/QueueSection.module.css dashboard/src/components/QueueSection.test.tsx
 git commit -m "feat(dashboard): replace InstanceRow grid with sortable density-aware queue table"
 ```

@@ -139,6 +139,7 @@ Create `dashboard/src/components/RowDetailPanel.tsx`:
 import { useEffect, useState } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
 import { api } from '../api/client'
+import { localDateTime } from '../utils/time'
 import styles from './RowDetailPanel.module.css'
 
 interface RowDetailPanelProps {
@@ -174,7 +175,7 @@ export default function RowDetailPanel({ row: rowVal, authMode }: RowDetailPanel
       <div className={styles.section}>
         <div className={styles.field}>
           <span className={styles.label}>Submitted</span>
-          <span className={styles.value}>{rowVal.createdAt}</span>
+          <span className={styles.value}>{localDateTime(rowVal.createdAt)}</span>
         </div>
         {authMode !== 'local' && rowVal.submitterIdentity && (
           <div className={styles.field}>

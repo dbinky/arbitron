@@ -141,13 +141,22 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 		placeholders[i] = "?"
 		args[i] = uuidToString(id)
 	}
-	query := `SELECT instance_id,
-		COALESCE(MAX(llm_model), '') AS latest_model,
-		COALESCE(MAX(attempt), 0) AS max_attempt,
-		COALESCE(MIN(started_at), '') AS first_started
-	FROM node_executions
-	WHERE instance_id IN (` + strings.Join(placeholders, ",") + `)
-	GROUP BY instance_id`
+	// latest_model is the model of the MOST-RECENTLY-STARTED execution that
+	// recorded one (the design's "latest model"), NOT MAX(llm_model) — an
+	// alphabetical max would pick an arbitrary model for a multi-step run.
+	inClause := strings.Join(placeholders, ",")
+	query := `SELECT ne.instance_id,
+		COALESCE((
+			SELECT x.llm_model FROM node_executions x
+			WHERE x.instance_id = ne.instance_id
+			  AND x.llm_model IS NOT NULL AND x.llm_model != ''
+			ORDER BY x.started_at DESC LIMIT 1
+		), '') AS latest_model,
+		COALESCE(MAX(ne.attempt), 0) AS max_attempt,
+		COALESCE(MIN(ne.started_at), '') AS first_started
+	FROM node_executions ne
+	WHERE ne.instance_id IN (` + inClause + `)
+	GROUP BY ne.instance_id`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -213,10 +222,11 @@ func TestAggregateByInstances_HappyPath(t *testing.T) {
 	instB := uuid.New()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	modelA := "gpt-4o"
+	modelA1 := "gpt-4o"
+	modelA2 := "gpt-4o-2024-11" // started LATER than modelA1 -> this is "latest"
 	modelB := "claude-3"
-	execA1 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA, NodeID: "n1", Attempt: 1, Status: instance.NodeStatusSucceeded, StartedAt: now, LLMModel: &modelA}
-	execA2 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA, NodeID: "n2", Attempt: 3, Status: instance.NodeStatusFailed, StartedAt: now.Add(time.Minute), LLMModel: &modelA}
+	execA1 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA, NodeID: "n1", Attempt: 1, Status: instance.NodeStatusSucceeded, StartedAt: now, LLMModel: &modelA1}
+	execA2 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA, NodeID: "n2", Attempt: 3, Status: instance.NodeStatusFailed, StartedAt: now.Add(time.Minute), LLMModel: &modelA2}
 	execB1 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instB, NodeID: "n1", Attempt: 2, Status: instance.NodeStatusSucceeded, StartedAt: now.Add(2 * time.Minute), LLMModel: &modelB}
 
 	require.NoError(t, repo.Create(context.Background(), execA1))
@@ -228,7 +238,7 @@ func TestAggregateByInstances_HappyPath(t *testing.T) {
 	assert.Len(t, got, 2, "instances with no executions are absent")
 
 	a := got[instA]
-	assert.Equal(t, "gpt-4o", a.LatestModel, "latest model from the aggregate")
+	assert.Equal(t, "gpt-4o-2024-11", a.LatestModel, "latest model = most-recently-started execution's model")
 	assert.Equal(t, 3, a.MaxAttempt, "max attempt across nodes")
 	assert.Equal(t, now, a.FirstStarted, "earliest started_at")
 
@@ -288,6 +298,10 @@ In `adapter/http/instance_handler_test.go`, add to `mockNodeExecRepo` (after `Ge
 ```go
 func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
 	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
+	// latestModelAt tracks the StartedAt of the execution whose model is
+	// currently recorded as LatestModel, so "latest" means latest-by-time
+	// (matching the SQLite query), not last-in-slice-order.
+	latestModelAt := make(map[uuid.UUID]time.Time)
 	for _, id := range ids {
 		for _, e := range r.executions {
 			if e.InstanceID == id {
@@ -302,7 +316,10 @@ func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UU
 					agg.FirstStarted = e.StartedAt
 				}
 				if e.LLMModel != nil && *e.LLMModel != "" {
-					agg.LatestModel = *e.LLMModel
+					if prev, seen := latestModelAt[id]; !seen || e.StartedAt.After(prev) {
+						agg.LatestModel = *e.LLMModel
+						latestModelAt[id] = e.StartedAt
+					}
 				}
 				out[id] = agg
 			}

@@ -12,6 +12,7 @@
 
 **Files:**
 - Modify: `dashboard/src/api/types.ts:18-34` (add `EnrichedInstanceSummary`)
+- Modify: `dashboard/src/api/client.ts:84` (switch `instances.list` return type to `EnrichedInstanceSummary[]`)
 - Create: `dashboard/src/components/queueColumns.ts`
 - Create: `dashboard/src/components/queueColumns.test.ts`
 
@@ -61,6 +62,23 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
   failedNodeId?: string
 }
 ```
+
+- [ ] Step 1b: Switch the API client's `instances.list` to return enriched rows
+
+The list endpoint now returns the enriched shape (Phase 1 Task 4 switched the HTTP
+handler), so the TS client must expose it or `QueueView` (Task 6) cannot read
+`runName`/`retryCount`/etc. and `tsc --noEmit` fails (`InstanceSummary[]` is not
+assignable to the `EnrichedInstanceSummary[]` state). In
+`dashboard/src/api/client.ts`, change the `instances.list` return type (line 84):
+
+```ts
+    list(params?: ListInstancesParams): Promise<EnrichedInstanceSummary[]> {
+```
+
+and add `EnrichedInstanceSummary` to the type import from `./types` at the top of
+`client.ts`. The runtime body is unchanged (the response JSON is a superset). The
+lean `InstanceSummary` remains the base type; callers that only need lean fields
+still compile (enriched extends it).
 
 - [ ] Step 2: Write the failing test for the column definitions
 
@@ -321,6 +339,6 @@ Expected: no type errors.
 - [ ] Step 7: Commit
 
 ```bash
-git add dashboard/src/api/types.ts dashboard/src/components/queueColumns.ts dashboard/src/components/queueColumns.test.ts
+git add dashboard/src/api/types.ts dashboard/src/api/client.ts dashboard/src/components/queueColumns.ts dashboard/src/components/queueColumns.test.ts
 git commit -m "feat(dashboard): add queueColumns single-source-of-truth column definitions"
 ```

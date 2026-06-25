@@ -4,6 +4,11 @@
 
 **Architecture:** `QueueView` already fetches active/failed/completed in parallel and renders `QueueSection` per state. This task adds: (1) a `useDensityPreference` call (keyed by the caller's userId from `/me`), (2) a `DensityToggle` in the toolbar, (3) `density` + `authMode` props threaded into each `QueueSection`, (4) the `/me` fetch for `authMode` + `userId`. The pending (queued) section is broken out as its own `QueueSection` (the design's Phase-2 policy: queued shows position ascending) rather than merged into Active. The `make ui` step rebuilds the embedded assets.
 
+> Dependency: this task assumes `api.instances.list` already returns
+> `Promise<EnrichedInstanceSummary[]>` (changed in Phase 3 Task 1, Step 1b).
+> Without that return-type change the `EnrichedInstanceSummary[]` state below and
+> the `tsc --noEmit` gate in Step 6 will not compile.
+
 **Tech Stack:** TypeScript, React 19, Vitest + `@testing-library/react`, Make.
 
 ---

@@ -514,9 +514,9 @@ func (e *InstanceEnricher) batchUsers(ctx context.Context, ownerSet map[uuid.UUI
 // instance's workflow snapshot. The relevant node is:
 //   - CurrentNodeID when the instance is active (running/waiting/paused)
 //   - FailedNodeID when failed
-//   - the last edge target in the snapshot otherwise (completed/cancelled)
+//   - none otherwise (completed/cancelled have no current step) -> ("", "")
 //
-// Best-effort: any parse/lookup failure returns ("", "").
+// Best-effort: any parse/lookup failure also returns ("", "").
 func (e *InstanceEnricher) resolveNodeFields(inst *instance.Instance) (label, backend string) {
 	nodeID := relevantNodeID(inst)
 	if nodeID == "" {
@@ -545,9 +545,10 @@ func relevantNodeID(inst *instance.Instance) string {
 	if inst.CurrentNodeID != nil && *inst.CurrentNodeID != "" {
 		return *inst.CurrentNodeID
 	}
-	// Completed/cancelled with no current node: best-effort last node. We do
-	// not parse the graph here; an empty return degrades the step to "" which
-	// the row renders as a placeholder.
+	// Terminal (completed/cancelled) rows have no *current* step (per the
+	// Phase-1 design provenance and the spec's "what step it is currently on"),
+	// so the step cell intentionally degrades to a placeholder. This is not a
+	// missing producer — there is no current-step value to show.
 	return ""
 }
 
