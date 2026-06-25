@@ -533,7 +533,7 @@ go build ./... && go test ./...
 
 Expected: no build errors; all package tests pass (existing handler tests that decode into `[]instance.InstanceSummary` still work because the enriched JSON is a superset — the extra fields are ignored by the lean struct).
 
-- [ ] Step 11: Commit
+- [x] Step 11: Commit
 
 ```bash
 git add adapter/http/instance_handler.go adapter/http/instance_handler_test.go domain/engine/engine.go domain/engine/enricher_list_test.go

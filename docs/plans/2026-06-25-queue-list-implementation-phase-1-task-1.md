@@ -365,7 +365,7 @@ go build ./...
 
 Expected: no output, exit code 0.
 
-- [ ] Step 10: Commit
+- [x] Step 10: Commit
 
 ```bash
 git add domain/instance/runname.go domain/instance/runname_test.go domain/instance/instance.go

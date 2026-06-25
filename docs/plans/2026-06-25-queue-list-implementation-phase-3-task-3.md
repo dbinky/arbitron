@@ -164,7 +164,7 @@ cd dashboard && npx tsc --noEmit
 
 Expected: no type errors.
 
-- [ ] Step 6: Commit
+- [x] Step 6: Commit
 
 ```bash
 git add dashboard/src/components/DensityToggle.tsx dashboard/src/components/DensityToggle.module.css dashboard/src/components/DensityToggle.test.tsx

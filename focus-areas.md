@@ -36,10 +36,9 @@ compare to the baseline in `RALPH.md`.
 - Verified ✅: HTTP `h.service.ListEnriched(...)` + `toEnrichedSummaryDTO`
   (`adapter/http/instance_handler.go:384`, `:250`); MCP
   `srv.deps.Engine.ListEnriched(ctx, filters)` (`adapter/mcp/tools_instance.go:115`).
-- Open: confirm the MCP path's `MarshalResult(enriched)` emits the same enriched
-  field names the dashboard/types expect (parity test at
-  `adapter/mcp/tools_instance_test.go:958` exists — verify it asserts the enriched
-  fields on the wire, not just a non-empty result).
+- Verified ✅: MCP parity test `TestInstanceList_ReturnsEnrichedFields` now asserts
+  `submitter` and `retryCount` on the wire alongside the previously-asserted `runName`,
+  `friendlyStep`, `model`, and `backend` (`adapter/mcp/tools_instance_test.go:981-986`).
 
 ## 4. Provenance: queue position is fed by the real manager, asserted at the SINK
 

@@ -51,6 +51,8 @@ these are depth/hardening gaps, not "missing feature" gaps.
   submitter, model/backend, retry, queue position) on the MCP wire — not merely that
   a non-empty list is returned. If the MCP struct serializes different JSON keys than
   `enrichedSummaryDTO`, that is a contract gap.
+- **Fixed**: added `submitter` and `retryCount` assertions to
+  `TestInstanceList_ReturnsEnrichedFields` at `adapter/mcp/tools_instance_test.go:985-986`.
 
 ### G5 — Confirm no un-enriched production list path remains
 - The lean `summaryDTO` / `InstanceRepository.List` must not be what any production
@@ -66,7 +68,15 @@ these are depth/hardening gaps, not "missing feature" gaps.
 
 ## Fixed
 
-_(none yet — populated as the loop resolves items above)_
+### G4 — Verify MCP enriched output has field parity with the HTTP/dashboard contract
+- Where: `adapter/mcp/tools_instance.go:115` returns `MarshalResult(enriched)`. A
+  parity test is referenced at `adapter/mcp/tools_instance_test.go:958`.
+- Gap: confirm that test asserts the actual enriched field names (run name,
+  submitter, model/backend, retry, queue position) on the MCP wire — not merely that
+  a non-empty list is returned. If the MCP struct serializes different JSON keys than
+  `enrichedSummaryDTO`, that is a contract gap.
+- **Fixed**: added `submitter` and `retryCount` assertions to
+  `TestInstanceList_ReturnsEnrichedFields` at `adapter/mcp/tools_instance_test.go:985-986`.
 
 ## Won't Fix
 

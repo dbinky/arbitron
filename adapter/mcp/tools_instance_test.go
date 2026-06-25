@@ -982,6 +982,8 @@ func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
 	assert.Contains(t, body, "Generate", "friendly step reaches the MCP result")
 	assert.Contains(t, body, "gpt-4o", "model reaches the MCP result")
 	assert.Contains(t, body, "claude-code", "backend reaches the MCP result")
+	assert.Contains(t, body, "alice", "submitter name reaches the MCP result")
+	assert.Contains(t, body, "2", "retry count reaches the MCP result")
 }
 
 // ---------------------------------------------------------------------------
