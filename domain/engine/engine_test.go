@@ -428,13 +428,10 @@ func (r *mockNodeExecutionRepo) AggregateByInstances(_ context.Context, ids []uu
 		}
 		agg, exists := out[e.InstanceID]
 		if !exists {
-			agg = instance.NodeExecutionAggregate{InstanceID: e.InstanceID, FirstStarted: e.StartedAt}
+			agg = instance.NodeExecutionAggregate{InstanceID: e.InstanceID}
 		}
 		if e.Attempt > agg.MaxAttempt {
 			agg.MaxAttempt = e.Attempt
-		}
-		if e.StartedAt.Before(agg.FirstStarted) {
-			agg.FirstStarted = e.StartedAt
 		}
 		if e.LLMModel != nil && *e.LLMModel != "" {
 			if prev, hasPrev := latestModelAt[e.InstanceID]; !hasPrev || e.StartedAt.After(prev) {

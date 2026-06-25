@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/arbitron/arbitron/adapter/sqlite/generated"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -172,8 +171,7 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 			  AND x.llm_model IS NOT NULL AND x.llm_model != ''
 			ORDER BY x.started_at DESC LIMIT 1
 		), '') AS latest_model,
-		COALESCE(MAX(ne.attempt), 0) AS max_attempt,
-		COALESCE(MIN(ne.started_at), '') AS first_started
+		COALESCE(MAX(ne.attempt), 0) AS max_attempt
 	FROM node_executions ne
 	WHERE ne.instance_id IN (` + inClause + `)
 	GROUP BY ne.instance_id`
@@ -185,27 +183,19 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 	defer rows.Close()
 
 	for rows.Next() {
-		var instIDStr, model, firstStartedStr string
+		var instIDStr, model string
 		var maxAttempt int64
-		if err := rows.Scan(&instIDStr, &model, &maxAttempt, &firstStartedStr); err != nil {
+		if err := rows.Scan(&instIDStr, &model, &maxAttempt); err != nil {
 			return nil, fmt.Errorf("scanning node execution aggregate: %w", err)
 		}
 		instID, err := parseUUID(instIDStr)
 		if err != nil {
 			return nil, fmt.Errorf("parsing instance id in aggregate: %w", err)
 		}
-		var firstStarted time.Time
-		if firstStartedStr != "" {
-			firstStarted, err = parseTime(firstStartedStr)
-			if err != nil {
-				return nil, fmt.Errorf("parsing first_started in aggregate: %w", err)
-			}
-		}
 		out[instID] = instance.NodeExecutionAggregate{
-			InstanceID:   instID,
-			LatestModel:  model,
-			MaxAttempt:   int(maxAttempt),
-			FirstStarted: firstStarted,
+			InstanceID:  instID,
+			LatestModel: model,
+			MaxAttempt:  int(maxAttempt),
 		}
 	}
 	if err := rows.Err(); err != nil {

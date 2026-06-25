@@ -45,7 +45,6 @@ func TestAggregateByInstances_HappyPath(t *testing.T) {
 	a := got[instA.ID]
 	assert.Equal(t, "gpt-4o-2024-11", a.LatestModel, "latest model = most-recently-started execution's model")
 	assert.Equal(t, 3, a.MaxAttempt, "max attempt across nodes")
-	assert.Equal(t, now, a.FirstStarted, "earliest started_at")
 
 	b := got[instB.ID]
 	assert.Equal(t, "claude-3", b.LatestModel)
@@ -94,5 +93,4 @@ func TestAggregateByInstances_NoModelColumn(t *testing.T) {
 	got, err := repo.AggregateByInstances(context.Background(), []uuid.UUID{inst.ID})
 	require.NoError(t, err)
 	assert.Equal(t, "", got[inst.ID].LatestModel, "script-only node: model empty")
-	assert.Equal(t, now, got[inst.ID].FirstStarted)
 }
