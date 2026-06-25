@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { InstanceSummary, WebSocketEvent } from '../api/types'
+import type { EnrichedInstanceSummary, Me, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
+import { useDensityPreference } from '../hooks/useDensityPreference'
 import QueueSection from '../components/QueueSection'
+import DensityToggle from '../components/DensityToggle'
 
 /** Returns an ISO date string for N days ago. */
 function daysAgo(n: number): string {
@@ -29,12 +31,17 @@ const STATE_CHANGE_EVENTS = new Set([
 ])
 
 export default function QueueView() {
-  const [active, setActive] = useState<InstanceSummary[]>([])
-  const [failed, setFailed] = useState<InstanceSummary[]>([])
-  const [completed, setCompleted] = useState<InstanceSummary[]>([])
+  const [active, setActive] = useState<EnrichedInstanceSummary[]>([])
+  const [pending, setPending] = useState<EnrichedInstanceSummary[]>([])
+  const [failed, setFailed] = useState<EnrichedInstanceSummary[]>([])
+  const [completed, setCompleted] = useState<EnrichedInstanceSummary[]>([])
+  const [me, setMe] = useState<Me | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showDismissed, setShowDismissed] = useState(false)
+
+  const { density, cycle: cycleDensity } = useDensityPreference(me?.userId ?? null)
+  const authMode = me?.authMode ?? 'local'
 
   const fetchAll = useCallback(async () => {
     try {
@@ -44,7 +51,7 @@ export default function QueueView() {
       // `inst.dismissed` from the server drives the RENDER (Restore vs Dismiss,
       // dimming). The server reconciles the two — do NOT re-thread showDismissed
       // down into the rows or it reintroduces the toggle/refetch flicker.
-      const [running, waiting, queued, paused, failedRes, completedRes] =
+      const [running, waiting, queued, paused, failedRes, completedRes, meResp] =
         await Promise.all([
           api.instances.list({ state: 'running' }),
           api.instances.list({ state: 'waiting' }),
@@ -52,11 +59,14 @@ export default function QueueView() {
           api.instances.list({ state: 'paused' }),
           api.instances.list({ state: 'failed', since, includeDismissed: showDismissed }),
           api.instances.list({ state: 'completed', since, includeDismissed: showDismissed }),
+          api.me(),
         ])
 
-      setActive([...running, ...waiting, ...queued, ...paused])
+      setActive([...running, ...waiting, ...paused])
+      setPending(queued)
       setFailed(failedRes)
       setCompleted(completedRes)
+      setMe(meResp)
       setError(null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -161,6 +171,9 @@ export default function QueueView() {
 
   return (
     <div style={{ padding: '16px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px 8px' }}>
+        <DensityToggle density={density} onCycle={cycleDensity} />
+      </div>
       <QueueSection
         title="Active"
         instances={active}
@@ -168,6 +181,18 @@ export default function QueueView() {
         countBg="rgba(52, 152, 219, 0.2)"
         countColor="var(--state-running)"
         timeMode="elapsed"
+        density={density}
+        authMode={authMode}
+      />
+      <QueueSection
+        title="Pending"
+        instances={pending}
+        titleColor="var(--state-queued)"
+        countBg="rgba(241, 196, 15, 0.2)"
+        countColor="var(--state-queued)"
+        timeMode="elapsed"
+        density={density}
+        authMode={authMode}
       />
       <QueueSection
         title="Failed"
@@ -177,6 +202,8 @@ export default function QueueView() {
         countColor="var(--state-failed)"
         subtitle={`Last ${HISTORY_DAYS} days`}
         timeMode="relative"
+        density={density}
+        authMode={authMode}
         onDismissAll={() => handleDismissAll('failed')}
         onDismiss={handleDismiss}
         onRestore={handleRestore}
@@ -189,6 +216,8 @@ export default function QueueView() {
         countColor="var(--state-completed)"
         subtitle={`Last ${HISTORY_DAYS} days`}
         timeMode="relative"
+        density={density}
+        authMode={authMode}
         defaultCollapsed
         onDismissAll={() => handleDismissAll('completed')}
         onDismiss={handleDismiss}

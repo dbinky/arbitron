@@ -20,7 +20,7 @@
 - Modify: `dashboard/src/routes/QueueView.test.tsx` (update for enriched rows + density + toggle)
 - Run: `make ui` (rebuild embedded assets)
 
-- [ ] Step 1: Read the existing QueueView test to understand the current mock surface
+- [x] Step 1: Read the existing QueueView test to understand the current mock surface
 
 ```bash
 cat dashboard/src/routes/QueueView.test.tsx
@@ -28,7 +28,7 @@ cat dashboard/src/routes/QueueView.test.tsx
 
 Note the existing mock setup (mocked `api.instances.list`, `useSystemWebSocket`, `useRefetchOnReconnect`). The test seeds `InstanceSummary` rows; it must now seed `EnrichedInstanceSummary` rows (with `runName` + `retryCount`) and mock `api.me`.
 
-- [ ] Step 2: Write the failing test for the wired QueueView
+- [x] Step 2: Write the failing test for the wired QueueView
 
 Append to `dashboard/src/routes/QueueView.test.tsx` (or replace the existing happy-path test):
 
@@ -162,7 +162,7 @@ describe('QueueView — enriched + density wiring', () => {
 
 Note: if `QueueView.test.tsx` already has a `describe('QueueView', ...)` block with conflicting mocks, merge the new tests into it rather than duplicating the `vi.mock` calls. Ensure the `api.me` mock is added to the existing mock factory.
 
-- [ ] Step 3: Run it, confirm it fails
+- [x] Step 3: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/routes/QueueView.test.tsx
@@ -170,7 +170,7 @@ cd dashboard && npx vitest run src/routes/QueueView.test.tsx
 
 Expected: failure — `QueueView` does not render a `DensityToggle`, no Pending section, no `api.me` call.
 
-- [ ] Step 4: Wire `QueueView`
+- [x] Step 4: Wire `QueueView`
 
 In `dashboard/src/routes/QueueView.tsx`:
 
@@ -314,7 +314,7 @@ export default function QueueView() {
   )
 ```
 
-- [ ] Step 5: Run the QueueView tests, confirm they pass
+- [x] Step 5: Run the QueueView tests, confirm they pass
 
 ```bash
 cd dashboard && npx vitest run src/routes/QueueView.test.tsx
@@ -322,7 +322,7 @@ cd dashboard && npx vitest run src/routes/QueueView.test.tsx
 
 Expected: all assertions pass.
 
-- [ ] Step 6: Run the full dashboard test gate + typecheck
+- [x] Step 6: Run the full dashboard test gate + typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit && npx vitest run
@@ -330,7 +330,7 @@ cd dashboard && npx tsc --noEmit && npx vitest run
 
 Expected: no type errors; all dashboard tests pass.
 
-- [ ] Step 7: Rebuild the embedded SPA assets
+- [x] Step 7: Rebuild the embedded SPA assets
 
 ```bash
 make ui
@@ -342,7 +342,7 @@ Expected: the `dashboard/` build runs and copies assets into `adapter/dashboard/
 git status --short adapter/dashboard/dist
 ```
 
-- [ ] Step 8: Confirm the Go test gate still passes (the embedded assets are consumed by the Go embed)
+- [x] Step 8: Confirm the Go test gate still passes (the embedded assets are consumed by the Go embed)
 
 ```bash
 go test ./...
@@ -350,7 +350,7 @@ go test ./...
 
 Expected: all Go tests pass.
 
-- [ ] Step 9: Commit
+- [x] Step 9: Commit
 
 ```bash
 git add dashboard/src/routes/QueueView.tsx dashboard/src/routes/QueueView.test.tsx adapter/dashboard/dist

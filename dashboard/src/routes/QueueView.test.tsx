@@ -1,25 +1,64 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
+import type { EnrichedInstanceSummary, Me } from '../api/types'
 
 vi.mock('../hooks/useSystemWebSocket', () => ({
   useSystemWebSocket: () => ({ connected: true }),
 }))
 vi.mock('../hooks/useRefetchOnReconnect', () => ({ useRefetchOnReconnect: () => {} }))
 
-const { list, dismiss, restore, dismissAll } = vi.hoisted(() => ({
+const { list, dismiss, restore, dismissAll, me } = vi.hoisted(() => ({
   list: vi.fn(),
   dismiss: vi.fn(),
   restore: vi.fn(),
   dismissAll: vi.fn(),
+  me: vi.fn(),
 }))
 vi.mock('../api/client', () => ({
   api: {
+    me,
     instances: { list, dismiss, restore, dismissAll },
   },
 }))
 
 import QueueView from './QueueView'
+
+function enriched(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
+  return {
+    id: 'i1',
+    ownerId: 'u1',
+    workflowName: 'wf',
+    state: 'running',
+    priority: 'normal',
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    runName: 'run — wf',
+    retryCount: 0,
+    ...overrides,
+  }
+}
+
+function mockMe(overrides: Partial<Me> = {}): Me {
+  return {
+    userId: 'u1',
+    username: 'local',
+    role: 'admin',
+    departments: ['default'],
+    ledDepartments: [],
+    isAdmin: true,
+    authMode: 'local',
+    ...overrides,
+  }
+}
+
+// Top-level default: every describe inherits a resolved /me so the wired
+// fetchAll (which now calls api.me()) doesn't fall into the error path.
+// Individual tests override me/​list as needed.
+beforeEach(() => {
+  me.mockReset()
+  me.mockResolvedValue(mockMe())
+})
 
 describe('QueueView fetchAll window', () => {
   beforeEach(() => {
@@ -457,6 +496,113 @@ describe('QueueView dismiss handlers', () => {
     // After dismissAll, fetchAll must re-run (list is called again).
     await waitFor(() => {
       expect(list).toHaveBeenCalled()
+    })
+  })
+})
+
+describe('QueueView — enriched + density wiring', () => {
+  beforeEach(() => {
+    list.mockReset()
+    list.mockResolvedValue([])
+    dismiss.mockReset()
+    dismiss.mockResolvedValue({ status: 'ok' })
+    restore.mockReset()
+    restore.mockResolvedValue({ status: 'ok' })
+    dismissAll.mockReset()
+    dismissAll.mockResolvedValue({ status: 'ok' })
+  })
+
+  it('renders the DensityToggle in the toolbar', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /density/i })).toBeInTheDocument()
+    })
+  })
+
+  it('renders the run name in a row (enriched field reaches the wire)', async () => {
+    list.mockImplementation((params?: { state?: string }) => {
+      if (params?.state === 'running')
+        return Promise.resolve([enriched({ id: 'r1', runName: 'MyRun — wf', state: 'running' })])
+      return Promise.resolve([])
+    })
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('MyRun — wf')).toBeInTheDocument()
+    })
+  })
+
+  it('renders the Pending (queued) section separately with queue positions', async () => {
+    list.mockImplementation((params?: { state?: string }) => {
+      if (params?.state === 'queued')
+        return Promise.resolve([enriched({ id: 'q1', state: 'queued', queuePosition: 1 })])
+      return Promise.resolve([])
+    })
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/pending/i)).toBeInTheDocument()
+      // Assert the queue-position cell (the load-bearing sink), not the count
+      // badge, which also renders "1" and makes getByText('1') ambiguous.
+      const posCell = screen.getByText('1', { selector: 'td[data-col="queuePosition"]' })
+      expect(posCell).toBeInTheDocument()
+    })
+  })
+
+  it('cycles density when the toggle is clicked (no refetch)', async () => {
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: /density/i })).toBeInTheDocument())
+    const listCallsBefore = list.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /density/i }))
+    // Density is layout-only; it must NOT trigger a refetch.
+    expect(list.mock.calls.length).toBe(listCallsBefore)
+  })
+
+  it('renders submitter as "you" in local mode', async () => {
+    list.mockImplementation((params?: { state?: string }) => {
+      if (params?.state === 'running')
+        return Promise.resolve([enriched({ id: 'r1', state: 'running', submitterName: 'alice' })])
+      return Promise.resolve([])
+    })
+    me.mockResolvedValue(mockMe({ authMode: 'local' }))
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('you')).toBeInTheDocument()
+    })
+  })
+
+  it('renders submitter as display name in shared mode', async () => {
+    list.mockImplementation((params?: { state?: string }) => {
+      if (params?.state === 'running')
+        return Promise.resolve([enriched({ id: 'r1', state: 'running', submitterName: 'alice' })])
+      return Promise.resolve([])
+    })
+    me.mockResolvedValue(mockMe({ authMode: 'org' }))
+    render(
+      <MemoryRouter>
+        <QueueView />
+      </MemoryRouter>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument()
     })
   })
 })
