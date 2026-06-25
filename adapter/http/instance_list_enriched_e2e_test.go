@@ -332,6 +332,115 @@ func TestRouter_InstanceList_BackendUnset_EmptyOnWire(t *testing.T) {
 	}
 }
 
+// TestRouter_InstanceList_TerminalRow_FriendlyStepEmpty confirms that a
+// completed instance has no current step, so friendlyStep is empty on the
+// wire — the negative control for friendly step wiring.
+func TestRouter_InstanceList_TerminalRow_FriendlyStepEmpty(t *testing.T) {
+	owner := uuid.New()
+	now := time.Now()
+	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: "n1", Label: "Step"}}}
+	inst := &instance.Instance{
+		ID:               uuid.New(),
+		OwnerID:          owner,
+		WorkflowName:     "wf",
+		WorkflowSnapshot: snapshotMapForRouter(t, wf),
+		State:            instance.StateCompleted,
+		Variables:        map[string]any{},
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	instRepo := newMockInstanceRepo()
+	instRepo.instances[inst.ID] = inst
+	nodeExecRepo := newMockNodeExecRepo()
+	snapRepo := newMockSnapshotRepo()
+	userRepo := &probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}}
+
+	eng := engine.NewEngine(
+		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
+		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
+		&probeQueueManager{}, &mockQueueRepoForRouter{},
+	)
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:   eng,
+		Instances: instRepo,
+		NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo,
+		Config:    &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	friendlyStep, exists := resp[0]["friendlyStep"]
+	if exists {
+		assert.Equal(t, "", friendlyStep, "completed instance -> friendlyStep must be empty")
+	}
+}
+
+// TestRouter_InstanceList_RunNameDegradesToShortID_NoVariables confirms that
+// an instance with no Variables falls back to the short-id run name (the
+// ladder's last rung) — the negative control for run name wiring.
+func TestRouter_InstanceList_RunNameDegradesToShortID_NoVariables(t *testing.T) {
+	owner := uuid.New()
+	nodeID := "n1"
+	now := time.Now()
+	wf := workflow.Workflow{Name: "wf", Inputs: []workflow.InputField{{Name: "title", Type: "string", Required: true}}}
+	inst := &instance.Instance{
+		ID:               uuid.New(),
+		OwnerID:          owner,
+		WorkflowName:     "wf",
+		WorkflowSnapshot: snapshotMapForRouter(t, wf),
+		State:            instance.StateRunning,
+		CurrentNodeID:    &nodeID,
+		Variables:        nil, // no variables — should fall back to short id
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+
+	instRepo := newMockInstanceRepo()
+	instRepo.instances[inst.ID] = inst
+	nodeExecRepo := newMockNodeExecRepo()
+	snapRepo := newMockSnapshotRepo()
+	userRepo := &probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}}
+
+	eng := engine.NewEngine(
+		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
+		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
+		&probeQueueManager{}, &mockQueueRepoForRouter{},
+	)
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+
+	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
+		Service:   eng,
+		Instances: instRepo,
+		NodeExecs: nodeExecRepo,
+		Snapshots: snapRepo,
+		Config:    &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	runName := resp[0]["runName"].(string)
+	assert.Contains(t, runName, "wf", "run name must contain the workflow name")
+	assert.NotContains(t, runName, " — ", "no variables -> no title-based name, just short-id fallback")
+}
+
 // TestRouter_InstanceList_EnricherAbsent_DegradesToShortID confirms that
 // WITHOUT the enricher wired, the runName is the short-id fallback (proving
 // the probe above is load-bearing — it fails when the wiring is inert).

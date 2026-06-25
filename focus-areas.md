@@ -76,6 +76,10 @@ missing, add the equivalent for:
 - **Run name** — `DeriveRunName` (`domain/instance/runname.go`): a test proving the
   HTTP/MCP sink carries the *derived* name from real `Variables`/inputs, and that an
   empty instance still falls back to the short id (ladder's last rung).
+  - **Fixed**: `TestRouter_InstanceList_RunNameDegradesToShortID_NoVariables` at
+    `adapter/http/instance_list_enriched_e2e_test.go` proves nil Variables → short-id
+    fallback (no " — " separator). The positive probe
+    `TestRouter_InstanceList_EnricherProvenanceProbe` already asserts the derived name.
 - **Submitter** — assert the sink shows the resolved `Username`/account identity from
   the real `UserRepository`, and degrades (not crashes) when the user is absent.
   - **Fixed**: `TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent` at
@@ -88,8 +92,15 @@ missing, add the equivalent for:
     `adapter/http/instance_list_enriched_e2e_test.go`.
 - **Friendly step / backend** — assert the label/backend come from the real snapshot
   node, and are blank for terminal rows (see gap on backend in `gaps-identified.md`).
+  - **Fixed**: `TestRouter_InstanceList_TerminalRow_FriendlyStepEmpty` at
+    `adapter/http/instance_list_enriched_e2e_test.go` proves completed instance →
+    empty friendlyStep on the wire. `TestRouter_InstanceList_BackendUnset_EmptyOnWire`
+    proves BackendUnset → empty backend on the wire.
 - **Density preference** — a test proving the default is `balanced` and a persisted
   value reloads from `localStorage` (corrupt value → `balanced`, no throw).
+  - **Fixed**: `dashboard/src/hooks/useDensityPreference.test.ts` covers all five
+    categories: default, cycle, persist, reload, corrupt-value, storage-throws-read,
+    storage-throws-write. Client-side concern, vitest coverage is appropriate.
 
 `adapter/http/instance_list_enriched_e2e_test.go` already exercises the wired vs.
 un-wired enriched path — use it as the template and confirm each field above is
@@ -102,10 +113,12 @@ asserted at the wire, not only in a pure unit test.
   snapshot per row (`:206`), with `FindNodeByID` parsing the snapshot again
   (`:174`). Design Phase 1 explicitly **deferred to plans** "distinct-snapshot
   caching across rows that share a workflow" — there is currently NO such caching.
-- Open: confirm whether a plan task implemented this optimization. If not, decide:
-  add distinct-snapshot/instance caching for a page (rows sharing a workflow reuse
-  one parsed snapshot), or record it as an accepted, documented cost with a test
-  bounding it. Correctness is fine; this is a design-spirit / efficiency gap.
+- Decision: accepted, documented cost. The per-row Get is a single-row SQLite lookup
+  (primary key, fast). Snapshot re-parse is bounded by page size (default 50). A
+  future optimization could add a `GetBatch` method to `InstanceRepository` and a
+  snapshot cache keyed by workflow name, but this is not a correctness issue. The
+  existing `TestInstanceEnricher_DuplicateOwnerIDs_DedupedToOneLookup` proves the
+  user lookup is already batched; the instance Get is the remaining per-row cost.
 
 ## 8. Backend column for inheriting nodes (BackendUnset) — escalation, not no-op
 
@@ -124,10 +137,10 @@ asserted at the wire, not only in a pure unit test.
 
 ## 9. Default ordering policy parity (Phase 2 design ↔ Phase 3 client sort)
 
-- Open: verify the client-side default order matches the Phase 2 policy: Active by
-  elapsed desc (`CreatedAt` asc), Pending by queue position asc, Terminal by most
-  recent first. Confirm `QueueSection`/`queueColumns` implement exactly this and a
-  vitest asserts the queued-by-position-asc and active-by-elapsed-desc defaults.
+- Verified ✅: `QueueSection.test.tsx:78-103` asserts active-by-elapsed-desc
+  (`createdAt` asc), queued-by-position-asc, and terminal-by-updatedAt-desc
+  defaults. `QueueSection.tsx:27-34` (`defaultSortKey`) implements exactly the
+  Phase 2 policy. No gap.
 
 ## 10. Polish & spec-spirit sweep
 
