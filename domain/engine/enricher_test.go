@@ -32,7 +32,7 @@ func newEnricherDeps() *enricherTestDeps {
 }
 
 func (d *enricherTestDeps) enricher() *engine.InstanceEnricher {
-	return engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil, "")
+	return engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "")
 }
 
 func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
@@ -292,7 +292,7 @@ func TestInstanceEnricher_BackendUnset_ResolvesToDefault(t *testing.T) {
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt}}
 
-	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil, "claude-code")
+	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "claude-code")
 	got, err := enr.Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
 	require.NoError(t, err)
 	assert.Equal(t, "claude-code", got[0].Backend, "BackendUnset with defaultAgentBackend -> resolves to default")
@@ -311,6 +311,27 @@ func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {
 	got, err := d.enricher().Enrich(context.Background(), summaries, identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser})
 	require.NoError(t, err)
 	assert.Equal(t, "Crashed step", got[0].FriendlyStep, "failed -> label from FailedNodeID")
+}
+
+func TestNewInstanceEnricher_NilQueuePosProvider_Panics(t *testing.T) {
+	d := newEnricherDeps()
+	assert.Panics(t, func() {
+		engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, nil, "")
+	}, "a nil QueuePositionProvider is a programming error; pass NoopQueuePositionProvider{}")
+}
+
+func TestSetQueuePositionProvider_Nil_Panics(t *testing.T) {
+	d := newEnricherDeps()
+	enr := engine.NewInstanceEnricher(d.instRepo, d.nodeExecRepo, d.userRepo, engine.NoopQueuePositionProvider{}, "")
+	assert.Panics(t, func() {
+		enr.SetQueuePositionProvider(nil)
+	}, "the setter must reject a nil provider")
+}
+
+func TestNoopQueuePositionProvider_ReturnsEmpty(t *testing.T) {
+	pos, err := engine.NoopQueuePositionProvider{}.QueuePositions(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, pos, "noop provider yields no positions")
 }
 
 // Security: the account identity must be the EMAIL only. The OIDC subject is an

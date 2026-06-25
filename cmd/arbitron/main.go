@@ -779,7 +779,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// engine so ListEnriched composes the additive queue-list fields (run
 	// name, submitter, friendly step, model, backend, retry count). The
 	// queue-position provider is wired in Phase 2 (queue.Manager.QueuePositions).
-	instanceEnricher := engine.NewInstanceEnricher(instanceRepo, nodeExecRepo, userRepo, nil, cfg.LLM.DefaultAgentBackend)
+	instanceEnricher := engine.NewInstanceEnricher(instanceRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, cfg.LLM.DefaultAgentBackend)
 	eng.SetInstanceEnricher(instanceEnricher)
 
 	// 12. Create the queue manager and wire it to the engine.

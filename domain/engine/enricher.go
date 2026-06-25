@@ -19,6 +19,18 @@ type QueuePositionProvider interface {
 	QueuePositions(ctx context.Context) (map[uuid.UUID]int, error)
 }
 
+// NoopQueuePositionProvider is the Null Object for QueuePositionProvider: it
+// reports no queue positions (every instance is non-queued, position 0). The
+// composition root constructs the enricher with it before the real queue
+// manager exists, then swaps in the manager via SetQueuePositionProvider. Using
+// an explicit Null Object (never nil) keeps the provider non-nil at all times.
+type NoopQueuePositionProvider struct{}
+
+// QueuePositions always returns an empty map (no positions) and never errors.
+func (NoopQueuePositionProvider) QueuePositions(context.Context) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}
+
 // InstanceEnricher is the service-layer enrichment step for the instance list.
 // Given an already-authorized page of InstanceSummary, it composes the
 // additive enriched fields by calling the real producers and returns
@@ -33,10 +45,12 @@ type InstanceEnricher struct {
 	defaultAgentBackend string               // deployment-wide fallback for BackendUnset nodes
 }
 
-// NewInstanceEnricher constructs the enricher with its collaborators. A nil
-// queuePos leaves the queue-position field at 0 (non-queued) until Phase 2
-// wires the real provider. defaultAgentBackend is the deployment-wide fallback
-// used when a node's Config.Backend is BackendUnset (inheriting).
+// NewInstanceEnricher constructs the enricher with its collaborators. queuePos
+// must be non-nil — pass NoopQueuePositionProvider{} when no real provider is
+// available yet (the composition root swaps in the queue manager later via
+// SetQueuePositionProvider). A nil queuePos is a programming error and panics.
+// defaultAgentBackend is the deployment-wide fallback used when a node's
+// Config.Backend is BackendUnset (inheriting).
 func NewInstanceEnricher(
 	instances instance.InstanceRepository,
 	nodeExecs instance.NodeExecutionRepository,
@@ -44,6 +58,9 @@ func NewInstanceEnricher(
 	queuePos QueuePositionProvider,
 	defaultAgentBackend string,
 ) *InstanceEnricher {
+	if queuePos == nil {
+		panic("engine: NewInstanceEnricher requires a non-nil QueuePositionProvider (use NoopQueuePositionProvider{})")
+	}
 	return &InstanceEnricher{
 		instances:          instances,
 		nodeExecs:          nodeExecs,
@@ -57,6 +74,9 @@ func NewInstanceEnricher(
 // as a setter so the composition root can construct the enricher before the
 // queue manager exists, then wire the provider once it does.
 func (e *InstanceEnricher) SetQueuePositionProvider(p QueuePositionProvider) {
+	if p == nil {
+		panic("engine: SetQueuePositionProvider requires a non-nil QueuePositionProvider (use NoopQueuePositionProvider{})")
+	}
 	e.queuePos = p
 }
 

@@ -62,7 +62,7 @@ func TestRouter_InstanceList_EnricherProvenanceProbe(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	// Inject an admin identity so the list is unconstrained (the instance is
 	// visible regardless of owner). The auth middleware is nil here; we pass
@@ -131,7 +131,7 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -185,7 +185,7 @@ func TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -246,7 +246,7 @@ func TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -307,7 +307,7 @@ func TestRouter_InstanceList_BackendUnset_EmptyOnWire(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -361,7 +361,7 @@ func TestRouter_InstanceList_TerminalRow_FriendlyStepEmpty(t *testing.T) {
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -417,7 +417,7 @@ func TestRouter_InstanceList_RunNameDegradesToShortID_NoVariables(t *testing.T) 
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, nil, ""))
+	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
