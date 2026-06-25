@@ -135,6 +135,7 @@ type Instance struct {
 // InstanceSummary is a lightweight representation for listing instances.
 type InstanceSummary struct {
 	ID            uuid.UUID     `json:"id"`
+	OwnerID       uuid.UUID     `json:"ownerId"`
 	WorkflowName  string        `json:"workflowName"`
 	State         State         `json:"state"`
 	Priority      Priority      `json:"priority"`
@@ -147,6 +148,23 @@ type InstanceSummary struct {
 	UpdatedAt     time.Time     `json:"updatedAt"`
 	CompletedAt   *time.Time    `json:"completedAt,omitempty"`
 	QueuedAt      *time.Time    `json:"queuedAt,omitempty"`
+}
+
+type Submitter struct {
+	Name            string
+	AccountIdentity string
+}
+
+type EnrichedInstanceSummary struct {
+	InstanceSummary
+	RunName       string
+	Submitter     Submitter
+	FriendlyStep  string
+	Model         string
+	Backend       string
+	RetryCount    int
+	QueuePosition int
+	FailedNodeID  *string
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.

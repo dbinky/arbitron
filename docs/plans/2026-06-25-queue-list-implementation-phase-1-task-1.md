@@ -15,7 +15,7 @@
 - Create: `domain/instance/runname_test.go`
 - Modify: `domain/instance/instance.go` (append `EnrichedInstanceSummary` after `InstanceSummary`)
 
-- [ ] Step 1: Write the failing test for `DeriveRunName` (all ladder rungs + edge cases)
+- [x] Step 1: Write the failing test for `DeriveRunName` (all ladder rungs + edge cases)
 
 Create `domain/instance/runname_test.go`:
 
@@ -106,7 +106,7 @@ func TestDeriveRunName(t *testing.T) {
 }
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./domain/instance/
@@ -114,7 +114,7 @@ go test ./domain/instance/
 
 Expected: build failure — `undefined: instance.DeriveRunName`.
 
-- [ ] Step 3: Minimal implementation of `DeriveRunName`
+- [x] Step 3: Minimal implementation of `DeriveRunName`
 
 Create `domain/instance/runname.go`:
 
@@ -219,7 +219,7 @@ func shortID(id uuid.UUID) string {
 }
 ```
 
-- [ ] Step 4: Run it, confirm it passes
+- [x] Step 4: Run it, confirm it passes
 
 ```bash
 go test ./domain/instance/
@@ -231,7 +231,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/instance	0.00s
 ```
 
-- [ ] Step 5: Write the failing test for `EnrichedInstanceSummary` field shape
+- [x] Step 5: Write the failing test for `EnrichedInstanceSummary` field shape
 
 Append to `domain/instance/runname_test.go`:
 
@@ -272,7 +272,7 @@ func TestEnrichedInstanceSummary_ZeroValueDegrades(t *testing.T) {
 }
 ```
 
-- [ ] Step 6: Run it, confirm it fails
+- [x] Step 6: Run it, confirm it fails
 
 ```bash
 go test ./domain/instance/
@@ -280,7 +280,7 @@ go test ./domain/instance/
 
 Expected: build failure — `undefined: instance.EnrichedInstanceSummary`, `undefined: instance.Submitter`.
 
-- [ ] Step 7: Add `OwnerID` to `InstanceSummary`, and `EnrichedInstanceSummary` + `Submitter` to `instance.go`
+- [x] Step 7: Add `OwnerID` to `InstanceSummary`, and `EnrichedInstanceSummary` + `Submitter` to `instance.go`
 
 First, add `OwnerID` to the existing `InstanceSummary` struct in `domain/instance/instance.go`. Insert the field after `ID` (line 137):
 
@@ -345,7 +345,7 @@ type EnrichedInstanceSummary struct {
 }
 ```
 
-- [ ] Step 8: Run it, confirm it passes
+- [x] Step 8: Run it, confirm it passes
 
 ```bash
 go test ./domain/instance/
@@ -357,7 +357,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/instance	0.00s
 ```
 
-- [ ] Step 9: Confirm the whole module builds
+- [x] Step 9: Confirm the whole module builds
 
 ```bash
 go build ./...
