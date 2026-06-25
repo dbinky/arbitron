@@ -16,7 +16,7 @@
 - Create: `domain/engine/enricher_list_test.go` (service-level `ListEnriched` test)
 - Modify: `adapter/http/instance_handler_test.go` (add enriched-list tests + extend `mockInstanceService`)
 
-- [ ] Step 1: Write the failing service-level test for `Engine.ListEnriched`
+- [x] Step 1: Write the failing service-level test for `Engine.ListEnriched`
 
 Create `domain/engine/enricher_list_test.go`:
 
@@ -147,7 +147,7 @@ func TestEngine_ListEnriched_RepoError_Propagates(t *testing.T) {
 }
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./domain/engine/ -run TestEngine_ListEnriched
@@ -155,7 +155,7 @@ go test ./domain/engine/ -run TestEngine_ListEnriched
 
 Expected: build failure — `undefined: engine.Engine.ListEnriched`, `undefined: engine.Engine.SetInstanceEnricher`.
 
-- [ ] Step 3: Add `SetInstanceEnricher` + `ListEnriched` to the Engine
+- [x] Step 3: Add `SetInstanceEnricher` + `ListEnriched` to the Engine
 
 In `domain/engine/engine.go`, add a field to the `Engine` struct (after `resolver` near line 41):
 
@@ -220,7 +220,7 @@ func (e *Engine) ListEnriched(ctx context.Context, filters instance.ListFilters)
 
 Add `"github.com/arbitron/arbitron/domain/identity"` to the import block if not already present (it is already imported in `engine.go`).
 
-- [ ] Step 4: Run the service test, confirm it passes
+- [x] Step 4: Run the service test, confirm it passes
 
 ```bash
 go test ./domain/engine/ -run TestEngine_ListEnriched
@@ -232,7 +232,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/engine	0.00s
 ```
 
-- [ ] Step 5: Write the failing HTTP test for the enriched `List` response
+- [x] Step 5: Write the failing HTTP test for the enriched `List` response
 
 Append to `adapter/http/instance_handler_test.go`:
 
@@ -310,7 +310,7 @@ func TestInstanceHandler_List_EnrichedProvenanceProbe(t *testing.T) {
 }
 ```
 
-- [ ] Step 6: Run it, confirm it fails
+- [x] Step 6: Run it, confirm it fails
 
 ```bash
 go test ./adapter/http/ -run TestInstanceHandler_List_Enriched
@@ -318,7 +318,7 @@ go test ./adapter/http/ -run TestInstanceHandler_List_Enriched
 
 Expected: build failure — `undefined: svc.listEnrichedFn`, and the JSON fields `runName`/`friendlyStep`/etc. are absent from the response (the handler still emits the lean `summaryResponse`).
 
-- [ ] Step 7: Extend `InstanceService` and `mockInstanceService` with `ListEnriched`
+- [x] Step 7: Extend `InstanceService` and `mockInstanceService` with `ListEnriched`
 
 In `adapter/http/instance_handler.go`, add to the `InstanceService` interface (after `ListInstances`):
 
@@ -356,7 +356,7 @@ func (m *mockInstanceService) ListEnriched(ctx context.Context, filters instance
 }
 ```
 
-- [ ] Step 8: Add the `enrichedSummaryDTO` + mapper and switch the `List` handler
+- [x] Step 8: Add the `enrichedSummaryDTO` + mapper and switch the `List` handler
 
 First, update the SQLite `ListInstances` query + mapper to populate the new `OwnerID` field on `InstanceSummary` (added in Phase 1 Task 1). In `adapter/sqlite/queries/instances.sql`, add `owner_id` to the `ListInstances` SELECT column list (line 19):
 
@@ -513,7 +513,7 @@ Now switch the `List` handler to use the enriched path. In `InstanceHandler.List
 	WriteJSON(w, http.StatusOK, out)
 ```
 
-- [ ] Step 9: Run the HTTP tests, confirm they pass
+- [x] Step 9: Run the HTTP tests, confirm they pass
 
 ```bash
 go test ./adapter/http/ -run TestInstanceHandler_List
@@ -525,7 +525,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/adapter/http	0.00s
 ```
 
-- [ ] Step 10: Confirm the whole module builds and all tests pass
+- [x] Step 10: Confirm the whole module builds and all tests pass
 
 ```bash
 go build ./... && go test ./...

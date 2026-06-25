@@ -165,6 +165,10 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
+		ownerID, err := parseUUID(row.OwnerID)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
 		createdAt, err := parseTime(row.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
@@ -187,6 +191,7 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		}
 		summaries[i] = instance.InstanceSummary{
 			ID:            id,
+			OwnerID:       ownerID,
 			WorkflowName:  row.WorkflowName,
 			State:         instance.State(row.State),
 			Priority:      instance.Priority(row.Priority),

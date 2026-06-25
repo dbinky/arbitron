@@ -20,6 +20,10 @@ import (
 // InstanceService defines the engine methods needed by instance handlers.
 type InstanceService interface {
 	ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	// ListEnriched returns the authorized page with additive enriched fields.
+	// When the enricher is unwired, rows carry the run name only. Implementations
+	// apply the same authz as ListInstances.
+	ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	GetTrace(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	GetNodeTrace(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
@@ -165,6 +169,7 @@ func isInteractiveNode(snapshot map[string]any, nodeID string) bool {
 // killing the silent-field-drop trap of two parallel mappers.
 type summaryDTO struct {
 	ID            string  `json:"id"`
+	OwnerID       string  `json:"ownerId"`
 	WorkflowName  string  `json:"workflowName"`
 	State         string  `json:"state"`
 	Priority      string  `json:"priority"`
@@ -182,6 +187,7 @@ type summaryDTO struct {
 func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
 	dto := summaryDTO{
 		ID:            s.ID.String(),
+		OwnerID:       s.OwnerID.String(),
 		WorkflowName:  s.WorkflowName,
 		State:         string(s.State),
 		Priority:      string(s.Priority),
@@ -220,6 +226,53 @@ func toSummaryResponse(s instance.InstanceSummary, dismissed bool) summaryRespon
 	return summaryResponse{
 		summaryDTO: toSummaryDTO(s),
 		Dismissed:  dismissed,
+	}
+}
+
+// enrichedSummaryDTO is the JSON projection of instance.EnrichedInstanceSummary.
+// It embeds summaryDTO so the lean fields flatten into the same JSON object;
+// the enriched fields are additive. submitterName/submitterIdentity carry the
+// resolved owner (the HTTP layer renders "you" vs the name from authMode in
+// the dashboard, not here — the dashboard reads authMode from /me).
+type enrichedSummaryDTO struct {
+	summaryDTO
+	RunName           string  `json:"runName"`
+	FriendlyStep      string  `json:"friendlyStep,omitempty"`
+	Model             string  `json:"model,omitempty"`
+	Backend           string  `json:"backend,omitempty"`
+	RetryCount        int     `json:"retryCount"`
+	QueuePosition     int     `json:"queuePosition,omitempty"`
+	SubmitterName     string  `json:"submitterName,omitempty"`
+	SubmitterIdentity string  `json:"submitterIdentity,omitempty"`
+	FailedNodeID      *string `json:"failedNodeId,omitempty"`
+}
+
+func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary) enrichedSummaryDTO {
+	return enrichedSummaryDTO{
+		summaryDTO:        toSummaryDTO(e.InstanceSummary),
+		RunName:           e.RunName,
+		FriendlyStep:      e.FriendlyStep,
+		Model:             e.Model,
+		Backend:           e.Backend,
+		RetryCount:        e.RetryCount,
+		QueuePosition:     e.QueuePosition,
+		SubmitterName:     e.Submitter.Name,
+		SubmitterIdentity: e.Submitter.AccountIdentity,
+		FailedNodeID:      e.FailedNodeID,
+	}
+}
+
+// enrichedResponse is the enriched list-item JSON: the enriched DTO plus the
+// per-user "dismissed" flag, mirroring summaryResponse.
+type enrichedResponse struct {
+	enrichedSummaryDTO
+	Dismissed bool `json:"dismissed"`
+}
+
+func toEnrichedResponse(e instance.EnrichedInstanceSummary, dismissed bool) enrichedResponse {
+	return enrichedResponse{
+		enrichedSummaryDTO: toEnrichedSummaryDTO(e),
+		Dismissed:          dismissed,
 	}
 }
 
@@ -328,11 +381,10 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	summaries, err := h.service.ListInstances(r.Context(), filters)
+	enriched, err := h.service.ListEnriched(r.Context(), filters)
 	if err != nil {
 		if errors.Is(err, instance.ErrNotFound) {
-			// No identity in context (defence-in-depth); reveal nothing.
-			WriteJSON(w, http.StatusOK, []instance.InstanceSummary{})
+			WriteJSON(w, http.StatusOK, []instance.EnrichedInstanceSummary{})
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
@@ -360,13 +412,13 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]summaryResponse, 0, len(summaries))
-	for _, s := range summaries {
-		isDismissed := dismissedIDs[s.ID]
+	out := make([]enrichedResponse, 0, len(enriched))
+	for _, e := range enriched {
+		isDismissed := dismissedIDs[e.ID]
 		if isDismissed && !includeDismissed {
-			continue // omit dismissed items by default
+			continue
 		}
-		out = append(out, toSummaryResponse(s, isDismissed))
+		out = append(out, toEnrichedResponse(e, isDismissed))
 	}
 	WriteJSON(w, http.StatusOK, out)
 }

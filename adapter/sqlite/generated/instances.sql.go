@@ -131,7 +131,7 @@ func (q *Queries) GetInstance(ctx context.Context, id string) (Instance, error) 
 }
 
 const listInstances = `-- name: ListInstances :many
-SELECT id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
+SELECT id, owner_id, workflow_name, state, priority, current_node_id, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
 FROM instances
 WHERE (?1 IS NULL OR state = ?1)
 AND (?2 IS NULL OR workflow_name = ?2)
@@ -162,6 +162,7 @@ type ListInstancesParams struct {
 
 type ListInstancesRow struct {
 	ID            string
+	OwnerID       string
 	WorkflowName  string
 	State         string
 	Priority      string
@@ -206,6 +207,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 		var i ListInstancesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OwnerID,
 			&i.WorkflowName,
 			&i.State,
 			&i.Priority,

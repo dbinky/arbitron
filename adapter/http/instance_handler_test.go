@@ -326,6 +326,7 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
 	listFn          func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	listEnrichedFn  func(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
 	getFn           func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
 	traceFn         func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
 	nodeTraceFn     func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
@@ -345,6 +346,21 @@ func (m *mockInstanceService) ListInstances(ctx context.Context, filters instanc
 		return m.listFn(ctx, filters)
 	}
 	return nil, nil
+}
+
+func (m *mockInstanceService) ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+	if m.listEnrichedFn != nil {
+		return m.listEnrichedFn(ctx, filters)
+	}
+	summaries, err := m.ListInstances(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]instance.EnrichedInstanceSummary, len(summaries))
+	for i, s := range summaries {
+		out[i] = instance.EnrichedInstanceSummary{InstanceSummary: s}
+	}
+	return out, nil
 }
 
 func (m *mockInstanceService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
@@ -2219,4 +2235,76 @@ func TestInstanceHandler_Cancel_ErrForbidden_Returns403(t *testing.T) {
 	h.Cancel(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestInstanceHandler_List_EnrichedFields(t *testing.T) {
+	h, instRepo, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	nodeID := "draft-node"
+	now := time.Now()
+	inst := &instance.Instance{
+		ID:            uuid.New(),
+		OwnerID:       owner,
+		WorkflowName:  "feature-pipeline",
+		State:         instance.StateRunning,
+		Priority:      instance.PriorityNormal,
+		CurrentNodeID: &nodeID,
+		Variables:     map[string]any{"title": "Refactor"},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	inst.WorkflowSnapshot = map[string]any{
+		"name":  "feature-pipeline",
+		"nodes": []any{map[string]any{"id": nodeID, "label": "Generate draft", "config": map[string]any{"backend": "claude-code"}}},
+	}
+	instRepo.instances[inst.ID] = inst
+
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: inst.ID, WorkflowName: "feature-pipeline", State: instance.StateRunning, Priority: instance.PriorityNormal, CurrentNodeID: &nodeID, CreatedAt: now, UpdatedAt: now},
+			RunName:         "Refactor — feature-pipeline",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+			FriendlyStep:    "Generate draft",
+			Model:           "gpt-4o",
+			Backend:         "claude-code",
+			RetryCount:      2,
+			QueuePosition:   0,
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	row := resp[0]
+	assert.Equal(t, "Refactor — feature-pipeline", row["runName"])
+	assert.Equal(t, "Generate draft", row["friendlyStep"])
+	assert.Equal(t, "gpt-4o", row["model"])
+	assert.Equal(t, "claude-code", row["backend"])
+	assert.Equal(t, float64(2), row["retryCount"])
+	assert.Equal(t, "alice", row["submitterName"])
+	assert.Equal(t, "alice@example.com", row["submitterIdentity"])
+	assert.Equal(t, false, row["dismissed"], "dismissed decoration preserved")
+}
+
+func TestInstanceHandler_List_EnrichedProvenanceProbe(t *testing.T) {
+	// Provenance probe: when the service returns NO enriched rows (empty),
+	// the handler still returns 200 + []. When the service is unwired
+	// (listEnrichedFn nil), the handler falls back to the plain service list
+	// so the endpoint never breaks.
+	h, _, _, _, svc := newInstanceHandler()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return nil, nil
+	}
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Empty(t, resp)
 }

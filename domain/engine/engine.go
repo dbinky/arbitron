@@ -39,6 +39,7 @@ type Engine struct {
 	workspaceManager WorkspaceManager
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
+	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
 	mu               sync.Mutex
 	contexts         map[uuid.UUID]context.CancelFunc
 	wg               sync.WaitGroup
@@ -156,6 +157,14 @@ type IDResolver interface {
 // and no archive check runs (local/unconfigured mode).
 func (e *Engine) SetWorkflowResolver(r IDResolver) {
 	e.resolver = r
+}
+
+// SetInstanceEnricher wires the list-enrichment step. When set, ListEnriched
+// runs the authorized ListInstances then the enricher to compose the additive
+// fields. When unset, ListEnriched returns the un-enriched summaries wrapped in
+// EnrichedInstanceSummary (run name only).
+func (e *Engine) SetInstanceEnricher(en *InstanceEnricher) {
+	e.enricher = en
 }
 
 // recordIntervention writes an audit row and publishes instance.intervened when
@@ -478,6 +487,45 @@ func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters
 	filters.Departments = lc.Departments
 	filters.IncludePublic = lc.IncludePublic
 	return e.instances.List(ctx, filters)
+}
+
+// ListEnriched returns the instances visible to the caller with the additive
+// enriched fields composed (run name, submitter, friendly step, model,
+// backend, retry count, queue position). Authorization is identical to
+// ListInstances (the same service-set filters); enrichment runs only on the
+// authorized page. A request with no identity returns ErrNotFound, exactly
+// like ListInstances. When no enricher is wired, rows carry the run name only
+// (derived from the lean summary) so the endpoint still works.
+func (e *Engine) ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+	lc, ok := listConstraint(ctx)
+	if !ok {
+		return nil, instance.ErrNotFound
+	}
+	if lc.Unconstrained {
+		filters.OwnerID = nil
+		filters.Departments = nil
+		filters.IncludePublic = false
+	} else {
+		filters.OwnerID = lc.OwnerID
+		filters.Departments = lc.Departments
+		filters.IncludePublic = lc.IncludePublic
+	}
+	summaries, err := e.instances.List(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	if e.enricher == nil {
+		out := make([]instance.EnrichedInstanceSummary, len(summaries))
+		for i, s := range summaries {
+			out[i] = instance.EnrichedInstanceSummary{
+				InstanceSummary: s,
+				RunName:         instance.DeriveRunName(s.WorkflowName, nil, nil, s.ID),
+			}
+		}
+		return out, nil
+	}
+	callerID, _ := identity.FromContext(ctx)
+	return e.enricher.Enrich(ctx, summaries, callerID)
 }
 
 // GetInstance loads an instance the caller may view, else ErrNotFound. Both an
