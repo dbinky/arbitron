@@ -14,7 +14,7 @@
 - Create: `domain/engine/enricher.go`
 - Create: `domain/engine/enricher_test.go`
 
-- [ ] Step 1: Write the failing test for the enricher (happy path: all fields present)
+- [x] Step 1: Write the failing test for the enricher (happy path: all fields present)
 
 Create `domain/engine/enricher_test.go`:
 
@@ -103,7 +103,7 @@ func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
 }
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 go test ./domain/engine/ -run TestInstanceEnricher_HappyPath
@@ -111,7 +111,7 @@ go test ./domain/engine/ -run TestInstanceEnricher_HappyPath
 
 Expected: build failure — `undefined: engine.InstanceEnricher`, `undefined: engine.NewInstanceEnricher`, `undefined: enricherInstanceRepo`, `undefined: newEnricherInstanceRepo`, `snapshotMap`.
 
-- [ ] Step 3: Add the test helpers (`enricherInstanceRepo`, `snapshotMap`)
+- [x] Step 3: Add the test helpers (`enricherInstanceRepo`, `snapshotMap`)
 
 Append to `domain/engine/enricher_test.go` (below the first test):
 
@@ -230,7 +230,7 @@ var _ instance.UserRepository = (*enricherUserRepo)(nil)
 
 Merge the new `"encoding/json"` import into the existing import block at the top of the file (do not leave a duplicate import block).
 
-- [ ] Step 4: Write the additional failing tests (degradation, edge cases)
+- [x] Step 4: Write the additional failing tests (degradation, edge cases)
 
 Append to `domain/engine/enricher_test.go`:
 
@@ -345,7 +345,7 @@ func TestInstanceEnricher_FailedInstance_UsesFailedNodeID(t *testing.T) {
 func strPtr(s string) *string { return &s }
 ```
 
-- [ ] Step 5: Implement the `InstanceEnricher`
+- [x] Step 5: Implement the `InstanceEnricher`
 
 Create `domain/engine/enricher.go`:
 
@@ -584,7 +584,7 @@ func accountIdentity(u instance.User) string {
 
 Add `"encoding/json"` to the import block of `domain/engine/enricher.go`.
 
-- [ ] Step 6: Confirm `mockNodeExecutionRepo` (the existing engine-test mock) has an `executions` slice field
+- [x] Step 6: Confirm `mockNodeExecutionRepo` (the existing engine-test mock) has an `executions` slice field
 
 The existing `mockNodeExecutionRepo` in `domain/engine/engine_test.go:358` has an `executions []*instance.NodeExecution` field that the tests seed directly. Confirm:
 
@@ -594,7 +594,9 @@ rg -n "type mockNodeExecutionRepo|executions " domain/engine/engine_test.go | he
 
 The `enricherUserRepo` and `enricherInstanceRepo` mocks are defined in the test file itself (Step 3 and the block above). No changes to the existing engine-test mocks are needed.
 
-- [ ] Step 7: Run the tests, confirm they pass
+> NOTE: The plan's claim "No changes to the existing engine-test mocks are needed" was wrong. The existing `mockNodeExecutionRepo.AggregateByInstances` returned an empty map (`engine_test.go:413-415`), so the happy-path assertions `row.Model == "gpt-4o"` and `row.RetryCount == 2` could not pass through the real seam. I updated `AggregateByInstances` to compute the aggregate from its `executions` slice (mirroring the SQLite impl's "most-recently-started model + max attempt" rule). This is safe — no other engine test asserts on aggregate output, and empty-seeded repos still return an empty map.
+
+- [x] Step 7: Run the tests, confirm they pass
 
 ```bash
 go test ./domain/engine/ -run TestInstanceEnricher
@@ -606,7 +608,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/engine	0.00s
 ```
 
-- [ ] Step 8: Confirm the whole module builds
+- [x] Step 8: Confirm the whole module builds
 
 ```bash
 go build ./...
@@ -614,7 +616,7 @@ go build ./...
 
 Expected: no output, exit code 0.
 
-- [ ] Step 9: Commit
+- [x] Step 9: Commit
 
 ```bash
 git add domain/engine/enricher.go domain/engine/enricher_test.go
