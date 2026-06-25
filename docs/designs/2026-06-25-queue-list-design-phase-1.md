@@ -57,9 +57,11 @@ Single responsibility of each unit:
    (including the existing `dismissed` decoration).
 5. **Node-execution aggregate (port extension).** One job: collapse many
    `NodeExecution` rows per instance into one per-instance aggregate
-   (latest model, backend, max attempt, first-started). New read-only method on
+   (latest model, max attempt, first-started). New read-only method on
    `NodeExecutionRepository`; SQLite adapter implements it as a single grouped
-   query.
+   query. Note: backend is **not** an aggregate output — `NodeExecution` carries
+   no backend column; backend is read from the workflow snapshot's relevant
+   `NodeConfig` (see Backend in the provenance table and the data flow below).
 6. **User batch lookup (existing port, used in batch).** One job: resolve owner
    display name + account identity for the page's distinct `OwnerID`s.
 
@@ -78,7 +80,8 @@ HTTP List request
         • DeriveRunName(workflowName, variables, inputs, id)   per row
         • NodeExecutionRepository.AggregateByInstances(ids)    one call / page
         • User batch lookup by distinct OwnerID                one call / page
-        • per row: load WorkflowSnapshot, FindNodeByID(relevantNodeID).Label
+        • per row: load WorkflowSnapshot, FindNodeByID(relevantNodeID)
+              → .Label (friendly step) and .Config.Backend (backend)
         → []EnrichedInstanceSummary
     → toEnrichedSummaryDTO (+ existing dismissal decoration)
   → JSON response
@@ -100,7 +103,7 @@ Each enriched input traced to the concrete producer that feeds it in production:
 | Local vs shared "you" | `domain/identity.Mode` (`local`/`org`/`edge`) from request identity | ✅ exists |
 | Friendly current step (label) | `domain/engine.FindNodeByID(Instance.WorkflowSnapshot, nodeID).Label`; `nodeID` = `Instance.CurrentNodeID` (active), `Instance.FailedNodeID` (failed), else last node | ✅ exists (`WorkflowSnapshot` on full `Instance`, not on `InstanceSummary` — see seam below) |
 | Model | `domain/instance.NodeExecution.LLMModel` aggregated by `NodeExecutionRepository.AggregateByInstances` (new method) | ✅ producer exists; aggregate method is new |
-| Backend | `domain/workflow.NodeConfig.Backend` of the relevant node (via snapshot/aggregate) | ✅ exists |
+| Backend | `domain/workflow.NodeConfig.Backend` of the relevant node, read from `Instance.WorkflowSnapshot` via `FindNodeByID(...).Config.Backend` (same snapshot load as the friendly-step label) — **not** from the node-exec aggregate, which has no backend column | ✅ producer exists; configured value may be `BackendUnset` (`""` = inherit), which degrades to an empty cell since the *effective* backend is not persisted on `NodeExecution` |
 | Retry count | `domain/instance.NodeExecution.Attempt`, aggregated (max across nodes) | ✅ exists |
 | First-started (for optional active-runtime elapsed) | `domain/instance.NodeExecution.StartedAt`, min across nodes (from aggregate) | ✅ exists |
 | Elapsed | client-side `now − InstanceSummary.CreatedAt` | ✅ field already present |
@@ -109,9 +112,12 @@ Each enriched input traced to the concrete producer that feeds it in production:
 | Last error | **Not a list field** — `instance.NodeExecution.Error` via existing `GetNodeTrace(FailedNodeID)`, consumed in Phase 3 | ✅ existing endpoint |
 
 There are **no `UNRESOLVED DEPENDENCY` items** in this phase: every enriched input
-traces to an existing producer. The only genuinely-aggregated fields
-(model/backend/retry/first-started) all derive from existing `NodeExecution`
-columns via the new read-time aggregate method.
+traces to an existing producer. The genuinely-aggregated fields
+(model/retry/first-started) all derive from existing `NodeExecution` columns via
+the new read-time aggregate method; backend is the one model/backend axis that is
+**not** aggregated — it is read from the relevant node's `NodeConfig.Backend` in
+the already-loaded `WorkflowSnapshot` (and may be empty when the node inherits its
+backend).
 
 ### Key seam: snapshot access in the list path
 
@@ -163,8 +169,8 @@ Tests are written before implementation, near the package changed
 (`domain/instance`, `domain/engine`/service, `adapter/http`).
 
 - **Happy-path:** a fully-populated instance enriches to all fields present
-  (run name from a `title` var, model/backend/retry from aggregate, step label
-  resolved, submitter name).
+  (run name from a `title` var, model/retry from the aggregate, backend and step
+  label resolved from the snapshot's relevant node, submitter name).
 - **Success (variations):** run-name ladder — each rung exercised: `title`, then
   `name`, then `slug`, then first-required input, then first non-empty input, then
   short id; "you" rendering in local mode vs display name + account identity in
@@ -175,7 +181,8 @@ Tests are written before implementation, near the package changed
 - **Error:** `InstanceRepository.List` itself errors → endpoint returns the same
   error status it does today (enrichment never reached).
 - **Edge-case:** empty page; instance with no node executions (queued — model
-  empty, retry 0); `CurrentNodeID` nil; `Variables` empty/non-string values;
+  empty, retry 0); relevant node with `BackendUnset` (`""`) → backend cell empty
+  (effective backend not persisted); `CurrentNodeID` nil; `Variables` empty/non-string values;
   duplicate `OwnerID`s deduped to one lookup; very long submitted titles.
 - **HTTP:** `enrichedSummaryDTO` JSON round-trip including nil-pointer fields and
   the preserved `dismissed` flag, following `instance_handler_test.go` mock
