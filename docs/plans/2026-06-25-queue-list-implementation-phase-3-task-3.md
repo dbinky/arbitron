@@ -15,7 +15,7 @@
 - Create: `dashboard/src/components/DensityToggle.module.css`
 - Create: `dashboard/src/components/DensityToggle.test.tsx`
 
-- [ ] Step 1: Write the failing test for the toggle
+- [x] Step 1: Write the failing test for the toggle
 
 Create `dashboard/src/components/DensityToggle.test.tsx`:
 
@@ -67,7 +67,7 @@ describe('DensityToggle', () => {
 })
 ```
 
-- [ ] Step 2: Run it, confirm it fails
+- [x] Step 2: Run it, confirm it fails
 
 ```bash
 cd dashboard && npx vitest run src/components/DensityToggle.test.tsx
@@ -75,7 +75,7 @@ cd dashboard && npx vitest run src/components/DensityToggle.test.tsx
 
 Expected: failure — `Failed to resolve import "./DensityToggle"`.
 
-- [ ] Step 3: Implement the component
+- [x] Step 3: Implement the component
 
 Create `dashboard/src/components/DensityToggle.tsx`:
 
@@ -148,7 +148,7 @@ Create `dashboard/src/components/DensityToggle.module.css`:
 }
 ```
 
-- [ ] Step 4: Run the test, confirm it passes
+- [x] Step 4: Run the test, confirm it passes
 
 ```bash
 cd dashboard && npx vitest run src/components/DensityToggle.test.tsx
@@ -156,7 +156,7 @@ cd dashboard && npx vitest run src/components/DensityToggle.test.tsx
 
 Expected: all assertions pass.
 
-- [ ] Step 5: Run typecheck
+- [x] Step 5: Run typecheck
 
 ```bash
 cd dashboard && npx tsc --noEmit
