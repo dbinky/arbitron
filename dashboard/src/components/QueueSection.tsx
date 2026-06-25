@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
+import { api } from '../api/client'
 import { visibleColumns, type ColumnDef } from './queueColumns'
 import QueueTableRow from './QueueTableRow'
 import RowDetailPanel from './RowDetailPanel'
@@ -62,6 +63,41 @@ export default function QueueSection({
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [errorText, setErrorText] = useState<string | null>(null)
+  const [errorLoading, setErrorLoading] = useState(false)
+
+  // Lazy-load the last error for the expanded row via the trace endpoint. The
+  // fetch lives here (not in RowDetailPanel) so the detail panel stays a pure
+  // render component. A failure shows an inline error state and never affects
+  // the table.
+  const expandedRow = expandedId ? instances.find((i) => i.id === expandedId) : undefined
+  const expandedFailedNodeId = expandedRow?.failedNodeId
+  useEffect(() => {
+    if (!expandedId || !expandedFailedNodeId) {
+      setErrorText(null)
+      setErrorLoading(false)
+      return
+    }
+    let cancelled = false
+    setErrorText(null)
+    setErrorLoading(true)
+    api.instances
+      .getNodeTrace(expandedId, expandedFailedNodeId)
+      .then((exec) => {
+        if (cancelled) return
+        const msg = (exec.error as { error?: unknown } | undefined)?.error
+        setErrorText(typeof msg === 'string' ? msg : msg ? JSON.stringify(msg) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setErrorText(null)
+      })
+      .finally(() => {
+        if (!cancelled) setErrorLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [expandedId, expandedFailedNodeId])
 
   // In local mode every row renders "you" for the submitter, so sorting by the
   // real submitterName would appear to do nothing — mark the column non-sortable
@@ -182,7 +218,12 @@ export default function QueueSection({
                   {expandedId === inst.id && (
                     <tr className={styles.detailRow}>
                       <td colSpan={columns.length + 1} className={styles.detailCell}>
-                        <RowDetailPanel row={inst} authMode={authMode} />
+                        <RowDetailPanel
+                        row={inst}
+                        authMode={authMode}
+                        errorText={errorText}
+                        errorLoading={errorLoading}
+                      />
                       </td>
                     </tr>
                   )}

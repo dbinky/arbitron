@@ -1,17 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
 import RowDetailPanel from './RowDetailPanel'
 import type { EnrichedInstanceSummary } from '../api/types'
-
-vi.mock('../api/client', () => ({
-  api: {
-    instances: {
-      getNodeTrace: vi.fn(),
-    },
-  },
-}))
-
-import { api } from '../api/client'
 
 function row(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -29,15 +19,9 @@ function row(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstance
   }
 }
 
+// RowDetailPanel is now a pure render component: the parent (QueueSection) owns
+// the trace fetch and passes errorText/errorLoading in. It imports no API client.
 describe('RowDetailPanel', () => {
-  beforeEach(() => {
-    vi.mocked(api.instances.getNodeTrace).mockReset()
-    vi.mocked(api.instances.getNodeTrace).mockResolvedValue({
-      id: 'e0', instanceId: 'i1', nodeId: 'fail-node', attempt: 0, status: 'failed',
-      error: undefined, startedAt: '2024-01-01T00:00:00Z',
-    } as any)
-  })
-
   it('renders secondary fields (submitter identity in shared mode)', () => {
     render(
       <RowDetailPanel
@@ -50,39 +34,41 @@ describe('RowDetailPanel', () => {
 
   it('hides submitter identity in local mode', () => {
     render(
-      <RowDetailPanel
-        row={row({ submitterIdentity: 'alice@example.com' })}
-        authMode="local"
-      />,
+      <RowDetailPanel row={row({ submitterIdentity: 'alice@example.com' })} authMode="local" />,
     )
     expect(screen.queryByText('alice@example.com')).toBeNull()
   })
 
-  it('lazy-loads last error via getNodeTrace(failedNodeId) on expand', async () => {
-    vi.mocked(api.instances.getNodeTrace).mockResolvedValue({
-      id: 'e1', instanceId: 'i1', nodeId: 'fail-node', attempt: 2, status: 'failed',
-      error: { error: 'boom: connection refused' },
-      startedAt: '2024-01-01T00:00:00Z',
-    } as any)
-    render(<RowDetailPanel row={row({ failedNodeId: 'fail-node' })} authMode="local" />)
-    await waitFor(() => {
-      expect(api.instances.getNodeTrace).toHaveBeenCalledWith('i1', 'fail-node')
-    })
+  it('renders the last error text passed in via the errorText prop', () => {
+    render(
+      <RowDetailPanel
+        row={row({ failedNodeId: 'fail-node' })}
+        authMode="local"
+        errorText="boom: connection refused"
+      />,
+    )
     expect(screen.getByText(/connection refused/i)).toBeInTheDocument()
   })
 
-  it('shows inline error state when the trace fetch rejects', async () => {
-    vi.mocked(api.instances.getNodeTrace).mockRejectedValue(new Error('404'))
+  it('shows a loading state while errorLoading is true', () => {
+    render(
+      <RowDetailPanel
+        row={row({ failedNodeId: 'fail-node' })}
+        authMode="local"
+        errorLoading
+      />,
+    )
+    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+  })
+
+  it('shows the inline error fallback when there is no errorText', () => {
     render(<RowDetailPanel row={row({ failedNodeId: 'fail-node' })} authMode="local" />)
-    await waitFor(() => {
-      expect(screen.getByText(/couldn't load details/i)).toBeInTheDocument()
-    })
+    expect(screen.getByText(/couldn't load details/i)).toBeInTheDocument()
   })
 
   it('shows no error section when failedNodeId is absent', () => {
     render(<RowDetailPanel row={row({ failedNodeId: undefined, state: 'completed' })} authMode="local" />)
     expect(screen.queryByText(/last error/i)).toBeNull()
-    expect(api.instances.getNodeTrace).not.toHaveBeenCalled()
   })
 
   it('renders model/backend and retry detail', () => {

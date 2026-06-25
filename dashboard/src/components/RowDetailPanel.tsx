@@ -1,37 +1,28 @@
-import { useEffect, useState } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
-import { api } from '../api/client'
 import { localDateTime } from '../utils/time'
 import styles from './RowDetailPanel.module.css'
 
 interface RowDetailPanelProps {
   row: EnrichedInstanceSummary
   authMode: 'local' | 'org' | 'edge'
+  /** Resolved last-error text (loadError), provided by the parent's trace fetch. */
+  errorText?: string | null
+  /** Whether the parent's trace fetch is in flight (loadError loading). */
+  errorLoading?: boolean
 }
 
 /**
- * RowDetailPanel renders secondary fields and lazy-loads the last error via
- * the trace endpoint only on expand. A fetch failure shows an inline error
- * state and never affects the table. A row with no failedNodeId shows no
- * error section.
+ * RowDetailPanel is a pure render component for a row's secondary fields and its
+ * last-error section. It owns no data fetching: the parent (QueueSection) lazy-
+ * loads the trace on expand and passes errorText/errorLoading in. A row with no
+ * failedNodeId shows no error section.
  */
-export default function RowDetailPanel({ row: rowVal, authMode }: RowDetailPanelProps) {
-  const [errorText, setErrorText] = useState<string | null>(null)
-  const [errorLoading, setErrorLoading] = useState(false)
-
-  useEffect(() => {
-    if (!rowVal.failedNodeId) return
-    setErrorLoading(true)
-    api.instances
-      .getNodeTrace(rowVal.id, rowVal.failedNodeId)
-      .then((exec) => {
-        const msg = (exec.error as { error?: unknown } | undefined)?.error
-        setErrorText(typeof msg === 'string' ? msg : msg ? JSON.stringify(msg) : null)
-      })
-      .catch(() => setErrorText(null))
-      .finally(() => setErrorLoading(false))
-  }, [rowVal.id, rowVal.failedNodeId])
-
+export default function RowDetailPanel({
+  row: rowVal,
+  authMode,
+  errorText = null,
+  errorLoading = false,
+}: RowDetailPanelProps) {
   return (
     <div className={styles.panel} data-testid="row-detail-panel">
       <div className={styles.section}>
