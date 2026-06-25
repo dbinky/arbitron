@@ -786,6 +786,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
 	eng.SetQueueManager(queueMgr)
 
+	// 12-pos. Wire the queue manager as the enricher's queue-position provider
+	// so queued rows carry their priority-aware position (Phase 2). The manager
+	// is the single ordering authority; the enricher only stamps the value.
+	instanceEnricher.SetQueuePositionProvider(queueMgr)
+
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)
 	queueMgr.SetScheduler(scheduler)

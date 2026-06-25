@@ -14,7 +14,7 @@
 - Modify: `cmd/arbitron/main.go:779-780` (after the queue manager is created, set it as the enricher's position provider)
 - Create: `adapter/http/instance_list_queue_position_e2e_test.go` (provenance probe for the position field)
 
-- [ ] Step 1: Write the failing router-level provenance probe for the queue position
+- [x] Step 1: Write the failing router-level provenance probe for the queue position
 
 Create `adapter/http/instance_list_queue_position_e2e_test.go`:
 
@@ -185,7 +185,7 @@ var _ instance.QueueRepository = (*probeQueueRepo)(nil)
 
 Note: `snapshotMapForRouter`, `probeUserRepo`, `newScopeAwareRepoForRouter` are defined in `adapter/http/instance_list_enriched_e2e_test.go` (Phase 1 Task 5). If that file's helpers used different names, use the exact names here. `eventbus.NewNoOp()` is the real no-op event bus (replace the shim from Phase 1 Task 5 if that file used a shim — the two files must agree on the eventbus helper; prefer the real `eventbus.NewNoOp()` in both).
 
-- [ ] Step 2: Run it, confirm the probe fails (position 0 because the composition root does not yet wire the provider)
+- [x] Step 2: Run it, confirm the probe fails (position 0 because the composition root does not yet wire the provider)
 
 ```bash
 go test ./adapter/http/ -run TestRouter_InstanceList_QueuePosition
@@ -193,7 +193,7 @@ go test ./adapter/http/ -run TestRouter_InstanceList_QueuePosition
 
 Expected: the provenance probe FAILS — `queuePosition` is 0 or absent because the composition root has not yet wired the manager as the position provider. The absent-provider test passes.
 
-- [ ] Step 3: Wire the manager as the enricher's position provider at the composition root
+- [x] Step 3: Wire the manager as the enricher's position provider at the composition root
 
 In `cmd/arbitron/main.go`, after the queue manager is created and set on the engine (after line 780, `eng.SetQueueManager(queueMgr)`), add:
 
@@ -204,7 +204,7 @@ In `cmd/arbitron/main.go`, after the queue manager is created and set on the eng
 	instanceEnricher.SetQueuePositionProvider(queueMgr)
 ```
 
-- [ ] Step 4: Confirm the provenance probe passes
+- [x] Step 4: Confirm the provenance probe passes
 
 ```bash
 go build ./... && go test ./adapter/http/ -run TestRouter_InstanceList_QueuePosition
@@ -212,7 +212,7 @@ go build ./... && go test ./adapter/http/ -run TestRouter_InstanceList_QueuePosi
 
 Expected: build succeeds; the provenance probe passes (`queuePosition` is 1); the absent-provider test passes (position 0).
 
-- [ ] Step 5: Confirm the full test gate passes
+- [x] Step 5: Confirm the full test gate passes
 
 ```bash
 go test ./...
@@ -220,7 +220,7 @@ go test ./...
 
 Expected: all package tests pass.
 
-- [ ] Step 6: Commit
+- [x] Step 6: Commit
 
 ```bash
 git add cmd/arbitron/main.go adapter/http/instance_list_queue_position_e2e_test.go
