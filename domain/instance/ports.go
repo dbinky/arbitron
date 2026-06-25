@@ -46,6 +46,12 @@ type NodeExecutionRepository interface {
 	Update(ctx context.Context, exec *NodeExecution) error
 	ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]NodeExecution, error)
 	GetByInstanceAndNode(ctx context.Context, instanceID uuid.UUID, nodeID string) (*NodeExecution, error)
+	// AggregateByInstances collapses all NodeExecution rows for the given
+	// instance IDs into one aggregate per instance (latest model, max attempt,
+	// first started). Returns a map keyed by instance ID. Instances with no
+	// executions are absent from the map (the caller treats absence as the
+	// zero value). An empty ids slice returns an empty map, not an error.
+	AggregateByInstances(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]NodeExecutionAggregate, error)
 }
 
 // VariableSnapshotRepository defines the port for persisting and querying variable snapshots.

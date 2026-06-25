@@ -73,6 +73,9 @@ func (r *countingNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UU
 	r.getCalls++
 	return &instance.NodeExecution{NodeID: nodeID}, nil
 }
+func (r *countingNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
+}
 
 var _ instance.NodeExecutionRepository = (*countingNodeExecRepo)(nil)
 

@@ -32,17 +32,35 @@ func (r *errInstanceRepo) Get(_ context.Context, _ uuid.UUID) (*instance.Instanc
 func (r *errInstanceRepo) List(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
 	return nil, r.err
 }
-func (r *errInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error    { return r.err }
-func (r *errInstanceRepo) UpdateVariables(_ context.Context, _ uuid.UUID, _ map[string]any) error { return r.err }
-func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error       { return r.err }
-func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error               { return r.err }
-func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error                       { return r.err }
-func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error)            { return nil, r.err }
-func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error { return r.err }
-func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error          { return r.err }
-func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error { return r.err }
-func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error    { return r.err }
-func (r *errInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) { return nil, r.err }
+func (r *errInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error {
+	return r.err
+}
+func (r *errInstanceRepo) UpdateVariables(_ context.Context, _ uuid.UUID, _ map[string]any) error {
+	return r.err
+}
+func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error { return r.err }
+func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error        { return r.err }
+func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
+	return nil, r.err
+}
+func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return r.err
+}
+func (r *errInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return nil, r.err
+}
 
 // errNodeExecRepo always returns the stored error.
 type errNodeExecRepo struct{ err error }
@@ -53,6 +71,9 @@ func (r *errNodeExecRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]inst
 	return nil, r.err
 }
 func (r *errNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+	return nil, r.err
+}
+func (r *errNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
 	return nil, r.err
 }
 
@@ -246,6 +267,38 @@ func (r *mockNodeExecRepo) GetByInstanceAndNode(_ context.Context, instanceID uu
 	return nil, fmt.Errorf("node execution instance=%s node=%s: %w", instanceID, nodeID, instance.ErrNotFound)
 }
 
+func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
+	// latestModelAt tracks the StartedAt of the execution whose model is
+	// currently recorded as LatestModel, so "latest" means latest-by-time
+	// (matching the SQLite query), not last-in-slice-order.
+	latestModelAt := make(map[uuid.UUID]time.Time)
+	for _, id := range ids {
+		for _, e := range r.executions {
+			if e.InstanceID == id {
+				agg, ok := out[id]
+				if !ok {
+					agg = instance.NodeExecutionAggregate{InstanceID: id, FirstStarted: e.StartedAt}
+				}
+				if e.Attempt > agg.MaxAttempt {
+					agg.MaxAttempt = e.Attempt
+				}
+				if e.StartedAt.Before(agg.FirstStarted) {
+					agg.FirstStarted = e.StartedAt
+				}
+				if e.LLMModel != nil && *e.LLMModel != "" {
+					if prev, seen := latestModelAt[id]; !seen || e.StartedAt.After(prev) {
+						agg.LatestModel = *e.LLMModel
+						latestModelAt[id] = e.StartedAt
+					}
+				}
+				out[id] = agg
+			}
+		}
+	}
+	return out, nil
+}
+
 // mockSnapshotRepo for InstanceHandler
 type mockSnapshotRepo struct {
 	snapshots []*instance.VariableSnapshot
@@ -272,19 +325,19 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
-	listFn           func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
-	getFn            func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
-	traceFn          func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
-	nodeTraceFn      func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
-	variablesFn      func(ctx context.Context, id uuid.UUID) (map[string]any, error)
-	variableHistFn   func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	interventionsFn  func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
-	pauseFn          func(id uuid.UUID) error
-	resumeFn         func(id uuid.UUID) error
-	cancelFn         func(id uuid.UUID) error
-	retryFn          func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn          func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn    func(id uuid.UUID, priority string) error
+	listFn          func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	getFn           func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn         func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn     func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn     func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn  func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn         func(id uuid.UUID) error
+	resumeFn        func(id uuid.UUID) error
+	cancelFn        func(id uuid.UUID) error
+	retryFn         func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn         func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn   func(id uuid.UUID, priority string) error
 }
 
 func (m *mockInstanceService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
@@ -429,15 +482,15 @@ func TestInstanceHandler_GetInterventions(t *testing.T) {
 func testInstance(state instance.State) *instance.Instance {
 	now := time.Now()
 	return &instance.Instance{
-		ID:           uuid.New(),
-		OwnerID:      uuid.New(),
-		WorkflowName: "test-wf",
-		State:        state,
-		Priority:     instance.PriorityNormal,
-		Variables:    map[string]any{"key": "value"},
+		ID:                uuid.New(),
+		OwnerID:           uuid.New(),
+		WorkflowName:      "test-wf",
+		State:             state,
+		Priority:          instance.PriorityNormal,
+		Variables:         map[string]any{"key": "value"},
 		OriginalVariables: map[string]any{"key": "value"},
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 }
 

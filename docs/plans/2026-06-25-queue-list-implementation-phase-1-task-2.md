@@ -18,7 +18,7 @@
 - Modify: `adapter/sqlite/node_execution_repo_test.go` (new; if absent, create) — add SQLite impl test
 - Modify: `adapter/http/instance_handler_test.go:212-247` (extend `mockNodeExecRepo`)
 
-- [ ] Step 1: Define the `NodeExecutionAggregate` result type and the failing port test
+- [x] Step 1: Define the `NodeExecutionAggregate` result type and the failing port test
 
 Create `domain/instance/aggregate.go`:
 
@@ -81,7 +81,7 @@ func TestNodeExecutionAggregate_Populated(t *testing.T) {
 }
 ```
 
-- [ ] Step 2: Run it, confirm it passes (the type exists already from this step)
+- [x] Step 2: Run it, confirm it passes (the type exists already from this step)
 
 ```bash
 go test ./domain/instance/
@@ -93,7 +93,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/domain/instance	0.00s
 ```
 
-- [ ] Step 3: Add `AggregateByInstances` to the port and run to confirm the SQLite adapter no longer satisfies the interface
+- [x] Step 3: Add `AggregateByInstances` to the port and run to confirm the SQLite adapter no longer satisfies the interface
 
 In `domain/instance/ports.go`, extend the `NodeExecutionRepository` interface (after `GetByInstanceAndNode` at line 48):
 
@@ -121,7 +121,7 @@ go build ./...
 
 Expected: build failure — `*sqlite.NodeExecutionRepo` does not satisfy `instance.NodeExecutionRepository` (missing `AggregateByInstances`); likewise the test mocks in `adapter/http/instance_handler_test.go` and `domain/engine` mocks.
 
-- [ ] Step 4: Implement the SQLite `AggregateByInstances` method
+- [x] Step 4: Implement the SQLite `AggregateByInstances` method
 
 In `adapter/sqlite/node_execution_repo.go`, add the import `"strings"` and `"github.com/google/uuid"` (already imported) and this method:
 
@@ -197,7 +197,7 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 
 Add `"time"` to the import block of `adapter/sqlite/node_execution_repo.go` if not already present (it is not in the current imports — add it).
 
-- [ ] Step 5: Write the SQLite implementation test
+- [x] Step 5: Write the SQLite implementation test
 
 Create `adapter/sqlite/node_execution_repo_aggregate_test.go`:
 
@@ -291,7 +291,7 @@ Expected:
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.00s
 ```
 
-- [ ] Step 6: Extend the `mockNodeExecRepo` in `instance_handler_test.go` to satisfy the interface
+- [x] Step 6: Extend the `mockNodeExecRepo` in `instance_handler_test.go` to satisfy the interface
 
 In `adapter/http/instance_handler_test.go`, add to `mockNodeExecRepo` (after `GetByInstanceAndNode`):
 
@@ -329,7 +329,7 @@ func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UU
 }
 ```
 
-- [ ] Step 7: Extend every other mock that implements `NodeExecutionRepository` to satisfy the interface
+- [x] Step 7: Extend every other mock that implements `NodeExecutionRepository` to satisfy the interface
 
 Search for all implementations:
 
@@ -345,7 +345,7 @@ func (m *mockNodeExecutionRepo) AggregateByInstances(context.Context, []uuid.UUI
 }
 ```
 
-- [ ] Step 8: Confirm the whole module builds and all tests pass
+- [x] Step 8: Confirm the whole module builds and all tests pass
 
 ```bash
 go build ./... && go test ./...

@@ -410,6 +410,10 @@ func (r *mockNodeExecutionRepo) GetByInstanceAndNode(_ context.Context, instance
 	return nil, fmt.Errorf("execution not found for instance %s node %s", instanceID, nodeID)
 }
 
+func (r *mockNodeExecutionRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
+}
+
 // mockSnapshotRepo implements instance.VariableSnapshotRepository
 type mockSnapshotRepo struct {
 	mu        sync.Mutex
