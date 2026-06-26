@@ -1,63 +1,47 @@
-import { useState, useMemo } from 'react'
-import type { InstanceSummary } from '../api/types'
-import InstanceRow from './InstanceRow'
+import { useState, useMemo, useEffect } from 'react'
+import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
+import { api } from '../api/client'
+import { visibleColumns, type ColumnDef } from './queueColumns'
+import QueueTableRow from './QueueTableRow'
+import RowDetailPanel from './RowDetailPanel'
 import styles from './QueueSection.module.css'
-
-type SortField = 'priority' | 'time' | 'name'
 
 interface QueueSectionProps {
   title: string
-  instances: InstanceSummary[]
+  instances: EnrichedInstanceSummary[]
   titleColor: string
   countBg: string
   countColor: string
   subtitle?: string
   timeMode: 'elapsed' | 'relative'
+  density: QueueDensity
+  authMode: 'local' | 'org' | 'edge'
   defaultCollapsed?: boolean
   onDismissAll?: () => void
   onDismiss?: (id: string) => void
   onRestore?: (id: string) => void
 }
 
-const priorityOrder: Record<string, number> = {
-  high: 0,
-  normal: 1,
-  low: 2,
+/** defaultSortKey picks the initial sort column from the section's state mix. */
+function defaultSortKey(instances: EnrichedInstanceSummary[]): string {
+  const states = new Set(instances.map((i) => i.state))
+  const isQueued = states.has('queued') && instances.every((i) => i.state === 'queued')
+  const isActive = instances.some((i) => ['running', 'waiting', 'paused'].includes(i.state))
+  if (isQueued) return 'queuePosition'
+  if (isActive) return 'elapsed'
+  return 'updatedAt' // terminal: most-recent first
 }
 
-function sortInstances(
-  instances: InstanceSummary[],
-  field: SortField,
-  timeMode: 'elapsed' | 'relative',
-): InstanceSummary[] {
-  const sorted = [...instances]
-  switch (field) {
-    case 'priority':
-      sorted.sort(
-        (a, b) =>
-          (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1),
-      )
-      break
-    case 'time':
-      if (timeMode === 'elapsed') {
-        // Elapsed: sort oldest createdAt first so longest-running instances surface to the top.
-        sorted.sort(
-          (a, b) =>
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-        )
-      } else {
-        // Relative: sort most-recently-updated first.
-        sorted.sort(
-          (a, b) =>
-            new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-        )
-      }
-      break
-    case 'name':
-      sorted.sort((a, b) => a.workflowName.localeCompare(b.workflowName))
-      break
+function compareRows(a: EnrichedInstanceSummary, b: EnrichedInstanceSummary, col: ColumnDef): number {
+  // A column's sortAccessor (when declared) yields the comparable value — a
+  // number for date/numeric columns, otherwise the display string accessor.
+  const get = col.sortAccessor ?? col.accessor
+  const va = get(a)
+  const vb = get(b)
+  if (typeof va === 'number' && typeof vb === 'number') {
+    return va - vb
   }
-  return sorted
+  return String(va).localeCompare(String(vb))
 }
 
 export default function QueueSection({
@@ -68,18 +52,99 @@ export default function QueueSection({
   countColor,
   subtitle,
   timeMode,
+  density,
+  authMode,
   defaultCollapsed = false,
   onDismissAll,
   onDismiss,
   onRestore,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
-  const [sortField, setSortField] = useState<SortField>('priority')
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [errorText, setErrorText] = useState<string | null>(null)
+  const [errorLoading, setErrorLoading] = useState(false)
 
-  const sorted = useMemo(
-    () => sortInstances(instances, sortField, timeMode),
-    [instances, sortField, timeMode],
-  )
+  // Lazy-load the last error for the expanded row via the trace endpoint. The
+  // fetch lives here (not in RowDetailPanel) so the detail panel stays a pure
+  // render component. A failure shows an inline error state and never affects
+  // the table.
+  const expandedRow = expandedId ? instances.find((i) => i.id === expandedId) : undefined
+  const expandedFailedNodeId = expandedRow?.failedNodeId
+  useEffect(() => {
+    if (!expandedId || !expandedFailedNodeId) {
+      setErrorText(null)
+      setErrorLoading(false)
+      return
+    }
+    let cancelled = false
+    setErrorText(null)
+    setErrorLoading(true)
+    api.instances
+      .getNodeTrace(expandedId, expandedFailedNodeId)
+      .then((exec) => {
+        if (cancelled) return
+        const msg = (exec.error as { error?: unknown } | undefined)?.error
+        setErrorText(typeof msg === 'string' ? msg : msg ? JSON.stringify(msg) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setErrorText(null)
+      })
+      .finally(() => {
+        if (!cancelled) setErrorLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [expandedId, expandedFailedNodeId])
+
+  // In local mode every row renders "you" for the submitter, so sorting by the
+  // real submitterName would appear to do nothing — mark the column non-sortable
+  // there. In org/edge mode the real name is shown, so it stays sortable.
+  const columns = useMemo(() => {
+    const cols = visibleColumns(density)
+    if (authMode !== 'local') return cols
+    return cols.map((c) => (c.key === 'submitter' ? { ...c, sortable: false } : c))
+  }, [density, authMode])
+
+  const sorted = useMemo(() => {
+    if (sortKey === null) {
+      const key = defaultSortKey(instances)
+      const sortedCopy = [...instances]
+      if (key === 'updatedAt') {
+        sortedCopy.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        return sortedCopy
+      }
+      if (key === 'queuePosition') {
+        sortedCopy.sort(
+          (a, b) =>
+            (a.queuePosition ?? Number.MAX_SAFE_INTEGER) - (b.queuePosition ?? Number.MAX_SAFE_INTEGER),
+        )
+        return sortedCopy
+      }
+      sortedCopy.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      return sortedCopy
+    }
+    const col = columns.find((c) => c.key === sortKey)
+    if (!col) return instances
+    const sortedCopy = [...instances]
+    sortedCopy.sort((a, b) => {
+      const cmp = compareRows(a, b, col)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sortedCopy
+  }, [instances, sortKey, sortDir, columns])
+
+  function handleHeaderClick(col: ColumnDef) {
+    if (!col.sortable) return
+    if (sortKey === col.key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(col.key)
+      setSortDir('asc')
+    }
+  }
 
   return (
     <div className={styles.section}>
@@ -95,18 +160,11 @@ export default function QueueSection({
           }
         }}
       >
-        <span
-          className={`${styles.arrow} ${collapsed ? '' : styles.arrowExpanded}`}
-        >
+        <span className={`${styles.arrow} ${collapsed ? '' : styles.arrowExpanded}`}>
           {'▶'}
         </span>
-        <span className={styles.title} style={{ color: titleColor }}>
-          {title}
-        </span>
-        <span
-          className={styles.count}
-          style={{ background: countBg, color: countColor }}
-        >
+        <span className={styles.title} style={{ color: titleColor }}>{title}</span>
+        <span className={styles.count} style={{ background: countBg, color: countColor }}>
           {instances.length}
         </span>
         {subtitle && <span className={styles.subtitle}>{subtitle}</span>}
@@ -114,10 +172,7 @@ export default function QueueSection({
           <button
             type="button"
             className={styles.dismissAll}
-            onClick={(e) => {
-              e.stopPropagation()
-              onDismissAll()
-            }}
+            onClick={(e) => { e.stopPropagation(); onDismissAll() }}
           >
             Dismiss All
           </button>
@@ -125,35 +180,58 @@ export default function QueueSection({
       </div>
 
       {!collapsed && (
-        <>
-          <div className={styles.sortControls}>
-            {(['priority', 'time', 'name'] as const).map((field) => (
-              <button
-                key={field}
-                className={`${styles.sortButton} ${sortField === field ? styles.sortButtonActive : ''}`}
-                onClick={() => setSortField(field)}
-              >
-                {field.charAt(0).toUpperCase() + field.slice(1)}
-              </button>
-            ))}
-          </div>
-          <div className={styles.body}>
-            {sorted.length === 0 ? (
-              <div className={styles.empty}>No instances</div>
-            ) : (
-              sorted.map((inst) => (
-                <InstanceRow
-                  key={inst.id}
-                  instance={inst}
-                  timeMode={timeMode}
-                  dimmed={inst.dismissed === true}
-                  onDismiss={onDismiss}
-                  onRestore={onRestore}
-                />
-              ))
-            )}
-          </div>
-        </>
+        <div className={styles.body}>
+          {sorted.length === 0 ? (
+            <div className={styles.empty}>No instances</div>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  {columns.map((col) => (
+                    <th
+                      key={col.key}
+                      className={`${styles.th} ${col.sortable ? styles.sortable : ''} ${sortKey === col.key ? styles.sortActive : ''}`}
+                      onClick={() => handleHeaderClick(col)}
+                      role="columnheader"
+                      aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                    >
+                      {col.header}
+                      {sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </th>
+                  ))}
+                  <th className={styles.th} aria-label="expand" />
+                </tr>
+              </thead>
+              {sorted.map((inst) => (
+                <tbody key={inst.id}>
+                  <QueueTableRow
+                    row={inst}
+                    columns={columns}
+                    timeMode={timeMode}
+                    authMode={authMode}
+                    dimmed={inst.dismissed === true}
+                    expanded={expandedId === inst.id}
+                    onExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
+                    onDismiss={onDismiss}
+                    onRestore={onRestore}
+                  />
+                  {expandedId === inst.id && (
+                    <tr className={styles.detailRow}>
+                      <td colSpan={columns.length + 1} className={styles.detailCell}>
+                        <RowDetailPanel
+                        row={inst}
+                        authMode={authMode}
+                        errorText={errorText}
+                        errorLoading={errorLoading}
+                      />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              ))}
+            </table>
+          )}
+        </div>
       )}
     </div>
   )

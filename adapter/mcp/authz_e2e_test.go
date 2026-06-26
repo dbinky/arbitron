@@ -110,6 +110,9 @@ func (r *authzNodeExecRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]in
 func (r *authzNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
 	return nil, instance.ErrNotFound
 }
+func (r *authzNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
+}
 
 var _ instance.NodeExecutionRepository = (*authzNodeExecRepo)(nil)
 

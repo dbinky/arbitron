@@ -165,6 +165,10 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
+		ownerID, err := parseUUID(row.OwnerID)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
 		createdAt, err := parseTime(row.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
@@ -185,20 +189,32 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
+		variables, err := fromJSONString(row.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: unmarshalling variables: %w", err)
+		}
+		snapshot, err := fromJSONString(row.WorkflowSnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: unmarshalling workflow snapshot: %w", err)
+		}
 		summaries[i] = instance.InstanceSummary{
-			ID:            id,
-			WorkflowName:  row.WorkflowName,
-			State:         instance.State(row.State),
-			Priority:      instance.Priority(row.Priority),
-			Department:    nullStringToString(row.Department),
-			Visibility:    instance.Visibility(row.Visibility),
-			CurrentNodeID: nullStringToPtr(row.CurrentNodeID),
-			CreatedAt:     createdAt,
-			UpdatedAt:     updatedAt,
-			CompletedAt:   completedAt,
-			QueuedAt:      queuedAt,
-			TriggerSource: instance.TriggerSource(row.TriggerSource),
-			ScheduleID:    scheduleID,
+			ID:               id,
+			OwnerID:          ownerID,
+			WorkflowName:     row.WorkflowName,
+			State:            instance.State(row.State),
+			Priority:         instance.Priority(row.Priority),
+			Department:       nullStringToString(row.Department),
+			Visibility:       instance.Visibility(row.Visibility),
+			CurrentNodeID:    nullStringToPtr(row.CurrentNodeID),
+			FailedNodeID:     nullStringToPtr(row.FailedNodeID),
+			Variables:        variables,
+			WorkflowSnapshot: snapshot,
+			CreatedAt:        createdAt,
+			UpdatedAt:        updatedAt,
+			CompletedAt:      completedAt,
+			QueuedAt:         queuedAt,
+			TriggerSource:    instance.TriggerSource(row.TriggerSource),
+			ScheduleID:       scheduleID,
 		}
 	}
 	return summaries, nil

@@ -50,3 +50,16 @@ export function elapsed(dateStr: string): string {
   const remainHours = hours % 24
   return `${days}d ${remainHours}h`
 }
+
+/**
+ * Formats an ISO timestamp as a compact, viewer-local "YYYY-MM-DD HH:mm"
+ * string (local tz via Date's local getters). Returns the input unchanged if
+ * it is not a parseable date. Used for the "submitted local time" column and
+ * the row-detail "Submitted" field.
+ */
+export function localDateTime(dateStr: string): string {
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}

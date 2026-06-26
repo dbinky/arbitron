@@ -38,6 +38,10 @@ func (s *stubNodeExecRepo) GetByInstanceAndNode(ctx context.Context, id uuid.UUI
 	return nil, nil
 }
 
+func (s *stubNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
+}
+
 type stubSnapshotRepo struct {
 	listByInstanceFn func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
 }

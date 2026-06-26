@@ -28,9 +28,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockWebhookInstanceRepo struct {
-	mu                     sync.Mutex
-	instances              map[uuid.UUID]*instance.Instance
-	setWebhookReceivedErr  error
+	mu                    sync.Mutex
+	instances             map[uuid.UUID]*instance.Instance
+	setWebhookReceivedErr error
 }
 
 func newMockWebhookInstanceRepo() *mockWebhookInstanceRepo {
@@ -149,6 +149,10 @@ func (r *mockWebhookNodeExecRepo) GetByInstanceAndNode(_ context.Context, instan
 	return exec, nil
 }
 
+func (r *mockWebhookNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
+}
+
 type mockWebhookScheduler struct {
 	mu          sync.Mutex
 	cancelCalls []uuid.UUID
@@ -165,10 +169,12 @@ type mockWebhookQueueRepo struct {
 	setQueuedCalls []uuid.UUID
 }
 
-func (r *mockWebhookQueueRepo) CountRunning(_ context.Context) (int, error)                             { return 0, nil }
-func (r *mockWebhookQueueRepo) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error)        { return 0, nil }
-func (r *mockWebhookQueueRepo) CountQueued(_ context.Context) (int, error)                              { return 0, nil }
-func (r *mockWebhookQueueRepo) CountWaiting(_ context.Context) (int, error)                             { return 0, nil }
+func (r *mockWebhookQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
+func (r *mockWebhookQueueRepo) CountRunningByOwner(_ context.Context, _ uuid.UUID) (int, error) {
+	return 0, nil
+}
+func (r *mockWebhookQueueRepo) CountQueued(_ context.Context) (int, error)  { return 0, nil }
+func (r *mockWebhookQueueRepo) CountWaiting(_ context.Context) (int, error) { return 0, nil }
 func (r *mockWebhookQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	return nil, nil
 }
@@ -182,6 +188,9 @@ func (r *mockWebhookQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instan
 	return nil, nil
 }
 func (r *mockWebhookQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockWebhookQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
 

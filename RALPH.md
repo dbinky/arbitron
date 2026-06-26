@@ -1,93 +1,145 @@
-# Loop Instructions
+# Ralph Refinement Charter — Queue List Visibility
 
 You are in an automated refinement loop and the user is unavailable for input, so
 do the work without asking for any user input.
 
-## Persona
+## Goal
 
-You are a senior Go engineer specializing in workflow/identity lifecycle management
-in a hexagonal architecture (domain ports + services, adapter implementations, a
-SQLite/sqlc persistence layer, and an MCP tool surface). You know this codebase's
-strict-TDD discipline — Go table tests across the five scenario categories (happy /
-success / failure / error / edge), `testify`, and hand-written SQLite repos. You
-review with the rigor of a principal engineer preparing a production deployment,
-caring above all about: fail-closed admin authorization, the integrity of
-non-transactional cross-store operations (filesystem folder + SQLite registry +
-references), and that a rename/edit never silently breaks a running instance, a
-schedule, or run history.
+Harden the **Queue List Visibility** feature to production quality. The queue list
+shows all workflow instances in a richer, sortable, density-aware table so users
+can instantly disambiguate simultaneous runs (especially multiple feature-pipeline
+runs) without opening each instance. Each row carries a generated run name plus
+separate sortable fields: workflow, submitter, submitted local time, status,
+friendly current step, elapsed, priority-aware queue position, model/backend, and
+retry count. A density toggle (balanced / dense / expanded) is remembered per user,
+and last-error detail is lazy-loaded into an inline row-detail panel.
 
-## Your Mission
+The implementation already exists and is green (see "Arrival state" below). This
+loop **reviews, verifies provenance, deepens coverage, and closes gaps** — it does
+not rebuild from scratch.
 
-The feature **workflow-management** (MCP-driven admin lifecycle management of
-workflows — rename, delete incl. shared, unpublish, duplicate, edit-in-place,
-archive, transfer ownership; backed by a stable per-workflow UUID, global name
-uniqueness, and a queryable audit trail) is **already implemented and the full
-suite is green** (spec `docs/specs/workflow-management-spec.md`, designs under
-`docs/superpowers/specs/workflow-management-design-phase-*.md`, plans under
-`docs/superpowers/plans/workflow-management-implementation-phase-*-task-*.md`).
+## Source documents
 
-This loop **reviews and hardens** that implementation: verify correctness against
-the spec and designs, deepen test coverage across all five scenario categories,
-close gaps, and polish to production quality. "Done" = every focus-area review
-complete, no open gaps, and the full suite green.
+- Spec: `docs/specs/2026-06-25-queue-list-spec.md`
+- Designs:
+  - `docs/designs/2026-06-25-queue-list-design-phase-1.md` — backend enrichment + run name
+  - `docs/designs/2026-06-25-queue-list-design-phase-2.md` — default ordering + priority-aware queue position
+  - `docs/designs/2026-06-25-queue-list-design-phase-3.md` — dashboard rich table, density, row details
+- Plans: `docs/plans/2026-06-25-queue-list-implementation-phase-{1,2,3}-task-*.md`
+- Working trackers: `focus-areas.md`, `gaps-identified.md` (repo root)
 
-## Tracking System
+## Test / build commands (use these EXACTLY — do not invent or guess)
 
-- At the start of an iteration, read `docs/reference/focus-areas.md`. Each single
-  area (Table 1) needs **2 review passes**; each paired area (Table 2) needs **1
-  review pass** before being considered __done__.
-- DO NOT update the tracking files until the "Wrap Up" phase.
+```
+go test ./...
+cd dashboard && npx vitest run
+cd dashboard && npx tsc --noEmit
+```
+
+`make ui` rebuilds the embedded dashboard bundle (`adapter/dashboard/dist`) that the
+Go binary serves via `//go:embed dist/*` (`adapter/dashboard/embed.go`). Any change
+under `dashboard/src` is NOT live until this is rerun — a green vitest run does not
+prove the served binary changed.
+
+## Branch-point test baseline (failures that existed BEFORE this feature)
+
+These pre-existing failures are NOT this feature's job and MUST NOT block the loop.
+"Done" gates on the absence of *new* failures, not on a fully-green suite.
+
+| Suite | Command | Build | Passed | Failed (baseline) |
+| --- | --- | --- | --- | --- |
+| go | `go test ./...` | ok | 3434 | 1 — `adapter/config.TestSampleFeaturePipeline_ValidatesWithDefaultProfiles` |
+| dashboard-vitest | `cd dashboard && npx vitest run` | ok | 370 | 0 |
+| dashboard-tsc | `cd dashboard && npx tsc --noEmit` | ok | 0 | 0 |
+
+## Arrival state (verified at seed time)
+
+- `go test ./...`: 1 failure — exactly the baseline `TestSampleFeaturePipeline_ValidatesWithDefaultProfiles`. **No new Go failures.**
+- `cd dashboard && npx vitest run`: 428 passed / 0 failed (up from 370 — ~58 new tests, all green).
+- `cd dashboard && npx tsc --noEmit`: clean.
+- Provenance (grep-verified, not inferred): the enricher is constructed at the real
+  composition root `cmd/arbitron/main.go:782` with the real `instanceRepo`,
+  `nodeExecRepo`, `userRepo`; the queue-position provider is wired to the real
+  `queueMgr` at `main.go:792`; `Engine.ListEnriched` calls it (`domain/engine/engine.go:528`)
+  and is consumed by both HTTP (`adapter/http/instance_handler.go:384`) and MCP
+  (`adapter/mcp/tools_instance.go:115`); the embedded `dist` bundle contains the live
+  feature markers (`balanced`, `density`, `expanded`, `queuePosition`, `runName`).
+
+This is a **review-and-harden** loop, not a build-from-scratch loop. The remaining
+work is depth: closing the gaps in `gaps-identified.md`, the provenance/coverage
+checks in `focus-areas.md`, and design-spirit polish.
 
 ## Constraints
 
 - **Read before you write.** Read the relevant code before modifying or judging it.
 - **One focus area per iteration.** Fix the single most important issue, well.
 - **Strict TDD.** Write/extend the failing test FIRST; never weaken an assertion to
-  make a test pass. Cover all five categories (happy/success/failure/error/edge) or
-  document why one does not apply.
-- **Do NOT invent functionality.** Log gaps in `docs/reference/gaps-identified.md`
-  (`## Open Issues`); out-of-scope ideas under `## Won't Fix`; move resolved items to
-  `## Fixed Previously`.
+  make a test pass. Cover all five categories (happy / success / failure / error /
+  edge) or document why one does not apply. This repo uses Go table tests + testify
+  and Vitest + @testing-library/react.
+- **Wired-and-fed, not merely present.** A component is done only when it is
+  constructed at the real composition root AND fed real data by a producer that
+  exists in the code — never `nil`/empty/hardcoded, never set only in `*_test.go`.
+- **Don't record an unfed/no-op production path as "acceptable"** in
+  `gaps-identified.md`. An unfed production path is a GAP to fix or an explicit
+  escalation — never a tolerated no-op.
+- **Spec non-goals stand:** no new queue actions (pause/cancel/rerun/reprioritize/
+  bulk); no change to execution/scheduling/priority/concurrency; no last-error
+  content in default columns; the richer list applies to ALL workflows, not just
+  feature-pipeline.
 - **Do NOT run a blanket `sqlc generate`** — it corrupts the hand-curated
-  `adapter/sqlite/generated/` tree. Prefer hand-written SQL (mirror the existing
-  hand-written repos); if you must regenerate, keep only the new query file and revert
-  all collateral edits.
-- **Preserve existing name-addressed behavior** and the spec's non-goals (MCP-only,
-  admin-gated, no UI, no execution change, external name-based callers not updated,
-  no bulk auto-migration).
+  `adapter/sqlite/generated/` tree. Mirror the existing hand-written repos.
+- After any `dashboard/src` change, run `make ui` so the embedded bundle reflects it.
 
-## Iteration Structure
+## Iteration structure
 
-1. Read `docs/reference/focus-areas.md`; pick the lowest-numbered incomplete review
-   (single areas before paired).
-2. Read that area's code deeply — contracts, error paths, the non-transactional
-   cross-store ordering/rollback, edge cases.
-3. Cross-reference against the spec/designs/plans; add any gap to
-   `docs/reference/gaps-identified.md` `## Open Issues`.
-4. Fix the single most important issue (test first); move it to `## Fixed Previously`.
-5. Run `make test`. Investigate and fix every failure; a red suite preempts all else.
-6. Assess the checklist honestly, then Wrap Up.
+1. Read `focus-areas.md`; pick the lowest-numbered incomplete item.
+2. Read that area's code deeply — contracts, error/degradation paths, the
+   composition-root wiring, and the producer that actually feeds it.
+3. Cross-reference against the spec/designs/plans; log any new gap in
+   `gaps-identified.md` under `## Open Issues`.
+4. Fix the single most important issue (test first); move it to `## Fixed`.
+5. Run all three test commands. A new failure (vs. baseline) preempts everything.
+6. Assess the checklist honestly, then wrap up.
 
-## The Checklist (be brutally honest)
+## Definition of done — checklist (be brutally honest)
 
-- [ ] All tests pass (`make test`).
-- [ ] The focus area has meaningful coverage across the five scenario categories.
-- [ ] The code aligns with the spec (`docs/specs/workflow-management-spec.md`) and the
-      relevant design phase — in spirit, not just surface.
-- [ ] Hexagonal module boundaries are clean (no leaking types across ports).
-- [ ] Admin authorization is fail-closed; cross-store ops leave no half-state on failure.
-- [ ] No open issues remain in `docs/reference/gaps-identified.md` for this area.
-- [ ] The focus area is complete and polished — you'd be proud to ship it.
+- [ ] **No new test failures vs the recorded baseline** (pre-existing failures
+      excluded), and nothing that built at baseline is now broken. Concretely: the
+      Go failure set is a subset of `{TestSampleFeaturePipeline_ValidatesWithDefaultProfiles}`;
+      vitest and tsc stay green.
+- [ ] **Every new component is wired-and-fed**: constructed at the real composition
+      root and fed a real producer — verified by grep that the symbol is
+      constructed/populated outside `*_test.go`, NOT by a green isolated test alone.
+      (Enricher, `DeriveRunName`, `NodeExecutionRepository.AggregateByInstances`,
+      `queue.Manager.QueuePositions`, `useDensityPreference`, `queueColumns`,
+      `QueueTableRow`, `RowDetailPanel`, `DensityToggle`.)
+- [ ] **Every plan task is genuinely implemented** — wired-and-fed, not merely
+      present — across Phase 1–3 tasks.
+- [ ] The feature's behaviors have **meaningful coverage across all five scenario
+      categories** (happy / success / failure / error / edge), and **at least one
+      test per component would fail if its production input were nil/empty** (a green
+      over-mocked test does NOT count). The queue-position e2e already models this
+      with a load-bearing negative control
+      (`adapter/http/instance_list_queue_position_e2e_test.go`); replicate that
+      discipline for run name, submitter, model/retry, friendly step/backend, and the
+      density preference.
+- [ ] The Phase 1–3 **designs are satisfied in spirit**, including degrade-per-field
+      best-effort enrichment and the cap-aware simulated queue rank.
+- [ ] No `## Open Issues` remain in `gaps-identified.md`, and no entry there records
+      an unfed/no-op production path as merely "acceptable."
+- [ ] The embedded dashboard bundle (`adapter/dashboard/dist`) reflects the current
+      `dashboard/src` (rerun `make ui` after any UI change).
 
-## Wrap Up
+Do NOT add a checklist box requiring the entire suite to be green — the baseline is
+already red by one pre-existing failure.
 
-**Step A — Did this focus area pass review?** All boxes honestly checked. No partial credit.
+## Wrap up each iteration
 
-**Step B — Update tracking (only if passed):** mark the area's next incomplete review
-pass complete in `docs/reference/focus-areas.md`. Otherwise leave it unchanged.
-
-**Step C — Commit:** `git add -A && git commit -m "refine(workflow-management): <what changed>"`.
-
-**Step D — Promise tag.** If ALL reviews are complete AND there are no open issues in
-`docs/reference/gaps-identified.md`, output `<promise>FINIT</promise>`; otherwise output
-`<promise>CLOSER</promise>`. Output exactly one tag, then stop.
+- **Step A — Pass?** All boxes honestly checked for the area you worked. No partial credit.
+- **Step B — Update tracking:** mark the area complete in `focus-areas.md`; move
+  resolved gaps to `## Fixed` in `gaps-identified.md`. Update trackers only at wrap-up.
+- **Step C — Commit:** `git add -A && git commit -m "refine(queue-list): <what changed>"`.
+- **Step D — Promise tag.** If ALL focus areas are complete AND there are no
+  `## Open Issues` AND the done checklist holds, output `<promise>FINIT</promise>`;
+  otherwise output `<promise>CLOSER</promise>`. Output exactly one tag, then stop.

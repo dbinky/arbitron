@@ -62,6 +62,10 @@ func (s *stubQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.In
 	return nil, nil
 }
 
+func (s *stubQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+
 type stubQueueManager struct {
 	updateConfigFn func(globalCap, perUserCap int)
 	evaluateFn     func(ctx context.Context) error

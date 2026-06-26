@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
@@ -32,17 +33,35 @@ func (r *errInstanceRepo) Get(_ context.Context, _ uuid.UUID) (*instance.Instanc
 func (r *errInstanceRepo) List(_ context.Context, _ instance.ListFilters) ([]instance.InstanceSummary, error) {
 	return nil, r.err
 }
-func (r *errInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error    { return r.err }
-func (r *errInstanceRepo) UpdateVariables(_ context.Context, _ uuid.UUID, _ map[string]any) error { return r.err }
-func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error       { return r.err }
-func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error               { return r.err }
-func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error                       { return r.err }
-func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error)            { return nil, r.err }
-func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error { return r.err }
-func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error          { return r.err }
-func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error { return r.err }
-func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error    { return r.err }
-func (r *errInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) { return nil, r.err }
+func (r *errInstanceRepo) UpdateState(_ context.Context, _ uuid.UUID, _ instance.State) error {
+	return r.err
+}
+func (r *errInstanceRepo) UpdateVariables(_ context.Context, _ uuid.UUID, _ map[string]any) error {
+	return r.err
+}
+func (r *errInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID, _ string) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error { return r.err }
+func (r *errInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error        { return r.err }
+func (r *errInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
+	return nil, r.err
+}
+func (r *errInstanceRepo) UpdatePriority(_ context.Context, _ uuid.UUID, _ instance.Priority) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWaiting(_ context.Context, _ uuid.UUID, _ *time.Time) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWebhookFields(_ context.Context, _ uuid.UUID, _ *string, _ *string) error {
+	return r.err
+}
+func (r *errInstanceRepo) SetWebhookReceived(_ context.Context, _ uuid.UUID, _ time.Time) error {
+	return r.err
+}
+func (r *errInstanceRepo) Stats(_ context.Context, _ string, _ time.Time, _ time.Time) (*instance.WorkflowStats, error) {
+	return nil, r.err
+}
 
 // errNodeExecRepo always returns the stored error.
 type errNodeExecRepo struct{ err error }
@@ -53,6 +72,9 @@ func (r *errNodeExecRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]inst
 	return nil, r.err
 }
 func (r *errNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
+	return nil, r.err
+}
+func (r *errNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
 	return nil, r.err
 }
 
@@ -111,12 +133,23 @@ func (r *mockInstanceRepo) List(_ context.Context, filters instance.ListFilters)
 			continue
 		}
 		summaries = append(summaries, instance.InstanceSummary{
-			ID:           inst.ID,
-			WorkflowName: inst.WorkflowName,
-			State:        inst.State,
-			Priority:     inst.Priority,
-			CreatedAt:    inst.CreatedAt,
-			UpdatedAt:    inst.UpdatedAt,
+			ID:               inst.ID,
+			OwnerID:          inst.OwnerID,
+			WorkflowName:     inst.WorkflowName,
+			State:            inst.State,
+			Priority:         inst.Priority,
+			Department:       inst.Department,
+			Visibility:       inst.Visibility,
+			CurrentNodeID:    inst.CurrentNodeID,
+			FailedNodeID:     inst.FailedNodeID,
+			Variables:        inst.Variables,
+			WorkflowSnapshot: inst.WorkflowSnapshot,
+			TriggerSource:    inst.TriggerSource,
+			ScheduleID:       inst.ScheduleID,
+			CreatedAt:        inst.CreatedAt,
+			UpdatedAt:        inst.UpdatedAt,
+			CompletedAt:      inst.CompletedAt,
+			QueuedAt:         inst.QueuedAt,
 		})
 	}
 	// Apply limit/offset
@@ -246,6 +279,35 @@ func (r *mockNodeExecRepo) GetByInstanceAndNode(_ context.Context, instanceID uu
 	return nil, fmt.Errorf("node execution instance=%s node=%s: %w", instanceID, nodeID, instance.ErrNotFound)
 }
 
+func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
+	// latestModelAt tracks the StartedAt of the execution whose model is
+	// currently recorded as LatestModel, so "latest" means latest-by-time
+	// (matching the SQLite query), not last-in-slice-order.
+	latestModelAt := make(map[uuid.UUID]time.Time)
+	for _, id := range ids {
+		for _, e := range r.executions {
+			if e.InstanceID == id {
+				agg, ok := out[id]
+				if !ok {
+					agg = instance.NodeExecutionAggregate{InstanceID: id}
+				}
+				if e.Attempt > agg.MaxAttempt {
+					agg.MaxAttempt = e.Attempt
+				}
+				if e.LLMModel != nil && *e.LLMModel != "" {
+					if prev, seen := latestModelAt[id]; !seen || e.StartedAt.After(prev) {
+						agg.LatestModel = *e.LLMModel
+						latestModelAt[id] = e.StartedAt
+					}
+				}
+				out[id] = agg
+			}
+		}
+	}
+	return out, nil
+}
+
 // mockSnapshotRepo for InstanceHandler
 type mockSnapshotRepo struct {
 	snapshots []*instance.VariableSnapshot
@@ -272,19 +334,20 @@ func (r *mockSnapshotRepo) ListByInstance(_ context.Context, instanceID uuid.UUI
 
 // mockInstanceService implements adapthttp.InstanceService
 type mockInstanceService struct {
-	listFn           func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
-	getFn            func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
-	traceFn          func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
-	nodeTraceFn      func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
-	variablesFn      func(ctx context.Context, id uuid.UUID) (map[string]any, error)
-	variableHistFn   func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
-	interventionsFn  func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
-	pauseFn          func(id uuid.UUID) error
-	resumeFn         func(id uuid.UUID) error
-	cancelFn         func(id uuid.UUID) error
-	retryFn          func(id uuid.UUID, variableEdits map[string]any) error
-	rerunFn          func(id uuid.UUID) (uuid.UUID, error)
-	setPriorityFn    func(id uuid.UUID, priority string) error
+	listFn          func(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error)
+	listEnrichedFn  func(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error)
+	getFn           func(ctx context.Context, id uuid.UUID) (*instance.Instance, error)
+	traceFn         func(ctx context.Context, id uuid.UUID) ([]instance.NodeExecution, error)
+	nodeTraceFn     func(ctx context.Context, id uuid.UUID, nodeID string) (*instance.NodeExecution, error)
+	variablesFn     func(ctx context.Context, id uuid.UUID) (map[string]any, error)
+	variableHistFn  func(ctx context.Context, id uuid.UUID) ([]instance.VariableSnapshot, error)
+	interventionsFn func(ctx context.Context, id uuid.UUID) ([]instance.Intervention, error)
+	pauseFn         func(id uuid.UUID) error
+	resumeFn        func(id uuid.UUID) error
+	cancelFn        func(id uuid.UUID) error
+	retryFn         func(id uuid.UUID, variableEdits map[string]any) error
+	rerunFn         func(id uuid.UUID) (uuid.UUID, error)
+	setPriorityFn   func(id uuid.UUID, priority string) error
 }
 
 func (m *mockInstanceService) ListInstances(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
@@ -292,6 +355,21 @@ func (m *mockInstanceService) ListInstances(ctx context.Context, filters instanc
 		return m.listFn(ctx, filters)
 	}
 	return nil, nil
+}
+
+func (m *mockInstanceService) ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+	if m.listEnrichedFn != nil {
+		return m.listEnrichedFn(ctx, filters)
+	}
+	summaries, err := m.ListInstances(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]instance.EnrichedInstanceSummary, len(summaries))
+	for i, s := range summaries {
+		out[i] = instance.EnrichedInstanceSummary{InstanceSummary: s}
+	}
+	return out, nil
 }
 
 func (m *mockInstanceService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
@@ -429,15 +507,15 @@ func TestInstanceHandler_GetInterventions(t *testing.T) {
 func testInstance(state instance.State) *instance.Instance {
 	now := time.Now()
 	return &instance.Instance{
-		ID:           uuid.New(),
-		OwnerID:      uuid.New(),
-		WorkflowName: "test-wf",
-		State:        state,
-		Priority:     instance.PriorityNormal,
-		Variables:    map[string]any{"key": "value"},
+		ID:                uuid.New(),
+		OwnerID:           uuid.New(),
+		WorkflowName:      "test-wf",
+		State:             state,
+		Priority:          instance.PriorityNormal,
+		Variables:         map[string]any{"key": "value"},
 		OriginalVariables: map[string]any{"key": "value"},
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 }
 
@@ -2166,4 +2244,153 @@ func TestInstanceHandler_Cancel_ErrForbidden_Returns403(t *testing.T) {
 	h.Cancel(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestInstanceHandler_List_EnrichedFields(t *testing.T) {
+	h, instRepo, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	nodeID := "draft-node"
+	now := time.Now()
+	inst := &instance.Instance{
+		ID:            uuid.New(),
+		OwnerID:       owner,
+		WorkflowName:  "feature-pipeline",
+		State:         instance.StateRunning,
+		Priority:      instance.PriorityNormal,
+		CurrentNodeID: &nodeID,
+		Variables:     map[string]any{"title": "Refactor"},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	inst.WorkflowSnapshot = map[string]any{
+		"name":  "feature-pipeline",
+		"nodes": []any{map[string]any{"id": nodeID, "label": "Generate draft", "config": map[string]any{"backend": "claude-code"}}},
+	}
+	instRepo.instances[inst.ID] = inst
+
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: inst.ID, WorkflowName: "feature-pipeline", State: instance.StateRunning, Priority: instance.PriorityNormal, CurrentNodeID: &nodeID, CreatedAt: now, UpdatedAt: now},
+			RunName:         "Refactor — feature-pipeline",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+			FriendlyStep:    "Generate draft",
+			Model:           "gpt-4o",
+			Backend:         "claude-code",
+			RetryCount:      2,
+			QueuePosition:   0,
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	row := resp[0]
+	assert.Equal(t, "Refactor — feature-pipeline", row["runName"])
+	assert.Equal(t, "Generate draft", row["friendlyStep"])
+	assert.Equal(t, "gpt-4o", row["model"])
+	assert.Equal(t, "claude-code", row["backend"])
+	assert.Equal(t, float64(2), row["retryCount"])
+	assert.Equal(t, "alice", row["submitterName"])
+	// Security: with no identity in context, the viewer is not the owner and not
+	// an admin, so the account identity (email) must be withheld.
+	_, hasIdentity := row["submitterIdentity"]
+	assert.False(t, hasIdentity, "non-owner/non-admin must NOT see submitterIdentity")
+	assert.Equal(t, false, row["dismissed"], "dismissed decoration preserved")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_RevealedToOwner(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: owner, Username: "alice", Role: identity.RoleUser}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "alice@example.com", resp[0]["submitterIdentity"], "owner sees the account identity")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_RevealedToAdmin(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: uuid.New(), Username: "admin", Role: identity.RoleAdmin}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	assert.Equal(t, "alice@example.com", resp[0]["submitterIdentity"], "admin sees the account identity")
+}
+
+func TestInstanceHandler_List_SubmitterIdentity_WithheldFromPeer(t *testing.T) {
+	h, _, _, _, svc := newInstanceHandler()
+	owner := uuid.New()
+	now := time.Now()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return []instance.EnrichedInstanceSummary{{
+			InstanceSummary: instance.InstanceSummary{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", State: instance.StateRunning, Priority: instance.PriorityNormal, CreatedAt: now, UpdatedAt: now},
+			RunName:         "run — wf",
+			Submitter:       instance.Submitter{Name: "alice", AccountIdentity: "alice@example.com"},
+		}}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	// A non-owning, non-admin peer (e.g. department/public viewer).
+	req = req.WithContext(identity.WithIdentity(req.Context(), identity.Identity{UserID: uuid.New(), Username: "bob", Role: identity.RoleUser}))
+	w := httptest.NewRecorder()
+	h.List(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp, 1)
+	_, has := resp[0]["submitterIdentity"]
+	assert.False(t, has, "a non-owner peer must NOT see another user's account identity")
+}
+
+func TestInstanceHandler_List_EnrichedProvenanceProbe(t *testing.T) {
+	// Provenance probe: when the service returns NO enriched rows (empty),
+	// the handler still returns 200 + []. When the service is unwired
+	// (listEnrichedFn nil), the handler falls back to the plain service list
+	// so the endpoint never breaks.
+	h, _, _, _, svc := newInstanceHandler()
+	svc.listEnrichedFn = func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+		return nil, nil
+	}
+	req := httptest.NewRequest(http.MethodGet, "/instances", nil)
+	w := httptest.NewRecorder()
+	h.List(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Empty(t, resp)
 }

@@ -410,6 +410,40 @@ func (r *mockNodeExecutionRepo) GetByInstanceAndNode(_ context.Context, instance
 	return nil, fmt.Errorf("execution not found for instance %s node %s", instanceID, nodeID)
 }
 
+func (r *mockNodeExecutionRepo) AggregateByInstances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		want[id] = struct{}{}
+	}
+	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
+	// latestModel tracks the StartedAt of the execution whose model is
+	// currently recorded as LatestModel, mirroring the SQLite impl's
+	// "most-recently-started execution that recorded a model" rule.
+	latestModelAt := make(map[uuid.UUID]time.Time, len(ids))
+	for _, e := range r.executions {
+		if _, ok := want[e.InstanceID]; !ok {
+			continue
+		}
+		agg, exists := out[e.InstanceID]
+		if !exists {
+			agg = instance.NodeExecutionAggregate{InstanceID: e.InstanceID}
+		}
+		if e.Attempt > agg.MaxAttempt {
+			agg.MaxAttempt = e.Attempt
+		}
+		if e.LLMModel != nil && *e.LLMModel != "" {
+			if prev, hasPrev := latestModelAt[e.InstanceID]; !hasPrev || e.StartedAt.After(prev) {
+				agg.LatestModel = *e.LLMModel
+				latestModelAt[e.InstanceID] = e.StartedAt
+			}
+		}
+		out[e.InstanceID] = agg
+	}
+	return out, nil
+}
+
 // mockSnapshotRepo implements instance.VariableSnapshotRepository
 type mockSnapshotRepo struct {
 	mu        sync.Mutex
@@ -458,6 +492,10 @@ func (r *mockUserRepo) GetDefaultUser(_ context.Context) (uuid.UUID, error) {
 
 func (r *mockUserRepo) GetByID(_ context.Context, _ uuid.UUID) (*instance.User, error) {
 	return nil, instance.ErrNotFound
+}
+
+func (r *mockUserRepo) UsersByID(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.User, error) {
+	return map[uuid.UUID]instance.User{}, nil
 }
 
 func (r *mockUserRepo) GetBySubject(_ context.Context, _ string) (*instance.User, error) {
@@ -551,6 +589,9 @@ func (r *mockQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Inst
 	return nil, nil
 }
 func (r *mockQueueRepo) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepo) ListQueued(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
 

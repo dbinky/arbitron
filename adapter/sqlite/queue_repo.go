@@ -115,3 +115,22 @@ func (r *QueueRepo) ListWaitingWithWebhook(ctx context.Context) ([]instance.Inst
 	}
 	return instances, nil
 }
+
+// ListQueued returns all currently-queued instances ordered by priority
+// (high → normal → low) then QueuedAt FIFO within a priority — the same
+// ordering NextEligible uses. An empty queue returns an empty slice.
+func (r *QueueRepo) ListQueued(ctx context.Context) ([]instance.Instance, error) {
+	rows, err := r.queries.ListQueued(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing queued instances: %w", err)
+	}
+	instances := make([]instance.Instance, 0, len(rows))
+	for _, row := range rows {
+		inst, err := rowToInstance(row)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, *inst)
+	}
+	return instances, nil
+}

@@ -54,6 +54,65 @@ func (q *Queries) CountWaiting(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const listQueued = `-- name: ListQueued :many
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances
+WHERE state = 'queued'
+ORDER BY
+  CASE priority
+    WHEN 'high' THEN 1
+    WHEN 'normal' THEN 2
+    WHEN 'low' THEN 3
+  END,
+  queued_at ASC
+`
+
+func (q *Queries) ListQueued(ctx context.Context) ([]Instance, error) {
+	rows, err := q.db.QueryContext(ctx, listQueued)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Instance
+	for rows.Next() {
+		var i Instance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.WorkflowName,
+			&i.WorkflowSnapshot,
+			&i.State,
+			&i.Priority,
+			&i.Variables,
+			&i.OriginalVariables,
+			&i.CurrentNodeID,
+			&i.FailedNodeID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.QueuedAt,
+			&i.WaitingUntil,
+			&i.WebhookToken,
+			&i.WebhookSecretHash,
+			&i.WebhookReceivedAt,
+			&i.Department,
+			&i.Visibility,
+			&i.TriggerSource,
+			&i.ScheduleID,
+			&i.WorkflowID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWaitingWithTimer = `-- name: ListWaitingWithTimer :many
 SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AND webhook_token IS NULL
 `

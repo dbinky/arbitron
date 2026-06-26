@@ -7,6 +7,7 @@ import type { InstanceSummary } from '../api/types'
 function summary(overrides: Partial<InstanceSummary> = {}): InstanceSummary {
   return {
     id: 'i1',
+    ownerId: 'u1',
     workflowName: 'wf',
     state: 'failed',
     priority: 'normal',

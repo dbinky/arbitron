@@ -1,7 +1,7 @@
 import type {
   DashboardStats,
+  EnrichedInstanceSummary,
   Instance,
-  InstanceSummary,
   InstanceState,
   Me,
   NodeExecution,
@@ -81,7 +81,7 @@ export const api = {
 
   instances: {
     /** List instances with optional filters. */
-    list(params?: ListInstancesParams): Promise<InstanceSummary[]> {
+    list(params?: ListInstancesParams): Promise<EnrichedInstanceSummary[]> {
       const q = new URLSearchParams()
       if (params?.state) q.set('state', params.state)
       if (params?.workflowName) q.set('workflowName', params.workflowName)

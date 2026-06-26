@@ -38,6 +38,11 @@ type QueueRepository interface {
 	SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
 	ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
 	ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
+	// ListQueued returns all currently-queued instances ordered by priority
+	// (high → normal → low) then QueuedAt FIFO within a priority — the same
+	// ordering NextEligible uses to pick the next item. An empty queue returns
+	// an empty slice, not an error.
+	ListQueued(ctx context.Context) ([]Instance, error)
 }
 
 // NodeExecutionRepository defines the port for persisting and querying node executions.
@@ -46,6 +51,12 @@ type NodeExecutionRepository interface {
 	Update(ctx context.Context, exec *NodeExecution) error
 	ListByInstance(ctx context.Context, instanceID uuid.UUID) ([]NodeExecution, error)
 	GetByInstanceAndNode(ctx context.Context, instanceID uuid.UUID, nodeID string) (*NodeExecution, error)
+	// AggregateByInstances collapses all NodeExecution rows for the given
+	// instance IDs into one aggregate per instance (latest model, max attempt).
+	// Returns a map keyed by instance ID. Instances with no
+	// executions are absent from the map (the caller treats absence as the
+	// zero value). An empty ids slice returns an empty map, not an error.
+	AggregateByInstances(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]NodeExecutionAggregate, error)
 }
 
 // VariableSnapshotRepository defines the port for persisting and querying variable snapshots.
@@ -71,6 +82,12 @@ type VariableSnapshotRepository interface {
 type UserRepository interface {
 	GetDefaultUser(ctx context.Context) (uuid.UUID, error)           // existing, unchanged
 	GetByID(ctx context.Context, id uuid.UUID) (*User, error)        // ErrNotFound if absent
+	// UsersByID batch-resolves the given user IDs in a single query, returning a
+	// map keyed by user ID. IDs with no row are simply absent from the map (no
+	// error). An empty ids slice returns an empty map without touching the DB.
+	// The list enricher uses it to resolve a page's distinct owners in one round
+	// trip instead of N per-owner GetByID calls.
+	UsersByID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]User, error)
 	GetBySubject(ctx context.Context, subject string) (*User, error) // ErrNotFound if new (JIT in Phase 2)
 	// GetByEmail returns the user with the given email (case-insensitive),
 	// ErrNotFound if absent. Empty email never matches. Edge-mode provisioning

@@ -81,7 +81,7 @@ func (r *httpAuthzInstanceRepo) UpdateCurrentNode(_ context.Context, _ uuid.UUID
 	return nil
 }
 func (r *httpAuthzInstanceRepo) SetFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
-func (r *httpAuthzInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error         { return nil }
+func (r *httpAuthzInstanceRepo) SetCompleted(_ context.Context, _ uuid.UUID) error        { return nil }
 func (r *httpAuthzInstanceRepo) ListRunning(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
@@ -105,13 +105,20 @@ var _ instance.InstanceRepository = (*httpAuthzInstanceRepo)(nil)
 
 type httpAuthzNodeExecRepo struct{}
 
-func (r *httpAuthzNodeExecRepo) Create(_ context.Context, _ *instance.NodeExecution) error { return nil }
-func (r *httpAuthzNodeExecRepo) Update(_ context.Context, _ *instance.NodeExecution) error { return nil }
+func (r *httpAuthzNodeExecRepo) Create(_ context.Context, _ *instance.NodeExecution) error {
+	return nil
+}
+func (r *httpAuthzNodeExecRepo) Update(_ context.Context, _ *instance.NodeExecution) error {
+	return nil
+}
 func (r *httpAuthzNodeExecRepo) ListByInstance(_ context.Context, _ uuid.UUID) ([]instance.NodeExecution, error) {
 	return []instance.NodeExecution{}, nil
 }
 func (r *httpAuthzNodeExecRepo) GetByInstanceAndNode(_ context.Context, _ uuid.UUID, _ string) (*instance.NodeExecution, error) {
 	return nil, instance.ErrNotFound
+}
+func (r *httpAuthzNodeExecRepo) AggregateByInstances(_ context.Context, _ []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	return map[uuid.UUID]instance.NodeExecutionAggregate{}, nil
 }
 
 var _ instance.NodeExecutionRepository = (*httpAuthzNodeExecRepo)(nil)

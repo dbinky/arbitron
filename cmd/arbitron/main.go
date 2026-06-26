@@ -775,9 +775,21 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	eng.SetWorkspaceManager(wsMgr)
 
+	// 11b. Construct the instance-list enrichment step and wire it to the
+	// engine so ListEnriched composes the additive queue-list fields (run
+	// name, submitter, friendly step, model, backend, retry count). The
+	// queue-position provider is wired in Phase 2 (queue.Manager.QueuePositions).
+	instanceEnricher := engine.NewInstanceEnricher(instanceRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, cfg.LLM.DefaultAgentBackend)
+	eng.SetInstanceEnricher(instanceEnricher)
+
 	// 12. Create the queue manager and wire it to the engine.
 	queueMgr := queue.NewManager(queueRepo, instanceRepo, cfg, eng)
 	eng.SetQueueManager(queueMgr)
+
+	// 12-pos. Wire the queue manager as the enricher's queue-position provider
+	// so queued rows carry their priority-aware position (Phase 2). The manager
+	// is the single ordering authority; the enricher only stamps the value.
+	instanceEnricher.SetQueuePositionProvider(queueMgr)
 
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)

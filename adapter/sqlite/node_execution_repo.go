@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/arbitron/arbitron/adapter/sqlite/generated"
 	"github.com/arbitron/arbitron/domain/instance"
@@ -142,6 +143,65 @@ func (r *NodeExecutionRepo) GetByInstanceAndNode(ctx context.Context, instanceID
 		return nil, fmt.Errorf("getting node execution: %w", err)
 	}
 	return r.rowToNodeExecution(row)
+}
+
+// AggregateByInstances collapses node executions for the given instance IDs
+// into one aggregate per instance. It uses a single grouped query with a
+// placeholder per id. An empty ids slice returns an empty map.
+func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
+	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = uuidToString(id)
+	}
+	// latest_model is the model of the MOST-RECENTLY-STARTED execution that
+	// recorded one (the design's "latest model"), NOT MAX(llm_model) — an
+	// alphabetical max would pick an arbitrary model for a multi-step run.
+	inClause := strings.Join(placeholders, ",")
+	query := `SELECT ne.instance_id,
+		COALESCE((
+			SELECT x.llm_model FROM node_executions x
+			WHERE x.instance_id = ne.instance_id
+			  AND x.llm_model IS NOT NULL AND x.llm_model != ''
+			ORDER BY x.started_at DESC LIMIT 1
+		), '') AS latest_model,
+		COALESCE(MAX(ne.attempt), 0) AS max_attempt
+	FROM node_executions ne
+	WHERE ne.instance_id IN (` + inClause + `)
+	GROUP BY ne.instance_id`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("aggregating node executions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var instIDStr, model string
+		var maxAttempt int64
+		if err := rows.Scan(&instIDStr, &model, &maxAttempt); err != nil {
+			return nil, fmt.Errorf("scanning node execution aggregate: %w", err)
+		}
+		instID, err := parseUUID(instIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("parsing instance id in aggregate: %w", err)
+		}
+		out[instID] = instance.NodeExecutionAggregate{
+			InstanceID:  instID,
+			LatestModel: model,
+			MaxAttempt:  int(maxAttempt),
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating node execution aggregates: %w", err)
+	}
+	return out, nil
 }
 
 func (r *NodeExecutionRepo) rowToNodeExecution(row generated.NodeExecution) (*instance.NodeExecution, error) {

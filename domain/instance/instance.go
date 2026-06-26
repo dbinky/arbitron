@@ -135,6 +135,7 @@ type Instance struct {
 // InstanceSummary is a lightweight representation for listing instances.
 type InstanceSummary struct {
 	ID            uuid.UUID     `json:"id"`
+	OwnerID       uuid.UUID     `json:"ownerId"`
 	WorkflowName  string        `json:"workflowName"`
 	State         State         `json:"state"`
 	Priority      Priority      `json:"priority"`
@@ -147,6 +148,32 @@ type InstanceSummary struct {
 	UpdatedAt     time.Time     `json:"updatedAt"`
 	CompletedAt   *time.Time    `json:"completedAt,omitempty"`
 	QueuedAt      *time.Time    `json:"queuedAt,omitempty"`
+	// FailedNodeID is the node the instance failed on (nil unless failed). Carried
+	// on the summary so the list enricher resolves the friendly step/error anchor
+	// without a per-row instance load.
+	FailedNodeID *string `json:"failedNodeId,omitempty"`
+	// Variables and WorkflowSnapshot are the run's variables and workflow
+	// definition snapshot, carried on the summary so the list enricher derives the
+	// run name and friendly step without a per-row instance load (avoids an N+1).
+	Variables        map[string]any `json:"-"`
+	WorkflowSnapshot map[string]any `json:"-"`
+}
+
+type Submitter struct {
+	Name            string
+	AccountIdentity string
+}
+
+type EnrichedInstanceSummary struct {
+	InstanceSummary
+	RunName       string
+	Submitter     Submitter
+	FriendlyStep  string
+	Model         string
+	Backend       string
+	RetryCount    int
+	QueuePosition int
+	FailedNodeID  *string
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.

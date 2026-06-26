@@ -87,6 +87,18 @@ func (m *routerMockService) ListInstances(ctx context.Context, filters instance.
 	return nil, nil
 }
 
+func (m *routerMockService) ListEnriched(ctx context.Context, filters instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+	summaries, err := m.ListInstances(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]instance.EnrichedInstanceSummary, len(summaries))
+	for i, s := range summaries {
+		out[i] = instance.EnrichedInstanceSummary{InstanceSummary: s}
+	}
+	return out, nil
+}
+
 func (m *routerMockService) GetInstance(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
 	if m.getFn != nil {
 		return m.getFn(ctx, id)
@@ -193,6 +205,9 @@ func (r *mockQueueRepoForRouter) ListWaitingWithTimer(_ context.Context) ([]inst
 	return nil, nil
 }
 func (r *mockQueueRepoForRouter) ListWaitingWithWebhook(_ context.Context) ([]instance.Instance, error) {
+	return nil, nil
+}
+func (r *mockQueueRepoForRouter) ListQueued(_ context.Context) ([]instance.Instance, error) {
 	return nil, nil
 }
 
