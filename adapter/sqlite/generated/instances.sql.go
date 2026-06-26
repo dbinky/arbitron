@@ -241,7 +241,7 @@ func (q *Queries) ListInstances(ctx context.Context, arg ListInstancesParams) ([
 }
 
 const listRunningInstances = `-- name: ListRunningInstances :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id FROM instances WHERE state = 'running'
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE state = 'running'
 `
 
 func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) {
@@ -276,6 +276,7 @@ func (q *Queries) ListRunningInstances(ctx context.Context) ([]Instance, error) 
 			&i.Visibility,
 			&i.TriggerSource,
 			&i.ScheduleID,
+			&i.WorkflowID,
 		); err != nil {
 			return nil, err
 		}
