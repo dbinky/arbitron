@@ -62,6 +62,13 @@
       "description": "Consecutive ralph passes that made no forward progress; the refine loop exits when this reaches 2 (stagnation backstop).",
       "default": 0,
       "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Power Automate / Teams webhook URL for completion alerts. Leave empty in the committed sample (the notify-teams steps are no-ops when unset, or read ARBITRON_TEAMS_WEBHOOK_URL from the server env). The runtime workflow stores the real URL as this default.",
+      "default": "",
+      "required": false
     }
   ],
   "nodes": [
@@ -640,6 +647,57 @@
         "x": 250,
         "y": 3840
       }
+    },
+    {
+      "id": "notify-teams",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60,
+        "args": [
+          "feature-pipeline complete — {{slug}}",
+          "Spec, phased designs, plans, implementation and the ralph refinement loop are done; a PR has been opened ({{push-and-pr.pr_url}}). PR review runs automatically on open.",
+          "good",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "PR={{push-and-pr.pr_url}}",
+          "Status={{pipeline_status}}"
+        ]
+      },
+      "label": "Notify Teams (PR opened)",
+      "description": "Rich completion alert to the Teams webhook after the PR is opened (no-op if teams_webhook_url unset).",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 3760
+      }
+    },
+    {
+      "id": "notify-teams-spec",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60,
+        "args": [
+          "feature-pipeline (spec-only) complete — {{slug}}",
+          "Spec, phased designs and TDD task plans were produced, aligned and checkpoint-pushed. Stopped before implementation (spec_only).",
+          "info",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=spec-only-complete"
+        ]
+      },
+      "label": "Notify Teams (spec-only)",
+      "description": "Rich alert to the Teams webhook on the spec-only stop (no-op if teams_webhook_url unset).",
+      "errorBehavior": {},
+      "position": {
+        "x": 520,
+        "y": 1700
+      }
     }
   ],
   "edges": [
@@ -666,11 +724,6 @@
     {
       "source": "brainstorm-design",
       "target": "align-designs"
-    },
-    {
-      "source": "spec-only?",
-      "target": "done-spec",
-      "output": "stop"
     },
     {
       "source": "spec-only?",
@@ -757,7 +810,20 @@
     },
     {
       "source": "notify-done",
+      "target": "notify-teams"
+    },
+    {
+      "source": "notify-teams",
       "target": "done"
+    },
+    {
+      "source": "spec-only?",
+      "target": "notify-teams-spec",
+      "output": "stop"
+    },
+    {
+      "source": "notify-teams-spec",
+      "target": "done-spec"
     }
   ]
 }

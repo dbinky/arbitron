@@ -1,7 +1,7 @@
 {
   "name": "pr-review",
-  "description": "Multi-persona PR review pipeline. Clones the PR into an isolated per-instance workspace (never a local ~/Repos checkout), runs Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security, verifies every required persona actually posted (fail-loud on dropout), then Manager decides. Optionally a senior engineer auto-implements the selected fix tier; a verify-fix gate (build/tests + wired-and-fed provenance check) pushes to the PR branch only if the fixes are clean, else reports BLOCKED. Reviewers run a mandatory wired-and-fed provenance trace, not just a diff read.",
   "author": "arbitron",
+  "description": "Multi-persona PR review pipeline. Clones the PR into an isolated per-instance workspace (never a local ~/Repos checkout), runs Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security, verifies every required persona actually posted (fail-loud on dropout), then Manager decides. Optionally a senior engineer auto-implements the selected fix tier; verify-fix runs build/tests + a wired-and-fed provenance check and writes a verdict file that record-verdict lifts into the gate. EITHER way the committed fixes are pushed to the PR branch (the per-instance workspace is GC'd after the run, so never pushing = lost work); the gate only decides whether the PR comment reads 'verified clean' or 'pushed but flagged for review'. Reviewers run a mandatory wired-and-fed provenance trace, not just a diff read.",
   "defaultErrorBehavior": {
     "type": "retry",
     "retries": 2,
@@ -26,6 +26,13 @@
       "description": "Auto-implement tier. One of: must, must-should, all-but-defer, none. 'none' skips the senior-engineer node entirely.",
       "default": "must-should",
       "required": true
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Power Automate / Teams webhook URL for the completion alert. Runtime default holds the secret; committed samples leave it empty (the notify-teams step is a no-op when unset, or reads ARBITRON_TEAMS_WEBHOOK_URL from the server env).",
+      "default": "",
+      "required": false
     }
   ],
   "nodes": [
@@ -217,7 +224,7 @@
         "model_profile": "coder-GLM"
       },
       "label": "Senior Engineer",
-      "description": "Implements the selected fix tier in the isolated worktree and commits (wired-and-fed, no self-certified half-fixes); the verify-fix gate decides whether to push",
+      "description": "Implements the selected fix tier in the isolated worktree and commits (wired-and-fed, no self-certified half-fixes); the verify-fix gate decides the comment, but the fixes are pushed either way",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -230,36 +237,52 @@
       "config": {
         "templateFile": "verify-fix.md",
         "model_profile": "coder-opus-medium",
+        "timeoutSeconds": 2400,
         "outputSchema": {
+          "type": "object",
           "properties": {
+            "push_ok": {
+              "type": "boolean"
+            },
             "blockers": {
+              "type": "array",
               "items": {
                 "type": "string"
-              },
-              "type": "array"
+              }
             },
             "notes": {
               "type": "string"
-            },
-            "push_ok": {
-              "type": "boolean"
             }
           },
           "required": [
             "push_ok",
             "blockers",
             "notes"
-          ],
-          "type": "object"
-        },
-        "timeoutSeconds": 2400
+          ]
+        }
       },
       "label": "Verify fix (wired-and-fed gate)",
-      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits; emits {push_ok, blockers, notes}. Catches half-wired Musts and new regressions before they ship.",
+      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits and WRITES its verdict to {{workspace}}/verify-verdict.json. agent_call does not enforce outputSchema, so the verdict flows via that file (lifted by record-verdict), not via prose.",
       "errorBehavior": {},
       "position": {
         "x": 0,
         "y": 1280
+      }
+    },
+    {
+      "id": "record-verdict",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-verdict.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Record verify verdict",
+      "description": "Lift the verify-fix verdict from {{workspace}}/verify-verdict.json into structured outputs {push_ok, blockers} so the fix-gate keys off a reliably-parsed value (agent_call does NOT enforce outputSchema). Defaults push_ok=false (concerns path) if the file is missing — and both fix paths push, so no committed work is ever lost.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1400
       }
     },
     {
@@ -268,7 +291,7 @@
       "config": {
         "conditions": [
           {
-            "field": "verify-fix.push_ok",
+            "field": "record-verdict.push_ok",
             "operator": "eq",
             "value": true,
             "output": "push"
@@ -276,12 +299,12 @@
         ],
         "defaultOutput": "block"
       },
-      "label": "Fixes clean?",
-      "description": "Push the fixes only if verify-fix passed; otherwise route to fix-blocked (no push).",
+      "label": "Verified clean?",
+      "description": "Both outputs push the senior engineer's commits to the PR branch (work is never lost). This gate only decides the PR comment: 'push' => verified-clean comment, 'block' => pushed-but-flagged comment listing the verify-fix blockers.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1440
+        "y": 1560
       }
     },
     {
@@ -292,12 +315,12 @@
         "interpreter": "/bin/sh",
         "timeoutSeconds": 300
       },
-      "label": "Commit & push fixes",
-      "description": "Commit any uncommitted senior-engineer fixes and push to the PR branch on the remote. Reached only when verify-fix passed.",
+      "label": "Push (verified clean)",
+      "description": "Commit any uncommitted senior-engineer fixes, push to the PR branch, and post a 'verified clean' comment. Reached when verify-fix passed.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1600
+        "y": 1720
       }
     },
     {
@@ -306,14 +329,14 @@
       "config": {
         "scriptFile": "scripts/fix-blocked.sh",
         "interpreter": "/bin/sh",
-        "timeoutSeconds": 60
+        "timeoutSeconds": 300
       },
-      "label": "Fix blocked (not pushed)",
-      "description": "Reached when verify-fix failed: post a BLOCKED comment with the blockers and do NOT push; commits stay in the unpushed worktree.",
+      "label": "Push + flag (concerns)",
+      "description": "Reached when verify-fix flagged concerns: STILL commit + push the fixes (workspace is GC'd, so not pushing = lost work), then post a comment with the blockers asking for human review before merge.",
       "errorBehavior": {},
       "position": {
         "x": 240,
-        "y": 1520
+        "y": 1720
       }
     },
     {
@@ -326,6 +349,33 @@
       "position": {
         "x": 260,
         "y": 1120
+      }
+    },
+    {
+      "id": "notify-teams",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60,
+        "args": [
+          "pr-review complete — {{repo}} PR #{{pr_number}}",
+          "Multi-persona review finished and the senior-engineer {{fix_scope}} fixes were pushed to the PR branch. See the PR for the manager Decision Summary and the verify-fix verdict.",
+          "info",
+          "Repo={{repo}}",
+          "PR=#{{pr_number}}",
+          "Branch={{pr_branch}}",
+          "Fix scope={{fix_scope}}",
+          "Verified clean={{record-verdict.push_ok}}",
+          "PR URL=https://github.com/{{repo}}/pull/{{pr_number}}"
+        ]
+      },
+      "label": "Notify Teams",
+      "description": "Post a rich completion alert to the Teams webhook (no-op if teams_webhook_url unset). Reached from BOTH push paths, so every finished review pings Teams regardless of the verdict.",
+      "errorBehavior": {},
+      "position": {
+        "x": 120,
+        "y": 1880
       }
     }
   ],
@@ -382,6 +432,10 @@
     },
     {
       "source": "verify-fix",
+      "target": "record-verdict"
+    },
+    {
+      "source": "record-verdict",
       "target": "fix-gate"
     },
     {
@@ -393,6 +447,14 @@
       "source": "fix-gate",
       "target": "fix-blocked",
       "output": "block"
+    },
+    {
+      "source": "commit-push",
+      "target": "notify-teams"
+    },
+    {
+      "source": "fix-blocked",
+      "target": "notify-teams"
     }
   ]
 }
