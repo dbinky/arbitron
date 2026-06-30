@@ -18,6 +18,16 @@ import (
 // This prevents goroutine leaks from frozen or slow clients.
 const wsWriteTimeout = 10 * time.Second
 
+// systemWSEnvelope is the JSON shape sent to system-WS clients. It carries the
+// instance id (which the bare engine.Event omits) so the client can map an
+// event to a specific queue row. Additive: existing fields are unchanged.
+type systemWSEnvelope struct {
+	InstanceID uuid.UUID `json:"instanceId"`
+	Type       string    `json:"type"`
+	Timestamp  time.Time `json:"timestamp"`
+	Data       any       `json:"data"`
+}
+
 // SystemStreamHandler handles WebSocket connections for streaming all workflow events
 // system-wide, regardless of instance.
 type SystemStreamHandler struct {
@@ -85,7 +95,13 @@ func (h *SystemStreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Req
 			if !h.canSee(ctx, id, sev.InstanceID, visible) {
 				continue // drop events for instances this caller may not see
 			}
-			if err := writeWSEvent(ctx, conn, sev.Event); err != nil {
+			env := systemWSEnvelope{
+				InstanceID: sev.InstanceID,
+				Type:       sev.Event.Type,
+				Timestamp:  sev.Event.Timestamp,
+				Data:       sev.Event.Data,
+			}
+			if err := writeWSValue(ctx, conn, env); err != nil {
 				return
 			}
 		case <-clientDone:
@@ -113,15 +129,20 @@ func (h *SystemStreamHandler) canSee(ctx context.Context, id identity.Identity, 
 	return v
 }
 
-// writeWSEvent serializes an event as JSON and sends it as a WebSocket text
-// message with a write deadline to prevent goroutine leaks from slow/frozen
-// clients. Shared by StreamHandler and SystemStreamHandler.
-func writeWSEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
-	data, err := json.Marshal(evt)
+// writeWSValue serializes v as JSON and sends it as a WebSocket text message
+// with a write deadline to prevent goroutine leaks from slow/frozen clients.
+func writeWSValue(ctx context.Context, conn *websocket.Conn, v any) error {
+	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
 	defer cancel()
 	return conn.Write(writeCtx, websocket.MessageText, data)
+}
+
+// writeWSEvent writes a bare engine.Event (used by the per-instance stream,
+// whose client already knows the instance).
+func writeWSEvent(ctx context.Context, conn *websocket.Conn, evt engine.Event) error {
+	return writeWSValue(ctx, conn, evt)
 }
