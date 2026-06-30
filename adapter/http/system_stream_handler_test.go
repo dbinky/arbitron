@@ -337,6 +337,53 @@ func TestSystemStreamHandler_ServerContextCancel_ClosesConnection(t *testing.T) 
 	assert.Error(t, readErr, "connection must be closed after server context is cancelled")
 }
 
+// TestSystemStreamHandler_EmitsInstanceIDOnWire drives the real handler end-to-end,
+// publishes an event for a known instance id, reads the raw WebSocket frame, and
+// decodes into map[string]any so that instanceId cannot be silently dropped by a
+// type that lacks the field (e.g. engine.Event).  The test closes the gap left by
+// TestSystemStream_EnvelopeIncludesInstanceID, which only marshals the struct in
+// isolation and would not catch the handler omitting the field from the envelope.
+func TestSystemStreamHandler_EmitsInstanceIDOnWire(t *testing.T) {
+	bus := eventbus.New()
+
+	srv := newSystemStreamTestServer(bus) // admin identity → sees all events
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + srv.URL[len("http"):] + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	// Give the handler a moment to subscribe before publishing.
+	time.Sleep(50 * time.Millisecond)
+
+	knownID := uuid.New()
+	bus.Publish(knownID, engine.Event{
+		Type:      "node.started",
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
+		Data:      map[string]any{"nodeId": "X"},
+	})
+
+	// Read the raw wire bytes — NOT engine.Event, which silently drops unknown fields.
+	_, msg, err := conn.Read(ctx)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(msg, &got))
+
+	// Core assertion: instanceId must appear in the wire envelope.
+	// If the handler ever omits InstanceID from systemWSEnvelope this becomes nil and fails.
+	assert.Equal(t, knownID.String(), got["instanceId"], "instanceId must be emitted in the system-WS envelope")
+
+	// Envelope fields beyond instanceId must also survive the round-trip.
+	assert.Equal(t, "node.started", got["type"], "type must be present in the envelope")
+	_, hasData := got["data"]
+	assert.True(t, hasData, "data must be present in the envelope")
+}
+
 func TestSystemStreamHandler_ClientDisconnect(t *testing.T) {
 	bus := eventbus.New()
 
