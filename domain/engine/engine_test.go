@@ -1827,6 +1827,28 @@ func TestEngine_PublishesNodeStartedEvents(t *testing.T) {
 	assert.ElementsMatch(t, []string{"A", "B", "C"}, nodeIDs)
 }
 
+func TestEngine_NodeStartedEventCarriesLabelAndBackend(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+
+	id, _, err := f.engine.Trigger(context.Background(), "linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	started := f.eventBus.eventsOfType(id, "node.started")
+	require.NotEmpty(t, started)
+	for _, e := range started {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok, "node.started Data should be a map")
+		nodeID, _ := d["nodeId"].(string)
+		label, hasLabel := d["nodeLabel"].(string)
+		_, hasBackend := d["backend"]
+		assert.True(t, hasLabel, "node.started Data should carry nodeLabel")
+		assert.Equal(t, nodeID, label, "linear nodes have no Label, so label == nodeId")
+		assert.True(t, hasBackend, "node.started Data should carry a backend key")
+	}
+}
+
 func TestEngine_PublishesNodeCompletedEvents(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())

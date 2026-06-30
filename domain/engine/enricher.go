@@ -179,6 +179,25 @@ func (e *InstanceEnricher) batchUsers(ctx context.Context, ownerSet map[uuid.UUI
 	return users
 }
 
+// nodeLabelAndBackend derives the friendly step label and effective backend for
+// a node, applying the same fallbacks the enriched list uses: label falls back
+// to the node id; backend falls back to defaultBackend when the node inherits
+// (BackendUnset). Shared by the enricher and the engine's node-event emitters so
+// a live-patched queue row matches what a refetch would produce.
+func nodeLabelAndBackend(node workflow.Node, defaultBackend string) (label, backend string) {
+	if node.Label != "" {
+		label = node.Label
+	} else {
+		label = node.ID
+	}
+	if node.Config.Backend != workflow.BackendUnset {
+		backend = node.Config.Backend
+	} else if defaultBackend != "" {
+		backend = defaultBackend
+	}
+	return label, backend
+}
+
 // resolveNodeFields returns (label, backend) for the relevant node in the
 // summary's workflow snapshot. The relevant node is:
 //   - CurrentNodeID when the instance is active (running/waiting/paused)
@@ -195,17 +214,7 @@ func (e *InstanceEnricher) resolveNodeFields(s instance.InstanceSummary) (label,
 	if err != nil {
 		return "", ""
 	}
-	if node.Label != "" {
-		label = node.Label
-	} else {
-		label = node.ID
-	}
-	if node.Config.Backend != workflow.BackendUnset {
-		backend = node.Config.Backend
-	} else if e.defaultAgentBackend != "" {
-		backend = e.defaultAgentBackend
-	}
-	return label, backend
+	return nodeLabelAndBackend(*node, e.defaultAgentBackend)
 }
 
 // relevantNodeID picks the node whose label/backend the row should show.

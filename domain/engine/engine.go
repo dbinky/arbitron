@@ -800,10 +800,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			return
 		}
 
+		nlabel, nbackend := nodeLabelAndBackend(node, e.defaultAgentBackendForEvents())
 		e.eventBus.Publish(instanceID, Event{
 			Type:      EventTypeNodeStarted,
 			Timestamp: time.Now(),
-			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": nlabel, "backend": nbackend},
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
@@ -883,10 +884,11 @@ func (e *Engine) handleNodeError(
 		return "", true
 	}
 
+	flabel, fbackend := nodeLabelAndBackend(node, e.defaultAgentBackendForEvents())
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeNodeFailed,
 		Timestamp: time.Now(),
-		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
+		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": flabel, "backend": fbackend, "error": execErr.Error()},
 	})
 
 	eb := resolveErrorBehavior(node, wf)
@@ -1575,6 +1577,15 @@ func (e *Engine) SetPriority(ctx context.Context, id uuid.UUID, priority string)
 
 // Shutdown gracefully waits for all in-flight workflow goroutines to finish.
 // It should be called before closing database connections or other resources.
+// defaultAgentBackendForEvents returns the deployment-wide default agent backend
+// used to stamp node events, sourced from the wired enricher (nil-safe).
+func (e *Engine) defaultAgentBackendForEvents() string {
+	if e.enricher != nil {
+		return e.enricher.defaultAgentBackend
+	}
+	return ""
+}
+
 func (e *Engine) Shutdown() {
 	e.wg.Wait()
 }
