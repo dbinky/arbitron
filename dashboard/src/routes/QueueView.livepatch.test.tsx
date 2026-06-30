@@ -28,6 +28,8 @@ const runningRow: EnrichedInstanceSummary = {
   retryCount: 0,
   friendlyStep: 'Architect R1',
   currentNodeId: 'architect-r1',
+  // backend 'codex' differs from the event backend 'claude-code' so the patch assertion is meaningful.
+  backend: 'codex',
 }
 
 const listMock = vi.fn(async ({ state }: { state: string }) =>
@@ -60,6 +62,9 @@ describe('QueueView live row patch', () => {
   it('patches the row Step in place on node.started without refetching', async () => {
     renderView()
     await waitFor(() => expect(screen.getByText('Architect R1')).toBeInTheDocument())
+    // Seed row has backend 'codex'; modelBackend cell should render it initially
+    // (balanced density shows modelBackend; no model set so the cell shows just the backend).
+    expect(screen.getByText('codex')).toBeInTheDocument()
     const callsAfterLoad = listMock.mock.calls.length
 
     act(() => {
@@ -72,6 +77,13 @@ describe('QueueView live row patch', () => {
     })
 
     await waitFor(() => expect(screen.getByText('10x R1')).toBeInTheDocument())
+    // backend patch: event carries 'claude-code', overwriting the seed value 'codex'.
+    // A regression that silently dropped backend from the patch would leave 'codex' in the DOM.
+    expect(screen.getByText('claude-code')).toBeInTheDocument()
+    expect(screen.queryByText('codex')).not.toBeInTheDocument()
+    // currentNodeId ('10x-r1') is patched in component state alongside friendlyStep and backend,
+    // but it has no dedicated rendered cell in the queue table; asserting it via the DOM is not
+    // possible without adding new rendering. The omission here is intentional and documented.
     expect(listMock.mock.calls.length).toBe(callsAfterLoad) // no refetch
   })
 
