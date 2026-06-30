@@ -1577,6 +1577,10 @@ func (e *Engine) SetPriority(ctx context.Context, id uuid.UUID, priority string)
 
 // Shutdown gracefully waits for all in-flight workflow goroutines to finish.
 // It should be called before closing database connections or other resources.
+func (e *Engine) Shutdown() {
+	e.wg.Wait()
+}
+
 // defaultAgentBackendForEvents returns the deployment-wide default agent backend
 // used to stamp node events, sourced from the wired enricher (nil-safe).
 func (e *Engine) defaultAgentBackendForEvents() string {
@@ -1584,10 +1588,6 @@ func (e *Engine) defaultAgentBackendForEvents() string {
 		return e.enricher.defaultAgentBackend
 	}
 	return ""
-}
-
-func (e *Engine) Shutdown() {
-	e.wg.Wait()
 }
 
 // RecoverCrashedInstances finds instances that are in running state

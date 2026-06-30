@@ -1849,6 +1849,37 @@ func TestEngine_NodeStartedEventCarriesLabelAndBackend(t *testing.T) {
 	}
 }
 
+func TestEngine_NodeFailedEventCarriesLabelAndBackend(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "halt"})
+	f.workflowRepo.add(wf)
+
+	// Node B fails
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, _, err := f.engine.Trigger(context.Background(), "error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	failed := f.eventBus.eventsOfType(id, "node.failed")
+	require.NotEmpty(t, failed)
+	for _, e := range failed {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok, "node.failed Data should be a map")
+		nodeID, _ := d["nodeId"].(string)
+		label, hasLabel := d["nodeLabel"].(string)
+		_, hasBackend := d["backend"]
+		_, hasError := d["error"]
+		assert.True(t, hasLabel, "node.failed Data should carry nodeLabel")
+		assert.NotEmpty(t, label, "node.failed nodeLabel should be non-empty")
+		assert.True(t, hasBackend, "node.failed Data should carry a backend key")
+		assert.True(t, hasError, "node.failed Data should carry an error key")
+		assert.Equal(t, "B", nodeID, "failed node should be B")
+	}
+}
+
 func TestEngine_PublishesNodeCompletedEvents(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
