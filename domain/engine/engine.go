@@ -40,9 +40,13 @@ type Engine struct {
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
-	mu               sync.Mutex
-	contexts         map[uuid.UUID]context.CancelFunc
-	wg               sync.WaitGroup
+	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
+	// onto node events when a node has BackendUnset. It is deployment config,
+	// injected at construction — not read through the presentation enricher.
+	defaultAgentBackend string
+	mu                  sync.Mutex
+	contexts            map[uuid.UUID]context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -56,18 +60,20 @@ func NewEngine(
 	eventBus EventBus,
 	queueManager QueueManager,
 	queueRepo instance.QueueRepository,
+	defaultAgentBackend string,
 ) *Engine {
 	return &Engine{
-		workflows:      workflows,
-		instances:      instances,
-		nodeExecutions: nodeExecutions,
-		snapshots:      snapshots,
-		users:          users,
-		executors:      executors,
-		eventBus:       eventBus,
-		queueManager:   queueManager,
-		queueRepo:      queueRepo,
-		contexts:       make(map[uuid.UUID]context.CancelFunc),
+		workflows:           workflows,
+		instances:           instances,
+		nodeExecutions:      nodeExecutions,
+		snapshots:           snapshots,
+		users:               users,
+		executors:           executors,
+		eventBus:            eventBus,
+		queueManager:        queueManager,
+		queueRepo:           queueRepo,
+		defaultAgentBackend: defaultAgentBackend,
+		contexts:            make(map[uuid.UUID]context.CancelFunc),
 	}
 }
 
@@ -800,7 +806,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			return
 		}
 
-		nlabel, nbackend := nodeLabelAndBackend(node, e.defaultAgentBackendForEvents())
+		nlabel, nbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
 		e.eventBus.Publish(instanceID, Event{
 			Type:      EventTypeNodeStarted,
 			Timestamp: time.Now(),
@@ -884,7 +890,7 @@ func (e *Engine) handleNodeError(
 		return "", true
 	}
 
-	flabel, fbackend := nodeLabelAndBackend(node, e.defaultAgentBackendForEvents())
+	flabel, fbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeNodeFailed,
 		Timestamp: time.Now(),
@@ -1579,15 +1585,6 @@ func (e *Engine) SetPriority(ctx context.Context, id uuid.UUID, priority string)
 // It should be called before closing database connections or other resources.
 func (e *Engine) Shutdown() {
 	e.wg.Wait()
-}
-
-// defaultAgentBackendForEvents returns the deployment-wide default agent backend
-// used to stamp node events, sourced from the wired enricher (nil-safe).
-func (e *Engine) defaultAgentBackendForEvents() string {
-	if e.enricher != nil {
-		return e.enricher.defaultAgentBackend
-	}
-	return ""
 }
 
 // RecoverCrashedInstances finds instances that are in running state

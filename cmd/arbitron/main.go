@@ -764,6 +764,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		bus,
 		nil, // queueManager set below after creation
 		queueRepo,
+		cfg.LLM.DefaultAgentBackend,
 	)
 
 	// 11a. Wire the per-instance workspace manager.

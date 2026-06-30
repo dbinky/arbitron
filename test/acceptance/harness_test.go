@@ -632,6 +632,7 @@ func newHarness(t *testing.T, b binding) *harness {
 	eng := engine.NewEngine(
 		workflowRepo, instances, nodeExecs, snapshots, users,
 		executors, bus, nil, queueRepo,
+		"",
 	)
 	eng.SetWorkspaceManager(wsMgr)
 

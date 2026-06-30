@@ -746,7 +746,7 @@ func newTestFixtures() *testFixtures {
 
 	// The mock queue manager's default Enqueue calls StartInstance directly,
 	// which simulates the old behavior of immediately starting.
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo})
+	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo}, "")
 
 	// Wire the mock queue manager to call StartInstance on the engine.
 	qm.mu.Lock()
@@ -2028,6 +2028,7 @@ func TestEngine_UnregisteredNodeType(t *testing.T) {
 		f.eventBus,
 		qm2,
 		&mockQueueRepo{instRepo: f.instanceRepo},
+		"",
 	)
 	qm2.mu.Lock()
 	qm2.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {

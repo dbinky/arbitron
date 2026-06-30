@@ -99,7 +99,7 @@ func TestDomainStack_MCPDeps_WiresSecurityFields(t *testing.T) {
 // (schedulerCancel, scheduler, tracingShutdown, db, logCloser) are nil. Only
 // the engine is non-nil (Shutdown() only waits on a zero-value WaitGroup).
 func TestDomainStack_Close_NilOptionalsDoNotPanic(t *testing.T) {
-	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
 	ds := &domainStack{eng: eng}
 	// All optional fields (scheduler, tracing, db, logCloser) are nil.
 	// Close must complete without panicking.
@@ -150,7 +150,7 @@ func TestConnectionValidateCmd_HasRunE(t *testing.T) {
 // The org-mode session sweep must be cancelled on Close so its goroutine stops
 // cleanly on shutdown (no leaked ticker writing to a closed DB).
 func TestDomainStack_Close_CancelsSessionSweep(t *testing.T) {
-	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	eng := engine.NewEngine(nil, nil, nil, nil, nil, nil, nil, nil, nil, "")
 	cancelled := false
 	ds := &domainStack{eng: eng, sweepCancel: func() { cancelled = true }}
 	assert.NotPanics(t, func() { ds.Close(context.Background()) })

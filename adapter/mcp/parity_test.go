@@ -88,7 +88,7 @@ func TestMCPRestParity_InstanceList(t *testing.T) {
 
 	// A real engine whose ListInstances does the scoping. The other deps are nil
 	// because only ListInstances is exercised.
-	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil)
+	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil, "")
 
 	idCtx := identity.WithIdentity(context.Background(), identity.Identity{UserID: ownerA, Username: "a", Role: identity.RoleUser})
 
@@ -153,7 +153,7 @@ func TestMCPRestParity_InstanceGetNonOwner(t *testing.T) {
 	repo := &parityInstanceRepo{instances: map[uuid.UUID]*instance.Instance{inst.ID: inst}}
 
 	// Real engine: GetInstance enforces canView(ctx, inst.OwnerID).
-	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil)
+	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil, "")
 
 	nonOwnerCtx := identity.WithIdentity(context.Background(), identity.Identity{
 		UserID: nonOwner, Username: "b", Role: identity.RoleUser,

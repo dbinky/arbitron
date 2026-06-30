@@ -146,6 +146,7 @@ func newLoopFixtures() *loopFixtures {
 		base.eventBus,
 		base.queueManager,
 		&mockQueueRepo{instRepo: base.instanceRepo},
+		"",
 	)
 
 	base.queueManager.mu.Lock()
