@@ -30,6 +30,9 @@ const STATE_CHANGE_EVENTS = new Set([
   'instance.recovered',
 ])
 
+/** Node events that should patch a single row in place (no refetch). */
+const NODE_PATCH_EVENTS = new Set(['node.started', 'node.failed'])
+
 export default function QueueView() {
   const [active, setActive] = useState<EnrichedInstanceSummary[]>([])
   const [pending, setPending] = useState<EnrichedInstanceSummary[]>([])
@@ -116,6 +119,24 @@ export default function QueueView() {
   const { connected } = useSystemWebSocket(
     useCallback(
       (event: WebSocketEvent) => {
+        if (NODE_PATCH_EVENTS.has(event.type)) {
+          const instId = event.instanceId
+          if (!instId) return
+          const d = (event.data ?? {}) as { nodeId?: string; nodeLabel?: string; backend?: string }
+          setActive((prev) => {
+            const idx = prev.findIndex((r) => r.id === instId)
+            if (idx === -1) return prev // not listed yet; instance.started refetch will surface it
+            const next = [...prev]
+            next[idx] = {
+              ...next[idx],
+              currentNodeId: d.nodeId ?? next[idx].currentNodeId,
+              friendlyStep: d.nodeLabel ?? next[idx].friendlyStep,
+              backend: d.backend ?? next[idx].backend,
+            }
+            return next
+          })
+          return
+        }
         if (!STATE_CHANGE_EVENTS.has(event.type)) return
         if (debounceRef.current) clearTimeout(debounceRef.current)
         debounceRef.current = setTimeout(() => {

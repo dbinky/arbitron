@@ -273,6 +273,8 @@ export interface WebSocketEvent {
   type: string
   timestamp: string
   data: unknown
+  /** Present on system-WS envelopes; identifies the originating instance. */
+  instanceId?: string
 }
 
 // ---------------------------------------------------------------------------
