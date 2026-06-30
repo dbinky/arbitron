@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { EnrichedInstanceSummary, Me, WebSocketEvent } from '../api/types'
+import type { EnrichedInstanceSummary, Me, NodeEventData, WebSocketEvent } from '../api/types'
 import { api } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
@@ -122,16 +122,25 @@ export default function QueueView() {
         if (NODE_PATCH_EVENTS.has(event.type)) {
           const instId = event.instanceId
           if (!instId) return
-          const d = (event.data ?? {}) as { nodeId?: string; nodeLabel?: string; backend?: string }
+          // `nodeLabel`/`nodeId` are untrusted: they originate from
+          // workflow-author-controlled definitions and cross the Go→JSON→TS
+          // boundary unvalidated. They are safe ONLY because `friendlyStep`
+          // renders through React's escaped text sink (JSX text child). Never
+          // route these into a raw-HTML (dangerouslySetInnerHTML) or attribute
+          // sink (e.g. `title`) without sanitizing first.
+          const d = (event.data ?? {}) as NodeEventData
           setActive((prev) => {
             const idx = prev.findIndex((r) => r.id === instId)
             if (idx === -1) return prev // not listed yet; instance.started refetch will surface it
             const next = [...prev]
+            // Patch only the Step column (currentNodeId + friendlyStep). Backend
+            // and model share one "Model / Backend" cell and refresh together on
+            // the lifecycle refetch — live-patching backend alone would show a
+            // mismatched modelN-1 · backendN pair for the whole run.
             next[idx] = {
               ...next[idx],
               currentNodeId: d.nodeId ?? next[idx].currentNodeId,
               friendlyStep: d.nodeLabel ?? next[idx].friendlyStep,
-              backend: d.backend ?? next[idx].backend,
             }
             return next
           })
