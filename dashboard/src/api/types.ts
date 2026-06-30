@@ -273,6 +273,19 @@ export interface WebSocketEvent {
   type: string
   timestamp: string
   data: unknown
+  /** Present on system-WS envelopes; identifies the originating instance. */
+  instanceId?: string
+}
+
+/**
+ * Payload shape of a `node.started` / `node.failed` event's `data` field.
+ * The engine emits this as an untyped `map[string]any` (every engine event
+ * does), so this is the single TS-side contract the consumer narrows to.
+ * Narrowed to the fields the live row patch reads.
+ */
+export interface NodeEventData {
+  nodeId?: string
+  nodeLabel?: string
 }
 
 // ---------------------------------------------------------------------------

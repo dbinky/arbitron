@@ -746,7 +746,7 @@ func newTestFixtures() *testFixtures {
 
 	// The mock queue manager's default Enqueue calls StartInstance directly,
 	// which simulates the old behavior of immediately starting.
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo})
+	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo}, "")
 
 	// Wire the mock queue manager to call StartInstance on the engine.
 	qm.mu.Lock()
@@ -1827,6 +1827,59 @@ func TestEngine_PublishesNodeStartedEvents(t *testing.T) {
 	assert.ElementsMatch(t, []string{"A", "B", "C"}, nodeIDs)
 }
 
+func TestEngine_NodeStartedEventCarriesLabelAndBackend(t *testing.T) {
+	f := newTestFixtures()
+	f.workflowRepo.add(linearWorkflow())
+
+	id, _, err := f.engine.Trigger(context.Background(), "linear-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateCompleted)
+
+	started := f.eventBus.eventsOfType(id, "node.started")
+	require.NotEmpty(t, started)
+	for _, e := range started {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok, "node.started Data should be a map")
+		nodeID, _ := d["nodeId"].(string)
+		label, hasLabel := d["nodeLabel"].(string)
+		_, hasBackend := d["backend"]
+		assert.True(t, hasLabel, "node.started Data should carry nodeLabel")
+		assert.Equal(t, nodeID, label, "linear nodes have no Label, so label == nodeId")
+		assert.True(t, hasBackend, "node.started Data should carry a backend key")
+	}
+}
+
+func TestEngine_NodeFailedEventCarriesLabelAndBackend(t *testing.T) {
+	f := newTestFixtures()
+	wf := errorWorkflow(workflow.ErrorBehavior{Type: "halt"})
+	f.workflowRepo.add(wf)
+
+	// Node B fails
+	f.executor.onNode("B", func(_ context.Context, _ workflow.Node, _ *variable.VariableStore) (*engine.NodeResult, error) {
+		return nil, fmt.Errorf("node B exploded")
+	})
+
+	id, _, err := f.engine.Trigger(context.Background(), "error-wf", nil, "normal")
+	require.NoError(t, err)
+	waitForInstance(t, f.instanceRepo, id, 5*time.Second, instance.StateFailed)
+
+	failed := f.eventBus.eventsOfType(id, "node.failed")
+	require.NotEmpty(t, failed)
+	for _, e := range failed {
+		d, ok := e.Data.(map[string]any)
+		require.True(t, ok, "node.failed Data should be a map")
+		nodeID, _ := d["nodeId"].(string)
+		label, hasLabel := d["nodeLabel"].(string)
+		_, hasBackend := d["backend"]
+		_, hasError := d["error"]
+		assert.True(t, hasLabel, "node.failed Data should carry nodeLabel")
+		assert.NotEmpty(t, label, "node.failed nodeLabel should be non-empty")
+		assert.True(t, hasBackend, "node.failed Data should carry a backend key")
+		assert.True(t, hasError, "node.failed Data should carry an error key")
+		assert.Equal(t, "B", nodeID, "failed node should be B")
+	}
+}
+
 func TestEngine_PublishesNodeCompletedEvents(t *testing.T) {
 	f := newTestFixtures()
 	f.workflowRepo.add(linearWorkflow())
@@ -1975,6 +2028,7 @@ func TestEngine_UnregisteredNodeType(t *testing.T) {
 		f.eventBus,
 		qm2,
 		&mockQueueRepo{instRepo: f.instanceRepo},
+		"",
 	)
 	qm2.mu.Lock()
 	qm2.enqueueFn = func(ctx context.Context, id uuid.UUID, _ uuid.UUID) (bool, error) {

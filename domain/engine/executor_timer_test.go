@@ -464,7 +464,7 @@ func TestRun_WaitResult_ExitsCleanly(t *testing.T) {
 		workflow.NodeTypeTransform:   f.executor,
 		workflow.NodeTypeTimerDelay:  timerExec,
 	}
-	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo})
+	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo}, "")
 	eng.SetScheduler(scheduler)
 
 	f.queueManager.mu.Lock()
@@ -517,7 +517,7 @@ func TestRun_WaitResult_DoesNotFollowEdges(t *testing.T) {
 		workflow.NodeTypeTransform:   f.executor,
 		workflow.NodeTypeTimerDelay:  timerExec,
 	}
-	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo})
+	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo}, "")
 	eng.SetScheduler(scheduler)
 
 	f.queueManager.mu.Lock()
@@ -559,7 +559,7 @@ func buildTimerEngine(t *testing.T, f *testFixtures, scheduler *mockTimerSchedul
 		workflow.NodeTypeTransform:   f.executor,
 		workflow.NodeTypeTimerDelay:  timerExec,
 	}
-	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo})
+	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, &mockQueueRepo{instRepo: f.instanceRepo}, "")
 	eng.SetScheduler(scheduler)
 
 	f.queueManager.mu.Lock()
@@ -815,7 +815,7 @@ func buildFullTimerEngine(t *testing.T, f *testFixtures) (*engine.Engine, *queue
 		workflow.NodeTypeTransform:   f.executor,
 		workflow.NodeTypeTimerDelay:  timerExec,
 	}
-	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, qr)
+	eng := engine.NewEngine(f.workflowRepo, f.instanceRepo, f.nodeExecRepo, f.snapshotRepo, f.userRepo, executors, f.eventBus, f.queueManager, qr, "")
 	eng.SetScheduler(scheduler)
 
 	f.queueManager.mu.Lock()

@@ -110,7 +110,7 @@ func newTriggerHarness() *triggerHarness {
 	qm := newMockQueueManager()
 
 	executors := map[workflow.NodeType]engine.NodeExecutor{}
-	eng := engine.NewEngine(repo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo})
+	eng := engine.NewEngine(repo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo}, "")
 
 	h := &triggerHarness{repo: repo, instances: instRepo, users: userRepo, engine: eng}
 	qm.mu.Lock()

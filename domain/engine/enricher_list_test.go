@@ -80,6 +80,7 @@ func TestEngine_ListEnriched_AppliesAuthzThenEnriches(t *testing.T) {
 	eng := engine.NewEngine(
 		newScopeAwareRepo(), repo, nodeExecRepo, newMockSnapshotRepo(),
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -98,6 +99,7 @@ func TestEngine_ListEnriched_NoIdentity_NotFound(t *testing.T) {
 	eng := engine.NewEngine(
 		newScopeAwareRepo(), repo, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
 		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), engine.NoopQueuePositionProvider{}, ""))
 
@@ -112,6 +114,7 @@ func TestEngine_ListEnriched_RepoError_Propagates(t *testing.T) {
 	eng := engine.NewEngine(
 		newScopeAwareRepo(), repo, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
 		newMockUserRepo(), map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(repo, newMockNodeExecutionRepo(), newEnricherUserRepo(), engine.NoopQueuePositionProvider{}, ""))
 

@@ -61,6 +61,7 @@ func TestRouter_InstanceList_EnricherProvenanceProbe(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -130,6 +131,7 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -184,6 +186,7 @@ func TestRouter_InstanceList_ModelRetryAbsentForQueuedInstance(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -245,6 +248,7 @@ func TestRouter_InstanceList_SubmitterDegradesWhenUserAbsent(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -306,6 +310,7 @@ func TestRouter_InstanceList_BackendUnset_EmptyOnWire(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -360,6 +365,7 @@ func TestRouter_InstanceList_TerminalRow_FriendlyStepEmpty(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -416,6 +422,7 @@ func TestRouter_InstanceList_RunNameDegradesToShortID_NoVariables(t *testing.T) 
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
 
@@ -469,6 +476,7 @@ func TestRouter_InstanceList_EnricherAbsent_DegradesToShortID(t *testing.T) {
 		&probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}},
 		map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
+		"",
 	)
 	// No SetInstanceEnricher — the enricher is unwired (the degraded path).
 

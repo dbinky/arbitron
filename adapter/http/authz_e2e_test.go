@@ -142,6 +142,7 @@ func newHTTPAuthzHandler(repo *httpAuthzInstanceRepo) *adapthttp.InstanceHandler
 		nil, repo, &httpAuthzNodeExecRepo{}, nil, nil,
 		map[workflow.NodeType]engine.NodeExecutor{},
 		nil, nil, nil,
+		"",
 	)
 	return adapthttp.NewInstanceHandler(repo, &httpAuthzNodeExecRepo{}, nil, eng)
 }

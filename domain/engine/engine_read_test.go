@@ -99,6 +99,7 @@ func newReadEngine(inst *instance.Instance, getErr error) (*engine.Engine, *coun
 	eng := engine.NewEngine(
 		newScopeAwareRepo(), instRepo, nodeRepo, snapRepo, newMockUserRepo(),
 		map[workflow.NodeType]engine.NodeExecutor{}, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
+		"",
 	)
 	return eng, nodeRepo, snapRepo
 }

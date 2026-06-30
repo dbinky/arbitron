@@ -124,6 +124,7 @@ func newAuthzEngine(repo *authzInstanceRepo) *engine.Engine {
 		nil, repo, &authzNodeExecRepo{}, nil, nil,
 		map[workflow.NodeType]engine.NodeExecutor{},
 		nil, nil, nil,
+		"",
 	)
 }
 

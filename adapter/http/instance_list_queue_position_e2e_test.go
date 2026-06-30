@@ -55,6 +55,7 @@ func TestRouter_InstanceList_QueuePositionProvenanceProbe(t *testing.T) {
 		newMockWorkflowRepo(), instRepo, nodeExecRepo, snapRepo,
 		userRepo, map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		nil, queueRepo,
+		"",
 	)
 	enricher := engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, "")
 	eng.SetInstanceEnricher(enricher)
@@ -104,6 +105,7 @@ func TestRouter_InstanceList_QueuePositionAbsentWhenProviderUnwired(t *testing.T
 		&probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}},
 		map[workflow.NodeType]engine.NodeExecutor{}, eventbus.NewNoOp(),
 		nil, &probeQueueRepo{queued: []instance.Instance{*queuedInst}},
+		"",
 	)
 	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, newMockNodeExecRepo(), &probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}}, engine.NoopQueuePositionProvider{}, ""))
 	// No SetQueuePositionProvider — position stays 0.

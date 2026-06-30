@@ -40,9 +40,13 @@ type Engine struct {
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
-	mu               sync.Mutex
-	contexts         map[uuid.UUID]context.CancelFunc
-	wg               sync.WaitGroup
+	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
+	// onto node events when a node has BackendUnset. It is deployment config,
+	// injected at construction — not read through the presentation enricher.
+	defaultAgentBackend string
+	mu                  sync.Mutex
+	contexts            map[uuid.UUID]context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -56,18 +60,20 @@ func NewEngine(
 	eventBus EventBus,
 	queueManager QueueManager,
 	queueRepo instance.QueueRepository,
+	defaultAgentBackend string,
 ) *Engine {
 	return &Engine{
-		workflows:      workflows,
-		instances:      instances,
-		nodeExecutions: nodeExecutions,
-		snapshots:      snapshots,
-		users:          users,
-		executors:      executors,
-		eventBus:       eventBus,
-		queueManager:   queueManager,
-		queueRepo:      queueRepo,
-		contexts:       make(map[uuid.UUID]context.CancelFunc),
+		workflows:           workflows,
+		instances:           instances,
+		nodeExecutions:      nodeExecutions,
+		snapshots:           snapshots,
+		users:               users,
+		executors:           executors,
+		eventBus:            eventBus,
+		queueManager:        queueManager,
+		queueRepo:           queueRepo,
+		defaultAgentBackend: defaultAgentBackend,
+		contexts:            make(map[uuid.UUID]context.CancelFunc),
 	}
 }
 
@@ -800,10 +806,11 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			return
 		}
 
+		nlabel, nbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
 		e.eventBus.Publish(instanceID, Event{
 			Type:      EventTypeNodeStarted,
 			Timestamp: time.Now(),
-			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type)},
+			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": nlabel, "backend": nbackend},
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
@@ -883,10 +890,11 @@ func (e *Engine) handleNodeError(
 		return "", true
 	}
 
+	flabel, fbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeNodeFailed,
 		Timestamp: time.Now(),
-		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "error": execErr.Error()},
+		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": flabel, "backend": fbackend, "error": execErr.Error()},
 	})
 
 	eb := resolveErrorBehavior(node, wf)

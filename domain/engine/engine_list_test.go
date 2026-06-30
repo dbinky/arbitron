@@ -76,6 +76,7 @@ func newListEngine(repo instance.InstanceRepository) *engine.Engine {
 	return engine.NewEngine(
 		newScopeAwareRepo(), repo, newMockNodeExecutionRepo(), newMockSnapshotRepo(),
 		newMockUserRepo(), executors, newMockEventBus(), newMockQueueManager(), &mockQueueRepo{},
+		"",
 	)
 }
 
