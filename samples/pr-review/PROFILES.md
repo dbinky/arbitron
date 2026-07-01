@@ -10,27 +10,19 @@ emptied/reseeded, recreate them with these exact axes (MCP `profile_create` /
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
 | reviewer-codex-medium | agent | codex | gpt-5.5 | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | architect-r1, architect-r2 |
-| reviewer-GLM | agent | opencode (connection: ollama-cloud) | glm-5.2 | default | Read,Grep,Glob,**Bash** | 10x-r1, 10x-r2 |
-| reviewer-opus-high | agent | claude-code | claude-opus-4-8 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | security |
-| reviewer-sonnet-high | agent | claude-code | claude-sonnet-4-6 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |
-| coder-opus-medium | agent | claude-code | claude-opus-4-8 | medium | Read,Write,Edit,Grep,Glob,Bash | verify-fix |
-| coder-GLM | agent | opencode (connection: ollama-cloud) | glm-5.2 | default | Read,Write,Edit,Grep,Glob,Bash | senior-engineer |
+| reviewer-opus-high | agent | claude-code | claude-opus-4-8 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r1, security |
+| reviewer-opus-medium | agent | claude-code | claude-opus-4-8 | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r2 |
+| reviewer-sonnet5-high | agent | claude-code | claude-sonnet-5 | high (ctx 200k) | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |
+| coder-opus-medium | agent | claude-code | claude-opus-4-8 | medium | Read,Write,Edit,Grep,Glob,Bash | senior-engineer, verify-fix |
 
-## CRITICAL: opencode-backed profiles must use plain `Bash`, NOT `Bash(gh:*)`
-The opencode backend's tool map (`adapter/opencode/toolmap.go`) only knows whole
-tokens (`bash → bash`); it does **not** parse the claude-code scoped-permission
-syntax `Bash(gh:*)`/`Bash(git:*)` and **silently drops them**, leaving the agent
-with no shell at all (read/grep/glob only). An opencode reviewer with scoped Bash
-"finds bugs but can't post" and burns enormous token counts flailing. So:
-- **opencode** profiles (`reviewer-GLM`, `coder-GLM`): use plain `Bash`.
-- **claude-code / codex** profiles (`reviewer-codex-medium`, `reviewer-opus-high`,
-  `reviewer-sonnet-high`, `coder-opus-medium`): scoped `Bash(gh:*)`/`Bash(git:*)`
-  is honored, so least-privilege is fine there. (`coder-opus-medium` uses plain
-  `Bash` because verify-fix must run arbitrary build/test commands, not just gh/git.)
-- `reviewer-ds4-flash` / `reviewer-ds4-pro` (deepseek, opencode) also exist in the
-  DB and were corrected to plain `Bash` for the same reason; they are not currently
-  referenced by this workflow (10x moved to `reviewer-GLM`).
+NOTE: this lineup is entirely claude-code + codex backends — no opencode profiles
+are referenced, so the claude-code scoped-Bash syntax `Bash(gh:*)`/`Bash(git:*)`
+is honored on every reviewer and least-privilege holds. (`coder-opus-medium` uses
+plain `Bash` because senior-engineer/verify-fix must run arbitrary build/test
+commands, not just gh/git.) If you ever swap a stage back to an opencode-backed
+profile, remember the opencode tool map (`adapter/opencode/toolmap.go`) does NOT
+parse scoped `Bash(...)` tokens and silently drops them — such profiles must use
+plain `Bash` or the agent gets no shell at all.
 
-NOTE: `glm-5.2` (and `deepseek-v4-pro/flash`) use the BARE model id (no `:cloud`
-tag) for the opencode/ollama-cloud path — the `:cloud` form is only for the
-`ollama run` CLI and would surface as a useless `exit status 1` through opencode.
+NOTE: `reviewer-sonnet5-high` pins `context_window: 200k`; Sonnet 5 accepts the
+full claude-code effort range (no `xhigh → high` flooring that Sonnet 4.6 had).

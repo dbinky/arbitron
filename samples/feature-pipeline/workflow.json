@@ -271,7 +271,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/produce-plans.md",
-        "model_profile": "coder-GLM",
+        "model_profile": "coder-opus-high",
         "timeoutSeconds": 3600
       },
       "label": "Produce plans",
@@ -319,7 +319,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/baseline-tests.md",
-        "model_profile": "coder-GLM",
+        "model_profile": "coder-sonnet5-medium",
         "timeoutSeconds": 3600
       },
       "label": "Capture test baseline",
@@ -351,8 +351,8 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/impl-task.md",
-        "model_profile": "coder-ds4-pro",
-        "timeoutSeconds": 3600
+        "model_profile": "coder-opus-medium",
+        "timeoutSeconds": 5400
       },
       "label": "Implement next task",
       "description": "Implement the next incomplete plan task, strict TDD, commit.",
@@ -465,7 +465,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/refine.md",
-        "model_profile": "coder-ds4",
+        "model_profile": "coder-sonnet5-high",
         "timeoutSeconds": 3600
       },
       "label": "Refine (ralph pass)",
@@ -481,7 +481,7 @@
       "type": "llm_call",
       "config": {
         "templateFile": "templates/refine-assess.md",
-        "model_profile": "assessor-sonnet-high",
+        "model_profile": "assessor-sonnet5-high",
         "outputSchema": {
           "properties": {
             "done": {

@@ -1,13 +1,15 @@
 #!/bin/sh
 # Reads the variable snapshot as JSON on stdin; clones repo_url into
-# {{workspace}}/src, derives slug + run_date, creates the
-# dev-<slug>-<run_date>-<instance-short-id> worktree at {{workspace}}/work, and
-# emits {slug, run_date, work_dir, src_dir, branch} as JSON.
+# {{workspace}}/src (optionally checking out base_branch), derives slug +
+# run_date, creates the dev-<slug>-<run_date>-<instance-short-id> worktree at
+# {{workspace}}/work, and emits {slug, run_date, work_dir, src_dir, branch,
+# base_ref} as JSON.
 set -eu
 IN="$(cat)"
 WS="$(printf '%s' "$IN" | jq -r '.workspace')"
 REPO_URL="$(printf '%s' "$IN" | jq -r '.repo_url')"
 SLUG_IN="$(printf '%s' "$IN" | jq -r '.slug // ""')"
+BASE_BRANCH_IN="$(printf '%s' "$IN" | jq -r '.base_branch // ""')"
 
 [ -n "$WS" ] && [ "$WS" != "null" ] || { echo "workspace not set" >&2; exit 1; }
 [ -n "$REPO_URL" ] && [ "$REPO_URL" != "null" ] || { echo "repo_url not set" >&2; exit 1; }
@@ -78,17 +80,47 @@ else
   [ -n "$SLUG" ] || SLUG="feature"
 fi
 
-# Shallow clone: the pipeline only needs the tip of the default branch to create
+# base_branch (optional): the ref the feature worktree is based on. Like repo_url
+# and slug it is an attacker-controllable workflow input that crosses into git
+# argument contexts (`git clone --branch`, `git worktree add <commit-ish>`), so
+# it is validated BEFORE it reaches git: reject a leading '-' (option injection)
+# and require a well-formed git ref name via `git check-ref-format` (which
+# rejects spaces, "..", "~", "^", ":", control chars, etc.). An empty value (the
+# default) means "use the repo's default branch", preserving prior behaviour.
+if [ -z "$BASE_BRANCH_IN" ] || [ "$BASE_BRANCH_IN" = "null" ]; then
+  BASE_BRANCH=""
+else
+  case "$BASE_BRANCH_IN" in
+    -*)
+      echo "base_branch must not begin with '-': $BASE_BRANCH_IN" >&2
+      exit 1 ;;
+  esac
+  if ! git check-ref-format "refs/heads/$BASE_BRANCH_IN" >/dev/null 2>&1; then
+    echo "base_branch is not a valid git branch name: $BASE_BRANCH_IN" >&2
+    exit 1
+  fi
+  BASE_BRANCH="$BASE_BRANCH_IN"
+fi
+
+# Shallow clone: the pipeline only needs the tip of the base branch to create
 # the feature worktree, commit, push, and open a PR — it never walks deep
 # history. --depth 1 keeps each per-instance clone code-sized instead of hauling
 # the full repo history. (git ignores --depth for plain local-path clones, hence
 # real runs clone an https/ssh URL.)
-# `--` ends option parsing so $REPO_URL / $SRC can never be interpreted as git
-# options even if validation above is ever loosened (defence in depth).
-git clone --depth 1 --quiet -- "$REPO_URL" "$SRC" 1>&2
-DEFAULT_BRANCH="$(git -C "$SRC" symbolic-ref --short HEAD)"
+# When base_branch is set we shallow-clone THAT ref directly; "--branch=<ref>"
+# binds the value to the option so it can never be parsed as a separate git
+# option even for an unusual ref. Otherwise we clone the remote HEAD (the repo's
+# default branch), exactly as before. `--` ends option parsing for the
+# positional repo/dir args (defence in depth).
+if [ -n "$BASE_BRANCH" ]; then
+  git clone --depth 1 --quiet "--branch=$BASE_BRANCH" -- "$REPO_URL" "$SRC" 1>&2
+  BASE_REF="$BASE_BRANCH"
+else
+  git clone --depth 1 --quiet -- "$REPO_URL" "$SRC" 1>&2
+  BASE_REF="$(git -C "$SRC" symbolic-ref --short HEAD)"
+fi
 BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
-git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$DEFAULT_BRANCH" 1>&2
+git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
 
-jq -n --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" \
-  '{slug:$slug, run_date:$rd, work_dir:$work, src_dir:$src, branch:$br}'
+jq -n --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
+  '{slug:$slug, run_date:$rd, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'

@@ -108,7 +108,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "10x-r1.md",
-        "model_profile": "reviewer-GLM"
+        "model_profile": "reviewer-opus-high"
       },
       "label": "10x R1",
       "description": "10x GSD Engineer first pass; runs the wired-and-fed provenance trace, replies to architect threads, adds practical findings",
@@ -138,7 +138,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "10x-r2.md",
-        "model_profile": "reviewer-GLM"
+        "model_profile": "reviewer-opus-medium"
       },
       "label": "10x R2",
       "description": "10x second pass; final positions in existing threads",
@@ -184,7 +184,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "manager.md",
-        "model_profile": "reviewer-sonnet-high"
+        "model_profile": "reviewer-sonnet5-high"
       },
       "label": "Manager",
       "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
@@ -221,7 +221,7 @@
       "type": "agent_call",
       "config": {
         "templateFile": "senior-engineer.md",
-        "model_profile": "coder-GLM"
+        "model_profile": "coder-opus-medium"
       },
       "label": "Senior Engineer",
       "description": "Implements the selected fix tier in the isolated worktree and commits (wired-and-fed, no self-certified half-fixes); the verify-fix gate decides the comment, but the fixes are pushed either way",
