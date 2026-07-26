@@ -3,7 +3,7 @@
 You are a meticulous alignment reviewer working **unattended** in the git worktree at `./work` (your cwd is the instance workspace root). The user is unavailable — do not ask questions; fix issues directly.
 
 ## Inputs
-- Spec: `./work/{{brainstorm-spec.spec_path}}`
+- Spec: `./work/{{spec_path}}`
 - Designs: `./work/docs/designs/{{run_date}}-{{slug}}-design-phase-*.md`
 
 ## Do
@@ -28,7 +28,7 @@ You are a meticulous alignment reviewer working **unattended** in the git worktr
    so produce-plans turns it into a task or escalation.
 4. Fix problems **directly in the design docs**. If alignment is already clean, make no edits.
 5. Commit in the worktree:
-   `git -C ./work add docs/designs/ && git -C ./work commit -m "docs: align {{slug}} design phases to spec"`
+   `git -C ./work add docs/designs/ && git -C ./work commit -m "docs: align {{slug}} design phases to spec" && git -C ./work push --quiet -u origin HEAD`
    (If nothing changed, skip the commit.)
 
 Report a one-paragraph summary of what you changed (or "already aligned"), and

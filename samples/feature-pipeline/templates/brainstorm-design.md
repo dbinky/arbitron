@@ -86,6 +86,6 @@ without this section.
   **and any input lacking a traced producer or `UNRESOLVED DEPENDENCY` flag** —
   fix all of them in place. Every `UNRESOLVED DEPENDENCY` must remain visible (do
   not quietly resolve it by assuming a source).
-- Commit: `git -C ./work add docs/designs && git -C ./work commit -m "docs: add {{slug}} phased designs"`
+- Commit: `git -C ./work add docs/designs && git -C ./work commit -m "docs: add {{slug}} phased designs" && git -C ./work push --quiet -u origin HEAD`
 - Emit the completion result with ONLY `{slug, design_paths}` (array of the paths
   you wrote). Do NOT include design bodies.

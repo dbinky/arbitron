@@ -3,7 +3,7 @@
 You are an alignment reviewer working **unattended** in the worktree at `./work`. Review the full document hierarchy and fix issues directly. The user is unavailable.
 
 ## Inputs
-- Spec: `./work/{{brainstorm-spec.spec_path}}`
+- Spec: `./work/{{spec_path}}`
 - Designs: `./work/docs/designs/{{run_date}}-{{slug}}-design-phase-*.md`
 - Plans: `./work/docs/plans/{{run_date}}-{{slug}}-implementation-phase-*-task-*.md`
 
@@ -24,15 +24,34 @@ This is the highest-value alignment check. For **every** new component/collabora
   production — add it if missing.
 - **No `// NOTE` encodes a missing producer/wiring as an accepted no-op.** If a plan
   task contains `// NOTE: X not available, only Y runs` (or similar), that is a
-  defect: convert it into the task that resolves it, or surface a top-level
-  `ESCALATION:` — do not leave the hole.
-- Every design `UNRESOLVED DEPENDENCY` is either resolved by a task or escalated.
+  defect: convert it into the task that resolves it, or surface it as unresolved
+  (below) — do not leave the hole.
+- Every design `UNRESOLVED DEPENDENCY` is either resolved by a task or surfaced as
+  unresolved (below).
 - **Anti-green-theater:** each component has a test that would fail if its
   production input were nil/empty; no fake ignores a load-bearing argument; no
   "integration" test asserts an intermediate hop instead of the sink. Strengthen any that do.
 
 Fix problems directly in the plan docs (and designs/spec if a defect there causes the misalignment).
 
-## Finish
-`git -C ./work add docs/plans/ docs/designs/ docs/specs/ && git -C ./work commit -m "docs: align {{slug}} implementation plans"`
-(Skip the commit if nothing changed.) Report a one-paragraph summary, plus any `ESCALATION:` items for unresolved dependencies.
+## Commit
+`git -C ./work add docs/plans/ docs/designs/ docs/specs/ && git -C ./work commit -m "docs: align {{slug}} implementation plans" && git -C ./work push --quiet -u origin HEAD`
+(Skip the commit if nothing changed.)
+
+## Finish — REQUIRED machine-readable escalation block
+Report a one-paragraph summary. Then, as the **LAST thing** in your output, emit a
+machine-readable dependency-provenance block that the planning gate parses — **ALWAYS**,
+even when clean:
+
+    UNRESOLVED-DEPENDENCIES: <count>
+
+If the count is greater than 0, follow it with one line per unresolved dependency:
+
+    - <doc path> — <consumer task/component> needs <missing producer file:symbol or field>: <the design decision a human must make>
+
+A dependency is **UNRESOLVED** if a plan task consumes a type / field / collaborator /
+data source that no task produces and no existing `file:symbol` provides — including any
+design `UNRESOLVED DEPENDENCY` you could not resolve into a task, and any `// NOTE` that
+papers over a missing producer. Emit `UNRESOLVED-DEPENDENCIES: 0` ONLY when the graph is
+fully closed. **Do not hide a hole to make the count zero** — an unresolved dependency
+caught here is cheap; one that reaches implementation livelocks the whole run.

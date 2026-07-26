@@ -3,7 +3,7 @@
 Working **unattended** in the worktree at `./work`, generate the three ralph tracking files at the repo root of the worktree, then commit. The user is unavailable.
 
 ## Inputs
-- Spec: `./work/{{write-spec.spec_path}}`
+- Spec: `./work/{{spec_path}}`
 - Designs: `./work/docs/designs/{{run_date}}-{{slug}}-design-phase-*.md`
 - Plans: `./work/docs/plans/{{run_date}}-{{slug}}-implementation-phase-*-task-*.md`
 - **Test command(s)** (use these exact commands — already detected for this repo): `{{record-baseline.test_commands}}`
@@ -55,5 +55,5 @@ as maximally varied — acceptable") as *acceptable*: an unfed production path i
 GAP to fix or an explicit escalation, never a tolerated no-op.
 
 ## Finish
-`git -C ./work add RALPH.md focus-areas.md gaps-identified.md && git -C ./work commit -m "chore: seed {{slug}} ralph refinement files"`
+`git -C ./work add RALPH.md focus-areas.md gaps-identified.md && git -C ./work commit -m "chore: seed {{slug}} ralph refinement files" && git -C ./work push --quiet -u origin HEAD`
 Report the top 3 focus areas.

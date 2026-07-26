@@ -3,7 +3,7 @@
 You are writing **detailed, code-level implementation plans** for a skilled engineer who has zero context for this codebase and questionable test taste. Work **unattended** in the worktree at `./work`. Do not ask questions.
 
 ## Inputs
-- Spec: `./work/{{brainstorm-spec.spec_path}}`
+- Spec: `./work/{{spec_path}}`
 - Designs: `./work/docs/designs/{{run_date}}-{{slug}}-design-phase-*.md`
 
 ## Wired-and-fed — the bar EVERY plan must meet
@@ -108,5 +108,5 @@ The point of the tests is to fail when the feature is inert. So:
 5. **Type/name consistency:** do the types, function signatures, and property names used in later tasks match what earlier tasks define? (e.g. `clearLayers()` in Task 3 vs `clearFullLayers()` in Task 7 is a bug.) Reconcile them.
 
 ## Finish
-`git -C ./work add docs/plans/ && git -C ./work commit -m "docs: write {{slug}} implementation plans"`
+`git -C ./work add docs/plans/ && git -C ./work commit -m "docs: write {{slug}} implementation plans" && git -C ./work push --quiet -u origin HEAD`
 Report the number of task files written, and any `ESCALATION:` lines for unresolved dependencies.
