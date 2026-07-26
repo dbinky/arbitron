@@ -106,6 +106,24 @@ U="$TMP/undated"; mkrepo "$U"
 : > "$U/docs/specs/swipe-match-spec.md"
 check "edge: undated filename matches"   "$(field "$(run "$U" swipe-match)" .resume_stage)" "design"
 
+# 5. safe_slug must never be empty: promoting matched_slug (which IS empty when
+#    nothing matched) blanked the slug and produced a placeholder branch.
+out="$(run "$H" totally-unrelated-thing)"
+check "edge: matched_slug empty when no match" "$(field "$out" .matched_slug)" ""
+check "edge: safe_slug falls back to caller"   "$(field "$out" .safe_slug)"    "totally-unrelated-thing"
+out="$(run "$H" app-push-notifications)"
+check "edge: safe_slug adopts the match"       "$(field "$out" .safe_slug)"    "push-notifications"
+
+# 6. Nested plan sets must be visible; a maxdepth-1 scan reported none.
+N="$TMP/nested"; mkrepo "$N"
+: > "$N/docs/specs/2026-01-01-widgets-spec.md"
+: > "$N/docs/designs/2026-01-01-widgets-design-phase-1.md"
+mkdir -p "$N/docs/plans/widgets"
+: > "$N/docs/plans/widgets/2026-01-01-widgets-implementation-phase-1-task-1.md"
+out="$(run "$N" widgets)"
+check "edge: nested plans are found"           "$(field "$out" .plan_count)"    "1"
+check "edge: nested plans -> implementation"   "$(field "$out" .resume_stage)"  "implementation"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "all detect-docs tests passed"

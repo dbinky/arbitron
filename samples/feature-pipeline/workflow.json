@@ -1099,7 +1099,7 @@
           {
             "variable": "slug",
             "operation": "set",
-            "value": "{{detect-docs.matched_slug}}"
+            "value": "{{detect-docs.safe_slug}}"
           },
           {
             "variable": "spec_path",
@@ -1115,7 +1115,7 @@
       },
       "label": "Promote detected docs",
       "errorBehavior": {},
-      "description": "Unambiguous path: adopt the detector's matched slug, spec path, and resume stage.",
+      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
       "position": {
         "x": -250,
         "y": 635
@@ -1129,7 +1129,7 @@
           {
             "variable": "slug",
             "operation": "set",
-            "value": "{{detect-docs-final.matched_slug}}"
+            "value": "{{detect-docs-final.safe_slug}}"
           },
           {
             "variable": "spec_path",
@@ -1179,7 +1179,7 @@
       },
       "label": "Resume at which stage?",
       "errorBehavior": {},
-      "description": "The ladder: plans present -> implementation; spec+designs -> write plans; spec only -> design brainstorm; nothing found -> full pipeline. Default is the full pipeline, so an unrecognised value can only cost time, never skip work that was not done.",
+      "description": "The ladder: plans present -> re-align and re-validate them, then implement; spec+designs -> write plans; spec only -> design brainstorm; nothing found -> full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
       "position": {
         "x": -250,
         "y": 795
@@ -1439,9 +1439,9 @@
     },
     {
       "source": "resume-stage?",
-      "target": "baseline-tests",
+      "target": "align-plans",
       "output": "impl",
-      "label": "plans exist"
+      "label": "plans exist — re-align + revalidate"
     },
     {
       "source": "produce-plans",

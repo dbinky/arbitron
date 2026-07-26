@@ -28,10 +28,12 @@ SLUG="$(printf '%s' "$IN" | jq -r '.slug // ""')"
 [ -n "$WORK" ] || { echo "detect-docs: work_dir not set" >&2; exit 1; }
 
 # List *.md basenames in a docs subdir; empty JSON array when the dir is absent.
+# Recurses: plan sets are sometimes nested one level (docs/plans/<feature>/...),
+# and a maxdepth-1 scan reported those repos as having no plans at all.
 list_dir() {
   if [ -d "$WORK/$1" ]; then
-    find "$WORK/$1" -maxdepth 1 -type f -name '*.md' 2>/dev/null \
-      | sed 's|.*/||' | sort | jq -R . | jq -s .
+    find "$WORK/$1" -type f -name '*.md' 2>/dev/null \
+      | sed 's|.*/||' | sort -u | jq -R . | jq -s .
   else
     echo '[]'
   fi
@@ -115,6 +117,12 @@ jq -n \
          else                           "spec"
          end),
       matched_slug: $b.slug,
+      # safe_slug is what callers should promote into the `slug` variable.
+      # matched_slug is "" when nothing scored high enough, and blindly adopting
+      # that empties `slug` — which yields a "feature" placeholder branch and
+      # misnamed docs. Fall back to the slug the caller passed, so promoting
+      # this value is always safe and no conditional guard is needed downstream.
+      safe_slug:    (if ($b.slug | length) > 0 then $b.slug else $slug end),
       spec_path:    (if $has_spec then "docs/specs/" + ($b.spec_files | first) else "" end),
       design_count: ($b.design_files | length),
       plan_count:   ($b.plan_files   | length),
