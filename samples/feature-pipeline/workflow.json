@@ -771,6 +771,12 @@
             },
             "unresolved_count": {
               "type": "number"
+            },
+            "has_blocking": {
+              "type": "boolean"
+            },
+            "blocking_count": {
+              "type": "number"
             }
           },
           "required": [
@@ -803,6 +809,18 @@
           },
           {
             "field": "deps-assess.has_blocking",
+            "operator": "eq",
+            "value": false,
+            "output": "proceed"
+          },
+          {
+            "field": "deps-assess.unresolved_count",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          },
+          {
+            "field": "deps-assess.has_unresolved",
             "operator": "eq",
             "value": false,
             "output": "proceed"
