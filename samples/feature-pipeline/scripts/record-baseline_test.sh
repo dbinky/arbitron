@@ -53,26 +53,44 @@ check "test_baseline preserves failure counts" "$nfail_in_baseline" "3"
 check_contains "summary counts total failures" "$summary" "3 pre-existing failing test(s)"
 check_contains "summary counts suites" "$summary" "across 2 suite(s)"
 
-# --- Case B: missing file fails loudly ---
+# --- Case B: missing file falls back to an EMPTY baseline and CONTINUES ---
+# This deliberately replaced an earlier hard-fail contract. A single premature
+# exit by the baseline-tests agent (e.g. backgrounding a slow suite and ending
+# its turn before writing the file) used to discard an entire spec+design+plan
+# run one step before it could be used, and retrying was futile because only the
+# agent can regenerate that artifact. The fallback must be LOUD, not silent:
+# without a real snapshot every currently-failing test looks "new", so
+# baseline_source is the flag downstream stages and humans read.
 WS2="$TMP/ws-missing"
 mkdir -p "$WS2"
-if printf '{"workspace":"%s"}' "$WS2" | sh "$SCRIPT" >/dev/null 2>&1; then
-  echo "FAIL - missing baseline should fail but succeeded"
-  fails=$((fails + 1))
+if out2="$(printf '{"workspace":"%s"}' "$WS2" | sh "$SCRIPT" 2>/dev/null)"; then
+  check "missing baseline continues (does not kill the run)" "ok" "ok"
+  check "missing baseline is flagged as fallback" \
+    "$(printf '%s' "$out2" | jq -r .baseline_source)" "fallback-empty"
+  check_contains "missing baseline warns in the summary" \
+    "$(printf '%s' "$out2" | jq -r .baseline_summary)" "FALLBACK EMPTY BASELINE"
 else
-  echo "ok   - missing baseline fails loudly"
+  echo "FAIL - missing baseline should fall back and continue, but exited non-zero"
+  fails=$((fails + 1))
 fi
 
-# --- Case C: malformed baseline (no .suites) fails loudly ---
+# --- Case C: malformed baseline (no .suites) also falls back, flagged ---
 WS3="$TMP/ws-bad"
 mkdir -p "$WS3"
 echo '{"oops":true}' > "$WS3/test-baseline.json"
-if printf '{"workspace":"%s"}' "$WS3" | sh "$SCRIPT" >/dev/null 2>&1; then
-  echo "FAIL - malformed baseline should fail but succeeded"
-  fails=$((fails + 1))
+if out3="$(printf '{"workspace":"%s"}' "$WS3" | sh "$SCRIPT" 2>/dev/null)"; then
+  check "malformed baseline is flagged as fallback" \
+    "$(printf '%s' "$out3" | jq -r .baseline_source)" "fallback-empty"
 else
-  echo "ok   - malformed baseline fails loudly"
+  echo "FAIL - malformed baseline should fall back and continue, but exited non-zero"
+  fails=$((fails + 1))
 fi
+
+# --- Case D: a VALID baseline must NOT be flagged as a fallback ---
+# Guards the inverse: if baseline_source were hardcoded, every run would look
+# degraded and the flag would stop meaning anything.
+check "valid baseline is not flagged as fallback" \
+  "$(printf '%s' "$out" | jq -r '.baseline_source // "unset"')" "measured"
 
 echo "---"
 if [ "$fails" -eq 0 ]; then
