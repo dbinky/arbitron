@@ -1,0 +1,533 @@
+{
+  "id": "71fce817-b51f-4c46-b77f-353d34295c7a",
+  "name": "ralph-loop",
+  "description": "Standalone ralph refinement loop: check out an existing branch, archive prior tracking docs, record a test baseline, seed a structured focus-area review plan (single-system + paired integration reviews), run the refinement loop until the reviews are satisfied, then open a PR back into the branch being refined.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {
+    "type": "retry",
+    "retries": 2,
+    "retryDelaySeconds": 30
+  },
+  "inputs": [
+    {
+      "name": "repo_url",
+      "type": "string",
+      "description": "GitHub repo URL to clone.",
+      "required": true
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "THE BRANCH TO REFINE. The worktree is cut from it and the PR targets it, so refinement lands back on this branch rather than the repo default.",
+      "default": "",
+      "required": true
+    },
+    {
+      "name": "slug",
+      "type": "string",
+      "description": "Short kebab-case label for the work branch and doc naming. Empty derives a neutral placeholder.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "scope_note",
+      "type": "string",
+      "description": "Optional free text narrowing or annotating the review scope. The branch diff is always the primary signal; this only adds context.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "max_focus_areas",
+      "type": "number",
+      "description": "Cap on single-system review areas. Paired reviews are N*(N-1), so N=8 already implies 72 passes. Bounds the loop's total cost.",
+      "default": 8,
+      "required": false
+    },
+    {
+      "name": "max_ralph_iterations",
+      "type": "number",
+      "description": "Backstop cap on refinement passes.",
+      "default": 200,
+      "required": false
+    },
+    {
+      "name": "ralph_iteration",
+      "type": "number",
+      "description": "Refinement loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "no_progress_streak",
+      "type": "number",
+      "description": "Consecutive passes with no forward progress; the loop exits at 2.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "teams_webhook_url",
+      "type": "string",
+      "description": "Power Automate / Teams webhook for completion alerts. Empty makes the notify steps no-ops.",
+      "default": "",
+      "required": false
+    }
+  ],
+  "nodes": [
+    {
+      "id": "init-workspace",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/init-workspace.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 600
+      },
+      "label": "Init workspace",
+      "description": "Clone repo_url at base_branch and create the work branch worktree at {{workspace}}/work.",
+      "errorBehavior": {},
+      "entrypoint": true,
+      "position": {
+        "x": 250,
+        "y": 0
+      }
+    },
+    {
+      "id": "promote-vars",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{init-workspace.slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{init-workspace.run_date}}"
+          },
+          {
+            "variable": "work_dir",
+            "operation": "set",
+            "value": "{{init-workspace.work_dir}}"
+          },
+          {
+            "variable": "branch",
+            "operation": "set",
+            "value": "{{init-workspace.branch}}"
+          }
+        ]
+      },
+      "label": "Promote vars",
+      "description": "Lift init-workspace outputs to top-level vars.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 140
+      }
+    },
+    {
+      "id": "notify-start",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Ralph loop started on {{branch}} (refining {{base_branch}} in {{repo_url}})."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: started",
+      "description": "In-app notification that the loop has started.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 280
+      }
+    },
+    {
+      "id": "derive-scope",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/derive-scope.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Derive review scope",
+      "description": "Fetch the default branch and compute what this branch changed vs its merge base. init-workspace shallow-clones ONLY the base ref, so origin/main is absent and this must fetch it before any merge-base is possible; falls back to a two-dot diff when the history is too shallow.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 420
+      }
+    },
+    {
+      "id": "archive-ralph",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/archive-ralph.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Archive prior ralph docs",
+      "description": "Copy any existing RALPH.md, docs/reference/focus-areas.md and docs/reference/gaps-identified.md into docs/reference/historical/ with a dated, intra-day-numbered name before they are overwritten.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 560
+      }
+    },
+    {
+      "id": "baseline-tests",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/baseline-tests.md",
+        "model_profile": "coder-sonnet5-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Capture test baseline",
+      "description": "Detect and run the project's test suite(s), writing {{workspace}}/test-baseline.json so the loop gates on NEW failures rather than a green suite.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 700
+      }
+    },
+    {
+      "id": "record-baseline",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-baseline.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Record baseline vars",
+      "description": "Lift the baseline into test_baseline / test_commands / baseline_summary vars.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 840
+      }
+    },
+    {
+      "id": "seed-ralph",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/seed-ralph.md",
+        "model_profile": "planner-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Seed ralph tracking docs",
+      "description": "Write RALPH.md at the repo root plus docs/reference/focus-areas.md and docs/reference/gaps-identified.md, using the single-system + paired-integration review structure populated with wired-and-fed provenance criteria.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 980
+      }
+    },
+    {
+      "id": "verify-ralph-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify ralph seed",
+      "description": "Grep the seeded RALPH.md for the loop terminators before the loop consumes it. Halts rather than retrying: a deterministic grep will not pass on a second attempt.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 250,
+        "y": 1120
+      }
+    },
+    {
+      "id": "checkpoint-push-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push seed",
+      "description": "Push the archived docs and the freshly seeded review plan before any refinement starts, so the planning work survives a later crash or cancel.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1260
+      }
+    },
+    {
+      "id": "refine",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine.md",
+        "model_profile": "coder-sonnet5-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine (ralph pass)",
+      "description": "One review area per pass: fix the most important issue, update tracking, commit, push, emit a promise tag, stop.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1400
+      }
+    },
+    {
+      "id": "refine-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/refine-assess.md",
+        "model_profile": "assessor-sonnet5-high",
+        "outputSchema": {
+          "properties": {
+            "consecutive_no_progress": {
+              "type": "number"
+            },
+            "done": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "progressed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "done",
+            "notes",
+            "progressed",
+            "consecutive_no_progress"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess refinement",
+      "description": "Read the pass's promise tag as strong evidence, then judge done against the review tables and the branch-point baseline.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
+      "id": "refine-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "ralph_iteration",
+            "operation": "increment",
+            "value": 1
+          },
+          {
+            "variable": "no_progress_streak",
+            "operation": "set",
+            "value": "{{refine-assess.consecutive_no_progress}}"
+          }
+        ]
+      },
+      "label": "ralph_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1680
+      }
+    },
+    {
+      "id": "refine-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "refine-assess.done",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 2,
+            "output": "exit"
+          },
+          {
+            "field": "ralph_iteration",
+            "operator": "gte",
+            "value": "{{max_ralph_iterations}}",
+            "output": "exit"
+          }
+        ],
+        "defaultOutput": "loop"
+      },
+      "label": "Refine loop or exit",
+      "description": "Exit when the review tables are satisfied, when two consecutive passes made no progress, or at the iteration cap; else run another pass.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1820
+      }
+    },
+    {
+      "id": "push-and-pr",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/push-and-pr.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Push \u0026 open PR",
+      "description": "Push the work branch and open a PR targeting base_branch, so refinement lands back on the branch being refined.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 1960
+      }
+    },
+    {
+      "id": "notify-done",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "Ralph loop complete for {{branch}}: PR {{push-and-pr.pr_url}} opened against {{base_branch}}."
+        ],
+        "timeoutSeconds": 30
+      },
+      "label": "Notify: PR opened",
+      "description": "In-app notification that the PR is open.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 2100
+      }
+    },
+    {
+      "id": "notify-teams",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "ralph-loop complete — {{slug}}",
+          "The refinement loop finished and opened a PR ({{push-and-pr.pr_url}}) against {{base_branch}}.",
+          "good",
+          "Repo={{repo_url}}",
+          "Refined={{base_branch}}",
+          "Branch={{branch}}",
+          "PR={{push-and-pr.pr_url}}",
+          "Passes={{ralph_iteration}}"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams",
+      "description": "Rich completion alert (no-op when teams_webhook_url is unset).",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 2240
+      }
+    },
+    {
+      "id": "done",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "complete"
+          }
+        ]
+      },
+      "label": "Done (terminal)",
+      "description": "Terminal node.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 2380
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "init-workspace",
+      "target": "promote-vars"
+    },
+    {
+      "source": "promote-vars",
+      "target": "notify-start"
+    },
+    {
+      "source": "notify-start",
+      "target": "derive-scope"
+    },
+    {
+      "source": "derive-scope",
+      "target": "archive-ralph"
+    },
+    {
+      "source": "archive-ralph",
+      "target": "baseline-tests"
+    },
+    {
+      "source": "baseline-tests",
+      "target": "record-baseline"
+    },
+    {
+      "source": "record-baseline",
+      "target": "seed-ralph"
+    },
+    {
+      "source": "seed-ralph",
+      "target": "verify-ralph-seed"
+    },
+    {
+      "source": "verify-ralph-seed",
+      "target": "checkpoint-push-seed"
+    },
+    {
+      "source": "checkpoint-push-seed",
+      "target": "refine"
+    },
+    {
+      "source": "refine",
+      "target": "refine-assess"
+    },
+    {
+      "source": "refine-assess",
+      "target": "refine-inc"
+    },
+    {
+      "source": "refine-inc",
+      "target": "refine-gate"
+    },
+    {
+      "source": "refine-gate",
+      "target": "refine",
+      "output": "loop",
+      "label": "back-edge: another pass"
+    },
+    {
+      "source": "refine-gate",
+      "target": "push-and-pr",
+      "output": "exit"
+    },
+    {
+      "source": "push-and-pr",
+      "target": "notify-done"
+    },
+    {
+      "source": "notify-done",
+      "target": "notify-teams"
+    },
+    {
+      "source": "notify-teams",
+      "target": "done"
+    }
+  ]
+}
