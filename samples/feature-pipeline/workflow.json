@@ -1,4 +1,5 @@
 {
+  "id": "00000000-0000-0000-0000-000000000000",
   "name": "feature-pipeline",
   "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, checkpoint-push the plans, record a branch-point test baseline, implement task-by-task (TDD), refine via the native ralph loop (gating on no NEW failures vs the baseline, with a stagnation backstop), and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
   "author": "arbitron",
@@ -67,7 +68,49 @@
       "name": "teams_webhook_url",
       "type": "string",
       "description": "Power Automate / Teams webhook URL for completion alerts. Leave empty in the committed sample (the notify-teams steps are no-ops when unset, or read ARBITRON_TEAMS_WEBHOOK_URL from the server env). The runtime workflow stores the real URL as this default.",
+      "default": "https://example.invalid/teams-webhook-redacted",
+      "required": false
+    },
+    {
+      "name": "deps_resolution_iteration",
+      "type": "number",
+      "description": "Plan-time dependency-resolution loop counter.",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "resume",
+      "type": "boolean",
+      "description": "Resume an interrupted feature: detect which docs already exist for `slug` and skip forward to the first stage that still has work. Requires `slug`.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "base_branch",
+      "type": "string",
+      "description": "Ref to base the feature worktree on (empty = the repo's default branch). init-workspace.sh already validates and shallow-clones this ref.",
       "default": "",
+      "required": false
+    },
+    {
+      "name": "spec_path",
+      "type": "string",
+      "description": "Repo-relative path to the spec. Populated by the spec brainstorm on a fresh run, or by doc detection on a resume. Templates read {{spec_path}}.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "resume_stage",
+      "type": "string",
+      "description": "Stage a resumed run enters at: spec | design | plans | implementation. Computed by detect-docs, never set by hand.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "impl_blocked",
+      "type": "boolean",
+      "description": "Set by the impl loop when every remaining task is blocked. Routes the final terminal to done-blocked while still allowing the ralph loop and PR to run. Never set by hand.",
+      "default": false,
       "required": false
     }
   ],
@@ -183,11 +226,16 @@
             "variable": "slug",
             "operation": "set",
             "value": "{{brainstorm-spec.slug}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{brainstorm-spec.spec_path}}"
           }
         ]
       },
       "label": "Re-promote slug",
-      "description": "After the spec brainstorm, set the global slug to the resolved feature slug the agent used, so designs/plans/templates all use one consistent slug.",
+      "description": "After the spec brainstorm, promote the resolved slug AND spec_path to top-level vars so designs/plans/templates all use one consistent slug and one spec pointer.",
       "errorBehavior": {},
       "position": {
         "x": 250,
@@ -246,8 +294,8 @@
       "description": "Gate AFTER planning + checkpoint push: if spec_only, stop with the spec/designs/plans pushed; else continue to baseline capture and the implementation loop.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 1600
+        "x": 248.9937661737613,
+        "y": 1638.2368853970725
       }
     },
     {
@@ -294,8 +342,8 @@
       "description": "Align spec+designs+plans; fix in place; commit.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 1280
+        "x": -215.88626154854018,
+        "y": 1278.364870032362
       }
     },
     {
@@ -310,8 +358,8 @@
       "description": "Push the feature branch after the spec/design/plan phase so that expensive interactive+planning work survives a later crash/cancel/logout instead of living only in the instance worktree.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 1440
+        "x": 257.2803105926472,
+        "y": 1501.8826400375012
       }
     },
     {
@@ -367,9 +415,12 @@
       "type": "llm_call",
       "config": {
         "templateFile": "templates/impl-assess.md",
-        "model_profile": "assessor-opus-low",
+        "model_profile": "assessor-opus-high",
         "outputSchema": {
           "properties": {
+            "all_remaining_blocked": {
+              "type": "boolean"
+            },
             "all_tasks_complete": {
               "type": "boolean"
             },
@@ -389,7 +440,7 @@
         }
       },
       "label": "Assess impl progress",
-      "description": "Emit {all_tasks_complete, tasks_remaining, notes}.",
+      "description": "Emit {all_tasks_complete, tasks_remaining, notes, all_remaining_blocked}. all_remaining_blocked is intentionally NOT in `required`: the claude-cli chat path has no native structured-output enforcement (schema is prompt prose only), so the model intermittently omits the key and a hard requirement kills the run. impl-gate only branches when it is true, so an absent value is correctly read as false.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -426,6 +477,12 @@
             "operator": "eq",
             "value": true,
             "output": "exit"
+          },
+          {
+            "field": "impl-assess.all_remaining_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
           },
           {
             "field": "impl_iteration",
@@ -484,6 +541,9 @@
         "model_profile": "assessor-sonnet5-high",
         "outputSchema": {
           "properties": {
+            "consecutive_no_progress": {
+              "type": "number"
+            },
             "done": {
               "type": "boolean"
             },
@@ -492,9 +552,6 @@
             },
             "progressed": {
               "type": "boolean"
-            },
-            "consecutive_no_progress": {
-              "type": "number"
             }
           },
           "required": [
@@ -654,7 +711,6 @@
       "config": {
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
-        "timeoutSeconds": 60,
         "args": [
           "feature-pipeline complete — {{slug}}",
           "Spec, phased designs, plans, implementation and the ralph refinement loop are done; a PR has been opened ({{push-and-pr.pr_url}}). PR review runs automatically on open.",
@@ -664,7 +720,8 @@
           "Branch={{branch}}",
           "PR={{push-and-pr.pr_url}}",
           "Status={{pipeline_status}}"
-        ]
+        ],
+        "timeoutSeconds": 60
       },
       "label": "Notify Teams (PR opened)",
       "description": "Rich completion alert to the Teams webhook after the PR is opened (no-op if teams_webhook_url unset).",
@@ -680,7 +737,6 @@
       "config": {
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
-        "timeoutSeconds": 60,
         "args": [
           "feature-pipeline (spec-only) complete — {{slug}}",
           "Spec, phased designs and TDD task plans were produced, aligned and checkpoint-pushed. Stopped before implementation (spec_only).",
@@ -689,7 +745,8 @@
           "Slug={{slug}}",
           "Branch={{branch}}",
           "Status=spec-only-complete"
-        ]
+        ],
+        "timeoutSeconds": 60
       },
       "label": "Notify Teams (spec-only)",
       "description": "Rich alert to the Teams webhook on the spec-only stop (no-op if teams_webhook_url unset).",
@@ -697,6 +754,534 @@
       "position": {
         "x": 520,
         "y": 1700
+      }
+    },
+    {
+      "id": "deps-assess",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/deps-assess.md",
+        "model_profile": "assessor-opus-high",
+        "outputSchema": {
+          "properties": {
+            "blocking_count": {
+              "type": "number"
+            },
+            "gaps": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "has_blocking": {
+              "type": "boolean"
+            },
+            "has_unresolved": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "unresolved_count": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "has_unresolved",
+            "unresolved_count",
+            "gaps",
+            "notes"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Assess plan dependencies",
+      "description": "Gate: read the align-plans report and emit {has_unresolved, unresolved_count, gaps, notes} so unresolved producers are caught before implementation.",
+      "errorBehavior": {},
+      "position": {
+        "x": 37.48000462038358,
+        "y": 1283.5262292058553
+      }
+    },
+    {
+      "id": "deps-gate",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "deps-assess.blocking_count",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          },
+          {
+            "field": "deps-assess.has_blocking",
+            "operator": "eq",
+            "value": false,
+            "output": "proceed"
+          },
+          {
+            "field": "deps-assess.unresolved_count",
+            "operator": "eq",
+            "value": 0,
+            "output": "proceed"
+          },
+          {
+            "field": "deps-assess.has_unresolved",
+            "operator": "eq",
+            "value": false,
+            "output": "proceed"
+          },
+          {
+            "field": "deps_resolution_iteration",
+            "operator": "gte",
+            "value": 1,
+            "output": "blocked"
+          }
+        ],
+        "defaultOutput": "resolve"
+      },
+      "label": "Deps blocking?",
+      "description": "Proceed when nothing BLOCKS implementation (blocking_count 0 / has_blocking false) — non-blocking items such as externally-provisioned secrets no longer veto a run. Otherwise take exactly ONE interactive resolve pass; if a blocker survives it, stop. Two proceed conditions are checked because llm_call outputSchema is not enforced, so either field arriving well-formed is enough.",
+      "errorBehavior": {},
+      "position": {
+        "x": 268.11220887229746,
+        "y": 1334.7194778192563
+      }
+    },
+    {
+      "id": "resolve-deps",
+      "type": "interactive_agent",
+      "config": {
+        "templateFile": "templates/resolve-deps.md",
+        "model_profile": "interviewer-opus-high",
+        "outputSchema": {
+          "properties": {
+            "notes": {
+              "type": "string"
+            },
+            "updated_docs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "updated_docs",
+            "notes"
+          ],
+          "type": "object"
+        },
+        "orchestrationFile": "orchestration/resolve-deps.orch.md"
+      },
+      "label": "Resolve dependency (interactive)",
+      "description": "Interactive opus-planner: point the human at each unresolved dependency, brainstorm the missing contract at implementation-design altitude, patch the blocked design/plan doc, commit; then loop back to re-align and re-check.",
+      "errorBehavior": {},
+      "position": {
+        "x": -41.00623382623874,
+        "y": 1417.3641497236476
+      }
+    },
+    {
+      "id": "deps-inc",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "deps_resolution_iteration",
+            "operation": "increment",
+            "value": 1
+          }
+        ]
+      },
+      "label": "deps_resolution_iteration++",
+      "description": "",
+      "errorBehavior": {},
+      "position": {
+        "x": -320,
+        "y": 1440
+      }
+    },
+    {
+      "id": "deps-blocked-notify",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline BLOCKED (planning) — {{slug}}",
+          "The planning phase could not close the dependency graph after {{max_deps_iterations}} interactive resolution passes. Implementation was NOT started, to avoid a livelock. Unresolved: {{deps-assess.notes}}",
+          "warning",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=planning-blocked"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (planning blocked)",
+      "description": "Escalation alert when unresolved plan dependencies remain after the resolution cap; the pipeline stops rather than shipping a plan the impl loop would livelock on.",
+      "errorBehavior": {},
+      "position": {
+        "x": 520,
+        "y": 1380
+      }
+    },
+    {
+      "id": "impl-blocked-notify",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/notify-teams.sh",
+        "interpreter": "/bin/sh",
+        "args": [
+          "feature-pipeline BLOCKED (implementation) — {{slug}}",
+          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope — a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
+          "warning",
+          "Repo={{repo_url}}",
+          "Slug={{slug}}",
+          "Branch={{branch}}",
+          "Status=impl-blocked"
+        ],
+        "timeoutSeconds": 60
+      },
+      "label": "Notify Teams (impl blocked)",
+      "description": "Escalation alert when the impl loop detects all remaining tasks are blocked on non-existent producers; stop-and-escalate instead of spinning to the cap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 546.1620794822074,
+        "y": 2673.7044223649787
+      }
+    },
+    {
+      "id": "done-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "pipeline_status",
+            "operation": "set",
+            "value": "blocked"
+          }
+        ]
+      },
+      "label": "Done (blocked, terminal)",
+      "description": "Terminal node for the escalation paths: planning or implementation stopped on an unresolvable dependency; a human must resolve the plan gap.",
+      "errorBehavior": {},
+      "position": {
+        "x": 520,
+        "y": 1680
+      }
+    },
+    {
+      "id": "resume?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "resume",
+            "operator": "eq",
+            "value": true,
+            "output": "detect"
+          }
+        ],
+        "defaultOutput": "fresh"
+      },
+      "label": "Resume?",
+      "description": "resume=true routes to doc detection; otherwise the full pipeline runs from the spec brainstorm exactly as before.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 395
+      }
+    },
+    {
+      "id": "detect-docs",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/detect-docs.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Detect existing docs",
+      "description": "Deterministic: globs docs/{specs,designs,plans}, normalizes filenames (strips ISO date + role suffix), token-scores against slug in both directions, and emits resume_stage + matched_slug + spec_path. A script, not an LLM: llm_call has no tools and its schema is not enforced.",
+      "errorBehavior": {},
+      "position": {
+        "x": -250,
+        "y": 395
+      }
+    },
+    {
+      "id": "docs-ambiguous?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "detect-docs.ambiguous",
+            "operator": "eq",
+            "value": true,
+            "output": "disambiguate"
+          }
+        ],
+        "defaultOutput": "clear"
+      },
+      "label": "Docs ambiguous?",
+      "description": "True only when two different features score within 0.2 of each other, i.e. picking wrongly is plausible. The LLM tiebreaker runs ONLY in that case.",
+      "errorBehavior": {},
+      "position": {
+        "x": -250,
+        "y": 475
+      }
+    },
+    {
+      "id": "disambiguate-docs",
+      "type": "llm_call",
+      "config": {
+        "templateFile": "templates/disambiguate-docs.md",
+        "model_profile": "assessor-sonnet-high",
+        "outputSchema": {
+          "properties": {
+            "chosen_slug": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chosen_slug"
+          ],
+          "type": "object"
+        }
+      },
+      "label": "Disambiguate docs (tiebreak)",
+      "description": "Picks which candidate feature the caller meant. It chooses ONLY the slug; stage and spec_path are recomputed deterministically afterwards by detect-docs-final, so a degenerate answer still yields correct routing.",
+      "errorBehavior": {},
+      "position": {
+        "x": -500,
+        "y": 475
+      }
+    },
+    {
+      "id": "promote-chosen-slug",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{disambiguate-docs.chosen_slug}}"
+          }
+        ]
+      },
+      "label": "Promote chosen slug",
+      "description": "Lifts the tiebreaker's slug into the variable the detector reads.",
+      "errorBehavior": {},
+      "position": {
+        "x": -500,
+        "y": 555
+      }
+    },
+    {
+      "id": "detect-docs-final",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/detect-docs.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Re-detect docs (chosen slug)",
+      "description": "Second deterministic pass against the disambiguated slug. This is what makes the LLM advisory: the routing facts always come from the script.",
+      "errorBehavior": {},
+      "position": {
+        "x": -500,
+        "y": 635
+      }
+    },
+    {
+      "id": "promote-docs",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{detect-docs.safe_slug}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{detect-docs.spec_path}}"
+          },
+          {
+            "variable": "resume_stage",
+            "operation": "set",
+            "value": "{{detect-docs.resume_stage}}"
+          }
+        ]
+      },
+      "label": "Promote detected docs",
+      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
+      "errorBehavior": {},
+      "position": {
+        "x": -250,
+        "y": 635
+      }
+    },
+    {
+      "id": "promote-docs-final",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "slug",
+            "operation": "set",
+            "value": "{{detect-docs-final.safe_slug}}"
+          },
+          {
+            "variable": "spec_path",
+            "operation": "set",
+            "value": "{{detect-docs-final.spec_path}}"
+          },
+          {
+            "variable": "resume_stage",
+            "operation": "set",
+            "value": "{{detect-docs-final.resume_stage}}"
+          }
+        ]
+      },
+      "label": "Promote detected docs (tiebroken)",
+      "description": "Disambiguated path: adopt the re-detection results.",
+      "errorBehavior": {},
+      "position": {
+        "x": -500,
+        "y": 715
+      }
+    },
+    {
+      "id": "resume-stage?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "implementation",
+            "output": "impl"
+          },
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "plans",
+            "output": "plans"
+          },
+          {
+            "field": "resume_stage",
+            "operator": "eq",
+            "value": "design",
+            "output": "design"
+          }
+        ],
+        "defaultOutput": "spec"
+      },
+      "label": "Resume at which stage?",
+      "description": "The ladder: plans present -> re-align and re-validate them, then implement; spec+designs -> write plans; spec only -> design brainstorm; nothing found -> full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
+      "errorBehavior": {},
+      "position": {
+        "x": -250,
+        "y": 795
+      }
+    },
+    {
+      "id": "checkpoint-push-plans",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push new plans",
+      "description": "Pushes as soon as plans exist, BEFORE the dependency gate can route anywhere. Previously the only checkpoint sat on the gate's proceed edge, so a blocked exit discarded the entire spec+design+plan package when the workspace was garbage-collected.",
+      "errorBehavior": {},
+      "position": {
+        "x": -215,
+        "y": 1200
+      }
+    },
+    {
+      "id": "push-blocked",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Push before blocked exit",
+      "description": "Terminal-path work preservation: both blocked escalations push the branch before ending, so a stopped run leaves its work on the remote instead of only in a workspace that is deleted on completion.",
+      "errorBehavior": {},
+      "position": {
+        "x": 520,
+        "y": 1560
+      }
+    },
+    {
+      "id": "mark-impl-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_blocked",
+            "operation": "set",
+            "value": true
+          }
+        ]
+      },
+      "label": "Mark implementation blocked",
+      "description": "Records that the impl loop exited blocked, so the run still refines and opens a PR but is reported as blocked rather than complete.",
+      "errorBehavior": {},
+      "position": {
+        "x": 546,
+        "y": 2600
+      }
+    },
+    {
+      "id": "final-status?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
+          }
+        ],
+        "defaultOutput": "complete"
+      },
+      "label": "Blocked or complete?",
+      "description": "Chooses the terminal AFTER the PR is opened. A run whose implementation was blocked still refines and ships a PR, but must not report 'complete' -- that would assert verification it never performed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 3800
+      }
+    },
+    {
+      "id": "verify-ralph-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify ralph seed",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "description": "Greps the seeded RALPH.md for the loop protocol (both promise tags, Wrap Up, the stop-after-tag rule, one-issue-then-stop, no-backtrack) before the refinement loop consumes it. seed-ralph previously specified the charter content but not how a pass ENDS, so the agent improvised a protocol with no terminator and the loop ran without termination semantics. Fails fast rather than retrying: a deterministic grep will not pass on a second attempt.",
+      "position": {
+        "x": 250,
+        "y": 2800
       }
     }
   ],
@@ -708,10 +1293,6 @@
     {
       "source": "promote-vars",
       "target": "notify-start"
-    },
-    {
-      "source": "notify-start",
-      "target": "brainstorm-spec"
     },
     {
       "source": "brainstorm-spec",
@@ -733,14 +1314,6 @@
     {
       "source": "align-designs",
       "target": "produce-plans"
-    },
-    {
-      "source": "produce-plans",
-      "target": "align-plans"
-    },
-    {
-      "source": "align-plans",
-      "target": "checkpoint-push"
     },
     {
       "source": "checkpoint-push",
@@ -779,7 +1352,7 @@
     },
     {
       "source": "seed-ralph",
-      "target": "refine"
+      "target": "verify-ralph-seed"
     },
     {
       "source": "refine",
@@ -813,10 +1386,6 @@
       "target": "notify-teams"
     },
     {
-      "source": "notify-teams",
-      "target": "done"
-    },
-    {
       "source": "spec-only?",
       "target": "notify-teams-spec",
       "output": "stop"
@@ -824,6 +1393,162 @@
     {
       "source": "notify-teams-spec",
       "target": "done-spec"
+    },
+    {
+      "source": "align-plans",
+      "target": "deps-assess"
+    },
+    {
+      "source": "deps-assess",
+      "target": "deps-gate"
+    },
+    {
+      "source": "deps-gate",
+      "target": "checkpoint-push",
+      "output": "proceed"
+    },
+    {
+      "source": "deps-gate",
+      "target": "resolve-deps",
+      "output": "resolve",
+      "label": "back-edge: resolve then re-align"
+    },
+    {
+      "source": "deps-gate",
+      "target": "deps-blocked-notify",
+      "output": "blocked"
+    },
+    {
+      "source": "resolve-deps",
+      "target": "deps-inc"
+    },
+    {
+      "source": "deps-inc",
+      "target": "align-plans",
+      "label": "loop: re-align + re-check deps"
+    },
+    {
+      "source": "notify-start",
+      "target": "resume?"
+    },
+    {
+      "source": "resume?",
+      "target": "brainstorm-spec",
+      "output": "fresh",
+      "label": "fresh run"
+    },
+    {
+      "source": "resume?",
+      "target": "detect-docs",
+      "output": "detect",
+      "label": "resume"
+    },
+    {
+      "source": "detect-docs",
+      "target": "docs-ambiguous?"
+    },
+    {
+      "source": "docs-ambiguous?",
+      "target": "promote-docs",
+      "output": "clear"
+    },
+    {
+      "source": "docs-ambiguous?",
+      "target": "disambiguate-docs",
+      "output": "disambiguate"
+    },
+    {
+      "source": "disambiguate-docs",
+      "target": "promote-chosen-slug"
+    },
+    {
+      "source": "promote-chosen-slug",
+      "target": "detect-docs-final"
+    },
+    {
+      "source": "detect-docs-final",
+      "target": "promote-docs-final"
+    },
+    {
+      "source": "promote-docs",
+      "target": "resume-stage?"
+    },
+    {
+      "source": "promote-docs-final",
+      "target": "resume-stage?"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "brainstorm-spec",
+      "output": "spec",
+      "label": "nothing found"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "brainstorm-design",
+      "output": "design",
+      "label": "spec exists"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "produce-plans",
+      "output": "plans",
+      "label": "spec+designs exist"
+    },
+    {
+      "source": "resume-stage?",
+      "target": "align-plans",
+      "output": "impl",
+      "label": "plans exist — re-align + revalidate"
+    },
+    {
+      "source": "produce-plans",
+      "target": "checkpoint-push-plans"
+    },
+    {
+      "source": "checkpoint-push-plans",
+      "target": "align-plans"
+    },
+    {
+      "source": "deps-blocked-notify",
+      "target": "push-blocked"
+    },
+    {
+      "source": "push-blocked",
+      "target": "done-blocked"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-impl-blocked",
+      "output": "blocked",
+      "label": "all remaining blocked"
+    },
+    {
+      "source": "mark-impl-blocked",
+      "target": "impl-blocked-notify"
+    },
+    {
+      "source": "impl-blocked-notify",
+      "target": "seed-ralph",
+      "label": "still refine + open a PR"
+    },
+    {
+      "source": "notify-teams",
+      "target": "final-status?"
+    },
+    {
+      "source": "final-status?",
+      "target": "done-blocked",
+      "output": "blocked"
+    },
+    {
+      "source": "final-status?",
+      "target": "done",
+      "output": "complete"
+    },
+    {
+      "source": "verify-ralph-seed",
+      "target": "refine"
     }
   ]
 }

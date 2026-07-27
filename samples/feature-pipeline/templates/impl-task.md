@@ -34,7 +34,7 @@ This is the per-task quality gate — do not finish the pass without it:
 Apply the fixes from all stages, then re-run the task's tests to confirm they're still green.
 
 ## Commit
-Commit using the task's commit step (or `git -C ./work add -A && git -C ./work commit -m "feat({{slug}}): <task title>"`). Do NOT start the next task — one task per pass.
+Commit using the task's commit step (or `git -C ./work add -A && git -C ./work commit -m "feat({{slug}}): <task title>" && git -C ./work push --quiet -u origin HEAD`). Do NOT start the next task — one task per pass.
 
 Red tests *elsewhere* in the suite are tolerated at this stage; later refinement closes them. Focus on completing THIS task's own steps and its own tests correctly.
 

@@ -50,7 +50,7 @@ brainstorm, narrowed to the PRODUCT level.
 - **Spec self-review (fix inline; no need to re-ask the human):** scan for
   placeholders/TBDs, internal contradictions, anything that could be read two ways,
   and any implementation detail that leaked in — fix all of them in the file.
-- Commit: `git -C ./work add docs/specs && git -C ./work commit -m "docs: add <slug> product spec"`
+- Commit: `git -C ./work add docs/specs && git -C ./work commit -m "docs: add <slug> product spec" && git -C ./work push --quiet -u origin HEAD`
 - Emit the completion result with ONLY `{slug, spec_path}` (path relative to the
   worktree). Do NOT include the spec text.
 
