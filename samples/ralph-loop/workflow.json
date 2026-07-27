@@ -1,5 +1,5 @@
 {
-  "id": "71fce817-b51f-4c46-b77f-353d34295c7a",
+  "id": "00000000-0000-0000-0000-000000000000",
   "name": "ralph-loop",
   "description": "Standalone ralph refinement loop: check out an existing branch, archive prior tracking docs, record a test baseline, seed a structured focus-area review plan (single-system + paired integration reviews), run the refinement loop until the reviews are satisfied, then open a PR back into the branch being refined.",
   "author": "arbitron",
@@ -34,13 +34,6 @@
       "type": "string",
       "description": "Optional free text narrowing or annotating the review scope. The branch diff is always the primary signal; this only adds context.",
       "default": "",
-      "required": false
-    },
-    {
-      "name": "max_focus_areas",
-      "type": "number",
-      "description": "Cap on single-system review areas. Paired reviews are N*(N-1), so N=8 already implies 72 passes. Bounds the loop's total cost.",
-      "default": 8,
       "required": false
     },
     {
@@ -379,7 +372,7 @@
         "interpreter": "/bin/sh",
         "timeoutSeconds": 300
       },
-      "label": "Push \u0026 open PR",
+      "label": "Push & open PR",
       "description": "Push the work branch and open a PR targeting base_branch, so refinement lands back on the branch being refined.",
       "errorBehavior": {},
       "position": {

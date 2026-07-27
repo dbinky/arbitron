@@ -43,6 +43,13 @@ is true only when ALL hold:
   NOT as grounds for `done`.
 - **No unchecked items remain** in `docs/reference/gaps-identified.md`. A path
   logged there as an inert/no-op "acceptable" is an OPEN gap, not a reason for done.
+- **The `## No seam` list is present and reasoned.** Paired reviews cover seams,
+  not every possible combination, so `focus-areas.md` must end with a `## No seam`
+  list recording each combination deliberately left unpaired and why. Combinations
+  listed there are **not** open work and must not keep `done` false. But a plan
+  with **no** `## No seam` section, or entries with no reason given, is a coverage
+  gap nobody can audit — emit `done: false` and say so. A silent omission is
+  indistinguishable from an oversight, which is the whole reason the list exists.
 - Every area is **wired-and-fed** — constructed at the real composition root and
   fed real data from an existing producer. A component that is present and green in
   isolation but fed `nil`/empty/hardcoded, or constructed only in tests, is NOT done.

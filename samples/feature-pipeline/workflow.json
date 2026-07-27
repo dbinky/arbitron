@@ -112,13 +112,6 @@
       "description": "Set by the impl loop when every remaining task is blocked. Routes the final terminal to done-blocked while still allowing the ralph loop and PR to run. Never set by hand.",
       "default": false,
       "required": false
-    },
-    {
-      "name": "max_focus_areas",
-      "type": "number",
-      "description": "Cap on single-system review areas seeded for the refinement loop. Paired reviews are N*(N-1), so N=8 already implies 72 passes; this bounds the loop cost.",
-      "default": 8,
-      "required": false
     }
   ],
   "nodes": [

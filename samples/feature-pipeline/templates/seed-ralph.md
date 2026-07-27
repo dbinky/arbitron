@@ -10,7 +10,6 @@ commit them. The user is unavailable — do not ask questions, make the calls yo
 - Plans: `./work/docs/plans/{{run_date}}-{{slug}}-implementation-phase-*-task-*.md`
 - **Test command(s)** (use these exact commands — already detected for this repo): `{{record-baseline.test_commands}}`
 - **Branch-point test baseline** (failures that existed BEFORE this feature): `{{record-baseline.test_baseline}}`
-- **Cap on single-system review areas:** {{max_focus_areas}}
 
 ## Files to write
 
@@ -43,23 +42,49 @@ Name them concretely (`consent ledger`, `OneSignal channel adapter`) — never
 generically (`backend`, `misc`). Prefer the component boundaries the phase designs
 already drew; they are the architecture's own seams.
 
-**Cap the list at {{max_focus_areas}} areas.** If the feature built more, merge the
-least risky into their nearest neighbour and say so in RALPH.md — the paired table
-below grows as N×(N−1), so an uncapped list makes the loop unaffordable.
+Emit **one area per distinct thing the change set touched — there is no cap.**
+Granularity is what makes a review specific enough to catch anything, so do not
+merge two genuinely separate concerns to shorten the list. The paired table below
+is seam-based, not all-pairs, so a longer list no longer multiplies the cost.
 
 Each single-system area needs **2 independent approvals** before it is done, so the
 table has two status columns. Two separate passes must each conclude it meets the bar.
 
-### Table 2 — Paired Integration Reviews
+### Table 2 — Paired Integration Reviews (seams only)
 
-Pair **every** area with **every other** area, including the reverse of each pair.
-For a pair (A, B) the reviewing mindset is:
+**Do NOT pair every area with every other.** Most pairs share no seam, and a review
+of two things that never meet has nothing to inspect — it burns a pass to
+manufacture an approval. Pair along real seams instead.
+
+A **seam** exists between areas A and B when they actually meet in the code:
+
+- one **produces** data the other **consumes**;
+- they share a **table, queue/topic, contract, endpoint, or feature flag**;
+- one **constructs, configures, or injects** the other;
+- they are **adjacent hops** in the same runtime path.
+
+For each seam you find, emit the pair in **both directions** — the reviewing
+mindset genuinely differs by direction. For a pair (A, B):
 
 > *I am reviewing the completeness, correctness, and spec alignment of **A** as it
 > is impacted by updates in **B**. Both should meet a stringent bar for "done" and
 > work together correctly.*
 
 Because reverse pairs exist, each paired review needs only **1 approval**.
+
+**Name the seam.** Every row must cite the concrete thing the two areas share —
+the symbol, table, topic, endpoint, or flag. A pair you cannot name a seam for is
+not a seam; drop it.
+
+**Additionally pair every cross-cutting area with each area it gates.** Anything
+that suppresses, authorizes, or short-circuits another path — a consent gate, an
+auth check, a feature flag, a shared schema — has a seam with everything it
+governs even when no data flows directly between them.
+
+**Record what you deliberately did not pair.** End `focus-areas.md` with a short
+`## No seam` list: each unpaired combination and a one-line reason. An omission
+that is written down is a decision; an omission that is silent is a coverage gap
+nobody can audit.
 
 This table is where a task-by-task implementation is most likely to be wrong: each
 task passed its own tests, but nothing yet checked that Phase 2's consent gate is
@@ -186,5 +211,5 @@ git -C ./work add RALPH.md docs/reference/ && git -C ./work commit -m "chore: se
 ```
 
 Report: the number of single-system areas, the number of paired reviews, the
-implied minimum pass count (2×singles + paired), and confirm RALPH.md contains the
+implied minimum pass count (2×singles + paired), the number of seams found, and the count of deliberately-unpaired combinations, and confirm RALPH.md contains the
 verbatim loop protocol.
