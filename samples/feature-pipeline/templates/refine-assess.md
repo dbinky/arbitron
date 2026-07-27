@@ -8,6 +8,28 @@ You are assessing whether refinement is complete. Reason only from the informati
 - **Branch-point test baseline** (failures that existed BEFORE this feature — these do NOT block): `{{record-baseline.test_baseline}}`
 - Consecutive prior passes that made no progress: {{no_progress_streak}}
 
+## The pass emits a promise tag — read it first
+
+RALPH.md requires every refinement pass to end with exactly one tag:
+
+- `<promise>FINIT</promise>` — the agent asserts all focus areas are complete and
+  no open gaps remain.
+- `<promise>CLOSER</promise>` — more work remains.
+
+Use it as **strong evidence, not as the verdict**:
+
+- `CLOSER` present → `done` is **false**. The agent doing the work says it is not
+  finished; do not overrule that.
+- `FINIT` present → `done` is true **only if** the criteria below also hold —
+  in particular the NEW-failures-vs-baseline check, which the pass agent may not
+  have evaluated. A `FINIT` alongside a new failure or an unwired component is
+  wrong; emit `done: false` and say so in `notes`.
+- **Neither tag present** → the pass violated the loop protocol. Treat as
+  `done: false` and `progressed: false`, and say so in `notes` — a pass that does
+  not follow the protocol has not demonstrably finished anything, and the
+  no-progress streak is the mechanism that stops a loop whose agent is ignoring
+  its instructions.
+
 ## How to judge "done"
 Gate on NEW failures vs the baseline AND on wired-and-fed. `done` is true only when
 ALL hold:

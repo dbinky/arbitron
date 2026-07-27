@@ -54,6 +54,68 @@ NOT let `gaps-identified.md` record an inert/no-op path (e.g. "empty set treated
 as maximally varied — acceptable") as *acceptable*: an unfed production path is a
 GAP to fix or an explicit escalation, never a tolerated no-op.
 
+## Loop protocol — RALPH.md MUST contain this section VERBATIM
+
+This is the part that makes the loop a loop. **Transcribe the block below into
+RALPH.md exactly as written — do not paraphrase it, summarise it, renumber it, or
+invent your own.** Substitute only the two bracketed placeholders.
+
+Without it the refinement agent has no rule for what *ends* a pass: it will
+improvise a protocol that says what to do and never says when to stop, sprawl
+across several focus areas in a single pass, and leave the loop unable to tell
+progress from churn.
+
+---8<--- copy from here ---8<---
+
+## Constraints
+
+- **Do NOT use sub-agents.** Modify and create code by hand, one component at a time.
+- **Read before you write.** Before modifying any file, read it. Before claiming something is fine, verify it.
+- **One focus area per iteration. Fix the most important issue, then stop.**
+- **Do NOT invent new functionality.** Log perceived gaps in `gaps-identified.md`. If something is clearly beyond scope, put it in `Won't Fix`.
+- **Test coverage matters.** Every public function in the focus area should have tests covering happy path, success, failure, error, and edge cases.
+
+## Iteration Structure
+
+1. **Read tracking** — Read `focus-areas.md`. Pick the next incomplete focus area (lowest number first).
+2. **Read the code** — Read every file in the focus area. Understand patterns, contracts, edge cases.
+3. **Cross-reference** — Compare against the spec and phase designs. Add issues to `gaps-identified.md`.
+4. **Fix the most important issue** — ONE issue per iteration. Fix it well across all affected files.
+5. **Write/verify tests** — Cover happy path, success, failure, error, and edge cases. Strict TDD when adding behaviour.
+6. **Run tests** — Run `[TEST COMMANDS]`. Compare failures against the recorded baseline; fix NEW failures only.
+7. **Assess the checklist** — Evaluate the checklist, then proceed to Wrap Up regardless of checklist state. **Do not go back to step 4.**
+
+Most focus areas need multiple passes to complete. This is normal and expected —
+do not try to finish everything in one pass, and do not mark an area complete to
+make the loop end sooner.
+
+## Wrap Up
+
+**Step A** — Did the focus area pass every checklist item?
+
+**Step B** — If it passed: mark the focus area complete in `focus-areas.md`. If it did not: do **NOT** update tracking.
+
+**Step C** — Commit and push. Your work is valuable regardless of checklist status:
+`git -C ./work add -A && git -C ./work commit -m "refine([SLUG]): <what you changed>" && git -C ./work push --quiet -u origin HEAD`
+
+**Step D** — Check both files:
+1. Are ALL focus areas in `focus-areas.md` marked complete?
+2. Are there ANY unchecked `[ ]` items in `gaps-identified.md`?
+
+Then output exactly one tag:
+- All complete AND no open issues: `<promise>FINIT</promise>`
+- Otherwise: `<promise>CLOSER</promise>`
+
+**Stop after the tag every time.**
+
+---8<--- copy to here ---8<---
+
+Substitutions: `[TEST COMMANDS]` → the exact commands from the Inputs above.
+`[SLUG]` → `{{slug}}`. Everything else is copied unchanged — the
+`<promise>` tags especially, because the workflow's refine gate reads them
+literally to decide whether to run another pass.
+
 ## Finish
 `git -C ./work add RALPH.md focus-areas.md gaps-identified.md && git -C ./work commit -m "chore: seed {{slug}} ralph refinement files" && git -C ./work push --quiet -u origin HEAD`
-Report the top 3 focus areas.
+Report the top 3 focus areas, and confirm RALPH.md contains the verbatim Loop
+protocol (Constraints, Iteration Structure, Wrap Up A–D, and both promise tags).

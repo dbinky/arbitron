@@ -1,5 +1,5 @@
 {
-  "id": "553a035c-143e-427c-912d-fe101ed3a9ed",
+  "id": "00000000-0000-0000-0000-000000000000",
   "name": "feature-pipeline",
   "description": "End-to-end feature pipeline: clone a repo, interactively brainstorm a spec and phased designs, then automatically align docs, produce plans, checkpoint-push the plans, record a branch-point test baseline, implement task-by-task (TDD), refine via the native ralph loop (gating on no NEW failures vs the baseline, with a stagnation backstop), and open a PR. Self-contained: all brainstorming/planning/execution processes are native template content with no external skill dependency.",
   "author": "arbitron",
@@ -104,6 +104,13 @@
       "type": "string",
       "description": "Stage a resumed run enters at: spec | design | plans | implementation. Computed by detect-docs, never set by hand.",
       "default": "",
+      "required": false
+    },
+    {
+      "name": "impl_blocked",
+      "type": "boolean",
+      "description": "Set by the impl loop when every remaining task is blocked. Routes the final terminal to done-blocked while still allowing the ralph loop and PR to run. Never set by hand.",
+      "default": false,
       "required": false
     }
   ],
@@ -757,11 +764,17 @@
         "model_profile": "assessor-opus-high",
         "outputSchema": {
           "properties": {
+            "blocking_count": {
+              "type": "number"
+            },
             "gaps": {
               "items": {
                 "type": "string"
               },
               "type": "array"
+            },
+            "has_blocking": {
+              "type": "boolean"
             },
             "has_unresolved": {
               "type": "boolean"
@@ -770,12 +783,6 @@
               "type": "string"
             },
             "unresolved_count": {
-              "type": "number"
-            },
-            "has_blocking": {
-              "type": "boolean"
-            },
-            "blocking_count": {
               "type": "number"
             }
           },
@@ -981,8 +988,8 @@
         "defaultOutput": "fresh"
       },
       "label": "Resume?",
-      "errorBehavior": {},
       "description": "resume=true routes to doc detection; otherwise the full pipeline runs from the spec brainstorm exactly as before.",
+      "errorBehavior": {},
       "position": {
         "x": 250,
         "y": 395
@@ -997,8 +1004,8 @@
         "timeoutSeconds": 120
       },
       "label": "Detect existing docs",
-      "errorBehavior": {},
       "description": "Deterministic: globs docs/{specs,designs,plans}, normalizes filenames (strips ISO date + role suffix), token-scores against slug in both directions, and emits resume_stage + matched_slug + spec_path. A script, not an LLM: llm_call has no tools and its schema is not enforced.",
+      "errorBehavior": {},
       "position": {
         "x": -250,
         "y": 395
@@ -1019,8 +1026,8 @@
         "defaultOutput": "clear"
       },
       "label": "Docs ambiguous?",
-      "errorBehavior": {},
       "description": "True only when two different features score within 0.2 of each other, i.e. picking wrongly is plausible. The LLM tiebreaker runs ONLY in that case.",
+      "errorBehavior": {},
       "position": {
         "x": -250,
         "y": 475
@@ -1033,7 +1040,6 @@
         "templateFile": "templates/disambiguate-docs.md",
         "model_profile": "assessor-sonnet-high",
         "outputSchema": {
-          "type": "object",
           "properties": {
             "chosen_slug": {
               "type": "string"
@@ -1044,12 +1050,13 @@
           },
           "required": [
             "chosen_slug"
-          ]
+          ],
+          "type": "object"
         }
       },
       "label": "Disambiguate docs (tiebreak)",
-      "errorBehavior": {},
       "description": "Picks which candidate feature the caller meant. It chooses ONLY the slug; stage and spec_path are recomputed deterministically afterwards by detect-docs-final, so a degenerate answer still yields correct routing.",
+      "errorBehavior": {},
       "position": {
         "x": -500,
         "y": 475
@@ -1068,8 +1075,8 @@
         ]
       },
       "label": "Promote chosen slug",
-      "errorBehavior": {},
       "description": "Lifts the tiebreaker's slug into the variable the detector reads.",
+      "errorBehavior": {},
       "position": {
         "x": -500,
         "y": 555
@@ -1084,8 +1091,8 @@
         "timeoutSeconds": 120
       },
       "label": "Re-detect docs (chosen slug)",
-      "errorBehavior": {},
       "description": "Second deterministic pass against the disambiguated slug. This is what makes the LLM advisory: the routing facts always come from the script.",
+      "errorBehavior": {},
       "position": {
         "x": -500,
         "y": 635
@@ -1114,8 +1121,8 @@
         ]
       },
       "label": "Promote detected docs",
-      "errorBehavior": {},
       "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
+      "errorBehavior": {},
       "position": {
         "x": -250,
         "y": 635
@@ -1144,8 +1151,8 @@
         ]
       },
       "label": "Promote detected docs (tiebroken)",
-      "errorBehavior": {},
       "description": "Disambiguated path: adopt the re-detection results.",
+      "errorBehavior": {},
       "position": {
         "x": -500,
         "y": 715
@@ -1178,8 +1185,8 @@
         "defaultOutput": "spec"
       },
       "label": "Resume at which stage?",
-      "errorBehavior": {},
       "description": "The ladder: plans present -> re-align and re-validate them, then implement; spec+designs -> write plans; spec only -> design brainstorm; nothing found -> full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
+      "errorBehavior": {},
       "position": {
         "x": -250,
         "y": 795
@@ -1194,8 +1201,8 @@
         "timeoutSeconds": 120
       },
       "label": "Checkpoint: push new plans",
-      "errorBehavior": {},
       "description": "Pushes as soon as plans exist, BEFORE the dependency gate can route anywhere. Previously the only checkpoint sat on the gate's proceed edge, so a blocked exit discarded the entire spec+design+plan package when the workspace was garbage-collected.",
+      "errorBehavior": {},
       "position": {
         "x": -215,
         "y": 1200
@@ -1210,11 +1217,71 @@
         "timeoutSeconds": 120
       },
       "label": "Push before blocked exit",
-      "errorBehavior": {},
       "description": "Terminal-path work preservation: both blocked escalations push the branch before ending, so a stopped run leaves its work on the remote instead of only in a workspace that is deleted on completion.",
+      "errorBehavior": {},
       "position": {
         "x": 520,
         "y": 1560
+      }
+    },
+    {
+      "id": "mark-impl-blocked",
+      "type": "transform",
+      "config": {
+        "operations": [
+          {
+            "variable": "impl_blocked",
+            "operation": "set",
+            "value": true
+          }
+        ]
+      },
+      "label": "Mark implementation blocked",
+      "description": "Records that the impl loop exited blocked, so the run still refines and opens a PR but is reported as blocked rather than complete.",
+      "errorBehavior": {},
+      "position": {
+        "x": 546,
+        "y": 2600
+      }
+    },
+    {
+      "id": "final-status?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "impl_blocked",
+            "operator": "eq",
+            "value": true,
+            "output": "blocked"
+          }
+        ],
+        "defaultOutput": "complete"
+      },
+      "label": "Blocked or complete?",
+      "description": "Chooses the terminal AFTER the PR is opened. A run whose implementation was blocked still refines and ships a PR, but must not report 'complete' -- that would assert verification it never performed.",
+      "errorBehavior": {},
+      "position": {
+        "x": 250,
+        "y": 3800
+      }
+    },
+    {
+      "id": "verify-ralph-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify ralph seed",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "description": "Greps the seeded RALPH.md for the loop protocol (both promise tags, Wrap Up, the stop-after-tag rule, one-issue-then-stop, no-backtrack) before the refinement loop consumes it. seed-ralph previously specified the charter content but not how a pass ENDS, so the agent improvised a protocol with no terminator and the loop ran without termination semantics. Fails fast rather than retrying: a deterministic grep will not pass on a second attempt.",
+      "position": {
+        "x": 250,
+        "y": 2800
       }
     }
   ],
@@ -1285,7 +1352,7 @@
     },
     {
       "source": "seed-ralph",
-      "target": "refine"
+      "target": "verify-ralph-seed"
     },
     {
       "source": "refine",
@@ -1317,10 +1384,6 @@
     {
       "source": "notify-done",
       "target": "notify-teams"
-    },
-    {
-      "source": "notify-teams",
-      "target": "done"
     },
     {
       "source": "spec-only?",
@@ -1363,11 +1426,6 @@
       "source": "deps-inc",
       "target": "align-plans",
       "label": "loop: re-align + re-check deps"
-    },
-    {
-      "source": "impl-gate",
-      "target": "impl-blocked-notify",
-      "output": "blocked"
     },
     {
       "source": "notify-start",
@@ -1456,12 +1514,41 @@
       "target": "push-blocked"
     },
     {
-      "source": "impl-blocked-notify",
-      "target": "push-blocked"
-    },
-    {
       "source": "push-blocked",
       "target": "done-blocked"
+    },
+    {
+      "source": "impl-gate",
+      "target": "mark-impl-blocked",
+      "output": "blocked",
+      "label": "all remaining blocked"
+    },
+    {
+      "source": "mark-impl-blocked",
+      "target": "impl-blocked-notify"
+    },
+    {
+      "source": "impl-blocked-notify",
+      "target": "seed-ralph",
+      "label": "still refine + open a PR"
+    },
+    {
+      "source": "notify-teams",
+      "target": "final-status?"
+    },
+    {
+      "source": "final-status?",
+      "target": "done-blocked",
+      "output": "blocked"
+    },
+    {
+      "source": "final-status?",
+      "target": "done",
+      "output": "complete"
+    },
+    {
+      "source": "verify-ralph-seed",
+      "target": "refine"
     }
   ]
 }
