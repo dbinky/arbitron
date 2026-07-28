@@ -79,13 +79,16 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 		return nil, err
 	}
 
-	pid, err := nullStringToParentID(parentID)
+	// ALL-OR-NONE on the read side: an incomplete tuple collapses to no link
+	// (a root run) rather than being partially populated. See
+	// nullStringToSpawnLink.
+	pid, nodeID, mode, err := nullStringToSpawnLink(parentID, parentNode, spawnMode)
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
 	inst.ParentInstanceID = pid
-	inst.ParentNodeID = nullStringToPtr(parentNode)
-	inst.SpawnMode = instance.SpawnMode(nullStringToString(spawnMode))
+	inst.ParentNodeID = nodeID
+	inst.SpawnMode = mode
 	inst.SpawnDepth = spawnDepth
 	return inst, nil
 }

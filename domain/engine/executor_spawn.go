@@ -64,19 +64,18 @@ func (e *SpawnWorkflowExecutor) Execute(ctx context.Context, node workflow.Node,
 		return nil, fmt.Errorf("spawn_workflow %q: instance ID not found in context", node.ID)
 	}
 
-	// Re-check the configured contract. Instances execute from a
-	// WorkflowSnapshot that may PREDATE Phase 1's validation, so the executor
-	// does not trust that validation ran — the same defensive stance the binding
-	// kind guard documents. An unrecognized (or empty) mode is an error, never a
-	// default.
-	mode := node.Config.SpawnMode
-	if !workflow.IsValidSpawnMode(mode) {
-		return nil, fmt.Errorf("spawn_workflow %q: unrecognized spawnMode %q (must be %q or %q)",
-			node.ID, mode, workflow.SpawnModeFireAndForget, workflow.SpawnModeWaitForChild)
+	// Re-check the configured contract through the SAME parser author-time
+	// validation uses. Instances execute from a WorkflowSnapshot that may PREDATE
+	// that validation, so the executor does not trust that validation ran — the
+	// same defensive stance the binding kind guard documents. Sharing the parser
+	// is what makes the two checks provably identical instead of two hand-copied
+	// string comparisons that can drift. An unrecognized (or empty) mode is an
+	// error, never a default.
+	cfg, cfgErr := workflow.ParseSpawnConfig(node.Config)
+	if cfgErr != nil {
+		return nil, fmt.Errorf("spawn_workflow %q: %w", node.ID, cfgErr)
 	}
-	if node.Config.ChildWorkflow == "" {
-		return nil, fmt.Errorf("spawn_workflow %q: childWorkflow is not configured", node.ID)
-	}
+	mode := cfg.Mode
 
 	if mode == workflow.SpawnModeWaitForChild {
 		return e.executeWait(ctx, node, vars, workflowName, instanceID)

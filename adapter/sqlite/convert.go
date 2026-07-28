@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 )
 
@@ -222,6 +223,37 @@ func parentIDToNullString(id *uuid.UUID) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: id.String(), Valid: true}
+}
+
+// nullStringToSpawnLink maps the three nullable spawn-link columns back to the
+// domain triple, enforcing the ALL-OR-NONE invariant on the READ side.
+//
+// The write side already refuses a partial link (InstanceRepo.Create writes all
+// three columns or all three NULLs) and the schema cannot express the
+// constraint without rebuilding the hottest table in the database — which is
+// out of scope while there is exactly one writer. That leaves the read side as
+// the place to make a partial row HARMLESS rather than merely unlikely: a row
+// with a parent id but no node id (hand-edited, restored from a partial backup,
+// or written by some future second writer) would otherwise read back as a
+// half-populated link that IsRoot() calls non-root while the wake can never
+// match it — a parent hung forever.
+//
+// An incomplete tuple therefore collapses to NO LINK — the run reads as a root,
+// which is the one interpretation every read path already handles safely. A
+// malformed parent id is still an ERROR: that is a corrupt value, not a missing
+// one, and silently rooting it would hide real corruption.
+func nullStringToSpawnLink(parentRaw, nodeRaw, modeRaw sql.NullString) (*uuid.UUID, *string, instance.SpawnMode, error) {
+	parentID, err := nullStringToParentID(parentRaw)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	nodeID := nullStringToPtr(nodeRaw)
+	mode := instance.SpawnMode(nullStringToString(modeRaw))
+
+	if parentID == nil || nodeID == nil || *nodeID == "" || !mode.Valid() {
+		return nil, nil, "", nil
+	}
+	return parentID, nodeID, mode, nil
 }
 
 // nullStringToParentID maps a nullable parent_instance_id column back to

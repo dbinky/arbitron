@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 )
@@ -744,7 +745,12 @@ func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []V
 		})
 	}
 
-	if node.Config.ChildWorkflow == "" {
+	// ONE set of contract checks, shared with the executor's defensive re-check
+	// (ParseSpawnConfig). The executor cannot simply trust that this ran — an
+	// instance executes from a WorkflowSnapshot that may PREDATE this validation
+	// — so both sides must check, and must check identically.
+	_, cfgErr := ParseSpawnConfig(node.Config)
+	if errors.Is(cfgErr, ErrSpawnChildWorkflowMissing) {
 		errs = append(errs, ValidationError{
 			Code:    "MISSING_REQUIRED_CONFIG",
 			Message: "spawn_workflow node " + node.ID + " must have a childWorkflow",
@@ -772,13 +778,11 @@ func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []V
 		})
 	}
 
-	if !IsValidSpawnMode(node.Config.SpawnMode) {
+	if errors.Is(cfgErr, ErrSpawnModeInvalid) {
 		errs = append(errs, ValidationError{
-			Code: "INVALID_SPAWN_MODE",
-			Message: "spawn_workflow node " + node.ID + " has an unrecognized spawnMode " +
-				strconv.Quote(node.Config.SpawnMode) + " (must be exactly " +
-				strconv.Quote(SpawnModeFireAndForget) + " or " + strconv.Quote(SpawnModeWaitForChild) + ")",
-			NodeID: node.ID,
+			Code:    "INVALID_SPAWN_MODE",
+			Message: "spawn_workflow node " + node.ID + " has an " + spawnModeProblem(cfgErr),
+			NodeID:  node.ID,
 		})
 		return errs
 	}
@@ -845,6 +849,18 @@ func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []V
 	}
 
 	return errs
+}
+
+// spawnModeProblem extracts the mode sentence from a ParseSpawnConfig error so
+// the ValidationError message stays the single-sentence form authors already
+// see, without this file re-deriving the wording ParseSpawnConfig owns.
+func spawnModeProblem(joined error) string {
+	for _, part := range strings.Split(joined.Error(), "\n") {
+		if strings.Contains(part, ErrSpawnModeInvalid.Error()) {
+			return part
+		}
+	}
+	return ErrSpawnModeInvalid.Error()
 }
 
 // validateInteractiveNode checks interactive-node-specific validation rules.

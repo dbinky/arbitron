@@ -1,7 +1,13 @@
 // Package workflow defines the domain types for workflow definitions.
 package workflow
 
-import "github.com/google/uuid"
+import (
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/google/uuid"
+)
 
 // NodeType identifies the kind of processing a workflow node performs.
 type NodeType string
@@ -81,6 +87,51 @@ const (
 	SpawnPortSuccess = "success"
 	SpawnPortFailure = "failure"
 )
+
+// SpawnConfig is the VALIDATED spawn contract of one spawn_workflow node: the
+// two fields every consumer needs, already checked.
+type SpawnConfig struct {
+	ChildWorkflow string
+	Mode          string
+}
+
+// Errors ParseSpawnConfig reports. They are sentinels so the validator can map
+// each to its own ValidationError code while the executor can wrap them
+// verbatim — one set of checks, two presentations.
+var (
+	// ErrSpawnChildWorkflowMissing: no child workflow was configured.
+	ErrSpawnChildWorkflowMissing = errors.New("childWorkflow is not configured")
+	// ErrSpawnModeInvalid: the spawnMode is empty or unrecognized.
+	ErrSpawnModeInvalid = errors.New("unrecognized spawnMode")
+)
+
+// ParseSpawnConfig extracts and checks a spawn node's contract.
+//
+// It is the ONE place the two string checks live. They were duplicated between
+// author-time validation and the executor's defensive re-check — which is not
+// redundant belt-and-braces but a real divergence risk, because an instance
+// executes from a WorkflowSnapshot that may PREDATE the validation that would
+// have caught the problem, so the executor genuinely must re-check and must
+// re-check the SAME way.
+//
+// EVERY problem is reported, joined, rather than the first: an author fixing a
+// spawn node should see both a missing childWorkflow and a bad mode in one
+// pass. Callers that need per-problem handling use errors.Is on the sentinels.
+func ParseSpawnConfig(cfg NodeConfig) (SpawnConfig, error) {
+	var problems []error
+	if cfg.ChildWorkflow == "" {
+		problems = append(problems, ErrSpawnChildWorkflowMissing)
+	}
+	if !IsValidSpawnMode(cfg.SpawnMode) {
+		problems = append(problems, fmt.Errorf("%w %s (must be exactly %s or %s)",
+			ErrSpawnModeInvalid, strconv.Quote(cfg.SpawnMode),
+			strconv.Quote(SpawnModeFireAndForget), strconv.Quote(SpawnModeWaitForChild)))
+	}
+	if len(problems) > 0 {
+		return SpawnConfig{}, errors.Join(problems...)
+	}
+	return SpawnConfig{ChildWorkflow: cfg.ChildWorkflow, Mode: cfg.SpawnMode}, nil
+}
 
 // IsValidSpawnMode reports whether m is a recognized spawn mode.
 //
