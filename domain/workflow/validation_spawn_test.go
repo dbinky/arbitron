@@ -250,6 +250,44 @@ func TestValidateSpawn_WaitForChildExtraUnnamedEdge_Rejected(t *testing.T) {
 	}
 }
 
+func TestValidateSpawn_WaitForChildDuplicateSuccessEdge_Rejected(t *testing.T) {
+	// findNextNode (domain/engine/engine.go) follows only the FIRST edge that
+	// matches a port; it never fans out. A second edge on the success port
+	// would silently become dead code with no validation error unless this is
+	// caught here.
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeWaitForChild,
+		}},
+		[]Edge{
+			{Source: "spawn", Target: "ok", Output: SpawnPortSuccess},
+			{Source: "spawn", Target: "bad", Output: SpawnPortSuccess},
+			{Source: "spawn", Target: "bad", Output: SpawnPortFailure},
+		},
+	)
+	errs := Validate(wf, nil, nil, nil)
+	if !hasError(errs, "INVALID_SPAWN_WORKFLOW", "spawn") {
+		t.Fatalf("expected INVALID_SPAWN_WORKFLOW for a duplicate success edge, got %v", codesFor(errs, "spawn"))
+	}
+}
+
+func TestValidateSpawn_WaitForChildDuplicateFailureEdge_Rejected(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeWaitForChild,
+		}},
+		[]Edge{
+			{Source: "spawn", Target: "ok", Output: SpawnPortSuccess},
+			{Source: "spawn", Target: "bad", Output: SpawnPortFailure},
+			{Source: "spawn", Target: "ok", Output: SpawnPortFailure},
+		},
+	)
+	errs := Validate(wf, nil, nil, nil)
+	if !hasError(errs, "INVALID_SPAWN_WORKFLOW", "spawn") {
+		t.Fatalf("expected INVALID_SPAWN_WORKFLOW for a duplicate failure edge, got %v", codesFor(errs, "spawn"))
+	}
+}
+
 // ---------- model_profile posture, at AUTHOR time ----------
 
 // fixedProfileChecker resolves exactly the aliases it is given. It HONOURS the

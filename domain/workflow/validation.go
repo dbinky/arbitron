@@ -698,12 +698,26 @@ func validateSpawnWorkflowNode(node Node, edges []Edge) []ValidationError {
 
 	switch node.Config.SpawnMode {
 	case SpawnModeWaitForChild:
+		// Exactly one edge per port, not merely "at least one": findNextNode
+		// (domain/engine/engine.go) follows only the FIRST edge matching a
+		// port and never fans out, so a second edge on success/failure would
+		// silently become dead code rather than erroring at run time.
 		for _, want := range []string{SpawnPortSuccess, SpawnPortFailure} {
-			if ports[want] == 0 {
+			switch ports[want] {
+			case 0:
 				errs = append(errs, ValidationError{
 					Code:    "MISSING_SPAWN_EDGE",
 					Message: "spawn_workflow node " + node.ID + " (wait_for_child) missing edge for output: " + want,
 					NodeID:  node.ID,
+				})
+			case 1:
+				// exactly one; valid.
+			default:
+				errs = append(errs, ValidationError{
+					Code: "INVALID_SPAWN_WORKFLOW",
+					Message: "spawn_workflow node " + node.ID +
+						" (wait_for_child) must have exactly one edge for output: " + want,
+					NodeID: node.ID,
 				})
 			}
 		}
