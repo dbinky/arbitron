@@ -316,6 +316,64 @@ func TestRecoverWebhooks_TimedOut_FailsInstance(t *testing.T) {
 	instRepo.mu.Unlock()
 }
 
+// TestRecoverWebhooks_TimedOut_WakesChildTerminalHook proves the startup
+// recovery path for an expired webhook timeout wakes an awaited-spawn parent
+// the same way the LIVE OnTimerFired path does. Without this, a wait_for_child
+// parent whose child was mid-webhook-wait at the moment of a crash, and whose
+// webhook timeout had already passed during the downtime window, would never
+// be woken until the NEXT process restart.
+func TestRecoverWebhooks_TimedOut_WakesChildTerminalHook(t *testing.T) {
+	id := uuid.New()
+	token := "recover-token-timeout-wake"
+	nodeID := "webhook-node"
+	pastDue := time.Now().Add(-2 * time.Minute)
+
+	qr := newMockQueueRepo()
+	qr.waitingWithWebhook = []instance.Instance{
+		{
+			ID:            id,
+			State:         instance.StateWaiting,
+			WebhookToken:  &token,
+			CurrentNodeID: &nodeID,
+			WaitingUntil:  &pastDue, // expired during downtime
+		},
+	}
+
+	instRepo := newMockInstanceRepo()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:           id,
+		State:        instance.StateWaiting,
+		WebhookToken: &token,
+	}
+	instRepo.mu.Unlock()
+
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	registry := &mockWebhookRegistry{}
+
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+	m.SetWebhookRegistry(registry)
+
+	var woken []uuid.UUID
+	m.SetChildTerminalHook(func(_ context.Context, instanceID uuid.UUID) {
+		woken = append(woken, instanceID)
+	})
+
+	handler := &mockTimerHandler{}
+	scheduler := queue.NewScheduler(handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	m.SetScheduler(scheduler)
+	err := m.RecoverWebhooks(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, []uuid.UUID{id}, woken, "a timed-out webhook child recovered at startup must wake its awaited-spawn parent, same as the live OnTimerFired path")
+}
+
 func TestRecoverTimers_NilWaitingUntil_Skipped(t *testing.T) {
 	id := uuid.New()
 	qr := newMockQueueRepo()

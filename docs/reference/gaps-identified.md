@@ -48,29 +48,27 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **`RecoverWebhooks` fails a timed-out webhook child during startup recovery
-  without calling the child-terminal wake, unlike its live equivalent.**
-  Found while reviewing area 19 (child-terminal wake); belongs to area 20's
-  scope (`domain/queue/manager.go`/`recovery.go`), not fixed here to keep this
-  pass to one issue. `domain/queue/manager.go:203-221`'s `OnTimerFired` (the
-  LIVE webhook-timeout path) does `SetFailed` then `m.notifyChildTerminal(ctx,
-  instanceID)` with a comment noting this is "the one terminal transition that
-  happens outside domain/engine." But `domain/queue/recovery.go:65-78`'s
-  `RecoverWebhooks` (the STARTUP recovery path, called after
-  `spawnReconciler.Reconcile` in `cmd/arbitron/main.go:1056-1074` — the
-  reconciler has already run by the time this failure happens) does the
-  IDENTICAL `SetFailed` for a webhook instance whose timeout expired during
-  downtime, but never calls `notifyChildTerminal`. Consequence: a
-  `wait_for_child` parent whose child was mid-webhook-wait at the moment of a
-  crash, and whose webhook timeout had already passed during the downtime
-  window, would never be woken — not by the reconciler (which ran before this
-  failure), not by this path (which doesn't call the hook) — until the NEXT
-  process restart. Fix: call `m.notifyChildTerminal(ctx, inst.ID)` after the
-  `SetFailed` in `RecoverWebhooks`, mirroring `OnTimerFired`'s `TimerTypeWebhook`
-  branch, with a test that boots the real composition root, crashes a
-  webhook-wait child past its timeout, restarts, and asserts its
-  `wait_for_child` parent resumes through the failure port in that same
-  startup pass.
+- [ ] **`OnTimerFired`'s own webhook-timeout `notifyChildTerminal` call has no
+  test that proves the wired hook actually fires.** Found while closing area 20
+  review 1 (`domain/queue/manager.go:186-226`). `go tool cover` shows the
+  `m.notifyChildTerminal(ctx, instanceID)` statement at line 222 already at 1
+  hit — but only because the call executes with `m.childTerminal == nil` in
+  every existing `TestOnTimerFired_WebhookTimeout_*` test
+  (`domain/queue/manager_test.go`); none of them calls
+  `m.SetChildTerminalHook(...)` first and asserts the hook was invoked with the
+  right instance ID, the way the newly-added
+  `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook` now does for the
+  startup-recovery sibling path. This is the exact shape of gap just fixed for
+  `RecoverWebhooks` (below): a shared correctness guarantee proven at one call
+  site and silently assumed at the other. No known live bug — the call is
+  present and unconditional on the success path — but the LIVE path (the one
+  every real webhook timeout goes through) deserves its own dedicated
+  hook-invocation test independent of the startup-recovery one, not just
+  statement coverage that happens to pass through a nil hook. Fix: add a test
+  that calls `m.SetChildTerminalHook(...)` before
+  `m.OnTimerFired(ctx, id, queue.TimerTypeWebhook)` and asserts the hook fires
+  with the timed-out instance's ID, mirroring
+  `TestManager_SetChildTerminalHook_IsInvoked`'s assertion shape.
 
 - [ ] **Verify the cascade produces an intervention record for every descendant.**
   `cascadeCancel` routes through `cancelAuthorized`, which calls
@@ -100,6 +98,49 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`RecoverWebhooks` failed a timed-out webhook child during startup
+  recovery without calling the child-terminal wake, unlike its live
+  equivalent.** Focus area 20 (queue-manager child-terminal hook), review 1.
+  Originally found while reviewing area 19 (child-terminal wake).
+  `domain/queue/manager.go:186-226`'s `OnTimerFired` (the LIVE webhook-timeout
+  path) does `SetFailed` then `m.notifyChildTerminal(ctx, instanceID)` with a
+  comment noting this is "the one terminal transition that happens outside
+  domain/engine." But `domain/queue/recovery.go:47-92`'s `RecoverWebhooks` (the
+  STARTUP recovery path, called after `spawnReconciler.Reconcile` in
+  `cmd/arbitron/main.go` — the reconciler has already run by the time this
+  failure happens) did the IDENTICAL `SetFailed` for a webhook instance whose
+  timeout expired during downtime, but never called `notifyChildTerminal` —
+  the same shape of gap this loop has fixed repeatedly for other
+  terminal-transition call sites (areas 19, 16): a shared correctness guarantee
+  proven at one call site and silently assumed at a sibling one. Consequence: a
+  `wait_for_child` parent whose child was mid-webhook-wait at the moment of a
+  crash, and whose webhook timeout had already passed during the downtime
+  window, would never have been woken — not by the reconciler (which ran
+  before this failure), not by this path (which didn't call the hook) — until
+  the NEXT process restart. Added
+  `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook`
+  (`domain/queue/recovery_test.go`), which wires a `SetChildTerminalHook` on
+  the manager, drives `RecoverWebhooks` over a timed-out webhook instance, and
+  asserts the hook fires with that instance's ID; confirmed it fails for the
+  right reason (`[]uuid.UUID(nil)`, hook never invoked) against the
+  pre-fix code, then confirmed it passes after adding
+  `m.notifyChildTerminal(ctx, inst.ID)` to `RecoverWebhooks` right after the
+  `SetFailed` succeeds (only on the success path — a `SetFailed` failure still
+  logs and `continue`s without waking, matching `OnTimerFired`'s own
+  error-propagation shape). Confirmed the rest of area 20's checklist from
+  source: `SetChildTerminalHook`/`notifyChildTerminal` are nil-safe
+  (`TestManager_ChildTerminalHook_IsNilSafe`), `domain/queue` has no
+  `domain/engine` import (grepped the package), and the hook is wired at the
+  real composition root (`cmd/arbitron/main.go:815`,
+  `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)`, already verified
+  end-to-end by area 16's `TestSpawnWaitE2E_*` suite). Left one new,
+  lower-priority gap for review 2 (logged above under Open): the LIVE
+  `OnTimerFired` webhook-timeout path's own `notifyChildTerminal` call has
+  statement coverage but no test that wires a hook and asserts it fires — not
+  a live bug (the call is unconditional on the success path) but the same
+  shape of unverified-call-site gap just fixed here for its startup-recovery
+  sibling. This closes review 1 approval for area 20; review 2 remains open.
 
 - [x] **`OnChildTerminal`'s own `queueRepo.SetQueued` failure branch — the
   function's documented "best-effort" contract — was untested.** Focus area 19
