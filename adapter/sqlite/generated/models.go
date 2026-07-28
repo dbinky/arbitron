@@ -71,6 +71,9 @@ type Instance struct {
 	TriggerSource     string
 	ScheduleID        sql.NullString
 	WorkflowID        sql.NullString
+	ParentInstanceID  sql.NullString
+	ParentNodeID      sql.NullString
+	SpawnMode         sql.NullString
 }
 
 type InstanceDismissal struct {

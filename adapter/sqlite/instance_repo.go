@@ -824,6 +824,14 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
+	// Spawn link (migration 018). Callers that scan the link columns separately
+	// (scanInstanceWithLink) overwrite these with the same conversion right
+	// after; callers whose generated query never selected the columns get the
+	// correct root/no-link zero value here rather than silently dropping it.
+	parentInstanceID, err := nullStringToParentID(row.ParentInstanceID)
+	if err != nil {
+		return nil, fmt.Errorf("converting instance row: %w", err)
+	}
 
 	return &instance.Instance{
 		ID:                id,
@@ -849,5 +857,8 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 		WebhookReceivedAt: webhookReceivedAt,
 		TriggerSource:     instance.TriggerSource(row.TriggerSource),
 		ScheduleID:        scheduleID,
+		ParentInstanceID:  parentInstanceID,
+		ParentNodeID:      nullStringToPtr(row.ParentNodeID),
+		SpawnMode:         instance.SpawnMode(nullStringToString(row.SpawnMode)),
 	}, nil
 }

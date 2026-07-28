@@ -119,3 +119,105 @@ func TestListRunning_PreservesProvenance(t *testing.T) {
 	require.Len(t, rows, 1)
 	assertProvenance(t, &rows[0], sid, wid)
 }
+
+// The same four generated queries characterized above (NextEligible,
+// ListWaitingWithTimer, ListWaitingWithWebhook, ListRunning) went stale a
+// second time: migration 018 added parent_instance_id / parent_node_id /
+// spawn_mode, and none of the four was updated to select or scan them. Every
+// Instance these paths return therefore reports a zero-value spawn link
+// (IsRoot() == true, SpawnMode == "") regardless of what is actually stored,
+// the exact same silent-drop failure mode the provenance tests above pin for
+// trigger_source / schedule_id / workflow_id.
+
+func assertSpawnLink(t *testing.T, got *instance.Instance, parentID uuid.UUID, parentNodeID string, mode instance.SpawnMode) {
+	t.Helper()
+	require.NotNil(t, got.ParentInstanceID, "parent_instance_id lost (nil)")
+	assert.Equal(t, parentID, *got.ParentInstanceID, "parent_instance_id wrong")
+	require.NotNil(t, got.ParentNodeID, "parent_node_id lost (nil)")
+	assert.Equal(t, parentNodeID, *got.ParentNodeID, "parent_node_id wrong")
+	assert.Equal(t, mode, got.SpawnMode, "spawn_mode lost or wrong")
+}
+
+func TestListRunning_PreservesSpawnLink(t *testing.T) {
+	db := setupTestDB(t)
+	instRepo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+
+	parent := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, instRepo.Create(ctx, parent))
+	child := newLinkedInstance(instance.SpawnLink{
+		ParentInstanceID: parent.ID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+	})
+	child.State = instance.StateRunning
+	require.NoError(t, instRepo.Create(ctx, child))
+
+	rows, err := instRepo.ListRunning(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assertSpawnLink(t, &rows[0], parent.ID, "spawn-1", instance.SpawnModeFireAndForget)
+}
+
+func TestNextEligible_PreservesSpawnLink(t *testing.T) {
+	db := setupTestDB(t)
+	instRepo := NewInstanceRepo(db.DB)
+	queueRepo := NewQueueRepo(db.DB)
+	ctx := context.Background()
+
+	parent := newLinkedInstance(instance.SpawnLink{})
+	parent.State = instance.StateRunning
+	require.NoError(t, instRepo.Create(ctx, parent))
+	child := newLinkedInstance(instance.SpawnLink{
+		ParentInstanceID: parent.ID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeWaitForChild,
+	})
+	require.NoError(t, instRepo.Create(ctx, child))
+	require.NoError(t, queueRepo.SetQueued(ctx, child.ID, time.Now().UTC()))
+
+	got, err := queueRepo.NextEligible(ctx, 0, 0)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assertSpawnLink(t, got, parent.ID, "spawn-1", instance.SpawnModeWaitForChild)
+}
+
+func TestListWaitingWithTimer_PreservesSpawnLink(t *testing.T) {
+	db := setupTestDB(t)
+	instRepo := NewInstanceRepo(db.DB)
+	queueRepo := NewQueueRepo(db.DB)
+	ctx := context.Background()
+
+	parent := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, instRepo.Create(ctx, parent))
+	child := newLinkedInstance(instance.SpawnLink{
+		ParentInstanceID: parent.ID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+	})
+	require.NoError(t, instRepo.Create(ctx, child))
+	until := time.Now().UTC().Add(time.Hour)
+	require.NoError(t, instRepo.SetWaiting(ctx, child.ID, &until))
+
+	rows, err := queueRepo.ListWaitingWithTimer(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assertSpawnLink(t, &rows[0], parent.ID, "spawn-1", instance.SpawnModeFireAndForget)
+}
+
+func TestListWaitingWithWebhook_PreservesSpawnLink(t *testing.T) {
+	db := setupTestDB(t)
+	instRepo := NewInstanceRepo(db.DB)
+	queueRepo := NewQueueRepo(db.DB)
+	ctx := context.Background()
+
+	parent := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, instRepo.Create(ctx, parent))
+	child := newLinkedInstance(instance.SpawnLink{
+		ParentInstanceID: parent.ID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeWaitForChild,
+	})
+	child.State = instance.StateWaiting
+	require.NoError(t, instRepo.Create(ctx, child))
+	tok := "tok-spawn"
+	hash := "hash-spawn"
+	require.NoError(t, instRepo.SetWebhookFields(ctx, child.ID, &tok, &hash))
+
+	rows, err := queueRepo.ListWaitingWithWebhook(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assertSpawnLink(t, &rows[0], parent.ID, "spawn-1", instance.SpawnModeWaitForChild)
+}

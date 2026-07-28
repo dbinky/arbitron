@@ -88,6 +88,47 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **The generated-query staleness bug that hit `trigger_source`/`schedule_id`/
+  `workflow_id` recurred for migration 018's spawn-link columns.** Focus area 7
+  review 2. This exact codebase already has a documented failure mode
+  (`adapter/sqlite/instance_repo_stale_queries_test.go`'s pre-existing
+  provenance tests): four hand-frozen `sqlc`-generated query functions in
+  `adapter/sqlite/generated/*.sql.go` (`ListRunningInstances`, `NextEligible`,
+  `ListWaitingWithTimer`, `ListWaitingWithWebhook`) each embed a literal SELECT
+  column list and a matching `Scan(...)` call, and neither is regenerated in
+  this environment (no `sqlc` binary — `which sqlc` exits 127) when a
+  migration adds columns. Migration `018_instance_spawn_link` added
+  `parent_instance_id`/`parent_node_id`/`spawn_mode`, but none of the four
+  queries' SELECT lists or Scan calls were updated for them, and
+  `generated.Instance` (`adapter/sqlite/generated/models.go`) had no fields to
+  hold them either — so every instance returned by these four paths silently
+  reported a zero-value spawn link (`IsRoot() == true`, `SpawnMode == ""`)
+  regardless of what was actually stored, the identical silent-drop shape
+  already characterized for the three provenance fields. Traced all four call
+  sites (`Engine.RecoverCrashedInstances`, `Manager.Evaluate` via
+  `queueRepo.NextEligible`, `queue.RecoverTimers`/`RecoverWebhooks`) and
+  confirmed none has a LIVE bug today — each either re-fetches the instance
+  fresh via `Get` before touching spawn-link fields, or only reads fields the
+  missing columns don't affect — but left uncorrected this is a landmine for
+  the very next caller that reads `.ParentInstanceID`/`.SpawnMode` off one of
+  these four result sets. Fixed by adding the three `sql.NullString` fields to
+  `generated.Instance`, appending `parent_instance_id, parent_node_id,
+  spawn_mode` to the SELECT column list and `&i.ParentInstanceID,
+  &i.ParentNodeID, &i.SpawnMode` to the Scan call in all four generated
+  functions, and populating the domain conversion in `rowToInstance`
+  (`adapter/sqlite/instance_repo.go`) so any caller of the shared helper gets
+  the correct value rather than silently dropping it. Added four failing-first
+  characterization tests in `adapter/sqlite/instance_repo_stale_queries_test.go`
+  (`TestListRunning_PreservesSpawnLink`, `TestNextEligible_PreservesSpawnLink`,
+  `TestListWaitingWithTimer_PreservesSpawnLink`,
+  `TestListWaitingWithWebhook_PreservesSpawnLink`), each creating a real
+  parent+child pair via the production `InstanceRepo`/`QueueRepo` and driving
+  the real repo method, confirmed all four failed for the right reason before
+  the fix and passed after, with no regression in the pre-existing provenance
+  or spawn-link suites. This is the "error"/latent-defect category the area
+  was missing (the round-trip, partial-link, root, and pre-existing-row cases
+  were already covered by review 1) — closes review 2 approval for area 7.
+
 - [x] **The partial-link guard in `InstanceRepo.Create` was undocumented by any
   test.** Focus area 7 review 1. `adapter/sqlite/instance_repo.go:80-88`
   documents and implements a load-bearing guard — a caller supplying only SOME

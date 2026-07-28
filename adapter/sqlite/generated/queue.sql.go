@@ -114,7 +114,7 @@ func (q *Queries) ListQueued(ctx context.Context) ([]Instance, error) {
 }
 
 const listWaitingWithTimer = `-- name: ListWaitingWithTimer :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AND webhook_token IS NULL
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode FROM instances WHERE state = 'waiting' AND waiting_until IS NOT NULL AND webhook_token IS NULL
 `
 
 func (q *Queries) ListWaitingWithTimer(ctx context.Context) ([]Instance, error) {
@@ -150,6 +150,9 @@ func (q *Queries) ListWaitingWithTimer(ctx context.Context) ([]Instance, error) 
 			&i.TriggerSource,
 			&i.ScheduleID,
 			&i.WorkflowID,
+			&i.ParentInstanceID,
+			&i.ParentNodeID,
+			&i.SpawnMode,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +168,7 @@ func (q *Queries) ListWaitingWithTimer(ctx context.Context) ([]Instance, error) 
 }
 
 const listWaitingWithWebhook = `-- name: ListWaitingWithWebhook :many
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode FROM instances WHERE state = 'waiting' AND webhook_token IS NOT NULL
 `
 
 func (q *Queries) ListWaitingWithWebhook(ctx context.Context) ([]Instance, error) {
@@ -201,6 +204,9 @@ func (q *Queries) ListWaitingWithWebhook(ctx context.Context) ([]Instance, error
 			&i.TriggerSource,
 			&i.ScheduleID,
 			&i.WorkflowID,
+			&i.ParentInstanceID,
+			&i.ParentNodeID,
+			&i.SpawnMode,
 		); err != nil {
 			return nil, err
 		}
@@ -216,7 +222,7 @@ func (q *Queries) ListWaitingWithWebhook(ctx context.Context) ([]Instance, error
 }
 
 const nextEligible = `-- name: NextEligible :one
-SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id FROM instances i
+SELECT id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode FROM instances i
 WHERE i.state = 'queued'
   AND (?1 = 0 OR (SELECT COUNT(*) FROM instances WHERE state = 'running') < ?1)
   AND (?2 = 0 OR (SELECT COUNT(*) FROM instances WHERE state = 'running' AND owner_id = i.owner_id) < ?2)
@@ -262,6 +268,9 @@ func (q *Queries) NextEligible(ctx context.Context, arg NextEligibleParams) (Ins
 		&i.TriggerSource,
 		&i.ScheduleID,
 		&i.WorkflowID,
+		&i.ParentInstanceID,
+		&i.ParentNodeID,
+		&i.SpawnMode,
 	)
 	return i, err
 }
