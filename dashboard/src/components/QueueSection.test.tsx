@@ -205,7 +205,12 @@ describe('QueueSection — row detail panel', () => {
 })
 
 describe('QueueSection — run hierarchy cache invalidation on refresh', () => {
-  it('a refreshSignal bump collapses an expanded row and drops its stale cached children', async () => {
+  // Expansion is USER INTENT and survives a refresh; only the fetched rows are
+  // a cache and go stale. Collapsing everything on any lifecycle event anywhere
+  // in the system made the tree unusable exactly when it mattered: watching a
+  // spawning run IS a stream of lifecycle events, so the tree slammed shut every
+  // few seconds, mid-inspection.
+  it('a refreshSignal bump keeps an expanded row open and refetches its children', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.instances.list).mockResolvedValue([
       summary({ id: 'child1', runName: 'Child Run', parentInstanceId: 'p1' }),
@@ -233,8 +238,9 @@ describe('QueueSection — run hierarchy cache invalidation on refresh', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.queryByText('Child Run')).toBeNull()
-    expect(screen.getByRole('button', { name: /show child runs of parent run/i })).toBeInTheDocument()
+    expect(await screen.findByText('Child Run')).toBeInTheDocument()
+    expect(vi.mocked(api.instances.list)).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: /hide child runs of parent run/i })).toBeInTheDocument()
   })
 
   it('re-rendering with the same refreshSignal does not disturb an expanded row', async () => {

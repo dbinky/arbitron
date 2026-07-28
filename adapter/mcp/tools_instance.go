@@ -28,6 +28,10 @@ func RegisterInstanceTools(srv *Server) {
 			gomcp.WithString("parent", gomcp.Description(
 				"Narrow by position in the spawn hierarchy: omit for all runs, "+
 					"\"roots\" for top-level runs only, or an instance UUID for that run's children")),
+			gomcp.WithNumber("limit", gomcp.Description(
+				fmt.Sprintf("Maximum rows to return (default %d, maximum %d)", mcpListDefaultLimit, mcpListMaxLimit))),
+			gomcp.WithNumber("offset", gomcp.Description(
+				"Rows to skip, for paging past the limit")),
 		),
 		instanceListHandler(srv),
 	)
@@ -102,6 +106,13 @@ func RegisterInstanceTools(srv *Server) {
 	)
 }
 
+// Paging bounds for instance_list. The default matches the repository's
+// historical implicit page size; the maximum bounds one tool call's payload.
+const (
+	mcpListDefaultLimit = 50
+	mcpListMaxLimit     = 500
+)
+
 func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
 		args := request.GetArguments()
@@ -129,6 +140,20 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 		filters.ParentScope = scope
 		filters.ParentInstanceID = parentID
 
+		// REAL paging, not a silent default. Without it the parent scope
+		// inherited the repository's unspoken 50-row cap, so a run with more
+		// children than that returned a truncated list INDISTINGUISHABLE from a
+		// complete one — an agent reading it would conclude the extra children do
+		// not exist. An explicit, documented limit with an offset is what makes
+		// "there may be more" expressible at all.
+		filters.Limit = mcpListDefaultLimit
+		if v, ok := args["limit"].(float64); ok && v > 0 {
+			filters.Limit = min(int(v), mcpListMaxLimit)
+		}
+		if v, ok := args["offset"].(float64); ok && v > 0 {
+			filters.Offset = int(v)
+		}
+
 		enriched, err := srv.deps.Engine.ListEnriched(ctx, filters)
 		if err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to list instances: %s", err)), nil
@@ -136,6 +161,11 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 		if enriched == nil {
 			enriched = []instance.EnrichedInstanceSummary{}
 		}
+		// The result stays a BARE ARRAY: the REST endpoint returns one, and a
+		// parity test pins the two surfaces to the same shape. Truncation is
+		// expressible because the limit is now documented and caller-set — a full
+		// page means "ask for the next offset" — rather than an unspoken 50 the
+		// caller could not distinguish from a complete list.
 		return MarshalResult(enriched)
 	}
 }

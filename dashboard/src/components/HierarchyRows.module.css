@@ -9,3 +9,10 @@
   font-size: 12px;
   color: #d64545;
 }
+
+.levelTruncated {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-style: italic;
+  opacity: 0.7;
+}

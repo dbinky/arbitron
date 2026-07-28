@@ -10,7 +10,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import HierarchyRows from './HierarchyRows'
-import { useRunHierarchy } from '../hooks/useRunHierarchy'
+import { CHILD_PAGE_LIMIT, useRunHierarchy } from '../hooks/useRunHierarchy'
 
 function row(id: string, overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -69,7 +69,7 @@ it('expanding a row fetches and renders its children nested', async () => {
   fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
 
   await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
-  expect(listMock).toHaveBeenCalledWith({ parent: 'p1' })
+  expect(listMock).toHaveBeenCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, includeDismissed: true })
 })
 
 // ---------- success ----------
@@ -88,8 +88,8 @@ it('expanding a child renders grandchildren, one level per request', async () =>
   fireEvent.click(screen.getByLabelText('Show child runs of run — c1'))
   await waitFor(() => expect(screen.getByText('wf-g1')).toBeTruthy())
 
-  expect(listMock).toHaveBeenNthCalledWith(1, { parent: 'p1' })
-  expect(listMock).toHaveBeenNthCalledWith(2, { parent: 'c1' })
+  expect(listMock).toHaveBeenNthCalledWith(1, { parent: 'p1', limit: CHILD_PAGE_LIMIT, includeDismissed: true })
+  expect(listMock).toHaveBeenNthCalledWith(2, { parent: 'c1', limit: CHILD_PAGE_LIMIT, includeDismissed: true })
 })
 
 it('nests visually by depth', async () => {
@@ -201,4 +201,36 @@ it('expanding a row to show its children does not nest one <tbody> inside anothe
   )
   errorSpy.mockRestore()
   expect(nestingWarning).toBeUndefined()
+})
+
+// ---------- truncation ----------
+
+// TRUNCATION IS STATED, NOT CLAMPED. The row's childCount comes from the server
+// and counts every child the caller may see; one expansion is ONE page. When
+// they disagree the UI must say so and say by how much — clamping the badge
+// down to the page size would make them agree by LYING about how many children
+// exist, and the user would never learn the rest are there.
+it('states how many children are shown when the page does not cover them all', async () => {
+  listMock.mockResolvedValue([row('c1', { parentInstanceId: 'p1' })])
+  render(<Harness rows={[row('p1', { childCount: 4 })]} />)
+
+  fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
+  await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
+
+  expect(screen.getByText(/Showing 1 of 4 child runs/)).toBeTruthy()
+})
+
+// No truncation row when the page covers everything — the common case must not
+// carry a permanent "there might be more" caveat.
+it('shows no truncation row when every child is on the page', async () => {
+  listMock.mockResolvedValue([
+    row('c1', { parentInstanceId: 'p1' }),
+    row('c2', { parentInstanceId: 'p1' }),
+  ])
+  render(<Harness rows={[row('p1', { childCount: 2 })]} />)
+
+  fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
+  await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
+
+  expect(screen.queryByText(/Showing/)).toBeNull()
 })

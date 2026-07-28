@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
 import type { ColumnDef } from './queueColumns'
-import type { RunHierarchy } from '../hooks/useRunHierarchy'
+import { CHILD_PAGE_LIMIT, type RunHierarchy } from '../hooks/useRunHierarchy'
 import QueueTableRow from './QueueTableRow'
 import styles from './HierarchyRows.module.css'
 
@@ -55,10 +55,12 @@ export default function HierarchyRows({
   return (
     <>
       {rows.map((inst) => {
-        const hasChildren = (inst.childCount ?? 0) > 0
+        const total = inst.childCount ?? 0
+        const hasChildren = total > 0
         const expanded = hierarchy.isExpanded(inst.id)
         const error = hierarchy.errorOf(inst.id)
         const loading = hierarchy.isLoading(inst.id)
+        const shown = hierarchy.childrenOf(inst.id).length
 
         return (
           // A plain Fragment, not a <tbody> — this block recurses into its own
@@ -108,6 +110,21 @@ export default function HierarchyRows({
               <tr>
                 <td colSpan={columns.length + 1} className={styles.levelError}>
                   {error}
+                </td>
+              </tr>
+            )}
+
+            {/* TRUNCATION IS STATED, NOT CLAMPED. The row's childCount comes
+                from the server and counts every child the caller may see; the
+                expansion is ONE page. When they disagree, say so and say by how
+                much — clamping the badge down to the page size would make the
+                two agree by LYING about how many children exist, and the user
+                would never learn that more are there. */}
+            {expanded && !loading && !error && shown < total && (
+              <tr>
+                <td colSpan={columns.length + 1} className={styles.levelTruncated}>
+                  Showing {shown} of {total} child runs
+                  {shown >= CHILD_PAGE_LIMIT ? ' (first page)' : ''}
                 </td>
               </tr>
             )}

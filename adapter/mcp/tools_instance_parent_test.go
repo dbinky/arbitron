@@ -165,3 +165,55 @@ func TestMCPInstanceList_UnknownParentReturnsEmpty(t *testing.T) {
 	assert.Empty(t, rows, "naming a run the caller cannot see returns an empty list, "+
 		"identical to a parent with no children — existence is not disclosed")
 }
+
+// ---------- paging ----------
+
+// Before explicit paging, the parent scope inherited the repository's unspoken
+// 50-row default, so a run with more children than that returned a TRUNCATED
+// list indistinguishable from a complete one — an agent reading it would
+// conclude the missing children do not exist. The limit is now stated in the
+// tool schema and set on every call.
+func TestMCPInstanceList_SetsAnExplicitDefaultLimit(t *testing.T) {
+	env := newParentToolEnv(t)
+
+	callListToolWithArgs(t, env.srv, env.ctx, map[string]any{"parent": "roots"})
+
+	assert.Equal(t, 50, env.captured().Limit,
+		"the page size must be explicit on the filters, not an unspoken repository default")
+	assert.Equal(t, 0, env.captured().Offset)
+}
+
+func TestMCPInstanceList_HonoursLimitAndOffset(t *testing.T) {
+	env := newParentToolEnv(t)
+
+	callListToolWithArgs(t, env.srv, env.ctx, map[string]any{
+		"parent": "roots", "limit": float64(10), "offset": float64(20),
+	})
+
+	assert.Equal(t, 10, env.captured().Limit)
+	assert.Equal(t, 20, env.captured().Offset)
+}
+
+// An unbounded limit would let one tool call pull the whole table into a model
+// context; the cap is what keeps paging the only way to read a large tree.
+func TestMCPInstanceList_ClampsAnOversizedLimit(t *testing.T) {
+	env := newParentToolEnv(t)
+
+	callListToolWithArgs(t, env.srv, env.ctx, map[string]any{
+		"parent": "roots", "limit": float64(100000),
+	})
+
+	assert.Equal(t, 500, env.captured().Limit)
+}
+
+// A nonsensical limit falls back to the default rather than to zero, which the
+// repository would silently turn back into its own default.
+func TestMCPInstanceList_IgnoresANonPositiveLimit(t *testing.T) {
+	env := newParentToolEnv(t)
+
+	callListToolWithArgs(t, env.srv, env.ctx, map[string]any{
+		"parent": "roots", "limit": float64(0),
+	})
+
+	assert.Equal(t, 50, env.captured().Limit)
+}
