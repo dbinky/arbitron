@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -970,6 +971,7 @@ func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
 				Model:           "gpt-4o",
 				Backend:         "claude-code",
 				RetryCount:      2,
+				ChildCount:      3,
 			}}, nil
 		},
 	}
@@ -984,6 +986,18 @@ func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
 	assert.Contains(t, body, "claude-code", "backend reaches the MCP result")
 	assert.Contains(t, body, "alice", "submitter name reaches the MCP result")
 	assert.Contains(t, body, "2", "retry count reaches the MCP result")
+
+	// EnrichedInstanceSummary.ChildCount carries no JSON tag — the same
+	// untagged convention already used by its siblings RetryCount/QueuePosition/
+	// FailedNodeID — so MCP marshals it under its bare Go field name
+	// "ChildCount" rather than REST's DTO-mapped "childCount". Decode (not
+	// substring-match) so a tag added only on one side, or the count silently
+	// dropping to 0, fails this test instead of slipping through.
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &rows))
+	require.Len(t, rows, 1)
+	assert.Equal(t, float64(3), rows[0]["ChildCount"],
+		"ChildCount must reach the MCP result under its Go field name")
 }
 
 // ---------------------------------------------------------------------------

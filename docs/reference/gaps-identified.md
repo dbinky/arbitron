@@ -26,18 +26,6 @@ escalate** — never a tolerated no-op.
   section's row set is refreshed, with a Vitest case asserting a stale cached
   child is not re-rendered after a refetch.
 
-- [ ] **Verify `ChildCount` / `parentInstanceId` field names on the MCP surface.**
-  `adapter/mcp/tools_instance.go:139` returns `MarshalResult(enriched)` over
-  `[]instance.EnrichedInstanceSummary` directly. The embedded `InstanceSummary`
-  carries JSON tags (`parentInstanceId`), but `EnrichedInstanceSummary.ChildCount`
-  (`domain/instance/instance.go:213`) has **no** JSON tag, so it marshals as
-  `ChildCount` while REST emits `childCount`
-  (`adapter/http/instance_handler.go:258`). Confirm whether this divergence is
-  pre-existing for the sibling fields (`RetryCount`, `QueuePosition`) and
-  therefore consistent, or whether the REST/MCP parity contract
-  (`adapter/mcp/parity_test.go`) is now weaker than it reads. Record the decision;
-  do not leave it unexamined.
-
 - [ ] **Confirm the awaited-spawn wait is invisible to the timer recovery sweep.**
   `executeWait` transitions the parent with `instances.UpdateState(ctx, id,
   StateWaiting)` and the comment claims `waiting_until` stays NULL so
@@ -128,9 +116,75 @@ escalate** — never a tolerated no-op.
   reachable by a real caller; pick up if area 19 needs further passes or if a
   future caller starts invoking `OnChildTerminal` before its terminal write.
 
+- [ ] **`EnrichedInstanceSummary.FailedNodeID` is declared twice — once
+  promoted from the embedded `InstanceSummary` (tagged `failedNodeId,omitempty`),
+  once again directly on `EnrichedInstanceSummary` itself (no tag) — so Go's
+  shallower-field-wins rule silently drops the promoted, tagged field from ANY
+  direct `encoding/json` marshal of the struct and marshals only the untagged
+  one under the bare key `"FailedNodeID"`.** Found while closing area 25 review 1
+  (`domain/instance/instance.go:177` vs `:208`), while confirming the sibling
+  fields referenced by the `ChildCount`/MCP-field-names gap (now fixed, see
+  Fixed section) really do share one untagged convention. Pre-existing —
+  present unchanged at the branch point, `ChildCount` did not introduce it — so
+  out of scope for this feature's own fix, but worth a decision: MCP's
+  `MarshalResult(enriched)` (`adapter/mcp/tools_instance.go:139`) marshals
+  `EnrichedInstanceSummary` directly, so an MCP client asking for the failed
+  node ID would need to read `"FailedNodeID"`, not `"failedNodeId"` — inconsistent
+  with every other tagged field on the same embedded type it hides. REST is
+  unaffected (it maps through `enrichedSummaryDTO`, never marshals the domain
+  struct directly). No test currently pins which key wins; a future rename of
+  either declaration could silently flip client-visible behaviour.
+
 ---
 
 ## Fixed
+
+- [x] **`ChildCount`'s MCP field name was undocumented-by-test and the
+  REST/MCP divergence unexamined.** Focus area 25 (MCP `instance_list` parent
+  selector), review 1. `adapter/mcp/tools_instance.go:139` returns
+  `MarshalResult(enriched)` over `[]instance.EnrichedInstanceSummary` directly.
+  `EnrichedInstanceSummary.ChildCount` (`domain/instance/instance.go:213`) has
+  no JSON tag, so it marshals as `"ChildCount"` while REST's
+  `enrichedSummaryDTO` (`adapter/http/instance_handler.go:258`) emits
+  `"childCount"`. Read the rest of `EnrichedInstanceSummary`
+  (`RunName`, `Submitter`, `FriendlyStep`, `Model`, `Backend`, `RetryCount`,
+  `QueuePosition`, `FailedNodeID`) and confirmed via `git diff` against the
+  branch point that NONE of the struct's own fields carry JSON tags — this is
+  a pre-existing, deliberate convention (`parity_test.go`'s own comment: "MCP
+  marshals the domain struct with PascalCase keys; REST maps to a ... DTO"),
+  not a new asymmetry `ChildCount` introduced. So the divergence is consistent,
+  not a bug — but no test proved `ChildCount` actually reaches the MCP surface
+  at all, under any key. Extended `TestInstanceList_ReturnsEnrichedFields`
+  (`adapter/mcp/tools_instance_test.go`) to set `ChildCount: 3` on the stub
+  enriched row, decode the MCP response body, and assert
+  `rows[0]["ChildCount"] == 3` (a real decode, not a substring match); confirmed
+  it fails for the right reason (`expected: 3, actual: 0`) with `ChildCount: 3`
+  temporarily removed from the fixture, then confirmed it passes with it
+  restored. Independently re-verified the rest of area 25's checklist from
+  source: the `parent` string arg and its description are present
+  (`tools_instance.go:28-30`); the SAME `instance.ParseParentScope` decoder
+  REST uses is called (grepped both call sites); a malformed selector returns a
+  tool error, covered for three malformed inputs
+  (`TestMCPInstanceList_MalformedParentIsAnError`); the parent selector itself
+  has happy (`_RootsOnly`, `_ChildrenOfAParent`), success
+  (`_NoParentArgDoesNoNarrowing`, `_ParentComposesWithStateArg`), failure/error
+  (`_MalformedParentIsAnError`), and edge (`_UnknownParentReturnsEmpty`)
+  coverage in `tools_instance_parent_test.go`, and its fake
+  (`parityInstanceRepo` in `parity_test.go`) genuinely honours `ParentScope`/
+  `ParentInstanceID` rather than ignoring them; composition-root wiring
+  confirmed real — `cmd/arbitron/main.go:1178` constructs
+  `adaptmcp.NewServerWithDeps("arbitron", "0.1.0", ds.mcpDeps())` then
+  `RegisterAllTools(mcpSrv)` → `RegisterInstanceTools`, and `mcpDeps()`
+  (`main.go:244-246`) passes the real `ds.eng`, not a stub. While confirming
+  the untagged-fields claim, found a separate, pre-existing gap — a duplicate
+  `FailedNodeID` declaration that shadows the embedded, tagged one for direct
+  JSON marshaling — logged above under Open rather than fixed here (out of
+  scope: present unchanged since the branch point, not introduced by
+  `ChildCount`). Ran the full `go test ./...`, `npx tsc --noEmit`, and
+  `npx vitest run`: no new failures beyond the recorded baseline (the one
+  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
+  errors; vitest 464 passed, 0 failed). This closes review 1 approval for area
+  25; review 2 remains open.
 
 - [x] **`400 INVALID_PARENT`'s specific error CODE was never pinned by a test —
   only the HTTP status.** Focus area 24 (REST list parent selector & hierarchy
