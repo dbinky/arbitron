@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,18 @@ func bootSpawnStack(t *testing.T) *domainStack {
 	require.NoError(t, err, "the composition root must boot with a spawn workflow present")
 	t.Cleanup(func() { ds.Close(context.Background()) })
 	return ds
+}
+
+// adminCtxForLocalUser returns a context carrying the local-mode default user's
+// admin identity, which intervention paths (Cancel/Retry) authorize against.
+func adminCtxForLocalUser(t *testing.T, ds *domainStack) context.Context {
+	t.Helper()
+	return identity.WithIdentity(context.Background(), identity.Identity{
+		UserID:      localDefaultUser,
+		Username:    "local",
+		Role:        identity.RoleAdmin,
+		Departments: []string{"default"},
+	})
 }
 
 // childrenOf returns the persisted children of parentID, read straight from the

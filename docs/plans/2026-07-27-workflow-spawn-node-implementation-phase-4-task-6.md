@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `cmd/arbitron/spawn_wait_e2e_test.go`:
 
@@ -234,7 +234,16 @@ func adminCtxForLocalUser(t *testing.T, ds *domainStack) context.Context {
 
 and add `"github.com/arbitron/arbitron/domain/identity"` to that file's imports.
 
-- [ ] **Step 2: Run it, confirm it fails when the reconciler/wake are absent**
+> NOTE (as implemented): the child workflow gains a leading `hold` node
+> (`tool_call` running `sh -c "sleep 2; echo '{}'"`) before its outcome node. As
+> written, the whole spawn -> child -> wake -> resume cycle completes in under
+> 500ms, so the parent's transient `waiting` state was gone before any poll could
+> observe it and all four tests failed on real, working wiring. The hold makes
+> the suspension observable; every assertion in the plan is unchanged.
+> (`timer_delay` was tried first and re-arms itself on every wake, so the child
+> never terminated.)
+
+- [x] **Step 2: Run it, confirm it fails when the reconciler/wake are absent**
 
 Run it against the current tree first:
 
@@ -266,7 +275,7 @@ Restore:
 mv domain/engine/engine.go.bak domain/engine/engine.go
 ```
 
-- [ ] **Step 3: Run it against the real wiring, confirm it passes**
+- [x] **Step 3: Run it against the real wiring, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -285,7 +294,7 @@ PASS
 ok  	github.com/arbitron/arbitron/cmd/arbitron	8.6s
 ```
 
-- [ ] **Step 4: Document the loop-body restriction**
+- [x] **Step 4: Document the loop-body restriction**
 
 In `AGENTS.md`, in the "Engine and Loop Behavior" section, replace the
 interactive-node paragraph with:
@@ -298,7 +307,7 @@ Do not put an **awaited** `spawn_workflow` node (`spawnMode: wait_for_child`) in
 A **fire-and-forget** `spawn_workflow` node is loop-safe and carries no such restriction: it has no short-circuit, so each revisit spawns a new child, consistent with the documented re-execution semantics of loop revisits.
 ```
 
-- [ ] **Step 5: Full Go gate**
+- [x] **Step 5: Full Go gate**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -307,7 +316,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add cmd/arbitron/spawn_wait_e2e_test.go cmd/arbitron/spawn_e2e_test.go AGENTS.md

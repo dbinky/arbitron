@@ -85,6 +85,10 @@ The engine permits cyclic graphs. There is no general engine-level runaway guard
 
 Do not put interactive nodes in loop bodies. The interactive executor has reuse/session behavior that is not appropriate for repeated loop passes.
 
+Do not put an **awaited** `spawn_workflow` node (`spawnMode: wait_for_child`) in a loop body, for the same underlying reason. Its resumption short-circuit cannot distinguish a re-entry-after-wait from a back-edge revisit: both arrive at the node with a terminal link already recorded for (parent, node), so a revisit reads the PREVIOUS child's outcome and routes immediately instead of spawning a new child.
+
+A **fire-and-forget** `spawn_workflow` node is loop-safe and carries no such restriction: it has no short-circuit, so each revisit spawns a new child, consistent with the documented re-execution semantics of loop revisits.
+
 Instance workspaces are managed through the `WorkspaceManager` port. Agent nodes should mutate only the instance workspace, exposed to templates as `{{workspace}}`.
 
 ## Provider and Credential Safety
