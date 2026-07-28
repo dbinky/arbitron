@@ -7,6 +7,13 @@ read files and must not claim to.
 ## Context
 - Tracking files live at `./work/RALPH.md`, `./work/docs/reference/focus-areas.md`, `./work/docs/reference/gaps-identified.md`.
 - The most recent refinement pass reported: {{refine.response}}
+- **What that pass actually committed** — read from git, not from the pass's prose:
+  - new commits this pass: `{{record-pass-commit.new_commit_count}}`
+  - tracking files (focus-areas / gaps-identified) touched: `{{record-pass-commit.tracking_touched}}`
+  - **hard progress signal** (`progress_evidence`): `{{record-pass-commit.progress_evidence}}`
+  - what changed: {{record-pass-commit.summary}}
+  - commit log:
+    {{record-pass-commit.commit_stat}}
 - **Branch-point test baseline** (failures that existed BEFORE this branch — these do NOT block): `{{record-baseline.test_baseline}}`
 - Consecutive prior passes that made no progress: {{no_progress_streak}}
 
@@ -65,9 +72,18 @@ coexist with an unwired component, so weigh the wiring evidence too.
 - `done`: boolean per the rule above. Be conservative: if any review lacks its
   required approvals, any gap is open, or any component is unwired, `done = false`.
 - `notes`: one sentence on the remaining blocker, or "done".
-- `progressed`: boolean — did THIS pass make real forward progress (advanced or
-  approved a review, fixed a real gap, wired a component, removed a NEW failure)?
-  A pass that only re-ran tests, churned, or got blocked counts as `false`.
+- `progressed`: boolean — **decide this from the commit evidence above, not from
+  the tone of the report.**
+  - If `progress_evidence` is `true`, emit `progressed: true`. A pass that produced
+    a new commit did real work. This is not a judgement call, and you must not
+    overrule it because the response dwells on what is left: the pass is REQUIRED
+    to report remaining work, so a report full of open items is the normal shape of
+    a productive pass, not evidence of churn. Judging progress from that narrative
+    is how two near-identical reports previously scored opposite verdicts and
+    killed a healthy run.
+  - If `progress_evidence` is `false`, nothing was committed. Judge from the pass's
+    `Progress:` line and the rest of its report — a pass that only re-ran tests,
+    churned, or got blocked counts as `false`.
 - `consecutive_no_progress`: integer. If `progressed` is true, emit `0`. Otherwise
   emit {{no_progress_streak}} + 1. This lets the loop bail out when it is stuck
   rather than spinning to the iteration cap.

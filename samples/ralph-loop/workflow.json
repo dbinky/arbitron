@@ -268,6 +268,22 @@
       }
     },
     {
+      "id": "record-pass-commit",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-pass-commit.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Record pass commit",
+      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone \u2014 but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
       "id": "refine-assess",
       "type": "llm_call",
       "config": {
@@ -302,7 +318,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1540
+        "y": 1680
       }
     },
     {
@@ -327,7 +343,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1680
+        "y": 1820
       }
     },
     {
@@ -361,7 +377,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 1820
+        "y": 1960
       }
     },
     {
@@ -377,7 +393,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 1960
+        "y": 2100
       }
     },
     {
@@ -396,7 +412,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 2100
+        "y": 2240
       }
     },
     {
@@ -406,7 +422,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "ralph-loop complete — {{slug}}",
+          "ralph-loop complete \u2014 {{slug}}",
           "The refinement loop finished and opened a PR ({{push-and-pr.pr_url}}) against {{base_branch}}.",
           "good",
           "Repo={{repo_url}}",
@@ -422,7 +438,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 2240
+        "y": 2380
       }
     },
     {
@@ -442,7 +458,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 2380
+        "y": 2520
       }
     }
   ],
@@ -489,6 +505,10 @@
     },
     {
       "source": "refine",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "record-pass-commit",
       "target": "refine-assess"
     },
     {

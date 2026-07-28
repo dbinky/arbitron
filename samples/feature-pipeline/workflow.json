@@ -25,7 +25,7 @@
     {
       "name": "spec_only",
       "type": "boolean",
-      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed — before implementation begins. The plans are checkpoint-pushed on both paths.",
+      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed \u2014 before implementation begins. The plans are checkpoint-pushed on both paths.",
       "default": false,
       "required": false
     },
@@ -68,7 +68,7 @@
       "name": "teams_webhook_url",
       "type": "string",
       "description": "Power Automate / Teams webhook URL for completion alerts. Leave empty in the committed sample (the notify-teams steps are no-ops when unset, or read ARBITRON_TEAMS_WEBHOOK_URL from the server env). The runtime workflow stores the real URL as this default.",
-      "default": "https://example.invalid/teams-webhook-redacted",
+      "default": "",
       "required": false
     },
     {
@@ -534,6 +534,22 @@
       }
     },
     {
+      "id": "record-pass-commit",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/record-pass-commit.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Record pass commit",
+      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone \u2014 but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3040
+      }
+    },
+    {
       "id": "refine-assess",
       "type": "llm_call",
       "config": {
@@ -568,7 +584,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3040
+        "y": 3180
       }
     },
     {
@@ -593,7 +609,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3200
+        "y": 3340
       }
     },
     {
@@ -627,7 +643,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3360
+        "y": 3500
       }
     },
     {
@@ -643,7 +659,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3520
+        "y": 3660
       }
     },
     {
@@ -662,7 +678,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3680
+        "y": 3820
       }
     },
     {
@@ -702,7 +718,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3840
+        "y": 3980
       }
     },
     {
@@ -712,7 +728,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline complete — {{slug}}",
+          "feature-pipeline complete \u2014 {{slug}}",
           "Spec, phased designs, plans, implementation and the ralph refinement loop are done; a PR has been opened ({{push-and-pr.pr_url}}). PR review runs automatically on open.",
           "good",
           "Repo={{repo_url}}",
@@ -728,7 +744,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3760
+        "y": 3900
       }
     },
     {
@@ -738,7 +754,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline (spec-only) complete — {{slug}}",
+          "feature-pipeline (spec-only) complete \u2014 {{slug}}",
           "Spec, phased designs and TDD task plans were produced, aligned and checkpoint-pushed. Stopped before implementation (spec_only).",
           "info",
           "Repo={{repo_url}}",
@@ -842,7 +858,7 @@
         "defaultOutput": "resolve"
       },
       "label": "Deps blocking?",
-      "description": "Proceed when nothing BLOCKS implementation (blocking_count 0 / has_blocking false) — non-blocking items such as externally-provisioned secrets no longer veto a run. Otherwise take exactly ONE interactive resolve pass; if a blocker survives it, stop. Two proceed conditions are checked because llm_call outputSchema is not enforced, so either field arriving well-formed is enough.",
+      "description": "Proceed when nothing BLOCKS implementation (blocking_count 0 / has_blocking false) \u2014 non-blocking items such as externally-provisioned secrets no longer veto a run. Otherwise take exactly ONE interactive resolve pass; if a blocker survives it, stop. Two proceed conditions are checked because llm_call outputSchema is not enforced, so either field arriving well-formed is enough.",
       "errorBehavior": {},
       "position": {
         "x": 268.11220887229746,
@@ -910,7 +926,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline BLOCKED (planning) — {{slug}}",
+          "feature-pipeline BLOCKED (planning) \u2014 {{slug}}",
           "The planning phase could not close the dependency graph after {{max_deps_iterations}} interactive resolution passes. Implementation was NOT started, to avoid a livelock. Unresolved: {{deps-assess.notes}}",
           "warning",
           "Repo={{repo_url}}",
@@ -935,8 +951,8 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline BLOCKED (implementation) — {{slug}}",
-          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope — a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
+          "feature-pipeline BLOCKED (implementation) \u2014 {{slug}}",
+          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope \u2014 a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
           "warning",
           "Repo={{repo_url}}",
           "Slug={{slug}}",
@@ -1121,7 +1137,7 @@
         ]
       },
       "label": "Promote detected docs",
-      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
+      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug \u2014 matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
       "errorBehavior": {},
       "position": {
         "x": -250,
@@ -1263,7 +1279,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3800
+        "y": 3940
       }
     },
     {
@@ -1356,6 +1372,10 @@
     },
     {
       "source": "refine",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "record-pass-commit",
       "target": "refine-assess"
     },
     {
@@ -1499,7 +1519,7 @@
       "source": "resume-stage?",
       "target": "align-plans",
       "output": "impl",
-      "label": "plans exist — re-align + revalidate"
+      "label": "plans exist \u2014 re-align + revalidate"
     },
     {
       "source": "produce-plans",
