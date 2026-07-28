@@ -88,6 +88,15 @@ describe('api.instances dismissal', () => {
     const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
     expect(url).not.toContain('includeDismissed')
   })
+
+  it('list narrows by parent when requested, and omits it otherwise', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    await api.instances.list({ parent: 'p1' })
+    await api.instances.list({ state: 'failed' })
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[0][0] as string).toContain('parent=p1')
+    expect(calls[1][0] as string).not.toContain('parent')
+  })
 })
 
 describe('api.schedules.list', () => {

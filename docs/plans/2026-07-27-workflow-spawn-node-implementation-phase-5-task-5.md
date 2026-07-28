@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `dashboard/src/hooks/useRunHierarchy.test.ts`:
 
@@ -191,7 +191,7 @@ it('invalidate drops the cache so the next expand refetches', async () => {
 })
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -206,7 +206,7 @@ Error: Failed to load url ./useRunHierarchy (resolved id: .../src/hooks/useRunHi
 Test Files  1 failed (1)
 ```
 
-- [ ] **Step 3: Add the row fields and the list parameter**
+- [x] **Step 3: Add the row fields and the list parameter**
 
 In `dashboard/src/api/types.ts`, add to `EnrichedInstanceSummary`:
 
@@ -246,7 +246,7 @@ and in `list`, beside the other params:
       if (params?.parent) q.set('parent', params.parent)
 ```
 
-- [ ] **Step 4: Implement the hook**
+- [x] **Step 4: Implement the hook**
 
 Create `dashboard/src/hooks/useRunHierarchy.ts`:
 
@@ -337,7 +337,7 @@ export function useRunHierarchy(): RunHierarchy {
 }
 ```
 
-- [ ] **Step 5: Run it, confirm it passes**
+- [x] **Step 5: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -352,7 +352,7 @@ Test Files  1 passed (1)
      Tests  10 passed (10)
 ```
 
-- [ ] **Step 6: Confirm the dashboard suite still passes**
+- [x] **Step 6: Confirm the dashboard suite still passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -361,7 +361,7 @@ npx tsc --noEmit && npx vitest run
 
 Expected: `Test Files  N passed`, no failures.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add dashboard/src/api/types.ts dashboard/src/api/client.ts dashboard/src/hooks/useRunHierarchy.ts dashboard/src/hooks/useRunHierarchy.test.ts
