@@ -26,15 +26,6 @@ escalate** — never a tolerated no-op.
   section's row set is refreshed, with a Vitest case asserting a stale cached
   child is not re-rendered after a refetch.
 
-- [ ] **`instance.Instance.IsRoot()` has no production caller.**
-  `domain/instance/instance.go:159` documents itself as "the ONE place the null
-  link means root convention is expressed, so read paths do not each re-derive
-  it" — but no production code calls it. The convention is in fact re-derived
-  independently in at least two places: the `ParentScopeRoots` SQL clause
-  (`adapter/sqlite/instance_repo.go:205`) and `topLevelRows`
-  (`dashboard/src/components/topLevelRows.ts:24`). Either route a real read path
-  through it or delete it; a "single source of truth" nothing reads is not one.
-
 - [ ] **Verify `ChildCount` / `parentInstanceId` field names on the MCP surface.**
   `adapter/mcp/tools_instance.go:139` returns `MarshalResult(enriched)` over
   `[]instance.EnrichedInstanceSummary` directly. The embedded `InstanceSummary`
@@ -108,6 +99,29 @@ escalate** — never a tolerated no-op.
   with an unmapped type (`workflow.NodeTypeScript`) across chat, agent, and a
   bogus `ProfileKind`, asserting `nil` every time — this is the review-2
   approval for area 3.
+
+- [x] **`instance.Instance.IsRoot()` had no production caller.**
+  `domain/instance/instance.go:159` documents itself as "the ONE place the null
+  link means root convention is expressed, so read paths do not each re-derive
+  it" — but no production code called it. `domain/engine/spawn_wake.go:43`
+  (`Engine.OnChildTerminal`) independently re-derived the exact same convention
+  with a two-field nil check (`child.ParentInstanceID == nil ||
+  child.ParentNodeID == nil`) guarded by the comment "a root run has nobody to
+  wake" — literally `IsRoot()`'s definition, inline. The two-field check is
+  safe to collapse to `child.IsRoot()` because `ParentInstanceID` and
+  `ParentNodeID` are never set independently: `engine.go`'s trigger-path
+  stamping only writes either both or neither (gated on `SpawnLink.Valid()`),
+  and `adapter/sqlite`'s create/scan path persists and reads the three link
+  columns as a single NULL-together unit. Replaced the inline check with
+  `child.IsRoot()`, giving the method its first production caller; existing
+  coverage (`TestOnChildTerminal_RootRunIsANoOp`,
+  `TestInstanceNullLinksAreRoots`, `TestInstanceWithLinkIsNotRoot`) still
+  passes unchanged. The other two re-derivations named in the original
+  finding — the `ParentScopeRoots` SQL clause and the dashboard's
+  `topLevelRows` — are a different layer (a SQL predicate and a TypeScript
+  predicate over a JSON DTO) that cannot call a Go method, so they are not
+  candidates for this fix; `IsRoot()`'s scope is Go in-process read paths over
+  an already-loaded `Instance`.
 
 ## Won't Fix
 

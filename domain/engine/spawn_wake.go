@@ -40,7 +40,7 @@ func (e *Engine) OnChildTerminal(ctx context.Context, childID uuid.UUID) {
 	if err != nil {
 		return // an unreadable child cannot identify a parent; the reconciler covers it
 	}
-	if child.ParentInstanceID == nil || child.ParentNodeID == nil {
+	if child.IsRoot() {
 		return // a root run has nobody to wake
 	}
 	if child.SpawnMode != instance.SpawnModeWaitForChild {
