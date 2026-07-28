@@ -48,35 +48,6 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **`cascadeCancel`'s "already-terminal child still descends into its own
-  active grandchildren" branch is completely uncovered.** Focus area 22
-  (cancel cascade). `domain/engine/cancel_cascade.go:67-71` — when
-  `cancelAuthorized` on a child returns `ErrCannotCancel` (already terminal),
-  the code deliberately still calls `e.cascadeCancel(ctx, childID, visited)`
-  rather than `continue`-ing past it, with the comment "still descend, since a
-  terminal child may have active grandchildren of its own." `go tool cover`
-  over the full `TestCancelCascade`-prefixed suite shows this exact statement
-  (line 70) at 0 hits, and deleting the recursive call entirely (replacing the
-  branch with a bare `continue`, keeping everything else identical) still
-  passes the ENTIRE suite — confirmed directly by temporarily editing the file
-  and re-running `go test ./domain/engine/... -run TestCancelCascade`, then
-  reverting. No existing fixture links an active child under an
-  already-terminal instance
-  (`TestCancelCascade_AlreadyTerminalChildIsSkippedNotFailed`'s `done` node has
-  no children of its own). Consequence: this is not a live bug today, but the
-  claim in the comment — the entire reason the "still descend" branch exists
-  instead of the simpler `continue` every other failure branch uses — is
-  currently unverified. A regression that deleted or short-circuited this
-  branch (e.g. "simplify" it down to match the other failure branch) would
-  ship undetected, silently orphaning any active descendant of an
-  already-completed/failed/cancelled spawn-linked node — plausible in
-  practice, since a fire-and-forget child can go terminal (e.g. complete)
-  while its own fire-and-forget grandchild is still running. Fix: add a test
-  with parent→child(terminal, e.g. `StateCompleted`)→grandchild(active) and
-  assert the grandchild ends `StateCancelled` and gets its own intervention
-  record, confirmed to fail for the right reason against a temporarily
-  `continue`-only version of the branch before passing against the real code.
-
 - [x] **Verify the cascade produces an intervention record for every descendant,
   scoped to the storage-failure case only.** `cascadeCancel` routes through
   `cancelAuthorized`, which calls `recordIntervention`; the "one intervention
@@ -131,6 +102,51 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`cascadeCancel`'s "already-terminal child still descends into its own
+  active grandchildren" branch was completely uncovered.** Focus area 22
+  (cancel cascade), review 1 (closes the last blocker deferred from the two
+  fixes below). `domain/engine/cancel_cascade.go:67-71` — when
+  `cancelAuthorized` on a child returns `ErrCannotCancel` (already terminal),
+  the code deliberately still calls `e.cascadeCancel(ctx, childID, visited)`
+  rather than `continue`-ing past it, with the comment "still descend, since a
+  terminal child may have active grandchildren of its own." `go tool cover`
+  over the full `TestCancelCascade`-prefixed suite showed this exact statement
+  at 0 hits, and deleting the recursive call entirely (replacing the branch
+  with a bare `continue`) still passed the entire suite. No existing fixture
+  linked an active child under an already-terminal instance. Consequence: a
+  regression that "simplified" this branch down to match every other failure
+  branch's `continue` would ship undetected, silently orphaning any active
+  descendant of an already-completed/failed/cancelled spawn-linked node —
+  plausible in practice, since a fire-and-forget child can go terminal (e.g.
+  complete) while its own fire-and-forget grandchild is still running. Added
+  `TestCancelCascade_AlreadyTerminalChildStillDescendsIntoActiveGrandchild`
+  (`domain/engine/cancel_cascade_test.go`), reusing the `unfiltered` fake
+  technique the visited-guard tests already established (needed here too:
+  the fake's own terminal-state filter would otherwise drop the terminal
+  child from `ListActiveChildren`'s result before the loop ever reached
+  `cancelAuthorized` on it, making the branch untestable through the fake at
+  all) to link parent→child(`StateCompleted`)→grandchild(`StateRunning`);
+  asserts the child is left untouched, the grandchild ends `StateCancelled`,
+  and the grandchild gets its own intervention record via
+  `interventions.ListByInstance`. Confirmed it fails for the right reason
+  (grandchild stays `StateRunning`, zero intervention records) when the
+  recursive `e.cascadeCancel(ctx, childID, visited)` call is temporarily
+  deleted (bare `continue` left in its place), then confirmed it passes
+  against the real code. With this fix, every remaining item on area 22's
+  checklist is now backed by a passing, meaningfully-failing test: the
+  visited-set guard and the department-scoped authorization-failure branch
+  (both fixed below), storage-failure partial-failure handling and its
+  sibling-branch audit-trail completeness (below), `ErrCannotCancel`-as-success
+  and both-spawn-modes-cascaded (pre-existing), parent-transitions-first
+  ordering (pre-existing), and the nil-`spawnLinks` no-op (pre-existing) —
+  plus the composition-root wiring (`eng.SetSpawnLinks(instanceRepo)`) already
+  proven end-to-end by area 16's
+  `TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot`.
+  Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
+  new failures beyond the recorded baseline (the one pre-existing
+  `adapter/config` failure is unchanged; dashboard typecheck and vitest both
+  clean). This closes review 1 approval for area 22; review 2 remains open.
 
 - [x] **`cascadeCancel`'s visited-set cycle guard (`domain/engine/cancel_cascade.go:61-63`,
   `if visited[childID] { continue }`) was never actually exercised by either

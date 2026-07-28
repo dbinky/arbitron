@@ -288,6 +288,39 @@ func TestCancelCascade_AlreadyTerminalChildIsSkippedNotFailed(t *testing.T) {
 	assert.Equal(t, instance.StateCancelled, c.stateOf(t, alive))
 }
 
+// An already-terminal child still descends into its OWN active grandchildren.
+// The "still descend" branch in cascadeCancel exists precisely because a
+// fire-and-forget child can go terminal (e.g. complete) while its own
+// fire-and-forget grandchild is still running — replacing that recursive call
+// with a bare `continue` (matching every other failure branch) would silently
+// orphan the grandchild. `unfiltered` simulates the race/corrupt-row shape
+// where ListActiveChildren still reports the already-terminal child as active
+// (see the visited-guard tests above for the identical technique); without it
+// the fake's own terminal filter would drop `child` before the loop ever
+// reached cancelAuthorized on it, making this branch untestable through the
+// fake at all.
+func TestCancelCascade_AlreadyTerminalChildStillDescendsIntoActiveGrandchild(t *testing.T) {
+	c := newCascadeFixture(t)
+	c.links.unfiltered = true
+	parent := c.run(t, instance.StateRunning)
+	child := c.run(t, instance.StateCompleted)
+	grandchild := c.run(t, instance.StateRunning)
+	c.links.link(parent, child)
+	c.links.link(child, grandchild)
+
+	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
+
+	assert.Equal(t, instance.StateCompleted, c.stateOf(t, child),
+		"an already-terminal child is left exactly as it was")
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, grandchild),
+		"the terminal child's own active grandchild must still be reached")
+
+	grandRecords, err := c.interventions.ListByInstance(context.Background(), grandchild)
+	require.NoError(t, err)
+	assert.Len(t, grandRecords, 1,
+		"the grandchild must get its own intervention record, not be silently orphaned")
+}
+
 func TestCancelCascade_ParentInAnUncancellableStateReturnsErrCannotCancel(t *testing.T) {
 	c := newCascadeFixture(t)
 	parent := c.run(t, instance.StateCompleted)
