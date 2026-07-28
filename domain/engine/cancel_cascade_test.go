@@ -416,6 +416,9 @@ func TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch(t *testing.T)
 	assert.Equal(t, instance.StateRunning, c.stateOf(t, grandchild),
 		"the cascade must not reach past a child it could not authorize, even though the "+
 			"actor could authorize the grandchild in isolation")
+	assert.Equal(t, 1, c.interventions.count(),
+		"only the parent's own cancellation is authorized; a denied child must never produce "+
+			"an audit record implying a cancellation that did not happen")
 }
 
 // ---------- edge cases ----------

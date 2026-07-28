@@ -103,6 +103,49 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **A denied child cancellation in the cascade produced no assertion that
+  the audit trail stayed accurate.** Focus area 22 (cancel cascade), review 2.
+  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch`
+  (`domain/engine/cancel_cascade_test.go`) already asserted the parent ends
+  `StateCancelled`, the child the actor cannot authorize (department-lead
+  check fails) is left `StateRunning`, and the grandchild past it is untouched
+  — but it never checked how many intervention records existed. Since
+  `cancelAuthorized` only calls `e.recordIntervention` on its success path
+  (`domain/engine/engine.go`), a denied child correctly produces none, so this
+  was safe in the real code — but nothing pinned it, and `recordIntervention`
+  being invoked before rather than after the authorization check, or on the
+  failure path by mistake, would have shipped a false audit record ("this
+  child was cancelled by X") for a child that was in fact left running,
+  silently corrupting the intervention trail an operator relies on to
+  understand what a cascade actually touched. Added
+  `assert.Equal(t, 1, c.interventions.count(), ...)` to the existing test,
+  asserting only the parent's own cancellation produced a record. Confirmed
+  it fails for the right reason (`expected: 1, actual: 2`) when a bogus
+  `e.recordIntervention(ctx, &instance.Instance{ID: childID},
+  instance.ActionCancel, nil)` call is temporarily injected into
+  `cascadeCancel`'s real-failure branch (`cancel_cascade.go:73-81`, the branch
+  reached when `cancelAuthorized` returns neither `nil` nor
+  `ErrCannotCancel`), then confirmed it passes again once the injected call is
+  reverted (`cancel_cascade.go` has no net changes this pass). Independently
+  re-verified the rest of area 22's checklist and found no other live gap:
+  `cascadeCancel` is at 100% branch coverage per `go tool cover -func`; the
+  `fakeSpawnLinks` test double's `ListActiveChildren` matches the real SQL
+  adapter's `state IN ('queued','running','waiting','paused')` filter
+  (`adapter/sqlite/instance_repo.go:649-674`); the owner-inheritance chain
+  (`TriggerWithDepartment` → `identity.WithIdentity`, `engine.go:395-480`)
+  confirmed as the reason cascade authorization by ownership always succeeds
+  while department-leadership can fail partway, since department is derived
+  per-child rather than inherited; `OnChildTerminal`
+  (`domain/engine/spawn_wake.go`) confirmed independent of `e.spawnLinks`: and
+  `cancelAuthorized`'s two uncovered `UpdateState`-failure branches confirmed
+  via `git show <branch-point>:domain/engine/engine.go` to be byte-identical
+  pre-existing code merely extracted into a new function name, not a gap
+  introduced by this feature, so correctly left alone. Ran the full
+  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new failures
+  beyond the recorded baseline (the one pre-existing `adapter/config` failure
+  is unchanged; dashboard typecheck and vitest both clean). This closes review
+  2 approval for area 22.
+
 - [x] **`cascadeCancel`'s "already-terminal child still descends into its own
   active grandchildren" branch was completely uncovered.** Focus area 22
   (cancel cascade), review 1 (closes the last blocker deferred from the two
