@@ -76,6 +76,35 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`childInputPrompt`'s sorted-key stability invariant was untested.**
+  Focus area 10 review 1. `domain/engine/child_input_preparer.go:148-150`
+  documents and implements a load-bearing invariant: both the declared-input
+  listing and the parent-context listing must render in SORTED key order, "so
+  the prompt is stable across runs" for provider-side caching and quiet trace
+  diffs — but no test asserted the order, and Go's randomized map iteration
+  means a regression that dropped the `sort.Strings`/`sort.Slice` calls would
+  produce a merely *flaky* prompt rather than a reliably-failing test, so it
+  could ship and pass CI by chance for a long time. Reviewed the full
+  `LLMChildInputPreparer`/`Prepare` implementation against Design Phase 2's
+  spec line by line (resolve → assertBindingKind → select → chat → parse
+  ordering, `structuredOutputInstruction` reuse, zero-input short-circuit,
+  `parseChildInputResponse`'s code-fence/prose/non-object handling,
+  `boundedExcerpt`, the fail-closed posture-guard-before-selection ordering)
+  and confirmed every item in the design's five-category testing strategy is
+  already covered, all real production wiring is fed from
+  `cmd/arbitron/main.go` (`providerFactory`, `profileResolver`, both real
+  adapters) and `executor_spawn.go` (`ChildInputRequest` built from
+  `node.Config`/`vars.Snapshot()`, never hardcoded), and every adapter treats
+  `ChatRequest.MaxTokens == 0` as "provider default" rather than "zero
+  tokens" — this was the one invariant in the design with zero test coverage.
+  Added `TestChildInputPreparer_PromptFieldsAndContextAreSortedForStability`
+  (`domain/engine/child_input_preparer_test.go`), which declares inputs and
+  parent-context keys in deliberately unsorted order and asserts their
+  appearance order in the rendered prompt is alphabetical; confirmed it fails
+  for the right reason (declaration order, not sorted) when the `sort.Slice`
+  call is temporarily removed, then confirmed it passes against the real
+  code. This closes review 1 approval for area 10.
+
 - [x] **`ChildInputRequest.ProfileAlias` may reach the resolver empty.**
   Focus area 9 review 1. `validateModelProfiles` deliberately allows a spawn
   node with **no** `model_profile` (`domain/workflow/validation.go:183-190`),

@@ -244,6 +244,55 @@ func TestChildInputPreparer_SchemaOnRequestMatchesChildContract(t *testing.T) {
 	assert.True(t, strings.Contains(s, `"repo"`) && strings.Contains(s, `"branch"`), "schema: %s", s)
 }
 
+// Both the contract listing and the context listing must appear in the prompt
+// in SORTED key order — documented in childInputPrompt as required so the
+// prompt stays stable across runs for provider-side caching and quiet trace
+// diffs. Go's map iteration order is randomized per run, so a regression that
+// dropped the sort would produce a flaky (not a reliably-failing) prompt;
+// asserting the exact order here is what pins the invariant instead of
+// leaving it to chance.
+func TestChildInputPreparer_PromptFieldsAndContextAreSortedForStability(t *testing.T) {
+	var got engine.ChatRequest
+	calls := 0
+	prov := respondWith(`{}`, &got, &calls)
+	p := engine.NewChildInputPreparer(chatSelector(prov), chatResolver("m"))
+
+	unsortedFields := []workflow.InputField{
+		{Name: "zebra", Type: "string", Required: false},
+		{Name: "apple", Type: "string", Required: false},
+		{Name: "mango", Type: "string", Required: false},
+	}
+
+	_, err := p.Prepare(context.Background(), engine.ChildInputRequest{
+		NodeID: "spawn-1", ChildWorkflow: "c", Inputs: unsortedFields,
+		ParentContext: map[string]any{"zulu": 1, "alpha": 2, "mike": 3},
+		ProfileAlias:  "chat-default",
+	})
+	require.NoError(t, err)
+
+	fieldIdx := map[string]int{
+		"apple": strings.Index(got.Prompt, "apple"),
+		"mango": strings.Index(got.Prompt, "mango"),
+		"zebra": strings.Index(got.Prompt, "zebra"),
+	}
+	require.NotEqual(t, -1, fieldIdx["apple"])
+	require.NotEqual(t, -1, fieldIdx["mango"])
+	require.NotEqual(t, -1, fieldIdx["zebra"])
+	assert.True(t, fieldIdx["apple"] < fieldIdx["mango"] && fieldIdx["mango"] < fieldIdx["zebra"],
+		"declared inputs must be listed alphabetically regardless of Inputs slice order: %s", got.Prompt)
+
+	ctxIdx := map[string]int{
+		"alpha: 2": strings.Index(got.Prompt, "alpha: 2"),
+		"mike: 3":  strings.Index(got.Prompt, "mike: 3"),
+		"zulu: 1":  strings.Index(got.Prompt, "zulu: 1"),
+	}
+	require.NotEqual(t, -1, ctxIdx["alpha: 2"])
+	require.NotEqual(t, -1, ctxIdx["mike: 3"])
+	require.NotEqual(t, -1, ctxIdx["zulu: 1"])
+	assert.True(t, ctxIdx["alpha: 2"] < ctxIdx["mike: 3"] && ctxIdx["mike: 3"] < ctxIdx["zulu: 1"],
+		"parent context must be listed alphabetically by key regardless of map iteration order: %s", got.Prompt)
+}
+
 // compile-time proof the concrete type satisfies the port.
 var _ engine.ChildInputPreparer = (*engine.LLMChildInputPreparer)(nil)
 
