@@ -1,0 +1,83 @@
+package main
+
+import (
+	"context"
+	"testing"
+
+	"github.com/arbitron/arbitron/domain/engine"
+	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// The ONE concrete resolver must satisfy BOTH domain ports, so the composition
+// root can pass the same value to the schedule evaluator and the spawn
+// executor and they can never resolve a user differently.
+var _ engine.IdentityResolver = userIdentityResolver{}
+
+// stubUserRepo is the minimal instance.UserRepository the resolver needs.
+type stubUserRepo struct {
+	instance.UserRepository
+	users map[uuid.UUID]*instance.User
+	depts map[uuid.UUID][]string
+}
+
+func (r stubUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, error) {
+	u, ok := r.users[id]
+	if !ok {
+		return nil, instance.ErrNotFound
+	}
+	return u, nil
+}
+
+func (r stubUserRepo) ListDepartments(_ context.Context, id uuid.UUID) ([]string, error) {
+	return r.depts[id], nil
+}
+
+// The local-mode default user (seeded by migration 001 as the admin "local")
+// resolves cleanly through the SAME builder the request path uses. This is the
+// precondition the spawn wiring depends on: without it, every spawn in a
+// local-mode deployment would fail at identity reconstruction.
+func TestUserIdentityResolver_LocalDefaultUser(t *testing.T) {
+	localID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	repo := stubUserRepo{
+		users: map[uuid.UUID]*instance.User{
+			localID: {ID: localID, Username: "local", Role: identity.RoleAdmin},
+		},
+		depts: map[uuid.UUID][]string{},
+	}
+	r := userIdentityResolver{users: repo, groups: identity.GroupConfig{DefaultGroup: "default"}}
+
+	got, err := r.IdentityForUser(context.Background(), localID)
+	require.NoError(t, err, "the local-mode default user must resolve; every spawn depends on it")
+	assert.Equal(t, localID, got.UserID)
+	assert.Equal(t, identity.RoleAdmin, got.Role)
+	assert.Equal(t, []string{"default"}, got.Departments,
+		"a user with no stored departments still belongs to the default group")
+}
+
+func TestUserIdentityResolver_CarriesStoredDepartments(t *testing.T) {
+	uid := uuid.New()
+	repo := stubUserRepo{
+		users: map[uuid.UUID]*instance.User{uid: {ID: uid, Username: "dev", Role: identity.RoleUser}},
+		depts: map[uuid.UUID][]string{uid: {"engineering", "platform"}},
+	}
+	r := userIdentityResolver{users: repo, groups: identity.GroupConfig{DefaultGroup: "default"}}
+
+	got, err := r.IdentityForUser(context.Background(), uid)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"engineering", "platform"}, got.Departments,
+		"the reconstructed identity must carry the owner's departments so a "+
+			"department-scoped child workflow resolves")
+}
+
+func TestUserIdentityResolver_UnknownUserErrors(t *testing.T) {
+	r := userIdentityResolver{
+		users:  stubUserRepo{users: map[uuid.UUID]*instance.User{}, depts: map[uuid.UUID][]string{}},
+		groups: identity.GroupConfig{DefaultGroup: "default"},
+	}
+	_, err := r.IdentityForUser(context.Background(), uuid.New())
+	require.Error(t, err, "identity resolution must fail rather than degrade to a system identity")
+}

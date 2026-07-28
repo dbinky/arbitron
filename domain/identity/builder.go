@@ -24,7 +24,7 @@ type UserIdentityInput struct {
 // BuildIdentity constructs the runtime Identity for a user from their persisted
 // facts and the RBAC GroupConfig. It is the SINGLE source of truth for the
 // Identity field set so the request path (AuthMiddleware.enrich) and the
-// scheduler path (scheduleIdentityResolver) can never diverge — in particular
+// scheduler and spawn paths (userIdentityResolver) can never diverge — in particular
 // LedDepartments, which is an authz input (workflow.CanSeePublication /
 // Identity.LeadsDepartment), is populated identically on both paths.
 //

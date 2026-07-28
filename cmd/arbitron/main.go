@@ -858,13 +858,38 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// the engine), and the management service (shared by REST + MCP). The
 	// evaluator's collision check is the concrete instance repo's HasActiveRun;
 	// the can-trigger gate reuses the engine's publication/visibility predicate.
+	// ONE identity resolver serves the schedule evaluator, the schedule run-now
+	// runner, AND the spawn executor, so a scheduled fire and a spawned child
+	// can never resolve the same user differently.
+	identityResolver := userIdentityResolver{users: userRepo, groups: groupCfg}
+
+	// 12c-spawn. Wire the spawn_workflow executor.
+	//
+	// It is registered AFTER engine construction, exactly as timer_delay and
+	// webhook_wait are, because it depends on the engine itself (*Engine
+	// satisfies engine.ChildSpawner). This works because the engine stores a
+	// REFERENCE to the executors map, not a copy, so this mutation is visible to
+	// the engine at execution time.
+	//
+	// The preparer's call is tool-SUPPRESSED: it routes through the same
+	// providerFactory chat arm llm_call uses, and the Phase-1 kind guard fails
+	// closed if the node's model_profile resolves to an agent binding.
+	childInputPreparer := engine.NewChildInputPreparer(providerFactory, profileResolver)
+	executors[workflow.NodeTypeSpawnWorkflow] = engine.NewSpawnWorkflowExecutor(
+		instanceRepo,
+		childInputPreparer,
+		eng,
+		identityResolver,
+		fileReader,
+	)
+
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
 	scheduleAlerter := schedule.NewScheduleAlerter(notifRepo, externalNotifier, logger)
 	scheduleEval := schedule.NewEvaluator(
 		scheduleRepo,
 		eng,
 		instanceRepo, // *adaptsqlite.InstanceRepo satisfies ActiveRunChecker
-		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		identityResolver,
 		scheduleAlerter,
 		schedule.WithLogger(logger),
 		// Resolve the schedule's stable WorkflowID to the workflow's CURRENT name at
@@ -877,7 +902,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// run-now. The Runner never advances LastFiredAt (run-now is out of cadence).
 	scheduleRunner := schedule.NewRunner(
 		eng,
-		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		identityResolver,
 		instanceRepo,
 	)
 	scheduleSvc := schedule.NewService(
@@ -1294,18 +1319,25 @@ func (c scheduleCanTrigger) CanTrigger(ctx context.Context, id identity.Identity
 	return workflow.CanSeePublication(id, pub), nil
 }
 
-// scheduleIdentityResolver builds the creator's identity for context injection
-// at fire time, so resolveStamp's InDepartment(override) check passes for a
-// department-stamped scheduled run. It constructs the Identity via the SAME
-// shared domain builder as AuthMiddleware.enrich (fed by the same UserRepository
-// + GroupConfig ports), so a scheduled fire and the same user's interactive
-// request resolve to identical identities — LedDepartments included.
-type scheduleIdentityResolver struct {
+// userIdentityResolver builds a user's full runtime identity from a bare user
+// id, for injection into a background context.
+//
+// It constructs the Identity via the SAME shared domain builder as
+// AuthMiddleware.enrich (fed by the same UserRepository + GroupConfig ports),
+// so a scheduled fire, a spawned child run, and the same user's interactive
+// request all resolve to identical identities — LedDepartments included.
+//
+// The name is deliberately NOT schedule-specific: ONE value of this type is
+// constructed at the composition root and passed to the schedule evaluator, the
+// schedule run-now runner, AND the spawn executor. It satisfies both
+// schedule.IdentityResolver and engine.IdentityResolver, which are structurally
+// identical twins redeclared across a domain edge.
+type userIdentityResolver struct {
 	users  instance.UserRepository
 	groups identity.GroupConfig
 }
 
-func (r scheduleIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
+func (r userIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
 	u, err := r.users.GetByID(ctx, userID)
 	if err != nil {
 		return identity.Identity{}, err

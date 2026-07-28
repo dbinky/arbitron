@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `cmd/arbitron/spawn_wiring_test.go`:
 
@@ -108,7 +108,7 @@ func TestUserIdentityResolver_UnknownUserErrors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -123,7 +123,7 @@ cmd/arbitron/spawn_wiring_test.go:16:33: undefined: userIdentityResolver
 FAIL	github.com/arbitron/arbitron/cmd/arbitron [build failed]
 ```
 
-- [ ] **Step 3: Rename the resolver to a neutral name**
+- [x] **Step 3: Rename the resolver to a neutral name**
 
 In `cmd/arbitron/main.go`, replace the type declaration and its comment
 (lines 1297-1332):
@@ -175,7 +175,7 @@ func (r userIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.U
 }
 ```
 
-- [ ] **Step 4: Construct the resolver once and reuse it**
+- [x] **Step 4: Construct the resolver once and reuse it**
 
 In `cmd/arbitron/main.go`, immediately before the `scheduleRepo := ...` line
 (~line 862), insert:
@@ -195,7 +195,7 @@ Then replace both occurrences of
 		identityResolver,
 ```
 
-- [ ] **Step 5: Construct and register the spawn executor**
+- [x] **Step 5: Construct and register the spawn executor**
 
 The spawn executor depends on `eng` (which satisfies `engine.ChildSpawner`), so
 it is registered AFTER engine construction, in the same block as `timer_delay`
@@ -227,7 +227,7 @@ Insert immediately after the `identityResolver := ...` line added in Step 4:
 	)
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -245,7 +245,7 @@ PASS
 ok  	github.com/arbitron/arbitron/cmd/arbitron	0.4s
 ```
 
-- [ ] **Step 7: Confirm the old name is gone**
+- [x] **Step 7: Confirm the old name is gone**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -254,7 +254,7 @@ grep -rn "scheduleIdentityResolver" cmd/ || echo "OK: renamed everywhere"
 
 Expected output: `OK: renamed everywhere`
 
-- [ ] **Step 8: Full Go gate**
+- [x] **Step 8: Full Go gate**
 
 ```bash
 go test ./...
@@ -262,7 +262,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add cmd/arbitron/main.go cmd/arbitron/spawn_wiring_test.go
