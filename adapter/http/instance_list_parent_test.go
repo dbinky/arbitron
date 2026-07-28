@@ -169,12 +169,17 @@ func TestInstanceListREST_ParentComposesWithStateFilter(t *testing.T) {
 
 // A malformed selector is REJECTED rather than silently degrading to an
 // unfiltered list, which would show a caller far more than they asked for.
+// The error code is pinned as INVALID_PARENT (not a generic BAD_REQUEST) so a
+// caller can distinguish this failure from any other 400 on the endpoint.
 func TestInstanceListREST_MalformedParentIsRejected(t *testing.T) {
 	h, _ := newParentListHandler([]instance.EnrichedInstanceSummary{})
 
 	for _, raw := range []string{"not-a-uuid", "ROOTS", "root", "%20"} {
 		w := adminListRequest(h, "?parent="+raw)
-		assert.Equal(t, http.StatusBadRequest, w.Code, "parent=%q must be rejected", raw)
+		require.Equal(t, http.StatusBadRequest, w.Code, "parent=%q must be rejected", raw)
+		var body adapthttp.ErrorResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, "INVALID_PARENT", body.Code, "parent=%q must report the INVALID_PARENT code", raw)
 	}
 }
 

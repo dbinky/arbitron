@@ -132,6 +132,51 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`400 INVALID_PARENT`'s specific error CODE was never pinned by a test —
+  only the HTTP status.** Focus area 24 (REST list parent selector & hierarchy
+  DTO), review 2. `adapter/http/instance_handler.go:411-414` documents and
+  implements a specific error code (`WriteError(w, http.StatusBadRequest,
+  "INVALID_PARENT", perr.Error())`) so a caller can distinguish a malformed
+  `parent` selector from any other `400` on the endpoint — but
+  `TestInstanceListREST_MalformedParentIsRejected`
+  (`adapter/http/instance_list_parent_test.go`, added when review 1 closed)
+  only asserted `w.Code == http.StatusBadRequest`, never decoded the JSON body
+  to check the `code` field. Confirmed by hand: changing the code string to
+  `"BAD_REQUEST"` left every existing test in the package green. A regression
+  that changed or genericized the code (the same shape of gap fixed repeatedly
+  elsewhere in this loop — a documented, specific claim proven only by its
+  coarser side effect) would ship undetected. Updated the test to decode
+  `adapthttp.ErrorResponse` from the response body and assert
+  `body.Code == "INVALID_PARENT"` for all four malformed inputs; confirmed it
+  fails for the right reason (`expected: "INVALID_PARENT", actual:
+  "BAD_REQUEST"`) against the neutered code, then confirmed it passes against
+  the real code. Independently re-verified the rest of area 24's checklist
+  from source rather than trusting review 1's write-up: composition-root
+  wiring re-confirmed (`cmd/arbitron/main.go:1188`, `Service: ds.eng` — the
+  real `*engine.Engine` — passed to `adapthttp.NewRouterFromDeps`, which
+  constructs `NewInstanceHandler` at `adapter/http/server.go:203` with all four
+  real repository/service deps, no `nil`/stub); re-traced the
+  narrowing-never-widening security contract end to end — `Engine.ListEnriched`
+  (`domain/engine/engine.go:544-557`) always overwrites
+  `OwnerID`/`Departments`/`IncludePublic` from the service-set
+  `listConstraint`, never from caller input, while leaving
+  `filters.ParentScope`/`.ParentInstanceID` (set only by the handler) untouched
+  — and `InstanceRepo.List` (`adapter/sqlite/instance_repo.go:204-215`) ANDs
+  the parent-scope clause onto the visibility disjunction rather than OR-ing it
+  in, so a caller cannot use `parent=` to see a run outside their own
+  visibility scope; `summaryDTO.ParentInstanceID`/`enrichedSummaryDTO.ChildCount`
+  mappings and their `omitempty` JSON tags are exercised by
+  `TestInstanceListREST_ChildrenOfAParent`/`_RootRowOmitsParentInstanceID`/
+  `_ChildCountIsSurfaced`; `List` is still the sole caller of `ListEnriched`
+  (unchanged since review 1). `go tool cover` over the full `adapter/http`
+  suite shows `List` at 98.1% and `toEnrichedSummaryDTO`/`toEnrichedResponse`
+  at 100%, matching review 1's own figures with no regression. Ran the full
+  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new failures
+  beyond the recorded baseline (the one pre-existing `adapter/config` failure
+  is unchanged; dashboard typecheck at 0 errors; vitest 464 passed, 0 failed,
+  unaffected by this Go-only change). This closes review 2 approval for area
+  24 — both approvals for area 24 are now recorded.
+
 - [x] **Area 23 (batched child counts on enriched rows), review 2: independent
   re-verification found no live gap.** Re-derived every checklist item from
   source rather than trusting review 1's write-up. `go tool cover` (running
