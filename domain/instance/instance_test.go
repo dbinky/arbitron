@@ -23,8 +23,8 @@ func TestStateWaitingConstant(t *testing.T) {
 
 func TestSentinelErrors(t *testing.T) {
 	tests := []struct {
-		err  error
-		msg  string
+		err error
+		msg string
 	}{
 		{ErrNotFound, "not found"},
 		{ErrNotRunning, "instance is not running"},
@@ -151,17 +151,17 @@ func TestNodeExecutionConstruction(t *testing.T) {
 	tokensOut := 50
 
 	exec := NodeExecution{
-		ID:              id,
-		InstanceID:      instanceID,
-		NodeID:          "llm-node",
-		Attempt:         1,
-		Status:          NodeStatusSucceeded,
-		ResolvedInputs:  map[string]any{"prompt": "hello"},
-		Output:          map[string]any{"result": "world"},
-		LLMModel:        &model,
-		LLMTokensIn:     &tokensIn,
-		LLMTokensOut:    &tokensOut,
-		StartedAt:       time.Now(),
+		ID:             id,
+		InstanceID:     instanceID,
+		NodeID:         "llm-node",
+		Attempt:        1,
+		Status:         NodeStatusSucceeded,
+		ResolvedInputs: map[string]any{"prompt": "hello"},
+		Output:         map[string]any{"result": "world"},
+		LLMModel:       &model,
+		LLMTokensIn:    &tokensIn,
+		LLMTokensOut:   &tokensOut,
+		StartedAt:      time.Now(),
 	}
 
 	assert.Equal(t, id, exec.ID)

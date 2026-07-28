@@ -80,8 +80,8 @@ type VariableSnapshotRepository interface {
 // (it is a genuine prerequisite there, and reshaping the package twice is churn).
 // Tracked via PR #20 review (thread r3358274543). Do not relocate piecemeal.
 type UserRepository interface {
-	GetDefaultUser(ctx context.Context) (uuid.UUID, error)           // existing, unchanged
-	GetByID(ctx context.Context, id uuid.UUID) (*User, error)        // ErrNotFound if absent
+	GetDefaultUser(ctx context.Context) (uuid.UUID, error)    // existing, unchanged
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error) // ErrNotFound if absent
 	// UsersByID batch-resolves the given user IDs in a single query, returning a
 	// map keyed by user ID. IDs with no row are simply absent from the map (no
 	// error). An empty ids slice returns an empty map without touching the DB.

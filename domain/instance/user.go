@@ -14,8 +14,8 @@ import (
 // using only the persisted User.
 type User struct {
 	ID       uuid.UUID
-	Subject  *string        `json:"-"` // nullable: IdP-stable sub; never serialized to client responses
-	Email    *string        `json:"-"` // nullable: IdP email; never serialized to client responses
+	Subject  *string `json:"-"` // nullable: IdP-stable sub; never serialized to client responses
+	Email    *string `json:"-"` // nullable: IdP email; never serialized to client responses
 	Username string
 	Role     identity.Role
 }

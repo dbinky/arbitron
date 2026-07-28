@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/executor_spawn_resume_test.go`:
 
@@ -177,7 +177,7 @@ func TestSpawnResume_FireAndForgetLinkDoesNotSatisfyAwaitedLookup(t *testing.T) 
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -196,7 +196,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/domain/engine	0.5s
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 Replace `resumeFromLink` in `domain/engine/executor_spawn.go` with:
 
@@ -230,7 +230,7 @@ func (e *SpawnWorkflowExecutor) resumeFromLink(node workflow.Node, link *instanc
 }
 ```
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -255,7 +255,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.6s
 ```
 
-- [ ] **Step 5: Confirm the package still passes**
+- [x] **Step 5: Confirm the package still passes**
 
 ```bash
 go test ./domain/engine/
@@ -263,7 +263,7 @@ go test ./domain/engine/
 
 Expected: `ok  	github.com/arbitron/arbitron/domain/engine`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/executor_spawn.go domain/engine/executor_spawn_resume_test.go

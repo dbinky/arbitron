@@ -172,13 +172,32 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 	return &NodeResult{IsWait: true, Output: output}, nil
 }
 
-// resumeFromLink decides the parent's next move from an existing link.
-// (The terminal-routing arm lands in Phase 4 Task 3.)
+// resumeFromLink decides the parent's next move from an EXISTING link.
+//
+// Keying on the link rather than on node-execution status is deliberate: the
+// interactive executor only needs to know THAT it finished, while the spawn
+// node needs to know HOW the child ended in order to choose a port. The child's
+// persisted state is the single authority for that; a second copy in the node
+// record could disagree with it after a retry or a late cancellation.
 func (e *SpawnWorkflowExecutor) resumeFromLink(node workflow.Node, link *instance.ChildLink) (*NodeResult, error) {
-	// The child is still active: return a wait result WITHOUT re-spawning and
-	// without re-transitioning state. This is the idempotent path that makes a
-	// spurious re-entry harmless.
-	return &NodeResult{IsWait: true, Output: spawnOutput(link.ChildID, node.Config.ChildWorkflow, node.Config.SpawnMode)}, nil
+	output := spawnOutput(link.ChildID, node.Config.ChildWorkflow, node.Config.SpawnMode)
+	output["childState"] = string(link.ChildState)
+
+	if !link.ChildState.IsTerminal() {
+		// Still active: return a wait result WITHOUT re-spawning and without
+		// re-transitioning state. This is the idempotent path that makes a
+		// spurious re-entry — a duplicate wake, a node-level retry — harmless.
+		return &NodeResult{IsWait: true, Output: output}, nil
+	}
+
+	// Terminal: route by outcome. A CANCELLED child routes through failure, the
+	// same port as a failed one — the spec is explicit that there is no separate
+	// cancellation path.
+	port := workflow.SpawnPortFailure
+	if link.ChildState == instance.StateCompleted {
+		port = workflow.SpawnPortSuccess
+	}
+	return &NodeResult{OutputPort: port, Output: output}, nil
 }
 
 // prepareAndSpawn is the sequence both modes share: reconstruct the parent

@@ -177,7 +177,9 @@ func TestRootCommand_HasConfigFlag(t *testing.T) {
 }
 
 // Cross-seam contract lock for FA27: the Windows Service BinaryPathName is
-//   "arbitron.exe" serve --config "%ProgramData%\Arbitron\config.yaml"
+//
+//	"arbitron.exe" serve --config "%ProgramData%\Arbitron\config.yaml"
+//
 // The --config flag is a PersistentFlag on root (not a LocalFlag on serve), so
 // it must be visible to the serve command's RunE via cmd.Flags(). If it were
 // ever moved to a non-persistent flag or omitted from root, the service would
