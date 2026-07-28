@@ -676,6 +676,95 @@ func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUI
 	return out, nil
 }
 
+// FindChildBySpawnNode implements instance.SpawnWaitRepository.
+//
+// All THREE key parts are load-bearing. Dropping the node id would let a child
+// of a different spawn node in the same parent answer here; dropping the mode
+// would let a fire-and-forget child answer an awaited lookup. Either mistake
+// routes a parent by an event that had nothing to do with it.
+//
+// (nil, nil) means "no child yet" — the FIRST-EXECUTION signal — and is
+// deliberately distinguishable from an error, because treating a storage
+// failure as "no child" would spawn a second child.
+//
+// ORDER BY created_at DESC LIMIT 1 picks the most recent child. A node-level
+// retry after a partially failed suspension can leave more than one row; the
+// newest is the one this pass is waiting on.
+func (r *InstanceRepo) FindChildBySpawnNode(ctx context.Context, parentID uuid.UUID, nodeID string, mode instance.SpawnMode) (*instance.ChildLink, error) {
+	const q = `SELECT id, state FROM instances
+  WHERE parent_instance_id = ? AND parent_node_id = ? AND spawn_mode = ?
+  ORDER BY created_at DESC, rowid DESC
+  LIMIT 1`
+
+	var idRaw, state string
+	err := r.db.QueryRowContext(ctx, q, uuidToString(parentID), nodeID, string(mode)).Scan(&idRaw, &state)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("finding child of %s node %q: %w", parentID, nodeID, err)
+	}
+	childID, err := parseUUID(idRaw)
+	if err != nil {
+		return nil, fmt.Errorf("finding child of %s node %q: %w", parentID, nodeID, err)
+	}
+	return &instance.ChildLink{ChildID: childID, ChildState: instance.State(state)}, nil
+}
+
+// ListWaitingOnTerminalChild implements instance.SpawnWaitRepository.
+//
+// The WHERE clause is the reconciler's correctness core and mirrors the
+// in-process wake's three-part match exactly:
+//
+//	the parent is WAITING
+//	∧ the parent's CURRENT node id == the child's recorded parent node id
+//	∧ the link's mode is wait_for_child
+//
+// plus "the child is already terminal". Any one of the three conjuncts dropped
+// would resume a parent by an unrelated event.
+func (r *InstanceRepo) ListWaitingOnTerminalChild(ctx context.Context) ([]instance.SpawnWaitCandidate, error) {
+	const q = `SELECT p.id, p.current_node_id, c.id, c.state
+  FROM instances p
+  JOIN instances c ON c.parent_instance_id = p.id
+  WHERE p.state = 'waiting'
+    AND p.current_node_id IS NOT NULL
+    AND c.parent_node_id = p.current_node_id
+    AND c.spawn_mode = 'wait_for_child'
+    AND c.state IN ('completed','failed','cancelled')`
+
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+	}
+	defer rows.Close()
+
+	out := []instance.SpawnWaitCandidate{}
+	for rows.Next() {
+		var parentRaw, nodeID, childRaw, state string
+		if err := rows.Scan(&parentRaw, &nodeID, &childRaw, &state); err != nil {
+			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+		}
+		parentID, err := parseUUID(parentRaw)
+		if err != nil {
+			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+		}
+		childID, err := parseUUID(childRaw)
+		if err != nil {
+			return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+		}
+		out = append(out, instance.SpawnWaitCandidate{
+			ParentID:     parentID,
+			ParentNodeID: nodeID,
+			ChildID:      childID,
+			ChildState:   instance.State(state),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing parents waiting on a terminal child: %w", err)
+	}
+	return out, nil
+}
+
 // rowToInstance converts a sqlc-generated Instance row into a domain Instance.
 // This is a package-level function so both InstanceRepo and QueueRepo can use
 // it without hidden coupling between the two repos.

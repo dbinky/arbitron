@@ -94,3 +94,24 @@ SELECT id FROM instances
 WHERE parent_instance_id = ?
   AND state IN ('queued','running','waiting','paused')
 ORDER BY created_at ASC;
+
+-- name: FindChildBySpawnNode :one
+-- The awaited child of ONE (parent, spawn node, mode) triple. All three key
+-- parts are load-bearing: without the node id a child of a different spawn node
+-- would answer; without the mode a fire-and-forget child would.
+SELECT id, state FROM instances
+WHERE parent_instance_id = ? AND parent_node_id = ? AND spawn_mode = ?
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1;
+
+-- name: ListWaitingOnTerminalChild :many
+-- Startup reconciliation: parents stuck in the waiting state whose awaited
+-- child is already terminal (the in-process wake was lost to a crash).
+SELECT p.id, p.current_node_id, c.id, c.state
+FROM instances p
+JOIN instances c ON c.parent_instance_id = p.id
+WHERE p.state = 'waiting'
+  AND p.current_node_id IS NOT NULL
+  AND c.parent_node_id = p.current_node_id
+  AND c.spawn_mode = 'wait_for_child'
+  AND c.state IN ('completed','failed','cancelled');

@@ -40,6 +40,14 @@ const (
 	StatePaused    State = "paused"
 )
 
+// IsTerminal reports whether s is a final state a run can no longer leave.
+// This is the ONE definition of "done": the awaited-spawn resumption
+// short-circuit, the child-terminal wake, and the startup reconciler all read
+// it, so they cannot disagree about when a child has finished.
+func (s State) IsTerminal() bool {
+	return s == StateCompleted || s == StateFailed || s == StateCancelled
+}
+
 // Priority represents the scheduling priority of a workflow instance.
 type Priority string
 

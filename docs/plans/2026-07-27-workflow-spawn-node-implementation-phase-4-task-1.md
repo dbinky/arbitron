@@ -20,7 +20,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing domain test**
+- [x] **Step 1: Write the failing domain test**
 
 Create `domain/instance/spawn_wait_test.go`:
 
@@ -66,7 +66,7 @@ func TestChildLinkShape(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -82,7 +82,7 @@ domain/instance/spawn_wait_test.go:...: undefined: ChildLink
 FAIL	github.com/arbitron/arbitron/domain/instance [build failed]
 ```
 
-- [ ] **Step 3: Implement the domain port**
+- [x] **Step 3: Implement the domain port**
 
 In `domain/instance/instance.go`, add immediately after the `State` constant
 block (line 41):
@@ -151,7 +151,7 @@ type SpawnWaitRepository interface {
 }
 ```
 
-- [ ] **Step 4: Run the domain test, confirm it passes**
+- [x] **Step 4: Run the domain test, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -169,7 +169,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/instance	0.2s
 ```
 
-- [ ] **Step 5: Write the failing adapter test**
+- [x] **Step 5: Write the failing adapter test**
 
 Create `adapter/sqlite/instance_spawn_wait_test.go`:
 
@@ -393,7 +393,7 @@ func TestListWaitingOnTerminalChild_StorageFailureErrors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run the adapter test, confirm it fails**
+- [x] **Step 6: Run the adapter test, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -408,7 +408,7 @@ adapter/sqlite/instance_spawn_wait_test.go:13:38: cannot use (*InstanceRepo)(nil
 FAIL	github.com/arbitron/arbitron/adapter/sqlite [build failed]
 ```
 
-- [ ] **Step 7: Implement the two queries**
+- [x] **Step 7: Implement the two queries**
 
 Append to `adapter/sqlite/instance_repo.go`:
 
@@ -503,7 +503,7 @@ func (r *InstanceRepo) ListWaitingOnTerminalChild(ctx context.Context) ([]instan
 }
 ```
 
-- [ ] **Step 8: Record the queries in the source-of-truth SQL file**
+- [x] **Step 8: Record the queries in the source-of-truth SQL file**
 
 Append to `adapter/sqlite/queries/instances.sql`:
 
@@ -530,7 +530,7 @@ WHERE p.state = 'waiting'
   AND c.state IN ('completed','failed','cancelled');
 ```
 
-- [ ] **Step 9: Run it, confirm it passes**
+- [x] **Step 9: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -558,7 +558,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.7s
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/instance/spawn_wait.go domain/instance/spawn_wait_test.go domain/instance/instance.go adapter/sqlite/instance_repo.go adapter/sqlite/queries/instances.sql adapter/sqlite/instance_spawn_wait_test.go
