@@ -15,7 +15,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `cmd/arbitron/spawn_e2e_test.go`:
 
@@ -195,7 +195,7 @@ func TestSpawnE2E_ChildlessRunIsARootWithNoChildren(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails when the wiring is absent**
+- [x] **Step 2: Run it, confirm it fails when the wiring is absent**
 
 First prove the probe would catch an inert feature. Temporarily comment out the
 registration line added in Phase 3 Task 4:
@@ -221,7 +221,7 @@ Restore the file:
 mv cmd/arbitron/main.go.bak cmd/arbitron/main.go
 ```
 
-- [ ] **Step 3: Run it against the real wiring, confirm it passes**
+- [x] **Step 3: Run it against the real wiring, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -238,7 +238,7 @@ PASS
 ok  	github.com/arbitron/arbitron/cmd/arbitron	3.6s
 ```
 
-- [ ] **Step 4: Full Go gate**
+- [x] **Step 4: Full Go gate**
 
 ```bash
 go test ./...
@@ -246,7 +246,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add cmd/arbitron/spawn_e2e_test.go
