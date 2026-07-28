@@ -293,6 +293,26 @@ func TestChildInputPreparer_PromptFieldsAndContextAreSortedForStability(t *testi
 		"parent context must be listed alphabetically by key regardless of map iteration order: %s", got.Prompt)
 }
 
+// The preparer's ChatRequest must carry the request's WorkDir. Subprocess-backed
+// chat providers (claude-cli) reject an empty WorkDir outright rather than
+// silently inheriting the engine process's own cwd, so dropping this field
+// here would fail every claude-cli-backed spawn node at the preparation call.
+func TestChildInputPreparer_WorkDirReachesChatRequest(t *testing.T) {
+	var got engine.ChatRequest
+	calls := 0
+	prov := respondWith(`{"repo":"r","branch":"b"}`, &got, &calls)
+	p := engine.NewChildInputPreparer(chatSelector(prov), chatResolver("m"))
+
+	_, err := p.Prepare(context.Background(), engine.ChildInputRequest{
+		NodeID: "spawn-1", ChildWorkflow: "c", Inputs: childFields(),
+		ParentContext: map[string]any{}, ProfileAlias: "chat-default",
+		WorkDir: "/var/arbitron/workspaces/parent-run-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/var/arbitron/workspaces/parent-run-1", got.WorkDir,
+		"the preparation call must carry the parent's WorkDir, not an empty string")
+}
+
 // compile-time proof the concrete type satisfies the port.
 var _ engine.ChildInputPreparer = (*engine.LLMChildInputPreparer)(nil)
 

@@ -76,6 +76,44 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`LLMChildInputPreparer.Prepare` never set `WorkDir` on its preparation
+  `ChatRequest`.** Focus area 10 review 2. Compared `Prepare`
+  (`domain/engine/child_input_preparer.go`) against its sibling
+  `LLMCallExecutor.Execute` (`domain/engine/executor_llm.go`), which sets
+  `WorkDir: workDirStr` via the existing `WorkDirFromVars(vars)` helper
+  (`domain/engine/conventions.go`) — `Prepare`'s `ChatRequest` literal built the
+  same kind of tool-suppressed reasoning call but omitted `WorkDir` entirely,
+  so it always defaulted to `""`. Confirmed the production consequence by
+  reading `adapter/claudecli/chat_adapter.go` and `adapter/claudecli/provider.go`:
+  both `ChatAdapter.Chat` and `Provider.Chat` call `validateWorkDir(req.WorkDir)`
+  before doing anything else and hard-fail with `ErrWorkDirRequired` on an
+  empty `WorkDir` — a deliberate PR #8 security guard against a subprocess
+  inheriting the engine process's own cwd (which holds `arbitron.db`,
+  `config.yaml`, and other secrets) — and confirmed via
+  `TestFactory_ChatProviderFor_EmptyIsClaudeCLI`
+  (`adapter/provider/factory_test.go`) that claude-cli is the default backend
+  when a profile sets no `Backend`. So every spawn node with a claude-cli-backed
+  `model_profile` and at least one declared child input would fail at the
+  preparation call in production, on every run, with no way to configure
+  around it — a "wired-and-fed" gap (a production call site building a request
+  literal with a load-bearing field left at its zero value) that no existing
+  test caught, because `mockChatProvider` never inspects `WorkDir`. Fixed by
+  threading the parent's workspace end to end: added `WorkDir string` to
+  `ChildInputRequest` (`domain/engine/ports.go`), set `WorkDir: req.WorkDir` on
+  the `ChatRequest` in `Prepare` (`domain/engine/child_input_preparer.go`), and
+  populated it in `prepareAndSpawn` via the same `WorkDirFromVars(vars)` helper
+  `LLMCallExecutor` already uses (`domain/engine/executor_spawn.go`) — no new
+  functionality, only a missing wire-up between two already-existing pieces.
+  Added `TestChildInputPreparer_WorkDirReachesChatRequest`
+  (`domain/engine/child_input_preparer_test.go`), pinning that a `WorkDir` on
+  the incoming request reaches the outgoing `ChatRequest`, and
+  `TestSpawnExecutor_ParentWorkspaceReachesPreparerAsWorkDir`
+  (`domain/engine/executor_spawn_test.go`), pinning that a workspace set via the
+  reserved `workspace` variable on the executor's `VariableStore` reaches the
+  preparer's `ChildInputRequest.WorkDir`; confirmed both fail (unknown field /
+  undefined field) against the pre-fix code and pass against the fix. This
+  closes review 2 approval for area 10.
+
 - [x] **`childInputPrompt`'s sorted-key stability invariant was untested.**
   Focus area 10 review 1. `domain/engine/child_input_preparer.go:148-150`
   documents and implements a load-bearing invariant: both the declared-input

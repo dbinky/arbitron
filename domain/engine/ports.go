@@ -101,6 +101,13 @@ type ChildInputRequest struct {
 	Guidance string
 	// ProfileAlias is the chat profile alias to resolve for the preparation call.
 	ProfileAlias string
+	// WorkDir is the parent instance's workspace directory, forwarded onto the
+	// preparation ChatRequest exactly as LLMCallExecutor forwards it
+	// (executor_llm.go). Subprocess-backed chat providers (claude-cli) reject an
+	// empty WorkDir outright (ErrWorkDirRequired) rather than inheriting the
+	// engine process's own cwd, so an empty value here is not a safe default —
+	// it makes every claude-cli-backed spawn node fail at the preparation call.
+	WorkDir string
 }
 
 // ChildInputPreparer turns a parent's available context into startup values

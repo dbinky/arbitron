@@ -75,6 +75,7 @@ func (p *LLMChildInputPreparer) Prepare(ctx context.Context, req ChildInputReque
 		Model:        binding.Model,
 		Prompt:       prompt,
 		OutputSchema: schema,
+		WorkDir:      req.WorkDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("spawn_workflow %q: prepare child inputs: %w", req.NodeID, err)

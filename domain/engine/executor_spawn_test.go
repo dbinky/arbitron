@@ -277,6 +277,26 @@ func TestSpawnExecutor_PassesChildContractAndParentContextToPreparer(t *testing.
 		"the parent's prior NODE OUTPUTS must reach the preparer, not just its inputs")
 }
 
+// The parent's workspace directory must reach the preparer as
+// ChildInputRequest.WorkDir. Subprocess-backed chat providers (claude-cli, the
+// default backend) reject an empty WorkDir outright rather than falling back
+// to the engine process's own cwd (ErrWorkDirRequired) — so an empty value
+// here is not a harmless default, it is a production outage for every
+// claude-cli-backed spawn node.
+func TestSpawnExecutor_ParentWorkspaceReachesPreparerAsWorkDir(t *testing.T) {
+	f := newSpawnExecFixture(t)
+
+	vars := variable.NewStore()
+	vars.SetReserved(engine.ReservedVarWorkspace, "/var/arbitron/workspaces/parent-run-1")
+
+	ctx := engine.ContextWithInstanceID(context.Background(), f.parentID)
+	_, err := f.exec.Execute(ctx, ffNode("child"), vars, "parent")
+	require.NoError(t, err)
+
+	assert.Equal(t, "/var/arbitron/workspaces/parent-run-1", f.preparer.gotReq.WorkDir,
+		"the preparer must receive the parent's workspace so its ChatRequest carries a valid WorkDir")
+}
+
 func TestSpawnExecutor_GuidanceFileIsReadAndSubstituted(t *testing.T) {
 	f := newSpawnExecFixture(t)
 	f.fileReader.files["parent/spawn-guidance.md"] = []byte("Prefer branch {{topic}} for the child.")

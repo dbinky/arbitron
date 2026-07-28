@@ -236,6 +236,7 @@ func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workfl
 		guidance = variable.Resolve(string(b), vars)
 	}
 
+	workDir, _ := WorkDirFromVars(vars)
 	values, err := e.preparer.Prepare(childCtx, ChildInputRequest{
 		NodeID:        node.ID,
 		ChildWorkflow: node.Config.ChildWorkflow,
@@ -243,6 +244,7 @@ func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workfl
 		ParentContext: vars.Snapshot(),
 		Guidance:      guidance,
 		ProfileAlias:  node.Config.ModelProfile,
+		WorkDir:       workDir,
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("spawn_workflow %q: prepare child inputs: %w", node.ID, err)
