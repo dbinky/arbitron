@@ -95,6 +95,20 @@ escalate** — never a tolerated no-op.
 
 ---
 
+## Fixed
+
+- [x] **`assertBindingKind`'s unmapped-type no-op was only verified indirectly.**
+  Focus area 3 requires verifying that an UNMAPPED node type really would no-op
+  `assertBindingKind`, but the existing coverage
+  (`TestExpectedKindForNodeType_OtherMappingsUnchanged`) only called
+  `expectedKindForNodeType` directly, never `assertBindingKind` itself, so a
+  future change that made the wrapper ignore `ok` would have gone undetected.
+  Added `TestAssertBindingKind_UnmappedNodeType_NoOp`
+  (`domain/engine/kind_guard_spawn_test.go`), which calls `assertBindingKind`
+  with an unmapped type (`workflow.NodeTypeScript`) across chat, agent, and a
+  bogus `ProfileKind`, asserting `nil` every time — this is the review-2
+  approval for area 3.
+
 ## Won't Fix
 
 Out of scope for this feature. Recorded so the omission is a decision, not an

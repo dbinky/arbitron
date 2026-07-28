@@ -45,6 +45,21 @@ func TestAssertBindingKind_SpawnWithChatBinding_OK(t *testing.T) {
 	}
 }
 
+// TestAssertBindingKind_UnmappedNodeType_NoOp exercises the no-op claim
+// through assertBindingKind itself (not just expectedKindForNodeType): a node
+// type with no chat/agent mapping must never fail closed, no matter what
+// binding.Kind is passed, because the guard is not meant to enforce anything
+// for it. If a future change to expectedKindForNodeType accidentally mapped
+// an unrelated node type, this is the test that would catch a stray failure
+// closed for it.
+func TestAssertBindingKind_UnmappedNodeType_NoOp(t *testing.T) {
+	for _, kind := range []provider.ProfileKind{provider.ProfileKindChat, provider.ProfileKindAgent, provider.ProfileKind("bogus")} {
+		if err := assertBindingKind("script-1", workflow.NodeTypeScript, kind); err != nil {
+			t.Fatalf("assertBindingKind(unmapped type, %q) = %v, want nil (no-op)", kind, err)
+		}
+	}
+}
+
 // TestExpectedKindForNodeType_OtherMappingsUnchanged pins that this change is
 // targeted: no other node type's mapping moved.
 func TestExpectedKindForNodeType_OtherMappingsUnchanged(t *testing.T) {
