@@ -1,46 +1,139 @@
-# Gaps Identified — workflow-management
+# Gaps Identified — Workflow Spawn Node
 
-Concrete gaps between the current code and the spec/designs/plans. As the loop refines:
-add newly found gaps under `## Open Issues`, move resolved ones to `## Fixed Previously`,
-and log out-of-scope ideas under `## Won't Fix (Beyond Current Scope)`.
+Concrete findings from the seeding sweep of
+`64768283d2c32b64023801103c7aab2f5ea538d3..HEAD`. Each was found by grepping the
+whole repo for the symbol and checking for a **production** (non-`*_test.go`,
+non-`*.test.ts`) constructor or caller.
 
-At seeding the implementation matches the plans/designs and the full Go suite is green,
-so there are **no open implementation gaps**. The items below are verification/hardening
-checks to actively confirm each pass (a green suite is necessary but not sufficient —
-assertions can be shallow):
+Tick a box only when the gap is closed in code with a test that would fail if the
+production input were nil/empty. An unfed production path is a gap to **fix or
+escalate** — never a tolerated no-op.
 
-## Open Issues
+---
 
-_None recorded yet. During each review pass, add a concrete gap here and write a failing
-test before fixing it. Candidate things to actively verify (promote to a real issue only
-if found wanting):_
-- The cross-store rename/delete/transfer rollback genuinely leaves no half-state on a
-  mid-operation failure (folder moved but registry not, or vice versa).
-- The delete running-instance guard uses the exact non-terminal state set and cannot be
-  bypassed by a race.
-- Every one of the seven ops emits exactly one audit event with correct actor/target/detail.
-- Non-admin callers are rejected on every lifecycle MCP tool (fail-closed), and local mode
-  still works.
-- Legacy null-`workflow_id` instances/schedules still operate, and a renamed workflow's
-  schedule still fires.
+## Open
 
-## Fixed Previously
+- [ ] **`useRunHierarchy.invalidate` has no production caller.**
+  `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate` and documents
+  it as "used on a full refetch", but the only reference outside the hook is
+  `dashboard/src/hooks/useRunHierarchy.test.ts:161`.
+  `dashboard/src/components/QueueSection.tsx` calls `useRunHierarchy()` and never
+  calls `invalidate`. Consequence: `QueueSection`'s refetch replaces the top-level
+  `instances` but every expanded level stays cached forever, so a child that
+  completes, fails, or is cancelled keeps rendering its stale state until the user
+  collapses and re-expands it — and a newly spawned child never appears under an
+  already-open parent. Fix: invalidate (or re-fetch open levels) when the
+  section's row set is refreshed, with a Vitest case asserting a stale cached
+  child is not re-rendered after a refetch.
 
-- **Unpublish did not remove the shared registry entry (Area 15).**
-  `Unpublish` removed the publication record and the shared folder but omitted
-  `registry.Delete` on the shared name's `workflow_identity` row. The lingering
-  row caused the cross-scope collision check (added in Area 9) to return
-  `ErrAlreadyExists` on any re-publish under the same name after an unpublish.
-  Fixed by adding step 4 (`registry.Delete` last, matching `Delete`'s ordering)
-  to `Unpublish` in `domain/workflow/delete.go`. Covered by three seam tests in
-  `domain/workflow/publish_unpublish_seam_test.go` and a registry-delete-failure
-  regression test in `domain/workflow/unpublish_test.go`.
+- [ ] **`instance.Instance.IsRoot()` has no production caller.**
+  `domain/instance/instance.go:159` documents itself as "the ONE place the null
+  link means root convention is expressed, so read paths do not each re-derive
+  it" — but no production code calls it. The convention is in fact re-derived
+  independently in at least two places: the `ParentScopeRoots` SQL clause
+  (`adapter/sqlite/instance_repo.go:205`) and `topLevelRows`
+  (`dashboard/src/components/topLevelRows.ts:24`). Either route a real read path
+  through it or delete it; a "single source of truth" nothing reads is not one.
 
-## Won't Fix (Beyond Current Scope)
+- [ ] **Verify `ChildCount` / `parentInstanceId` field names on the MCP surface.**
+  `adapter/mcp/tools_instance.go:139` returns `MarshalResult(enriched)` over
+  `[]instance.EnrichedInstanceSummary` directly. The embedded `InstanceSummary`
+  carries JSON tags (`parentInstanceId`), but `EnrichedInstanceSummary.ChildCount`
+  (`domain/instance/instance.go:213`) has **no** JSON tag, so it marshals as
+  `ChildCount` while REST emits `childCount`
+  (`adapter/http/instance_handler.go:258`). Confirm whether this divergence is
+  pre-existing for the sibling fields (`RetryCount`, `QueuePosition`) and
+  therefore consistent, or whether the REST/MCP parity contract
+  (`adapter/mcp/parity_test.go`) is now weaker than it reads. Record the decision;
+  do not leave it unexamined.
 
-_Per the spec's Non-Goals — do NOT implement in the loop:_
-- A management dashboard/UI (MCP-only this iteration).
-- Updating external, name-based callers (e.g. a GitHub Action) on rename.
-- Per-owner or per-department management delegation (admin-only).
-- Bulk automatic migration of pre-existing ambiguous names.
-- Changing workflow authoring/validation or instance execution semantics.
+- [ ] **`ChildInputRequest.ProfileAlias` may reach the resolver empty.**
+  `validateModelProfiles` deliberately allows a spawn node with **no**
+  `model_profile` (`domain/workflow/validation.go:186`), on the grounds that a
+  zero-input child never makes a preparation call. But
+  `SpawnWorkflowExecutor.prepareAndSpawn` passes `node.Config.ModelProfile`
+  unconditionally, and `LLMChildInputPreparer.Prepare` only skips the call when
+  `len(req.Inputs) == 0` (`domain/engine/child_input_preparer.go:48`). Verify what
+  `provider.ProfileResolver.Resolve(ctx, "")` does for a child that DOES declare
+  inputs on a node with no alias: if it silently resolves a default binding, the
+  author-time carve-out has widened into an unguarded path. Add the failing case
+  (declared inputs + empty alias) and assert a clear error naming the node.
+
+- [ ] **Confirm the awaited-spawn wait is invisible to the timer recovery sweep.**
+  `executeWait` transitions the parent with `instances.UpdateState(ctx, id,
+  StateWaiting)` and the comment claims `waiting_until` stays NULL so
+  `RecoverTimers` cannot pick it up (`domain/engine/executor_spawn.go:159-163`).
+  Verify against the actual `UpdateState` implementation and the
+  `ListWaitingWithTimer` predicate in `adapter/sqlite/instance_repo.go` that a
+  spawn-waiting parent is genuinely excluded — an untested claim in a comment is
+  not a guarantee, and a false positive here would fail a parent that is waiting
+  correctly.
+
+- [ ] **`Engine.OnChildTerminal` is called with `context.Background()` from three
+  sites.** `engine.go` (run completion, `failInstance`, `cancelAuthorized`) all
+  pass a background context deliberately, but `OnChildTerminal` then performs
+  `instances.Get` ×2 and `queueRepo.SetQueued` with no deadline and no request
+  identity. Confirm none of those repository calls depends on a context value
+  (identity, tenant, tracing) that the background context drops, and that an
+  unbounded call here cannot wedge the terminal transition that invoked it.
+
+- [ ] **No end-to-end coverage that a fire-and-forget child from node A does not
+  wake a parent waiting at node B.** Phase 4's design calls this "the central
+  mis-wake guard" and the single most important assertion in the phase.
+  `domain/engine/spawn_wake_test.go` exists — confirm it covers the two-node case
+  against the real `OnChildTerminal` (not a fake that already filters by node id),
+  and that the fake `InstanceRepository` it uses does not ignore `ParentNodeID`.
+
+- [ ] **Verify the cascade produces an intervention record for every descendant.**
+  `cascadeCancel` routes through `cancelAuthorized`, which calls
+  `recordIntervention` — but `authorizeIntervention` runs per child against the
+  ambient context identity. Confirm with a test that cancelling a deep tree
+  writes one intervention row per cancelled run, and that an admin cancelling
+  another user's run does not fail authorization partway down the tree and
+  silently orphan the remaining descendants (the cascade logs and continues, so a
+  systematic authorization failure would be invisible).
+
+---
+
+## Won't Fix
+
+Out of scope for this feature. Recorded so the omission is a decision, not an
+oversight. **None of these is an unfed production path** — each is either
+explicitly a spec non-goal or pre-existing behaviour this change set did not
+touch.
+
+- **Recursion / runaway limits on spawning.** The spec lists recursion limits and
+  loop prevention as explicit non-goals, and `AGENTS.md:85` records that the
+  engine has no general runaway guard. A workflow that spawns itself grows
+  instance count geometrically. Phase 3's design records this as a known, accepted
+  risk. Out of scope.
+- **Lifting the awaited-spawn loop-body restriction.** Phase 4's design states the
+  short-circuit cannot distinguish re-entry-after-wait from a back-edge revisit,
+  and explicitly does not attempt to lift the restriction — for either awaited
+  spawn nodes or interactive nodes, which carry the same restriction for the same
+  reason. Documented in `AGENTS.md` instead.
+- **Duplicate child on fire-and-forget node retry.** A node-level retry of a
+  fire-and-forget spawn re-invokes `Execute` and creates a second child. Phase 3
+  records this as intended and pinned by test, since the spec states
+  fire-and-forget child outcomes do not affect the parent. (The awaited path is
+  idempotent via the short-circuit.)
+- **Atomicity of the child's terminal write and the parent's wake.** Phase 4
+  defers this as a durability refinement: `SpawnWaitReconciler` makes
+  non-atomicity recoverable rather than fatal.
+- **A child left running when the parent fails at the spawn node.** Deliberate:
+  the child may already be executing side effects, and cancelling it from a
+  failing parent would layer a second failure on the first. Consistent with the
+  engine's existing choice to retain workspaces on failure.
+- **Hierarchy on the single-instance detail view.** Phase 5 covers the list view
+  only.
+- **Editor-side UI for spawn nodes** (node palette, per-type port rendering,
+  configuration form). `dashboard/src/graph` has no editor for any node type;
+  `conditional` has had named ports far longer and still renders through
+  `ArbitronNode`'s single source handle. Spawn nodes are authored in
+  `workflow.json` and policed by Phase 1 validation.
+- **Server-side depth limit on hierarchy expansion.** Expansion is user-driven,
+  one level per request; depth costs requests, not an unbounded query.
+- **Pre-existing baseline failure**
+  `adapter/config.TestSampleFeaturePipeline_ValidatesWithDefaultProfiles`. Present
+  at the branch point; not this feature's job. Must not block the loop, and must
+  not be "fixed" by weakening the sample-pipeline validation this feature extends.
