@@ -17,7 +17,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/spawn_reconciler_test.go`:
 
@@ -210,7 +210,7 @@ func TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -226,7 +226,7 @@ domain/engine/spawn_reconciler_test.go:...: undefined: engine.NewSpawnWaitReconc
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 Create `domain/engine/spawn_reconciler.go`:
 
@@ -330,7 +330,7 @@ func (r *SpawnWaitReconciler) Reconcile(ctx context.Context) error {
 }
 ```
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -353,7 +353,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.6s
 ```
 
-- [ ] **Step 5: Wire it into the startup sequence**
+- [x] **Step 5: Wire it into the startup sequence**
 
 In `cmd/arbitron/main.go`, immediately after the `RecoverCrashedInstances` block
 (which ends with its closing `}` around line 1000) and BEFORE
@@ -377,7 +377,7 @@ In `cmd/arbitron/main.go`, immediately after the `RecoverCrashedInstances` block
 	}
 ```
 
-- [ ] **Step 6: Verify the startup ordering is what the plan says**
+- [x] **Step 6: Verify the startup ordering is what the plan says**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -393,7 +393,7 @@ Expected output — the reconciler line number must be GREATER than the
 1010:	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 gofmt -w cmd/arbitron/ && go build ./... && go test ./...
@@ -401,7 +401,7 @@ gofmt -w cmd/arbitron/ && go build ./... && go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/spawn_reconciler.go domain/engine/spawn_reconciler_test.go cmd/arbitron/main.go

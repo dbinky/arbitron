@@ -1033,6 +1033,22 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
+	// 14-spawn. Reconcile parents stuck waiting on a child that already finished.
+	//
+	// ORDERING IS SIGNIFICANT: this runs AFTER RecoverCrashedInstances, which
+	// marks crashed CHILDREN as failed — so their parents resume through the
+	// failure port in this same startup pass instead of hanging until the next
+	// restart. A waiting parent is itself untouched by that sweep, since it is not
+	// in the running state.
+	//
+	// A failure here is logged, NOT fatal: the same posture as the timer/webhook
+	// recovery sweeps. A parent missed on this boot is picked up on the next one.
+	logger.Info("reconciling parents waiting on spawned children")
+	spawnReconciler := engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr)
+	if err := spawnReconciler.Reconcile(context.Background()); err != nil {
+		logger.Error("spawn-wait reconciliation incomplete", "error", err)
+	}
+
 	// 14a. Recover pending timers and webhook endpoints from the database.
 	logger.Info("recovering pending timers")
 	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
