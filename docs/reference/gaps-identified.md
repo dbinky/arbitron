@@ -76,6 +76,50 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`Engine.ChildInputs`'s default-user-unavailable fail-closed path was
+  untested.** Focus area 13 review 1. `domain/engine/engine_spawn.go:28-31`
+  calls the same `triggerOwner` helper `TriggerWithDepartment` uses, and
+  correctly returns an error rather than proceeding with a nil owner when a
+  system caller (no context identity) hits an unresolvable default user — but
+  this is `ChildInputs`'s OWN call to `triggerOwner`, and `go tool cover`
+  showed its `!ok` branch (lines 29-31) at 0% while the identical branch in
+  `Trigger`/`TriggerWithDepartment` is pinned by
+  `TestTrigger_DefaultUserUnavailable_FailsClosed`
+  (`engine_trigger_scope_test.go:183`) — the same shape of gap already fixed
+  twice in this loop (area 12's Subject/Email derefs, area 8's zero-scope
+  branch): a shared helper's behavior is proven at one call site and silently
+  assumed at a sibling one. A regression that dropped or inverted `ChildInputs`'s
+  own `!ok` check would have let a nil-owner query fall through to
+  `workflow.LoadVisibleFiltered` with `uuid.Nil`, silently reading the "private
+  to nobody" scope instead of failing the node — undetected by any existing
+  test, since the only production caller (`prepareAndSpawn`) always injects a
+  resolved identity before calling, so this is a latent defensive-branch gap
+  today, not a live bug, but the fail-closed contract is `ChildInputs`'s own
+  and deserves its own pin independent of `Trigger`'s. Added
+  `TestEngineChildInputs_DefaultUserUnavailable_FailsClosed`
+  (`domain/engine/engine_spawn_test.go`), which sets `f.userRepo.defaultUserErr`
+  and calls `ChildInputs` with a bare `context.Background()`, asserting the
+  "failed to resolve owner" error; confirmed it fails for the right reason (no
+  error returned) when the `!ok` check is temporarily replaced with a
+  discarded `_`, then confirmed it passes against the real code. Also reviewed
+  the rest of area 13 against the wired-and-fed criteria: `ChildSpawner` and
+  `SpawnRequest` are constructed only at the composition root
+  (`cmd/arbitron/main.go:894-903`, `eng` — the concrete `*Engine` — passed to
+  `NewSpawnWorkflowExecutor`), `Spawn`'s link-validity-before-creation guard
+  and thin-delegation shape are unchanged and already covered
+  (`TestEngineSpawn_RejectsInvalidLinkBeforeCreating` and siblings), and the
+  five-category bar (happy, success, failure, error, edge) is now met for both
+  methods — `ChildInputs`'s "not-found on invisible" half of the checklist
+  inherits `workflow.LoadVisibleFiltered`'s own pre-existing coverage in
+  `domain/workflow/resolve_test.go` (confirmed via `git show` against the
+  branch point that `LoadVisibleFiltered` predates this feature, so its own
+  test suite is not this feature's job to extend). The remaining uncovered
+  line (`if ctx == nil` in both `Spawn` and `ChildInputs`) mirrors an existing,
+  never-tested defensive pattern already present in `Trigger`/
+  `TriggerWithDepartment` pre-dating this feature — not a gap this feature
+  introduced. This closes review 1 approval for area 13; review 2 remains
+  open.
+
 - [x] **`userIdentityResolver.IdentityForUser`'s Subject/Email → `LedDepartments`
   plumbing was untested.** Focus area 12 review 2.
   `cmd/arbitron/main.go:1384-1391` duplicates `AuthMiddleware.enrich`'s

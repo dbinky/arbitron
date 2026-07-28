@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -56,6 +57,22 @@ func TestEngineChildInputs_UnknownWorkflowErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, workflow.ErrNotFound,
 		"a workflow the caller cannot see is indistinguishable from one that does not exist")
+}
+
+// ChildInputs resolves the owner exactly as TriggerWithDepartment does: the
+// context identity when present, otherwise the default user. A system caller
+// with no context identity and an unresolvable default user must fail closed
+// rather than proceed with a nil owner, which would silently bypass
+// owner-scoped visibility. TestTrigger_DefaultUserUnavailable_FailsClosed pins
+// this same triggerOwner branch for Trigger; ChildInputs has its own call to
+// triggerOwner and needs its own pin.
+func TestEngineChildInputs_DefaultUserUnavailable_FailsClosed(t *testing.T) {
+	f := spawnerFixture(t)
+	f.userRepo.defaultUserErr = errors.New("db unavailable")
+
+	_, err := f.engine.ChildInputs(context.Background(), "child")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to resolve owner")
 }
 
 func TestEngineChildInputs_ZeroDeclaredInputs(t *testing.T) {
