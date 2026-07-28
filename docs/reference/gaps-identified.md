@@ -88,6 +88,34 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`ListWaitingOnTerminalChild`'s retry-produces-duplicate-candidates case
+  was untested.** Focus area 5 review 2. The reconciler's query JOINs every
+  terminal child of a waiting parent's current node
+  (`adapter/sqlite/instance_repo.go:725-733`), with no analogous tie-break to
+  `FindChildBySpawnNode`'s `ORDER BY ... LIMIT 1` — by design, since it answers
+  "is there a terminal child" rather than "which child answers", but that
+  means a node-level retry that leaves more than one terminal child for the
+  same (parent, node) key (the exact scenario the tie-break test above
+  exercises) surfaces as TWO `SpawnWaitCandidate` rows naming the same parent,
+  and no test verified either the SQL layer produced this shape or that
+  `SpawnWaitReconciler.Reconcile` tolerates it. Confirmed by hand that it is
+  harmless — the reconciler re-verifies `parent.State == waiting` against the
+  live row before each `SetQueued`, so the second candidate for an
+  already-requeued parent is skipped — but an untested "confirmed by hand" is
+  exactly the gap this loop exists to close. Added
+  `TestListWaitingOnTerminalChild_RetryLeavesOneRowPerTerminalChild`
+  (`adapter/sqlite/instance_spawn_wait_test.go`) pinning the two-row shape, and
+  `TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce`
+  (`domain/engine/spawn_reconciler_test.go`) asserting the parent is queued
+  and `NotifyCapacityFreed` fires exactly once despite the duplicate. Also
+  reviewed and confirmed as correct-by-design (not a gap): `SpawnWaitCandidate.
+  ChildState`, populated by the SQL adapter, has no production reader —
+  `SpawnWaitReconciler.Reconcile` only uses it to identify *that* a child is
+  terminal (already filtered by the WHERE clause), never *how*, because the
+  routing decision is deliberately deferred to `resumeFromLink`'s fresher
+  `FindChildBySpawnNode` read at resumption. This closes the "edge" category
+  gap for area 5 — review 2 approval.
+
 - [x] **`FindChildBySpawnNode`'s newest-child tie-break was untested.**
   Focus area 5 review 1. `adapter/sqlite/instance_repo.go:690-697` documents
   `ORDER BY created_at DESC, rowid DESC LIMIT 1` as deliberate: a node-level

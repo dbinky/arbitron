@@ -170,6 +170,28 @@ func TestSpawnWaitReconciler_QueryFailureIsReturnedNotPanicked(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 }
 
+// ListWaitingOnTerminalChild's JOIN produces one row per terminal child, so a
+// node-level retry that left more than one terminal child for the same
+// (parent, node) key surfaces as TWO candidates naming the SAME parent. The
+// reconciler must not double-queue or error on the second: its own
+// re-verification against the current row (parent.State != waiting after the
+// first SetQueued) is what makes the duplicate harmless, and this test is
+// what would catch a regression if that guard were ever weakened to key on
+// something the second candidate could still satisfy.
+func TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce(t *testing.T) {
+	r := newReconcilerFixture(t)
+	parent := r.seedWaitingParent(t, "spawn-1")
+	r.spawnWaits.candidates = []instance.SpawnWaitCandidate{
+		{ParentID: parent, ParentNodeID: "spawn-1", ChildID: uuid.New(), ChildState: instance.StateFailed},
+		{ParentID: parent, ParentNodeID: "spawn-1", ChildID: uuid.New(), ChildState: instance.StateCompleted},
+	}
+
+	require.NoError(t, r.rec.Reconcile(context.Background()))
+
+	assert.Equal(t, instance.StateQueued, r.stateOf(t, parent))
+	assert.Equal(t, 1, r.f.queueManager.notifyCount(), "one notify per Reconcile call, not one per duplicate candidate")
+}
+
 // A re-queue failure for one candidate must not abandon the rest.
 func TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest(t *testing.T) {
 	r := newReconcilerFixture(t)

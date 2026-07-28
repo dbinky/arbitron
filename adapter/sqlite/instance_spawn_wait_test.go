@@ -224,6 +224,38 @@ func TestListWaitingOnTerminalChild_NonWaitingParentIsNotACandidate(t *testing.T
 	assert.Empty(t, got, "a cancelled parent must never be resurrected by its dying child")
 }
 
+// A node-level retry after a partially failed suspension can leave more than
+// one terminal child row for the same (parent, node, mode) key — the same
+// situation FindChildBySpawnNode's tie-break exists for. The JOIN here has no
+// analogous tie-break: it is not resolving "which child answers", only
+// "is there a terminal child at all", so one row per matching child is
+// correct, not a bug. This pins that shape down so a future change collapsing
+// it to one-row-per-parent (or, worse, silently dropping the newest) is
+// caught, and documents that the duplicate is harmless downstream (see
+// TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce).
+func TestListWaitingOnTerminalChild_RetryLeavesOneRowPerTerminalChild(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	owner := uuid.MustParse(spawnTestOwner)
+
+	parent := waitingParent(t, repo, "spawn-1")
+	stale := childOf(t, repo, parent, "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateFailed, owner, instance.VisibilityPrivate, "")
+	newest := childOf(t, repo, parent, "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateCompleted, owner, instance.VisibilityPrivate, "")
+
+	got, err := repo.ListWaitingOnTerminalChild(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 2, "both terminal children of the retried node are candidates")
+
+	childIDs := []uuid.UUID{got[0].ChildID, got[1].ChildID}
+	assert.ElementsMatch(t, []uuid.UUID{stale, newest}, childIDs)
+	for _, c := range got {
+		assert.Equal(t, parent, c.ParentID)
+		assert.Equal(t, "spawn-1", c.ParentNodeID)
+	}
+}
+
 func TestListWaitingOnTerminalChild_EmptyDatabaseReturnsEmpty(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewInstanceRepo(db.DB)
