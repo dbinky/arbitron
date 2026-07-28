@@ -70,6 +70,30 @@ func TestSpawnResume_ResultCarriesChildOutcome(t *testing.T) {
 		"the node output must record HOW the child ended so the trace is self-explanatory")
 }
 
+// The "childState in the output" claim was only ever pinned for a Completed
+// child (above). resumeFromLink writes output["childState"] BEFORE the
+// terminal check, unconditionally, for every one of the seven possible link
+// states — but a regression that moved the write to after the terminal
+// short-circuit, or hard-coded it in the terminal branch only, would have
+// shipped undetected: the Failed/Cancelled routing tests only assert
+// OutputPort, and the still-active edge-case test only asserts IsWait. This
+// is the same shape of gap fixed repeatedly elsewhere in this loop — a claim
+// proven at one call site (Completed) and silently assumed at every sibling
+// one.
+func TestSpawnResume_ChildStateReflectsExactLinkStateAcrossAllOutcomes(t *testing.T) {
+	for _, st := range []instance.State{
+		instance.StateCompleted, instance.StateFailed, instance.StateCancelled,
+		instance.StateQueued, instance.StateRunning, instance.StateWaiting, instance.StatePaused,
+	} {
+		_, res, err := resumeWith(t, st)
+		require.NoError(t, err, "state %s", st)
+		require.NotNil(t, res, "state %s", st)
+		out, ok := res.Output.(map[string]any)
+		require.True(t, ok, "state %s", st)
+		assert.Equal(t, string(st), out["childState"], "state %s must be recorded verbatim", st)
+	}
+}
+
 // ---------- edge cases ----------
 
 // Re-entering while the child is STILL ACTIVE returns to waiting without

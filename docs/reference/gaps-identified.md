@@ -76,6 +76,54 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`resumeFromLink`'s "childState in the output" claim was pinned for only
+  one of seven possible link states.** Focus area 18 (awaited-spawn resumption
+  short-circuit), review 1. `domain/engine/executor_spawn.go:183-184` writes
+  `output["childState"] = string(link.ChildState)` unconditionally, BEFORE the
+  terminal/still-active branch — so every resumption, terminal or not, must
+  carry the child's exact state in its output. But
+  `TestSpawnResume_ResultCarriesChildOutcome`
+  (`domain/engine/executor_spawn_resume_test.go`) only asserted this for a
+  `Completed` child; the sibling routing tests
+  (`TestSpawnResume_FailedChildRoutesFailure`,
+  `_CancelledChildRoutesFailure`) asserted only `OutputPort`, and the
+  still-active edge-case test
+  (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`) never
+  inspected `res.Output` at all — the same shape of gap fixed repeatedly
+  elsewhere in this loop: a claim proven at one call site and silently assumed
+  at every sibling one. A regression that moved the `childState` write inside
+  the terminal branch, or hard-coded it only for the success path, would have
+  shipped undetected — leaving the trace silently missing "how the child
+  ended" for a failed/cancelled/still-waiting resumption, exactly the
+  self-explanatory-trace guarantee the field's own comment promises. Added
+  `TestSpawnResume_ChildStateReflectsExactLinkStateAcrossAllOutcomes`, which
+  drives `resumeWith` across all seven `instance.State` values and asserts
+  `out["childState"]` equals the exact state given every time; confirmed it
+  fails for the right reason (`childState` absent from every case) when the
+  `output["childState"] = ...` line is temporarily removed, then confirmed it
+  passes against the real code. Independently reviewed the rest of area 18's
+  checklist from source: `executeWait` keys resumption on
+  `FindChildBySpawnNode`'s link, never on node-execution status
+  (`TestSpawnResume_BackEdgeRevisitRoutesFromPreviousChild` pins this as
+  tested behaviour, not an assumption); the still-active branch correctly
+  covers all four non-terminal states with no re-spawn and no re-transition
+  (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`); terminal
+  routing sends `Completed` to success and both `Failed` and `Cancelled` to
+  the SAME failure port, matching the spec's no-separate-cancellation-path
+  requirement, and is proven at the sink by the real composition root in
+  `cmd/arbitron/spawn_wait_e2e_test.go` (`TestSpawnWaitE2E_*RoutesParentThrough*`),
+  not just through fakes; the link key includes both node id and mode
+  (`TestSpawnResume_SecondSpawnNodeMatchedIndependently`,
+  `_FireAndForgetLinkDoesNotSatisfyAwaitedLookup`); `instance.ChildLink{...}`
+  is constructed only by the real `InstanceRepo.FindChildBySpawnNode`
+  (`adapter/sqlite/instance_repo.go:711`), grepped for all non-test call
+  sites; and the "attempt=1 written twice" shape (once by `executeWait` on
+  suspend, once by `executeWithRetry` on a terminal resume) is inherited,
+  pre-existing behaviour shared by every other wait-style executor
+  (`WebhookWaitExecutor` does the identical thing), not a gap this feature
+  introduced. This closes review 1 approval for area 18; review 2 remains
+  open.
+
 - [x] **Area 17 (spawn executor — wait-for-child suspension), review 2: independent
   re-verification found no live gap.** Re-derived every checklist item from
   source rather than trusting review 1's write-up. Confirmed via `go tool
