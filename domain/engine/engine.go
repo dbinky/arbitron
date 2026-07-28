@@ -266,6 +266,33 @@ func (e *Engine) triggerAdminOverrode(ctx context.Context, scope workflow.Scope,
 	return workflow.AdminOverrode(callerID, pub)
 }
 
+// sharedVisibilityFilter builds the shared-scope gate for a workflow read.
+//
+// It is shared by TriggerWithDepartment and ChildInputs so a spawn node's
+// child-workflow lookup can NEVER resolve a workflow the same caller could not
+// trigger directly. Gating keys on the CONTEXT identity (a REST/MCP caller, or
+// the reconstructed owner identity a spawn injects). A system trigger (no
+// context identity) skips gating — a scheduler/webhook trigger already passed
+// authorization at registration time. A nil filter disables shared-scope gating
+// for callers with no publication lookup.
+func (e *Engine) sharedVisibilityFilter(ctx context.Context) workflow.SharedVisibilityFilter {
+	id, ok := identity.FromContext(ctx)
+	if !ok || e.publishers == nil {
+		return nil
+	}
+	pubs := e.publishers
+	return func(ctx context.Context, name string) (bool, error) {
+		pub, found, err := pubs.PublicationOf(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if !found {
+			return true, nil // unpublished shared folder ⇒ open
+		}
+		return workflow.CanSeePublication(id, pub), nil
+	}
+}
+
 // TriggerWithDepartment loads a workflow, validates inputs, stamps the run's
 // visibility+department (applying the optional validated per-trigger department
 // override), creates the instance, and enqueues it. departmentOverride is "" for
@@ -290,20 +317,7 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	// system user; gating keys on the CONTEXT identity (a REST/MCP caller). A
 	// system trigger (no context identity) skips gating — a scheduler/webhook
 	// trigger already passed authorization at registration time.
-	var filter workflow.SharedVisibilityFilter
-	if id, ok := identity.FromContext(ctx); ok && e.publishers != nil {
-		pubs := e.publishers
-		filter = func(ctx context.Context, name string) (bool, error) {
-			pub, found, err := pubs.PublicationOf(ctx, name)
-			if err != nil {
-				return false, err
-			}
-			if !found {
-				return true, nil // unpublished shared folder ⇒ open
-			}
-			return workflow.CanSeePublication(id, pub), nil
-		}
-	}
+	filter := e.sharedVisibilityFilter(ctx)
 	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)

@@ -354,6 +354,17 @@ func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {
 	return r.instances[id]
 }
 
+// all returns every instance the repo holds. Test-only.
+func (r *mockInstanceRepo) all() []*instance.Instance {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*instance.Instance, 0, len(r.instances))
+	for _, inst := range r.instances {
+		out = append(out, inst)
+	}
+	return out
+}
+
 // mockNodeExecutionRepo implements instance.NodeExecutionRepository
 type mockNodeExecutionRepo struct {
 	mu         sync.Mutex

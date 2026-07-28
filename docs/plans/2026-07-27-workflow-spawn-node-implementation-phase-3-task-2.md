@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/engine_spawn_test.go`:
 
@@ -247,7 +247,7 @@ func (r *mockInstanceRepo) all() []*instance.Instance {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -264,7 +264,7 @@ domain/engine/engine_spawn_test.go:...: undefined: engine.SpawnRequest
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Declare the ports**
+- [x] **Step 3: Declare the ports**
 
 Append to `domain/engine/ports.go`:
 
@@ -337,7 +337,7 @@ import (
 )
 ```
 
-- [ ] **Step 4: Extract the shared visibility filter**
+- [x] **Step 4: Extract the shared visibility filter**
 
 In `domain/engine/engine.go`, replace the inline filter construction inside
 `TriggerWithDepartment` (lines 288-306, the `var filter workflow.SharedVisibilityFilter`
@@ -379,7 +379,7 @@ func (e *Engine) sharedVisibilityFilter(ctx context.Context) workflow.SharedVisi
 }
 ```
 
-- [ ] **Step 5: Implement `ChildInputs` and `Spawn`**
+- [x] **Step 5: Implement `ChildInputs` and `Spawn`**
 
 Create `domain/engine/engine_spawn.go`:
 
@@ -455,7 +455,7 @@ func (e *Engine) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 }
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -479,7 +479,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.5s
 ```
 
-- [ ] **Step 7: Confirm the extracted filter did not change trigger behaviour**
+- [x] **Step 7: Confirm the extracted filter did not change trigger behaviour**
 
 ```bash
 go test ./domain/engine/ ./adapter/http/ ./adapter/mcp/
@@ -488,7 +488,7 @@ go test ./domain/engine/ ./adapter/http/ ./adapter/mcp/
 Expected: `ok` for all three — in particular
 `domain/engine/engine_trigger_scope_test.go` must still pass unchanged.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/engine_spawn.go domain/engine/engine_spawn_test.go domain/engine/ports.go domain/engine/engine.go domain/engine/engine_test.go

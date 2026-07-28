@@ -5,6 +5,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -273,4 +275,55 @@ type EventBus interface {
 	// SubscribeAll yields ScopedEvent so consumers can authorize each event by
 	// the instance it belongs to.
 	SubscribeAll() (<-chan ScopedEvent, func())
+}
+
+// IdentityResolver turns a user id into that user's full runtime identity
+// (role, departments, led departments).
+//
+// It is a structurally identical twin of schedule.IdentityResolver, REDECLARED
+// rather than imported because domain/engine must not depend on
+// domain/schedule. This mirrors the codebase's established practice of
+// redeclaring a type across a domain edge to keep the dependency
+// one-directional (instance.Claims vs identity.Claims; instance.Visibility vs
+// workflow.Visibility).
+//
+// The composition root passes the SAME concrete value to both the schedule
+// evaluator and the spawn executor, so a scheduled fire and a spawned run can
+// never resolve a user differently.
+type IdentityResolver interface {
+	IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error)
+}
+
+// SpawnRequest is everything ChildSpawner needs to create one linked child.
+type SpawnRequest struct {
+	// ChildWorkflow is the child workflow's name.
+	ChildWorkflow string
+	// Variables are the prepared startup values.
+	Variables map[string]any
+	// Priority is inherited from the parent run: a child of a high-priority run
+	// competes on equal footing with its parent's siblings. Nothing requires an
+	// independent priority axis.
+	Priority string
+	// Link is the child's back-reference to the spawning node. It MUST be valid;
+	// an incomplete link is rejected before any instance is created, because a
+	// child that cannot be matched by the wake would strand its parent forever.
+	Link instance.SpawnLink
+}
+
+// ChildSpawner creates and enqueues a child workflow instance linked to its
+// parent, and answers what a child workflow declares as its inputs.
+//
+// Both operations are on ONE port so the spawn executor depends on a
+// single-operation-shaped interface rather than on the whole Engine — an
+// isolation boundary and what makes the executor unit-testable. *Engine
+// satisfies it.
+type ChildSpawner interface {
+	// ChildInputs returns the child workflow's declared input contract, resolved
+	// through the SAME owner-scoped visibility filter the trigger path uses. A
+	// workflow the caller cannot see returns ErrNotFound — indistinguishable
+	// from "does not exist", so existence is never leaked.
+	ChildInputs(ctx context.Context, workflowName string) ([]workflow.InputField, error)
+	// Spawn creates the child under the identity carried on ctx, with the link
+	// already set, and enqueues it. It returns the new child instance's id.
+	Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 }
