@@ -131,6 +131,30 @@ func TestChildCounts_AllChildrenInvisibleIsAbsent(t *testing.T) {
 	assert.False(t, present, "a parent whose children are all invisible must report no count (no existence leak)")
 }
 
+// A totally zero-scope ChildVisibility (not Unconstrained, no OwnerID, no
+// Departments, no IncludePublic) must fail CLOSED — count nothing — rather
+// than falling through to an unfiltered count. This is childVisibilityClause's
+// "0=1" branch, distinct from the OwnerID-scoped branch the other invisible-
+// children tests exercise: a caller with OwnerID set takes the "c.owner_id = ?"
+// arm, never the empty-ors arm this test pins down.
+func TestChildCounts_ZeroScopeVisibilityFailsClosed(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+	owner := uuid.MustParse(spawnTestOwner)
+
+	p := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, repo.Create(ctx, p))
+	// A public child would be visible under IncludePublic, or under an OwnerID
+	// match — neither is set here, so a fail-open regression would surface it.
+	childOf(t, repo, p.ID, "n1", instance.SpawnModeFireAndForget, instance.StateRunning, owner, instance.VisibilityPublic, "")
+
+	got, err := repo.ChildCountsByParents(ctx, []uuid.UUID{p.ID}, instance.ChildVisibility{})
+	require.NoError(t, err)
+	_, present := got[p.ID]
+	assert.False(t, present, "zero-scope visibility must count nothing, not fall through to unfiltered")
+}
+
 func TestChildCounts_DepartmentVisibleChildrenAreCounted(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewInstanceRepo(db.DB)

@@ -88,6 +88,38 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`childVisibilityClause`'s zero-scope fail-closed branch was untested.**
+  Focus area 8 review 1. `adapter/sqlite/instance_repo.go:579-581` documents and
+  implements a load-bearing security guard: when a caller's `ChildVisibility` is
+  not `Unconstrained` and carries no `OwnerID`, `Departments`, or
+  `IncludePublic` (the zero value), the disjunction is empty and the clause
+  must render `0=1` — count nothing — rather than falling through to an
+  unfiltered (fail-open) count. No test ever constructed a totally zero-value
+  `instance.ChildVisibility{}`: the existing invisible-children coverage
+  (`TestChildCounts_AllChildrenInvisibleIsAbsent`,
+  `TestChildCounts_ExcludesInvisibleChildren`) always sets `OwnerID`, which
+  takes the `"c.owner_id = ?"` disjunct arm, never the empty-`ors` arm this
+  gap is about. A regression flipping `0=1` to `1=1` (or dropping the guard)
+  would have shipped silently and leaked child-existence counts to a caller
+  with no authorized scope at all. Added
+  `TestChildCounts_ZeroScopeVisibilityFailsClosed`
+  (`adapter/sqlite/instance_spawn_queries_test.go`), which creates a *public*
+  child (visible under `IncludePublic` or an owner match, neither set here)
+  and asserts it is absent from the count under `instance.ChildVisibility{}`;
+  confirmed it fails for the right reason when the branch is temporarily
+  changed to `1=1`, then confirmed it passes against the real code. Also
+  traced the only production caller (`InstanceEnricher.batchChildCounts`,
+  `domain/engine/enricher.go:104-111`) and confirmed it already short-circuits
+  before ever constructing a zero-scope `ChildVisibility` (no identity on the
+  context skips the call entirely) — so this was a latent, not live, gap, but
+  the fail-closed contract is documented as the query layer's own invariant
+  and deserves its own coverage independent of today's one caller. This is
+  the "edge"/security-invariant category area 8 was missing — happy, success,
+  failure, and error were already covered for all four link-addressed queries
+  and the `ParentScope` clause via the existing extensive suite
+  (`instance_spawn_queries_test.go`, `instance_spawn_wait_test.go`,
+  `instance_repo_parent_scope_test.go`). Closes review 1 approval for area 8.
+
 - [x] **The generated-query staleness bug that hit `trigger_source`/`schedule_id`/
   `workflow_id` recurred for migration 018's spawn-link columns.** Focus area 7
   review 2. This exact codebase already has a documented failure mode
