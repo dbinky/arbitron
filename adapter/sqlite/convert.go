@@ -213,3 +213,28 @@ func fromNullJSONString(ns sql.NullString) (map[string]any, error) {
 	}
 	return m, nil
 }
+
+// parentIDToNullString maps a nilable parent instance UUID to a nullable SQL
+// string: nil (a root run) => SQL NULL; a value => its canonical UUID string.
+// It is the inverse of nullStringToParentID.
+func parentIDToNullString(id *uuid.UUID) sql.NullString {
+	if id == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: id.String(), Valid: true}
+}
+
+// nullStringToParentID maps a nullable parent_instance_id column back to
+// *uuid.UUID: NULL or empty => nil (a root run). A deleted parent's id is still
+// a valid UUID string, so this round-trips a dangling link too — there is no FK
+// on the column by design.
+func nullStringToParentID(ns sql.NullString) (*uuid.UUID, error) {
+	if !ns.Valid || ns.String == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(ns.String)
+	if err != nil {
+		return nil, fmt.Errorf("parsing parent_instance_id: %w", err)
+	}
+	return &id, nil
+}

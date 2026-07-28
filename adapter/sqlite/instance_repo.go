@@ -27,6 +27,26 @@ func NewInstanceRepo(db *sql.DB) *InstanceRepo {
 	}
 }
 
+// createInstanceSQL writes the row and the spawn link in ONE statement.
+//
+// The link MUST ride this INSERT rather than a follow-up UPDATE: the trigger
+// path creates AND enqueues (Engine.TriggerWithDepartment), so control returns
+// to the caller only after the child may already be running. A child that
+// reached a terminal state before a follow-up link write landed would leave its
+// waiting parent with nothing to match, and the parent would hang forever.
+//
+// This is hand-written rather than sqlc-generated for the same reason
+// CountActiveByWorkflowID is: it lets the column set evolve without a
+// regeneration step. queries/instances.sql carries the matching source-of-truth
+// SQL.
+const createInstanceSQL = `INSERT INTO instances (
+	id, owner_id, workflow_name, workflow_snapshot, state, priority,
+	variables, original_variables, queued_at, department, visibility,
+	trigger_source, schedule_id, workflow_id,
+	parent_instance_id, parent_node_id, spawn_mode
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING created_at, updated_at`
+
 func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) error {
 	snapshotJSON, err := toJSONString(inst.WorkflowSnapshot)
 	if err != nil {
@@ -56,37 +76,50 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		triggerSource = instance.OriginManual
 	}
 
-	row, err := r.queries.CreateInstance(ctx, generated.CreateInstanceParams{
-		ID:                uuidToString(inst.ID),
-		OwnerID:           uuidToString(inst.OwnerID),
-		WorkflowName:      inst.WorkflowName,
-		WorkflowSnapshot:  snapshotJSON,
-		State:             string(inst.State),
-		Priority:          string(inst.Priority),
-		Variables:         varsJSON,
-		OriginalVariables: origVarsJSON,
-		QueuedAt:          timeToNullString(inst.QueuedAt),
-		Department:        deptToNullString(inst.Department),
-		Visibility:        string(visibility),
-		TriggerSource:     string(triggerSource),
-		ScheduleID:        scheduleIDToNullString(inst.ScheduleID),
-		// Stamp the stable workflow_id (migration 017) in the SAME INSERT. Folding
-		// it into the generated query (rather than a follow-up UPDATE) is atomic:
-		// there is no crash window in which the row exists with workflow_id=NULL,
-		// which would make a live run invisible to the delete-while-running guard
+	// A PARTIAL link is never written: a row with a parent id but no node id
+	// could not be matched by the wake and would strand its parent forever. All
+	// three columns are written together or all three stay NULL.
+	var parentID, parentNode, spawnMode sql.NullString
+	if inst.ParentInstanceID != nil && inst.ParentNodeID != nil && inst.SpawnMode.Valid() {
+		parentID = parentIDToNullString(inst.ParentInstanceID)
+		parentNode = ptrToNullString(inst.ParentNodeID)
+		spawnMode = sql.NullString{String: string(inst.SpawnMode), Valid: true}
+	}
+
+	var createdAtRaw, updatedAtRaw string
+	err = r.db.QueryRowContext(ctx, createInstanceSQL,
+		uuidToString(inst.ID),
+		uuidToString(inst.OwnerID),
+		inst.WorkflowName,
+		snapshotJSON,
+		string(inst.State),
+		string(inst.Priority),
+		varsJSON,
+		origVarsJSON,
+		timeToNullString(inst.QueuedAt),
+		deptToNullString(inst.Department),
+		string(visibility),
+		string(triggerSource),
+		scheduleIDToNullString(inst.ScheduleID),
+		// Stamp the stable workflow_id (migration 017) in the SAME INSERT: there
+		// is no crash window in which the row exists with workflow_id=NULL, which
+		// would make a live run invisible to the delete-while-running guard
 		// (CountActiveByWorkflowID keys on workflow_id). A Nil id (legacy/local-mode
 		// run) maps to NULL — the backfill's "dangling label" state.
-		WorkflowID: workflowIDToNullString(inst.WorkflowID),
-	})
+		workflowIDToNullString(inst.WorkflowID),
+		parentID,
+		parentNode,
+		spawnMode,
+	).Scan(&createdAtRaw, &updatedAtRaw)
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
 	}
 
-	createdAt, err := parseTime(row.CreatedAt)
+	createdAt, err := parseTime(createdAtRaw)
 	if err != nil {
 		return fmt.Errorf("parsing created_at: %w", err)
 	}
-	updatedAt, err := parseTime(row.UpdatedAt)
+	updatedAt, err := parseTime(updatedAtRaw)
 	if err != nil {
 		return fmt.Errorf("parsing updated_at: %w", err)
 	}
@@ -96,16 +129,14 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 }
 
 func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
-	row, err := r.queries.GetInstance(ctx, uuidToString(id))
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+instanceColumnsWithLink+` FROM instances WHERE id = ?`, uuidToString(id))
+	inst, err := scanInstanceWithLink(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 		}
 		return nil, fmt.Errorf("getting instance: %w", err)
-	}
-	inst, err := rowToInstance(row)
-	if err != nil {
-		return nil, err
 	}
 	return inst, nil
 }

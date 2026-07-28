@@ -21,7 +21,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `adapter/sqlite/instance_spawn_link_test.go`:
 
@@ -235,7 +235,7 @@ func TestInstanceRepo_CreateStillStampsEveryPreExistingField(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -252,7 +252,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/adapter/sqlite	0.3s
 ```
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `adapter/sqlite/migrations/018_instance_spawn_link.up.sql`:
 
@@ -307,7 +307,7 @@ DROP INDEX IF EXISTS idx_instances_parent;
 -- and migrations/README.md.
 ```
 
-- [ ] **Step 4: Add the link converters**
+- [x] **Step 4: Add the link converters**
 
 Append to `adapter/sqlite/convert.go`:
 
@@ -338,7 +338,7 @@ func nullStringToParentID(ns sql.NullString) (*uuid.UUID, error) {
 }
 ```
 
-- [ ] **Step 5: Add the shared column list and link scanner**
+- [x] **Step 5: Add the shared column list and link scanner**
 
 Create `adapter/sqlite/instance_spawn_rows.go`:
 
@@ -425,7 +425,7 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 }
 ```
 
-- [ ] **Step 6: Rewrite `Create` and `Get` to carry the link**
+- [x] **Step 6: Rewrite `Create` and `Get` to carry the link**
 
 In `adapter/sqlite/instance_repo.go`, replace the `r.queries.CreateInstance(...)` call and its
 result handling (lines 59-93) with a hand-written INSERT. The full method becomes:
@@ -550,7 +550,7 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 
 The `generated` import stays in use (`rowToInstance`, the other repo methods), so no import changes are needed beyond confirming `database/sql` and `errors` are already imported — they are.
 
-- [ ] **Step 7: Keep `queries/instances.sql` in lockstep**
+- [x] **Step 7: Keep `queries/instances.sql` in lockstep**
 
 Replace lines 1-7 of `adapter/sqlite/queries/instances.sql`:
 
@@ -570,7 +570,7 @@ RETURNING *;
 SELECT * FROM instances WHERE id = ?;
 ```
 
-- [ ] **Step 8: Run it, confirm it passes**
+- [x] **Step 8: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -592,7 +592,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.6s
 ```
 
-- [ ] **Step 9: Confirm the whole sqlite suite still passes (Create/Get are hot paths)**
+- [x] **Step 9: Confirm the whole sqlite suite still passes (Create/Get are hot paths)**
 
 ```bash
 go test ./adapter/sqlite/
@@ -600,7 +600,7 @@ go test ./adapter/sqlite/
 
 Expected: `ok  	github.com/arbitron/arbitron/adapter/sqlite`
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add adapter/sqlite/migrations/018_instance_spawn_link.up.sql adapter/sqlite/migrations/018_instance_spawn_link.down.sql adapter/sqlite/instance_spawn_rows.go adapter/sqlite/instance_repo.go adapter/sqlite/convert.go adapter/sqlite/queries/instances.sql adapter/sqlite/instance_spawn_link_test.go

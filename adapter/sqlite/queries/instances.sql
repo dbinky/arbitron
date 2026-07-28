@@ -1,9 +1,15 @@
 -- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-- NOTE: InstanceRepo.Create executes this statement HAND-WRITTEN (see
+-- createInstanceSQL in instance_repo.go) so the column set can evolve without a
+-- sqlc regeneration step, the same way CountActiveByWorkflowID does. This
+-- definition is kept in lockstep as the readable source of truth.
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
+-- NOTE: executed hand-written by InstanceRepo.Get (instanceColumnsWithLink) so
+-- the spawn-link columns are read in the same statement.
 SELECT * FROM instances WHERE id = ?;
 
 -- name: ListInstances :many
