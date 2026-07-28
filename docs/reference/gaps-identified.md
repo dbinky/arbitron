@@ -13,20 +13,6 @@ escalate** — never a tolerated no-op.
 
 ## Open
 
-- [ ] **`executeWait`'s own `instances.Get` failure (the load before
-  `assertSpawnBranchPorts`) is untested.** `domain/engine/executor_spawn.go:117-120`
-  loads the parent to check its snapshot's branch ports BEFORE any child is
-  created — a distinct call site from `prepareAndSpawn`'s own `instances.Get`
-  (already covered by `TestSpawnExecutor_ParentInstanceLoadFailure_Errors` for
-  the fire-and-forget path). `go tool cover` over `TestSpawnWait`-prefixed
-  tests shows this branch (lines 118-120) at 0% hits: no existing test in
-  `executor_spawn_wait_test.go` sets `f.instances.getErr`. Reading the code
-  shows the error would propagate before `assertSpawnBranchPorts` or
-  `prepareAndSpawn` ever run, so no child would be created and the parent
-  would be untouched — the same shape as the already-covered failures, but
-  unverified. Needed to close review 1 for focus area 17 (spawn executor —
-  wait-for-child suspension).
-
 - [ ] **`useRunHierarchy.invalidate` has no production caller.**
   `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate` and documents
   it as "used on a full refetch", but the only reference outside the hook is
@@ -89,6 +75,35 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`executeWait`'s own `instances.Get` failure (the load before
+  `assertSpawnBranchPorts`) was untested.** Focus area 17 (spawn executor —
+  wait-for-child suspension), review 1. `domain/engine/executor_spawn.go:117-120`
+  loads the parent to check its snapshot's branch ports BEFORE any child is
+  created — a distinct call site from `prepareAndSpawn`'s own `instances.Get`
+  (already covered by `TestSpawnExecutor_ParentInstanceLoadFailure_Errors` for
+  the fire-and-forget path). `go tool cover` over `TestSpawnWait`-prefixed
+  tests showed this branch (lines 118-120) at 0% hits: no existing test in
+  `executor_spawn_wait_test.go` set `f.instances.getErr`. Added
+  `TestSpawnWait_ParentLoadForBranchPortCheck_FailsBeforeCreatingChild`
+  (`domain/engine/executor_spawn_wait_test.go`), asserting the node errors, no
+  child is spawned, and the preparer is never called (the load failure must
+  precede any LLM cost); confirmed it fails for the right reason (nil-pointer
+  panic dereferencing `parent.WorkflowSnapshot`) when the error check is
+  temporarily replaced with `_ = err; if false { ... }`, then confirmed it
+  passes against the real code. `go tool cover` afterward shows the branch at
+  1 hit and `executeWait`'s own-scope statements at 95.5% (the remaining
+  uncovered branch, the `link != nil` resumption early-return, belongs to area
+  18, not this area). Also re-confirmed the rest of area 17's checklist: the
+  full first-execution path (happy/success), both missing-port failures, the
+  preparation and waiting-transition failures, and the node-exec-write failure
+  (fixed below) together cover all five scenario categories; the ordering
+  invariant is proven against a REAL `queue.Manager` (not a mock) by
+  `cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack` fixture; and
+  `SpawnWorkflowExecutor` is constructed only at the real composition root
+  (`cmd/arbitron/main.go:894`), confirmed by grepping for
+  `NewSpawnWorkflowExecutor` outside `*_test.go`. This closes review 1
+  approval for area 17; review 2 remains open.
 
 - [x] **`nodeExecs.Create`'s failure inside `executeWait` had no test, unlike
   the identical failure mode already pinned for the sibling

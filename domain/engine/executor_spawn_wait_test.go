@@ -326,6 +326,21 @@ func TestSpawnWait_NodeExecutionRecordWriteFails_ChildSurvivesAndParentNotSuspen
 		"the parent must not be left in a half-suspended state")
 }
 
+// executeWait loads the parent a SECOND time (distinct from prepareAndSpawn's
+// own load) purely to check the snapshot's branch ports before any child is
+// created. A failure at THIS load must surface the same way every other
+// pre-spawn failure does: no child, parent untouched.
+func TestSpawnWait_ParentLoadForBranchPortCheck_FailsBeforeCreatingChild(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.instances.getErr = errors.New("db down")
+
+	res, err := f.run(t)
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Empty(t, f.spawner.spawned, "no child may be created when the parent cannot be loaded")
+	assert.Equal(t, 0, f.preparer.calls, "the load failure must precede any LLM cost")
+}
+
 // A storage failure on the short-circuit lookup must NOT be mistaken for "no
 // child yet", which would spawn a second child.
 func TestSpawnWait_LinkLookupFailure_DoesNotSpawnASecondChild(t *testing.T) {
