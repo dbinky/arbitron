@@ -180,3 +180,19 @@ func TestValidateChildInputs_EmptyStringAndZeroAreSatisfying(t *testing.T) {
 		t.Fatalf("empty string / zero must satisfy a required input, got %v", err)
 	}
 }
+
+// A required input present with a value of the WRONG declared type (a string
+// where the child declares "number") is satisfied and passed through
+// UNCHANGED: no type check and no coercion is attempted here by design — the
+// declared type is prompt guidance only, and this pins that a future change
+// cannot silently start rejecting or mutating a type-mismatched value without
+// this test failing first.
+func TestValidateChildInputs_TypeMismatchIsNeitherRejectedNorCoerced(t *testing.T) {
+	produced := map[string]any{"repo": "r", "issueCount": "three"}
+	if err := validateChildInputs("child", inputs(), produced); err != nil {
+		t.Fatalf("a required input of the wrong declared type must still satisfy the contract, got %v", err)
+	}
+	if produced["issueCount"] != "three" {
+		t.Errorf(`validateChildInputs must not coerce issueCount, got %v (%T)`, produced["issueCount"], produced["issueCount"])
+	}
+}

@@ -76,6 +76,34 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`validateChildInputs`'s "no type coercion" invariant was untested.**
+  Focus area 11 review 1. `domain/engine/child_input_contract.go:84-86`
+  documents that a produced value is never type-checked or coerced against its
+  declared `InputField.Type` — "the trigger path is the single place input
+  semantics are enforced" — but traced `Engine.TriggerWithDepartment`
+  (`domain/engine/engine.go:375-405`) and confirmed the trigger path *also*
+  never checks `InputField.Type` against the supplied value; it only enforces
+  presence (`Required`) and the reserved-name guard via `SetInput`. So a
+  declared type is pure prompt guidance, never validated anywhere in the
+  engine, for spawn-produced values or ordinary manual triggers alike — this is
+  pre-existing behaviour the feature does not change, not a gap to fix. Also
+  reviewed `childInputSchema`/`childInputPrompt`/`validateChildInputs` as a unit
+  against the wired-and-fed criteria: all three are called only from `Prepare`
+  (`domain/engine/child_input_preparer.go:54-55,89`), which area 10 already
+  confirmed is constructed at the real composition root
+  (`NewChildInputPreparer` in `cmd/arbitron/main.go`) and fed real
+  `ChildInputRequest` values built from `node.Config`/`vars.Snapshot()` in
+  `executor_spawn.go`, never hardcoded; and confirmed the five-category bar
+  (happy, success, failure, error, edge) was already met by the existing
+  `child_input_contract_test.go` suite except for this one invariant. Added
+  `TestValidateChildInputs_TypeMismatchIsNeitherRejectedNorCoerced`
+  (`domain/engine/child_input_contract_test.go`), which produces a required
+  `number` input as a string and asserts both that the contract is satisfied
+  and that the value is passed through unchanged — pinning the documented
+  no-coercion behaviour so a future change cannot silently start rejecting or
+  mutating type-mismatched values without this test failing first. This closes
+  review 1 approval for area 11; review 2 remains open.
+
 - [x] **`LLMChildInputPreparer.Prepare` never set `WorkDir` on its preparation
   `ChatRequest`.** Focus area 10 review 2. Compared `Prepare`
   (`domain/engine/child_input_preparer.go`) against its sibling
