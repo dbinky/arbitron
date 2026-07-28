@@ -76,6 +76,37 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`userIdentityResolver.IdentityForUser`'s `ListDepartments` failure path
+  was untested.** Focus area 12 review 1. `cmd/arbitron/main.go:1375-1383`
+  calls `r.users.GetByID` then `r.users.ListDepartments`, propagating an error
+  from either — but `cmd/arbitron/spawn_wiring_test.go`'s `stubUserRepo.
+  ListDepartments` had no way to return an error, so only the `GetByID` failure
+  path (`TestUserIdentityResolver_UnknownUserErrors`) was exercised; a
+  regression that silently swallowed a `ListDepartments` error (e.g. `depts,
+  _ := ...`) and built a departmentless identity from a real user's DB row
+  would have shipped undetected — the scheduler and spawn executor (the two
+  production callers, `domain/schedule/runner.go:79` and
+  `domain/engine/executor_spawn.go:215`) both already propagate whatever error
+  the resolver returns, so this was purely a gap in the resolver's own test
+  coverage, not a live bug. Also confirmed the other three parts of area 12's
+  checklist already hold: `IdentityResolver` is a structurally identical twin
+  of `schedule.IdentityResolver` (same method signature, redeclared per the
+  codebase's established cross-domain-edge practice); the type was already
+  renamed from schedule-specific to `userIdentityResolver` and ONE value is
+  constructed at `cmd/arbitron/main.go:880` and passed to the spawn executor
+  (`:900`), the schedule evaluator (`:911`), and the schedule run-now runner
+  (`:924`); and `TestUserIdentityResolver_LocalDefaultUser` already pins Phase
+  3's local-mode open question (`docs/designs/...-phase-3.md:214-217`) — the
+  local-mode default user resolves cleanly through the same `BuildIdentity`
+  the request path's `AuthMiddleware.enrich` uses, without needing a distinct
+  resolution path. Added
+  `TestUserIdentityResolver_ListDepartmentsErrorPropagates`
+  (`cmd/arbitron/spawn_wiring_test.go`), extending `stubUserRepo` with a
+  `deptErr` field; confirmed it fails for the right reason (no error returned)
+  when the `ListDepartments` error check is temporarily replaced with `depts,
+  _ := ...`, then confirmed it passes against the real code. This closes
+  review 1 approval for area 12; review 2 remains open.
+
 - [x] **A present-but-null OPTIONAL child input was untested (distinct from the
   already-tested absent case).** Focus area 11 review 2.
   `domain/engine/child_input_contract.go`'s docstring enumerates exactly three

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/engine"
@@ -20,8 +21,9 @@ var _ engine.IdentityResolver = userIdentityResolver{}
 // stubUserRepo is the minimal instance.UserRepository the resolver needs.
 type stubUserRepo struct {
 	instance.UserRepository
-	users map[uuid.UUID]*instance.User
-	depts map[uuid.UUID][]string
+	users   map[uuid.UUID]*instance.User
+	depts   map[uuid.UUID][]string
+	deptErr error
 }
 
 func (r stubUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, error) {
@@ -33,6 +35,9 @@ func (r stubUserRepo) GetByID(_ context.Context, id uuid.UUID) (*instance.User, 
 }
 
 func (r stubUserRepo) ListDepartments(_ context.Context, id uuid.UUID) ([]string, error) {
+	if r.deptErr != nil {
+		return nil, r.deptErr
+	}
 	return r.depts[id], nil
 }
 
@@ -80,4 +85,20 @@ func TestUserIdentityResolver_UnknownUserErrors(t *testing.T) {
 	}
 	_, err := r.IdentityForUser(context.Background(), uuid.New())
 	require.Error(t, err, "identity resolution must fail rather than degrade to a system identity")
+}
+
+// A ListDepartments failure (e.g. a transient DB error) must propagate rather
+// than silently building a departmentless identity: a spawn or schedule fire
+// that resolves the wrong (under-scoped) identity for its owner is a silent
+// authz regression, not a recoverable degradation.
+func TestUserIdentityResolver_ListDepartmentsErrorPropagates(t *testing.T) {
+	uid := uuid.New()
+	repo := stubUserRepo{
+		users:   map[uuid.UUID]*instance.User{uid: {ID: uid, Username: "dev", Role: identity.RoleUser}},
+		deptErr: errors.New("departments unavailable"),
+	}
+	r := userIdentityResolver{users: repo, groups: identity.GroupConfig{DefaultGroup: "default"}}
+
+	_, err := r.IdentityForUser(context.Background(), uid)
+	require.Error(t, err, "a ListDepartments failure must propagate, not degrade to a departmentless identity")
 }
