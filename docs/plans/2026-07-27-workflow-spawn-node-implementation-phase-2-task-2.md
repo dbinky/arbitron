@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/child_input_preparer_test.go`:
 
@@ -274,7 +274,7 @@ var _ engine.ChildInputPreparer = (*engine.LLMChildInputPreparer)(nil)
 var _ provider.ProfileKind = provider.ProfileKindChat
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -290,7 +290,7 @@ domain/engine/child_input_preparer_test.go:...: undefined: engine.LLMChildInputP
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 Create `domain/engine/child_input_preparer.go`:
 
@@ -520,7 +520,7 @@ func renderContextValue(v any) string {
 }
 ```
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -546,7 +546,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.4s
 ```
 
-- [ ] **Step 5: Confirm the package still passes**
+- [x] **Step 5: Confirm the package still passes**
 
 ```bash
 go test ./domain/engine/
@@ -554,7 +554,7 @@ go test ./domain/engine/
 
 Expected: `ok  	github.com/arbitron/arbitron/domain/engine`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/child_input_preparer.go domain/engine/child_input_preparer_test.go
