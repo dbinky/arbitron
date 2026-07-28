@@ -87,6 +87,39 @@ func TestUserIdentityResolver_UnknownUserErrors(t *testing.T) {
 	require.Error(t, err, "identity resolution must fail rather than degrade to a system identity")
 }
 
+// userIdentityResolver.IdentityForUser duplicates AuthMiddleware.enrich's
+// Subject/Email extraction (main.go:1384-1391 vs auth_middleware.go:315-322)
+// rather than sharing it, because the two live on opposite sides of the
+// domain/adapter boundary. auth_middleware_test.go thoroughly pins that the
+// request path's copy threads Subject/Email into LedDepartments (e.g.
+// TestAuthMiddleware_Enrich_SubjectLead_Match), but nothing pinned the
+// resolver's own copy — every existing resolver test leaves Subject/Email nil,
+// so a regression that dropped or swapped the two pointer derefs in main.go
+// (breaking the "identical identity across request/schedule/spawn paths"
+// guarantee the type's docstring promises) would go undetected.
+func TestUserIdentityResolver_SubjectAndEmailDriveLedDepartments(t *testing.T) {
+	uid := uuid.New()
+	subject := "svc-subject-id"
+	email := "lead@corp.example"
+	repo := stubUserRepo{
+		users: map[uuid.UUID]*instance.User{
+			uid: {ID: uid, Username: "lead", Role: identity.RoleUser, Subject: &subject, Email: &email},
+		},
+		depts: map[uuid.UUID][]string{},
+	}
+	groups := identity.GroupConfig{
+		DefaultGroup: "default",
+		Leads:        map[string][]string{"platform": {"svc-subject-id", "lead@corp.example"}},
+	}
+	r := userIdentityResolver{users: repo, groups: groups}
+
+	got, err := r.IdentityForUser(context.Background(), uid)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"platform"}, got.LedDepartments,
+		"Subject/Email on the User row must reach LedDepartments through the "+
+			"resolver's own copy of the enrich logic, matching the request path")
+}
+
 // A ListDepartments failure (e.g. a transient DB error) must propagate rather
 // than silently building a departmentless identity: a spawn or schedule fire
 // that resolves the wrong (under-scoped) identity for its owner is a silent

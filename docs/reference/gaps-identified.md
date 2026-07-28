@@ -76,6 +76,41 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`userIdentityResolver.IdentityForUser`'s Subject/Email → `LedDepartments`
+  plumbing was untested.** Focus area 12 review 2.
+  `cmd/arbitron/main.go:1384-1391` duplicates `AuthMiddleware.enrich`'s
+  Subject/Email pointer-deref extraction (`adapter/http/auth_middleware.go:315-322`)
+  rather than sharing it — the type's own docstring calls this out as
+  deliberate, so "a scheduled fire, a spawned child run, and the same user's
+  interactive request all resolve to identical identities" — but every
+  existing `userIdentityResolver` test (`TestUserIdentityResolver_LocalDefaultUser`,
+  `_CarriesStoredDepartments`, `_UnknownUserErrors`,
+  `_ListDepartmentsErrorPropagates`) leaves `Subject`/`Email` nil on the stub
+  user, so the two `if u.Subject != nil` / `if u.Email != nil` branches were
+  only ever exercised on their false arm. The request-path copy of this exact
+  logic is thoroughly pinned (`TestAuthMiddleware_Enrich_SubjectLead_Match` and
+  siblings in `adapter/http/auth_middleware_test.go`), but the resolver's own
+  copy had no equivalent — a regression that dropped or swapped the two
+  derefs in `main.go` (breaking the documented cross-path identity-parity
+  guarantee for every scheduled fire and spawned child) would have shipped
+  undetected. Added
+  `TestUserIdentityResolver_SubjectAndEmailDriveLedDepartments`
+  (`cmd/arbitron/spawn_wiring_test.go`), which sets a matching `Subject`/`Email`
+  against a `GroupConfig.Leads` entry and asserts `LedDepartments` comes back
+  populated; confirmed it fails for the right reason (empty `LedDepartments`)
+  when the two derefs are temporarily blanked out in `main.go`, then confirmed
+  it passes against the real code. Also reviewed the rest of area 12's
+  checklist independently: the twin-port relationship still holds (the
+  compile-time assertion plus the real call sites at
+  `schedule.NewEvaluator`/`schedule.NewRunner` in `cmd/arbitron/main.go:907-926`
+  both require `userIdentityResolver` to satisfy `schedule.IdentityResolver`,
+  which only compiles if the twin stays structurally identical), the
+  schedule→neutral rename and the single shared composition-root value
+  (`cmd/arbitron/main.go:880`) still hold, and `groups` (`groupCfg`) is fed
+  from real parsed config (`cmd/arbitron/main.go:354`), the same value passed
+  to both auth middlewares — not a hardcoded or test-only value. This closes
+  review 2 approval for area 12; both approvals for area 12 are now recorded.
+
 - [x] **`userIdentityResolver.IdentityForUser`'s `ListDepartments` failure path
   was untested.** Focus area 12 review 1. `cmd/arbitron/main.go:1375-1383`
   calls `r.users.GetByID` then `r.users.ListDepartments`, propagating an error
