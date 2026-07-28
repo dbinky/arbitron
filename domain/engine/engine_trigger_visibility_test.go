@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -14,6 +15,7 @@ import (
 // fakePubLookup is a minimal workflow.PublisherLookup for trigger gating tests.
 type fakePubLookup struct {
 	pubs map[string]workflow.Publication
+	errs map[string]error
 }
 
 func (f *fakePubLookup) PublisherOf(_ context.Context, name string) (uuid.UUID, bool, error) {
@@ -22,6 +24,9 @@ func (f *fakePubLookup) PublisherOf(_ context.Context, name string) (uuid.UUID, 
 }
 
 func (f *fakePubLookup) PublicationOf(_ context.Context, name string) (workflow.Publication, bool, error) {
+	if err, ok := f.errs[name]; ok {
+		return workflow.Publication{}, false, err
+	}
 	p, ok := f.pubs[name]
 	return p, ok, nil
 }
@@ -94,4 +99,42 @@ func TestEngine_Trigger_SystemTrigger_SkipsVisibilityGate(t *testing.T) {
 	// No identity in context → system trigger path → gate skipped.
 	_, _, err := h.engine.Trigger(context.Background(), "eng-wf", nil, "normal")
 	require.NoError(t, err, "system trigger must bypass visibility gating regardless of publisher config")
+}
+
+// Success: a shared workflow with NO publication record at all (PublicationOf
+// found=false) is treated as open, not hidden — "unpublished shared folder ⇒
+// open" per the closure's own comment. This is distinct from the department
+// cases above, which all register a Publication for the name; this exercises
+// the not-found branch of sharedVisibilityFilter's own PublicationOf call,
+// which no existing test reached (a caller with no publisher lookup configured
+// takes a different code path — filter is nil and gating is skipped entirely
+// — so this requires a configured lookup that simply has no row for the name).
+func TestEngine_Trigger_UnpublishedSharedWorkflow_VisibleWithIdentity(t *testing.T) {
+	h := newTriggerHarness()
+	caller := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("open-wf"))
+	// Publisher lookup configured, but "open-wf" has no entry: PublicationOf
+	// returns found=false.
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{}})
+
+	_, _, err := h.engine.Trigger(ctxAs(caller), "open-wf", nil, "normal")
+	require.NoError(t, err, "a shared workflow with no publication record must remain visible")
+}
+
+// Failure: a PublicationOf lookup error must fail the trigger closed, not
+// silently treat the workflow as invisible or as open. No existing test drove
+// a lookup failure through the real closure returned by sharedVisibilityFilter
+// (as opposed to workflow.LoadVisibleFiltered's own generic filter-error
+// test, which uses a fake filter function rather than the engine's actual
+// PublicationOf-backed closure).
+func TestEngine_Trigger_PublicationLookupError_FailsClosed(t *testing.T) {
+	h := newTriggerHarness()
+	caller := uuid.New()
+	lookupErr := errors.New("publication lookup unavailable")
+	h.repo.put(workflow.Shared(), sharedWf("flaky-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{errs: map[string]error{"flaky-wf": lookupErr}})
+
+	_, _, err := h.engine.Trigger(ctxAs(caller), "flaky-wf", nil, "normal")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, lookupErr)
 }

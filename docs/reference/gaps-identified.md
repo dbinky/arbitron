@@ -76,6 +76,54 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`sharedVisibilityFilter`'s own error and not-found branches were never
+  exercised through the real closure.** Focus area 14 review 1.
+  `domain/engine/engine.go:282-298` is a pure code-move extraction of logic
+  that predates this feature (confirmed by diffing against
+  `64768283d2c32b64023801103c7aab2f5ea538d3:domain/engine/engine.go`, which
+  has the identical inline closure inside `TriggerWithDepartment`) — but the
+  extraction now makes this closure shared by `ChildInputs`, a NEW caller this
+  feature adds. Confirmed via `go test -coverprofile` over the whole
+  `domain/engine` suite that two of its three branches had 0 hits: the
+  `pubs.PublicationOf` error path (`return false, err`) and the not-found path
+  (`return true, nil // unpublished shared folder ⇒ open`) — every existing
+  test that exercises gating at all (`TestEngine_Trigger_DepartmentWorkflow_*`)
+  registers a `Publication` for the workflow name it triggers, so only the
+  `CanSeePublication` branch was ever reached. `workflow.LoadVisibleFiltered`'s
+  own suite tests a filter-returns-error contract generically with a fake
+  filter function, which is a different thing from the engine's actual
+  `PublicationOf`-backed closure ever being driven down either path. Traced the
+  consequence of each: `LoadVisibleFiltered` (`domain/workflow/resolve.go`)
+  propagates a filter error immediately (fail-closed, correct) and treats a
+  `false` result as "absent, try next scope" (never leaks existence) — so
+  today's behavior is correct, but a regression that swallowed the
+  `PublicationOf` error (fail-open) or inverted the not-found branch (hiding
+  every unpublished shared workflow, including newly-spawnable children) would
+  have shipped undetected on both the trigger AND the spawn path. Extended
+  `fakePubLookup` (`domain/engine/engine_trigger_visibility_test.go`) with an
+  `errs map[string]error` field, and added
+  `TestEngine_Trigger_UnpublishedSharedWorkflow_VisibleWithIdentity` (a shared
+  workflow with a configured publisher lookup but no publication row must
+  remain visible) and `TestEngine_Trigger_PublicationLookupError_FailsClosed`
+  (a lookup error must propagate, not be swallowed); confirmed each fails for
+  the right reason when its branch is temporarily neutered (not-found forced
+  to `false`; error forced to `true, nil`), then confirmed both pass against
+  the real code. Also reviewed the rest of area 14's checklist by reading
+  `TriggerWithDepartment` end to end: the spawn link is read from
+  `instance.SpawnLinkFromContext` and stamped into the SAME `Instance` struct
+  literal as `TriggerSource`/`ScheduleID` (lines 441-492, one literal, no
+  follow-up write — confirmed by `TestTrigger_StampsSpawnLinkAtConstruction`
+  and `TestTrigger_SpawnLinkAndOriginCoexist`); an incomplete link
+  (`SpawnLink.Valid()` false) is ignored wholesale, never partially persisted
+  (`TestTrigger_PartialSpawnLinkIsNotStamped`); and the four pre-existing
+  `TestEngine_Trigger_DepartmentWorkflow_*`/`_SystemTrigger_*` tests already
+  exercise the extracted helper through its one pre-existing caller
+  (`TriggerWithDepartment`), while area 13's prior pass added the equivalent
+  coverage for the new caller (`ChildInputs`) reusing the same scope-aware
+  fixtures — so the "unchanged for existing callers" claim is now backed by
+  passing tests on both callers, not just a code-identity argument. This
+  closes review 1 approval for area 14; review 2 remains open.
+
 - [x] **`Engine.ChildInputs`'s "not-found on invisible" claim was only tested
   against a scope-agnostic mock.** Focus area 13 review 2.
   `domain/engine/engine_spawn.go:32` calls `workflow.LoadVisibleFiltered` with
