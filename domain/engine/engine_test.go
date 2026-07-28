@@ -562,6 +562,8 @@ type mockQueueManager struct {
 	// onNotify, when set, is invoked from NotifyCapacityFreed. Test-only
 	// ordering probe.
 	onNotify func()
+	// notifyCalls counts NotifyCapacityFreed invocations. Test-only.
+	notifyCalls int
 }
 
 func newMockQueueManager() *mockQueueManager {
@@ -583,6 +585,7 @@ func (m *mockQueueManager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uu
 
 func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
 	m.mu.Lock()
+	m.notifyCalls++
 	hook := m.onNotify
 	m.mu.Unlock()
 	if hook != nil {
@@ -592,6 +595,13 @@ func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
 	case m.notifyCapacityFreedCh <- struct{}{}:
 	default:
 	}
+}
+
+// notifyCount reports how many times NotifyCapacityFreed was called. Test-only.
+func (m *mockQueueManager) notifyCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.notifyCalls
 }
 
 // mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)

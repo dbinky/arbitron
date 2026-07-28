@@ -20,7 +20,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing engine test**
+- [x] **Step 1: Write the failing engine test**
 
 Create `domain/engine/spawn_wake_test.go`:
 
@@ -239,7 +239,7 @@ func (q *mockQueueManager) notifyCount() int {
 and increment `notifyCalls` inside `NotifyCapacityFreed` if the existing mock
 does not already track it (add the `notifyCalls int` field beside the mutex).
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -254,7 +254,7 @@ domain/engine/spawn_wake_test.go:...: w.f.engine.OnChildTerminal undefined
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Implement the wake**
+- [x] **Step 3: Implement the wake**
 
 Create `domain/engine/spawn_wake.go`:
 
@@ -337,7 +337,7 @@ func (e *Engine) OnChildTerminal(ctx context.Context, childID uuid.UUID) {
 }
 ```
 
-- [ ] **Step 4: Invoke the wake from the consolidated terminal points**
+- [x] **Step 4: Invoke the wake from the consolidated terminal points**
 
 **(a) `failInstance`** — replace the body of `failInstance`
 (`domain/engine/engine.go:861-869`):
@@ -410,7 +410,7 @@ code this feature touches.
 	return nil
 ```
 
-- [ ] **Step 5: Run the engine tests, confirm they pass**
+- [x] **Step 5: Run the engine tests, confirm they pass**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -435,7 +435,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.6s
 ```
 
-- [ ] **Step 6: Write the failing queue-hook test**
+- [x] **Step 6: Write the failing queue-hook test**
 
 Create `domain/queue/manager_child_hook_test.go`:
 
@@ -477,7 +477,7 @@ func TestManager_SetChildTerminalHook_IsInvoked(t *testing.T) {
 }
 ```
 
-- [ ] **Step 7: Run it, confirm it fails**
+- [x] **Step 7: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -493,7 +493,7 @@ domain/queue/manager_child_hook_test.go:...: m.SetChildTerminalHook undefined
 FAIL	github.com/arbitron/arbitron/domain/queue [build failed]
 ```
 
-- [ ] **Step 8: Implement the queue hook**
+- [x] **Step 8: Implement the queue hook**
 
 In `domain/queue/manager.go`, add the field to `Manager` (after `scheduler`):
 
@@ -553,7 +553,7 @@ In `OnTimerFired`'s `TimerTypeWebhook` arm, replace the final `return` with:
 	}
 ```
 
-- [ ] **Step 9: Wire the hook at the composition root**
+- [x] **Step 9: Wire the hook at the composition root**
 
 In `cmd/arbitron/main.go`, immediately after `queueMgr.SetWebhookRegistry(webhookRegistry)`
 (~line 802), add:
@@ -567,7 +567,7 @@ In `cmd/arbitron/main.go`, immediately after `queueMgr.SetWebhookRegistry(webhoo
 	queueMgr.SetChildTerminalHook(eng.OnChildTerminal)
 ```
 
-- [ ] **Step 10: Run everything, confirm it passes**
+- [x] **Step 10: Run everything, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -587,7 +587,7 @@ ok  	github.com/arbitron/arbitron/domain/queue	0.3s
 ok  	github.com/arbitron/arbitron/cmd/arbitron	4.0s
 ```
 
-- [ ] **Step 11: Full Go gate**
+- [x] **Step 11: Full Go gate**
 
 ```bash
 go test ./...
@@ -595,7 +595,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/spawn_wake.go domain/engine/spawn_wake_test.go domain/engine/engine.go domain/engine/engine_test.go domain/queue/manager.go domain/queue/manager_child_hook_test.go cmd/arbitron/main.go

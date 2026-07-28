@@ -39,7 +39,13 @@ type Manager struct {
 	starter         InstanceStarter
 	webhookRegistry WebhookRegistryPort
 	scheduler       TimerSchedulerPort
-	mu              sync.Mutex
+	// childTerminal is an OPTIONAL, nil-safe hook invoked when this Manager
+	// drives an instance to a terminal state. It exists because the
+	// webhook-timeout path below fails an instance from INSIDE domain/queue,
+	// which cannot import domain/engine to call the spawn wake directly. Same
+	// optional-collaborator pattern as SetWebhookRegistry / SetScheduler.
+	childTerminal func(ctx context.Context, instanceID uuid.UUID)
+	mu            sync.Mutex
 }
 
 // NewManager constructs a new Manager with all required dependencies.
@@ -66,6 +72,22 @@ func (m *Manager) SetWebhookRegistry(reg WebhookRegistryPort) {
 // initialization to break circular dependencies.
 func (m *Manager) SetScheduler(s TimerSchedulerPort) {
 	m.scheduler = s
+}
+
+// SetChildTerminalHook wires the callback invoked when this Manager drives an
+// instance to a terminal state, so a waiting spawn parent can be woken. Nil
+// (unset) is valid: the startup reconciler is the authority for correctness and
+// recovers any parent this hook misses.
+func (m *Manager) SetChildTerminalHook(h func(ctx context.Context, instanceID uuid.UUID)) {
+	m.childTerminal = h
+}
+
+// notifyChildTerminal invokes the optional hook. Nil-safe.
+func (m *Manager) notifyChildTerminal(ctx context.Context, instanceID uuid.UUID) {
+	if m.childTerminal == nil {
+		return
+	}
+	m.childTerminal(ctx, instanceID)
 }
 
 // CanStart checks if a given owner can start an instance given current capacity.
@@ -192,7 +214,13 @@ func (m *Manager) OnTimerFired(ctx context.Context, instanceID uuid.UUID, timerT
 		if inst.CurrentNodeID != nil {
 			failedNodeID = *inst.CurrentNodeID
 		}
-		return m.instances.SetFailed(ctx, instanceID, failedNodeID)
+		if err := m.instances.SetFailed(ctx, instanceID, failedNodeID); err != nil {
+			return err
+		}
+		// This instance may be somebody's awaited child; this is the one terminal
+		// transition that happens outside domain/engine.
+		m.notifyChildTerminal(ctx, instanceID)
+		return nil
 	}
 	return nil
 }

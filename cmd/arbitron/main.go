@@ -802,6 +802,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	queueMgr.SetWebhookRegistry(webhookRegistry)
 	eng.SetWebhookRegistry(webhookRegistry)
 
+	// 12-wh-spawn. The webhook-timeout path fails an instance from inside
+	// domain/queue, which cannot import domain/engine. Wire the engine's spawn
+	// wake as the optional child-terminal hook so a parent awaiting a
+	// webhook-timed-out child is re-queued immediately instead of waiting for the
+	// next startup reconciliation.
+	queueMgr.SetChildTerminalHook(eng.OnChildTerminal)
+
 	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are
 	// available. These executors are added after engine construction because they
 	// depend on the scheduler and webhook registry, which in turn depend on the

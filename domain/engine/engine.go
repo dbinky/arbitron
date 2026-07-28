@@ -717,7 +717,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
 			// Mark the instance as failed and log via event bus.
-			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil {
+			if e.failInstance(ctx, instanceID, "") {
 				e.emitNotification(context.Background(), instanceID, workflowName, notification.TypeFailed)
 			}
 			e.eventBus.Publish(instanceID, Event{
@@ -751,7 +751,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
 	if parseErr != nil {
-		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.failInstance(ctx, instanceID, "")
 		return
 	}
 
@@ -771,7 +771,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 
 	if currentNodeID == "" {
-		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.failInstance(ctx, instanceID, "")
 		return
 	}
 
@@ -878,6 +878,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
 		// Workspace is removed only after SetCompleted succeeds.
 		e.cleanupWorkspace(instanceID)
+		// A completed run may be somebody's awaited child.
+		e.OnChildTerminal(context.Background(), instanceID)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInstanceCompleted,
@@ -899,6 +901,9 @@ func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID 
 		return false
 	}
 	e.warnWorkspaceRetained(instanceID, "instance_failed")
+	// A failed run may be somebody's awaited child. Use a background context: the
+	// run context is often already cancelled at this point.
+	e.OnChildTerminal(context.Background(), instanceID)
 	return true
 }
 
@@ -1455,6 +1460,10 @@ func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
 	e.recordIntervention(ctx, inst, instance.ActionCancel, nil)
+	// A cancelled run may be somebody's awaited child; a cancelled child routes
+	// its parent through the failure port (there is no separate cancellation
+	// path).
+	e.OnChildTerminal(context.Background(), instanceID)
 	return nil
 }
 
