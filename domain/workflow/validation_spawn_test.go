@@ -305,6 +305,24 @@ func TestValidateSpawn_UnknownProfile_Rejected(t *testing.T) {
 	}
 }
 
+// The generic model/model_profile conflict check (validateModelProfiles) is
+// shared across every capability-checked node type, including spawn — this
+// pins that the spawn arm actually reaches it rather than assuming the shared
+// code path is exercised elsewhere.
+func TestValidateSpawn_ModelAndModelProfileConflict_Rejected(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeFireAndForget,
+			ModelProfile: "chatty", Model: "claude-opus-4",
+		}},
+		[]Edge{{Source: "spawn", Target: "ok"}},
+	)
+	errs := Validate(wf, nil, fixedProfileChecker{"chatty": "chat"}, nil)
+	if !hasError(errs, "MODEL_PROFILE_CONFLICT", "spawn") {
+		t.Fatalf("expected MODEL_PROFILE_CONFLICT on spawn, got %v", codesFor(errs, "spawn"))
+	}
+}
+
 // An ABSENT model_profile is NOT an author error on a spawn node, unlike
 // llm_call/agent_call. A child workflow that declares zero inputs needs no
 // preparation call at all, and validation cannot load the child to find out —
