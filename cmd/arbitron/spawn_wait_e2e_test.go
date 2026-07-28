@@ -189,6 +189,38 @@ func TestSpawnWaitE2E_CancelledChildRoutesParentThroughFailure(t *testing.T) {
 		"a cancelled child routes through failure — there is no separate cancellation path")
 }
 
+// COMPOSITION-ROOT WIRING PROBE for eng.SetSpawnLinks(instanceRepo)
+// (cmd/arbitron/main.go). cascadeCancel is a documented no-op when
+// e.spawnLinks is nil (domain/engine/cancel_cascade.go), and every existing
+// cascade test drives that behavior through a fake SpawnLinkRepository — none
+// of them prove main.go actually wires the real one. Cancelling the PARENT
+// while it is suspended (StateWaiting, a cancellable state) and its child is
+// still active proves the cascade reaches the real, still-running child
+// through the composition root, not just a fake in a unit test.
+func TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot(t *testing.T) {
+	ds := bootWaitStack(t, "complete")
+
+	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
+	require.NoError(t, err)
+
+	waitForState(t, ds, parentID, instance.StateWaiting)
+	children := childrenOf(t, ds, parentID)
+	require.Len(t, children, 1)
+	childID := children[0].ID
+
+	child, err := ds.instanceRepo.Get(context.Background(), childID)
+	require.NoError(t, err)
+	if child.State != instance.StateRunning {
+		t.Skipf("child reached a terminal state before the parent could be cancelled: %v", child.State)
+	}
+
+	ctx := adminCtxForLocalUser(t, ds)
+	require.NoError(t, ds.eng.Cancel(ctx, parentID))
+
+	waitForState(t, ds, parentID, instance.StateCancelled)
+	waitForState(t, ds, childID, instance.StateCancelled)
+}
+
 // The parent's node-execution record is written on the WAIT path, where
 // executeWithRetry deliberately writes none.
 func TestSpawnWaitE2E_NodeExecutionRecordWrittenOnTheWaitPath(t *testing.T) {

@@ -76,6 +76,45 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`eng.SetSpawnLinks(instanceRepo)`'s composition-root wiring for the
+  cancel cascade was verified only by reading `main.go`, never by a real
+  composition-root test.** Focus area 16 review 2. `cascadeCancel`
+  (`domain/engine/cancel_cascade.go:47-49`) documents and implements a
+  load-bearing no-op: `if e.spawnLinks == nil { return }` — cancelling a parent
+  silently leaves every active child running, exactly the shape of gap this
+  loop has fixed repeatedly for other composition-root seams (the reconciler
+  ordering fixed in review 1, above). Every existing `cascadeCancel` test
+  (`domain/engine/cancel_cascade_test.go`) drives the cascade through a fake
+  `SpawnLinkRepository` that the test itself constructs and injects — none of
+  them prove `cmd/arbitron/main.go` actually calls `eng.SetSpawnLinks(instanceRepo)`
+  before a real cancel reaches it. A regression that dropped, reordered past a
+  point where `instanceRepo` isn't yet constructed, or conditionally skipped
+  that one call in `main.go` would have shipped undetected: every child of a
+  cancelled run would keep executing with no operator-visible error. Added
+  `TestSpawnWaitE2E_CancellingParentCascadesToActiveChildThroughCompositionRoot`
+  (`cmd/arbitron/spawn_wait_e2e_test.go`), which boots the real composition
+  root via `initDomain`, triggers a `wait_for_child` parent so it suspends in
+  `StateWaiting` (a cancellable state) with a still-`StateRunning` child, calls
+  `ds.eng.Cancel` on the PARENT, and asserts the child is cascaded into
+  `StateCancelled` too. Confirmed it fails for the right reason (child never
+  reaches `StateCancelled`, 40s timeout) when `eng.SetSpawnLinks(instanceRepo)`
+  is temporarily commented out in `main.go`, then confirmed it passes against
+  the real code. Independently re-verified area 16's other six checklist items
+  by re-reading `main.go` and re-deriving each claim from source rather than
+  trusting review 1's write-up: `instanceEnricher.SetSpawnLinks` (:798),
+  `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)` (:815), the single
+  `identityResolver` value (a stateless struct of interfaces/maps, so
+  pass-by-value to three call sites is equivalent to sharing one instance)
+  (:880, :900, :911, :924), `NewChildInputPreparer` fed real `providerFactory`/
+  `profileResolver` (:893), `executors[workflow.NodeTypeSpawnWorkflow]`
+  assigned after `engine.NewEngine` onto the SAME map the engine holds by
+  reference (confirmed the map is built at :744 and passed to `NewEngine` at
+  :757, so the later assignment at :894 is visible to the engine — the
+  identical pattern already used for `timer_delay`/`webhook_wait`), and the
+  reconciler ordering re-confirmed passing via
+  `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`. This closes review 2
+  approval for area 16; both approvals for area 16 are now recorded.
+
 - [x] **The startup ordering "`spawnReconciler.Reconcile` runs AFTER
   `RecoverCrashedInstances`" was proven only through fakes, never through the
   real composition root.** Focus area 16 review 1. `cmd/arbitron/main.go`
