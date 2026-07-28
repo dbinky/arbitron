@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
 import type { ColumnDef } from './queueColumns'
 import type { RunHierarchy } from '../hooks/useRunHierarchy'
@@ -61,7 +61,13 @@ export default function HierarchyRows({
         const loading = hierarchy.isLoading(inst.id)
 
         return (
-          <tbody key={inst.id}>
+          // A plain Fragment, not a <tbody> — this block recurses into its own
+          // children's rows, and nesting a <tbody> inside another <tbody> is
+          // invalid HTML that real browsers do not auto-correct when the DOM
+          // is built via the JS API (only HTML-text parsing gets that fixup).
+          // The single owning <tbody> lives once, at the call site in
+          // QueueSection.
+          <Fragment key={inst.id}>
             <QueueTableRow
               row={inst}
               columns={columns}
@@ -123,7 +129,7 @@ export default function HierarchyRows({
                 detailCellClassName={detailCellClassName}
               />
             )}
-          </tbody>
+          </Fragment>
         )
       })}
     </>

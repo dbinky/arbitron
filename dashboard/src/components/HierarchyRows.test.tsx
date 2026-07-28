@@ -27,20 +27,23 @@ function row(id: string, overrides: Partial<EnrichedInstanceSummary> = {}): Enri
   }
 }
 
-// Harness: renders HierarchyRows inside a real table with a real hierarchy hook.
+// Harness: renders HierarchyRows the way QueueSection actually does — a
+// single <tbody> owned by the table, wrapping the rows HierarchyRows produces.
 function Harness({ rows }: { rows: EnrichedInstanceSummary[] }) {
   const hierarchy = useRunHierarchy()
   return (
     <MemoryRouter>
       <table>
-        <HierarchyRows
-          rows={rows}
-          columns={COLUMNS}
-          depth={0}
-          timeMode="elapsed"
-          authMode="local"
-          hierarchy={hierarchy}
-        />
+        <tbody>
+          <HierarchyRows
+            rows={rows}
+            columns={COLUMNS}
+            depth={0}
+            timeMode="elapsed"
+            authMode="local"
+            hierarchy={hierarchy}
+          />
+        </tbody>
       </table>
     </MemoryRouter>
   )
@@ -177,4 +180,25 @@ it('an expander whose level comes back empty renders no child rows and no error'
   fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
   await waitFor(() => expect(screen.getByLabelText('Hide child runs of run — p1')).toBeTruthy())
   expect(screen.queryByText(/Failed to load/)).toBeNull()
+})
+
+// Each row's <tbody> must sit ALONGSIDE its children's <tbody>s under the
+// table, not wrap them — nesting one <tbody> inside another is invalid HTML
+// (React itself flags it: "This will cause a hydration error") and real
+// browsers do not auto-correct a DOM tree built via the JS API the way they
+// correct parsed HTML text, so a real user would see this exact malformed
+// structure, not just a dev-console warning.
+it('expanding a row to show its children does not nest one <tbody> inside another', async () => {
+  listMock.mockResolvedValue([row('c1', { parentInstanceId: 'p1' })])
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(<Harness rows={[row('p1', { childCount: 1 })]} />)
+
+  fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
+  await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
+
+  const nestingWarning = errorSpy.mock.calls.find((c) =>
+    String(c[0]).includes('cannot be a child of'),
+  )
+  errorSpy.mockRestore()
+  expect(nestingWarning).toBeUndefined()
 })

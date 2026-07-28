@@ -126,6 +126,66 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`HierarchyRows` nested one `<tbody>` inside another every time a row
+  was expanded, an HTML-invalid structure React itself flags as a hydration
+  hazard.** Focus area 29 (dashboard hierarchy rendering), review 2.
+  `dashboard/src/components/HierarchyRows.tsx` wrapped each row's own markup
+  (`QueueTableRow` + optional detail/loading/error rows + a recursive
+  `<HierarchyRows>` call for its expanded children) in a `<tbody key=
+  {inst.id}>`. `QueueSection.tsx` never wrapped its `<HierarchyRows>` call in
+  a `<tbody>` of its own, so the top level worked by accident (each root row's
+  `<tbody>` sat directly under `<table>`, a valid position) — but the
+  recursive call for an EXPANDED row's children placed the child's `<tbody>`
+  INSIDE the parent's own `<tbody>`, which `isTagValidWithParent` in React's
+  `validateDOMNesting` rejects (`tbody`'s only valid children are `tr`/
+  `style`/`script`/`template`). Confirmed by spying on `console.error` while
+  expanding a row in `HierarchyRows.test.tsx`'s harness: React logged "In
+  HTML, `<tbody>` cannot be a child of `<tbody>`... This will cause a
+  hydration error" on every expansion, and NO existing test (across
+  `HierarchyRows.test.tsx`, `QueueTableRow.test.tsx`, `QueueSection.test.tsx`)
+  ever spied on `console.error`, so this was invisible to the whole suite
+  despite firing on nearly every hierarchy-expansion test that already
+  existed. This is not merely a lint nit: browsers only auto-correct invalid
+  table nesting when PARSING HTML text (network response or `innerHTML`); a
+  tree built via the DOM API (which is what React does) is not reparsed or
+  fixed up, so a real user's browser renders the exact malformed tree
+  constructed here, with no guarantee every engine's anonymous
+  table-box-generation degrades gracefully for a recursively-nested
+  row-group, and the SPA would additionally be unhydratable if this
+  component were ever rendered server-side. Added `'expanding a row to show
+  its children does not nest one <tbody> inside another'`
+  (`HierarchyRows.test.tsx`), which spies on `console.error` and asserts no
+  call contains "cannot be a child of"; confirmed it fails for the right
+  reason (the exact React nesting-violation message) against the pre-fix
+  code, then confirmed it passes against the fix. Also updated the test
+  harness itself to wrap `<HierarchyRows>` in a `<tbody>` (matching
+  `QueueSection`'s real usage) rather than placing it bare under `<table>`,
+  since a bare-`<tr>`-under-`<table>` structure is its own distinct nesting
+  violation that would have made the fixed code look broken in the harness
+  even though `QueueSection` no longer has that problem. Fixed by giving each
+  row's own grouping a plain `Fragment` (keyed, no DOM node of its own)
+  instead of a `<tbody>`, and moving the single owning `<tbody>` up to
+  `QueueSection`'s call site — so the table now has exactly one `<tbody>`
+  no matter how many hierarchy levels are expanded, matching a normal flat
+  table's structure. Independently re-verified the rest of area 29's
+  checklist from source rather than trusting review 1's write-up:
+  `QueueTableRow`'s `aria-expanded`/`aria-label` toggle-state tracking,
+  `stopPropagation`, `depth`-driven indent, and childless-row spacer are all
+  still backed by the four tests review 1 added and are unaffected by this
+  fix (`git diff` on `QueueTableRow.tsx` is empty this pass); `HierarchyRows`
+  recursion/depth passthrough and `QueueSection`'s delegation to it for the
+  detail row it replaced are still covered by the existing nesting/depth and
+  detail-panel/refresh-invalidation tests; re-confirmed by grep that
+  `HierarchyRows` is constructed only by itself (recursion) and
+  `QueueSection`, `QueueTableRow` only by `HierarchyRows`, and `QueueSection`
+  only by the real `QueueView.tsx` route (four call sites, unchanged from
+  review 1). Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx
+  vitest run`: no new failures beyond the recorded baseline (the one
+  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at
+  0 errors; vitest 476 passed, 0 failed, up from 475 with this pass's one new
+  test). This closes review 2 approval for area 29 — both approvals for area
+  29 are now recorded.
+
 - [x] **`QueueTableRow`'s hierarchy-toggle `e.stopPropagation()` — the exact
   mechanism that keeps expanding/collapsing a row's children from ALSO
   navigating away to that row's detail view — was completely untested.**

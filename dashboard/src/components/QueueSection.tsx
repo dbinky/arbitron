@@ -223,28 +223,30 @@ export default function QueueSection({
                   <th className={styles.th} aria-label="expand" />
                 </tr>
               </thead>
-              <HierarchyRows
-                rows={roots}
-                columns={columns}
-                depth={0}
-                timeMode={timeMode}
-                authMode={authMode}
-                hierarchy={hierarchy}
-                detailExpandedId={expandedId}
-                onDetailExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
-                onDismiss={onDismiss}
-                onRestore={onRestore}
-                detailRowClassName={styles.detailRow}
-                detailCellClassName={styles.detailCell}
-                renderDetail={(inst) => (
-                  <RowDetailPanel
-                    row={inst}
-                    authMode={authMode}
-                    errorText={errorText}
-                    errorLoading={errorLoading}
-                  />
-                )}
-              />
+              <tbody>
+                <HierarchyRows
+                  rows={roots}
+                  columns={columns}
+                  depth={0}
+                  timeMode={timeMode}
+                  authMode={authMode}
+                  hierarchy={hierarchy}
+                  detailExpandedId={expandedId}
+                  onDetailExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
+                  onDismiss={onDismiss}
+                  onRestore={onRestore}
+                  detailRowClassName={styles.detailRow}
+                  detailCellClassName={styles.detailCell}
+                  renderDetail={(inst) => (
+                    <RowDetailPanel
+                      row={inst}
+                      authMode={authMode}
+                      errorText={errorText}
+                      errorLoading={errorLoading}
+                    />
+                  )}
+                />
+              </tbody>
             </table>
           )}
         </div>
