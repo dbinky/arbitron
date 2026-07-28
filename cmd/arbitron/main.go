@@ -792,6 +792,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// is the single ordering authority; the enricher only stamps the value.
 	instanceEnricher.SetQueuePositionProvider(queueMgr)
 
+	// 12-count. Wire the link-addressed read surface as the enricher's child-count
+	// source, so a page of the run list resolves every hierarchy expander in ONE
+	// batched, post-authorization query.
+	instanceEnricher.SetSpawnLinks(instanceRepo)
+
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)
 	queueMgr.SetScheduler(scheduler)

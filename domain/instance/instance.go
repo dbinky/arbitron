@@ -206,6 +206,11 @@ type EnrichedInstanceSummary struct {
 	RetryCount    int
 	QueuePosition int
 	FailedNodeID  *string
+	// ChildCount is the number of spawned children the CALLER may see. It drives
+	// the hierarchy expander: a row with 0 renders none. It is computed
+	// post-authorization, so a run whose children are all invisible to the caller
+	// reports 0 and leaks no existence.
+	ChildCount int
 }
 
 // NodeExecutionStatus represents the outcome of a single node execution.

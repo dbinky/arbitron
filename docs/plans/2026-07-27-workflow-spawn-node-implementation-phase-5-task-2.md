@@ -18,7 +18,11 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
+
+> NOTE: the plan's `adminCtx()` helper was dropped — `engine_test` already
+> declares `adminCtx(uuid.UUID)` in `engine_list_test.go`, so redeclaring it
+> would not compile. The tests call the existing `adminCtx(uuid.New())`.
 
 Create `domain/engine/enricher_child_count_test.go`:
 
@@ -241,7 +245,7 @@ func TestEnricherChildCount_NoIdentitySkipsCounting(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -257,7 +261,7 @@ domain/engine/enricher_child_count_test.go:...: rows[0].ChildCount undefined
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Add the field to the enriched summary**
+- [x] **Step 3: Add the field to the enriched summary**
 
 In `domain/instance/instance.go`, add to `EnrichedInstanceSummary`:
 
@@ -280,7 +284,7 @@ type EnrichedInstanceSummary struct {
 }
 ```
 
-- [ ] **Step 4: Add the enricher field, setter, and batched call**
+- [x] **Step 4: Add the enricher field, setter, and batched call**
 
 In `domain/engine/enricher.go`, add the field to `InstanceEnricher`:
 
@@ -358,7 +362,7 @@ and inside the row loop, after the queue-position stamp:
 		}
 ```
 
-- [ ] **Step 5: Wire it at the composition root**
+- [x] **Step 5: Wire it at the composition root**
 
 In `cmd/arbitron/main.go`, immediately after
 `instanceEnricher.SetQueuePositionProvider(queueMgr)` (~line 793), add:
@@ -370,7 +374,7 @@ In `cmd/arbitron/main.go`, immediately after
 	instanceEnricher.SetSpawnLinks(instanceRepo)
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -394,7 +398,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.7s
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 go test ./...
@@ -402,7 +406,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/instance/instance.go domain/engine/enricher.go domain/engine/enricher_child_count_test.go cmd/arbitron/main.go
