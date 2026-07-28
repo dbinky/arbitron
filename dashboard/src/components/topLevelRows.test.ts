@@ -73,3 +73,12 @@ it('a mutual two-instance cycle does not erase either row', () => {
   const rows = [r('a', 'b'), r('b', 'a')]
   expect(topLevelRows(rows).map((x) => x.id)).toEqual(['a', 'b'])
 })
+
+// The guard is documented as walking the FULL parent chain to detect a cycle of
+// any length, not just a direct mutual (length-2) link. A regression that only
+// special-cased self-references and direct mutual pairs — matching both tests
+// above — would still erase a longer cycle.
+it('a three-instance cycle does not erase any row', () => {
+  const rows = [r('a', 'b'), r('b', 'c'), r('c', 'a')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['a', 'b', 'c'])
+})

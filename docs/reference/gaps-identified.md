@@ -126,6 +126,36 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`isOnCycle`'s "detects a cycle of any length" claim was proven only up
+  to length 2.** Focus area 28 (dashboard section-aware top-level rule),
+  review 2. `dashboard/src/components/topLevelRows.ts`'s `isOnCycle` walks the
+  full parent chain via a `seen` set specifically to generalize beyond the
+  original self-referential (length-1) special case — the fix's own commit
+  message says "Generalized the guard... subsuming the single-node
+  self-referential case" — but the only cycle tests that existed
+  (`topLevelRows.test.ts`) covered length 1 (self-reference) and length 2
+  (mutual pair). A regression that replaced the general walk with a
+  direct/one-hop-back check (which would still satisfy both existing tests)
+  would silently reintroduce the original bug for any 3-or-more-node cycle.
+  Added `'a three-instance cycle does not erase any row'`, asserting
+  `topLevelRows([r('a','b'), r('b','c'), r('c','a')])` keeps all three rows in
+  order; confirmed it fails for the right reason (`expected [] to deeply equal
+  ['a','b','c']`) against a naive length-2-only `isOnCycle` stand-in, then
+  confirmed it passes against the real code (`git diff --stat` on
+  `topLevelRows.ts` is empty — no production change needed). Independently
+  re-verified the rest of area 28's checklist from source rather than trusting
+  review 1's write-up: `topLevelRows` has exactly one production call site
+  (`QueueSection.tsx:158`, grepped for all non-test references), fed by
+  `instances` props (`active`/`pending`/`failed`/`completed`) that are real
+  API-derived state slices in `QueueView.tsx`, not hardcoded or test-only
+  data; `EnrichedInstanceSummary.parentInstanceId` (`dashboard/src/api/types.ts:66`)
+  is the only field read, matching area 26's wire-format verification. Ran the
+  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
+  failures beyond the recorded baseline (the one pre-existing `adapter/config`
+  failure is unchanged; dashboard typecheck at 0 errors; vitest 471 passed, 0
+  failed, up from 470 with this pass's one new test). This closes review 2
+  approval for area 28 — both approvals for area 28 are now recorded.
+
 - [x] **`topLevelRows` erased every row of a corrupt multi-node parent-link
   cycle, not just a self-referential one.** Focus area 28 (dashboard
   section-aware top-level rule), review 1.
