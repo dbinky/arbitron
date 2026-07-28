@@ -88,6 +88,34 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`childVisibilityClause`'s `IncludePublic` disjunct was never exercised in
+  isolation.** Focus area 8 review 2. `adapter/sqlite/instance_repo.go:568-570`
+  adds `c.visibility = 'public'` to the disjunction when `vis.IncludePublic` is
+  set, but the only existing test that sets `IncludePublic`
+  (`TestChildCounts_ExcludesInvisibleChildren`) also sets an `OwnerID` that
+  already admits the one counted child via the `c.owner_id = ?` arm — so the
+  `IncludePublic` arm itself was never the reason a child was counted.
+  Confirmed by hand: replacing `if vis.IncludePublic` with `if false &&
+  vis.IncludePublic` left every test in `adapter/sqlite` green. A regression
+  that dropped or broke the disjunct (the same shape as the already-fixed
+  zero-scope branch) would have shipped silently, under-counting children and
+  hiding a hierarchy expander for a caller who should see a public child.
+  Added `TestChildCounts_IncludePublicAloneCountsPublicChildren`
+  (`adapter/sqlite/instance_spawn_queries_test.go`), which creates a public
+  child owned by a stranger with neither `OwnerID` nor `Departments` matching
+  and asserts it is counted purely under `IncludePublic`; confirmed it fails
+  for the right reason against the neutered branch, then passes against the
+  real code. Also reviewed the other three link-addressed queries
+  (`ListActiveChildren`, `FindChildBySpawnNode`, `ListWaitingOnTerminalChild`)
+  and the `ParentScope` clause in `List` against the five-category bar (happy,
+  success, failure, error, edge) — all four already have dedicated coverage
+  for every state/mode/tie-break/storage-failure case, and all four have a
+  confirmed production caller (`cancel_cascade.go`, `executor_spawn.go`,
+  `enricher.go`, `spawn_reconciler.go`) fed real data, not a fake or
+  hardcoded value; `ParentScope`/`ParentInstanceID` are fed from the shared
+  `instance.ParseParentScope` decoder at both the REST and MCP call sites.
+  This closes review 2 approval for area 8.
+
 - [x] **`childVisibilityClause`'s zero-scope fail-closed branch was untested.**
   Focus area 8 review 1. `adapter/sqlite/instance_repo.go:579-581` documents and
   implements a load-bearing security guard: when a caller's `ChildVisibility` is

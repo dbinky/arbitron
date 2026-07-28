@@ -179,6 +179,37 @@ func TestChildCounts_DepartmentVisibleChildrenAreCounted(t *testing.T) {
 	assert.Equal(t, 1, got[p.ID])
 }
 
+// The IncludePublic disjunct's positive arm ("c.visibility = 'public'") was
+// never exercised alone: TestChildCounts_ExcludesInvisibleChildren sets
+// IncludePublic alongside an OwnerID match that already admits the counted
+// child via the "c.owner_id = ?" arm, so a regression that dropped or broke
+// the IncludePublic disjunct would still pass every existing test. This
+// isolates it: a public child owned by a stranger, with neither OwnerID nor
+// Departments matching, is counted purely because IncludePublic is set.
+func TestChildCounts_IncludePublicAloneCountsPublicChildren(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+
+	otherOwner := uuid.New()
+	_, err := db.DB.Exec(`INSERT INTO users (id, username, role) VALUES (?, ?, 'user')`,
+		otherOwner.String(), "other")
+	require.NoError(t, err)
+
+	p := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, repo.Create(ctx, p))
+	childOf(t, repo, p.ID, "n1", instance.SpawnModeFireAndForget, instance.StateRunning,
+		otherOwner, instance.VisibilityPublic, "")
+
+	stranger := uuid.New()
+	got, err := repo.ChildCountsByParents(ctx, []uuid.UUID{p.ID}, instance.ChildVisibility{
+		OwnerID:       &stranger,
+		IncludePublic: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, got[p.ID], "a public child must be counted under IncludePublic even with no owner/department match")
+}
+
 // ---------- ListActiveChildren ----------
 
 func TestListActiveChildren_CoversBothModes(t *testing.T) {
