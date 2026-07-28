@@ -830,6 +830,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// admin actions on other users' instances are attributed.
 	interventionRepo := adaptsqlite.NewInterventionRepo(db)
 	eng.SetInterventions(interventionRepo)
+	// 12a-bis-3. Wire the link-addressed read surface so cancelling a run tears
+	// down its spawned children recursively, and so the list enricher can resolve
+	// a page's child counts in one batched call.
+	eng.SetSpawnLinks(instanceRepo)
 	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
 	// run they do not own emits a domain audit event (instance.lead_intervention /
 	// admin.override). *audit.Service.Record has exactly the void

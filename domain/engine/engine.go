@@ -40,6 +40,10 @@ type Engine struct {
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
+	// spawnLinks is the OPTIONAL link-addressed read surface. When unset (nil),
+	// the cancel cascade and the enricher's child counts are no-ops — cancelling
+	// still works exactly as before this feature.
+	spawnLinks instance.SpawnLinkRepository
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
@@ -1421,8 +1425,30 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 }
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
-// cancels its context/timer as appropriate.
+// cancels its context/timer as appropriate, then cancels every active child it
+// spawned, recursively.
+//
+// ORDER IS A CORRECTNESS REQUIREMENT, NOT A STYLE PREFERENCE. The child-terminal
+// wake only re-queues a parent that is STILL in the waiting state. Cancelling
+// the parent FIRST means it is already cancelled by the time its children reach
+// their terminal state, so the wake is a no-op and the parent cannot be
+// resurrected through its own failure port by the very children being torn
+// down. Reversing the order produces a parent that flips from cancelled back to
+// queued.
 func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
+	if err := e.cancelAuthorized(ctx, instanceID); err != nil {
+		return err
+	}
+	e.cascadeCancel(ctx, instanceID, map[uuid.UUID]bool{instanceID: true})
+	return nil
+}
+
+// cancelAuthorized authorizes and performs the cancellation of ONE instance:
+// the state transition, wait-resource deactivation, the cancelled event, and
+// the intervention audit record. It performs NO cascade — Cancel owns that, so
+// the cascade can reuse this authorized path for every descendant and produce
+// an audit record for each one.
+func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) error {
 	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
 		return err

@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/cancel_cascade_test.go`:
 
@@ -442,7 +442,7 @@ package that declares it, so an `interface{ count() int }` assertion written
 inside `package engine` can never match a `count()` defined in
 `package engine_test`.
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -457,7 +457,7 @@ domain/engine/cancel_cascade_test.go:...: f.engine.SetSpawnLinks undefined
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Add the engine field**
+- [x] **Step 3: Add the engine field**
 
 In `domain/engine/engine.go`, add to the `Engine` struct after `enricher`:
 
@@ -469,7 +469,7 @@ In `domain/engine/engine.go`, add to the `Engine` struct after `enricher`:
 	spawnLinks       instance.SpawnLinkRepository
 ```
 
-- [ ] **Step 4: Split `Cancel` and add the cascade**
+- [x] **Step 4: Split `Cancel` and add the cascade**
 
 In `domain/engine/engine.go`, rename the existing `Cancel` to `cancelAuthorized`
 (changing only the signature line and its doc comment; the body is unchanged
@@ -590,7 +590,7 @@ func (e *Engine) cascadeCancel(ctx context.Context, parentID uuid.UUID, visited 
 }
 ```
 
-- [ ] **Step 5: Wire it at the composition root**
+- [x] **Step 5: Wire it at the composition root**
 
 In `cmd/arbitron/main.go`, immediately after `eng.SetInterventions(interventionRepo)`
 (~line 828), add:
@@ -602,7 +602,7 @@ In `cmd/arbitron/main.go`, immediately after `eng.SetInterventions(interventionR
 	eng.SetSpawnLinks(instanceRepo)
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -631,7 +631,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.7s
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 go test ./...
@@ -641,7 +641,7 @@ Expected: `ok` for every package, no `FAIL` lines. In particular every existing
 `Cancel` test (`domain/engine`, `adapter/http`, `adapter/mcp`) must still pass —
 the split changed no observable behaviour for a childless run.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/cancel_cascade.go domain/engine/cancel_cascade_test.go domain/engine/engine.go domain/engine/engine_test.go cmd/arbitron/main.go

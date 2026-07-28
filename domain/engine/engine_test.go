@@ -3267,3 +3267,38 @@ func TestEngine_WorkspacePersistedBeforeNodes(t *testing.T) {
 	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), persistedWorkspace,
 		"workspace must be persisted to inst.Variables before the first node runs")
 }
+
+// mockInterventionRepo implements instance.InterventionRepository for tests.
+type mockInterventionRepo struct {
+	mu      sync.Mutex
+	records []instance.Intervention
+}
+
+func newMockInterventionRepo() *mockInterventionRepo {
+	return &mockInterventionRepo{}
+}
+
+func (r *mockInterventionRepo) Create(_ context.Context, iv *instance.Intervention) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, *iv)
+	return nil
+}
+
+func (r *mockInterventionRepo) ListByInstance(_ context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []instance.Intervention
+	for _, iv := range r.records {
+		if iv.InstanceID == id {
+			out = append(out, iv)
+		}
+	}
+	return out, nil
+}
+
+func (r *mockInterventionRepo) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.records)
+}
