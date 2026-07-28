@@ -145,6 +145,26 @@ func TestEngineChildInputs_DepartmentWorkflow_AllowedForMember(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A PublicationOf lookup error must fail ChildInputs closed, not silently
+// treat the child workflow as invisible or as open. sharedVisibilityFilter's
+// error-propagation branch is already pinned through Trigger
+// (TestEngine_Trigger_PublicationLookupError_FailsClosed), but ChildInputs
+// builds its OWN closure via its OWN call to e.sharedVisibilityFilter(ctx) —
+// same shared logic, a distinct call site. This is the same shape of gap
+// already fixed for areas 12/13: a shared helper's behavior proven at one
+// call site and silently assumed at a sibling one.
+func TestEngineChildInputs_PublicationLookupError_FailsClosed(t *testing.T) {
+	h := newTriggerHarness()
+	caller := uuid.New()
+	lookupErr := errors.New("publication lookup unavailable")
+	h.repo.put(workflow.Shared(), sharedWf("flaky-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{errs: map[string]error{"flaky-wf": lookupErr}})
+
+	_, err := h.engine.ChildInputs(ctxAs(caller), "flaky-wf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, lookupErr)
+}
+
 // ---------- Spawn ----------
 
 func TestEngineSpawn_CreatesLinkedChildUnderRequestedOwner(t *testing.T) {

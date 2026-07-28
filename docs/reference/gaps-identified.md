@@ -76,6 +76,51 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`sharedVisibilityFilter`'s error-propagation branch was only pinned
+  through `Trigger`, not through `ChildInputs`.** Focus area 14 review 2.
+  `sharedVisibilityFilter`'s docstring and review 1's fix establish that
+  `Trigger`/`TriggerWithDepartment` and `ChildInputs` must share the identical
+  gate so "a spawn node can never reach a workflow the same caller could not
+  trigger directly" — and area 13's prior passes already pinned the
+  not-found/CanSeePublication branches for `ChildInputs` via
+  `TestEngineChildInputs_DepartmentWorkflow_HiddenFromOutsider`/
+  `_AllowedForMember`. But the `PublicationOf` **error**-propagation branch
+  (`domain/engine/engine.go:290-292`, `return false, err`) was pinned only via
+  `TestEngine_Trigger_PublicationLookupError_FailsClosed`, which drives it
+  through `Trigger`. `ChildInputs` calls its OWN `e.sharedVisibilityFilter(ctx)`
+  at `domain/engine/engine_spawn.go:32` — same shared logic, a genuinely
+  distinct call site — and this is exactly the shape of gap already fixed
+  repeatedly in this loop (areas 12, 13): a shared helper's behavior proven at
+  one call site and silently assumed at a sibling one. A regression that
+  swallowed the `PublicationOf` error only along the `ChildInputs` path (e.g. a
+  future refactor that built ChildInputs its own ad hoc filter instead of
+  reusing `sharedVisibilityFilter`, or dropped the error check on just that
+  call site) would let a spawn node's child-workflow lookup silently treat a
+  lookup outage as "unpublished ⇒ open" instead of failing closed — undetected
+  by any existing test, since none drove a `PublicationOf` error through
+  `ChildInputs`. Added `TestEngineChildInputs_PublicationLookupError_FailsClosed`
+  (`domain/engine/engine_spawn_test.go`), mirroring
+  `TestEngine_Trigger_PublicationLookupError_FailsClosed`'s fixture shape but
+  calling `ChildInputs` instead of `Trigger`; confirmed it fails for the right
+  reason (no error returned) when the error branch is temporarily changed to
+  `return true, nil`, then confirmed it passes against the real code. Also
+  independently re-verified the rest of area 14's checklist by reading
+  `TriggerWithDepartment` end to end again: `WithSpawnLink` has exactly one
+  production caller (`Engine.Spawn`, `domain/engine/engine_spawn.go:63`), which
+  rejects an invalid link BEFORE ever writing it to context, so the
+  incomplete-link-ignored branch inside `TriggerWithDepartment` is a genuine
+  defensive guard (tested via `TestTrigger_PartialSpawnLinkIsNotStamped`) rather
+  than a load-bearing production path; confirmed via `go tool cover` that the
+  entire link-stamping block (`engine.go:448-457`) is fully exercised; traced
+  that the run-loop context (`runCtx` in `Engine.run`, derived fresh from
+  `context.Background()`) never carries a parent's `Origin` or `SpawnLink`
+  forward into a child's own node executions, so nested spawns cannot leak a
+  grandparent's link (confirmed by `TestEngineSpawn_GrandchildLinksToItsOwnParent`
+  plus direct code reading); and confirmed the single struct literal claim
+  still holds (`inst := &instance.Instance{...}` then one `Create` call, no
+  interim mutation). This closes review 2 approval for area 14; both approvals
+  for area 14 are now recorded.
+
 - [x] **`sharedVisibilityFilter`'s own error and not-found branches were never
   exercised through the real closure.** Focus area 14 review 1.
   `domain/engine/engine.go:282-298` is a pure code-move extraction of logic
