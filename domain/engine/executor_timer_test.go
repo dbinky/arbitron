@@ -23,9 +23,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockTimerScheduler struct {
-	mu             sync.Mutex
-	scheduleCalls  []scheduleCall
-	cancelCalls    []uuid.UUID
+	mu            sync.Mutex
+	scheduleCalls []scheduleCall
+	cancelCalls   []uuid.UUID
 }
 
 type scheduleCall struct {

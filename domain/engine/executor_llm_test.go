@@ -456,8 +456,8 @@ func TestLLMCallExecutor_NoSchemaNoInstruction(t *testing.T) {
 		},
 	}
 	node := workflow.Node{
-		ID:   "chat1",
-		Type: workflow.NodeTypeLLMCall,
+		ID:     "chat1",
+		Type:   workflow.NodeTypeLLMCall,
 		Config: workflow.NodeConfig{TemplateFile: "prompt.txt", ModelProfile: "chat-default"},
 	}
 	exec := engine.NewLLMCallExecutor(fr, chatSelector(prov), chatResolver("m"))

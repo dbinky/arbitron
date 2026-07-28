@@ -37,11 +37,11 @@ func (NoopQueuePositionProvider) QueuePositions(context.Context) (map[uuid.UUID]
 // only: each producer call is isolated, and a failure for one field degrades
 // only that field — the row still renders. It never fails the list.
 type InstanceEnricher struct {
-	instances          instance.InstanceRepository
-	nodeExecs          instance.NodeExecutionRepository
-	users              instance.UserRepository
-	queuePos           QueuePositionProvider // nil -> no position (Phase 2 wires this)
-	defaultAgentBackend string               // deployment-wide fallback for BackendUnset nodes
+	instances           instance.InstanceRepository
+	nodeExecs           instance.NodeExecutionRepository
+	users               instance.UserRepository
+	queuePos            QueuePositionProvider // nil -> no position (Phase 2 wires this)
+	defaultAgentBackend string                // deployment-wide fallback for BackendUnset nodes
 }
 
 // NewInstanceEnricher constructs the enricher with its collaborators. queuePos
@@ -61,10 +61,10 @@ func NewInstanceEnricher(
 		panic("engine: NewInstanceEnricher requires a non-nil QueuePositionProvider (use NoopQueuePositionProvider{})")
 	}
 	return &InstanceEnricher{
-		instances:          instances,
-		nodeExecs:          nodeExecs,
-		users:              users,
-		queuePos:           queuePos,
+		instances:           instances,
+		nodeExecs:           nodeExecs,
+		users:               users,
+		queuePos:            queuePos,
 		defaultAgentBackend: defaultAgentBackend,
 	}
 }

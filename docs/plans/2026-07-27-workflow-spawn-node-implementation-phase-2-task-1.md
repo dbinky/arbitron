@@ -17,7 +17,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/child_input_contract_test.go`:
 
@@ -206,7 +206,7 @@ func TestValidateChildInputs_EmptyStringAndZeroAreSatisfying(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -223,7 +223,7 @@ domain/engine/child_input_contract_test.go:...: undefined: ErrChildContractUnsat
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation — the pure contract logic**
+- [x] **Step 3: Minimal implementation — the pure contract logic**
 
 Create `domain/engine/child_input_contract.go`:
 
@@ -342,7 +342,7 @@ func validateChildInputs(childWorkflow string, fields []workflow.InputField, pro
 }
 ```
 
-- [ ] **Step 4: Declare the port**
+- [x] **Step 4: Declare the port**
 
 Append to `domain/engine/ports.go`, after the `InteractiveStreamSelector` declaration:
 
@@ -400,7 +400,7 @@ import (
 )
 ```
 
-- [ ] **Step 5: Run it, confirm it passes**
+- [x] **Step 5: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -427,7 +427,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.4s
 ```
 
-- [ ] **Step 6: Confirm the package builds and passes**
+- [x] **Step 6: Confirm the package builds and passes**
 
 ```bash
 go build ./... && go test ./domain/engine/
@@ -435,7 +435,7 @@ go build ./... && go test ./domain/engine/
 
 Expected: build succeeds; `ok  	github.com/arbitron/arbitron/domain/engine`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/child_input_contract.go domain/engine/child_input_contract_test.go domain/engine/ports.go

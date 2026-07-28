@@ -7,6 +7,7 @@ import (
 
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
 
@@ -74,6 +75,44 @@ type AgentProviderSelector interface {
 // chat stream; agent bindings get the tool-enabled (YOLO) stream.
 type InteractiveStreamSelector interface {
 	StreamProviderFor(b provider.ResolvedBinding) (ChatProvider, error)
+}
+
+// ChildInputRequest is everything the preparer needs to turn a parent's
+// available context into startup values for a child workflow. It is a struct
+// rather than a positional signature because the field set is the contract and
+// is expected to grow (e.g. a per-node token budget) without breaking callers.
+type ChildInputRequest struct {
+	// NodeID is the spawn node being executed. It is used to attribute errors
+	// and to assert the binding kind against the node type.
+	NodeID string
+	// ChildWorkflow is the child's name, used only for error messages and prompt
+	// framing. The preparer never loads a workflow itself.
+	ChildWorkflow string
+	// Inputs is the CHILD's declared input contract, loaded by the caller. The
+	// child's declaration is the authority; the parent never names the fields.
+	Inputs []workflow.InputField
+	// ParentContext is the parent run's flat variable snapshot (its inputs and
+	// all prior node outputs).
+	ParentContext map[string]any
+	// Guidance is the optional author-supplied prose, already read by the
+	// caller. Empty means no guidance was configured.
+	Guidance string
+	// ProfileAlias is the chat profile alias to resolve for the preparation call.
+	ProfileAlias string
+}
+
+// ChildInputPreparer turns a parent's available context into startup values
+// that satisfy a child workflow's declared input contract.
+//
+// GUARANTEES: on success, every REQUIRED input of the child is present and
+// non-null. On failure, NO partial result is returned — the caller cannot
+// accidentally spawn with half a payload.
+//
+// Because the return value is "values that satisfy the contract", the caller
+// needs no knowledge of how they were obtained; a future non-LLM implementation
+// (static mapping, cached result) satisfies the same port.
+type ChildInputPreparer interface {
+	Prepare(ctx context.Context, req ChildInputRequest) (map[string]any, error)
 }
 
 // AgentMission describes a single agentic mission to run inside the instance

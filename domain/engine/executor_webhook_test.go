@@ -24,8 +24,8 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockWebhookRegistrar struct {
-	mu             sync.Mutex
-	registerCalls  []registerCall
+	mu              sync.Mutex
+	registerCalls   []registerCall
 	deactivateCalls []string
 }
 

@@ -30,18 +30,18 @@ type stamp struct {
 //
 // Stamping rules (spec §Instance Visibility, design §Trigger Stamping):
 //   - public:     Visibility=public; Department = "" ALWAYS. A public run's
-//                 audience is everyone, so attributing it to any one department
-//                 is a category error. The previous firstDepartment(id) fallback
-//                 read JWT-claim-first-seen order — unstable across logins — so
-//                 the SAME user/same public workflow drifted between departments
-//                 across runs (PR #21 Must Fix). Public runs are surfaced via the
-//                 dashboard's explicit cross-department (public) lane, not a
-//                 department bucket. The override is still validated above (the
-//                 scope-widening guard) but never attributes a public run.
+//     audience is everyone, so attributing it to any one department
+//     is a category error. The previous firstDepartment(id) fallback
+//     read JWT-claim-first-seen order — unstable across logins — so
+//     the SAME user/same public workflow drifted between departments
+//     across runs (PR #21 Must Fix). Public runs are surfaced via the
+//     dashboard's explicit cross-department (public) lane, not a
+//     department bucket. The override is still validated above (the
+//     scope-widening guard) but never attributes a public run.
 //   - department: Visibility=department; Department = override, else the
-//                 publication's department.
+//     publication's department.
 //   - private:    Visibility=private; Department = "" (override ignored for the
-//                 audience but still validated above).
+//     audience but still validated above).
 //
 // The override never widens beyond the caller's own departments.
 func resolveStamp(id identity.Identity, pubVisibility instance.Visibility, pubDepartment, override string) (stamp, error) {
