@@ -22,6 +22,10 @@ interface QueueSectionProps {
   onDismissAll?: () => void
   onDismiss?: (id: string) => void
   onRestore?: (id: string) => void
+  /** Bumped by the caller on every top-level refetch; invalidates the run
+   *  hierarchy's cached child levels so an already-open row doesn't keep
+   *  showing a stale child state (or miss a newly spawned one). */
+  refreshSignal?: number
 }
 
 /** defaultSortKey picks the initial sort column from the section's state mix. */
@@ -60,6 +64,7 @@ export default function QueueSection({
   onDismissAll,
   onDismiss,
   onRestore,
+  refreshSignal,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [sortKey, setSortKey] = useState<string | null>(null)
@@ -68,6 +73,15 @@ export default function QueueSection({
   const [errorText, setErrorText] = useState<string | null>(null)
   const [errorLoading, setErrorLoading] = useState(false)
   const hierarchy = useRunHierarchy()
+
+  // A top-level refetch replaces `instances` wholesale but leaves any
+  // already-expanded hierarchy level's cache untouched, so it would otherwise
+  // keep showing a child's pre-refetch state (or hide one that just
+  // appeared) until the user collapses and re-expands it by hand.
+  const { invalidate } = hierarchy
+  useEffect(() => {
+    invalidate()
+  }, [refreshSignal, invalidate])
 
   // Lazy-load the last error for the expanded row via the trace endpoint. The
   // fetch lives here (not in RowDetailPanel) so the detail panel stays a pure

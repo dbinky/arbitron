@@ -13,19 +13,6 @@ escalate** — never a tolerated no-op.
 
 ## Open
 
-- [ ] **`useRunHierarchy.invalidate` has no production caller.**
-  `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate` and documents
-  it as "used on a full refetch", but the only reference outside the hook is
-  `dashboard/src/hooks/useRunHierarchy.test.ts:161`.
-  `dashboard/src/components/QueueSection.tsx` calls `useRunHierarchy()` and never
-  calls `invalidate`. Consequence: `QueueSection`'s refetch replaces the top-level
-  `instances` but every expanded level stays cached forever, so a child that
-  completes, fails, or is cancelled keeps rendering its stale state until the user
-  collapses and re-expands it — and a newly spawned child never appears under an
-  already-open parent. Fix: invalidate (or re-fetch open levels) when the
-  section's row set is refreshed, with a Vitest case asserting a stale cached
-  child is not re-rendered after a refetch.
-
 - [ ] **Confirm the awaited-spawn wait is invisible to the timer recovery sweep.**
   `executeWait` transitions the parent with `instances.UpdateState(ctx, id,
   StateWaiting)` and the comment claims `waiting_until` stays NULL so
@@ -138,6 +125,47 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`useRunHierarchy.invalidate` had no production caller.** Focus area 27
+  (dashboard run-hierarchy state hook), review 1.
+  `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate`, documented as
+  "used on a full refetch", but the only reference outside the hook was
+  `dashboard/src/hooks/useRunHierarchy.test.ts:161` — `QueueSection.tsx` called
+  `useRunHierarchy()` and never called `invalidate`, so every expanded level
+  stayed cached forever: a child that completed, failed, or was cancelled kept
+  rendering its pre-refetch state until the user collapsed and re-expanded it by
+  hand, and a newly spawned child never appeared under an already-open parent.
+  Wired it to the top-level refetch that already exists: `QueueView.tsx` now
+  tracks a `refreshedAt` counter, incremented only on `fetchAll`'s SUCCESS path
+  (not on the in-place `NODE_PATCH_EVENTS` row patch, which doesn't touch
+  `instances`' identity in a way that means "the list was truly refetched," and
+  not on a failed fetch, which leaves the existing rows and thus their children
+  still valid), and passes it to every `<QueueSection refreshSignal={...}>`.
+  `QueueSection` runs `useEffect(() => invalidate(), [refreshSignal,
+  invalidate])` — `invalidate`'s identity is stable (the hook's own
+  `useCallback` has an empty dep array), so this fires exactly once per real
+  bump, not once per render. Added
+  `'a refreshSignal bump collapses an expanded row and drops its stale cached
+  children'` (`dashboard/src/components/QueueSection.test.tsx`): expands a row,
+  confirms the (mocked) child renders, bumps `refreshSignal` via `rerender`, and
+  asserts the child is gone and the row is collapsed again; confirmed it fails
+  for the right reason (stale `Child Run` cell still present) when the effect
+  body is neutered to `if (false) invalidate()`, then confirmed it passes
+  against the real code. Added a sibling test asserting an unchanged
+  `refreshSignal` leaves an expanded row untouched, so the fix doesn't collapse
+  rows on every unrelated re-render. Did not attempt a finer-grained "re-fetch
+  only open levels while preserving expansion" — `invalidate`'s own contract
+  (tested at `useRunHierarchy.test.ts:156`) is "drop cache AND collapse," and
+  building a different, softer behavior would be inventing functionality no
+  design document asked for; this pass wires the existing, already-specified
+  behavior to a real caller. Ran `go test ./...`, `npx tsc --noEmit`, and
+  `npx vitest run`: no new failures beyond the recorded baseline (the one
+  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
+  errors; vitest 468 passed, 0 failed, up from 466 with this pass's two new
+  tests). This closes review 1 approval for area 27; review 2 remains open, and
+  the rest of area 27's checklist (one-request-per-level lazy fetch, per-row
+  error confinement, error levels not cached) was not independently
+  re-verified this pass — left for review 2.
 
 - [x] **`ListInstancesParams.parent`'s own doc comment documents three wire
   values (omit, `'roots'`, an instance UUID), matching

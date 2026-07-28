@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import QueueSection from './QueueSection'
 import type { EnrichedInstanceSummary } from '../api/types'
 
-vi.mock('../api/client', () => ({ api: { instances: { getNodeTrace: vi.fn() } } }))
+vi.mock('../api/client', () => ({ api: { instances: { getNodeTrace: vi.fn(), list: vi.fn() } } }))
 
 function summary(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -201,5 +201,70 @@ describe('QueueSection — row detail panel', () => {
     expect(screen.getByTestId('row-detail-panel')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /collapse/i }))
     expect(screen.queryByTestId('row-detail-panel')).toBeNull()
+  })
+})
+
+describe('QueueSection — run hierarchy cache invalidation on refresh', () => {
+  it('a refreshSignal bump collapses an expanded row and drops its stale cached children', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.instances.list).mockResolvedValue([
+      summary({ id: 'child1', runName: 'Child Run', parentInstanceId: 'p1' }),
+    ])
+
+    const parent = summary({ id: 'p1', runName: 'Parent Run', childCount: 1 })
+    const { rerender } = renderSection({ instances: [parent], refreshSignal: 0 })
+
+    fireEvent.click(screen.getByRole('button', { name: /show child runs of parent run/i }))
+    expect(await screen.findByText('Child Run')).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <QueueSection
+          title="Failed"
+          instances={[parent]}
+          titleColor="red"
+          countBg="red"
+          countColor="red"
+          timeMode="relative"
+          density="balanced"
+          authMode="local"
+          refreshSignal={1}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByText('Child Run')).toBeNull()
+    expect(screen.getByRole('button', { name: /show child runs of parent run/i })).toBeInTheDocument()
+  })
+
+  it('re-rendering with the same refreshSignal does not disturb an expanded row', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.instances.list).mockResolvedValue([
+      summary({ id: 'child1', runName: 'Child Run', parentInstanceId: 'p1' }),
+    ])
+
+    const parent = summary({ id: 'p1', runName: 'Parent Run', childCount: 1 })
+    const { rerender } = renderSection({ instances: [parent], refreshSignal: 0 })
+
+    fireEvent.click(screen.getByRole('button', { name: /show child runs of parent run/i }))
+    expect(await screen.findByText('Child Run')).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <QueueSection
+          title="Failed"
+          instances={[parent]}
+          titleColor="red"
+          countBg="red"
+          countColor="red"
+          timeMode="relative"
+          density="balanced"
+          authMode="local"
+          refreshSignal={0}
+        />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Child Run')).toBeInTheDocument()
   })
 })
