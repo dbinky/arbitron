@@ -103,6 +103,45 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`instanceEnricher.SetSpawnLinks(instanceRepo)`'s composition-root wiring
+  had no test proving it through the real engine, unlike the identical seam
+  already proven for `eng.SetSpawnLinks` (area 16 review 2) and
+  `queueMgr.SetChildTerminalHook` (area 20).** Focus area 23 (batched child
+  counts on enriched rows), review 1. `domain/engine/enricher.go:105`
+  documents and implements a load-bearing no-op: `if e.spawnLinks == nil ...
+  return map[uuid.UUID]int{}` — every row would report `ChildCount` 0 and no
+  hierarchy expander would render. Every existing test in
+  `domain/engine/enricher_child_count_test.go` drives `batchChildCounts`
+  through a `countingSpawnLinks` fake the test itself constructs and injects
+  via `en.SetSpawnLinks(links)` — none of them prove `cmd/arbitron/main.go`
+  actually calls `instanceEnricher.SetSpawnLinks(instanceRepo)` before a real
+  list request reaches it, the same shape of gap this loop has fixed
+  repeatedly for other composition-root seams. Added
+  `TestEnricherChildCountE2E_ParentReportsRealChildCountThroughCompositionRoot`
+  (`cmd/arbitron/enricher_child_count_e2e_test.go`), which boots the real
+  composition root via `initDomain`, triggers a real `fire_and_forget` spawn
+  parent, waits for its real linked child to be persisted, then reads the
+  parent back through `Engine.ListEnriched` (the sink a dashboard request
+  would hit) and asserts `ChildCount == 1`; confirmed it fails for the right
+  reason (`ChildCount` 0) when `instanceEnricher.SetSpawnLinks(instanceRepo)`
+  is temporarily removed from `main.go`, then confirmed it passes again once
+  restored (`main.go` has no net changes this pass). Independently reviewed
+  the rest of area 23's checklist from source and found it already solid:
+  `batchChildCounts` is at 100% statement coverage
+  (`domain/engine/enricher_child_count_test.go` covers happy — counts
+  stamped on rows; success — one batched call per page, visibility passed is
+  the SAME service-set scope, admin unconstrained; failure/error — a query
+  failure degrades only the row, never the page; edge — no repo wired, empty
+  page touches no repository, no identity skips counting rather than
+  defaulting to unconstrained); the `countingSpawnLinks` fake honours the
+  `ChildVisibility` argument rather than ignoring it, so
+  `TestEnricherChildCount_InvisibleChildrenReportZero` is unfailable-if-broken
+  by construction, not by luck. Ran the full `go test ./...`,
+  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
+  recorded baseline (the one pre-existing `adapter/config` failure is
+  unchanged; dashboard typecheck and vitest both clean). This closes review 1
+  approval for area 23; review 2 remains open.
+
 - [x] **A denied child cancellation in the cascade produced no assertion that
   the audit trail stayed accurate.** Focus area 22 (cancel cascade), review 2.
   `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch`
