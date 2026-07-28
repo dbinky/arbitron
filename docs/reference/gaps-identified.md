@@ -76,6 +76,36 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **Area 17 (spawn executor — wait-for-child suspension), review 2: independent
+  re-verification found no live gap.** Re-derived every checklist item from
+  source rather than trusting review 1's write-up. Confirmed via `go tool
+  cover` (running the full `TestSpawn`-prefixed suite) that `Execute`,
+  `executeFireAndForget`, `executeWait`, `resumeFromLink`, `prepareAndSpawn`,
+  `spawnOutput`, and `assertSpawnBranchPorts` are all at 100% statement
+  coverage (a `TestSpawnWait`-only run shows `executeWait` at 95.5% because the
+  `link != nil` short-circuit belongs to area 18's own tests, not this area's).
+  Re-confirmed the ordering invariant (enqueue → node-exec record →
+  `UpdateState(waiting)` → `NotifyCapacityFreed`) is proven twice: once as a
+  synchronous call-order assertion against fakes
+  (`TestSpawnWait_OrderingInvariant_SpawnThenRecordThenWaitingThenNotify`) and
+  once end-to-end against the REAL `queue.Manager` with `perusercap: 1` — a
+  config under which the test would hang if the ordering broke
+  (`cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack`/
+  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess` and siblings).
+  Confirmed `assertSpawnBranchPorts` scopes edges by `edge.Source == nodeID`
+  (no cross-node false positives) and is checked BEFORE `prepareAndSpawn`
+  (`TestSpawnWait_MissingFailurePort_FailsBeforeCreatingChild`,
+  `_MissingSuccessPort_...`, `_ParentLoadForBranchPortCheck_...`, each
+  asserting zero preparer calls / zero spawned children). Confirmed
+  `NewSpawnWorkflowExecutor` is constructed only at the real composition root
+  (`cmd/arbitron/main.go:894`, grepped for all non-test call sites). Confirmed
+  `queue.Manager.NotifyCapacityFreed`'s own `_ context.Context` parameter (it
+  fires its evaluation via `context.Background()` in a goroutine) is
+  deliberate fire-and-forget behavior, not a dropped-argument bug, and the
+  test double (`mockQueueManager`) matches this shape rather than silently
+  diverging from it. No code change was needed; this closes review 2 approval
+  for area 17 — both approvals for area 17 are now recorded.
+
 - [x] **`executeWait`'s own `instances.Get` failure (the load before
   `assertSpawnBranchPorts`) was untested.** Focus area 17 (spawn executor —
   wait-for-child suspension), review 1. `domain/engine/executor_spawn.go:117-120`
