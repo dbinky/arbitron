@@ -64,12 +64,21 @@ func (e *Engine) cascadeCancel(ctx context.Context, parentID uuid.UUID, visited 
 		visited[childID] = true
 
 		if cerr := e.cancelAuthorized(ctx, childID); cerr != nil {
-			if !errors.Is(cerr, instance.ErrCannotCancel) {
-				slog.Warn("cancel cascade: failed to cancel child",
-					"parentID", parentID, "childID", childID, "error", cerr)
+			if errors.Is(cerr, instance.ErrCannotCancel) {
+				// Already terminal: still descend, since a terminal child may have
+				// active grandchildren of its own.
+				e.cascadeCancel(ctx, childID, visited)
+				continue
 			}
-			// Continue regardless: an already-terminal child may still have active
-			// grandchildren of its own.
+			// A real failure (authorization denied, storage error, not-found): the
+			// child ITSELF is untouched, so descending into its subtree with the
+			// same identity could authorize a grandchild the actor could not
+			// authorize on the child — cancelling a descendant while the node
+			// between it and the parent stays running. Halt this branch instead of
+			// leaving that inconsistent, unannounced hole in the tree.
+			slog.Warn("cancel cascade: failed to cancel child, branch not descended",
+				"parentID", parentID, "childID", childID, "error", cerr)
+			continue
 		}
 		e.cascadeCancel(ctx, childID, visited)
 	}

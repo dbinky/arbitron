@@ -48,14 +48,50 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **Verify the cascade produces an intervention record for every descendant.**
-  `cascadeCancel` routes through `cancelAuthorized`, which calls
-  `recordIntervention` — but `authorizeIntervention` runs per child against the
-  ambient context identity. Confirm with a test that cancelling a deep tree
-  writes one intervention row per cancelled run, and that an admin cancelling
-  another user's run does not fail authorization partway down the tree and
-  silently orphan the remaining descendants (the cascade logs and continues, so a
-  systematic authorization failure would be invisible).
+- [ ] **`cascadeCancel`'s visited-set cycle guard (`domain/engine/cancel_cascade.go:61-63`,
+  `if visited[childID] { continue }`) is never actually exercised by either test
+  that claims to prove it.** Found while reviewing area 22 (cancel cascade).
+  `TestCancelCascade_SelfReferentialLinkHaltsTraversal` and
+  `_MutualLinkCycleHaltsTraversal` both pass today, but instrumenting the
+  already-visited branch with a print statement and re-running them shows it is
+  hit ZERO times by either test. The real reason both "halt" is a DIFFERENT
+  mechanism: `cancelAuthorized` transitions each instance to `StateCancelled`
+  (terminal) BEFORE the recursive `cascadeCancel` call that would re-list it,
+  and the fake's `ListActiveChildren` (matching the real SQLite query's
+  presumed shape) filters out terminal instances — so by the time a cycle would
+  re-visit an already-cancelled node, that node no longer appears in
+  `ListActiveChildren`'s result at all, and the loop body (including the
+  `visited` check) is never reached for it a second time. The `visited` map is
+  therefore currently PROVEN REDUNDANT by these two tests, not proven
+  load-bearing — the doc comment's claim ("makes corrupt or hand-edited link
+  data degrade into a halted traversal") is unverified for the one case where it
+  would actually matter: a cycle or reconvergence involving a node that has NOT
+  yet been transitioned to terminal at the time it is re-reached (e.g. two
+  cancel-cascade branches racing to reach a shared descendant before either has
+  transitioned it, if the domain model ever allowed a child to be reachable
+  from two parents, or a corrupt row pointing a child back to a
+  not-yet-cancelled ancestor). Since the link graph is single-parent by
+  construction, this may be genuinely unreachable — but that must be
+  demonstrated by a test that removes the state-based coincidental protection
+  (e.g. injects a still-non-terminal node into a cycle) rather than assumed.
+  Not fixed in this pass to keep the pass to one issue (the authorization-branch
+  fix below); the guard itself is unchanged and still present, so there is no
+  regression — only an existing test-coverage claim now known to be false.
+
+- [ ] **Verify the cascade produces an intervention record for every descendant,
+  scoped to the storage-failure case only.** `cascadeCancel` routes through
+  `cancelAuthorized`, which calls `recordIntervention`; the "one intervention
+  row per cancelled run across a deep tree" claim and the "authorization
+  failure partway down the tree does not silently orphan the rest of the
+  traversal" claim are now both covered (the latter fixed this pass — see
+  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch` under Fixed).
+  What remains unverified: `cascadeCancel`'s own `ListActiveChildren` failure
+  (a storage error listing one branch, `TestCancelCascade_StorageFailureStillReportsSuccess`)
+  only asserts the PARENT stays cancelled — it never asserts whether a sibling
+  branch's intervention records are still written, i.e. whether one branch's
+  storage error silently truncates unrelated branches' audit trail too. Confirm
+  with a test that a `ListActiveChildren` failure on one child's branch still
+  lets a SIBLING branch's descendants be cancelled and recorded.
 
 - [ ] **Three defensive branches in `OnChildTerminal` have no known reachable
   production caller and are untested.** Found while closing area 19 review 2
@@ -76,6 +112,52 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`cascadeCancel` recursed into a child's descendants even when that child
+  itself failed cancellation for a REAL reason (authorization denied, not-found,
+  storage error) — not just the benign already-terminal case.** Focus area 22
+  (cancel cascade), review 1. `domain/engine/cancel_cascade.go`'s pre-fix loop
+  called `e.cascadeCancel(ctx, childID, visited)` unconditionally after
+  `cancelAuthorized(ctx, childID)`, regardless of WHY it failed. The design's own
+  authorization claim ("children inherit the parent's owner, so an identity
+  authorized to intervene on the parent is authorized on every descendant") is
+  true for OwnerID but not for Department: `canIntervene` also grants department
+  LEADS, and a spawned child's `Department` is derived from that child's OWN
+  workflow publication (`resolvePublication`), not inherited from its parent —
+  so a department lead authorized on the parent can be genuinely UNauthorized on
+  a child scoped to a different department. `go tool cover` confirmed the
+  non-`ErrCannotCancel` branch (the `slog.Warn` at the old lines 67-70) was at 0
+  hits — no existing test drove `cancelAuthorized` to fail for any reason other
+  than the parent's own uncancellable state or a `ListActiveChildren` storage
+  error at the TOP of the cascade. Consequence: a department-lead actor
+  cancelling a parent whose child is scoped to a department they don't lead
+  would see that child correctly left running (authorization denied) — but the
+  cascade would still recurse into the unauthorized child's OWN children via the
+  same ctx identity, cancelling a grandchild whose department the actor DOES
+  lead. Result: a live, running node (the child) sandwiched between a cancelled
+  parent and a cancelled grandchild, with no operator-visible error beyond a
+  `slog.Warn` log line — exactly the "systematic authorization failure would be
+  invisible" shape already flagged in this file's Open section. Added
+  `cascadeFixture.runInDepartment` (`domain/engine/cancel_cascade_test.go`) and
+  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch`, which drives a
+  department-lead actor (leads "eng", member of "eng"+"finance") through a
+  parent("eng")→child("finance")→grandchild("eng") chain and asserts the
+  authorization-denied child AND the otherwise-reachable grandchild both stay
+  `StateRunning`; confirmed it fails for the right reason (grandchild wrongly
+  reaches `StateCancelled`) against the pre-fix code, then confirmed it passes
+  after changing `cascadeCancel` to only recurse past a failed child when the
+  failure is `ErrCannotCancel` (already terminal — genuinely safe to still check
+  its own children), and to `continue` without descending for any other error.
+  Ran `go test ./domain/engine/...` (full `TestCancelCascade` suite plus the
+  whole package), `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
+  new failures beyond the recorded baseline (the one pre-existing
+  `adapter/config` failure is unchanged; dashboard typecheck and vitest both
+  clean). While independently re-deriving the rest of area 22's checklist from
+  source, found the visited-set guard is currently proven redundant rather than
+  load-bearing by its own two "cycle" tests (logged separately above under
+  Open, not fixed here to keep this pass to one issue) — so review 1 approval
+  for area 22 is **not** recorded this pass; the checklist item "visited-set
+  guard" is not yet genuinely verified.
 
 - [x] **`SpawnWaitReconciler.Reconcile`'s "one failure doesn't abandon the rest"
   guarantee was proven only for a `Get` failure, never for the sibling

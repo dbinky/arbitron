@@ -119,6 +119,20 @@ func (c *cascadeFixture) run(t *testing.T, state instance.State) uuid.UUID {
 	return inst.ID
 }
 
+// runInDepartment creates an instance owned by someone OTHER than the fixture
+// owner, department-scoped, so a department-lead actor's canIntervene depends
+// on department membership rather than ownership or admin.
+func (c *cascadeFixture) runInDepartment(t *testing.T, state instance.State, dept string) uuid.UUID {
+	t.Helper()
+	inst := &instance.Instance{
+		ID: uuid.New(), OwnerID: uuid.New(), WorkflowName: "wf",
+		State: state, Priority: instance.PriorityNormal,
+		Visibility: instance.VisibilityDepartment, Department: dept,
+	}
+	require.NoError(t, c.f.instanceRepo.Create(context.Background(), inst))
+	return inst.ID
+}
+
 func (c *cascadeFixture) stateOf(t *testing.T, id uuid.UUID) instance.State {
 	t.Helper()
 	got, err := c.f.instanceRepo.Get(context.Background(), id)
@@ -290,6 +304,43 @@ func TestCancelCascade_StorageFailureStillReportsSuccess(t *testing.T) {
 
 	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
 	assert.Equal(t, instance.StateCancelled, c.stateOf(t, parent))
+}
+
+// A department-lead actor (non-owner, non-admin) is authorized on the parent
+// by department but NOT on a child scoped to a DIFFERENT department — children
+// are NOT department-inherited from their parent (only ownership is; Department
+// is derived per-child from that child's own workflow publication). The cascade
+// must not silently reach past the node it could not authorize: cancelling a
+// grandchild whose OWN department the actor happens to lead, while the
+// intervening child stays running unauthorized-and-untouched, would leave a
+// worse-than-either-outcome hole in the tree — a live node sandwiched between
+// two cancelled ones with no operator-visible error (only a Warn log).
+func TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.runInDepartment(t, instance.StateRunning, "eng")
+	child := c.runInDepartment(t, instance.StateRunning, "finance")
+	grandchild := c.runInDepartment(t, instance.StateRunning, "eng")
+	c.links.link(parent, child)
+	c.links.link(child, grandchild)
+
+	// Actor leads "eng" (authorizes the parent AND would authorize the
+	// grandchild in isolation) but only MEMBERS "finance" (view-only, no
+	// intervene) — so cancelAuthorized on the child fails with ErrForbidden,
+	// not ErrCannotCancel.
+	leadCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: uuid.New(), Role: identity.RoleUser,
+		Departments:    []string{"eng", "finance"},
+		LedDepartments: []string{"eng"},
+	})
+
+	require.NoError(t, c.f.engine.Cancel(leadCtx, parent))
+
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, parent))
+	assert.Equal(t, instance.StateRunning, c.stateOf(t, child),
+		"the actor does not lead the child's department, so the child is correctly left uncancelled")
+	assert.Equal(t, instance.StateRunning, c.stateOf(t, grandchild),
+		"the cascade must not reach past a child it could not authorize, even though the "+
+			"actor could authorize the grandchild in isolation")
 }
 
 // ---------- edge cases ----------
