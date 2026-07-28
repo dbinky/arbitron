@@ -28,7 +28,12 @@ var ErrBindingKindMismatch = errors.New("engine: binding kind does not match nod
 // model_profile (the caller should not be enforcing the invariant for them).
 func expectedKindForNodeType(t workflow.NodeType) (provider.ProfileKind, bool) {
 	switch t {
-	case workflow.NodeTypeLLMCall, workflow.NodeTypeInteractiveLLM:
+	// spawn_workflow performs a tool-SUPPRESSED input-preparation chat call, so
+	// it belongs on the chat arm. Mapping it here is load-bearing, not
+	// cosmetic: an UNMAPPED type returns ok=false, which makes assertBindingKind
+	// a no-op — a new node type that calls a provider would silently skip the
+	// chat-vs-agent posture guard entirely.
+	case workflow.NodeTypeLLMCall, workflow.NodeTypeInteractiveLLM, workflow.NodeTypeSpawnWorkflow:
 		return provider.ProfileKindChat, true
 	case workflow.NodeTypeAgentCall, workflow.NodeTypeInteractiveAgent:
 		return provider.ProfileKindAgent, true
