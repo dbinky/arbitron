@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
 import { api } from '../api/client'
 
@@ -43,8 +43,25 @@ export interface RunHierarchy {
  * page are unaffected, and collapsing then re-expanding retries.
  */
 export function useRunHierarchy(): RunHierarchy {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [levels, setLevels] = useState<Record<string, Level>>({})
+  const [expanded, setExpandedState] = useState<Record<string, boolean>>({})
+  const [levels, setLevelsState] = useState<Record<string, Level>>({})
+
+  // Mirrors of the state above, updated synchronously (inside the same
+  // functional setState call) rather than on the next render. `toggle` reads
+  // these instead of the closed-over `expanded`/`levels` so that two toggles
+  // fired back to back — a real double-click on the row's expander — each see
+  // the OTHER's effect immediately, rather than both reading the same
+  // pre-update snapshot and both slipping past the "already expanded"/
+  // "already fetching" guards to fire a duplicate request.
+  const expandedRef = useRef(expanded)
+  const levelsRef = useRef(levels)
+
+  const setExpanded = useCallback((updater: (prev: Record<string, boolean>) => Record<string, boolean>) => {
+    setExpandedState((prev) => (expandedRef.current = updater(prev)))
+  }, [])
+  const setLevels = useCallback((updater: (prev: Record<string, Level>) => Record<string, Level>) => {
+    setLevelsState((prev) => (levelsRef.current = updater(prev)))
+  }, [])
 
   const isExpanded = useCallback((id: string) => expanded[id] === true, [expanded])
   const childrenOf = useCallback((id: string) => levels[id]?.rows ?? EMPTY, [levels])
@@ -53,7 +70,7 @@ export function useRunHierarchy(): RunHierarchy {
 
   const toggle = useCallback(
     async (id: string) => {
-      if (expanded[id]) {
+      if (expandedRef.current[id]) {
         setExpanded((prev) => ({ ...prev, [id]: false }))
         return
       }
@@ -61,7 +78,7 @@ export function useRunHierarchy(): RunHierarchy {
 
       // Already fetched successfully: re-expanding uses the cache. A level that
       // ERRORED is not cached, so re-expanding retries.
-      if (levels[id] && levels[id].error === null) return
+      if (levelsRef.current[id] && levelsRef.current[id].error === null) return
 
       setLevels((prev) => ({ ...prev, [id]: { rows: prev[id]?.rows ?? EMPTY, loading: true, error: null } }))
       try {
@@ -72,13 +89,13 @@ export function useRunHierarchy(): RunHierarchy {
         setLevels((prev) => ({ ...prev, [id]: { rows: EMPTY, loading: false, error: msg } }))
       }
     },
-    [expanded, levels],
+    [setExpanded, setLevels],
   )
 
   const invalidate = useCallback(() => {
-    setExpanded({})
-    setLevels({})
-  }, [])
+    setExpanded(() => ({}))
+    setLevels(() => ({}))
+  }, [setExpanded, setLevels])
 
   return { isExpanded, childrenOf, isLoading, errorOf, toggle, invalidate }
 }

@@ -126,6 +126,51 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **A double-toggle fired before the first fetch settled broke the
+  "one request per level" contract, and silently re-expanded instead of
+  collapsing.** Focus area 27 (dashboard run-hierarchy state hook), review 2.
+  `toggle` (`dashboard/src/hooks/useRunHierarchy.ts`) read the closed-over
+  `expanded[id]`/`levels[id]` from the CURRENT RENDER's state to decide
+  whether to collapse, skip (cache hit), or fetch. Two `toggle(id)` calls
+  fired back to back — a real double-click on the row's expander, or any
+  caller invoking it twice before React re-renders — both closed over the
+  SAME pre-update snapshot (`expanded[id]` still `false`, `levels[id]` still
+  `undefined`), so both slipped past the "already expanded" and "already
+  fetching/cached" guards: two concurrent `api.instances.list` calls fired for
+  one logical toggle, and the row ended up expanded (last write wins `true`)
+  instead of collapsing back — a real double-click should behave like flipping
+  a checkbox twice, not fire two requests and stay open. Added `'two toggles
+  fired before the first fetch settles issue only one request'`
+  (`dashboard/src/hooks/useRunHierarchy.test.ts`), which calls
+  `toggle('p1')` twice inside one `act` before resolving the mocked fetch and
+  asserts `listMock` was called exactly once and the row ends collapsed;
+  confirmed it failed for the right reason against the pre-fix code
+  (`expected "vi.fn()" to be called 1 times, but got 2 times`), then confirmed
+  it passes against the fix. Fixed by mirroring `expanded`/`levels` into a
+  `useRef` updated SYNCHRONOUSLY inside each functional `setState` call (not on
+  the next render), and having `toggle` read the ref instead of the
+  closed-over state for its collapse/cache-hit decisions — the second call now
+  sees the first call's effect immediately and correctly collapses without
+  fetching. Independently re-verified the rest of area 27's checklist left
+  open by review 1: one-request-per-level lazy fetch (now also covered under
+  the racy case above, plus the existing `'collapsing hides the children
+  without refetching...'` and `'recursive expansion...'` tests for the
+  non-racy case), per-row error confinement
+  (`'confines an expansion failure to its own row'`, keyed by a `Record<string,
+  Level>` so rows cannot cross-contaminate by construction), error levels not
+  cached (`'a retry after a failed expansion refetches'`); confirmed
+  `useRunHierarchy` is still constructed at exactly one production call site
+  (`QueueSection.tsx:75`, grepped for all non-test references) and every
+  member of its returned `RunHierarchy` interface — `isExpanded`, `childrenOf`,
+  `isLoading`, `errorOf`, `toggle`, `invalidate` — is read by real production
+  code (`HierarchyRows.tsx` reads the first five, `QueueSection.tsx` wires
+  `invalidate` to `refreshSignal`), not merely exercised by a test. Ran the
+  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
+  failures beyond the recorded baseline (the one pre-existing `adapter/config`
+  failure is unchanged; dashboard typecheck at 0 errors; vitest 469 passed, 0
+  failed, up from 468 with this pass's one new test). This closes review 2
+  approval for area 27 — both approvals for area 27 are now recorded.
+
 - [x] **`useRunHierarchy.invalidate` had no production caller.** Focus area 27
   (dashboard run-hierarchy state hook), review 1.
   `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate`, documented as

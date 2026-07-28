@@ -99,6 +99,28 @@ it('reports a loading state while a level is in flight', async () => {
   await waitFor(() => expect(result.current.isLoading('p1')).toBe(false))
 })
 
+it('two toggles fired before the first fetch settles issue only one request', async () => {
+  let resolveFn: (v: EnrichedInstanceSummary[]) => void = () => {}
+  listMock.mockReturnValue(new Promise<EnrichedInstanceSummary[]>((r) => { resolveFn = r }))
+  const { result } = renderHook(() => useRunHierarchy())
+
+  // Simulates a real double-click on the row's expander: both handlers fire
+  // before React has re-rendered with the first call's `expanded`/`levels`
+  // update, so a stale-closure read of either would let both calls slip past
+  // the "already expanded" and "already fetching" guards.
+  act(() => {
+    void result.current.toggle('p1')
+    void result.current.toggle('p1')
+  })
+  await act(async () => { resolveFn([]) })
+
+  expect(listMock).toHaveBeenCalledTimes(1)
+  // The second toggle lands after the first has already flipped `expanded`,
+  // so — like clicking a checkbox twice — it collapses the row again rather
+  // than starting a second fetch.
+  expect(result.current.isExpanded('p1')).toBe(false)
+})
+
 // ---------- failure ----------
 
 it('confines an expansion failure to its own row', async () => {
