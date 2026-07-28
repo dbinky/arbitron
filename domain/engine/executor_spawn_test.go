@@ -50,6 +50,8 @@ type fakeChildSpawner struct {
 	spawned          []engine.SpawnRequest
 	spawnedIdentity  []identity.Identity
 	nextID           uuid.UUID
+	// onSpawn, when set, is invoked at the start of Spawn. Test-only ordering probe.
+	onSpawn func()
 }
 
 func (s *fakeChildSpawner) ChildInputs(_ context.Context, workflowName string) ([]workflow.InputField, error) {
@@ -64,6 +66,9 @@ func (s *fakeChildSpawner) ChildInputs(_ context.Context, workflowName string) (
 }
 
 func (s *fakeChildSpawner) Spawn(ctx context.Context, req engine.SpawnRequest) (uuid.UUID, error) {
+	if s.onSpawn != nil {
+		s.onSpawn()
+	}
 	if s.spawnErr != nil {
 		return uuid.Nil, s.spawnErr
 	}
@@ -141,6 +146,9 @@ func newSpawnExecFixture(t *testing.T) *spawnExecFixture {
 	}}
 	prep := &fakePreparer{values: map[string]any{"repo": "arbitron/arbitron"}}
 	fr := newMockFileReader()
+	nodeExecs := newMockNodeExecutionRepo()
+	sw := newFakeSpawnWaits()
+	qm := newMockQueueManager()
 
 	return &spawnExecFixture{
 		instances:  instances,
@@ -148,7 +156,7 @@ func newSpawnExecFixture(t *testing.T) *spawnExecFixture {
 		spawner:    spawner,
 		preparer:   prep,
 		fileReader: fr,
-		exec:       engine.NewSpawnWorkflowExecutor(instances, prep, spawner, ids, fr),
+		exec:       engine.NewSpawnWorkflowExecutor(instances, nodeExecs, sw, prep, spawner, ids, fr, qm),
 		parentID:   parent.ID,
 		ownerID:    owner,
 	}
@@ -320,22 +328,6 @@ func TestSpawnExecutor_ChildWorkflowInvisibleOrMissing_Fails(t *testing.T) {
 	assert.Nil(t, res)
 	assert.Empty(t, f.spawner.spawned)
 	assert.Equal(t, 0, f.preparer.calls, "an unresolvable child must fail before any LLM cost")
-}
-
-// Wait-for-child must fail LOUDLY in this phase, never fall through to
-// fire-and-forget: falling through would leave the parent's success/failure
-// ports unreachable and the parent would proceed as though a child had
-// succeeded — a wrong answer rather than a visible gap.
-func TestSpawnExecutor_WaitForChild_UnsupportedInThisPhase(t *testing.T) {
-	f := newSpawnExecFixture(t)
-	node := ffNode("child")
-	node.Config.SpawnMode = workflow.SpawnModeWaitForChild
-
-	res, err := f.run(t, node)
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.Contains(t, err.Error(), "wait_for_child")
-	assert.Empty(t, f.spawner.spawned, "it must NOT fall through to fire-and-forget")
 }
 
 func TestSpawnExecutor_MissingChildWorkflowConfig_Fails(t *testing.T) {

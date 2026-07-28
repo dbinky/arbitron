@@ -98,6 +98,9 @@ type mockInstanceRepo struct {
 	getErr              error
 	setWaitingErr       error
 	setWebhookFieldsErr error
+	// updateStateErr, when set, makes UpdateState fail. Used to exercise the
+	// half-suspended failure path.
+	updateStateErr error
 	// onUpdateState, when set, is invoked from UpdateState AFTER the state
 	// mutation is applied. It is a test-only hook (not part of the production
 	// InstanceRepository port) used to snapshot cross-mock ordering — e.g. the
@@ -206,6 +209,10 @@ func listVisible(inst *instance.Instance, f instance.ListFilters) bool {
 
 func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
 	r.mu.Lock()
+	if r.updateStateErr != nil {
+		r.mu.Unlock()
+		return r.updateStateErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		r.mu.Unlock()
@@ -370,6 +377,9 @@ type mockNodeExecutionRepo struct {
 	mu         sync.Mutex
 	executions []*instance.NodeExecution
 	createErr  error
+	// onCreate, when set, is invoked from Create AFTER the record is stored.
+	// Test-only ordering probe.
+	onCreate func(*instance.NodeExecution)
 }
 
 func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
@@ -378,11 +388,16 @@ func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
 
 func (r *mockNodeExecutionRepo) Create(_ context.Context, exec *instance.NodeExecution) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.createErr != nil {
+		r.mu.Unlock()
 		return r.createErr
 	}
 	r.executions = append(r.executions, exec)
+	hook := r.onCreate
+	r.mu.Unlock()
+	if hook != nil {
+		hook(exec)
+	}
 	return nil
 }
 
@@ -544,6 +559,9 @@ type mockQueueManager struct {
 	mu                    sync.Mutex
 	enqueueFn             func(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error)
 	notifyCapacityFreedCh chan struct{}
+	// onNotify, when set, is invoked from NotifyCapacityFreed. Test-only
+	// ordering probe.
+	onNotify func()
 }
 
 func newMockQueueManager() *mockQueueManager {
@@ -564,6 +582,12 @@ func (m *mockQueueManager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uu
 }
 
 func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
+	m.mu.Lock()
+	hook := m.onNotify
+	m.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	select {
 	case m.notifyCapacityFreedCh <- struct{}{}:
 	default:

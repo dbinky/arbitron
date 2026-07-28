@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/executor_spawn_wait_test.go`:
 
@@ -421,7 +421,7 @@ func (s *fakeChildSpawner) Spawn(ctx context.Context, req engine.SpawnRequest) (
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -436,7 +436,7 @@ domain/engine/executor_spawn_wait_test.go:...: too many arguments in call to eng
 FAIL	github.com/arbitron/arbitron/domain/engine [build failed]
 ```
 
-- [ ] **Step 3: Extend the executor**
+- [x] **Step 3: Extend the executor**
 
 Rewrite the struct, constructor, and `Execute` in
 `domain/engine/executor_spawn.go`. Replace everything from `type
@@ -726,7 +726,7 @@ import (
 )
 ```
 
-- [ ] **Step 4: Update the Phase 3 fixture constructor call**
+- [x] **Step 4: Update the Phase 3 fixture constructor call**
 
 In `domain/engine/executor_spawn_test.go`, in `newSpawnExecFixture`, replace the
 executor construction with the eight-argument form:
@@ -752,7 +752,7 @@ The Phase 3 test `TestSpawnExecutor_WaitForChild_UnsupportedInThisPhase` is now
 obsolete — wait-for-child IS supported. Delete that test function; the wait path
 is covered by `TestSpawnWait_*`.
 
-- [ ] **Step 5: Update the composition root**
+- [x] **Step 5: Update the composition root**
 
 In `cmd/arbitron/main.go`, replace the spawn executor construction with the
 eight-argument form:
@@ -777,7 +777,7 @@ eight-argument form:
 > same way it already satisfies `schedule.ActiveRunChecker`. No alias or cast is
 > needed; pass it for both the first and third arguments.
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -804,7 +804,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.6s
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 go test ./...
@@ -812,7 +812,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/executor_spawn.go domain/engine/executor_spawn_test.go domain/engine/executor_spawn_wait_test.go domain/engine/engine_test.go cmd/arbitron/main.go

@@ -877,10 +877,13 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	childInputPreparer := engine.NewChildInputPreparer(providerFactory, profileResolver)
 	executors[workflow.NodeTypeSpawnWorkflow] = engine.NewSpawnWorkflowExecutor(
 		instanceRepo,
+		nodeExecRepo,
+		instanceRepo, // *adaptsqlite.InstanceRepo also satisfies instance.SpawnWaitRepository
 		childInputPreparer,
 		eng,
 		identityResolver,
 		fileReader,
+		queueMgr,
 	)
 
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
