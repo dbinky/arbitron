@@ -76,6 +76,46 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **Area 18 (awaited-spawn resumption short-circuit), review 2: independent
+  re-verification found no live gap.** Re-derived every checklist item from
+  source rather than trusting review 1's write-up. `go tool cover` over
+  `TestSpawnResume`-prefixed tests shows `resumeFromLink` at 100% statement
+  coverage. Confirmed the LINK-not-node-exec-status key by reading
+  `FindChildBySpawnNode` (`adapter/sqlite/instance_repo.go:693-712`) and its
+  own suite, including `TestFindChildBySpawnNode_MultipleChildrenReturnsTheNewest`
+  — which specifically defeats same-second `created_at` collisions with a
+  `rowid DESC` tie-break and documents that dropping the tie-break "would
+  silently make the executor's resumption short-circuit key on the WRONG
+  child" — and confirmed the fake used in the executor's own suite,
+  `fakeSpawnWaits`, honours all three key parts (parent, node, mode) rather
+  than collapsing them, so the mis-wake/wrong-mode guards in
+  `TestSpawnResume_SecondSpawnNodeMatchedIndependently` and
+  `_FireAndForgetLinkDoesNotSatisfyAwaitedLookup` are unfailable-if-broken by
+  construction, not by luck. Confirmed the still-active path (no re-spawn, no
+  re-transition) is exercised for all four non-terminal `instance.State`
+  values (`TestSpawnResume_ActiveChildReturnsToWaitingWithoutSpawning`) and
+  terminal routing — including cancelled-routes-to-failure — is proven both
+  against fakes and end-to-end through the real composition root
+  (`cmd/arbitron/spawn_wait_e2e_test.go`'s
+  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess`,
+  `_FailedChildRoutesParentThroughFailure`,
+  `_CancelledChildRoutesParentThroughFailure`). Confirmed review 1's
+  `childState`-across-all-outcomes fix
+  (`TestSpawnResume_ChildStateReflectsExactLinkStateAcrossAllOutcomes`) is
+  exhaustive over all seven `instance.State` values, matching
+  `domain/instance/instance.go`'s complete enumeration — no state was left
+  untested. Verified `TestSpawnResume_BackEdgeRevisitRoutesFromPreviousChild`
+  is not a redundant duplicate of the Completed-routes-success case despite
+  identical assertions: per `AGENTS.md:88`, the resumption short-circuit
+  genuinely cannot distinguish a wake re-entry from a back-edge revisit — they
+  are the identical code path by design — so the test correctly pins that
+  documented limitation as tested behaviour rather than fabricating a
+  distinct mechanism that does not exist. Confirmed
+  `SpawnWorkflowExecutor`/`resumeFromLink` has no separate construction site
+  outside the composition root already verified in area 16. No code change
+  was needed; this closes review 2 approval for area 18 — both approvals for
+  area 18 are now recorded.
+
 - [x] **`resumeFromLink`'s "childState in the output" claim was pinned for only
   one of seven possible link states.** Focus area 18 (awaited-spawn resumption
   short-circuit), review 1. `domain/engine/executor_spawn.go:183-184` writes
