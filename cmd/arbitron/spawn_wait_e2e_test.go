@@ -204,3 +204,98 @@ func TestSpawnWaitE2E_NodeExecutionRecordWrittenOnTheWaitPath(t *testing.T) {
 	assert.Equal(t, instance.NodeStatusSucceeded, exec.Status)
 	assert.NotEmpty(t, exec.Output["childInstanceId"])
 }
+
+// PROVENANCE PROBE for the composition root's startup ORDER, not just its
+// presence. main.go runs spawnReconciler.Reconcile immediately after
+// RecoverCrashedInstances specifically so a parent left waiting on a child
+// that crashed mid-flight resumes in the SAME startup pass, rather than being
+// stranded until some other wake arrives (there is none, since a crashed
+// child never reaches a terminal state through any OnChildTerminal call
+// site). Every existing reconciler test drives this ordering claim through
+// fakes (domain/engine/spawn_reconciler_test.go); this one boots the REAL
+// composition root twice against the SAME database file to prove main.go
+// itself gets the order right, not just the reconciler's own logic.
+func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
+	root := t.TempDir()
+	workspaceDir := filepath.Join(root, "workspaces")
+	require.NoError(t, os.MkdirAll(workspaceDir, 0o700))
+
+	writeWorkflow(t, workspaceDir, "wait-child", `{
+  "name": "wait-child",
+  "description": "child",
+  "inputs": [],
+  "nodes": [
+    {"id": "hold", "type": "tool_call", "entrypoint": true,
+     "config": {"command": "sh", "args": ["-c", "sleep `+childHoldSeconds+`; echo '{}'"]}}
+  ],
+  "edges": []
+}`)
+	writeWorkflow(t, workspaceDir, "wait-parent", `{
+  "name": "wait-parent",
+  "description": "parent",
+  "inputs": [],
+  "nodes": [
+    {"id": "p1", "type": "transform", "entrypoint": true,
+     "config": {"operations": [{"variable": "started", "operation": "set", "value": true}]}},
+    {"id": "spawn-1", "type": "spawn_workflow",
+     "config": {"childWorkflow": "wait-child", "spawnMode": "wait_for_child"}},
+    {"id": "onSuccess", "type": "transform",
+     "config": {"operations": [{"variable": "branch", "operation": "set", "value": "success"}]}},
+    {"id": "onFailure", "type": "transform",
+     "config": {"operations": [{"variable": "branch", "operation": "set", "value": "failure"}]}}
+  ],
+  "edges": [
+    {"source": "p1", "target": "spawn-1"},
+    {"source": "spawn-1", "target": "onSuccess", "output": "success"},
+    {"source": "spawn-1", "target": "onFailure", "output": "failure"}
+  ]
+}`)
+
+	configPath := filepath.Join(root, "config.yaml")
+	cfg := "" +
+		"server:\n  host: \"127.0.0.1\"\n  port: 0\n" +
+		"auth:\n  mode: \"local\"\n" +
+		"database:\n  path: \"" + filepath.Join(root, "arbitron.db") + "\"\n" +
+		"workspace:\n  path: \"" + workspaceDir + "\"\n" +
+		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
+		"logging:\n  level: \"error\"\n  file: \"" + filepath.Join(root, "arbitron.log") + "\"\n" +
+		"queue:\n  globalcap: 5\n  perusercap: 5\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
+
+	// --- First boot: crash while the child is still mid-flight. ---
+	ds1, err := initDomain(context.Background(), configPath)
+	require.NoError(t, err)
+
+	parentID, _, err := ds1.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
+	require.NoError(t, err)
+	waitForState(t, ds1, parentID, instance.StateWaiting)
+
+	children := childrenOf(t, ds1, parentID)
+	require.Len(t, children, 1)
+	childID := children[0].ID
+	child, err := ds1.instanceRepo.Get(context.Background(), childID)
+	require.NoError(t, err)
+	if child.State != instance.StateRunning {
+		t.Skipf("child reached a terminal state before the simulated crash: %v", child.State)
+	}
+
+	// Simulate a hard crash: sever the database out from under the live
+	// process with no graceful drain, so the child's row is stranded at
+	// StateRunning exactly as a real process kill would leave it. (A real
+	// ds1.Close() would instead wait for the sleeping child to finish and
+	// shut down cleanly, which is not the scenario this test targets.)
+	require.NoError(t, ds1.db.Close())
+
+	// --- Second boot: the real restart path. ---
+	ds2, err := initDomain(context.Background(), configPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { ds2.Close(context.Background()) })
+
+	// If RecoverCrashedInstances did not run, or spawnReconciler.Reconcile did
+	// not run immediately after it in this same startup pass, the parent would
+	// be stranded in StateWaiting indefinitely.
+	waitForState(t, ds2, childID, instance.StateFailed)
+	waitForState(t, ds2, parentID, instance.StateCompleted)
+	assert.Equal(t, "failure", branchVariable(t, ds2, parentID),
+		"the restart's recover-then-reconcile ordering must resume the stranded parent")
+}

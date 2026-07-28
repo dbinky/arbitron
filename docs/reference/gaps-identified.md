@@ -76,6 +76,44 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **The startup ordering "`spawnReconciler.Reconcile` runs AFTER
+  `RecoverCrashedInstances`" was proven only through fakes, never through the
+  real composition root.** Focus area 16 review 1. `cmd/arbitron/main.go`
+  reads all six of area 16's checklist items correctly on inspection:
+  `instanceEnricher.SetSpawnLinks(instanceRepo)` (:798), `eng.SetSpawnLinks(instanceRepo)`
+  (:841), `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)` (:815), a single
+  `identityResolver` value constructed once (:880) and passed to the spawn
+  executor (:900), the schedule evaluator (:911), and the schedule runner
+  (:924), `NewChildInputPreparer` constructed and fed into the spawn executor
+  (:893-903), and `executors[workflow.NodeTypeSpawnWorkflow]` assigned AFTER
+  `engine.NewEngine` via the shared-map-reference pattern also used for
+  `timer_delay`/`webhook_wait` (:894, confirmed exercised end-to-end by
+  `TestSpawnE2E_FireAndForgetCreatesLinkedChildThroughCompositionRoot`,
+  `cmd/arbitron/spawn_e2e_test.go`). The one claim with no composition-root
+  test at all was the ordering comment at :1047 ("ORDERING IS SIGNIFICANT:
+  this runs AFTER RecoverCrashedInstances... so their parents resume through
+  the failure port in this same startup pass instead of hanging until the
+  next restart") — `domain/engine/spawn_reconciler_test.go`'s
+  `TestSpawnWaitReconciler_ResumesParentOfACrashedChildAfterRecovery` proves
+  the ordering DEPENDENCY (call `RecoverCrashedInstances` then `Reconcile` on
+  a shared fixture) but never proves `main.go` itself calls them in that
+  order at a real restart — a regression that reordered, dropped, or
+  conditionally skipped the reconciler call in `main.go` (the exact shape of
+  every prior composition-root gap this loop has fixed) would have shipped
+  undetected. Added `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`
+  (`cmd/arbitron/spawn_wait_e2e_test.go`), which boots the real composition
+  root via `initDomain`, triggers a `wait_for_child` parent, captures its
+  child mid-flight (still `StateRunning`, asleep), severs the database
+  out from under the live process to simulate a hard crash (no graceful
+  `Shutdown`/drain), then calls `initDomain` a SECOND time against the SAME
+  database file — the real restart path — and asserts the parent, which
+  nothing else in the system would ever wake, resumes through the failure
+  branch in this second boot. Confirmed it fails for the right reason (parent
+  never reaches `StateCompleted`, 40s timeout) when the reconciler call in
+  `main.go` is temporarily wrapped in `if false { ... }`, then confirmed it
+  passes against the real code. This closes review 1 approval for area 16;
+  review 2 remains open.
+
 - [x] **`Engine.Spawn`'s inherited archived-workflow refusal was never exercised
   through `Spawn` itself.** Focus area 15 review 2. `Engine.Spawn`
   (`domain/engine/engine_spawn.go:52-69`) is deliberately thin: it derives a
