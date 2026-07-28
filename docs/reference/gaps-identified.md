@@ -139,6 +139,43 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`EnrichedInstanceSummary.parentInstanceId`/`.childCount`'s wire-format
+  field names were proven only by TS-constructed object literals, never by an
+  actual JSON round trip.** Focus area 26 (dashboard API client & hierarchy
+  types), review 1. `dashboard/src/api/client.ts`'s `list()` is a pure
+  passthrough (`return request(...)`, itself just `res.json()` cast to `T`
+  with no runtime validation), so a field-name mismatch between
+  `dashboard/src/api/types.ts` and the server's actual JSON keys (the same
+  shape of gap already found and fixed for MCP's `ChildCount`/`FailedNodeID`
+  in area 25) would compile fine and only surface as `undefined` at runtime —
+  TypeScript cannot catch it because the cast is unchecked. Confirmed by
+  reading every existing test that touches these fields
+  (`client.test.ts`, `HierarchyRows.test.tsx`, `useRunHierarchy.test.ts`,
+  `topLevelRows.test.ts`): all of them build fixtures through a typed `row()`
+  helper or a direct TS object literal, which would still compile even if
+  someone renamed the field in `types.ts` (every call site would just get
+  renamed too) — none of them prove the CLIENT decodes the SERVER's actual
+  string keys (`parentInstanceId`, `childCount`, confirmed matching
+  `adapter/http/instance_handler.go`'s `enrichedSummaryDTO` JSON tags by
+  source comparison) rather than some other convention. Added `'list surfaces
+  parentInstanceId and childCount from a raw wire-format response verbatim'`
+  (`dashboard/src/api/client.test.ts`), which mocks `fetch` to return a raw,
+  hand-typed JSON object using literal string keys (not the `row()` helper)
+  and asserts `api.instances.list()` surfaces `parentInstanceId`/`childCount`
+  from it; confirmed it fails for the right reason (`expected: "p1", actual:
+  undefined`) when the mock's key is temporarily typo'd to
+  `parentInstanceID`, then confirmed it passes with the correct key restored.
+  Independently verified the rest of area 26's checklist from source: `parent`
+  is appended as `?parent=` only when truthy (`client.ts:99`, covered by the
+  existing `'list narrows by parent...'` test); the SAME `roots`/UUID wire
+  vocabulary is documented consistently in `ListInstancesParams.parent`'s
+  comment and `domain/instance/spawn_link.go`'s `ParseParentScope`. Ran the
+  full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no new
+  failures beyond the recorded baseline (the one pre-existing `adapter/config`
+  failure is unchanged; dashboard typecheck at 0 errors; vitest 465 passed, 0
+  failed, up from 464 with this pass's one new test). This closes review 1
+  approval for area 26; review 2 remains open.
+
 - [x] **MCP `instance_list`'s `enriched == nil` → `[]` normalisation
   (`adapter/mcp/tools_instance.go:136-138`) had a test with the right name and
   the right assertion, but the wrong sink — it didn't actually exercise the

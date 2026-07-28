@@ -97,6 +97,35 @@ describe('api.instances dismissal', () => {
     expect(calls[0][0] as string).toContain('parent=p1')
     expect(calls[1][0] as string).not.toContain('parent')
   })
+
+  // Regression guard for the hierarchy fields' wire contract: the server emits
+  // these key names (adapter/http/instance_handler.go's enrichedSummaryDTO),
+  // and TypeScript's unchecked `res.json() as T` cast cannot itself catch a
+  // typo'd field name in types.ts — only a test built from raw string-keyed
+  // JSON, not a `row()`-style typed object literal, can.
+  it('list surfaces parentInstanceId and childCount from a raw wire-format response verbatim', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          id: 'c1',
+          ownerId: 'u1',
+          workflowName: 'wf-a',
+          state: 'running',
+          priority: 'normal',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          runName: 'run #1',
+          retryCount: 0,
+          parentInstanceId: 'p1',
+          childCount: 2,
+        },
+      ],
+    } as Response)
+    const out = await api.instances.list({ parent: 'p1' })
+    expect(out[0].parentInstanceId).toBe('p1')
+    expect(out[0].childCount).toBe(2)
+  })
 })
 
 describe('api.schedules.list', () => {
