@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/workflow/workflow_spawn_test.go`:
 
@@ -119,7 +119,7 @@ func TestNodeConfigSpawnFieldsRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -136,7 +136,7 @@ domain/workflow/workflow_spawn_test.go:16:5: undefined: SpawnModeFireAndForget
 FAIL	github.com/arbitron/arbitron/domain/workflow [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 In `domain/workflow/workflow.go`, add the constant to the node-type block (after `NodeTypeAgentCall`, line 19):
 
@@ -205,7 +205,7 @@ Finally, add the two fields to `NodeConfig` (after `ToolScope`, line 107):
 > `ModelProfile` field for the chat profile of the preparation call. Do not add
 > spawn-specific duplicates of either.
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -232,7 +232,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/workflow	0.2s
 ```
 
-- [ ] **Step 5: Confirm nothing else regressed**
+- [x] **Step 5: Confirm nothing else regressed**
 
 ```bash
 go test ./domain/... ./adapter/... ./cmd/...
@@ -240,7 +240,7 @@ go test ./domain/... ./adapter/... ./cmd/...
 
 Expected: `ok` for every package (no `FAIL` lines).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/workflow/workflow.go domain/workflow/workflow_spawn_test.go

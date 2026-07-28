@@ -17,6 +17,10 @@ const (
 	NodeTypeInteractiveLLM   NodeType = "interactive_llm"
 	NodeTypeInteractiveAgent NodeType = "interactive_agent"
 	NodeTypeAgentCall        NodeType = "agent_call"
+	// NodeTypeSpawnWorkflow starts a CHILD workflow instance from within a
+	// parent workflow. It is ONE node type with two modes (see SpawnMode*);
+	// there is deliberately no separate node type per mode.
+	NodeTypeSpawnWorkflow NodeType = "spawn_workflow"
 )
 
 // IsInteractive reports whether t is one of the human-in-the-loop node types.
@@ -50,6 +54,45 @@ const (
 func IsValidAgentBackend(b string) bool {
 	switch b {
 	case BackendUnset, BackendClaudeCode, BackendOpencode, BackendCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Spawn mode axis. A spawn_workflow node either starts the child and continues
+// (fire-and-forget) or suspends the parent until the child finishes
+// (wait-for-child). These constants are the single source of truth for the
+// allowed vocabulary, shared by validation (this package), the spawn executor,
+// and the persisted link on the child instance. The allowed set is exact-match
+// lowercase.
+const (
+	// SpawnModeFireAndForget starts the child and continues the parent along a
+	// single unnamed outgoing edge. Child outcomes never affect the parent.
+	SpawnModeFireAndForget = "fire_and_forget"
+	// SpawnModeWaitForChild suspends the parent until the child reaches a
+	// terminal state, then resumes it through the success or failure port.
+	SpawnModeWaitForChild = "wait_for_child"
+)
+
+// Spawn output ports. Both are REQUIRED on a wait-for-child node and both are
+// REJECTED on a fire-and-forget node (see validateSpawnWorkflowNode).
+const (
+	SpawnPortSuccess = "success"
+	SpawnPortFailure = "failure"
+)
+
+// IsValidSpawnMode reports whether m is a recognized spawn mode.
+//
+// Unlike IsValidAgentBackend, the EMPTY value is INVALID. There is no sensible
+// inherited default: the two modes have opposite control-flow consequences (the
+// parent continues vs. the parent suspends and requires two connected ports),
+// so an unset mode is an authoring error, not an inheritance request. An
+// unrecognized value must fail closed at workflow load rather than mis-route or
+// silently fall back at run time.
+func IsValidSpawnMode(m string) bool {
+	switch m {
+	case SpawnModeFireAndForget, SpawnModeWaitForChild:
 		return true
 	default:
 		return false
@@ -106,6 +149,8 @@ type NodeConfig struct {
 	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
 	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
 	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
+	ChildWorkflow      string            `json:"childWorkflow,omitempty"` // spawn_workflow: the child workflow's name
+	SpawnMode          string            `json:"spawnMode,omitempty"`     // spawn_workflow: "fire_and_forget" | "wait_for_child"
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`
 	Temperature        float64           `json:"temperature,omitempty"`
