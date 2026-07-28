@@ -126,6 +126,49 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **The `typeColors` accent map in `ArbitronNode` — including the new
+  `spawn_workflow: '#2ecc71'` entry — had no test at all, for any node type.**
+  Focus area 30 (dashboard graph accent for `spawn_workflow`), review 1.
+  `dashboard/src/graph/nodes/ArbitronNode.tsx:8-17` is a plain
+  `Record<string, string>` read at render (`typeColors[data.nodeType] ??
+  '#888888'`) and applied to both the `typeBar` background and the
+  `typeLabel` text color — but `ArbitronNode.test.tsx` only asserted handle
+  geometry, never the accent. Confirmed by temporarily deleting the
+  `spawn_workflow` entry: the entire dashboard suite (`npx vitest run`) stayed
+  green, proving a typo'd or removed key for the type this feature introduced
+  would silently degrade every `spawn_workflow` node in the graph editor to
+  the generic grey fallback, with nothing to catch it. Added two tests: one
+  asserting `nodeType: 'spawn_workflow'` renders the type bar/label in
+  `rgb(46, 204, 113)` (`#2ecc71`) with the label text `'spawn workflow'`, and
+  one asserting an unmapped node type falls back to `rgb(136, 136, 136)`
+  (`#888888`) rather than crashing or rendering an unstyled bar — this also
+  covers the pre-existing fallback branch, which was equally untested.
+  Confirmed the first test fails for the right reason
+  (`expected 'rgb(136, 136, 136)' to be 'rgb(46, 204, 113)'`) with the
+  `spawn_workflow` entry temporarily removed, then confirmed it passes with
+  the entry restored (`git diff --stat` on `ArbitronNode.tsx` is empty — no
+  production change needed). Independently verified the review's second claim
+  — "no editor-side port rendering is required" for the node's `success`/
+  `failure` ports — by reading `useGraphLayout.ts:173-186`: edge labels are
+  already derived generically from `e.label ?? e.output` for every node type
+  (this is how the pre-existing `conditional` node's branch ports are
+  labeled too), so `spawn_workflow`'s ports need no node-side handle
+  special-casing; `ArbitronNode` exposes only the fixed top/bottom handles
+  for every type (already covered by the existing handles test), and grepped
+  the whole `dashboard/src/graph` tree for any per-node-type handle or port
+  logic — found none, confirming the claim rather than taking it on faith.
+  Also confirmed `nodeTypes` (which registers `ArbitronNode`) is wired into
+  real routes, not just tests (`grep` found `WorkflowReview.tsx` and
+  `ExecutionView.tsx` as the two production call sites, alongside the mock in
+  `GraphView.loops.test.tsx`). Ran the full `go test ./...`,
+  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
+  recorded baseline (the one pre-existing `adapter/config` failure is
+  unchanged; dashboard typecheck at 0 errors; vitest 478 passed, 0 failed, up
+  from 476 with this pass's two new tests). This closes review 1 approval for
+  area 30; review 2 remains open — did not attempt to prove the fallback
+  color choice or bar/label pairing beyond what's tested here, left for
+  review 2 to independently re-derive.
+
 - [x] **`HierarchyRows` nested one `<tbody>` inside another every time a row
   was expanded, an HTML-invalid structure React itself flags as a hydration
   hazard.** Focus area 29 (dashboard hierarchy rendering), review 2.
