@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/engine/child_input_preparer_errors_test.go`:
 
@@ -285,7 +285,7 @@ func (s *spySelector) ChatProviderFor(provider.ResolvedBinding) (engine.ChatProv
 var _ engine.ChatProviderSelector = (*spySelector)(nil)
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -306,7 +306,13 @@ FAIL
 in this file must pass once Step 3 lands. Run the command and record what
 actually failed before editing.)
 
-- [ ] **Step 3: Minimal implementation — trim before fence stripping**
+> ACTUAL: nothing failed. All 24 `TestChildInputPreparer_*` cases (Task 2 + Task 3)
+> passed on the first run, including `..._LeadingWhitespaceResponseParses` — the
+> anticipated exception. `stripCodeFence` (`domain/engine/executor_llm.go:243`)
+> opens with `t := strings.TrimSpace(s)`, so leading whitespace is already
+> absorbed, and `json.Unmarshal` tolerates it independently.
+
+- [x] **Step 3: Minimal implementation — trim before fence stripping**
 
 In `domain/engine/child_input_preparer.go`, change the first line of the parse
 block inside `parseChildInputResponse`:
@@ -320,7 +326,16 @@ block inside `parseChildInputResponse`:
 
 `strings` is already imported by this file (used by `childInputPrompt`).
 
-- [ ] **Step 4: Run it, confirm it passes**
+> NOT APPLIED — the edit is a provable no-op. `stripCodeFence` already begins
+> with `strings.TrimSpace(s)` (`domain/engine/executor_llm.go:244`), so
+> `stripCodeFence(strings.TrimSpace(raw))` is byte-for-byte identical to
+> `stripCodeFence(raw)` for every input. Adding it would ship dead code that a
+> reader would mistake for load-bearing tolerance logic. The BEHAVIOUR this step
+> exists to guarantee is delivered and pinned green by
+> `TestChildInputPreparer_LeadingWhitespaceResponseParses`; `child_input_preparer.go`
+> is therefore unchanged by this task, which is test-only.
+
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -353,7 +368,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.5s
 ```
 
-- [ ] **Step 5: Full Go gate**
+- [x] **Step 5: Full Go gate**
 
 ```bash
 go test ./...
@@ -361,7 +376,13 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 6: Commit**
+> ACTUAL: `domain/engine` and every other package are green.
+> `adapter/config` fails on `TestSampleFeaturePipeline_ValidatesWithDefaultProfiles`
+> (14 × `UNKNOWN_PROFILE` for the sample feature-pipeline's aliases). Confirmed
+> PRE-EXISTING and unrelated: it fails identically with this task's work stashed,
+> and this task touches no production code.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/engine/child_input_preparer.go domain/engine/child_input_preparer_errors_test.go
