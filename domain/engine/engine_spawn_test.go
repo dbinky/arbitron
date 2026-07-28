@@ -109,6 +109,42 @@ func TestEngineChildInputs_ScopedToContextIdentity(t *testing.T) {
 	assert.Len(t, got, 2)
 }
 
+// ChildInputs shares the exact sharedVisibilityFilter gate Trigger uses, but
+// TestEngineChildInputs_ScopedToContextIdentity above only proves the CALL
+// SHAPE against a scope-agnostic mock — it cannot catch a regression that
+// drops or bypasses the gate. newTriggerHarness's scope-aware repo is what
+// TestEngine_Trigger_DepartmentWorkflow_HiddenFromOutsider uses to pin this
+// same gate for Trigger; ChildInputs needs its own pin against real
+// department-scoped visibility since it is ChildInputs's own call into
+// LoadVisibleFiltered, not a re-export of Trigger's.
+func TestEngineChildInputs_DepartmentWorkflow_HiddenFromOutsider(t *testing.T) {
+	h := newTriggerHarness()
+	publisher := uuid.New()
+	outsider := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: publisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	_, err := h.engine.ChildInputs(ctxWithDept(outsider, "sales"), "eng-wf")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, workflow.ErrNotFound,
+		"a spawn node must never learn that a department workflow it cannot see exists")
+}
+
+func TestEngineChildInputs_DepartmentWorkflow_AllowedForMember(t *testing.T) {
+	h := newTriggerHarness()
+	publisher := uuid.New()
+	member := uuid.New()
+	h.repo.put(workflow.Shared(), sharedWf("eng-wf"))
+	h.engine.SetPublisherLookup(&fakePubLookup{pubs: map[string]workflow.Publication{
+		"eng-wf": {Publisher: publisher, Visibility: workflow.VisibilityDepartment, Department: "engineering"},
+	}})
+
+	_, err := h.engine.ChildInputs(ctxWithDept(member, "engineering"), "eng-wf")
+	require.NoError(t, err)
+}
+
 // ---------- Spawn ----------
 
 func TestEngineSpawn_CreatesLinkedChildUnderRequestedOwner(t *testing.T) {

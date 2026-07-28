@@ -76,6 +76,46 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`Engine.ChildInputs`'s "not-found on invisible" claim was only tested
+  against a scope-agnostic mock.** Focus area 13 review 2.
+  `domain/engine/engine_spawn.go:32` calls `workflow.LoadVisibleFiltered` with
+  `e.sharedVisibilityFilter(ctx)` — the exact same department-visibility gate
+  `TriggerWithDepartment` uses, documented as shared so "a spawn node can never
+  reach a workflow the same caller could not trigger directly." But the only
+  existing coverage, `TestEngineChildInputs_ScopedToContextIdentity`
+  (`domain/engine/engine_spawn_test.go`), explicitly notes in its own comment
+  that "the mock workflow repo is scope-agnostic, so this asserts the CALL
+  SHAPE" — it cannot fail if the gate were dropped or bypassed, since the mock
+  `Load` ignores the `Scope` argument entirely and a private-scope hit always
+  succeeds before shared scope (and its filter) is ever consulted. This is the
+  same shape of gap already fixed three times in this loop (area 12's
+  Subject/Email derefs, area 9's fail-closed carve-out, area 8's zero-scope
+  branch): a shared helper's behavior is proven at one call site
+  (`TestEngine_Trigger_DepartmentWorkflow_HiddenFromOutsider`,
+  `domain/engine/engine_trigger_visibility_test.go`) and silently assumed at a
+  sibling one. A regression that passed `nil` instead of
+  `e.sharedVisibilityFilter(ctx)` into `ChildInputs`'s `LoadVisibleFiltered`
+  call would have let a spawn node resolve a department-restricted child
+  workflow from outside that department — undetected by any existing test.
+  Added `TestEngineChildInputs_DepartmentWorkflow_HiddenFromOutsider` and
+  `TestEngineChildInputs_DepartmentWorkflow_AllowedForMember`
+  (`domain/engine/engine_spawn_test.go`), reusing the existing scope-aware
+  `newTriggerHarness`/`fakePubLookup`/`ctxWithDept` fixtures from
+  `engine_trigger_scope_test.go`/`engine_trigger_visibility_test.go` — an
+  outsider gets `workflow.ErrNotFound` on a department-gated shared workflow,
+  a department member does not. Confirmed both fail for the right reason (no
+  error returned) when the filter argument is temporarily replaced with `nil`
+  in `engine_spawn.go`, then confirmed both pass against the real code.
+  Reviewed the rest of area 13 independently: `Engine.Spawn`'s link-validity
+  guard and thin-delegation shape are unchanged since review 1 and still
+  covered (`TestEngineSpawn_RejectsInvalidLinkBeforeCreating` and siblings);
+  `ChildSpawner`/`SpawnRequest` are still constructed only at the composition
+  root (`cmd/arbitron/main.go:894`, passing the concrete `*Engine` to
+  `NewSpawnWorkflowExecutor`); and the five-category bar (happy, success,
+  failure, error, edge) is now met for both methods with a genuine
+  invisibility case rather than a call-shape stand-in. This closes review 2
+  approval for area 13; both approvals for area 13 are now recorded.
+
 - [x] **`Engine.ChildInputs`'s default-user-unavailable fail-closed path was
   untested.** Focus area 13 review 1. `domain/engine/engine_spawn.go:28-31`
   calls the same `triggerOwner` helper `TriggerWithDepartment` uses, and
