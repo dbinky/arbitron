@@ -248,6 +248,41 @@ func TestEngineSpawn_RejectsInvalidLinkBeforeCreating(t *testing.T) {
 	assert.Equal(t, before, len(f.instanceRepo.all()), "no child may be created for an invalid link")
 }
 
+// Spawn is deliberately THIN: it derives a context carrying the link and
+// delegates entirely to TriggerWithDepartment, which refuses an archived
+// workflow (engine.go:330-348) before creating any instance. Design Phase 3's
+// own testing strategy lists "the child workflow is archived -> node fails" as
+// a required failure-category case for the spawn path, but every existing
+// archived-refusal test (TestTrigger_Archived_Refused and siblings,
+// engine_archived_trigger_test.go) drives the check through Trigger, never
+// through Spawn. This is the same shape of gap already fixed repeatedly in
+// this loop (areas 12, 13, 14): a shared helper's behavior proven at one call
+// site and silently assumed at a sibling one that reaches it one line away
+// through the identical delegation. Spawn inherits the check "for free" by
+// construction today, so this is not a live bug — but an untested inheritance
+// claim is exactly the gap this loop exists to close, and a future refactor
+// that gave Spawn its own bypass of TriggerWithDepartment (or reordered the
+// archive check past the link/instance creation) would ship undetected.
+func TestEngineSpawn_ArchivedChildWorkflow_Refused(t *testing.T) {
+	f := spawnerFixture(t)
+	res := newArchiveResolver()
+	res.register("child", uuid.New())
+	res.markArchived("child")
+	f.engine.SetWorkflowResolver(res)
+	before := len(f.instanceRepo.all())
+
+	_, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child",
+		Variables:     map[string]any{"repo": "r"},
+		Priority:      string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: uuid.New(), ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.ErrorIs(t, err, workflow.ErrArchived)
+	assert.Equal(t, before, len(f.instanceRepo.all()), "no child may be created for an archived workflow")
+}
+
 // A grandchild is linked to ITS parent, not to the root.
 func TestEngineSpawn_GrandchildLinksToItsOwnParent(t *testing.T) {
 	f := spawnerFixture(t)

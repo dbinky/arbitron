@@ -76,6 +76,57 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`Engine.Spawn`'s inherited archived-workflow refusal was never exercised
+  through `Spawn` itself.** Focus area 15 review 2. `Engine.Spawn`
+  (`domain/engine/engine_spawn.go:52-69`) is deliberately thin: it derives a
+  context carrying the link and delegates entirely to `TriggerWithDepartment`,
+  whose docstring states every one of its behaviours — including refusing an
+  archived workflow (`engine.go:330-348`) — is "inherited rather than
+  reimplemented" so no owner-override refactor of the trigger path is needed.
+  Design Phase 3's own testing strategy lists "the child workflow is archived
+  → node fails" as a required **failure**-category case for the spawn path.
+  But every existing archived-refusal test
+  (`TestTrigger_Archived_Refused`/`_NotArchived_Succeeds`/
+  `_NotArchivedResolver_NeverBlocks`/`_IsArchivedError_FailsClosed`,
+  `domain/engine/engine_archived_trigger_test.go`) drives the check through
+  `Trigger`, never through `Spawn` — the exact shape of gap already fixed
+  repeatedly in this loop (areas 12, 13, 14): a shared helper's behavior
+  proven at one call site and silently assumed at a sibling one that reaches
+  it one line away through identical delegation. Confirmed today's code has
+  no live bug — `Spawn` inherits the check for free by construction — but an
+  untested inheritance claim is exactly the gap this loop exists to close,
+  and a future refactor that gave `Spawn` its own bypass of
+  `TriggerWithDepartment`, or reordered the archive check past instance
+  creation, would ship undetected. Added
+  `TestEngineSpawn_ArchivedChildWorkflow_Refused`
+  (`domain/engine/engine_spawn_test.go`), reusing the existing
+  `spawnerFixture`/`archiveResolver` fixtures, asserting `Spawn` returns
+  `workflow.ErrArchived` and creates no instance for an archived child
+  workflow; confirmed it fails for the right reason (`nil` error) when the
+  archived-check branch in `TriggerWithDepartment` is temporarily neutered
+  (`if false && e.resolver != nil`), then confirmed it passes against the
+  real code. Independently re-verified the rest of area 15's checklist:
+  `go tool cover` over `TestSpawn`-prefixed tests shows `Execute`,
+  `executeFireAndForget`, `prepareAndSpawn`, `spawnOutput`, and
+  `assertSpawnBranchPorts` at 100% statement coverage (the wait-mode branch
+  of `Execute` is covered by area 17/18's own `TestSpawnWait_*` suite, not
+  this scope); every design-phase-3 testing-strategy item (happy path, owner
+  inheritance + departments, priority inheritance, guidance read+substitute,
+  no-child-on-preparation-failure, invisible/missing child workflow,
+  identity-resolution failure with no fallback, instance-load failure, enqueue
+  failure surfaced, zero-declared-inputs edge case, unrecognized-snapshot-mode
+  edge case, department-less owner, retry-creates-second-child, and
+  grandchild-links-to-immediate-parent) is present and passing in
+  `executor_spawn_test.go`; the executor is constructed only at the real
+  composition root (`cmd/arbitron/main.go:894-903`) with all eight
+  collaborators real, non-nil, non-hardcoded values; and `ownerFromContext`'s
+  use for the parent's OWN guidance-template read (as opposed to the
+  reconstructed owner identity used for `ChildInputs`/`Spawn`) is the correct,
+  pre-existing pattern shared by every other file-reading executor
+  (`executor_llm.go`, `executor_agent.go`, `executor_interactive.go`), not a
+  gap. This closes review 2 approval for area 15; both approvals for area 15
+  are now recorded.
+
 - [x] **`fakeChildSpawner.ChildInputs` ignored `ctx`, so no test proved the
   executor passes the reconstructed OWNER identity — not the ambient caller
   identity — into `ChildInputs`.** Focus area 15 review 1.
