@@ -334,6 +334,28 @@ func TestInstanceList(t *testing.T) {
 		assert.Equal(t, "[]", text)
 	})
 
+	t.Run("nil Engine.ListEnriched result produces JSON array not null", func(t *testing.T) {
+		// The previous subtest exercises stubEngine's own default ListEnriched,
+		// which delegates through ListInstances and always rebuilds the result
+		// with make([]T, len(summaries)) — a non-nil empty slice even when the
+		// repo returns nil. That never reaches instanceListHandler's own
+		// `enriched == nil` normalisation at all: deleting that normalisation
+		// entirely still leaves every other test in this file green. Drive
+		// ListEnriched itself to return a literal nil slice so the handler's own
+		// guard is what turns it into "[]", not the stub's reconstruction.
+		eng := &stubEngine{
+			listEnrichedFn: func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
+		result := callTool(t, srv, "instance_list", nil)
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
+
 	t.Run("caller identity context is forwarded to engine", func(t *testing.T) {
 		// Verifies the MCP tool passes its call context (which carries the auth
 		// identity injected by callTool) through to Engine.ListInstances, so the

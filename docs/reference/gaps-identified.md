@@ -139,6 +139,59 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **MCP `instance_list`'s `enriched == nil` → `[]` normalisation
+  (`adapter/mcp/tools_instance.go:136-138`) had a test with the right name and
+  the right assertion, but the wrong sink — it didn't actually exercise the
+  handler's own guard.** Focus area 25 (MCP `instance_list` parent selector),
+  review 2. `go tool cover` on the `adapter/mcp` suite showed
+  `instanceListHandler` at 95%, with lines 136-138 (the `if enriched == nil {
+  enriched = []instance.EnrichedInstanceSummary{} }` block) at 0 hits, despite
+  an existing test titled `"nil repo result produces JSON array not null"`
+  (`tools_instance_test.go`) that asserts exactly the behaviour this guard is
+  for. Root cause: that test sets the *repo's* `listFn` to return `nil, nil`
+  and uses the DEFAULT `stubEngine{}` (no `listEnrichedFn`), whose own
+  `ListEnriched` delegates through `ListInstances` and rebuilds the result
+  with `make([]instance.EnrichedInstanceSummary, len(summaries))` — which is a
+  non-nil empty slice even when `len(summaries) == 0`. So `enriched` returned
+  to the handler was never actually `nil` in that test; the assertion passed
+  because the STUB, not the handler, already produced `"[]"`. Confirmed by
+  temporarily deleting the handler's own normalisation block entirely: the
+  full `adapter/mcp` package (all pre-existing tests, this one included) still
+  passed, proving the code path this test claimed to cover has no test that
+  can fail if it regresses — the same "asserts an intermediate hop instead of
+  the sink" shape RALPH.md calls out by name. A regression that returned a raw
+  `nil` from a real caller of `Engine.ListEnriched` — plausible, since
+  `Engine.ListEnriched` delegates to `e.enricher.Enrich` when an enricher is
+  wired, and nothing here pins that path's own nil-handling either — would
+  have shipped an MCP client a literal JSON `null` instead of `[]`, breaking
+  any client that iterates the result without a null-check. Added a sibling
+  subtest, `"nil Engine.ListEnriched result produces JSON array not null"`,
+  that sets `listEnrichedFn` directly to return `nil, nil`, bypassing the
+  stub's own reconstruction and forcing the handler's guard to be what turns
+  it into `"[]"`; confirmed it fails for the right reason (`actual: "null"`)
+  with the guard temporarily removed, then confirmed it passes with the real
+  code restored. `go tool cover` afterward shows `instanceListHandler` at
+  100%. Independently re-verified the rest of area 25's checklist from source
+  rather than trusting review 1's write-up: the `parent` string arg and
+  description are unchanged and present (`tools_instance.go:28-30`); the SAME
+  `instance.ParseParentScope` decoder is still the only decode path (grepped);
+  a malformed selector still returns a tool error
+  (`TestMCPInstanceList_MalformedParentIsAnError`); happy
+  (`_RootsOnly`, `_ChildrenOfAParent`), success (`_NoParentArgDoesNoNarrowing`,
+  `_ParentComposesWithStateArg`), failure (`_MalformedParentIsAnError`), and
+  edge (`_UnknownParentReturnsEmpty`) coverage all still present and green in
+  `tools_instance_parent_test.go`; `TestMCPRestParity_InstanceListParentFilter`
+  still proves MCP/REST parity for the `roots` scope; composition-root wiring
+  re-confirmed at BOTH real call sites (`cmd/arbitron/main.go:1178` HTTP-mounted
+  MCP server and `main.go:1320` stdio transport), both built from the same
+  `ds.mcpDeps()` carrying the real `ds.eng`, not a stub. Ran the full
+  `go test ./...`, `npx tsc --noEmit`, and `npx vitest run` (vitest unaffected,
+  not re-run for this Go-only change but already green from step 2 of this
+  pass): no new failures beyond the recorded baseline (the one pre-existing
+  `adapter/config` failure is unchanged; dashboard typecheck at 0 errors;
+  vitest 464 passed, 0 failed as of this pass's pre-check). This closes review
+  2 approval for area 25 — both approvals for area 25 are now recorded.
+
 - [x] **`ChildCount`'s MCP field name was undocumented-by-test and the
   REST/MCP divergence unexamined.** Focus area 25 (MCP `instance_list` parent
   selector), review 1. `adapter/mcp/tools_instance.go:139` returns
