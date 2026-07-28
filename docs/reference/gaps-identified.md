@@ -48,20 +48,29 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **`Engine.OnChildTerminal` is called with `context.Background()` from three
-  sites.** `engine.go` (run completion, `failInstance`, `cancelAuthorized`) all
-  pass a background context deliberately, but `OnChildTerminal` then performs
-  `instances.Get` ×2 and `queueRepo.SetQueued` with no deadline and no request
-  identity. Confirm none of those repository calls depends on a context value
-  (identity, tenant, tracing) that the background context drops, and that an
-  unbounded call here cannot wedge the terminal transition that invoked it.
-
-- [ ] **No end-to-end coverage that a fire-and-forget child from node A does not
-  wake a parent waiting at node B.** Phase 4's design calls this "the central
-  mis-wake guard" and the single most important assertion in the phase.
-  `domain/engine/spawn_wake_test.go` exists — confirm it covers the two-node case
-  against the real `OnChildTerminal` (not a fake that already filters by node id),
-  and that the fake `InstanceRepository` it uses does not ignore `ParentNodeID`.
+- [ ] **`RecoverWebhooks` fails a timed-out webhook child during startup recovery
+  without calling the child-terminal wake, unlike its live equivalent.**
+  Found while reviewing area 19 (child-terminal wake); belongs to area 20's
+  scope (`domain/queue/manager.go`/`recovery.go`), not fixed here to keep this
+  pass to one issue. `domain/queue/manager.go:203-221`'s `OnTimerFired` (the
+  LIVE webhook-timeout path) does `SetFailed` then `m.notifyChildTerminal(ctx,
+  instanceID)` with a comment noting this is "the one terminal transition that
+  happens outside domain/engine." But `domain/queue/recovery.go:65-78`'s
+  `RecoverWebhooks` (the STARTUP recovery path, called after
+  `spawnReconciler.Reconcile` in `cmd/arbitron/main.go:1056-1074` — the
+  reconciler has already run by the time this failure happens) does the
+  IDENTICAL `SetFailed` for a webhook instance whose timeout expired during
+  downtime, but never calls `notifyChildTerminal`. Consequence: a
+  `wait_for_child` parent whose child was mid-webhook-wait at the moment of a
+  crash, and whose webhook timeout had already passed during the downtime
+  window, would never be woken — not by the reconciler (which ran before this
+  failure), not by this path (which doesn't call the hook) — until the NEXT
+  process restart. Fix: call `m.notifyChildTerminal(ctx, inst.ID)` after the
+  `SetFailed` in `RecoverWebhooks`, mirroring `OnTimerFired`'s `TimerTypeWebhook`
+  branch, with a test that boots the real composition root, crashes a
+  webhook-wait child past its timeout, restarts, and asserts its
+  `wait_for_child` parent resumes through the failure port in that same
+  startup pass.
 
 - [ ] **Verify the cascade produces an intervention record for every descendant.**
   `cascadeCancel` routes through `cancelAuthorized`, which calls
@@ -75,6 +84,56 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`Engine.Resume`'s webhook-timeout-expired-while-paused branch failed an
+  instance without calling the child-terminal wake — a fourth terminal-transition
+  call site the area 19 checklist's "three engine call sites" claim missed.**
+  Focus area 19 (child-terminal wake), review 1. This pre-dates the spawn
+  feature (identical at the branch point,
+  `64768283d2c32b64023801103c7aab2f5ea538d3:domain/engine/engine.go:1314`) — the
+  feature converted the run loop's three internal `SetFailed` call sites to go
+  through the new `failInstance` helper (confirmed via `git diff` against the
+  branch point: panic recovery, workflow-parse failure, and empty-current-node
+  failure, all now `e.failInstance(...)`, each of which calls
+  `e.OnChildTerminal`) and added the call directly in `cancelAuthorized`, but
+  never touched `resumeFromWebhookWait`'s own `e.instances.SetFailed` at
+  `engine.go:1358` (reached via `Engine.Resume`, itself reachable in production
+  from both `adapter/mcp/tools_instance.go:218` and
+  `adapter/http/instance_handler.go:512`) — the exact shape of gap this loop
+  keeps finding: a shared correctness guarantee proven at some call sites and
+  silently assumed at a sibling one three call sites away. Consequence: a
+  `wait_for_child` child instance that is paused mid-webhook-wait and resumed
+  after its timeout has already expired is failed via this path, but its
+  waiting parent is never re-queued — it hangs until the next full-process
+  restart's `SpawnWaitReconciler` pass instead of resuming immediately, same as
+  every other terminal-transition gap this loop has fixed for this feature.
+  Added `TestResumeFromWebhookWaitTimeout_InvokesTheChildTerminalWake`
+  (`domain/engine/spawn_wake_test.go`), reusing the `wakeFixture` scaffold
+  with a `StatePaused` child carrying an expired `WebhookToken`/`WaitingUntil`,
+  driven through the real `Engine.Resume(bgAdmin(), ...)` entry point (not
+  `OnChildTerminal` called directly, unlike every other test in this file, so
+  it proves the wiring at the actual call site); confirmed it fails for the
+  right reason (parent stays `waiting` instead of `queued`) before the fix,
+  then passes after adding `e.OnChildTerminal(context.Background(), instanceID)`
+  to `resumeFromWebhookWait` right after the `SetFailed` succeeds, mirroring
+  the `failInstance`/`cancelAuthorized` pattern. Independently re-verified the
+  rest of area 19's checklist: the three-part match
+  (waiting ∧ `CurrentNodeID`==`ParentNodeID` ∧ mode==wait_for_child) and its
+  best-effort/void posture are unchanged and covered by the existing
+  `spawn_wake_test.go` suite; also closed two previously-open gaps this same
+  review touches — confirmed `instances.Get` and `queueRepo.SetQueued`
+  (`adapter/sqlite/instance_repo.go:132`, `adapter/sqlite/queue_repo.go:76`)
+  read no context value at all (no identity/tenant/tracing lookup), so
+  `OnChildTerminal`'s `context.Background()` calls drop nothing load-bearing;
+  and confirmed `TestOnChildTerminal_NodeMismatchDoesNotWake` genuinely
+  exercises the real match logic — `mockInstanceRepo.Get`
+  (`domain/engine/engine_test.go:124`) returns instances verbatim by ID with no
+  `ParentNodeID`-based filtering, so the node-mismatch guard is proven in
+  `OnChildTerminal` itself, not pre-filtered away by the fake. While reviewing
+  this area, found a related but out-of-scope gap in `domain/queue/recovery.go`
+  (area 20's file, not area 19's) — logged separately under Open rather than
+  fixed here, to keep this pass to one issue. This closes review 1 approval for
+  area 19; review 2 remains open.
 
 - [x] **Area 18 (awaited-spawn resumption short-circuit), review 2: independent
   re-verification found no live gap.** Re-derived every checklist item from

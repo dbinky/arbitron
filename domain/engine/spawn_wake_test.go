@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/google/uuid"
@@ -194,4 +195,36 @@ func TestRunCompletion_InvokesTheChildTerminalWake(t *testing.T) {
 	w.f.engine.OnChildTerminal(context.Background(), w.childID)
 
 	assert.Equal(t, instance.StateQueued, w.parentState(t))
+}
+
+// A FOURTH terminal-transition call site exists that predates this feature and
+// was never wired to the wake: Engine.Resume's webhook-timeout-expired-while-
+// paused branch (engine.go, resumeFromWebhookWait) calls instances.SetFailed
+// directly, bypassing failInstance entirely. If the failed instance is itself
+// an awaited child, its parent must still be woken -- otherwise it hangs until
+// the next startup reconciler pass instead of being re-queued immediately, the
+// same guarantee the run-loop completion, failInstance, and cancelAuthorized
+// call sites already provide.
+func TestResumeFromWebhookWaitTimeout_InvokesTheChildTerminalWake(t *testing.T) {
+	w := newWakeFixture(t, "spawn-1", "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateWaiting, instance.StatePaused)
+
+	token := "expired-token"
+	past := time.Now().Add(-time.Minute)
+	node := "spawn-1"
+	w.f.instanceRepo.mu.Lock()
+	child := w.f.instanceRepo.instances[w.childID]
+	child.WebhookToken = &token
+	child.WaitingUntil = &past
+	child.CurrentNodeID = &node
+	w.f.instanceRepo.mu.Unlock()
+
+	require.NoError(t, w.f.engine.Resume(bgAdmin(), w.childID))
+
+	got, err := w.f.instanceRepo.Get(context.Background(), w.childID)
+	require.NoError(t, err)
+	require.Equal(t, instance.StateFailed, got.State, "precondition: the resume must actually fail the child")
+
+	assert.Equal(t, instance.StateQueued, w.parentState(t),
+		"a child failed via Resume's webhook-timeout-expired-while-paused path must still wake its waiting parent")
 }

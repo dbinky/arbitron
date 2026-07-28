@@ -1363,6 +1363,8 @@ func (e *Engine) resumeFromWebhookWait(ctx context.Context, instanceID uuid.UUID
 			Timestamp: time.Now(),
 			Data:      map[string]any{"reason": "webhook timeout expired while paused"},
 		})
+		// A failed run may be somebody's awaited child.
+		e.OnChildTerminal(context.Background(), instanceID)
 		return nil
 	}
 
