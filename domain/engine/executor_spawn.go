@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/arbitron/arbitron/domain/identity"
@@ -167,9 +168,77 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 		return nil, fmt.Errorf("spawn_workflow %q: set waiting state: %w", node.ID, err)
 	}
 
+	// THE LOST-WAKE GUARD.
+	//
+	// Everything above assumes the child is still running when the parent
+	// suspends. It very often is not. Parent and child compete for the SAME
+	// per-user capacity, and at any cap above one the child starts, runs, and can
+	// reach a terminal state WHILE the parent is still `running` here — before
+	// the `waiting` write above lands. OnChildTerminal fires in that window,
+	// finds a parent that is not waiting, and correctly does nothing. The wake is
+	// gone. No error, no log, and the parent hangs until the process restarts.
+	// This is not a crash-only or write-failure case: it is the ordinary
+	// happy path at the shipped default cap.
+	//
+	// The repair is to close the window from the other side. The `waiting` write
+	// is now durable, so this read is ordered AFTER it: any wake lost to the race
+	// necessarily left a terminal link visible right here. If it did, this
+	// goroutine takes the parent back and routes it in-process; the wait never
+	// happened as far as the graph is concerned.
+	if res, claimed := e.recoverLostWake(ctx, node, instanceID); claimed {
+		return res, nil
+	}
+
 	e.queueMgr.NotifyCapacityFreed(ctx)
 
 	return &NodeResult{IsWait: true, Output: output}, nil
+}
+
+// recoverLostWake re-reads the awaited child after the parent's `waiting`
+// transition is durable and, if the child has ALREADY finished, claims the
+// parent back to `running` and returns the routed result.
+//
+// The claim is a COMPARE-AND-SET (waiting -> running, at this node), not a plain
+// write, because a waiting parent has two possible movers: this goroutine and
+// the wake path's re-queue. Losing the claim is the normal, benign outcome — it
+// means the wake did land, the parent is queued, and it will re-enter
+// executeWait and short-circuit on the link at the top. Either way the parent
+// resumes exactly once.
+//
+// EVERY failure degrades to "keep waiting" rather than to an error: the parent
+// is legitimately in the waiting state, and SpawnWaitReconciler sweeps for
+// exactly this condition on a ticker. A hung parent is the thing being fixed;
+// a failed spawn node would be a worse outcome than a slightly later wake.
+func (e *SpawnWorkflowExecutor) recoverLostWake(ctx context.Context, node workflow.Node, instanceID uuid.UUID) (*NodeResult, bool) {
+	link, err := e.spawnWaits.FindChildBySpawnNode(ctx, instanceID, node.ID, instance.SpawnModeWaitForChild)
+	if err != nil {
+		slog.Error("spawn_workflow: re-reading awaited child after suspending failed; "+
+			"relying on the spawn-wait reconciler",
+			"nodeID", node.ID, "instanceID", instanceID, "error", err)
+		return nil, false
+	}
+	if link == nil || !link.ChildState.IsTerminal() {
+		return nil, false // the child is still running: a real wait, and the wake will arrive
+	}
+
+	claimed, err := e.spawnWaits.ClaimWaitingParent(ctx, instanceID, node.ID)
+	if err != nil {
+		slog.Error("spawn_workflow: claiming the parent back from waiting failed; "+
+			"relying on the spawn-wait reconciler",
+			"nodeID", node.ID, "instanceID", instanceID, "error", err)
+		return nil, false
+	}
+	if !claimed {
+		return nil, false // the wake won the race and re-queued the parent
+	}
+
+	res, rerr := e.resumeFromLink(node, link)
+	if rerr != nil {
+		slog.Error("spawn_workflow: routing an already-terminal child failed",
+			"nodeID", node.ID, "instanceID", instanceID, "error", rerr)
+		return nil, false
+	}
+	return res, true
 }
 
 // resumeFromLink decides the parent's next move from an EXISTING link.

@@ -96,4 +96,3 @@ func (m *Manager) RecoverWebhooks(ctx context.Context) error {
 
 	return m.Evaluate(ctx)
 }
-

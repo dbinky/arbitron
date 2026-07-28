@@ -80,8 +80,8 @@ type Token struct {
 	ID         uuid.UUID
 	UserID     uuid.UUID
 	Label      string
-	Prefix     string     // clear, non-secret, for display
-	TokenHash  string     `json:"-"` // sha256 hex; internal only, never serialized to clients
+	Prefix     string // clear, non-secret, for display
+	TokenHash  string `json:"-"` // sha256 hex; internal only, never serialized to clients
 	CreatedAt  time.Time
 	LastUsedAt *time.Time // nil until first use
 }

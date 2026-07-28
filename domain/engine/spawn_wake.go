@@ -65,12 +65,21 @@ func (e *Engine) OnChildTerminal(ctx context.Context, childID uuid.UUID) {
 		return
 	}
 
-	if err := e.queueRepo.SetQueued(ctx, parent.ID, time.Now()); err != nil {
-		// Surfaced but not fatal: the reconciler recovers this parent on the next
-		// startup.
+	// CONDITIONAL re-queue. The state read above is a snapshot; between it and
+	// this write the spawn executor may have claimed the same parent back to
+	// `running` to resume in-process (its lost-wake guard). An unconditional
+	// SetQueued would then leave one run both queued and executing — two
+	// goroutines walking the same graph. The `state = waiting` predicate makes
+	// exactly one of the two movers win.
+	requeued, err := e.queueRepo.SetQueuedIfWaiting(ctx, parent.ID, time.Now())
+	if err != nil {
+		// Surfaced but not fatal: the reconciler sweeps for this parent.
 		slog.Error("spawn wake: failed to re-queue parent",
 			"parentID", parent.ID, "childID", childID, "error", err)
 		return
+	}
+	if !requeued {
+		return // the executor claimed it first and is resuming it in-process
 	}
 	e.queueManager.NotifyCapacityFreed(ctx)
 }

@@ -255,9 +255,9 @@ func TestReadiness_ProbesBoundStdout(t *testing.T) {
 // directly so a floor change is a one-line, test-caught update in BOTH units.
 func TestReadiness_VersionThresholdParity(t *testing.T) {
 	cases := []struct {
-		name    string
-		lines   []string
-		waitErr error
+		name     string
+		lines    []string
+		waitErr  error
 		startErr error
 	}{
 		{

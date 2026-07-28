@@ -18,21 +18,27 @@ import (
 // satisfied by a minimal fake — catches signature drift immediately.
 type fakeTokenRepoP struct{}
 
-func (fakeTokenRepoP) Create(context.Context, *identity.Token) error                      { return nil }
-func (fakeTokenRepoP) ListByUser(context.Context, uuid.UUID) ([]identity.Token, error)    { return nil, nil }
-func (fakeTokenRepoP) GetByHash(context.Context, string) (*identity.Token, error)         { return nil, nil }
-func (fakeTokenRepoP) Delete(context.Context, uuid.UUID, uuid.UUID) error                 { return nil }
-func (fakeTokenRepoP) TouchLastUsed(context.Context, uuid.UUID) error                     { return nil }
+func (fakeTokenRepoP) Create(context.Context, *identity.Token) error { return nil }
+func (fakeTokenRepoP) ListByUser(context.Context, uuid.UUID) ([]identity.Token, error) {
+	return nil, nil
+}
+func (fakeTokenRepoP) GetByHash(context.Context, string) (*identity.Token, error) { return nil, nil }
+func (fakeTokenRepoP) Delete(context.Context, uuid.UUID, uuid.UUID) error         { return nil }
+func (fakeTokenRepoP) TouchLastUsed(context.Context, uuid.UUID) error             { return nil }
 
 type fakeDeviceCodeRepoP struct{}
 
-func (fakeDeviceCodeRepoP) Create(context.Context, *identity.DeviceCode) error                          { return nil }
-func (fakeDeviceCodeRepoP) GetByHash(context.Context, string) (*identity.DeviceCode, error)             { return nil, nil }
-func (fakeDeviceCodeRepoP) GetByUserCode(context.Context, string) (*identity.DeviceCode, error)         { return nil, nil }
-func (fakeDeviceCodeRepoP) Approve(context.Context, string, uuid.UUID) error                            { return nil }
-func (fakeDeviceCodeRepoP) Deny(context.Context, string) error                                          { return nil }
-func (fakeDeviceCodeRepoP) Consume(context.Context, string) error                                       { return nil }
-func (fakeDeviceCodeRepoP) DeleteExpired(context.Context, time.Time) (int, error)                       { return 0, nil }
+func (fakeDeviceCodeRepoP) Create(context.Context, *identity.DeviceCode) error { return nil }
+func (fakeDeviceCodeRepoP) GetByHash(context.Context, string) (*identity.DeviceCode, error) {
+	return nil, nil
+}
+func (fakeDeviceCodeRepoP) GetByUserCode(context.Context, string) (*identity.DeviceCode, error) {
+	return nil, nil
+}
+func (fakeDeviceCodeRepoP) Approve(context.Context, string, uuid.UUID) error      { return nil }
+func (fakeDeviceCodeRepoP) Deny(context.Context, string) error                    { return nil }
+func (fakeDeviceCodeRepoP) Consume(context.Context, string) error                 { return nil }
+func (fakeDeviceCodeRepoP) DeleteExpired(context.Context, time.Time) (int, error) { return 0, nil }
 
 var (
 	_ identity.TokenRepository      = (*fakeTokenRepoP)(nil)

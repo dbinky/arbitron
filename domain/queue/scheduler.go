@@ -45,11 +45,11 @@ type Scheduler struct {
 // NewScheduler constructs a new Scheduler.
 func NewScheduler(handler TimerFiredHandler) *Scheduler {
 	return &Scheduler{
-		timers: make(map[uuid.UUID]timerEntry),
+		timers:  make(map[uuid.UUID]timerEntry),
 		handler: handler,
-		stopCh: make(chan struct{}),
-		doneCh: make(chan struct{}),
-		wakeCh: make(chan struct{}, 1),
+		stopCh:  make(chan struct{}),
+		doneCh:  make(chan struct{}),
+		wakeCh:  make(chan struct{}, 1),
 	}
 }
 
@@ -196,4 +196,3 @@ func (s *Scheduler) findEarliestLocked() (time.Time, bool) {
 	}
 	return earliest, found
 }
-

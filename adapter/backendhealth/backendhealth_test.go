@@ -61,7 +61,7 @@ func (c *captureRunner) Run(ctx context.Context, spec claudecli.RunSpec) (<-chan
 // the "ready" state, so the system/health surface can show it pre-run.
 func TestCodexEntry_Ready(t *testing.T) {
 	r := &scriptRunner{scripts: []script{
-		{lines: []string{"codex-cli 0.137.0"}},      // --version
+		{lines: []string{"codex-cli 0.137.0"}},       // --version
 		{lines: []string{"Logged in using ChatGPT"}}, // login status
 	}}
 	entry, err := CodexEntry(context.Background(), r)

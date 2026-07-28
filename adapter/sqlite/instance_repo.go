@@ -764,6 +764,31 @@ func (r *InstanceRepo) FindChildBySpawnNode(ctx context.Context, parentID uuid.U
 	return &instance.ChildLink{ChildID: childID, ChildState: instance.State(state)}, nil
 }
 
+// ClaimWaitingParent implements instance.SpawnWaitRepository.
+//
+// ONE conditional UPDATE is the whole mechanism: the `state = 'waiting' AND
+// current_node_id = ?` predicate makes the transition atomic against the wake
+// path's competing SetQueuedIfWaiting on the same row, so exactly one mover
+// wins and a parent can never be queued and executing at the same time.
+//
+// The node predicate matters as much as the state one: a parent that has since
+// advanced to a LATER spawn node is not the parent this claim is about, and
+// taking it would resume the wrong node.
+func (r *InstanceRepo) ClaimWaitingParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error) {
+	const q = `UPDATE instances
+  SET state = 'running', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+  WHERE id = ? AND state = 'waiting' AND current_node_id = ?`
+	res, err := r.db.ExecContext(ctx, q, uuidToString(parentID), nodeID)
+	if err != nil {
+		return false, fmt.Errorf("claiming waiting parent %s: %w", parentID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("claiming waiting parent %s: %w", parentID, err)
+	}
+	return n > 0, nil
+}
+
 // ListWaitingOnTerminalChild implements instance.SpawnWaitRepository.
 //
 // The WHERE clause is the reconciler's correctness core and mirrors the

@@ -26,6 +26,17 @@ type fakeSpawnWaits struct {
 	findErr    error
 	candidates []instance.SpawnWaitCandidate
 	listErr    error
+	// instances, when set, makes ClaimWaitingParent a REAL compare-and-set over
+	// the mock repository — the same waiting->running transition the SQL
+	// performs — so a test can assert the parent's resulting state.
+	instances *mockInstanceRepo
+	claimErr  error
+	claimed   []string
+	// findCalls counts FindChildBySpawnNode calls; onFind runs BEFORE each
+	// answer, so a test can simulate the child reaching a terminal state at an
+	// exact point in the executor's sequence (e.g. during the suspend).
+	findCalls int
+	onFind    func(call int)
 }
 
 func newFakeSpawnWaits() *fakeSpawnWaits {
@@ -44,6 +55,14 @@ func (f *fakeSpawnWaits) set(parent uuid.UUID, node string, mode instance.SpawnM
 
 func (f *fakeSpawnWaits) FindChildBySpawnNode(_ context.Context, parentID uuid.UUID, nodeID string, mode instance.SpawnMode) (*instance.ChildLink, error) {
 	f.mu.Lock()
+	f.findCalls++
+	call := f.findCalls
+	hook := f.onFind
+	f.mu.Unlock()
+	if hook != nil {
+		hook(call)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.findErr != nil {
 		return nil, f.findErr
@@ -58,6 +77,34 @@ func (f *fakeSpawnWaits) ListWaitingOnTerminalChild(context.Context) ([]instance
 		return nil, f.listErr
 	}
 	return f.candidates, nil
+}
+
+// ClaimWaitingParent models the real conditional UPDATE: it succeeds only while
+// the parent is still waiting, and flips it to running. With no repository wired
+// it always loses, which is the "the wake got there first" case.
+func (f *fakeSpawnWaits) ClaimWaitingParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error) {
+	f.mu.Lock()
+	claimErr := f.claimErr
+	repo := f.instances
+	f.claimErr = nil
+	f.mu.Unlock()
+	if claimErr != nil {
+		return false, claimErr
+	}
+	if repo == nil {
+		return false, nil
+	}
+	inst, err := repo.Get(ctx, parentID)
+	if err != nil || inst.State != instance.StateWaiting {
+		return false, nil
+	}
+	if err := repo.UpdateState(ctx, parentID, instance.StateRunning); err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	f.claimed = append(f.claimed, parentID.String()+"|"+nodeID)
+	f.mu.Unlock()
+	return true, nil
 }
 
 var _ instance.SpawnWaitRepository = (*fakeSpawnWaits)(nil)
@@ -140,6 +187,7 @@ func newSpawnWaitFixture(t *testing.T, snapshot map[string]any) *spawnWaitFixtur
 	prep := &fakePreparer{values: map[string]any{}}
 	fr := newMockFileReader()
 	sw := newFakeSpawnWaits()
+	sw.instances = instances
 
 	return &spawnWaitFixture{
 		instances: instances, nodeExecs: nodeExecs, spawnWaits: sw,
@@ -360,4 +408,134 @@ func TestSpawnWait_UnparseableSnapshot_Errors(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, res)
 	assert.Empty(t, f.spawner.spawned)
+}
+
+// ---------------------------------------------------------------------------
+// lost wake
+// ---------------------------------------------------------------------------
+
+// terminalDuringSuspend makes the awaited child reach `state` at the exact
+// moment the parent is suspending: the FIRST FindChildBySpawnNode (the
+// first-execution probe) still sees no child, and by the SECOND (the executor's
+// post-suspend re-read) the child is already terminal.
+//
+// That is the real happy-path interleaving whenever parent and child run
+// concurrently — which is every per-user cap above one, including the shipped
+// default. In it, OnChildTerminal fires while the parent is still `running`,
+// finds a non-waiting parent, and correctly does nothing. The wake is gone.
+func terminalDuringSuspend(f *spawnWaitFixture, state instance.State) {
+	childID := uuid.New()
+	f.spawnWaits.onFind = func(call int) {
+		if call == 1 {
+			return // first execution: no child exists yet
+		}
+		f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+			&instance.ChildLink{ChildID: childID, ChildState: state})
+	}
+}
+
+// THE REGRESSION. Without the post-suspend re-read the parent returns IsWait and
+// hangs forever: no error, no log, recoverable only by a process restart.
+func TestSpawnWait_ChildTerminalDuringSuspend_RoutesInsteadOfHanging(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspend(f, instance.StateCompleted)
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	assert.False(t, res.IsWait,
+		"a child that finished before the parent's waiting write landed left no wake to arrive; "+
+			"the parent must resume here or hang forever")
+	assert.Equal(t, workflow.SpawnPortSuccess, res.OutputPort)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateRunning, got.State,
+		"the parent must be taken back out of waiting BEFORE it routes")
+	assert.Len(t, f.spawner.spawned, 1, "the recovery must not spawn a second child")
+}
+
+// A failed child recovered on the same path routes through the failure port.
+func TestSpawnWait_FailedChildTerminalDuringSuspend_RoutesFailure(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspend(f, instance.StateFailed)
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.SpawnPortFailure, res.OutputPort)
+}
+
+// A child that is still ACTIVE at the re-read is an ordinary wait: the parent
+// suspends, capacity is released, and the wake will arrive normally.
+func TestSpawnWait_ActiveChildAtReRead_StillSuspends(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	childID := uuid.New()
+	f.spawnWaits.onFind = func(call int) {
+		if call == 1 {
+			return
+		}
+		f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+			&instance.ChildLink{ChildID: childID, ChildState: instance.StateRunning})
+	}
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	assert.True(t, res.IsWait)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateWaiting, got.State)
+	assert.Contains(t, *f.order, "notify", "an ordinary wait must still release the per-user slot")
+}
+
+// LOSING the claim is the benign outcome, not a failure: it means the wake DID
+// land and re-queued the parent. The executor must then take the ordinary wait
+// path — releasing capacity so the re-queued parent can start — rather than
+// route a parent it does not own.
+func TestSpawnWait_LosingTheClaimFallsBackToWaiting(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspend(f, instance.StateCompleted)
+	// No repository behind the fake claim => every claim loses, modelling the
+	// wake having already moved the parent out of `waiting`.
+	f.spawnWaits.instances = nil
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	assert.True(t, res.IsWait)
+	assert.Contains(t, *f.order, "notify",
+		"the re-queued parent needs the per-user slot released to start")
+}
+
+// A storage failure on the re-read degrades to an ordinary wait — never to a
+// failed spawn node. The parent is legitimately waiting and the reconciler
+// sweeps for exactly this condition on a ticker.
+func TestSpawnWait_ReReadFailureDegradesToWaiting(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.spawnWaits.onFind = func(call int) {
+		if call >= 2 {
+			f.spawnWaits.mu.Lock()
+			f.spawnWaits.findErr = errors.New("db down")
+			f.spawnWaits.mu.Unlock()
+		}
+	}
+
+	res, err := f.run(t)
+	require.NoError(t, err, "a failed re-read must not fail the node")
+	assert.True(t, res.IsWait)
+}
+
+// Likewise a storage failure on the CLAIM itself.
+func TestSpawnWait_ClaimFailureDegradesToWaiting(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspend(f, instance.StateCompleted)
+	f.spawnWaits.claimErr = errors.New("db down")
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	assert.True(t, res.IsWait)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateWaiting, got.State)
 }

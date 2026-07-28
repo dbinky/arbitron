@@ -46,4 +46,20 @@ type SpawnWaitRepository interface {
 	// awaited child (matching the parent's CURRENT node id, with
 	// mode = wait_for_child) is already terminal. An empty result is not an error.
 	ListWaitingOnTerminalChild(ctx context.Context) ([]SpawnWaitCandidate, error)
+
+	// ClaimWaitingParent atomically moves parentID from `waiting` at nodeID to
+	// `running`, reporting whether THIS caller won the claim.
+	//
+	// It exists because a waiting parent has TWO possible movers: the spawn
+	// executor, which discovers that the child already finished and wants to
+	// resume in-process, and the wake path, which re-queues it. A read-then-write
+	// on either side can be overtaken by the other, leaving a parent that is
+	// simultaneously queued and being executed — one run, two goroutines.
+	//
+	// The predicate is state AND node, not state alone: a parent that has moved
+	// on to a LATER spawn node is no longer the parent this claim is about.
+	//
+	// A losing claim is not an error. It means the other mover won, and the
+	// caller must take its no-op path.
+	ClaimWaitingParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error)
 }

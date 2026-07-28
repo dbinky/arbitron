@@ -52,6 +52,10 @@ func (s *stubQueueRepo) NextEligible(_ context.Context, _, _ int) (*instance.Ins
 	return nil, nil
 }
 
+func (s *stubQueueRepo) SetQueuedIfWaiting(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (s *stubQueueRepo) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error { return nil }
 
 func (s *stubQueueRepo) ListWaitingWithTimer(_ context.Context) ([]instance.Instance, error) {

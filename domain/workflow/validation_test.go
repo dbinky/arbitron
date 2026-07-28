@@ -782,10 +782,10 @@ func TestValidateInteractive_AcceptsNodeTypeWithRequiredConfig(t *testing.T) {
 		Name: "interactive-basic",
 		Nodes: []workflow.Node{
 			{
-				ID:                "entry",
-				Type:              workflow.NodeTypeInteractiveLLM,
-				Label:             "Interactive",
-				Entrypoint:        true,
+				ID:         "entry",
+				Type:       workflow.NodeTypeInteractiveLLM,
+				Label:      "Interactive",
+				Entrypoint: true,
 				Config: workflow.NodeConfig{
 					OrchestrationFile: "orchestrate.yaml",
 					TemplateFile:      "prompt.hbs",

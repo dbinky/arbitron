@@ -80,9 +80,16 @@ func (r *SpawnWaitReconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 
-		if serr := r.queueRepo.SetQueued(ctx, c.ParentID, time.Now()); serr != nil {
+		// Conditional, for the same reason the in-process wake is: the executor
+		// may be claiming this very parent back to `running` right now. Losing
+		// the race is success, not failure — the parent is resuming either way.
+		ok, serr := r.queueRepo.SetQueuedIfWaiting(ctx, c.ParentID, time.Now())
+		if serr != nil {
 			slog.Error("spawn-wait reconciler: failed to re-queue parent",
 				"parentID", c.ParentID, "childID", c.ChildID, "error", serr)
+			continue
+		}
+		if !ok {
 			continue
 		}
 		requeued++

@@ -48,7 +48,7 @@ func TestTeamsNotifier_Notify_PostsCard(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	n.Wait() // delivery is fire-and-forget; wait for the dispatched POST
@@ -68,7 +68,7 @@ func TestTeamsNotifier_Notify_DisabledNoOp(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: false},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", srv.Client(), discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "http://localhost:8080", srv.Client(), discardLogger())
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	n.Wait()
@@ -80,7 +80,7 @@ func TestTeamsNotifier_Notify_EmptyURLNoOp(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: "", Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"http://localhost:8080", http.DefaultClient, discardLogger())
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "http://localhost:8080", http.DefaultClient, discardLogger())
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 }
 
@@ -96,7 +96,7 @@ func TestTeamsNotifier_Notify_Non2xxSwallowed(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), logger)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", srv.Client(), logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	n.Wait()
@@ -114,7 +114,7 @@ func TestTeamsNotifier_Notify_TransportErrorSwallowed(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: url, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", http.DefaultClient, logger)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", http.DefaultClient, logger)
 
 	require.NoError(t, n.Notify(context.Background(), sampleNotification()))
 	n.Wait()
@@ -156,7 +156,7 @@ func TestTeamsNotifier_Notify_NilLoggerNoPanic(t *testing.T) {
 	cfg := &config.Config{Notifications: config.NotificationsConfig{
 		Teams: config.TeamsConfig{WebhookURL: srv.URL, Enabled: true},
 	}}
-	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams),"", srv.Client(), nil)
+	n := adaptnotif.NewTeamsNotifier(config.NewSettingsStore(&cfg.Notifications.Teams), "", srv.Client(), nil)
 
 	require.NotPanics(t, func() {
 		require.NoError(t, n.Notify(context.Background(), sampleNotification()))

@@ -38,4 +38,3 @@ func AdminOverrode(id identity.Identity, p Publication) bool {
 	demoted.Role = identity.RoleUser
 	return CanSeePublication(id, p) && !CanSeePublication(demoted, p)
 }
-

@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,14 +19,28 @@ import (
 // node, keeping the parent observably suspended for several poll intervals.
 const childHoldSeconds = "2"
 
-// bootWaitStack writes an awaited parent + child pair and boots the REAL
-// composition root. childOutcome selects whether the child completes or fails.
+// bootWaitStack boots the cap-1 deadlock probe: parent and child compete for
+// the SAME single per-user slot, so the child can only start once the parent's
+// waiting transition releases it. If the executor transitioned before enqueueing
+// the child, or skipped NotifyCapacityFreed, this hangs.
 //
-// The per-user cap is 1 on purpose: it proves the ordering invariant. Parent and
-// child compete for the SAME per-user slot, so the child can only start once the
-// parent's waiting transition releases it. If the executor transitioned before
-// enqueueing the child, or skipped NotifyCapacityFreed, this test would hang.
+// A cap of 1 also SERIALIZES the pair, which is why it cannot be the only
+// configuration under test: it makes the child's terminal write strictly later
+// than the parent's waiting write, hiding the lost-wake race entirely. See
+// bootWaitStackWith and the cap-5 test below.
 func bootWaitStack(t *testing.T, childOutcome string) *domainStack {
+	t.Helper()
+	return bootWaitStackWith(t, childOutcome, 1, childHoldSeconds)
+}
+
+// bootWaitStackWith writes an awaited parent + child pair and boots the REAL
+// composition root, with the per-user cap and the child's opening delay both
+// explicit — the two knobs that decide whether the child can reach a terminal
+// state BEFORE its parent is durably waiting.
+//
+// holdSeconds == "" removes the child's opening sleep entirely, so the child is
+// a single transform that finishes almost immediately.
+func bootWaitStackWith(t *testing.T, childOutcome string, perUserCap int, holdSeconds string) *domainStack {
 	t.Helper()
 	root := t.TempDir()
 	workspaceDir := filepath.Join(root, "workspaces")
@@ -43,17 +59,27 @@ func bootWaitStack(t *testing.T, childOutcome string) *domainStack {
 	// Without it the whole spawn -> child -> wake -> resume cycle finishes in
 	// well under a second and the parent's WAITING state — the state these tests
 	// assert on — is gone before any poll can observe it.
+	// With a hold, the child opens with a short sleep so its run outlives a poll
+	// interval and the parent's WAITING state is observable. WITHOUT one, the
+	// child is a single node that finishes almost immediately — which is the
+	// point of the lost-wake test.
+	childNodes := childNode + `,
+    {"id": "hold", "type": "tool_call", "entrypoint": true,
+     "config": {"command": "sh", "args": ["-c", "sleep ` + holdSeconds + `; echo '{}'"]}}`
+	childEdges := `{"source": "hold", "target": "c1"}`
+	if holdSeconds == "" {
+		childNodes = strings.Replace(childNode, `"id": "c1",`, `"id": "c1", "entrypoint": true,`, 1)
+		childEdges = ""
+	}
 	writeWorkflow(t, workspaceDir, "wait-child", `{
   "name": "wait-child",
   "description": "child",
   "inputs": [],
   "nodes": [
-    {"id": "hold", "type": "tool_call", "entrypoint": true,
-     "config": {"command": "sh", "args": ["-c", "sleep `+childHoldSeconds+`; echo '{}'"]}},
-    `+childNode+`
+    `+childNodes+`
   ],
   "edges": [
-    {"source": "hold", "target": "c1"}
+    `+childEdges+`
   ]
 }`)
 
@@ -86,8 +112,7 @@ func bootWaitStack(t *testing.T, childOutcome string) *domainStack {
 		"workspace:\n  path: \"" + workspaceDir + "\"\n" +
 		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
 		"logging:\n  level: \"error\"\n  file: \"" + filepath.Join(root, "arbitron.log") + "\"\n" +
-		// A per-user cap of ONE is the deadlock probe.
-		"queue:\n  globalcap: 5\n  perusercap: 1\n"
+		"queue:\n  globalcap: 5\n  perusercap: " + strconv.Itoa(perUserCap) + "\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
 	ds, err := initDomain(context.Background(), configPath)
@@ -330,4 +355,55 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 	waitForState(t, ds2, parentID, instance.StateCompleted)
 	assert.Equal(t, "failure", branchVariable(t, ds2, parentID),
 		"the restart's recover-then-reconcile ordering must resume the stranded parent")
+}
+
+// The wait cycle at the SHIPPED default per-user cap, with a child that has no
+// artificial delay — the configuration every cap-1 test above structurally
+// cannot exercise.
+//
+// A cap of 1 SERIALIZES parent and child: the child cannot start until the
+// parent's `waiting` transition frees the slot, so the child's terminal write is
+// always strictly later and OnChildTerminal always finds a waiting parent. Those
+// tests prove the deadlock guard and nothing about the wake race. At a cap of 5
+// the pair runs CONCURRENTLY and the ordering is genuinely undetermined: if the
+// child reaches terminal first, the wake finds a still-`running` parent and is
+// lost.
+//
+// HONEST SCOPE. This is a real-wiring regression, not a deterministic probe: on
+// an idle machine the parent's two remaining writes reliably beat the child to
+// the finish, so it passes with or without the fix. The deterministic proof —
+// the interleaving forced, failing without the repair — is
+// TestSpawnWait_ChildTerminalDuringSuspend_RoutesInsteadOfHanging in
+// domain/engine. What this test adds is that the recovery path, when it does
+// engage, engages through the REAL composition root: it would hang here (and
+// under a loaded machine's inverted write ordering) if the executor's
+// post-suspend re-read were absent or unwired.
+func TestSpawnWaitE2E_ChildFinishingBeforeTheParentSuspends_StillWakesIt(t *testing.T) {
+	ds := bootWaitStackWith(t, "complete", 5, "")
+
+	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
+	require.NoError(t, err)
+
+	// No intermediate assertion on the parent reaching `waiting`: whether it is
+	// ever observably waiting is exactly the race. The contract is only that the
+	// parent RESUMES and routes.
+	waitForState(t, ds, parentID, instance.StateCompleted)
+
+	assert.Equal(t, "success", branchVariable(t, ds, parentID),
+		"a child that finished before its parent suspended must still route the parent through SUCCESS")
+
+	children := childrenOf(t, ds, parentID)
+	require.Len(t, children, 1, "exactly one child — the recovery path must not re-spawn")
+}
+
+// The same configuration on the FAILURE port. Same scope caveat as above.
+func TestSpawnWaitE2E_ChildFailingBeforeTheParentSuspends_StillRoutesFailure(t *testing.T) {
+	ds := bootWaitStackWith(t, "fail", 5, "")
+
+	parentID, _, err := ds.eng.Trigger(context.Background(), "wait-parent", map[string]any{}, "normal")
+	require.NoError(t, err)
+
+	waitForState(t, ds, parentID, instance.StateCompleted)
+	assert.Equal(t, "failure", branchVariable(t, ds, parentID))
+	require.Len(t, childrenOf(t, ds, parentID), 1)
 }

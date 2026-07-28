@@ -96,11 +96,11 @@ func TestBuildTeamsPayload_WellFormed(t *testing.T) {
 func TestBuildTeamsPayload_NeverErrors_RecordedNA(t *testing.T) {
 	id := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	stressNames := []string{
-		``,                       // empty workflow name
-		`quote"and\backslash`,    // characters that must be JSON-escaped
-		"tab\tand\nnewline",      // control characters
-		"emoji-🚀-and-üñïçödé",    // multibyte unicode
-		`</script><b>html</b>`,   // HTML-significant runes (Go escapes <, >, &)
+		``,                     // empty workflow name
+		`quote"and\backslash`,  // characters that must be JSON-escaped
+		"tab\tand\nnewline",    // control characters
+		"emoji-🚀-and-üñïçödé",  // multibyte unicode
+		`</script><b>html</b>`, // HTML-significant runes (Go escapes <, >, &)
 	}
 	for _, name := range stressNames {
 		n := &notification.Notification{

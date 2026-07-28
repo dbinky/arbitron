@@ -411,8 +411,12 @@ func TestChat_MissingKey_FailsClosedBeforeCall(t *testing.T) {
 
 func TestSecurity_KeyNeverLogged(t *testing.T) {
 	branches := map[string]func() *fakeTransport{
-		"chat_success":   func() *fakeTransport { return &fakeTransport{resp: jsonResponse(200, `{"content":[{"type":"text","text":"ok"}]}`)} },
-		"chat_non2xx":    func() *fakeTransport { return &fakeTransport{resp: jsonResponse(401, `{"error":{"message":"`+secretKey+`-ish"}}`)} },
+		"chat_success": func() *fakeTransport {
+			return &fakeTransport{resp: jsonResponse(200, `{"content":[{"type":"text","text":"ok"}]}`)}
+		},
+		"chat_non2xx": func() *fakeTransport {
+			return &fakeTransport{resp: jsonResponse(401, `{"error":{"message":"`+secretKey+`-ish"}}`)}
+		},
 		"chat_malformed": func() *fakeTransport { return &fakeTransport{resp: jsonResponse(200, `{bad`)} },
 	}
 	for name, mk := range branches {

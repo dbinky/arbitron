@@ -101,9 +101,11 @@ func (c *countingTokenRepo) Create(_ context.Context, t *Token) error {
 	return nil
 }
 func (c *countingTokenRepo) ListByUser(context.Context, uuid.UUID) ([]Token, error) { return nil, nil }
-func (c *countingTokenRepo) GetByHash(context.Context, string) (*Token, error)      { return nil, ErrNotFound }
-func (c *countingTokenRepo) Delete(context.Context, uuid.UUID, uuid.UUID) error     { return nil }
-func (c *countingTokenRepo) TouchLastUsed(context.Context, uuid.UUID) error         { return nil }
+func (c *countingTokenRepo) GetByHash(context.Context, string) (*Token, error) {
+	return nil, ErrNotFound
+}
+func (c *countingTokenRepo) Delete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (c *countingTokenRepo) TouchLastUsed(context.Context, uuid.UUID) error     { return nil }
 
 func newDeviceSvc(repo DeviceCodeRepository, tokens *TokenService, now func() time.Time) *DeviceCodeService {
 	s := NewDeviceCodeService(repo, tokens, 10*time.Minute, 5)

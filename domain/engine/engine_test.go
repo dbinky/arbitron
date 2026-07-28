@@ -621,6 +621,26 @@ func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error) { return 0,
 func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	return nil, nil
 }
+
+// SetQueuedIfWaiting mirrors the real conditional UPDATE: it re-queues ONLY a
+// parent still in the waiting state, which is what makes the wake and the
+// executor's in-process claim mutually exclusive.
+func (r *mockQueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, queuedAt time.Time) (bool, error) {
+	if r.instRepo != nil {
+		r.instRepo.mu.Lock()
+		inst, ok := r.instRepo.instances[id]
+		waiting := ok && inst.State == instance.StateWaiting
+		r.instRepo.mu.Unlock()
+		if !waiting {
+			return false, nil
+		}
+	}
+	if err := r.SetQueued(ctx, id, queuedAt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
 	r.mu.Lock()
 	err := r.setQueuedErr

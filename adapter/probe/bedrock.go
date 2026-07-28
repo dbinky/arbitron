@@ -44,8 +44,10 @@ func newBedrockProbe(d Deps) *bedrockProbe {
 		}
 	}
 	return &bedrockProbe{
-		httpClient:       hc,
-		timeout:          func(ctx context.Context) (context.Context, context.CancelFunc) { return procenv.WithTimeout(ctx, d.Timeout) },
+		httpClient: hc,
+		timeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return procenv.WithTimeout(ctx, d.Timeout)
+		},
 		maxResponseBytes: d.MaxResponseBytes,
 		clock:            clk,
 		endpoint:         endpoint,

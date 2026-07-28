@@ -26,11 +26,11 @@ const testClientID = "test-client"
 // idpHarness is a minimal OIDC issuer: discovery doc, JWKS, and a token endpoint
 // that returns a signed ID token configurable per test.
 type idpHarness struct {
-	server   *httptest.Server
-	signKey  *rsa.PrivateKey
-	keyID    string
-	issuer   string
-	tokenFn  func(t *testing.T) (string, int) // returns token-endpoint body + status
+	server  *httptest.Server
+	signKey *rsa.PrivateKey
+	keyID   string
+	issuer  string
+	tokenFn func(t *testing.T) (string, int) // returns token-endpoint body + status
 }
 
 func newIDPHarness(t *testing.T) *idpHarness {
@@ -44,10 +44,10 @@ func newIDPHarness(t *testing.T) *idpHarness {
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 h.issuer,
-			"authorization_endpoint": h.issuer + "/authorize",
-			"token_endpoint":         h.issuer + "/token",
-			"jwks_uri":               h.issuer + "/jwks",
+			"issuer":                                h.issuer,
+			"authorization_endpoint":                h.issuer + "/authorize",
+			"token_endpoint":                        h.issuer + "/token",
+			"jwks_uri":                              h.issuer + "/jwks",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})

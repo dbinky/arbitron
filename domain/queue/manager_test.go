@@ -83,6 +83,13 @@ func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance
 	return inst, nil
 }
 
+func (r *mockQueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	if err := r.SetQueued(ctx, id, at); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

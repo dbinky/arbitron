@@ -84,6 +84,28 @@ func (r *QueueRepo) SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.T
 	return nil
 }
 
+// SetQueuedIfWaiting implements instance.QueueRepository.
+//
+// The `state = 'waiting'` predicate is the whole point: it makes the re-queue
+// atomic against the spawn executor's competing claim on the same row, so a
+// parent cannot end up queued while a run goroutine is already executing it.
+// Hand-written (not sqlc-generated) because the generated SetQueued is :exec and
+// discards the row count this needs.
+func (r *QueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, queuedAt time.Time) (bool, error) {
+	const q = `UPDATE instances
+  SET state = 'queued', queued_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+  WHERE id = ? AND state = 'waiting'`
+	res, err := r.db.ExecContext(ctx, q, stringToNullString(timeToString(queuedAt)), uuidToString(id))
+	if err != nil {
+		return false, fmt.Errorf("re-queueing waiting instance: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("re-queueing waiting instance: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (r *QueueRepo) ListWaitingWithTimer(ctx context.Context) ([]instance.Instance, error) {
 	rows, err := r.queries.ListWaitingWithTimer(ctx)
 	if err != nil {
