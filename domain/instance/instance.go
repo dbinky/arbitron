@@ -114,8 +114,21 @@ type Instance struct {
 	// schedule for schedule/run_now runs, nil otherwise. There is intentionally
 	// NO foreign key on schedule_id: a schedule may be deleted while its
 	// historical runs remain.
-	TriggerSource     TriggerSource
-	ScheduleID        *uuid.UUID
+	TriggerSource TriggerSource
+	ScheduleID    *uuid.UUID
+	// ParentInstanceID / ParentNodeID / SpawnMode are the child's link back to
+	// the parent's spawn node that created it (see SpawnLink). All three are
+	// nil/empty for a root run — every instance created before this feature and
+	// every manually triggered run after it. Null links are NORMAL, not an
+	// error: read paths treat them as "this is a root run".
+	//
+	// There is intentionally NO foreign key on parent_instance_id, the same
+	// deliberate choice recorded for ScheduleID above: a referenced row may be
+	// removed while historical runs remain, and a purged parent must not
+	// cascade-delete a child's execution history.
+	ParentInstanceID  *uuid.UUID
+	ParentNodeID      *string
+	SpawnMode         SpawnMode
 	State             State
 	Priority          Priority
 	Variables         map[string]any
@@ -132,6 +145,13 @@ type Instance struct {
 	WebhookReceivedAt *time.Time
 }
 
+// IsRoot reports whether this run has no spawning parent. It is the ONE place
+// the "null link means root" convention is expressed, so read paths do not each
+// re-derive it.
+func (i Instance) IsRoot() bool {
+	return i.ParentInstanceID == nil
+}
+
 // InstanceSummary is a lightweight representation for listing instances.
 type InstanceSummary struct {
 	ID            uuid.UUID     `json:"id"`
@@ -143,11 +163,15 @@ type InstanceSummary struct {
 	Visibility    Visibility    `json:"visibility,omitempty"`
 	TriggerSource TriggerSource `json:"triggerSource"`
 	ScheduleID    *uuid.UUID    `json:"scheduleId,omitempty"`
-	CurrentNodeID *string       `json:"currentNodeId,omitempty"`
-	CreatedAt     time.Time     `json:"createdAt"`
-	UpdatedAt     time.Time     `json:"updatedAt"`
-	CompletedAt   *time.Time    `json:"completedAt,omitempty"`
-	QueuedAt      *time.Time    `json:"queuedAt,omitempty"`
+	// ParentInstanceID is the spawning parent run, nil for a root. It is carried
+	// on the summary (the projection the list path and enricher consume) so the
+	// hierarchy read needs no per-row instance load.
+	ParentInstanceID *uuid.UUID `json:"parentInstanceId,omitempty"`
+	CurrentNodeID    *string    `json:"currentNodeId,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
+	QueuedAt         *time.Time `json:"queuedAt,omitempty"`
 	// FailedNodeID is the node the instance failed on (nil unless failed). Carried
 	// on the summary so the list enricher resolves the friendly step/error anchor
 	// without a per-row instance load.
@@ -241,6 +265,16 @@ type ListFilters struct {
 	// request input, or a non-admin could widen scope to other departments.
 	Departments   []string
 	IncludePublic bool
-	Limit         int
-	Offset        int
+	// ParentScope narrows the list by position in the spawn hierarchy: unset
+	// (no narrowing), roots-only, or the children of ParentInstanceID.
+	//
+	// Unlike OwnerID/Departments/IncludePublic above, this IS a legitimate
+	// caller-supplied value: it is a NARROWING, never a widening, and composes
+	// with — never replaces — the service-set constraints.
+	ParentScope ParentScope
+	// ParentInstanceID is the parent whose children to return. Read ONLY when
+	// ParentScope == ParentScopeChildren; ignored otherwise.
+	ParentInstanceID *uuid.UUID
+	Limit            int
+	Offset           int
 }

@@ -17,7 +17,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/instance/spawn_link_test.go`:
 
@@ -247,7 +247,7 @@ func TestChildVisibilityFromFilters(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -264,7 +264,7 @@ domain/instance/spawn_link_test.go:...: inst.ParentInstanceID undefined (type In
 FAIL	github.com/arbitron/arbitron/domain/instance [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation — the link vocabulary and port**
+- [x] **Step 3: Minimal implementation — the link vocabulary and port**
 
 Create `domain/instance/spawn_link.go`:
 
@@ -417,7 +417,7 @@ type SpawnLinkRepository interface {
 }
 ```
 
-- [ ] **Step 4: Minimal implementation — the aggregate fields**
+- [x] **Step 4: Minimal implementation — the aggregate fields**
 
 In `domain/instance/instance.go`, add to `Instance` immediately after the `ScheduleID` field (line 118):
 
@@ -478,7 +478,7 @@ Add to `ListFilters`, after `IncludePublic`:
 	Offset        int
 ```
 
-- [ ] **Step 5: Run it, confirm it passes**
+- [x] **Step 5: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -505,7 +505,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/instance	0.2s
 ```
 
-- [ ] **Step 6: Confirm nothing else regressed (the struct additions are additive)**
+- [x] **Step 6: Confirm nothing else regressed (the struct additions are additive)**
 
 ```bash
 go build ./... && go test ./domain/... ./adapter/... ./cmd/...
@@ -513,7 +513,7 @@ go build ./... && go test ./domain/... ./adapter/... ./cmd/...
 
 Expected: build succeeds; every package prints `ok` (no `FAIL`).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/instance/spawn_link.go domain/instance/spawn_link_test.go domain/instance/instance.go
