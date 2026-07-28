@@ -48,28 +48,6 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **`OnTimerFired`'s own webhook-timeout `notifyChildTerminal` call has no
-  test that proves the wired hook actually fires.** Found while closing area 20
-  review 1 (`domain/queue/manager.go:186-226`). `go tool cover` shows the
-  `m.notifyChildTerminal(ctx, instanceID)` statement at line 222 already at 1
-  hit — but only because the call executes with `m.childTerminal == nil` in
-  every existing `TestOnTimerFired_WebhookTimeout_*` test
-  (`domain/queue/manager_test.go`); none of them calls
-  `m.SetChildTerminalHook(...)` first and asserts the hook was invoked with the
-  right instance ID, the way the newly-added
-  `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook` now does for the
-  startup-recovery sibling path. This is the exact shape of gap just fixed for
-  `RecoverWebhooks` (below): a shared correctness guarantee proven at one call
-  site and silently assumed at the other. No known live bug — the call is
-  present and unconditional on the success path — but the LIVE path (the one
-  every real webhook timeout goes through) deserves its own dedicated
-  hook-invocation test independent of the startup-recovery one, not just
-  statement coverage that happens to pass through a nil hook. Fix: add a test
-  that calls `m.SetChildTerminalHook(...)` before
-  `m.OnTimerFired(ctx, id, queue.TimerTypeWebhook)` and asserts the hook fires
-  with the timed-out instance's ID, mirroring
-  `TestManager_SetChildTerminalHook_IsInvoked`'s assertion shape.
-
 - [ ] **Verify the cascade produces an intervention record for every descendant.**
   `cascadeCancel` routes through `cancelAuthorized`, which calls
   `recordIntervention` — but `authorizeIntervention` runs per child against the
@@ -98,6 +76,41 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`OnTimerFired`'s own webhook-timeout `notifyChildTerminal` call had no
+  test that proves the wired hook actually fires.** Focus area 20
+  (queue-manager child-terminal hook), review 2. Found while closing area 20
+  review 1 (`domain/queue/manager.go:186-226`). `go tool cover` showed the
+  `m.notifyChildTerminal(ctx, instanceID)` statement at line 222 already at 1
+  hit — but only because the call executed with `m.childTerminal == nil` in
+  every existing `TestOnTimerFired_WebhookTimeout_*` test
+  (`domain/queue/manager_test.go`); none of them called
+  `m.SetChildTerminalHook(...)` first and asserted the hook was invoked with
+  the right instance ID, the way `TestRecoverWebhooks_TimedOut_WakesChildTerminalHook`
+  already did for the startup-recovery sibling path. Same shape of gap as the
+  `RecoverWebhooks` fix below: a shared correctness guarantee proven at one
+  call site and silently assumed at a sibling one — no known live bug (the
+  call is present and unconditional on the success path), but the LIVE path
+  (the one every real webhook timeout goes through) deserved its own dedicated
+  hook-invocation test independent of the startup-recovery one, not just
+  statement coverage that happened to pass through a nil hook. Added
+  `TestOnTimerFired_WebhookTimeout_InvokesChildTerminalHook`
+  (`domain/queue/manager_test.go`), wiring `m.SetChildTerminalHook(...)` before
+  driving `m.OnTimerFired(ctx, id, queue.TimerTypeWebhook)` and asserting the
+  hook fires exactly once with the timed-out instance's own ID, mirroring
+  `TestManager_SetChildTerminalHook_IsInvoked`'s assertion shape; confirmed it
+  fails for the right reason (hook never called, zero-value UUID) when the
+  `m.notifyChildTerminal(ctx, instanceID)` call is temporarily wrapped in
+  `if false { ... }`, then confirmed it passes against the real code.
+  Independently re-verified the rest of area 20's checklist from source:
+  `notifyChildTerminal` is nil-safe (`TestManager_ChildTerminalHook_IsNilSafe`
+  and the un-hooked webhook-timeout tests, which never panic), `domain/queue`
+  has no `arbitron/domain/engine` import (grepped the package directly), and
+  the hook is wired at the real composition root
+  (`cmd/arbitron/main.go:815`, `queueMgr.SetChildTerminalHook(eng.OnChildTerminal)`,
+  already exercised end-to-end by area 16's `TestSpawnWaitE2E_*` suite). This
+  closes review 2 approval for area 20 — both approvals for area 20 are now
+  recorded.
 
 - [x] **`RecoverWebhooks` failed a timed-out webhook child during startup
   recovery without calling the child-terminal wake, unlike its live
