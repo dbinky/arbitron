@@ -858,17 +858,18 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	queueMgr.SetChildTerminalHook(eng.OnChildTerminal)
 
 	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are
-	// available. These executors are added after engine construction because they
-	// depend on the scheduler and webhook registry, which in turn depend on the
-	// queue manager, creating a circular dependency. This works because the
-	// engine stores a reference to the executors map (not a copy), so mutations
-	// here are visible to the engine at execution time.
-	executors[workflow.NodeTypeTimerDelay] = engine.NewTimerDelayExecutor(
+	// available. These executors are registered after engine construction because
+	// they depend on the scheduler and webhook registry, which in turn depend on
+	// the queue manager, creating a circular dependency. Registration goes
+	// through the engine's own mutex (RegisterExecutor) rather than by mutating
+	// the shared map header, which was an unsynchronized write to a map the run
+	// loop reads from other goroutines.
+	eng.RegisterExecutor(workflow.NodeTypeTimerDelay, engine.NewTimerDelayExecutor(
 		instanceRepo, nodeExecRepo, scheduler, queueMgr,
-	)
-	executors[workflow.NodeTypeWebhookWait] = engine.NewWebhookWaitExecutor(
+	))
+	eng.RegisterExecutor(workflow.NodeTypeWebhookWait, engine.NewWebhookWaitExecutor(
 		instanceRepo, nodeExecRepo, webhookRegistry, scheduler, queueMgr,
-	)
+	))
 
 	// 12a. Create notification repo and wire it to the engine.
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
@@ -926,15 +927,15 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	//
 	// It is registered AFTER engine construction, exactly as timer_delay and
 	// webhook_wait are, because it depends on the engine itself (*Engine
-	// satisfies engine.ChildSpawner). This works because the engine stores a
-	// REFERENCE to the executors map, not a copy, so this mutation is visible to
-	// the engine at execution time.
+	// satisfies engine.ChildSpawner) — through RegisterExecutor, so the write is
+	// synchronized with the run loop's lookup and rejected once the set is
+	// frozen.
 	//
 	// The preparer's call is tool-SUPPRESSED: it routes through the same
 	// providerFactory chat arm llm_call uses, and the Phase-1 kind guard fails
 	// closed if the node's model_profile resolves to an agent binding.
 	childInputPreparer := engine.NewChildInputPreparer(providerFactory, profileResolver)
-	executors[workflow.NodeTypeSpawnWorkflow] = engine.NewSpawnWorkflowExecutor(
+	eng.RegisterExecutor(workflow.NodeTypeSpawnWorkflow, engine.NewSpawnWorkflowExecutor(
 		instanceRepo,
 		nodeExecRepo,
 		instanceRepo, // *adaptsqlite.InstanceRepo also satisfies instance.SpawnWaitRepository
@@ -943,7 +944,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		identityResolver,
 		fileReader,
 		queueMgr,
-	)
+	))
 
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
 	scheduleAlerter := schedule.NewScheduleAlerter(notifRepo, externalNotifier, logger)
@@ -1034,8 +1035,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	interactiveExec := engine.NewInteractiveExecutor(
 		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, fileReader, bus, queueMgr,
 	)
-	executors[workflow.NodeTypeInteractiveLLM] = interactiveExec
-	executors[workflow.NodeTypeInteractiveAgent] = interactiveExec
+	eng.RegisterExecutor(workflow.NodeTypeInteractiveLLM, interactiveExec)
+	eng.RegisterExecutor(workflow.NodeTypeInteractiveAgent, interactiveExec)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
@@ -1058,6 +1059,14 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}); ok {
 		s.SetAuditRecorder(auditSvc)
 	}
+
+	// 12e. SEAL the executor set.
+	//
+	// Every executor is registered by this point, and from here on goroutines
+	// that can EXECUTE a node start: the timer scheduler, crash recovery, the
+	// queue evaluator, the schedule evaluator. Registration after this panics
+	// rather than racing the run loop's lookup.
+	eng.FreezeExecutors()
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.

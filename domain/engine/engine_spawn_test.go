@@ -14,8 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// compile-time proof that *Engine satisfies the port the executor depends on.
-var _ engine.ChildSpawner = (*engine.Engine)(nil)
+// compile-time proof that *Engine satisfies the port the executor depends on,
+// and each of its halves independently — a read-only caller can depend on
+// ChildWorkflowReader alone rather than on an interface that can also start a
+// billed run.
+var (
+	_ engine.ChildSpawner        = (*engine.Engine)(nil)
+	_ engine.ChildWorkflowReader = (*engine.Engine)(nil)
+	_ engine.ChildRunStarter     = (*engine.Engine)(nil)
+)
 
 func spawnerFixture(t *testing.T) *testFixtures {
 	t.Helper()

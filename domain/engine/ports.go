@@ -317,20 +317,41 @@ type SpawnRequest struct {
 	Link instance.SpawnLink
 }
 
-// ChildSpawner creates and enqueues a child workflow instance linked to its
-// parent, and answers what a child workflow declares as its inputs.
-//
-// Both operations are on ONE port so the spawn executor depends on a
-// single-operation-shaped interface rather than on the whole Engine — an
-// isolation boundary and what makes the executor unit-testable. *Engine
-// satisfies it.
-type ChildSpawner interface {
+// ChildWorkflowReader answers what a child workflow DECLARES. It is a pure
+// read, and the only capability a caller that merely inspects a child's
+// contract — a validator, a dry-run, an editor preview — needs.
+type ChildWorkflowReader interface {
 	// ChildInputs returns the child workflow's declared input contract, resolved
 	// through the SAME owner-scoped visibility filter the trigger path uses. A
 	// workflow the caller cannot see returns ErrNotFound — indistinguishable
 	// from "does not exist", so existence is never leaked.
 	ChildInputs(ctx context.Context, workflowName string) ([]workflow.InputField, error)
+}
+
+// ChildRunStarter CREATES a child run. It is the write half, and the one with
+// real consequences: a row, a workspace, a billed provider call, and a
+// descendant that inherits the parent's credentials.
+type ChildRunStarter interface {
 	// Spawn creates the child under the identity carried on ctx, with the link
 	// already set, and enqueues it. It returns the new child instance's id.
 	Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
+}
+
+// ChildSpawner is the pair, and is what the spawn executor depends on because
+// it genuinely does both: it reads the contract, prepares values against it,
+// then starts the run.
+//
+// The halves are declared SEPARATELY so that read-only callers can depend on
+// the read alone. Bundling them meant any future consumer that only wanted to
+// inspect a child's declared inputs would take a dependency that can also start
+// a billed run — the interface would grant more authority than the caller
+// needs, and a reader of that call site could not tell from the type that it
+// does not spawn.
+//
+// It stays a COMPOSITION rather than two constructor parameters: the executor
+// needs both, production supplies both from one value (*Engine), and splitting
+// the parameter would add a second argument that is always the same object.
+type ChildSpawner interface {
+	ChildWorkflowReader
+	ChildRunStarter
 }

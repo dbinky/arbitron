@@ -69,15 +69,41 @@ func TestChildInputPreparer_EmptyResponse_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "no JSON object found")
 }
 
-// The excerpt lets an operator diagnose the failure from the trace without
-// re-running, and it is BOUNDED so a whole model response never bloats a
-// node-execution record.
-func TestChildInputPreparer_UnparseableResponse_IncludesBoundedExcerpt(t *testing.T) {
-	long := strings.Repeat("x", 5000)
-	_, err := prepareWith(t, long)
+// The trace-visible error carries a FINGERPRINT, not the reply.
+//
+// The reply is generated from the untrusted parent context, and this error is
+// persisted on the node-execution record and rendered in the trace UI — a
+// durable, widely-readable copy of whatever the model emitted, possibly
+// including upstream values the reader is not entitled to see. Length plus hash
+// keeps what the error is actually for (empty vs truncated vs prose-wrapped,
+// and "the same bad output again" across two failures) with none of the
+// content. The content goes to slog.Debug, which is operator-gated and not
+// persisted with the run.
+func TestChildInputPreparer_UnparseableResponse_ErrorCarriesAFingerprintNotTheReply(t *testing.T) {
+	secret := strings.Repeat("SUPER-SECRET-UPSTREAM-VALUE ", 200)
+	_, err := prepareWith(t, secret)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "truncated", "a long unparseable response must be truncated in the error")
-	assert.Less(t, len(err.Error()), 1200, "the error message must stay bounded, got %d bytes", len(err.Error()))
+
+	assert.NotContains(t, err.Error(), "SUPER-SECRET-UPSTREAM-VALUE",
+		"the raw model reply must not be persisted in a trace-visible error")
+	assert.Contains(t, err.Error(), "reply length", "the length is what makes the failure diagnosable")
+	assert.Contains(t, err.Error(), "sha256")
+	assert.Less(t, len(err.Error()), 400, "the error message must stay small, got %d bytes", len(err.Error()))
+}
+
+// Two identical bad replies must fingerprint identically, and a different reply
+// differently — that is what makes "the model is deterministically producing the
+// same bad output" readable from two trace entries.
+func TestChildInputPreparer_FingerprintDistinguishesReplies(t *testing.T) {
+	_, errA := prepareWith(t, "not json at all")
+	_, errB := prepareWith(t, "not json at all")
+	_, errC := prepareWith(t, "also not json")
+	require.Error(t, errA)
+	require.Error(t, errB)
+	require.Error(t, errC)
+
+	assert.Equal(t, errA.Error(), errB.Error())
+	assert.NotEqual(t, errA.Error(), errC.Error())
 }
 
 // ---------- error: provider / profile / posture ----------

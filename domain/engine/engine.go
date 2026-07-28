@@ -50,9 +50,13 @@ type Engine struct {
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
 	defaultAgentBackend string
-	mu                  sync.Mutex
-	contexts            map[uuid.UUID]context.CancelFunc
-	wg                  sync.WaitGroup
+	// executorsFrozen seals the executor map. Registration and lookup both go
+	// through mu, and freezing makes a post-startup registration a loud panic
+	// rather than a data race — see RegisterExecutor.
+	executorsFrozen bool
+	mu              sync.Mutex
+	contexts        map[uuid.UUID]context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -85,6 +89,52 @@ func NewEngine(
 		// repository via SetSpawnLinks.
 		spawnLinks: NoopSpawnLinks{},
 	}
+}
+
+// RegisterExecutor registers a node executor AFTER construction.
+//
+// Several executors cannot be built before the engine exists — timer_delay and
+// webhook_wait need the scheduler and webhook registry, spawn_workflow needs
+// the engine itself as its ChildSpawner — so the composition root has always
+// mutated the executor map post-construction. That worked only because the map
+// header is shared, and it was a plain unsynchronized write to a map the run
+// loop reads from other goroutines: a data race the moment any recovery or
+// queue goroutine starts before wiring finishes.
+//
+// Registration now takes the engine's mutex, and FreezeExecutors seals the set
+// before those goroutines start, so a late registration is a loud panic instead
+// of silent memory corruption. A nil executor is rejected for the same reason:
+// it would surface much later as "no executor registered for node type".
+func (e *Engine) RegisterExecutor(t workflow.NodeType, ex NodeExecutor) {
+	if ex == nil {
+		panic("engine: RegisterExecutor requires a non-nil NodeExecutor for node type " + string(t))
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.executorsFrozen {
+		panic("engine: RegisterExecutor called after FreezeExecutors for node type " + string(t) +
+			"; every executor must be registered before recovery and queue goroutines start")
+	}
+	e.executors[t] = ex
+}
+
+// FreezeExecutors seals the executor set. The composition root MUST call it
+// after the last RegisterExecutor and BEFORE starting any goroutine that can
+// execute a node (crash recovery, the queue evaluator, the schedule evaluator).
+// It is idempotent.
+func (e *Engine) FreezeExecutors() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.executorsFrozen = true
+}
+
+// executorFor looks up a node type's executor under the same lock registration
+// takes, so a read can never observe a half-written map.
+func (e *Engine) executorFor(t workflow.NodeType) (NodeExecutor, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ex, ok := e.executors[t]
+	return ex, ok
 }
 
 // SetScheduler sets the timer scheduler on the engine.
@@ -1053,7 +1103,7 @@ func (e *Engine) handleNodeSuccess(
 // A NodeExecution record is created for each attempt. The final record is returned
 // so the caller can update it (e.g., marking it skipped).
 func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, error) {
-	executor, ok := e.executors[node.Type]
+	executor, ok := e.executorFor(node.Type)
 	if !ok {
 		return nil, nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
 	}
