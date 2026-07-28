@@ -549,10 +549,10 @@ func TestNotificationHandler_Dismiss_PublishesEvent(t *testing.T) {
 
 // captureNotificationRepo records the OwnerID filter each method receives.
 type captureNotificationRepo struct {
-	capturedListOwnerID      *uuid.UUID
-	capturedCountOwnerID     *uuid.UUID
-	capturedMarkReadOwnerID  *uuid.UUID
-	capturedDismissOwnerID   *uuid.UUID
+	capturedListOwnerID     *uuid.UUID
+	capturedCountOwnerID    *uuid.UUID
+	capturedMarkReadOwnerID *uuid.UUID
+	capturedDismissOwnerID  *uuid.UUID
 }
 
 func (r *captureNotificationRepo) Create(_ context.Context, _ *notification.Notification) error {

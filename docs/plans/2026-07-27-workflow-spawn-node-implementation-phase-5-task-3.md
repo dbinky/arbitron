@@ -16,7 +16,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `adapter/http/instance_list_parent_test.go`:
 
@@ -225,7 +225,7 @@ func TestInstanceListREST_UnknownParentReturnsEmptyNot404(t *testing.T) {
 > Run `grep -n "func newTest\|func setupHandler\|identity.WithIdentity" adapter/http/instance_handler_test.go`
 > to find them. Do not introduce a parallel harness.
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -242,7 +242,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/adapter/http	0.4s
 ```
 
-- [ ] **Step 3: Surface the hierarchy fields on the DTOs**
+- [x] **Step 3: Surface the hierarchy fields on the DTOs**
 
 In `adapter/http/instance_handler.go`, add to `summaryDTO` (after `ScheduleID`):
 
@@ -278,7 +278,7 @@ and in `toEnrichedSummaryDTO`:
 		ChildCount:    e.ChildCount,
 ```
 
-- [ ] **Step 4: Parse the parent selector in `List`**
+- [x] **Step 4: Parse the parent selector in `List`**
 
 In `adapter/http/instance_handler.go`, inside `List`, after the `offset` block
 and before the `ListEnriched` call, add:
@@ -300,7 +300,7 @@ and before the `ListEnriched` call, add:
 	filters.ParentInstanceID = parentID
 ```
 
-- [ ] **Step 5: Run it, confirm it passes**
+- [x] **Step 5: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -323,7 +323,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/http	0.5s
 ```
 
-- [ ] **Step 6: Confirm the existing HTTP suite still passes**
+- [x] **Step 6: Confirm the existing HTTP suite still passes**
 
 ```bash
 go test ./adapter/http/
@@ -331,7 +331,7 @@ go test ./adapter/http/
 
 Expected: `ok  	github.com/arbitron/arbitron/adapter/http`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add adapter/http/instance_handler.go adapter/http/instance_list_parent_test.go
