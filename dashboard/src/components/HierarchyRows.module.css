@@ -1,0 +1,11 @@
+.levelStatus {
+  padding: 6px 10px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.levelError {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #d64545;
+}

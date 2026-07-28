@@ -13,6 +13,7 @@ const typeColors: Record<string, string> = {
   transform: '#9b59b6',
   timer_delay: '#00bcd4',
   webhook_wait: '#e91e63',
+  spawn_workflow: '#2ecc71',
 }
 
 const stateNodeClass: Record<NodeExecutionState, string> = {

@@ -34,3 +34,31 @@
 .expand:hover {
   color: var(--text-primary);
 }
+/* Tree affordance in the first cell: a fixed-width toggle (or an equal-width
+   spacer, so rows without children still align) followed by the cell text. */
+.treeCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hierarchyToggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  width: 14px;
+  font-size: 11px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.hierarchyToggle:hover {
+  opacity: 1;
+}
+
+.hierarchySpacer {
+  display: inline-block;
+  width: 14px;
+}

@@ -27,7 +27,7 @@ The graph view needs no new node component: `nodeTypes.ts` maps every Arbitron n
 
 ---
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `dashboard/src/components/HierarchyRows.test.tsx`:
 
@@ -285,7 +285,7 @@ it('a self-referential link does not erase the row', () => {
 })
 ```
 
-- [ ] **Step 2: Run them, confirm they fail**
+- [x] **Step 2: Run them, confirm they fail**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -302,7 +302,7 @@ Error: Failed to load url ./topLevelRows (resolved id: .../src/components/topLev
 Test Files  2 failed (2)
 ```
 
-- [ ] **Step 3: Add the hierarchy expander to `QueueTableRow`**
+- [x] **Step 3: Add the hierarchy expander to `QueueTableRow`**
 
 In `dashboard/src/components/QueueTableRow.tsx`, extend the props:
 
@@ -415,7 +415,7 @@ Append to `dashboard/src/components/QueueTableRow.module.css`:
 }
 ```
 
-- [ ] **Step 4: Create the recursive row renderer**
+- [x] **Step 4: Create the recursive row renderer**
 
 Create `dashboard/src/components/HierarchyRows.tsx`:
 
@@ -572,7 +572,7 @@ Create `dashboard/src/components/HierarchyRows.module.css`:
 }
 ```
 
-- [ ] **Step 5: Add the section-aware nesting rule**
+- [x] **Step 5: Add the section-aware nesting rule**
 
 Create `dashboard/src/components/topLevelRows.ts`:
 
@@ -605,7 +605,7 @@ export function topLevelRows(rows: EnrichedInstanceSummary[]): EnrichedInstanceS
 }
 ```
 
-- [ ] **Step 6: Delegate row rendering from `QueueSection`**
+- [x] **Step 6: Delegate row rendering from `QueueSection`**
 
 In `dashboard/src/components/QueueSection.tsx`:
 
@@ -660,7 +660,7 @@ import { useRunHierarchy } from '../hooks/useRunHierarchy'
               />
 ```
 
-- [ ] **Step 7: Leave `QueueView`'s fetches unchanged — deliberately**
+- [x] **Step 7: Leave `QueueView`'s fetches unchanged — deliberately**
 
 `dashboard/src/routes/QueueView.tsx` is **not** modified. Its per-state
 `api.instances.list` calls stay unnarrowed, and `QueueSection` applies
@@ -673,7 +673,7 @@ completed fire-and-forget parent, which is the ordinary case. The `parent=roots`
 selector still exists on REST and MCP (Phase 5 Tasks 3–4) for consumers that
 list runs without a state segmentation; the dashboard simply is not one.
 
-- [ ] **Step 8: Give the spawn node an accent colour**
+- [x] **Step 8: Give the spawn node an accent colour**
 
 In `dashboard/src/graph/nodes/ArbitronNode.tsx`, add to `typeColors`:
 
@@ -702,7 +702,7 @@ onto the single `ArbitronNode`, which already renders the type label from
 > rendering to add. Workflows carrying a spawn node are authored in
 > `workflow.json` and validated by `domain/workflow/validation.go`.
 
-- [ ] **Step 9: Run the dashboard gate, confirm it passes**
+- [x] **Step 9: Run the dashboard gate, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -727,7 +727,7 @@ Test Files  N passed (N)
 > weaken the new tests to accommodate them. `QueueView.test.tsx` should be
 > untouched: this task changes no `list()` arguments.
 
-- [ ] **Step 10: Rebuild the embedded SPA**
+- [x] **Step 10: Rebuild the embedded SPA**
 
 `adapter/dashboard/dist` is embedded by the Go binary via `//go:embed`, so it
 must be rebuilt and committed whenever dashboard source changes.
@@ -745,7 +745,7 @@ vite v8.x.x building for production...
 ✓ built in ...
 ```
 
-- [ ] **Step 11: Full gate**
+- [x] **Step 11: Full gate**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -755,7 +755,7 @@ make test-all
 Expected: the Go suite prints `ok` for every package and the dashboard suite
 reports all files passed.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add dashboard/src/components/HierarchyRows.tsx dashboard/src/components/HierarchyRows.module.css dashboard/src/components/HierarchyRows.test.tsx dashboard/src/components/topLevelRows.ts dashboard/src/components/topLevelRows.test.ts dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueSection.tsx dashboard/src/graph/nodes/ArbitronNode.tsx adapter/dashboard/dist
