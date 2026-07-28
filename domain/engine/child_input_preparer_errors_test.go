@@ -118,6 +118,31 @@ func TestChildInputPreparer_UnknownProfile_Errors(t *testing.T) {
 	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 }
 
+// validateModelProfiles lets a spawn node omit model_profile entirely, on the
+// theory that a child with zero declared inputs never reaches this call. If
+// the node's child DOES declare inputs, req.ProfileAlias arrives empty and
+// this must fail closed with a named error — never silently resolve some
+// default binding, which would turn the author-time carve-out into an
+// unguarded escalation path.
+func TestChildInputPreparer_EmptyProfileAliasWithDeclaredInputs_FailsClosed(t *testing.T) {
+	prov := &mockChatProvider{
+		callFn: func(context.Context, engine.ChatRequest) (*engine.ChatResponse, error) {
+			t.Fatal("the provider must not be called when the profile alias is empty")
+			return nil, nil
+		},
+	}
+	p := engine.NewChildInputPreparer(chatSelector(prov), chatResolver("m"))
+
+	values, err := p.Prepare(context.Background(), engine.ChildInputRequest{
+		NodeID: "spawn-1", ChildWorkflow: "c", Inputs: childFields(),
+		ParentContext: map[string]any{}, ProfileAlias: "",
+	})
+	require.Error(t, err)
+	assert.Nil(t, values)
+	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
+	assert.Contains(t, err.Error(), "spawn-1", "the error must name the offending node")
+}
+
 // The binding-kind guard must fire BEFORE any provider is selected, so a
 // tool-enabled (agent) provider is never constructed for what must be a
 // tool-suppressed reasoning call.

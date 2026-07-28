@@ -38,18 +38,6 @@ escalate** — never a tolerated no-op.
   (`adapter/mcp/parity_test.go`) is now weaker than it reads. Record the decision;
   do not leave it unexamined.
 
-- [ ] **`ChildInputRequest.ProfileAlias` may reach the resolver empty.**
-  `validateModelProfiles` deliberately allows a spawn node with **no**
-  `model_profile` (`domain/workflow/validation.go:186`), on the grounds that a
-  zero-input child never makes a preparation call. But
-  `SpawnWorkflowExecutor.prepareAndSpawn` passes `node.Config.ModelProfile`
-  unconditionally, and `LLMChildInputPreparer.Prepare` only skips the call when
-  `len(req.Inputs) == 0` (`domain/engine/child_input_preparer.go:48`). Verify what
-  `provider.ProfileResolver.Resolve(ctx, "")` does for a child that DOES declare
-  inputs on a node with no alias: if it silently resolves a default binding, the
-  author-time carve-out has widened into an unguarded path. Add the failing case
-  (declared inputs + empty alias) and assert a clear error naming the node.
-
 - [ ] **Confirm the awaited-spawn wait is invisible to the timer recovery sweep.**
   `executeWait` transitions the parent with `instances.UpdateState(ctx, id,
   StateWaiting)` and the comment claims `waiting_until` stays NULL so
@@ -87,6 +75,29 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`ChildInputRequest.ProfileAlias` may reach the resolver empty.**
+  Focus area 9 review 1. `validateModelProfiles` deliberately allows a spawn
+  node with **no** `model_profile` (`domain/workflow/validation.go:183-190`),
+  on the grounds that a zero-input child never makes a preparation call. But
+  `SpawnWorkflowExecutor.prepareAndSpawn` passes `node.Config.ModelProfile`
+  unconditionally, and `LLMChildInputPreparer.Prepare` only skips the call
+  when `len(req.Inputs) == 0`. Traced `provider.ProfileResolver.Resolve(ctx,
+  "")` for both the production resolver (`adapter/provider/dynamic.go:73`)
+  and its cache lookup (`adapter/provider/cache.go:92`): a miss on alias `""`
+  behaves identically to a miss on any other unknown alias — `ProfileCache.get`
+  is a plain map lookup keyed by `Profile.Alias`, and no code path ever
+  registers a profile under the empty alias — so `Resolve(ctx, "")` returns
+  `provider.ErrUnknownProfile` wrapped with `""`, not a silently-resolved
+  default binding. The author-time carve-out does fail closed at run time, as
+  the validation comment claims. Added
+  `TestChildInputPreparer_EmptyProfileAliasWithDeclaredInputs_FailsClosed`
+  (`domain/engine/child_input_preparer_errors_test.go`), which asserts a child
+  that declares inputs on a node with an empty `ProfileAlias` gets
+  `provider.ErrUnknownProfile` naming the node, the provider is never called,
+  and no partial map is returned — pinning the fail-closed behaviour so a
+  future resolver change cannot silently widen this into an unguarded path.
+  This closes review 1 approval for area 9.
 
 - [x] **`childVisibilityClause`'s `IncludePublic` disjunct was never exercised in
   isolation.** Focus area 8 review 2. `adapter/sqlite/instance_repo.go:568-570`
