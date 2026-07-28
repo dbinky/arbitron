@@ -64,3 +64,12 @@ it('a self-referential link does not erase the row', () => {
   const rows = [r('self', 'self')]
   expect(topLevelRows(rows).map((x) => x.id)).toEqual(['self'])
 })
+
+// A single-node cycle (self-referential) is guarded above, but a longer cycle
+// of corrupt/hand-edited links is the same shape: each row's IMMEDIATE parent
+// is present, so the naive per-row check suppresses every member, erasing the
+// whole cycle from the section with no ancestor left to expand and reveal it.
+it('a mutual two-instance cycle does not erase either row', () => {
+  const rows = [r('a', 'b'), r('b', 'a')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['a', 'b'])
+})

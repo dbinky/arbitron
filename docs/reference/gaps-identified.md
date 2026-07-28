@@ -126,6 +126,50 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`topLevelRows` erased every row of a corrupt multi-node parent-link
+  cycle, not just a self-referential one.** Focus area 28 (dashboard
+  section-aware top-level rule), review 1.
+  `dashboard/src/components/topLevelRows.ts`'s pre-fix implementation only
+  special-cased a length-1 cycle (`r.parentInstanceId === r.id`, per the
+  existing self-referential test) — but the domain layer already treats
+  longer spawn-link cycles as a real corrupt-data possibility worth guarding
+  against (`domain/engine/cancel_cascade_test.go`'s
+  `TestCancelCascade_MutualLinkCycleHaltsTraversal`, using an `unfiltered`
+  fake to simulate a hand-edited/corrupt link row), and a normal
+  `Engine.Spawn` can never itself produce a cycle since a child instance is
+  always newly created after its parent (so only DB corruption/manual editing
+  can produce one). Since each row has exactly one `parentInstanceId`, a
+  length-2+ cycle (A's parent is B, B's parent is A) has every member's
+  IMMEDIATE parent present in the same section, so the naive per-row check
+  suppressed both — unlike the guarded self-loop case, there is no member
+  outside the cycle left to expand and reveal the rest, so the whole cycle
+  silently vanished from the section with no way to bring it back into view.
+  Added `'a mutual two-instance cycle does not erase either row'`
+  (`dashboard/src/components/topLevelRows.test.ts`), asserting
+  `topLevelRows([r('a','b'), r('b','a')])` keeps both rows; confirmed it
+  fails for the right reason (`expected [] to deeply equal ['a', 'b']`)
+  against the pre-fix code, then confirmed it passes against the fix.
+  Generalized the guard: `isOnCycle(id)` walks the parent chain (through rows
+  present in the section) from `id`, returning true only if it loops back to
+  `id` itself (subsuming the single-node self-referential case, which now
+  needs no special-casing) — a row whose chain instead escapes to an absent
+  parent, or wanders into a DIFFERENT cycle that never revisits `id`, is
+  still suppressed exactly as before. Manually traced (not re-tested, since
+  the existing suite already exercises it) that a normal multi-level chain
+  (parent → child → grandchild, no cycle) is unaffected: `isOnCycle` returns
+  false for the grandchild once the walk reaches the parent's own empty
+  `parentInstanceId`, so the base "immediate parent present" suppression rule
+  still applies unchanged. Ran the full `go test ./...`,
+  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
+  recorded baseline (the one pre-existing `adapter/config` failure is
+  unchanged; dashboard typecheck at 0 errors; vitest 470 passed, 0 failed, up
+  from 469 with this pass's one new test). Independently confirmed
+  `topLevelRows` has exactly one production call site
+  (`QueueSection.tsx:158`, grepped for all non-test references), fed real
+  `instances` prop data flowing from `QueueView`'s API-backed state, not a
+  hardcoded or test-only value. This closes review 1 approval for area 28;
+  review 2 remains open.
+
 - [x] **A double-toggle fired before the first fetch settled broke the
   "one request per level" contract, and silently re-expanded instead of
   collapsing.** Focus area 27 (dashboard run-hierarchy state hook), review 2.
