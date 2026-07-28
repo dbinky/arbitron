@@ -139,6 +139,37 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`ListInstancesParams.parent`'s own doc comment documents three wire
+  values (omit, `'roots'`, an instance UUID), matching
+  `domain/instance/spawn_link.go`'s `ParseParentScope`, but only "omit" and "a
+  UUID" were ever exercised by a client-level test.** Focus area 26 (dashboard
+  API client & hierarchy types), review 2. Confirmed by grep that no dashboard
+  production code ever calls `api.instances.list({ parent: 'roots' })` — the
+  dashboard fetches unfiltered by state (`QueueView.tsx`) and computes
+  top-level rows client-side via `topLevelRows.ts` instead of asking the
+  server for the `roots` scope (a deliberate design already covered by the "No
+  seam" rationale for 24/25 × 27/28/29), so this is not a live bug, just an
+  untested corner of the documented client vocabulary. Added `'list sends the
+  literal roots scope verbatim'` (`dashboard/src/api/client.test.ts`),
+  asserting `list({ parent: 'roots' })` produces a URL containing
+  `parent=roots`; confirmed it fails for the right reason (`expected:
+  "parent=roots", actual: "/api/v1/instances"`) when the truthy check is
+  temporarily changed to exclude `'roots'`, then confirmed it passes against
+  the real code (`git diff --stat` on `client.ts` is empty — no production
+  change needed). Independently re-verified the rest of area 26's checklist
+  from source rather than trusting review 1's write-up: `enrichedSummaryDTO`'s
+  `parentInstanceId`/`childCount` JSON tags (`adapter/http/instance_handler.go:188,258`)
+  still match `types.ts` exactly; real production callers of the hierarchy
+  fields are confirmed by grep (`HierarchyRows.tsx:58` reads `childCount`,
+  `topLevelRows.ts:24` reads `parentInstanceId`, `useRunHierarchy.ts:68` calls
+  `list({ parent: id })` with a real instance id) — not merely present in
+  types with no reader. Ran the full `go test ./...`, `npx tsc --noEmit`, and
+  `npx vitest run`: no new failures beyond the recorded baseline (the one
+  pre-existing `adapter/config` failure is unchanged; dashboard typecheck at 0
+  errors; vitest 466 passed, 0 failed, up from 465 with this pass's one new
+  test). This closes review 2 approval for area 26 — both approvals for area
+  26 are now recorded.
+
 - [x] **`EnrichedInstanceSummary.parentInstanceId`/`.childCount`'s wire-format
   field names were proven only by TS-constructed object literals, never by an
   actual JSON round trip.** Focus area 26 (dashboard API client & hierarchy

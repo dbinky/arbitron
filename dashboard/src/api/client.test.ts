@@ -98,6 +98,17 @@ describe('api.instances dismissal', () => {
     expect(calls[1][0] as string).not.toContain('parent')
   })
 
+  // ListInstancesParams.parent's own doc comment documents THREE wire values
+  // (omit, 'roots', an instance UUID) matching domain/instance/spawn_link.go's
+  // ParseParentScope, but only "omit" and "a UUID" were ever exercised above —
+  // the literal 'roots' scope was undocumented-by-test at the client boundary.
+  it('list sends the literal roots scope verbatim', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    await api.instances.list({ parent: 'roots' })
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string
+    expect(url).toContain('parent=roots')
+  })
+
   // Regression guard for the hierarchy fields' wire contract: the server emits
   // these key names (adapter/http/instance_handler.go's enrichedSummaryDTO),
   // and TypeScript's unchecked `res.json() as T` cast cannot itself catch a
