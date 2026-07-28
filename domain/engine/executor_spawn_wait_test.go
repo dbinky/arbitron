@@ -303,6 +303,29 @@ func TestSpawnWait_WaitingTransitionFails_ChildSurvivesAndNodeErrors(t *testing.
 		"the parent must not be left in a half-suspended state")
 }
 
+// The node-execution write sits BEFORE the waiting transition in the
+// load-bearing ordering (enqueue -> node-exec record -> waiting -> notify), so
+// a failure here must surface the same way a failure at the later waiting
+// transition does: the child is already enqueued and is not rolled back, and
+// the parent is left in its prior (non-waiting) state rather than half
+// suspended. TestWebhookWaitExecutor_NodeExecCreateFails_ReturnsError pins the
+// identical shape for the sibling webhook-wait executor; this had no
+// equivalent for the spawn wait path.
+func TestSpawnWait_NodeExecutionRecordWriteFails_ChildSurvivesAndParentNotSuspended(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.nodeExecs.createErr = errors.New("db write failed")
+
+	res, err := f.run(t)
+	require.Error(t, err)
+	assert.Nil(t, res)
+	require.Len(t, f.spawner.spawned, 1, "the child was already enqueued and is not rolled back")
+
+	got, gerr := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, gerr)
+	assert.Equal(t, instance.StateRunning, got.State,
+		"the parent must not be left in a half-suspended state")
+}
+
 // A storage failure on the short-circuit lookup must NOT be mistaken for "no
 // child yet", which would spawn a second child.
 func TestSpawnWait_LinkLookupFailure_DoesNotSpawnASecondChild(t *testing.T) {

@@ -13,6 +13,20 @@ escalate** — never a tolerated no-op.
 
 ## Open
 
+- [ ] **`executeWait`'s own `instances.Get` failure (the load before
+  `assertSpawnBranchPorts`) is untested.** `domain/engine/executor_spawn.go:117-120`
+  loads the parent to check its snapshot's branch ports BEFORE any child is
+  created — a distinct call site from `prepareAndSpawn`'s own `instances.Get`
+  (already covered by `TestSpawnExecutor_ParentInstanceLoadFailure_Errors` for
+  the fire-and-forget path). `go tool cover` over `TestSpawnWait`-prefixed
+  tests shows this branch (lines 118-120) at 0% hits: no existing test in
+  `executor_spawn_wait_test.go` sets `f.instances.getErr`. Reading the code
+  shows the error would propagate before `assertSpawnBranchPorts` or
+  `prepareAndSpawn` ever run, so no child would be created and the parent
+  would be untouched — the same shape as the already-covered failures, but
+  unverified. Needed to close review 1 for focus area 17 (spawn executor —
+  wait-for-child suspension).
+
 - [ ] **`useRunHierarchy.invalidate` has no production caller.**
   `dashboard/src/hooks/useRunHierarchy.ts:78` exports `invalidate` and documents
   it as "used on a full refetch", but the only reference outside the hook is
@@ -75,6 +89,37 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`nodeExecs.Create`'s failure inside `executeWait` had no test, unlike
+  the identical failure mode already pinned for the sibling
+  `WebhookWaitExecutor`.** Focus area 17 (spawn executor — wait-for-child
+  suspension); review 1 remains open (see the `executeWait` `instances.Get` gap
+  above). `domain/engine/executor_spawn.go:146-157` writes the wait path's own
+  node-execution record — deliberately, since `executeWithRetry` skips one on
+  the wait path — as part of the load-bearing ordering this focus area exists
+  to check: `enqueue → node-exec record → UpdateState(waiting) →
+  NotifyCapacityFreed`. `go tool cover` over `TestSpawnWait`-prefixed tests
+  showed the `Create` error branch (lines 155-157) at 0% hits, while
+  `TestWebhookWaitExecutor_NodeExecCreateFails_ReturnsError`
+  (`executor_webhook_test.go`) already pins the identical shape one call away
+  in the sibling wait executor — the same gap already fixed repeatedly in this
+  loop: a behavior proven at one call site and silently assumed at a sibling
+  one. A regression that swallowed this error (e.g. logging instead of
+  returning) would leave the child running with the parent stuck in
+  `StateRunning` forever, since neither `UpdateState(waiting)` nor
+  `NotifyCapacityFreed` would ever run afterward — undetected by any existing
+  test. Added
+  `TestSpawnWait_NodeExecutionRecordWriteFails_ChildSurvivesAndParentNotSuspended`
+  (`domain/engine/executor_spawn_wait_test.go`), asserting the child is not
+  rolled back and the parent remains `StateRunning`; confirmed it fails for the
+  right reason (no error returned) when the `Create` error check is temporarily
+  replaced with a discarded `_ =`, then confirmed it passes against the real
+  code. Also confirmed via the same coverage run that the whole-of-instance
+  per-user-capacity deadlock guard this focus area names ("ordering invariant")
+  is already proven against the REAL `queue.Manager` — not just a mock — by
+  `cmd/arbitron/spawn_wait_e2e_test.go`'s `bootWaitStack` fixture, which sets
+  `perusercap: 1` specifically so the test would hang if the ordering broke;
+  this was not a gap.
 
 - [x] **`eng.SetSpawnLinks(instanceRepo)`'s composition-root wiring for the
   cancel cascade was verified only by reading `main.go`, never by a real
