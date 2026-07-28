@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test for the context carrier**
+- [x] **Step 1: Write the failing test for the context carrier**
 
 Create `domain/instance/spawn_context_test.go`:
 
@@ -87,7 +87,7 @@ func TestSpawnLinkContext_InnerOverridesOuter(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -103,7 +103,7 @@ domain/instance/spawn_context_test.go:18:12: undefined: SpawnLinkFromContext
 FAIL	github.com/arbitron/arbitron/domain/instance [build failed]
 ```
 
-- [ ] **Step 3: Implement the carrier**
+- [x] **Step 3: Implement the carrier**
 
 Create `domain/instance/spawn_context.go`:
 
@@ -143,7 +143,7 @@ func SpawnLinkFromContext(ctx context.Context) (SpawnLink, bool) {
 }
 ```
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -162,7 +162,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/instance	0.2s
 ```
 
-- [ ] **Step 5: Write the failing test for the trigger-path stamp**
+- [x] **Step 5: Write the failing test for the trigger-path stamp**
 
 Create `domain/engine/engine_spawn_stamp_test.go`:
 
@@ -277,7 +277,7 @@ func TestTrigger_SpawnLinkAndOriginCoexist(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run it, confirm it fails**
+- [x] **Step 6: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -292,7 +292,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/domain/engine	0.4s
 ```
 
-- [ ] **Step 7: Implement the stamp**
+- [x] **Step 7: Implement the stamp**
 
 In `domain/engine/engine.go`, immediately after the origin block (which ends
 with the `scheduleID = o.ScheduleID` assignment, ~line 421), add:
@@ -328,7 +328,7 @@ after `ScheduleID: scheduleID,`:
 		SpawnMode:         spawnMode,
 ```
 
-- [ ] **Step 8: Run it, confirm it passes**
+- [x] **Step 8: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -347,7 +347,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/engine	0.5s
 ```
 
-- [ ] **Step 9: Confirm nothing regressed**
+- [x] **Step 9: Confirm nothing regressed**
 
 ```bash
 go test ./domain/... ./adapter/... ./cmd/...
@@ -355,7 +355,11 @@ go test ./domain/... ./adapter/... ./cmd/...
 
 Expected: `ok` for every package.
 
-- [ ] **Step 10: Commit**
+> NOTE: `adapter/config` `TestSampleFeaturePipeline_ValidatesWithDefaultProfiles`
+> fails (UNKNOWN_PROFILE on the sample feature-pipeline nodes). Verified
+> PRE-EXISTING by stashing this task's changes — unrelated to the spawn link.
+
+- [x] **Step 10: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/instance/spawn_context.go domain/instance/spawn_context_test.go domain/engine/engine.go domain/engine/engine_spawn_stamp_test.go

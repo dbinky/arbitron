@@ -420,6 +420,24 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		scheduleID = o.ScheduleID
 	}
 
+	// Stamp the parent/child spawn link from the trigger context. It rides the
+	// SAME context-carried creation-time mechanism as Origin above, and is
+	// stamped into the SAME Instance literal below — never as a follow-up write.
+	// This trigger path creates AND enqueues, so a link written after enqueue
+	// could lose a race with a fast child reaching a terminal state, leaving its
+	// waiting parent with nothing to match. An INCOMPLETE link is ignored
+	// entirely rather than partially persisted.
+	var parentInstanceID *uuid.UUID
+	var parentNodeID *string
+	var spawnMode instance.SpawnMode
+	if l, ok := instance.SpawnLinkFromContext(ctx); ok && l.Valid() {
+		p := l.ParentInstanceID
+		n := l.ParentNodeID
+		parentInstanceID = &p
+		parentNodeID = &n
+		spawnMode = l.Mode
+	}
+
 	// Resolve the stable workflow id (name->id) so the run carries an identity
 	// reference that survives a later rename/edit. The registry is authoritative;
 	// when it is unwired or has no row for this name, fall back to the id carried
@@ -443,6 +461,9 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		Visibility:        st.Visibility,
 		TriggerSource:     triggerSource,
 		ScheduleID:        scheduleID,
+		ParentInstanceID:  parentInstanceID,
+		ParentNodeID:      parentNodeID,
+		SpawnMode:         spawnMode,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
