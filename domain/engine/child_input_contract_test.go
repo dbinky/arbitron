@@ -104,6 +104,31 @@ func TestValidateChildInputs_AbsentOptionalIsFine(t *testing.T) {
 	}
 }
 
+// A required-and-null input is rejected (TestValidateChildInputs_
+// NullRequiredIsTreatedAsMissing); this pins the OPTIONAL counterpart: an
+// optional input present with an explicit null is accepted (the "rejects
+// exactly three things" list above does not include it) and passed through
+// UNCHANGED rather than stripped to match the absent case. Downstream,
+// Engine.TriggerWithDepartment treats a present-nil variable identically to
+// an absent one (engine.go: `!provided || val == nil`), so this key surviving
+// as an explicit nil is what lets the child's own default apply exactly as it
+// would for an absent key — a different code path reaching the same outcome,
+// worth pinning independently since a future change here could silently start
+// rejecting or stripping it.
+func TestValidateChildInputs_NullOptionalPassesThroughUnchanged(t *testing.T) {
+	produced := map[string]any{"repo": "r", "issueCount": float64(1), "dryRun": nil}
+	if err := validateChildInputs("child", inputs(), produced); err != nil {
+		t.Fatalf("a present-but-null OPTIONAL input must satisfy the contract, got %v", err)
+	}
+	v, present := produced["dryRun"]
+	if !present {
+		t.Fatal("validateChildInputs must not strip a present-but-null optional key")
+	}
+	if v != nil {
+		t.Errorf("validateChildInputs must not coerce a null optional value, got %v (%T)", v, v)
+	}
+}
+
 func TestValidateChildInputs_ExtraKeysPassThrough(t *testing.T) {
 	produced := map[string]any{"repo": "r", "issueCount": float64(1), "note": "extra"}
 	if err := validateChildInputs("child", inputs(), produced); err != nil {

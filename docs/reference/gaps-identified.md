@@ -76,6 +76,37 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **A present-but-null OPTIONAL child input was untested (distinct from the
+  already-tested absent case).** Focus area 11 review 2.
+  `domain/engine/child_input_contract.go`'s docstring enumerates exactly three
+  things `validateChildInputs` rejects — nil map, missing required, present-but-
+  null REQUIRED — implying a present-but-null OPTIONAL input is accepted and
+  passed through unchanged, but only the absent-optional case had a test
+  (`TestValidateChildInputs_AbsentOptionalIsFine`); the present-null-optional
+  shape (the model explicitly emitting `"dryRun": null` rather than omitting
+  the key) was unexercised. Traced the downstream consequence in
+  `Engine.TriggerWithDepartment` (`domain/engine/engine.go:377-393`): a
+  present-nil variable and an absent variable take the identical branch
+  (`!provided || val == nil`), so the child's own `Default` applies either way
+  — the two code paths (validateChildInputs's accept-and-pass-through, then
+  TriggerWithDepartment's present-nil-equals-absent) combine correctly today,
+  but nothing pinned it. Added
+  `TestValidateChildInputs_NullOptionalPassesThroughUnchanged`
+  (`domain/engine/child_input_contract_test.go`), asserting an optional input
+  present with an explicit `nil` satisfies the contract and the key survives
+  unchanged in the produced map; confirmed it fails for the right reason
+  (reports `dryRun` as a missing required input) when the `!f.Required`
+  short-circuit is temporarily removed from the required-fields loop, then
+  confirmed it passes against the real code. Reviewed the rest of area 11
+  against the wired-and-fed criteria: `childInputSchema`/`validateChildInputs`
+  are still called only from `Prepare` (confirmed unchanged since review 1),
+  `childInputPrompt`'s stability and `structuredOutputInstruction`'s JSON
+  marshaling (which sorts map keys, so the schema's property ordering was
+  never actually an instability risk despite living in a `map[string]any`) were
+  already covered by area 10's passes, and the five-category bar (happy,
+  success, failure, error, edge) was otherwise already met by the existing
+  suite. This closes review 2 approval for area 11.
+
 - [x] **`validateChildInputs`'s "no type coercion" invariant was untested.**
   Focus area 11 review 1. `domain/engine/child_input_contract.go:84-86`
   documents that a produced value is never type-checked or coerced against its
