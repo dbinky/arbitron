@@ -103,6 +103,47 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **Area 23 (batched child counts on enriched rows), review 2: independent
+  re-verification found no live gap.** Re-derived every checklist item from
+  source rather than trusting review 1's write-up. `go tool cover` (running
+  `TestEnricherChildCount`-prefixed tests) confirms `batchChildCounts` and
+  `SetSpawnLinks` are both at 100% statement coverage. Confirmed `Enrich` is
+  the ONLY production call site of `batchChildCounts`/the enricher's
+  `ChildVisibility` construction (grepped for `.Enrich(` across the whole
+  repo — `domain/engine/engine.go:572` is the sole non-test caller, invoked
+  from `ListEnriched` with the identical `ctx` that already authorized the
+  page via its own `listConstraint(ctx)` call), so the "same listConstraint
+  that authorized the page" claim holds by construction — both calls derive
+  from the same immutable `ctx` within one request, not from a value threaded
+  between them, so they cannot diverge. Confirmed `countingSpawnLinks`
+  (`domain/engine/enricher_child_count_test.go`) genuinely honours the
+  `ChildVisibility` argument rather than ignoring it (already noted by review
+  1, re-checked here), so the non-disclosure test
+  (`TestEnricherChildCount_InvisibleChildrenReportZero`) is unfailable-if-broken
+  by construction. Re-verified the composition-root wiring
+  (`cmd/arbitron/main.go:798`,
+  `instanceEnricher.SetSpawnLinks(instanceRepo)`) independently by temporarily
+  commenting out that line and re-running review 1's own
+  `TestEnricherChildCountE2E_ParentReportsRealChildCountThroughCompositionRoot`
+  (`cmd/arbitron/enricher_child_count_e2e_test.go`): confirmed it fails for the
+  right reason (`ChildCount` 0 instead of 1) with the wiring removed, then
+  confirmed it passes again once restored (`main.go` has no net diff after
+  this pass — `git diff --stat` is empty). Confirmed all five scenario
+  categories are present and each is a genuine (not over-mocked) test: happy
+  (`TestEnricherChildCount_StampsCountsOnRows`), success/batching
+  (`_OneBatchedCallPerPage`, `_PassesTheCallersServiceSetVisibility`,
+  `_AdminVisibilityIsUnconstrained`, `_InvisibleChildrenReportZero`),
+  failure/degradation (`_QueryFailureDegradesTheRowNotThePage`), and edge
+  (`_NoRepositoryWiredReportsZero`, `_EmptyPageTouchesNoRepository`,
+  `_NoIdentitySkipsCounting` — the last two proving the repository is never
+  touched without a real page or a real identity, matching the "never default
+  to unconstrained" contract). Ran the full `go test ./...`,
+  `npx tsc --noEmit`, and `npx vitest run`: no new failures beyond the
+  recorded baseline (the one pre-existing `adapter/config` failure is
+  unchanged; dashboard typecheck at 0 errors; vitest 464 passed, 0 failed).
+  This closes review 2 approval for area 23 — both approvals for area 23 are
+  now recorded.
+
 - [x] **`instanceEnricher.SetSpawnLinks(instanceRepo)`'s composition-root wiring
   had no test proving it through the real engine, unlike the identical seam
   already proven for `eng.SetSpawnLinks` (area 16 review 2) and
