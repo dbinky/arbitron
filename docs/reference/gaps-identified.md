@@ -48,20 +48,69 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **Verify the cascade produces an intervention record for every descendant,
+- [ ] **`cascadeCancel`'s "already-terminal child still descends into its own
+  active grandchildren" branch is completely uncovered.** Focus area 22
+  (cancel cascade). `domain/engine/cancel_cascade.go:67-71` — when
+  `cancelAuthorized` on a child returns `ErrCannotCancel` (already terminal),
+  the code deliberately still calls `e.cascadeCancel(ctx, childID, visited)`
+  rather than `continue`-ing past it, with the comment "still descend, since a
+  terminal child may have active grandchildren of its own." `go tool cover`
+  over the full `TestCancelCascade`-prefixed suite shows this exact statement
+  (line 70) at 0 hits, and deleting the recursive call entirely (replacing the
+  branch with a bare `continue`, keeping everything else identical) still
+  passes the ENTIRE suite — confirmed directly by temporarily editing the file
+  and re-running `go test ./domain/engine/... -run TestCancelCascade`, then
+  reverting. No existing fixture links an active child under an
+  already-terminal instance
+  (`TestCancelCascade_AlreadyTerminalChildIsSkippedNotFailed`'s `done` node has
+  no children of its own). Consequence: this is not a live bug today, but the
+  claim in the comment — the entire reason the "still descend" branch exists
+  instead of the simpler `continue` every other failure branch uses — is
+  currently unverified. A regression that deleted or short-circuited this
+  branch (e.g. "simplify" it down to match the other failure branch) would
+  ship undetected, silently orphaning any active descendant of an
+  already-completed/failed/cancelled spawn-linked node — plausible in
+  practice, since a fire-and-forget child can go terminal (e.g. complete)
+  while its own fire-and-forget grandchild is still running. Fix: add a test
+  with parent→child(terminal, e.g. `StateCompleted`)→grandchild(active) and
+  assert the grandchild ends `StateCancelled` and gets its own intervention
+  record, confirmed to fail for the right reason against a temporarily
+  `continue`-only version of the branch before passing against the real code.
+
+- [x] **Verify the cascade produces an intervention record for every descendant,
   scoped to the storage-failure case only.** `cascadeCancel` routes through
   `cancelAuthorized`, which calls `recordIntervention`; the "one intervention
   row per cancelled run across a deep tree" claim and the "authorization
   failure partway down the tree does not silently orphan the rest of the
-  traversal" claim are now both covered (the latter fixed this pass — see
-  `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch` under Fixed).
-  What remains unverified: `cascadeCancel`'s own `ListActiveChildren` failure
-  (a storage error listing one branch, `TestCancelCascade_StorageFailureStillReportsSuccess`)
-  only asserts the PARENT stays cancelled — it never asserts whether a sibling
-  branch's intervention records are still written, i.e. whether one branch's
-  storage error silently truncates unrelated branches' audit trail too. Confirm
-  with a test that a `ListActiveChildren` failure on one child's branch still
-  lets a SIBLING branch's descendants be cancelled and recorded.
+  traversal" claim were already covered (the latter fixed in a prior pass —
+  see `TestCancelCascade_AuthorizationFailureOnAChildHaltsThatBranch` under
+  Fixed). What remained unverified: `cascadeCancel`'s own `ListActiveChildren`
+  failure (a storage error listing one branch,
+  `TestCancelCascade_StorageFailureStillReportsSuccess`) only asserted the
+  PARENT stays cancelled — it never asserted whether a SIBLING branch's
+  intervention records are still written, i.e. whether one branch's storage
+  error silently truncates unrelated branches' audit trail too. Added
+  `TestCancelCascade_StorageFailureOnOneBranchDoesNotTruncateSiblingBranch`
+  (`domain/engine/cancel_cascade_test.go`), which links a parent to two
+  branches — `branchA` (whose OWN `ListActiveChildren` call fails) and
+  `branchB` (with its own live grandchild) — and asserts all four instances
+  (parent, branchA, branchB, grandchildB) end `StateCancelled` and all four
+  get intervention records (`c.interventions.count() == 4`). Confirmed this is
+  not a live bug: Go's call-stack semantics already scope the failure
+  correctly (the failing recursive call for `branchA` simply returns after
+  logging, which cannot affect the OUTER loop iterating over the parent's
+  other children) — moving the test's `for` loop to `break` instead of
+  `continue` on any error, or otherwise trying to construct a code path where
+  branchA's failure reaches branchB, was not possible without restructuring
+  the function into something no longer resembling straightforward recursion;
+  this matches the shape of several other "review 2: independent
+  re-verification found no live gap" entries below (areas 17, 18) where the
+  fix is closing a testing gap rather than a code change. While re-deriving
+  this branch's coverage, found a SEPARATE, more significant gap — the
+  "already-terminal child still descends into active grandchildren" branch is
+  entirely untested (logged above under Open, not fixed here to keep this pass
+  to one issue). This does not close review 1 approval for area 22: the newly
+  found gap above must close first.
 
 - [ ] **Three defensive branches in `OnChildTerminal` have no known reachable
   production caller and are untested.** Found while closing area 19 review 2

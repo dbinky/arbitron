@@ -315,6 +315,39 @@ func TestCancelCascade_StorageFailureStillReportsSuccess(t *testing.T) {
 	assert.Equal(t, instance.StateCancelled, c.stateOf(t, parent))
 }
 
+// A ListActiveChildren storage failure is scoped to the ONE branch it occurs
+// on: it must not truncate a SIBLING branch's cancellation or its audit
+// trail. branchA's own descendants are unreachable (branchA's OWN
+// ListActiveChildren call fails), but branchA itself is still cancelled
+// (cancelAuthorized on branchA runs BEFORE the cascade recurses into it and
+// hits the failing list call) and branchB's entire subtree — sibling to the
+// failure, sharing nothing but the same parent — is cancelled and recorded
+// exactly as if branchA had never failed.
+func TestCancelCascade_StorageFailureOnOneBranchDoesNotTruncateSiblingBranch(t *testing.T) {
+	c := newCascadeFixture(t)
+	parent := c.run(t, instance.StateRunning)
+	branchA := c.run(t, instance.StateRunning)
+	branchB := c.run(t, instance.StateRunning)
+	grandchildB := c.run(t, instance.StateRunning)
+	c.links.link(parent, branchA)
+	c.links.link(parent, branchB)
+	c.links.link(branchB, grandchildB)
+	c.links.listErr[branchA] = errors.New("db down listing branchA's children")
+
+	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
+
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, parent))
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, branchA),
+		"branchA's OWN cancellation happens before the failing list call, so it is still cancelled")
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, branchB),
+		"a storage error on branchA's branch must not stop branchB, an unrelated sibling, from being cancelled")
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, grandchildB),
+		"branchB's own descendants are unaffected by branchA's storage error")
+	assert.Equal(t, 4, c.interventions.count(),
+		"parent, branchA, branchB, and grandchildB must each get an audit record — "+
+			"branchA's storage error must not silently drop branchB's subtree from the audit trail")
+}
+
 // A department-lead actor (non-owner, non-admin) is authorized on the parent
 // by department but NOT on a child scoped to a DIFFERENT department — children
 // are NOT department-inherited from their parent (only ownership is; Department
