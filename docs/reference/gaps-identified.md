@@ -83,6 +83,35 @@ escalate** — never a tolerated no-op.
   to one issue). This does not close review 1 approval for area 22: the newly
   found gap above must close first.
 
+- [ ] **A dismissed child stays counted in `ChildCount` but disappears from its
+  parent's expanded row list, with no way to bring it back into view.**
+  `ChildCountsByParents` (`adapter/sqlite/instance_repo.go:592-611`) has no
+  concept of per-user dismissal — its `WHERE` clause is built purely from
+  `childVisibilityClause` (owner/department/public), matching the deliberate
+  domain/view split documented at `adapter/http/instance_handler.go:225`
+  ("dismissed" is HTTP/view state, intentionally not part of the domain
+  model). But `List`'s dismissed-set subtraction
+  (`adapter/http/instance_handler.go:444-457`, `isDismissed && !includeDismissed`
+  → `continue`) applies unconditionally, including when `filters.ParentScope ==
+  ParentScopeChildren`. The dashboard's only child-fetch call,
+  `useRunHierarchy.toggle` (`dashboard/src/hooks/useRunHierarchy.ts:66`,
+  `api.instances.list({ parent: id })`), never passes `includeDismissed`, so it
+  gets the default `false`. Net effect: a parent's expander can read
+  "2 children" (from `ChildCount`, dismissal-blind) while expanding shows only
+  1 row (the dismissed sibling silently subtracted) — and there is no
+  dashboard affordance to pass `includeDismissed=true` for a single expanded
+  level, so that child is permanently invisible via the hierarchy view once
+  dismissed (e.g. by a "Dismiss All" on an unrelated top-level sweep that
+  happened to catch it). Neither the spec nor any of the five phase designs
+  mention dismissal at all, so there is no documented intended behaviour to
+  wire against — this needs a product decision (e.g. "child fetches always
+  imply `includeDismissed=true`", or "a dismissed child should also be
+  subtracted from `ChildCount`") before it can be closed as a fix rather than
+  a guess. Found while closing area 24 review 1; the fix, if any, belongs to
+  area 27 (hook) or area 23/8 (count query), not area 24 itself — REST's own
+  `List`/`ListEnriched` wiring for the `parent` selector is otherwise correct
+  and this does not block area 24's own approval.
+
 - [ ] **Three defensive branches in `OnChildTerminal` have no known reachable
   production caller and are untested.** Found while closing area 19 review 2
   (`domain/engine/spawn_wake.go`): `go tool cover` shows the `ctx == nil`
