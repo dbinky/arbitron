@@ -13,16 +13,20 @@ RETURNING *;
 SELECT * FROM instances WHERE id = ?;
 
 -- name: ListInstances :many
--- Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
--- owned by them, OR public (when include_public), OR a department run in one of
--- their departments. An admin passes owner_id=NULL, include_public=0 (false),
--- and an empty departments array, in which case the guarded `unconstrained` arm
--- admits every row.
+-- NOTE: InstanceRepo.List assembles this statement in Go so the optional parent
+-- narrowing can be appended without a sqlc regeneration step. This definition
+-- is kept in lockstep as the readable source of truth for the RBAC clause.
 --
--- departments is a JSON array string (e.g. '["engineering","platform"]'); the
--- json_each subquery turns it into a membership test. Portable to Postgres as
--- `instances.department = ANY($departments)`.
-SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
+-- Disjunctive RBAC visibility filter: a caller sees a row when it is owned by
+-- them, OR public (when include_public), OR a department run in one of their
+-- departments. An admin passes owner_id=NULL, include_public=0, and an empty
+-- departments array, in which case the guarded `unconstrained` arm admits every
+-- row.
+--
+-- The parent narrowing (parent_instance_id IS NULL for roots-only, or
+-- parent_instance_id = ? for a specific parent) is appended as a further AND by
+-- the Go builder, so it can only NARROW the authorized set, never widen it.
+SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))

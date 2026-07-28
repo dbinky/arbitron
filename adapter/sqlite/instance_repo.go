@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/arbitron/arbitron/adapter/sqlite/generated"
@@ -141,112 +142,176 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 	return inst, nil
 }
 
+// List returns a page of instance summaries.
+//
+// The statement is assembled here rather than generated so the parent
+// narrowing can be appended without a sqlc regeneration step
+// (queries/instances.sql carries the matching source-of-truth SQL).
+//
+// SECURITY — the disjunctive RBAC visibility filter is preserved clause for
+// clause from the query this replaces: a caller sees a row when it is owned by
+// them, OR public (when IncludePublic), OR a department run in one of their
+// departments. "No narrowing supplied at all" means an ADMIN list and admits
+// every row; that is exactly the `unconstrained` arm the generated query
+// guarded. The parent predicate is appended as a further AND, so it can only
+// ever NARROW the authorized set — never widen it.
 func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 50
 	}
 
-	// Admin lists arrive with no owner/department/public narrowing; mark the
-	// query unconstrained so the disjunctive WHERE admits every row.
-	unconstrained := int64(0)
-	if filters.OwnerID == nil && len(filters.Departments) == 0 && !filters.IncludePublic {
-		unconstrained = 1
-	}
-	deptJSON := "[]"
-	if len(filters.Departments) > 0 {
-		b, err := json.Marshal(filters.Departments)
-		if err != nil {
-			return nil, fmt.Errorf("marshalling departments filter: %w", err)
-		}
-		deptJSON = string(b)
-	}
-	includePublic := int64(0)
-	if filters.IncludePublic {
-		includePublic = 1
-	}
+	var where []string
+	var args []any
 
-	params := generated.ListInstancesParams{
-		Limit:         int64(filters.Limit),
-		Offset:        int64(filters.Offset),
-		Unconstrained: unconstrained,
-		IncludePublic: includePublic,
-		Departments:   deptJSON,
-	}
 	if filters.State != nil {
-		params.State = string(*filters.State)
+		where = append(where, "state = ?")
+		args = append(args, string(*filters.State))
 	}
 	if filters.WorkflowName != nil {
-		params.WorkflowName = *filters.WorkflowName
+		where = append(where, "workflow_name = ?")
+		args = append(args, *filters.WorkflowName)
 	}
 	if filters.Since != nil {
-		params.Since = timeToString(*filters.Since)
-	}
-	if filters.OwnerID != nil {
-		params.OwnerID = uuidToString(*filters.OwnerID)
+		where = append(where, "created_at >= ?")
+		args = append(args, timeToString(*filters.Since))
 	}
 
-	rows, err := r.queries.ListInstances(ctx, params)
+	// Admin lists arrive with no owner/department/public narrowing at all; in
+	// that case no visibility clause is emitted and every row is admitted.
+	unconstrained := filters.OwnerID == nil && len(filters.Departments) == 0 && !filters.IncludePublic
+	if !unconstrained {
+		var ors []string
+		if filters.OwnerID != nil {
+			ors = append(ors, "owner_id = ?")
+			args = append(args, uuidToString(*filters.OwnerID))
+		}
+		if filters.IncludePublic {
+			ors = append(ors, "visibility = 'public'")
+		}
+		if len(filters.Departments) > 0 {
+			b, err := json.Marshal(filters.Departments)
+			if err != nil {
+				return nil, fmt.Errorf("marshalling departments filter: %w", err)
+			}
+			// json_each turns the JSON array into a membership test. Portable to
+			// Postgres as `instances.department = ANY($departments)`.
+			ors = append(ors, "(visibility = 'department' AND department IN (SELECT value FROM json_each(?)))")
+			args = append(args, string(b))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+
+	switch filters.ParentScope {
+	case instance.ParentScopeRoots:
+		where = append(where, "parent_instance_id IS NULL")
+	case instance.ParentScopeChildren:
+		if filters.ParentInstanceID == nil {
+			// A children scope with no parent id is a caller bug. Return an empty
+			// page rather than silently degrading to an unfiltered list.
+			return []instance.InstanceSummary{}, nil
+		}
+		where = append(where, "parent_instance_id = ?")
+		args = append(args, uuidToString(*filters.ParentInstanceID))
+	}
+
+	q := "SELECT " + instanceSummaryColumns + " FROM instances"
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, int64(filters.Limit), int64(filters.Offset))
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing instances: %w", err)
 	}
+	defer rows.Close()
 
-	summaries := make([]instance.InstanceSummary, len(rows))
-	for i, row := range rows {
-		id, err := parseUUID(row.ID)
+	summaries := []instance.InstanceSummary{}
+	for rows.Next() {
+		var (
+			idRaw, ownerRaw, workflowName, state, priority string
+			currentNodeID, failedNodeID                    sql.NullString
+			variablesRaw, snapshotRaw                      string
+			createdAtRaw, updatedAtRaw                     string
+			completedAtRaw, queuedAtRaw                    sql.NullString
+			department                                     sql.NullString
+			visibility, triggerSource                      string
+			scheduleIDRaw, parentIDRaw                     sql.NullString
+		)
+		if err := rows.Scan(
+			&idRaw, &ownerRaw, &workflowName, &state, &priority, &currentNodeID,
+			&failedNodeID, &variablesRaw, &snapshotRaw, &createdAtRaw, &updatedAtRaw,
+			&completedAtRaw, &queuedAtRaw, &department, &visibility, &triggerSource,
+			&scheduleIDRaw, &parentIDRaw,
+		); err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+
+		id, err := parseUUID(idRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		ownerID, err := parseUUID(row.OwnerID)
+		ownerID, err := parseUUID(ownerRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		createdAt, err := parseTime(row.CreatedAt)
+		createdAt, err := parseTime(createdAtRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		updatedAt, err := parseTime(row.UpdatedAt)
+		updatedAt, err := parseTime(updatedAtRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		completedAt, err := nullStringToTimePtr(row.CompletedAt)
+		completedAt, err := nullStringToTimePtr(completedAtRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		queuedAt, err := nullStringToTimePtr(row.QueuedAt)
+		queuedAt, err := nullStringToTimePtr(queuedAtRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		scheduleID, err := nullStringToScheduleID(row.ScheduleID)
+		scheduleID, err := nullStringToScheduleID(scheduleIDRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: %w", err)
 		}
-		variables, err := fromJSONString(row.Variables)
+		parentID, err := nullStringToParentID(parentIDRaw)
+		if err != nil {
+			return nil, fmt.Errorf("listing instances: %w", err)
+		}
+		variables, err := fromJSONString(variablesRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: unmarshalling variables: %w", err)
 		}
-		snapshot, err := fromJSONString(row.WorkflowSnapshot)
+		snapshot, err := fromJSONString(snapshotRaw)
 		if err != nil {
 			return nil, fmt.Errorf("listing instances: unmarshalling workflow snapshot: %w", err)
 		}
-		summaries[i] = instance.InstanceSummary{
+
+		summaries = append(summaries, instance.InstanceSummary{
 			ID:               id,
 			OwnerID:          ownerID,
-			WorkflowName:     row.WorkflowName,
-			State:            instance.State(row.State),
-			Priority:         instance.Priority(row.Priority),
-			Department:       nullStringToString(row.Department),
-			Visibility:       instance.Visibility(row.Visibility),
-			CurrentNodeID:    nullStringToPtr(row.CurrentNodeID),
-			FailedNodeID:     nullStringToPtr(row.FailedNodeID),
+			WorkflowName:     workflowName,
+			State:            instance.State(state),
+			Priority:         instance.Priority(priority),
+			Department:       nullStringToString(department),
+			Visibility:       instance.Visibility(visibility),
+			CurrentNodeID:    nullStringToPtr(currentNodeID),
+			FailedNodeID:     nullStringToPtr(failedNodeID),
 			Variables:        variables,
 			WorkflowSnapshot: snapshot,
 			CreatedAt:        createdAt,
 			UpdatedAt:        updatedAt,
 			CompletedAt:      completedAt,
 			QueuedAt:         queuedAt,
-			TriggerSource:    instance.TriggerSource(row.TriggerSource),
+			TriggerSource:    instance.TriggerSource(triggerSource),
 			ScheduleID:       scheduleID,
-		}
+			ParentInstanceID: parentID,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing instances: %w", err)
 	}
 	return summaries, nil
 }

@@ -23,6 +23,14 @@ const instanceColumnsWithLink = `id, owner_id, workflow_name, workflow_snapshot,
 	`webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, ` +
 	`parent_instance_id, parent_node_id, spawn_mode`
 
+// instanceSummaryColumns is the explicit column list for the LEAN list
+// projection. It is the column set the generated ListInstances query selected,
+// plus parent_instance_id so the hierarchy read needs no per-row load. Full
+// blobs (original_variables, webhook fields) stay out of the page on purpose.
+const instanceSummaryColumns = `id, owner_id, workflow_name, state, priority, current_node_id, ` +
+	`failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, ` +
+	`queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id`
+
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
 type rowScanner interface {
 	Scan(dest ...any) error

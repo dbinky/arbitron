@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `adapter/sqlite/instance_repo_parent_scope_test.go`:
 
@@ -252,7 +252,7 @@ func TestList_DepartmentDisjunctionStillApplies(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -269,7 +269,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/adapter/sqlite	0.4s
 ```
 
-- [ ] **Step 3: Add the summary column list**
+- [x] **Step 3: Add the summary column list**
 
 Append to `adapter/sqlite/instance_spawn_rows.go`:
 
@@ -283,7 +283,7 @@ const instanceSummaryColumns = `id, owner_id, workflow_name, state, priority, cu
 	`queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id`
 ```
 
-- [ ] **Step 4: Rewrite `List`**
+- [x] **Step 4: Rewrite `List`**
 
 Replace the whole `List` method in `adapter/sqlite/instance_repo.go` (lines 109-221) with:
 
@@ -481,7 +481,7 @@ import (
 )
 ```
 
-- [ ] **Step 5: Keep `queries/instances.sql` in lockstep**
+- [x] **Step 5: Keep `queries/instances.sql` in lockstep**
 
 Replace the `-- name: ListInstances :many` block (lines 9-33) of `adapter/sqlite/queries/instances.sql` with:
 
@@ -517,7 +517,7 @@ ORDER BY created_at DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -542,7 +542,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.6s
 ```
 
-- [ ] **Step 7: Run the existing visibility regression suites (they cover the clause just rewritten)**
+- [x] **Step 7: Run the existing visibility regression suites (they cover the clause just rewritten)**
 
 ```bash
 go test ./adapter/sqlite/ ./adapter/http/ ./adapter/mcp/ ./domain/engine/
@@ -552,7 +552,7 @@ Expected: `ok` for all four packages — in particular
 `adapter/sqlite/instance_repo_list_visibility_test.go` and
 `adapter/sqlite/instance_repo_visibility_test.go` must still pass unchanged.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add adapter/sqlite/instance_repo.go adapter/sqlite/instance_spawn_rows.go adapter/sqlite/queries/instances.sql adapter/sqlite/instance_repo_parent_scope_test.go
