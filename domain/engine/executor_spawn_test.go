@@ -49,12 +49,20 @@ type fakeChildSpawner struct {
 	spawnErr         error
 	spawned          []engine.SpawnRequest
 	spawnedIdentity  []identity.Identity
+	inputsIdentity   []identity.Identity
 	nextID           uuid.UUID
 	// onSpawn, when set, is invoked at the start of Spawn. Test-only ordering probe.
 	onSpawn func()
 }
 
-func (s *fakeChildSpawner) ChildInputs(_ context.Context, workflowName string) ([]workflow.InputField, error) {
+// ChildInputs records the IDENTITY carried on ctx, not just the workflow name:
+// production's Engine.ChildInputs derives its owner and department-visibility
+// filter from ctx (domain/engine/engine_spawn.go:28-32), so a fake that
+// ignored ctx here would let a regression that passed the ambient caller's
+// context instead of the reconstructed owner's context go undetected.
+func (s *fakeChildSpawner) ChildInputs(ctx context.Context, workflowName string) ([]workflow.InputField, error) {
+	id, _ := identity.FromContext(ctx)
+	s.inputsIdentity = append(s.inputsIdentity, id)
 	if s.inputsErr != nil {
 		return nil, s.inputsErr
 	}
@@ -233,6 +241,30 @@ func TestSpawnExecutor_ChildOwnerIsParentOwnerNotAmbientIdentity(t *testing.T) {
 	assert.Equal(t, f.ownerID, f.spawner.spawnedIdentity[0].UserID,
 		"the spawn must run under the parent owner's identity, not the ambient one")
 	assert.NotEqual(t, intruder, f.spawner.spawnedIdentity[0].UserID)
+}
+
+// ChildInputs is called BEFORE Spawn in prepareAndSpawn, and it is the call
+// that decides whether the parent's owner can even see the child workflow
+// (Engine.ChildInputs gates on ctx's identity — area 13). A regression that
+// passed the executor's raw incoming ctx (the AMBIENT caller identity) instead
+// of the reconstructed childCtx to spawner.ChildInputs would silently widen or
+// narrow which child workflows resolve, with no other test catching it, since
+// TestSpawnExecutor_ChildOwnerIsParentOwnerNotAmbientIdentity only inspects the
+// identity reaching Spawn.
+func TestSpawnExecutor_ChildInputsCallCarriesOwnerIdentityNotAmbient(t *testing.T) {
+	f := newSpawnExecFixture(t)
+	intruder := uuid.New()
+
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: intruder, Role: "admin"})
+	ctx = engine.ContextWithInstanceID(ctx, f.parentID)
+
+	_, err := f.exec.Execute(ctx, ffNode("child"), variable.NewStore(), "parent")
+	require.NoError(t, err)
+
+	require.Len(t, f.spawner.inputsIdentity, 1)
+	assert.Equal(t, f.ownerID, f.spawner.inputsIdentity[0].UserID,
+		"ChildInputs must be resolved under the PARENT INSTANCE's owner identity")
+	assert.NotEqual(t, intruder, f.spawner.inputsIdentity[0].UserID)
 }
 
 // The reconstructed identity carries the owner's DEPARTMENTS so a

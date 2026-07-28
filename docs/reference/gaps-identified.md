@@ -76,6 +76,53 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`fakeChildSpawner.ChildInputs` ignored `ctx`, so no test proved the
+  executor passes the reconstructed OWNER identity — not the ambient caller
+  identity — into `ChildInputs`.** Focus area 15 review 1.
+  `domain/engine/executor_spawn.go:219-223` (`prepareAndSpawn`) builds
+  `childCtx := identity.WithIdentity(ctx, ownerIdentity)` and calls
+  `e.spawner.ChildInputs(childCtx, ...)` — and production's
+  `Engine.ChildInputs` (`domain/engine/engine_spawn.go:24-37`) genuinely
+  depends on that context: it derives the owner via `triggerOwner(ctx, ...)`
+  and gates the department-visibility read via
+  `e.sharedVisibilityFilter(ctx)`, exactly like the trigger path. But
+  `executor_spawn_test.go`'s `fakeChildSpawner.ChildInputs` had signature
+  `ChildInputs(_ context.Context, workflowName string)` — the identity
+  parameter was discarded outright — so a regression that passed the raw
+  incoming `ctx` (the caller's own identity, e.g. an intruder admin triggering
+  the parent) instead of `childCtx` to `spawner.ChildInputs` would have shipped
+  undetected: `TestSpawnExecutor_ChildOwnerIsParentOwnerNotAmbientIdentity`
+  only inspects the identity that reaches `Spawn`, never the one that reaches
+  `ChildInputs`, and no other test in the suite calls `ChildInputs` through the
+  executor with a distinguishable ambient identity. The consequence of such a
+  regression: a spawn node could silently read a DIFFERENT owner's
+  department-scoped child-workflow visibility than the one it will actually
+  spawn under, an existence-leak/authorization-narrowing bug in the same shape
+  already fixed repeatedly in this loop (areas 12, 13, 14) — a shared contract
+  proven at one call site (`Spawn`) and silently assumed at a sibling one
+  (`ChildInputs`) despite both being fed by the SAME `childCtx` value one line
+  apart. Extended `fakeChildSpawner` with an `inputsIdentity
+  []identity.Identity` field, recording `identity.FromContext(ctx)` on every
+  `ChildInputs` call (`domain/engine/executor_spawn_test.go`), and added
+  `TestSpawnExecutor_ChildInputsCallCarriesOwnerIdentityNotAmbient`, which runs
+  the executor with an intruder identity in the ambient context and asserts
+  `ChildInputs` was called with the PARENT OWNER's identity, not the
+  intruder's; confirmed it fails for the right reason (asserts the intruder's
+  id where the owner's was expected) when `childCtx` is temporarily replaced
+  with the raw `ctx` at the `ChildInputs` call site, then confirmed it passes
+  against the real code. Reviewed the rest of area 15's checklist
+  independently: `Execute`'s mode re-check against the snapshot is fully
+  covered (`TestSpawnExecutor_UnrecognizedSnapshotMode_Fails`,
+  `_EmptySnapshotMode_Fails`); `prepareAndSpawn`'s ordering (parent load →
+  identity → child inputs → guidance read+`variable.Resolve` → prepare →
+  spawn) is enforced by Go's own sequential control flow and pinned end-to-end
+  by the existing failure/error-category tests (a failure at any stage leaves
+  `spawner.spawned` empty); `go tool cover` shows
+  `executeFireAndForget`/`prepareAndSpawn`/`spawnOutput` at 100% statement
+  coverage; and the executor is constructed only at the real composition root
+  (`cmd/arbitron/main.go:894-903`) with no `nil`/hardcoded collaborator. This
+  closes review 1 approval for area 15; review 2 remains open.
+
 - [x] **`sharedVisibilityFilter`'s error-propagation branch was only pinned
   through `Trigger`, not through `ChildInputs`.** Focus area 14 review 2.
   `sharedVisibilityFilter`'s docstring and review 1's fix establish that
