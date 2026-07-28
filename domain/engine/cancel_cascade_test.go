@@ -17,11 +17,20 @@ import (
 // ListActiveChildren HONOURS the parent id AND the child's current state — a
 // fake that returned every child regardless of state would make the
 // "already-terminal child is skipped" test unfailable.
+//
+// unfiltered disables that state check, making ListActiveChildren keep
+// returning a link even after the linked instance has gone terminal — the
+// shape of a corrupt or hand-edited row, or a race where a node hasn't yet
+// recorded its terminal transition. It exists so a cycle test can prove the
+// visited-set guard itself halts the traversal, rather than benefiting from
+// the coincidence that cancelAuthorized always makes a node terminal (hence
+// filtered out) before it could ever be re-listed.
 type fakeSpawnLinks struct {
-	mu       sync.Mutex
-	children map[uuid.UUID][]uuid.UUID
-	states   func(uuid.UUID) instance.State
-	listErr  map[uuid.UUID]error
+	mu         sync.Mutex
+	children   map[uuid.UUID][]uuid.UUID
+	states     func(uuid.UUID) instance.State
+	listErr    map[uuid.UUID]error
+	unfiltered bool
 }
 
 func newFakeSpawnLinks(states func(uuid.UUID) instance.State) *fakeSpawnLinks {
@@ -46,7 +55,7 @@ func (f *fakeSpawnLinks) ListActiveChildren(_ context.Context, parentID uuid.UUI
 	}
 	out := []uuid.UUID{}
 	for _, c := range f.children[parentID] {
-		if !f.states(c).IsTerminal() {
+		if f.unfiltered || !f.states(c).IsTerminal() {
 			out = append(out, c)
 		}
 	}
@@ -408,4 +417,50 @@ func TestCancelCascade_MutualLinkCycleHaltsTraversal(t *testing.T) {
 	require.NoError(t, c.f.engine.Cancel(c.ctx, a))
 	assert.Equal(t, instance.StateCancelled, c.stateOf(t, a))
 	assert.Equal(t, instance.StateCancelled, c.stateOf(t, b))
+}
+
+// The two tests above pass today, but they pass for the WRONG reason:
+// cancelAuthorized transitions each instance to a terminal state before the
+// recursive call that would re-list it, and ListActiveChildren filters out
+// terminal instances — so the cycle "halts" because the terminal filter
+// already dropped the node from the list, not because the visited-set guard's
+// own `if visited[childID] { continue }` branch ever fired. These two tests
+// set `unfiltered: true` so ListActiveChildren keeps returning an
+// already-cancelled node as if it were still active — the shape of a corrupt
+// or hand-edited link row — removing that coincidental protection so the
+// guard itself has to do the work. The intervention count pins it precisely:
+// a second `cancelAuthorized` call on an already-terminal node would still
+// return ErrCannotCancel and keep recursing without ever failing an
+// assertion, so only the exact count (not just "ends cancelled") proves the
+// traversal stopped rather than looped.
+func TestCancelCascade_VisitedGuardHaltsSelfReferentialCycleWithoutStateCoincidence(t *testing.T) {
+	c := newCascadeFixture(t)
+	c.links.unfiltered = true
+	parent := c.run(t, instance.StateRunning)
+	c.links.link(parent, parent)
+
+	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
+
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, parent))
+	assert.Equal(t, 1, c.interventions.count(),
+		"cancelAuthorized must be invoked exactly once; a repeat invocation means "+
+			"the visited map, not the terminal-state filter, failed to halt the cycle")
+}
+
+func TestCancelCascade_VisitedGuardHaltsMutualCycleWithoutStateCoincidence(t *testing.T) {
+	c := newCascadeFixture(t)
+	c.links.unfiltered = true
+	a := c.run(t, instance.StateRunning)
+	b := c.run(t, instance.StateRunning)
+	c.links.link(a, b)
+	c.links.link(b, a)
+
+	require.NoError(t, c.f.engine.Cancel(c.ctx, a))
+
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, a))
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, b))
+	assert.Equal(t, 2, c.interventions.count(),
+		"cancelAuthorized must be invoked exactly once per instance; a repeat "+
+			"invocation on either node means the visited map, not the "+
+			"terminal-state filter, failed to halt the cycle")
 }

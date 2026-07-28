@@ -48,36 +48,6 @@ escalate** — never a tolerated no-op.
   not a guarantee, and a false positive here would fail a parent that is waiting
   correctly.
 
-- [ ] **`cascadeCancel`'s visited-set cycle guard (`domain/engine/cancel_cascade.go:61-63`,
-  `if visited[childID] { continue }`) is never actually exercised by either test
-  that claims to prove it.** Found while reviewing area 22 (cancel cascade).
-  `TestCancelCascade_SelfReferentialLinkHaltsTraversal` and
-  `_MutualLinkCycleHaltsTraversal` both pass today, but instrumenting the
-  already-visited branch with a print statement and re-running them shows it is
-  hit ZERO times by either test. The real reason both "halt" is a DIFFERENT
-  mechanism: `cancelAuthorized` transitions each instance to `StateCancelled`
-  (terminal) BEFORE the recursive `cascadeCancel` call that would re-list it,
-  and the fake's `ListActiveChildren` (matching the real SQLite query's
-  presumed shape) filters out terminal instances — so by the time a cycle would
-  re-visit an already-cancelled node, that node no longer appears in
-  `ListActiveChildren`'s result at all, and the loop body (including the
-  `visited` check) is never reached for it a second time. The `visited` map is
-  therefore currently PROVEN REDUNDANT by these two tests, not proven
-  load-bearing — the doc comment's claim ("makes corrupt or hand-edited link
-  data degrade into a halted traversal") is unverified for the one case where it
-  would actually matter: a cycle or reconvergence involving a node that has NOT
-  yet been transitioned to terminal at the time it is re-reached (e.g. two
-  cancel-cascade branches racing to reach a shared descendant before either has
-  transitioned it, if the domain model ever allowed a child to be reachable
-  from two parents, or a corrupt row pointing a child back to a
-  not-yet-cancelled ancestor). Since the link graph is single-parent by
-  construction, this may be genuinely unreachable — but that must be
-  demonstrated by a test that removes the state-based coincidental protection
-  (e.g. injects a still-non-terminal node into a cycle) rather than assumed.
-  Not fixed in this pass to keep the pass to one issue (the authorization-branch
-  fix below); the guard itself is unchanged and still present, so there is no
-  regression — only an existing test-coverage claim now known to be false.
-
 - [ ] **Verify the cascade produces an intervention record for every descendant,
   scoped to the storage-failure case only.** `cascadeCancel` routes through
   `cancelAuthorized`, which calls `recordIntervention`; the "one intervention
@@ -112,6 +82,37 @@ escalate** — never a tolerated no-op.
 ---
 
 ## Fixed
+
+- [x] **`cascadeCancel`'s visited-set cycle guard (`domain/engine/cancel_cascade.go:61-63`,
+  `if visited[childID] { continue }`) was never actually exercised by either
+  test that claimed to prove it.** Focus area 22 (cancel cascade), review 1
+  (continued from the authorization-branch fix below, deliberately deferred to
+  keep that pass to one issue). `TestCancelCascade_SelfReferentialLinkHaltsTraversal`
+  and `_MutualLinkCycleHaltsTraversal` both passed, but instrumenting the
+  already-visited branch showed it was hit ZERO times by either: `cancelAuthorized`
+  transitions each instance to `StateCancelled` (terminal) BEFORE the recursive
+  `cascadeCancel` call that would re-list it, and the fake's `ListActiveChildren`
+  filters out terminal instances — so a cycle "halted" because the terminal
+  filter had already dropped the node from the list, not because the `visited`
+  check ever fired. The map was PROVEN REDUNDANT by these two tests, not proven
+  load-bearing. Added an `unfiltered` field to `fakeSpawnLinks`
+  (`domain/engine/cancel_cascade_test.go`) that skips the terminal-state filter
+  in `ListActiveChildren`, simulating a corrupt/hand-edited link row that keeps
+  reporting an already-cancelled node as active, and two new tests —
+  `TestCancelCascade_VisitedGuardHaltsSelfReferentialCycleWithoutStateCoincidence`
+  and `_MutualCycleWithoutStateCoincidence` — that reuse the self-referential
+  and mutual-cycle fixtures with `unfiltered: true` and assert the exact
+  intervention count (1 and 2 respectively), which only holds if `cancelAuthorized`
+  is invoked exactly once per node; a second invocation (the guard failing to
+  halt) would still return `ErrCannotCancel` and keep recursing without ever
+  failing a looser "ends cancelled" assertion, so the exact count is what makes
+  the test meaningful. Confirmed both fail for the right reason — an unbounded
+  recursion that blows the goroutine stack rather than returning — when the
+  `visited[childID]` check is temporarily replaced with `false && visited[childID]`,
+  then confirmed both pass against the real code. This closes the guard
+  half of area 22's checklist; review 1 approval is still not recorded this
+  pass because the sibling gap below (intervention records for a storage-failure
+  sibling branch) remains open.
 
 - [x] **`cascadeCancel` recursed into a child's descendants even when that child
   itself failed cancellation for a REAL reason (authorization denied, not-found,
