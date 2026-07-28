@@ -88,6 +88,25 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`FindChildBySpawnNode`'s newest-child tie-break was untested.**
+  Focus area 5 review 1. `adapter/sqlite/instance_repo.go:690-697` documents
+  `ORDER BY created_at DESC, rowid DESC LIMIT 1` as deliberate: a node-level
+  retry can leave more than one child row for the same (parent, node, mode)
+  key, and the newest must answer. But `created_at` is `strftime('%Y-%m-%dT
+  %H:%M:%SZ')` — second resolution (migration `001_initial_schema.up.sql:8`)
+  — so two children created back-to-back in a retry (or in any fast test)
+  land on an identical timestamp; `rowid DESC` was the ONLY thing breaking the
+  tie, and no test exercised the multiple-children case at all. A regression
+  that dropped or reversed the tie-break would have shipped silently and made
+  the executor's resumption short-circuit (`FindChildBySpawnNode` is consulted
+  by area 18) key on the wrong child. Added
+  `TestFindChildBySpawnNode_MultipleChildrenReturnsTheNewest`
+  (`adapter/sqlite/instance_spawn_wait_test.go`), which creates a stale child
+  then a newest child under the same key and asserts the newest one answers;
+  confirmed it fails (returns the stale child) when the ordering is reversed
+  to `ASC, rowid ASC`, then confirmed the real ordering passes it. This closes
+  the "edge" category gap for area 5 — review 1 approval.
+
 - [x] **`assertBindingKind`'s unmapped-type no-op was only verified indirectly.**
   Focus area 3 requires verifying that an UNMAPPED node type really would no-op
   `assertBindingKind`, but the existing coverage

@@ -106,6 +106,33 @@ func TestFindChildBySpawnNode_TerminalChildIsReturnedWithItsState(t *testing.T) 
 	}
 }
 
+// A node-level retry after a partially failed suspension can leave more than
+// one child row for the same (parent, node, mode) key. created_at has only
+// second resolution (strftime %S, migration 001), so two children created
+// within the same test — as a real retry typically is — land on an identical
+// timestamp; rowid DESC is the ONLY thing that breaks the tie. Without this
+// test, dropping that tie-break (or reversing it) would silently make the
+// executor's resumption short-circuit key on the WRONG child and no test
+// would fail.
+func TestFindChildBySpawnNode_MultipleChildrenReturnsTheNewest(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	owner := uuid.MustParse(spawnTestOwner)
+
+	parent := waitingParent(t, repo, "spawn-1")
+	stale := childOf(t, repo, parent, "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateFailed, owner, instance.VisibilityPrivate, "")
+	newest := childOf(t, repo, parent, "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateRunning, owner, instance.VisibilityPrivate, "")
+
+	got, err := repo.FindChildBySpawnNode(context.Background(), parent, "spawn-1", instance.SpawnModeWaitForChild)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, newest, got.ChildID, "the retry's newest child must answer, not the stale one")
+	assert.NotEqual(t, stale, got.ChildID)
+	assert.Equal(t, instance.StateRunning, got.ChildState)
+}
+
 func TestFindChildBySpawnNode_StorageFailureErrors(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewInstanceRepo(db.DB)
