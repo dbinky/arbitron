@@ -278,6 +278,18 @@ type ListFilters struct {
 	// request input, or a non-admin could widen scope to other departments.
 	Departments   []string
 	IncludePublic bool
+	// Unconstrained is the EXPLICIT admin assertion: "this caller may see every
+	// row, and I have checked". It is the only thing that turns off the
+	// visibility predicate.
+	//
+	// SECURITY: it exists because "no narrowing supplied" is ambiguous — it is
+	// equally the shape of an admin list and of a caller whose scope was never
+	// computed (a missing identity, a handler that forgot to route through the
+	// service). Inferring admin from the absence of a filter made the second
+	// case return the full table. Like OwnerID/Departments/IncludePublic this is
+	// SERVICE-SET, by ListInstances/ListEnriched from listConstraint, and must
+	// never be set from request input.
+	Unconstrained bool
 	// ParentScope narrows the list by position in the spawn hierarchy: unset
 	// (no narrowing), roots-only, or the children of ParentInstanceID.
 	//

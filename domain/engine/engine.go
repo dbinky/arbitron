@@ -526,18 +526,31 @@ func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters
 	if !ok {
 		return nil, instance.ErrNotFound // no identity: reveal nothing
 	}
+	return e.instances.List(ctx, applyListConstraint(filters, lc))
+}
+
+// applyListConstraint overwrites every visibility field on filters from the
+// service-derived scope, discarding whatever the caller supplied.
+//
+// The admin arm sets Unconstrained EXPLICITLY rather than clearing the
+// narrowing and letting the repository infer "no filters means admin". That
+// inference was the divergence: the repository's List read a scope-less filter
+// set as an admin list and returned the full table, while the identical input
+// to childVisibilityClause was read as "no scope" and returned nothing. One of
+// those two is a data leak, and it is not the fail-closed one.
+func applyListConstraint(filters instance.ListFilters, lc listFilter) instance.ListFilters {
 	if lc.Unconstrained {
-		// Admin: clear any visibility narrowing so the repo returns all rows.
+		filters.Unconstrained = true
 		filters.OwnerID = nil
 		filters.Departments = nil
 		filters.IncludePublic = false
-		return e.instances.List(ctx, filters)
+		return filters
 	}
-	// Non-admin: service-set the disjunction; ignore any caller-supplied values.
+	filters.Unconstrained = false
 	filters.OwnerID = lc.OwnerID
 	filters.Departments = lc.Departments
 	filters.IncludePublic = lc.IncludePublic
-	return e.instances.List(ctx, filters)
+	return filters
 }
 
 // ListEnriched returns the instances visible to the caller with the additive
@@ -552,16 +565,7 @@ func (e *Engine) ListEnriched(ctx context.Context, filters instance.ListFilters)
 	if !ok {
 		return nil, instance.ErrNotFound
 	}
-	if lc.Unconstrained {
-		filters.OwnerID = nil
-		filters.Departments = nil
-		filters.IncludePublic = false
-	} else {
-		filters.OwnerID = lc.OwnerID
-		filters.Departments = lc.Departments
-		filters.IncludePublic = lc.IncludePublic
-	}
-	summaries, err := e.instances.List(ctx, filters)
+	summaries, err := e.instances.List(ctx, applyListConstraint(filters, lc))
 	if err != nil {
 		return nil, err
 	}

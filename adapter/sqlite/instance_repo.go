@@ -148,13 +148,14 @@ func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instanc
 // narrowing can be appended without a sqlc regeneration step
 // (queries/instances.sql carries the matching source-of-truth SQL).
 //
-// SECURITY — the disjunctive RBAC visibility filter is preserved clause for
-// clause from the query this replaces: a caller sees a row when it is owned by
-// them, OR public (when IncludePublic), OR a department run in one of their
-// departments. "No narrowing supplied at all" means an ADMIN list and admits
-// every row; that is exactly the `unconstrained` arm the generated query
-// guarded. The parent predicate is appended as a further AND, so it can only
-// ever NARROW the authorized set — never widen it.
+// SECURITY — the disjunctive RBAC visibility filter comes from the ONE shared
+// visibilityPredicate, the same one the child-count query uses: a caller sees a
+// row when it is owned by them, OR public (when IncludePublic), OR a department
+// run in one of their departments. It FAILS CLOSED — admitting every row
+// requires filters.Unconstrained, the explicit admin assertion service-set by
+// ListInstances/ListEnriched; "no narrowing supplied at all" now yields nothing
+// rather than the full table. The parent predicate is appended as a further
+// AND, so it can only ever NARROW the authorized set — never widen it.
 func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) ([]instance.InstanceSummary, error) {
 	if filters.Limit <= 0 {
 		filters.Limit = 50
@@ -176,30 +177,20 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		args = append(args, timeToString(*filters.Since))
 	}
 
-	// Admin lists arrive with no owner/department/public narrowing at all; in
-	// that case no visibility clause is emitted and every row is admitted.
-	unconstrained := filters.OwnerID == nil && len(filters.Departments) == 0 && !filters.IncludePublic
-	if !unconstrained {
-		var ors []string
-		if filters.OwnerID != nil {
-			ors = append(ors, "owner_id = ?")
-			args = append(args, uuidToString(*filters.OwnerID))
-		}
-		if filters.IncludePublic {
-			ors = append(ors, "visibility = 'public'")
-		}
-		if len(filters.Departments) > 0 {
-			b, err := json.Marshal(filters.Departments)
-			if err != nil {
-				return nil, fmt.Errorf("marshalling departments filter: %w", err)
-			}
-			// json_each turns the JSON array into a membership test. Portable to
-			// Postgres as `instances.department = ANY($departments)`.
-			ors = append(ors, "(visibility = 'department' AND department IN (SELECT value FROM json_each(?)))")
-			args = append(args, string(b))
-		}
-		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	// THE SAME predicate the child-count query applies, over the same
+	// service-set scope. Admission of every row requires filters.Unconstrained —
+	// the explicit admin assertion — never the mere absence of a narrowing.
+	visClause, visArgs, err := visibilityPredicate(instance.ChildVisibility{
+		Unconstrained: filters.Unconstrained,
+		OwnerID:       filters.OwnerID,
+		Departments:   filters.Departments,
+		IncludePublic: filters.IncludePublic,
+	}, "")
+	if err != nil {
+		return nil, err
 	}
+	where = append(where, visClause)
+	args = append(args, visArgs...)
 
 	switch filters.ParentScope {
 	case instance.ParentScopeRoots:
@@ -544,39 +535,54 @@ func (r *InstanceRepo) CountActiveByWorkflowID(ctx context.Context, workflowID u
 	return n, nil
 }
 
-// childVisibilityClause renders the caller's service-set visibility scope as a
-// SQL predicate over the CHILD row, plus its bound arguments.
+// visibilityPredicate renders a caller's service-set visibility scope as a SQL
+// predicate, plus its bound arguments. alias is the table alias to qualify the
+// columns with ("c" for the child-count join, "" for a bare single-table
+// query).
 //
-// It is the same disjunction List applies. Reusing the caller's already-computed
-// scope (rather than re-deriving one) is what makes the child count
-// post-authorization: a count that included children the caller cannot see
-// would render an expander whose expansion yields an empty list, leaking the
-// existence of runs the caller may not view.
+// THIS IS THE ONE VISIBILITY PREDICATE. It is shared by List and by
+// ChildCountsByParents because those two previously read the SAME input in
+// OPPOSITE directions: List treated "no scope at all" as an admin list and
+// returned the whole table, while the child-count clause treated it as "no
+// authority" and returned nothing. Only a caller invariant — written down
+// nowhere — kept the first from being a data leak.
 //
-// An admin (Unconstrained) yields "1=1". A non-admin with NO scope at all
-// yields "0=1" — fail closed, count nothing — rather than admitting every row.
-func childVisibilityClause(vis instance.ChildVisibility) (string, []any, error) {
+// It FAILS CLOSED. Admission of every row requires the EXPLICIT Unconstrained
+// assertion, which only listConstraint sets, and only for an admin. Absence of
+// a scope is absence of authority and yields "0=1".
+func visibilityPredicate(vis instance.ChildVisibility, alias string) (string, []any, error) {
 	if vis.Unconstrained {
 		return "1=1", nil, nil
+	}
+	col := func(name string) string {
+		if alias == "" {
+			return name
+		}
+		return alias + "." + name
 	}
 	var ors []string
 	var args []any
 	if vis.OwnerID != nil {
-		ors = append(ors, "c.owner_id = ?")
+		ors = append(ors, col("owner_id")+" = ?")
 		args = append(args, uuidToString(*vis.OwnerID))
 	}
 	if vis.IncludePublic {
-		ors = append(ors, "c.visibility = 'public'")
+		ors = append(ors, col("visibility")+" = 'public'")
 	}
 	if len(vis.Departments) > 0 {
 		b, err := json.Marshal(vis.Departments)
 		if err != nil {
-			return "", nil, fmt.Errorf("marshalling child visibility departments: %w", err)
+			return "", nil, fmt.Errorf("marshalling visibility departments: %w", err)
 		}
-		ors = append(ors, "(c.visibility = 'department' AND c.department IN (SELECT value FROM json_each(?)))")
+		// json_each turns the JSON array into a membership test. Portable to
+		// Postgres as `department = ANY($departments)`.
+		ors = append(ors, "("+col("visibility")+" = 'department' AND "+col("department")+" IN (SELECT value FROM json_each(?)))")
 		args = append(args, string(b))
 	}
 	if len(ors) == 0 {
+		// No owner, no departments, no public, and no admin assertion: this
+		// caller has no authority to list anything. Admitting every row here was
+		// the divergence this function exists to close.
 		return "0=1", nil, nil
 	}
 	return "(" + strings.Join(ors, " OR ") + ")", args, nil
@@ -595,7 +601,7 @@ func (r *InstanceRepo) ChildCountsByParents(ctx context.Context, parentIDs []uui
 		return out, nil
 	}
 
-	visClause, visArgs, err := childVisibilityClause(vis)
+	visClause, visArgs, err := visibilityPredicate(vis, "c")
 	if err != nil {
 		return nil, err
 	}

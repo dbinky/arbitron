@@ -69,7 +69,7 @@ func TestInstanceRepoList_SurfacesDepartmentVisibility(t *testing.T) {
 	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	id := mkInst(t, repo, owner, instance.VisibilityDepartment, "engineering")
 
-	got, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	got, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	var found bool
 	for _, s := range got {
@@ -82,7 +82,7 @@ func TestInstanceRepoList_SurfacesDepartmentVisibility(t *testing.T) {
 	require.True(t, found)
 }
 
-// Admin (no narrowing) sees everything.
+// Admin sees everything — but ONLY on the EXPLICIT Unconstrained assertion.
 func TestInstanceRepoList_AdminUnconstrained(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewInstanceRepo(db.DB)
@@ -90,6 +90,28 @@ func TestInstanceRepoList_AdminUnconstrained(t *testing.T) {
 	a := mkInst(t, repo, owner, instance.VisibilityPrivate, "")
 	b := mkInst(t, repo, owner, instance.VisibilityDepartment, "finance")
 
-	got := listIDs(t, repo, instance.ListFilters{Limit: 100}) // no owner/dept/public => all
-	assert.True(t, got[a] && got[b], "unconstrained list returns all rows")
+	got := listIDs(t, repo, instance.ListFilters{Unconstrained: true, Limit: 100})
+	assert.True(t, got[a] && got[b], "the explicit admin assertion returns all rows")
+}
+
+// THE FAIL-CLOSED ASSERTION. A filter set with no owner, no departments, no
+// public, and no admin assertion is the shape of a caller whose scope was never
+// computed — a missing identity, or a handler that bypassed the service. It
+// previously returned the ENTIRE table, because the repository read "no
+// narrowing" as "admin". The identical input to the child-count clause returned
+// nothing, and only an unwritten caller invariant kept the difference from
+// being a data leak.
+func TestInstanceRepoList_NoScopeAndNoAdminAssertionReturnsNothing(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	owner := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	mkInst(t, repo, owner, instance.VisibilityPrivate, "")
+	mkInst(t, repo, owner, instance.VisibilityPublic, "")
+	mkInst(t, repo, owner, instance.VisibilityDepartment, "engineering")
+
+	got, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	require.NoError(t, err)
+	assert.Empty(t, got,
+		"absence of a scope is absence of authority: admitting every row requires the "+
+			"explicit Unconstrained assertion, which only listConstraint sets and only for an admin")
 }

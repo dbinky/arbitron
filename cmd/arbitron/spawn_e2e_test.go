@@ -98,7 +98,11 @@ func adminCtxForLocalUser(t *testing.T, ds *domainStack) context.Context {
 // repository — the SINK, not an intermediate hop.
 func childrenOf(t *testing.T, ds *domainStack, parentID uuid.UUID) []instance.InstanceSummary {
 	t.Helper()
+	// Unconstrained is the EXPLICIT admin assertion the repository requires
+	// before it admits rows: a scope-less filter set fails closed. The test is
+	// reading storage directly, standing in for an admin list.
 	got, err := ds.instanceRepo.List(context.Background(), instance.ListFilters{
+		Unconstrained:    true,
 		ParentScope:      instance.ParentScopeChildren,
 		ParentInstanceID: &parentID,
 		Limit:            50,

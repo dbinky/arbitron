@@ -666,7 +666,13 @@ func (h *InstanceHandler) DismissAll(w http.ResponseWriter, r *http.Request) {
 	// dashboard lists. DismissAll deliberately omits List's includeDismissed
 	// filtering and dismissed-set subtraction: it dismisses everything in the
 	// window regardless of current per-user dismissed state.
-	summaries, err := h.instances.List(r.Context(), baseWindowFilters(&state, since))
+	//
+	// It routes through the SERVICE, not the raw repository: the repository's
+	// visibility predicate fails closed, and the service is what derives the
+	// caller's scope from the request identity. Reading the repository directly
+	// relied on the repository inferring "admin" from an unscoped filter set —
+	// the exact inference that made an unscoped list return the full table.
+	summaries, err := h.service.ListInstances(r.Context(), baseWindowFilters(&state, since))
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return

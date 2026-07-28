@@ -49,7 +49,8 @@ func TestList_ParentScopeRoots_ReturnsOnlyRoots(t *testing.T) {
 	rootA, c1, c2, rootB := parentScopeFixture(t, repo)
 
 	got, err := repo.List(context.Background(), instance.ListFilters{
-		ParentScope: instance.ParentScopeRoots, Limit: 100,
+		Unconstrained: true,
+		ParentScope:   instance.ParentScopeRoots, Limit: 100,
 	})
 	require.NoError(t, err)
 	ids := idsOf(got)
@@ -65,7 +66,8 @@ func TestList_ParentScopeChildren_ReturnsOnlyThatParentsChildren(t *testing.T) {
 	rootA, c1, c2, rootB := parentScopeFixture(t, repo)
 
 	got, err := repo.List(context.Background(), instance.ListFilters{
-		ParentScope: instance.ParentScopeChildren, ParentInstanceID: &rootA, Limit: 100,
+		Unconstrained: true,
+		ParentScope:   instance.ParentScopeChildren, ParentInstanceID: &rootA, Limit: 100,
 	})
 	require.NoError(t, err)
 	ids := idsOf(got)
@@ -81,7 +83,7 @@ func TestList_ParentScopeAny_ReturnsEverything(t *testing.T) {
 	repo := NewInstanceRepo(db.DB)
 	rootA, c1, c2, rootB := parentScopeFixture(t, repo)
 
-	got, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	got, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	ids := idsOf(got)
 	for _, id := range []uuid.UUID{rootA, c1, c2, rootB} {
@@ -96,7 +98,7 @@ func TestList_SummaryCarriesParentInstanceID(t *testing.T) {
 	repo := NewInstanceRepo(db.DB)
 	rootA, c1, _, _ := parentScopeFixture(t, repo)
 
-	got, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	got, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	for _, s := range got {
 		switch s.ID {
@@ -139,7 +141,8 @@ func TestList_ParentScopeChildrenWithNoParentID_ReturnsEmpty(t *testing.T) {
 	parentScopeFixture(t, repo)
 
 	got, err := repo.List(context.Background(), instance.ListFilters{
-		ParentScope: instance.ParentScopeChildren, Limit: 100,
+		Unconstrained: true,
+		ParentScope:   instance.ParentScopeChildren, Limit: 100,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, got)
@@ -151,7 +154,8 @@ func TestList_ParentWithNoChildren_ReturnsEmpty(t *testing.T) {
 	_, _, _, rootB := parentScopeFixture(t, repo)
 
 	got, err := repo.List(context.Background(), instance.ListFilters{
-		ParentScope: instance.ParentScopeChildren, ParentInstanceID: &rootB, Limit: 100,
+		Unconstrained: true,
+		ParentScope:   instance.ParentScopeChildren, ParentInstanceID: &rootB, Limit: 100,
 	})
 	require.NoError(t, err)
 	assert.Empty(t, got)
@@ -164,7 +168,8 @@ func TestList_UnknownParentID_ReturnsEmptyNotError(t *testing.T) {
 
 	unknown := uuid.New()
 	got, err := repo.List(context.Background(), instance.ListFilters{
-		ParentScope: instance.ParentScopeChildren, ParentInstanceID: &unknown, Limit: 100,
+		Unconstrained: true,
+		ParentScope:   instance.ParentScopeChildren, ParentInstanceID: &unknown, Limit: 100,
 	})
 	require.NoError(t, err, "naming a run the caller cannot see must not leak via an error")
 	assert.Empty(t, got)
@@ -187,18 +192,18 @@ func TestList_ExistingFiltersStillApplyAfterRewrite(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, b))
 
 	name := "alpha"
-	got, err := repo.List(ctx, instance.ListFilters{WorkflowName: &name, Limit: 100})
+	got, err := repo.List(ctx, instance.ListFilters{Unconstrained: true, WorkflowName: &name, Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, a.ID, got[0].ID)
 
 	st := instance.StateCompleted
-	got, err = repo.List(ctx, instance.ListFilters{State: &st, Limit: 100})
+	got, err = repo.List(ctx, instance.ListFilters{Unconstrained: true, State: &st, Limit: 100})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, b.ID, got[0].ID)
 
-	got, err = repo.List(ctx, instance.ListFilters{Limit: 1})
+	got, err = repo.List(ctx, instance.ListFilters{Unconstrained: true, Limit: 1})
 	require.NoError(t, err)
 	assert.Len(t, got, 1, "limit must still apply")
 }

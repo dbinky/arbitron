@@ -29,7 +29,7 @@ func newOriginInstance(src instance.TriggerSource, scheduleID *uuid.UUID) *insta
 // summaryFor finds the listed summary for the given instance id.
 func summaryFor(t *testing.T, repo *InstanceRepo, id uuid.UUID) instance.InstanceSummary {
 	t.Helper()
-	summaries, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	summaries, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	for _, s := range summaries {
 		if s.ID == id {
