@@ -154,6 +154,28 @@ func TestOnChildTerminal_DuplicateWakeIsANoOp(t *testing.T) {
 		"the second wake must be a no-op: the parent is no longer waiting")
 }
 
+// A SetQueued failure is surfaced but must never be fatal: the wake is
+// best-effort, and the startup reconciler recovers a parent this call fails to
+// re-queue. It must not panic, must not call NotifyCapacityFreed for a parent
+// it failed to queue, and must leave the parent in StateWaiting so the
+// reconciler's own waiting-state query still finds it.
+func TestOnChildTerminal_SetQueuedFailureIsSurfacedNotFatal(t *testing.T) {
+	w := newWakeFixture(t, "spawn-1", "spawn-1", instance.SpawnModeWaitForChild,
+		instance.StateWaiting, instance.StateCompleted)
+	w.f.queueRepo.mu.Lock()
+	w.f.queueRepo.setQueuedErr = assert.AnError
+	w.f.queueRepo.mu.Unlock()
+
+	require.NotPanics(t, func() {
+		w.f.engine.OnChildTerminal(context.Background(), w.childID)
+	})
+
+	assert.Equal(t, instance.StateWaiting, w.parentState(t),
+		"a parent must stay waiting (not desync into queued) when the re-queue write itself failed")
+	assert.Equal(t, 0, w.f.queueManager.notifyCount(),
+		"must not tell the queue manager capacity freed up for a parent that was never actually re-queued")
+}
+
 // A parent whose CurrentNodeID is nil (never advanced) cannot match.
 func TestOnChildTerminal_ParentWithNoCurrentNodeIsANoOp(t *testing.T) {
 	f := newTestFixtures()

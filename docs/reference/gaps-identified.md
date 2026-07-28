@@ -81,9 +81,84 @@ escalate** — never a tolerated no-op.
   silently orphan the remaining descendants (the cascade logs and continues, so a
   systematic authorization failure would be invisible).
 
+- [ ] **Three defensive branches in `OnChildTerminal` have no known reachable
+  production caller and are untested.** Found while closing area 19 review 2
+  (`domain/engine/spawn_wake.go`): `go tool cover` shows the `ctx == nil`
+  guard (line 36-38), the `!child.State.IsTerminal()` "called too early" guard
+  (line 49-51, doc comment: "the real terminal write will call again"), and the
+  parent-`instances.Get` error branch (line 53-56) all at 0 hits. All four
+  production call sites (`run()`'s completion, `failInstance`,
+  `cancelAuthorized`, `resumeFromWebhookWait`) already write the child's
+  terminal state before calling the wake and always pass a live context, so
+  none of these three branches is reachable today — not a live bug, but an
+  unverified defensive-code claim, the same shape of gap this loop has fixed
+  repeatedly elsewhere (most recently the `SetQueued`-failure branch in this
+  same review). Low priority relative to the `SetQueued` fix since none is
+  reachable by a real caller; pick up if area 19 needs further passes or if a
+  future caller starts invoking `OnChildTerminal` before its terminal write.
+
 ---
 
 ## Fixed
+
+- [x] **`OnChildTerminal`'s own `queueRepo.SetQueued` failure branch — the
+  function's documented "best-effort" contract — was untested.** Focus area 19
+  (child-terminal wake), review 2. `domain/engine/spawn_wake.go`'s own
+  docstring states the wake "is deliberately VOID and best-effort. A missed
+  wake is recovered by `SpawnWaitReconciler` at the next startup; a wake that
+  fails must never fail the terminal transition that triggered it." `go tool
+  cover` over the full `TestOnChildTerminal`/`TestRunCompletion`/
+  `TestResumeFromWebhookWaitTimeout`/`TestCancelCascade` suite showed
+  `spawn_wake.go` at only 77.3% statement coverage, with the `SetQueued` error
+  branch (lines 68-74: log-and-return, no `NotifyCapacityFreed`) at 0 hits —
+  the existing `mockQueueRepo` (`domain/engine/engine_test.go`) had no way to
+  inject a `SetQueued` error at all. A regression that let a `SetQueued` error
+  propagate up through `failInstance`/`cancelAuthorized`/the run loop's
+  completion path (turning a best-effort wake failure into a fatal one for the
+  terminal transition that triggered it), or that called
+  `NotifyCapacityFreed` regardless of the error (misleading the queue into
+  thinking a parent that was never actually re-queued had capacity freed up),
+  would have shipped undetected. Added a `setQueuedErr` field to
+  `mockQueueRepo` and `TestOnChildTerminal_SetQueuedFailureIsSurfacedNotFatal`
+  (`domain/engine/spawn_wake_test.go`), asserting the call does not panic, the
+  parent stays `StateWaiting` (not desynced into `StateQueued` on a failed
+  write), and `NotifyCapacityFreed` is never called; confirmed it fails for the
+  right reason (`NotifyCapacityFreed` called once despite the injected error)
+  when the error check is temporarily replaced with a discarded `_ =`, then
+  confirmed it passes against the real code. Independently re-verified the
+  rest of area 19's checklist from source rather than trusting review 1's
+  write-up: re-derived the three-part match's three conjuncts each from their
+  own dedicated tests; confirmed via `git diff` against the branch point that
+  exactly three run-loop `SetFailed` call sites (panic recovery, workflow-parse
+  failure, empty-current-node failure) were converted to `failInstance`, and
+  that `OnChildTerminal` calls were added at exactly four sites — the run-loop
+  completion path, `failInstance`, `cancelAuthorized` (newly extracted from
+  `Cancel` by this feature), and `resumeFromWebhookWait` (review 1's fix) — all
+  four are exercised by a real call through the public API rooted at
+  `Engine.Trigger`/`Engine.Cancel`/`Engine.Resume`, not just direct
+  `OnChildTerminal` calls: `cmd/arbitron/spawn_wait_e2e_test.go`'s
+  `TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess` (run-loop
+  completion), `_FailedChildRoutesParentThroughFailure` (a node failure driving
+  `failInstance` through `handleNodeError`), and
+  `_CancelledChildRoutesParentThroughFailure` (`ds.eng.Cancel` on the CHILD
+  directly, proving `cancelAuthorized`'s own call site, not just the cascade's)
+  all drive through the real composition root; `resumeFromWebhookWait`'s own
+  call site is proven through `Engine.Resume` in
+  `TestResumeFromWebhookWaitTimeout_InvokesTheChildTerminalWake`. Confirmed
+  `RecoverCrashedInstances` (`engine.go:1664`, unchanged by this feature per
+  `git diff`) deliberately does NOT call the wake — it runs before
+  `SpawnWaitReconciler.Reconcile` in the startup order (area 16/21), which is
+  the substitute wake for exactly this path, so its own waiting parents are
+  picked up by `ListWaitingOnTerminalChild` instead. Left the two remaining
+  untested defensive branches (`ctx == nil`, and the `!child.State.IsTerminal()`
+  "called too early" guard, and the parent-`Get`-error branch) unfixed: no
+  known production caller can reach them today (all four call sites already
+  write the terminal state before calling the wake), and the `ctx == nil`
+  branch mirrors the same never-tested defensive pattern already established
+  pre-feature in `Trigger`/`TriggerWithDepartment` (noted when closing area 13);
+  logged as a residual, lower-priority coverage gap rather than fixed in this
+  pass to keep the pass to one issue. This closes review 2 approval for area
+  19 — both approvals for area 19 are now recorded.
 
 - [x] **`Engine.Resume`'s webhook-timeout-expired-while-paused branch failed an
   instance without calling the child-terminal wake — a fourth terminal-transition

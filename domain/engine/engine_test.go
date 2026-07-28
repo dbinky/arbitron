@@ -606,8 +606,9 @@ func (m *mockQueueManager) notifyCount() int {
 
 // mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)
 type mockQueueRepo struct {
-	mu       sync.Mutex
-	instRepo *mockInstanceRepo
+	mu           sync.Mutex
+	instRepo     *mockInstanceRepo
+	setQueuedErr error
 }
 
 func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
@@ -620,6 +621,12 @@ func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance
 	return nil, nil
 }
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
+	r.mu.Lock()
+	err := r.setQueuedErr
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if r.instRepo != nil {
 		r.instRepo.mu.Lock()
 		if inst, ok := r.instRepo.instances[id]; ok {
@@ -766,6 +773,7 @@ type testFixtures struct {
 	eventBus     *mockEventBus
 	executor     *mockExecutor
 	queueManager *mockQueueManager
+	queueRepo    *mockQueueRepo
 	engine       *engine.Engine
 }
 
@@ -789,9 +797,11 @@ func newTestFixtures() *testFixtures {
 		workflow.NodeTypeInteractiveAgent: exec,
 	}
 
+	queueRepo := &mockQueueRepo{instRepo: instRepo}
+
 	// The mock queue manager's default Enqueue calls StartInstance directly,
 	// which simulates the old behavior of immediately starting.
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo}, "")
+	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, queueRepo, "")
 
 	// Wire the mock queue manager to call StartInstance on the engine.
 	qm.mu.Lock()
@@ -812,6 +822,7 @@ func newTestFixtures() *testFixtures {
 		eventBus:     eventBus,
 		executor:     exec,
 		queueManager: qm,
+		queueRepo:    queueRepo,
 		engine:       eng,
 	}
 }
