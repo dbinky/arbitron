@@ -51,6 +51,19 @@ func (p *LLMChildInputPreparer) Prepare(ctx context.Context, req ChildInputReque
 		return map[string]any{}, nil
 	}
 
+	// The child DOES declare inputs, so a preparation call is about to happen and
+	// this node needs a profile. A spawn node's model_profile is optional at
+	// AUTHOR time — validation cannot load the child to know whether it declares
+	// inputs — so the requirement is enforced here, at the first moment it is
+	// actually knowable, and named by node and child so the trace says which
+	// node to fix. Resolving "" instead would surface as `unknown profile: ""`,
+	// which reads like a registry problem rather than a missing config field.
+	if req.ProfileAlias == "" {
+		return nil, fmt.Errorf(
+			"spawn_workflow %q: child workflow %q declares %d input(s), so this node must set a model_profile to prepare them",
+			req.NodeID, req.ChildWorkflow, len(req.Inputs))
+	}
+
 	schema := childInputSchema(req.Inputs)
 	prompt := childInputPrompt(req) + structuredOutputInstruction(schema)
 

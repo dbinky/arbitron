@@ -124,6 +124,10 @@ func TestChildInputPreparer_UnknownProfile_Errors(t *testing.T) {
 // this must fail closed with a named error — never silently resolve some
 // default binding, which would turn the author-time carve-out into an
 // unguarded escalation path.
+//
+// The error is raised HERE, explicitly, rather than by letting the resolver
+// reject the empty alias: `unknown profile: ""` reads like a registry outage,
+// while this names the node, the child, and the missing config field.
 func TestChildInputPreparer_EmptyProfileAliasWithDeclaredInputs_FailsClosed(t *testing.T) {
 	prov := &mockChatProvider{
 		callFn: func(context.Context, engine.ChatRequest) (*engine.ChatResponse, error) {
@@ -139,8 +143,9 @@ func TestChildInputPreparer_EmptyProfileAliasWithDeclaredInputs_FailsClosed(t *t
 	})
 	require.Error(t, err)
 	assert.Nil(t, values)
-	assert.ErrorIs(t, err, provider.ErrUnknownProfile)
 	assert.Contains(t, err.Error(), "spawn-1", "the error must name the offending node")
+	assert.Contains(t, err.Error(), "c", "and the child whose contract went unsatisfied")
+	assert.Contains(t, err.Error(), "model_profile", "and the field to set")
 }
 
 // The binding-kind guard must fire BEFORE any provider is selected, so a
@@ -279,3 +284,25 @@ func (s *spySelector) ChatProviderFor(provider.ResolvedBinding) (engine.ChatProv
 }
 
 var _ engine.ChatProviderSelector = (*spySelector)(nil)
+
+// A child declaring ZERO inputs never makes a preparation call, so a missing
+// model_profile is not an error at all on that path. This is why the check
+// cannot live in author-time validation.
+func TestChildInputPreparer_NoInputsNeedsNoModelProfile(t *testing.T) {
+	calls := 0
+	var got engine.ChatRequest
+	prov := respondWith(`{}`, &got, &calls)
+	p := engine.NewChildInputPreparer(chatSelector(prov), chatResolver("gpt-4o"))
+
+	values, err := p.Prepare(context.Background(), engine.ChildInputRequest{
+		NodeID:        "spawn-1",
+		ChildWorkflow: "child-pipeline",
+		Inputs:        nil,
+		ParentContext: map[string]any{},
+		ProfileAlias:  "",
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, values)
+	assert.Zero(t, calls, "a child with no declared inputs must cost no provider call")
+}

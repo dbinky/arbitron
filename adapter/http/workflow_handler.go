@@ -202,7 +202,15 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	checker := ownerBoundChecker{fr: h.fileReader, owner: callerOwner(r.Context())}
-	errs := workflow.Validate(wf, checker, h.profileChecker, h.connChecker)
+	// Author-time existence check for every spawn_workflow node's childWorkflow,
+	// over the SAME visible set the spawn path resolves against. A listing
+	// failure SKIPS the pass rather than inventing phantom UNKNOWN_CHILD_WORKFLOW
+	// findings from a transient outage.
+	var opts []workflow.ValidateOption
+	if names, nerr := h.wfSvc.VisibleNames(r.Context()); nerr == nil {
+		opts = append(opts, workflow.WithWorkflowChecker(names))
+	}
+	errs := workflow.Validate(wf, checker, h.profileChecker, h.connChecker, opts...)
 	valid := len(errs) == 0
 	if errs == nil {
 		errs = []workflow.ValidationError{}

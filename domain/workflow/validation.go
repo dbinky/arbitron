@@ -32,6 +32,37 @@ type ConnectionChecker interface {
 	ConnectionExists(name string) bool
 }
 
+// WorkflowChecker reports whether a workflow NAME resolves to a workflow the
+// author can see. It is the spawn-node analogue of ProfileChecker: an injected
+// domain capability, not an adapter import.
+//
+// It is nil-skippable like every other checker, and it is deliberately
+// name-only — resolution at run time is by name too, through the run owner's
+// visibility filter, so an existence answer given here for a different identity
+// is advisory about the shape of the graph, not a substitute for the run-time
+// fail-closed load.
+type WorkflowChecker interface {
+	// WorkflowExists reports whether a workflow with the given name resolves.
+	// A workflow the author cannot see is indistinguishable from one that does
+	// not exist — existence is never leaked.
+	WorkflowExists(name string) bool
+}
+
+// ValidateOption is an additive knob on Validate. It exists so a new checker
+// can be introduced without a positional-parameter change at more than a
+// hundred call sites; the four original checkers stay positional.
+type ValidateOption func(*validateOptions)
+
+type validateOptions struct {
+	workflows WorkflowChecker
+}
+
+// WithWorkflowChecker enables author-time existence validation of every
+// spawn_workflow node's childWorkflow.
+func WithWorkflowChecker(wc WorkflowChecker) ValidateOption {
+	return func(o *validateOptions) { o.workflows = wc }
+}
+
 // ValidationError describes a single validation problem found in a workflow.
 //
 // Severity distinguishes hard validation failures from non-gating advisories.
@@ -79,7 +110,12 @@ var validErrorBehaviorTypes = map[string]bool{
 // Pass a non-nil ConnectionChecker to validate that a profile's non-empty
 // ConnectionRef names an existing connection; pass nil to skip that pass. Each
 // checker is independently nil-skippable.
-func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker) []ValidationError {
+func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker, opts ...ValidateOption) []ValidationError {
+	var o validateOptions
+	for _, apply := range opts {
+		apply(&o)
+	}
+
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
@@ -108,27 +144,67 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 		errs = append(errs, validateConnectionReferences(wf, connChecker)...)
 	}
 
+	if o.workflows != nil {
+		errs = append(errs, validateChildWorkflowReferences(wf, o.workflows)...)
+	}
+
 	return errs
 }
 
-// validateConnectionReferences checks that every llm_call/agent_call node whose
-// model_profile resolves to a non-empty ConnectionRef names a connection that
-// actually exists. An empty ConnectionRef is the claude-cli no-key subscription
-// path and is valid with no existence check. An unknown alias is skipped here
-// because validateModelProfiles (Phase 1) already reports it; double-reporting
-// is avoided.
+// validateChildWorkflowReferences checks that every spawn_workflow node names a
+// child workflow that actually resolves.
+//
+// It runs in the SAME spawn-node traversal shape as the connection check above
+// and closes the same class of gap: a bad reference that passes publish and
+// fails only at run time, after the parent has already burned a queue slot and
+// reached the spawn node. An empty childWorkflow is skipped — validateNodeConfigs
+// owns that error and double-reporting helps nobody.
+func validateChildWorkflowReferences(wf *Workflow, workflows WorkflowChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		if n.Type != NodeTypeSpawnWorkflow || n.Config.ChildWorkflow == "" {
+			continue
+		}
+		if !workflows.WorkflowExists(n.Config.ChildWorkflow) {
+			errs = append(errs, ValidationError{
+				Code: "UNKNOWN_CHILD_WORKFLOW",
+				Message: "spawn_workflow node " + n.ID + " references unknown workflow " +
+					strconv.Quote(n.Config.ChildWorkflow),
+				NodeID: n.ID,
+			})
+		}
+	}
+	return errs
+}
+
+// validateConnectionReferences checks that every node whose model_profile
+// resolves to a non-empty ConnectionRef names a connection that actually
+// exists. An empty ConnectionRef is the claude-cli no-key subscription path and
+// is valid with no existence check. An unknown alias is skipped here because
+// validateModelProfiles (Phase 1) already reports it; double-reporting is
+// avoided.
+//
+// spawn_workflow is INCLUDED. Its model_profile drives a real provider call —
+// the child-input preparation — so a profile naming a deleted connection is
+// exactly as broken here as on an llm_call, and omitting the type meant such a
+// workflow passed publish and failed only at run time, after the parent had
+// already reached the spawn node.
 func validateConnectionReferences(wf *Workflow, connChecker ConnectionChecker) []ValidationError {
 	var errs []ValidationError
 	for _, n := range wf.Nodes {
 		switch n.Type {
-		case NodeTypeLLMCall, NodeTypeAgentCall:
+		case NodeTypeLLMCall, NodeTypeAgentCall, NodeTypeSpawnWorkflow:
 		default:
 			continue
 		}
 
 		alias := n.Config.ModelProfile
 		if alias == "" {
-			// Phase 1 reports the missing model_profile; nothing to check here.
+			// Phase 1 reports the missing model_profile for the types that require
+			// it. A spawn node's alias is legitimately OPTIONAL — a child declaring
+			// zero inputs never makes a preparation call — so an empty alias here is
+			// not an error at all; it becomes a node-named runtime error out of
+			// ChildInputPreparer.Prepare only if a call is actually attempted.
 			continue
 		}
 
