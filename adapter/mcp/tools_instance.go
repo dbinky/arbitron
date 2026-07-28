@@ -25,6 +25,9 @@ func RegisterInstanceTools(srv *Server) {
 			gomcp.WithDescription("List workflow instances with optional filters"),
 			gomcp.WithString("state", gomcp.Description("Filter by state (queued, running, waiting, completed, failed, cancelled, paused)")),
 			gomcp.WithString("workflowName", gomcp.Description("Filter by workflow name")),
+			gomcp.WithString("parent", gomcp.Description(
+				"Narrow by position in the spawn hierarchy: omit for all runs, "+
+					"\"roots\" for top-level runs only, or an instance UUID for that run's children")),
 		),
 		instanceListHandler(srv),
 	)
@@ -111,6 +114,20 @@ func instanceListHandler(srv *Server) server.ToolHandlerFunc {
 		if wfName, _ := args["workflowName"].(string); wfName != "" {
 			filters.WorkflowName = &wfName
 		}
+		// The parent selector is the ONE caller-supplied narrowing here. It
+		// composes with — and can never replace — the owner/department constraints
+		// ListEnriched service-sets from the request identity. Decoding goes
+		// through the SAME shared domain parser the REST handler uses, so the two
+		// surfaces cannot drift on the wire format.
+		//
+		// A malformed selector is an error, never a silent unfiltered list.
+		parentRaw, _ := args["parent"].(string)
+		scope, parentID, perr := instance.ParseParentScope(parentRaw)
+		if perr != nil {
+			return gomcp.NewToolResultError(perr.Error()), nil
+		}
+		filters.ParentScope = scope
+		filters.ParentInstanceID = parentID
 
 		enriched, err := srv.deps.Engine.ListEnriched(ctx, filters)
 		if err != nil {

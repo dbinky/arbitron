@@ -17,7 +17,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `adapter/mcp/tools_instance_parent_test.go`:
 
@@ -131,7 +131,14 @@ var _ = context.Background
 > while the REST test reads `rows[0]["id"]`. The existing parity test documents
 > this difference; do not "fix" it.
 
-- [ ] **Step 2: Run it, confirm it fails**
+> **Correction applied during implementation.** `instance.InstanceSummary` carries
+> lowerCamelCase `json` tags (`json:"id"`, `json:"workflowName"`), so the MCP rows
+> use `rows[0]["id"]` too — matching the existing `TestMCPRestParity_InstanceList`,
+> which already asserts `mcpSummaries[0]["id"]`. The tests were written against the
+> real serialization, not the PascalCase note above. (Non-tagged fields promoted from
+> `EnrichedInstanceSummary`, e.g. `RunName`, do keep PascalCase keys.)
+
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -148,7 +155,7 @@ Expected output:
 FAIL	github.com/arbitron/arbitron/adapter/mcp	0.4s
 ```
 
-- [ ] **Step 3: Add the tool argument**
+- [x] **Step 3: Add the tool argument**
 
 In `adapter/mcp/tools_instance.go`, extend the `instance_list` tool declaration:
 
@@ -166,7 +173,7 @@ In `adapter/mcp/tools_instance.go`, extend the `instance_list` tool declaration:
 	)
 ```
 
-- [ ] **Step 4: Decode the selector in the handler**
+- [x] **Step 4: Decode the selector in the handler**
 
 In `instanceListHandler`, after the `workflowName` block:
 
@@ -190,7 +197,7 @@ In `instanceListHandler`, after the `workflowName` block:
 		filters.ParentInstanceID = parentID
 ```
 
-- [ ] **Step 5: Extend the parity test**
+- [x] **Step 5: Extend the parity test**
 
 In `adapter/mcp/parity_test.go`, append to `TestMCPRestParity_InstanceList` — or
 add a sibling test — the parent-filtered comparison:
@@ -236,7 +243,7 @@ func TestMCPRestParity_InstanceListParentFilter(t *testing.T) {
 > `filters.ParentScope`/`filters.ParentInstanceID` (roots => `ParentInstanceID ==
 > nil`; children => equal to the filter) or this parity test proves nothing.
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -259,7 +266,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/mcp	0.5s
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 go test ./...
@@ -269,7 +276,7 @@ Expected: `ok` for every package, no `FAIL` lines. In particular
 `adapter/mcp/register_test.go` (the registered-tool-name list) must still pass —
 the tool name is unchanged, only its argument set grew.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add adapter/mcp/tools_instance.go adapter/mcp/tools_instance_parent_test.go adapter/mcp/parity_test.go

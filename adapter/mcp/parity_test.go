@@ -26,15 +26,32 @@ import (
 // OwnerID filter, so the real engine's scoping can be exercised end-to-end.
 type parityInstanceRepo struct {
 	instances map[uuid.UUID]*instance.Instance
+	// gotFilters records the filters the last List call received, so a handler
+	// that dropped a caller-supplied narrowing is caught rather than tolerated.
+	gotFilters instance.ListFilters
 }
 
 func (r *parityInstanceRepo) List(_ context.Context, f instance.ListFilters) ([]instance.InstanceSummary, error) {
+	r.gotFilters = f
 	var out []instance.InstanceSummary
 	for _, inst := range r.instances {
 		if f.OwnerID != nil && inst.OwnerID != *f.OwnerID {
 			continue
 		}
-		out = append(out, instance.InstanceSummary{ID: inst.ID, WorkflowName: inst.WorkflowName, State: inst.State})
+		switch f.ParentScope {
+		case instance.ParentScopeRoots:
+			if inst.ParentInstanceID != nil {
+				continue
+			}
+		case instance.ParentScopeChildren:
+			if inst.ParentInstanceID == nil || f.ParentInstanceID == nil || *inst.ParentInstanceID != *f.ParentInstanceID {
+				continue
+			}
+		}
+		out = append(out, instance.InstanceSummary{
+			ID: inst.ID, WorkflowName: inst.WorkflowName, State: inst.State,
+			ParentInstanceID: inst.ParentInstanceID,
+		})
 	}
 	return out, nil
 }
@@ -142,6 +159,39 @@ func callListTool(t *testing.T, srv *adaptmcp.Server, ctx context.Context) []map
 	return summaries
 }
 
+// TestMCPRestParity_InstanceListParentFilter extends the parity discipline to
+// the parent selector: for the same identity and the same selector, MCP and
+// REST must return the same scoped set. Without this, one surface could widen
+// scope through the new parameter while the other did not.
+func TestMCPRestParity_InstanceListParentFilter(t *testing.T) {
+	owner := uuid.New()
+	root := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "root", State: instance.StateRunning}
+	rootID := root.ID
+	child := &instance.Instance{
+		ID: uuid.New(), OwnerID: owner, WorkflowName: "child", State: instance.StateRunning,
+		ParentInstanceID: &rootID,
+	}
+	repo := &parityInstanceRepo{instances: map[uuid.UUID]*instance.Instance{root.ID: root, child.ID: child}}
+
+	eng := engine.NewEngine(nil, repo, nil, nil, nil, map[workflow.NodeType]engine.NodeExecutor{}, nil, nil, nil, "")
+	idCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: owner, Username: "o", Role: identity.RoleUser,
+	})
+
+	deps := &adaptmcp.Deps{Engine: eng, Instances: repo}
+	srv := adaptmcp.NewServerWithDeps("test", "0.0.0", deps)
+	adaptmcp.RegisterInstanceTools(srv)
+
+	mcpRows := callListToolWithArgs(t, srv, idCtx, map[string]any{"parent": "roots"})
+	restRows := callListRESTWithQuery(t, eng, repo, idCtx, "?parent=roots")
+
+	require.Len(t, mcpRows, 1)
+	require.Len(t, restRows, 1)
+	assert.Equal(t, root.ID.String(), mcpRows[0]["id"])
+	assert.Equal(t, root.ID.String(), restRows[0]["id"],
+		"MCP and REST must return the same roots-only set for the same identity")
+}
+
 // TestMCPRestParity_InstanceGetNonOwner pins the FA-33 read-scoping invariant:
 // when a non-owner, non-admin calls GetInstance, both the MCP tool (instance_get)
 // and the REST endpoint (GET /instances/{id}) must return the identical not-found
@@ -201,12 +251,17 @@ func TestMCPRestParity_InstanceGetNonOwner(t *testing.T) {
 
 func callListREST(t *testing.T, eng *engine.Engine, repo instance.InstanceRepository, ctx context.Context) []map[string]any {
 	t.Helper()
+	return callListRESTWithQuery(t, eng, repo, ctx, "")
+}
+
+func callListRESTWithQuery(t *testing.T, eng *engine.Engine, repo instance.InstanceRepository, ctx context.Context, query string) []map[string]any {
+	t.Helper()
 	h := adapthttp.NewInstanceHandler(repo, nil, nil, eng)
 	r := chi.NewRouter()
 	r.Get("/api/v1/instances", func(w http.ResponseWriter, req *http.Request) {
 		h.List(w, req.WithContext(ctx))
 	})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances"+query, nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
