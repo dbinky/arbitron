@@ -1,6 +1,9 @@
 package workflow
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // FileChecker is a minimal subset of the engine.FileReader port used for
 // validating file references within a workflow definition. Keeping this as a
@@ -167,11 +170,24 @@ func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationEr
 			wantKind = "chat"
 		case NodeTypeInteractiveAgent:
 			wantKind = "agent"
+		case NodeTypeSpawnWorkflow:
+			// The input-preparation call is tool-SUPPRESSED, so an agent-kind
+			// binding here is a config-driven escalation from a reasoning call to
+			// an RCE-capable one. This is the author-time half of the guard
+			// domain/engine's expectedKindForNodeType enforces at run time.
+			wantKind = "chat"
 		default:
 			continue
 		}
 
 		if n.Config.ModelProfile == "" {
+			// A spawn node's alias is OPTIONAL: a child that declares zero inputs
+			// never makes a preparation call, and validation cannot load the child
+			// to know. An empty alias fails closed at run time only if a call is
+			// actually made. Every other type here REQUIRES it.
+			if n.Type == NodeTypeSpawnWorkflow {
+				continue
+			}
 			errs = append(errs, ValidationError{
 				Code:    "MISSING_REQUIRED_CONFIG",
 				Message: string(n.Type) + " node " + n.ID + " must have a model_profile",
@@ -536,6 +552,8 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
+		case NodeTypeSpawnWorkflow:
+			errs = append(errs, validateSpawnWorkflowNode(n, wf.Edges)...)
 		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
@@ -628,6 +646,92 @@ func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 			Message: "webhook_wait node " + node.ID + " must have exactly one outgoing edge",
 			NodeID:  node.ID,
 		})
+	}
+
+	return errs
+}
+
+// validateSpawnWorkflowNode checks spawn_workflow-specific validation rules.
+//
+// The mode is checked FIRST and, when unrecognized, short-circuits: the port
+// rules are mode-specific, so reporting them against an undefined mode would
+// bury the one finding the author can act on. An empty mode is an authoring
+// error, NOT an inheritance request (see IsValidSpawnMode).
+func validateSpawnWorkflowNode(node Node, edges []Edge) []ValidationError {
+	var errs []ValidationError
+
+	if node.Entrypoint {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_SPAWN_WORKFLOW",
+			Message: "spawn_workflow node " + node.ID + " cannot be an entrypoint",
+			NodeID:  node.ID,
+		})
+	}
+
+	if node.Config.ChildWorkflow == "" {
+		errs = append(errs, ValidationError{
+			Code:    "MISSING_REQUIRED_CONFIG",
+			Message: "spawn_workflow node " + node.ID + " must have a childWorkflow",
+			NodeID:  node.ID,
+		})
+	}
+
+	if !IsValidSpawnMode(node.Config.SpawnMode) {
+		errs = append(errs, ValidationError{
+			Code: "INVALID_SPAWN_MODE",
+			Message: "spawn_workflow node " + node.ID + " has an unrecognized spawnMode " +
+				strconv.Quote(node.Config.SpawnMode) + " (must be exactly " +
+				strconv.Quote(SpawnModeFireAndForget) + " or " + strconv.Quote(SpawnModeWaitForChild) + ")",
+			NodeID: node.ID,
+		})
+		return errs
+	}
+
+	// Collect this node's outgoing ports. Mirrors validateConditionalEdges'
+	// (source, output) set technique.
+	ports := map[string]int{}
+	for _, e := range edges {
+		if e.Source == node.ID {
+			ports[e.Output]++
+		}
+	}
+
+	switch node.Config.SpawnMode {
+	case SpawnModeWaitForChild:
+		for _, want := range []string{SpawnPortSuccess, SpawnPortFailure} {
+			if ports[want] == 0 {
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_SPAWN_EDGE",
+					Message: "spawn_workflow node " + node.ID + " (wait_for_child) missing edge for output: " + want,
+					NodeID:  node.ID,
+				})
+			}
+		}
+		if ports[""] > 0 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (wait_for_child) must not have an unnamed outgoing edge; route through the success and failure ports",
+				NodeID: node.ID,
+			})
+		}
+	case SpawnModeFireAndForget:
+		if ports[SpawnPortSuccess] > 0 || ports[SpawnPortFailure] > 0 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (fire_and_forget) must not wire the success or failure ports; those exist only in wait_for_child mode",
+				NodeID: node.ID,
+			})
+		}
+		if ports[""] != 1 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (fire_and_forget) must have exactly one unnamed outgoing edge",
+				NodeID: node.ID,
+			})
+		}
 	}
 
 	return errs

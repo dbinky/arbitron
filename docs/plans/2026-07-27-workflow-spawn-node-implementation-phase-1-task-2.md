@@ -17,7 +17,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `domain/workflow/validation_spawn_test.go`:
 
@@ -368,7 +368,7 @@ func TestValidateSpawn_OtherNodeTypesUnaffected(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -386,7 +386,7 @@ Expected output (the arm does not exist, so every finding assertion fails):
 FAIL	github.com/arbitron/arbitron/domain/workflow	0.2s
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 In `domain/workflow/validation.go`, add the arm to the `validateNodeConfigs` switch, right after the `NodeTypeWebhookWait` case (~line 539):
 
@@ -496,7 +496,7 @@ import (
 )
 ```
 
-- [ ] **Step 3b: Give the spawn node an author-time model_profile posture check**
+- [x] **Step 3b: Give the spawn node an author-time model_profile posture check**
 
 `validateModelProfiles` (`domain/workflow/validation.go:157`) is the author-time
 counterpart of `domain/engine`'s binding-kind guard. Every other LLM-calling node
@@ -552,7 +552,7 @@ Change the switch head (line 160-172) and the empty-alias arm (line 174-181):
 Everything below that (the `Model` conflict check, the unknown-alias check, and
 the kind comparison) is unchanged and now covers the spawn node too.
 
-- [ ] **Step 4: Run it, confirm it passes**
+- [x] **Step 4: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -585,7 +585,7 @@ PASS
 ok  	github.com/arbitron/arbitron/domain/workflow	0.2s
 ```
 
-- [ ] **Step 5: Confirm the whole workflow package still passes**
+- [x] **Step 5: Confirm the whole workflow package still passes**
 
 ```bash
 go test ./domain/workflow/
@@ -593,7 +593,7 @@ go test ./domain/workflow/
 
 Expected: `ok  	github.com/arbitron/arbitron/domain/workflow`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add domain/workflow/validation.go domain/workflow/validation_spawn_test.go
