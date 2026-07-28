@@ -676,6 +676,49 @@ func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUI
 	return out, nil
 }
 
+// ListOrphanedActiveChildren implements instance.SpawnLinkRepository.
+//
+// It is the retry surface behind the in-process cancel cascade: any active run
+// whose parent is already cancelled. The join is index-eligible on
+// idx_instances_parent's leading column, and the result is ordered oldest-first
+// so a sweep tears down the longest-stranded runs before the newest ones.
+//
+// Only the child's own parent is consulted — a grandchild whose parent is still
+// active is deliberately NOT returned, because cancelling that parent (in the
+// same sweep or on the next tick) cascades to it. That keeps this query one
+// level deep and the recursion in the domain cascade, matching
+// ListActiveChildren.
+func (r *InstanceRepo) ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error) {
+	const q = `SELECT c.id FROM instances c
+  JOIN instances p ON p.id = c.parent_instance_id
+  WHERE c.state IN ('queued','running','waiting','paused')
+    AND p.state = 'cancelled'
+  ORDER BY c.created_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("listing orphaned active children: %w", err)
+	}
+	defer rows.Close()
+
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("listing orphaned active children: %w", err)
+		}
+		id, err := parseUUID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("listing orphaned active children: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing orphaned active children: %w", err)
+	}
+	return out, nil
+}
+
 // FindChildBySpawnNode implements instance.SpawnWaitRepository.
 //
 // All THREE key parts are load-bearing. Dropping the node id would let a child

@@ -143,4 +143,16 @@ type SpawnLinkRepository interface {
 	// awaited ones. A parent with no active children returns an empty slice,
 	// not an error.
 	ListActiveChildren(ctx context.Context, parentID uuid.UUID) ([]uuid.UUID, error)
+
+	// ListOrphanedActiveChildren returns the ids of every still-active run whose
+	// PARENT is already cancelled — the exact residue an interrupted cancel
+	// cascade leaves behind.
+	//
+	// The cascade is a best-effort in-process walk: a storage error on one
+	// branch, a process death mid-walk, or a descendant that was still queued
+	// when its parent's link row was read all leave an active child under a
+	// cancelled parent. Without a sweep that state is permanent and invisible —
+	// the operator has already been told the tree is gone. An empty result is
+	// the normal case, not an error.
+	ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error)
 }

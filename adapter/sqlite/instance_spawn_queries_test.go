@@ -297,6 +297,56 @@ func TestListActiveChildren_DoesNotReturnGrandchildren(t *testing.T) {
 	assert.NotEqual(t, grand, got[0])
 }
 
+// ---------- ListOrphanedActiveChildren ----------
+
+// The residue of an interrupted cascade: the parent is cancelled but the child
+// is still burning capacity. Nothing else in the system notices this state, so
+// the query that finds it is the whole retry mechanism.
+func TestListOrphanedActiveChildren_FindsActiveChildOfCancelledParent(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+	owner := uuid.MustParse(spawnTestOwner)
+
+	p := newLinkedInstance(instance.SpawnLink{})
+	p.State = instance.StateCancelled
+	require.NoError(t, repo.Create(ctx, p))
+	stranded := childOf(t, repo, p.ID, "n1", instance.SpawnModeFireAndForget, instance.StateRunning, owner, instance.VisibilityPrivate, "")
+
+	got, err := repo.ListOrphanedActiveChildren(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, stranded, got[0])
+}
+
+func TestListOrphanedActiveChildren_IgnoresHealthyAndTerminalRows(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+	owner := uuid.MustParse(spawnTestOwner)
+
+	// An ACTIVE parent's active child is not an orphan.
+	live := newLinkedInstance(instance.SpawnLink{})
+	live.State = instance.StateWaiting
+	require.NoError(t, repo.Create(ctx, live))
+	childOf(t, repo, live.ID, "n1", instance.SpawnModeWaitForChild, instance.StateRunning, owner, instance.VisibilityPrivate, "")
+
+	// A cancelled parent's already-terminal child is not an orphan either.
+	dead := newLinkedInstance(instance.SpawnLink{})
+	dead.State = instance.StateCancelled
+	require.NoError(t, repo.Create(ctx, dead))
+	childOf(t, repo, dead.ID, "n1", instance.SpawnModeFireAndForget, instance.StateCompleted, owner, instance.VisibilityPrivate, "")
+
+	// A root run is never an orphan, whatever its state.
+	root := newLinkedInstance(instance.SpawnLink{})
+	root.State = instance.StateRunning
+	require.NoError(t, repo.Create(ctx, root))
+
+	got, err := repo.ListOrphanedActiveChildren(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
 // ---------- error ----------
 
 func TestSpawnQueries_StorageFailureSurfacesAsError(t *testing.T) {
@@ -311,6 +361,9 @@ func TestSpawnQueries_StorageFailureSurfacesAsError(t *testing.T) {
 	_, err := repo.ListActiveChildren(ctx, p.ID)
 	require.Error(t, err, "a repository failure must surface as an error, never as an empty result "+
 		"indistinguishable from \"no children\"")
+
+	_, err = repo.ListOrphanedActiveChildren(ctx)
+	require.Error(t, err, "a repository failure must surface as an error, never as an empty orphan set")
 
 	_, err = repo.ChildCountsByParents(ctx, []uuid.UUID{p.ID}, instance.ChildVisibility{Unconstrained: true})
 	require.Error(t, err)

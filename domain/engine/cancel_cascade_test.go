@@ -74,6 +74,25 @@ func (f *fakeSpawnLinks) ChildCountsByParents(_ context.Context, ids []uuid.UUID
 	return out, nil
 }
 
+// ListOrphanedActiveChildren returns every non-terminal child whose parent is
+// itself cancelled — the same residue the real query finds.
+func (f *fakeSpawnLinks) ListOrphanedActiveChildren(_ context.Context) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []uuid.UUID{}
+	for parent, kids := range f.children {
+		if f.states(parent) != instance.StateCancelled {
+			continue
+		}
+		for _, c := range kids {
+			if !f.states(c).IsTerminal() {
+				out = append(out, c)
+			}
+		}
+	}
+	return out, nil
+}
+
 var _ instance.SpawnLinkRepository = (*fakeSpawnLinks)(nil)
 
 // ---------------------------------------------------------------------------

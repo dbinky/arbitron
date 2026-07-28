@@ -95,6 +95,16 @@ WHERE parent_instance_id = ?
   AND state IN ('queued','running','waiting','paused')
 ORDER BY created_at ASC;
 
+-- name: ListOrphanedActiveChildren :many
+-- The residue of an interrupted cancel cascade: every still-active run whose
+-- parent is already cancelled. One level deep — a grandchild under a still-
+-- active parent is reached by cancelling that parent, not by this query.
+SELECT c.id FROM instances c
+JOIN instances p ON p.id = c.parent_instance_id
+WHERE c.state IN ('queued','running','waiting','paused')
+  AND p.state = 'cancelled'
+ORDER BY c.created_at ASC;
+
 -- name: FindChildBySpawnNode :one
 -- The awaited child of ONE (parent, spawn node, mode) triple. All three key
 -- parts are load-bearing: without the node id a child of a different spawn node

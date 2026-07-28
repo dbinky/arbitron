@@ -48,6 +48,10 @@ func (c *countingSpawnLinks) ListActiveChildren(context.Context, uuid.UUID) ([]u
 	return nil, nil
 }
 
+func (c *countingSpawnLinks) ListOrphanedActiveChildren(context.Context) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 var _ instance.SpawnLinkRepository = (*countingSpawnLinks)(nil)
 
 func summariesFor(ids ...uuid.UUID) []instance.InstanceSummary {

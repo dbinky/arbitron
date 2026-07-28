@@ -41,8 +41,9 @@ type InstanceEnricher struct {
 	nodeExecs instance.NodeExecutionRepository
 	users     instance.UserRepository
 	queuePos  QueuePositionProvider // nil -> no position (Phase 2 wires this)
-	// spawnLinks is the OPTIONAL link-addressed read surface. nil -> every row
-	// reports ChildCount 0 and renders no expander.
+	// spawnLinks is the link-addressed read surface. It is NEVER nil: the
+	// constructor installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so a
+	// missed wiring step cannot silently blank every row's child count.
 	spawnLinks          instance.SpawnLinkRepository
 	defaultAgentBackend string // deployment-wide fallback for BackendUnset nodes
 }
@@ -69,6 +70,9 @@ func NewInstanceEnricher(
 		users:               users,
 		queuePos:            queuePos,
 		defaultAgentBackend: defaultAgentBackend,
+		// Non-nil from birth, like queuePos above; the composition root swaps in
+		// the real repository via SetSpawnLinks.
+		spawnLinks: NoopSpawnLinks{},
 	}
 }
 
@@ -85,8 +89,15 @@ func (e *InstanceEnricher) SetQueuePositionProvider(p QueuePositionProvider) {
 // SetSpawnLinks wires the link-addressed read surface used for batched child
 // counts. Kept as a setter (like SetQueuePositionProvider) so the composition
 // root can construct the enricher before deciding whether the capability is
-// available. nil is valid: rows then report no children.
+// available.
+//
+// repo MUST be non-nil — pass NoopSpawnLinks{} to opt out deliberately. The nil
+// case is rejected for the same reason it is on Engine.SetSpawnLinks: a missed
+// wiring step must fail loudly at startup, not degrade a feature in silence.
 func (e *InstanceEnricher) SetSpawnLinks(repo instance.SpawnLinkRepository) {
+	if repo == nil {
+		panic("engine: SetSpawnLinks requires a non-nil SpawnLinkRepository (use NoopSpawnLinks{})")
+	}
 	e.spawnLinks = repo
 }
 
@@ -102,7 +113,7 @@ func (e *InstanceEnricher) SetSpawnLinks(repo instance.SpawnLinkRepository) {
 // still renders. With no identity on the context there is no authorized scope,
 // so counting is skipped entirely rather than defaulting to unconstrained.
 func (e *InstanceEnricher) batchChildCounts(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]int {
-	if e.spawnLinks == nil || len(ids) == 0 {
+	if len(ids) == 0 {
 		return map[uuid.UUID]int{}
 	}
 	lc, ok := listConstraint(ctx)

@@ -61,7 +61,42 @@ const (
 	deviceCodePollInterval = 5
 	// deviceCodeSweepInterval is how often expired device codes are purged.
 	deviceCodeSweepInterval = 5 * time.Minute
+	// spawnSweepInterval is how often the two spawn reconcilers re-run after the
+	// startup pass: parents stuck waiting on an already-finished child, and runs
+	// stranded active under a cancelled parent. Both holes open in a HEALTHY
+	// process (a lost wake, a partially-failed cascade), so neither is a
+	// startup-only concern. Both sweeps are indexed single queries that usually
+	// match nothing, so a minute is cheap; the cost of a longer interval is a
+	// user staring at a run that looks hung.
+	spawnSweepInterval = 1 * time.Minute
 )
+
+// sweepSpawnReconcilers re-runs the two spawn reconcilers on a ticker until ctx
+// is cancelled. Errors are logged, not fatal — a transient DB error on one tick
+// must not kill the loop. Mirrors sweepExpiredDeviceCodes.
+func sweepSpawnReconcilers(
+	ctx context.Context,
+	waits *engine.SpawnWaitReconciler,
+	orphans *engine.OrphanedChildReconciler,
+	interval time.Duration,
+	log *slog.Logger,
+) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := waits.Reconcile(ctx); err != nil {
+				log.Error("spawn-wait reconciliation incomplete", "error", err)
+			}
+			if err := orphans.Reconcile(ctx); err != nil {
+				log.Error("orphaned-child reconciliation incomplete", "error", err)
+			}
+		}
+	}
+}
 
 // sweepExpiredDeviceCodes purges expired device-authorization rows on a ticker
 // until ctx is cancelled. Errors are logged, not fatal — a transient DB error on
@@ -190,6 +225,9 @@ type domainStack struct {
 	authMW       *adapthttp.AuthMiddleware
 	authHandler  *adapthttp.AuthHandler
 	sweepCancel  context.CancelFunc
+	// spawnSweepCancel stops the spawn-wait / orphaned-child reconciliation
+	// ticker. It is stopped BEFORE the DB closes, like sweepCancel.
+	spawnSweepCancel context.CancelFunc
 	// backendHealth is the shared, TTL-cached backend-health component (codex
 	// install/login readiness). Constructed ONCE here and injected into BOTH the
 	// HTTP SystemHandler and the MCP server so the probe forks at most once per
@@ -226,6 +264,11 @@ func (ds *domainStack) Close(ctx context.Context) {
 	// Stop the org-mode session sweep before closing the DB it writes to.
 	if ds.sweepCancel != nil {
 		ds.sweepCancel()
+	}
+	// Same for the spawn reconciliation ticker: it queries and re-queues through
+	// the DB, so it must not outlive it.
+	if ds.spawnSweepCancel != nil {
+		ds.spawnSweepCancel()
 	}
 	// Stop the bearer last-used flusher's owned goroutine, draining any pending
 	// touches synchronously before the DB closes.
@@ -1058,9 +1101,33 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		logger.Error("spawn-wait reconciliation incomplete", "error", err)
 	}
 
+	// 14-spawn-sweep. Both spawn reconcilers then run CONTINUOUSLY on a ticker.
+	//
+	// A startup-only pass is not sufficient for either of them, because neither
+	// hole is crash-specific:
+	//
+	//   * A lost wake happens in a HEALTHY process whenever a child reaches a
+	//     terminal state before its parent's `waiting` transition is durable —
+	//     routine at the shipped per-user cap, where parent and child run
+	//     concurrently. Reconciling only at startup would leave that parent hung
+	//     until the next restart.
+	//   * The cancel cascade is a best-effort in-process walk that tolerates
+	//     partial failure by design, so a storage error on one branch strands an
+	//     active descendant under a cancelled parent, again with no restart in
+	//     sight.
+	//
+	// Errors are logged, never fatal: a transient DB error on one tick must not
+	// kill the loop. The orphan sweep cancels under the ORPHAN OWNER's
+	// reconstructed identity, through the SAME identityResolver the spawn
+	// executor and the schedule evaluator use.
+	orphanReconciler := engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng)
+	spawnSweepCtx, spawnSweepCancel := context.WithCancel(context.Background())
+	go sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
+
 	// 14a. Recover pending timers and webhook endpoints from the database.
 	logger.Info("recovering pending timers")
 	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
+		spawnSweepCancel()
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1072,6 +1139,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	logger.Info("recovering webhook endpoints")
 	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
+		spawnSweepCancel()
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1130,6 +1198,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		queueRepo:           queueRepo,
 		scheduler:           scheduler,
 		schedulerCancel:     schedulerCancel,
+		spawnSweepCancel:    spawnSweepCancel,
 		scheduleEval:        scheduleEval,
 		scheduleEvalCancel:  scheduleEvalCancel,
 		scheduleSvc:         scheduleSvc,

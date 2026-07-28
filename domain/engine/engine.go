@@ -40,9 +40,11 @@ type Engine struct {
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
-	// spawnLinks is the OPTIONAL link-addressed read surface. When unset (nil),
-	// the cancel cascade and the enricher's child counts are no-ops — cancelling
-	// still works exactly as before this feature.
+	// spawnLinks is the link-addressed read surface. It is NEVER nil: NewEngine
+	// installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so the cancel
+	// cascade can never be silently downgraded to a no-op by a missed wiring
+	// step. Opting out is possible but must be spelled NoopSpawnLinks{}, whose
+	// doc comment states that it disables descendant cancellation.
 	spawnLinks instance.SpawnLinkRepository
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
@@ -78,6 +80,10 @@ func NewEngine(
 		queueRepo:           queueRepo,
 		defaultAgentBackend: defaultAgentBackend,
 		contexts:            make(map[uuid.UUID]context.CancelFunc),
+		// Non-nil from birth so cascadeCancel never has to nil-check a
+		// containment control. The composition root overwrites this with the real
+		// repository via SetSpawnLinks.
+		spawnLinks: NoopSpawnLinks{},
 	}
 }
 
@@ -1441,7 +1447,18 @@ func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
 	if err := e.cancelAuthorized(ctx, instanceID); err != nil {
 		return err
 	}
-	e.cascadeCancel(ctx, instanceID, map[uuid.UUID]bool{instanceID: true})
+	// DETACH the cascade from the caller's request. The parent is already
+	// cancelled at this point, so the walk MUST run to completion: on the
+	// request context, a client disconnect or a write timeout part-way through
+	// would silently strand the rest of the subtree — active descendants running
+	// with the parent's inherited credentials and nobody watching. This is the
+	// same posture OnChildTerminal already takes at its call sites.
+	//
+	// context.WithoutCancel (not context.Background) because cancelAuthorized
+	// re-authorizes every descendant from the identity carried on ctx: dropping
+	// the values would turn the cascade into an unauthenticated walk. Only
+	// cancellation and the deadline are shed.
+	e.cascadeCancel(context.WithoutCancel(ctx), instanceID, map[uuid.UUID]bool{instanceID: true})
 	return nil
 }
 
