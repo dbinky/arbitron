@@ -46,8 +46,9 @@ These reuse `NodeConfig`'s existing optional-field convention — `TemplateFile`
 and `ModelProfile` already exist on `NodeConfig` and are reused verbatim rather
 than duplicated under spawn-specific names.
 
-The mode vocabulary is a closed, exact-match, lowercase set with a named
-validity predicate, mirroring `IsValidAgentBackend`
+The mode vocabulary is a closed, exact-match, lowercase set of exactly two
+values — `fire_and_forget` and `wait_for_child` — with a named validity
+predicate, mirroring `IsValidAgentBackend`
 (`domain/workflow/workflow.go:50-57`) — including its rationale: an
 unrecognized value must fail closed at workflow load rather than mis-route or
 silently fall back at run time.
@@ -121,9 +122,11 @@ The mode is stored on the link rather than re-derived from the parent's
 workflow snapshot for two reasons, both of which are correctness, not
 convenience:
 
-1. **The cancel cascade filters on it.** Fire-and-forget children survive
-   parent cancellation (Phase 5); awaited children do not. The cascade needs
-   the mode without parsing every parent's snapshot.
+1. **The resumption short-circuit looks up by it.** Phase 4's executor asks
+   "does an awaited child already exist for `(this parent, this node)`?" to
+   decide between spawning, continuing to wait, and routing. The mode is part
+   of that key, and it must be answerable without parsing every parent's
+   workflow snapshot.
 2. **The wake hook filters on it.** A parent can be waiting at spawn node *B*
    while a fire-and-forget child launched earlier from node *A* reaches a
    terminal state. Matching only on "this child's parent is in a waiting state"
@@ -157,7 +160,9 @@ Three capabilities are added to the instance persistence ports:
   an error), and an empty input touches no storage. It exists for the same
   reason — the queue list must not issue N+1 queries per page.
 - **List a parent's active children.** Returns children in states that can
-  still be cancelled. Phase 5's cascade consumes it.
+  still be cancelled, **regardless of spawn mode** — the spec's cancel cascade
+  covers every active child, not only awaited ones. Phase 5's cascade consumes
+  it.
 
 `ListFilters` carries a standing security contract
 (`domain/instance/instance.go:231-244`): `OwnerID`, `Departments`, and

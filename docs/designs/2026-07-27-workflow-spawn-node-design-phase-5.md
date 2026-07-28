@@ -32,8 +32,8 @@ to that method inherits its guarantees at every depth for free.
 
 ### 1. Cancel cascade
 
-**One job:** when a run is cancelled, cancel the awaited children it is
-responsible for.
+**One job:** when a run is cancelled, cancel every active child it spawned,
+recursively.
 
 Extends `Engine.Cancel`, which today authorizes, transitions by current state,
 deactivates wait resources, publishes an event, and records an intervention.
@@ -46,16 +46,28 @@ terminal state, so the wake is a no-op and the parent cannot be resurrected
 through its own `failure` port by the very children being torn down. Reversing
 the order produces a parent that flips from cancelled back to queued.
 
-**Scope of the cascade: awaited children only.** Children linked with
-fire-and-forget mode are left running. This is a deliberate product decision:
-the parent explicitly disclaimed the child's lifecycle when the author chose
-that mode, so the child is an independent run that happens to record where it
-came from. Awaited children are the opposite — the parent is blocked on them,
-and leaving them running after the parent is gone would burn queue capacity and
-workspace on work no one will consume. The mode is read from the link column
-added in Phase 1, which exists in part for exactly this filter.
+**Scope of the cascade: every active child, both modes.** The spec states the
+requirement without qualification — "Cancelling a parent cancels active
+children recursively" — so fire-and-forget children are cancelled alongside
+awaited ones.
 
-**Recursion** proceeds depth-wise through awaited links. The link graph is
+The tempting reading is that fire-and-forget children should survive, on the
+grounds that the parent disclaimed the child's lifecycle. That reading confuses
+two different directions. The spec's fire-and-forget carve-outs are all
+child→parent: "fire-and-forget child outcomes do not affect the parent after
+the child has been spawned", and the matching non-goal. Nothing in the spec
+weakens the parent→child direction, and the outcome the cascade serves —
+operators tearing down a run tree without hunting for orphans — is defeated
+precisely by the children nobody is waiting on, since those are the ones no
+later failure will surface. A fire-and-forget child left running after its
+parent is cancelled burns queue capacity and a workspace on work whose
+requester is gone, and is invisible in the flat list it was cancelled from.
+
+The link's spawn mode is therefore **not** a filter on the cascade. It is read
+by Phase 4's wake match and resumption short-circuit; the cascade takes the
+whole active-children set.
+
+**Recursion** proceeds depth-wise through all links. The link graph is
 acyclic by construction — a child is always created after its parent, so no
 instance can be its own ancestor. The traversal nonetheless carries a visited
 set, so corrupt or hand-edited data degrades into a halted traversal rather
@@ -157,9 +169,9 @@ Cancel(parent)
    ├─ deactivate wait resources        (engine.go:1428)
    ├─ publish cancelled event, record intervention
    │
-   └─ cascade: list active children of parent WHERE mode = wait_for_child
+   └─ cascade: list ALL active children of parent (both spawn modes)
          └─ for each, recursively Cancel  (visited-set guarded)
-              └─ its own awaited children …
+              └─ its own active children …
 
   ↳ parent is already cancelled, so each child's terminal wake (Phase 4)
     finds no waiting parent and is a no-op — the parent cannot be resurrected
@@ -261,7 +273,11 @@ Tests precede implementation. Go tests live beside the packages they cover; the
 dashboard is covered by Vitest per `AGENTS.md:95-99`. All five categories are
 required.
 
-- **Happy path** — cancelling a parent with one awaited child cancels both; the
+- **Happy path** — cancelling a parent with one awaited child cancels both;
+  cancelling a parent with one fire-and-forget child cancels both (the spec's
+  unqualified recursive-cancel requirement, and the single most important
+  assertion in this phase — it is the one a mode-filtered cascade would fail);
+  the
   top-level list returns roots only; expanding a root returns its children;
   expanding a child returns grandchildren.
 - **Success** — the cascade reaches grandchildren and deeper; the parent
@@ -271,9 +287,7 @@ required.
   resolve in a single batched call rather than one call per row; REST and MCP
   return the same scoped set for an identical parent filter, extending the
   existing parity test; a child row exposes the same actions as a root row.
-- **Failure** — a fire-and-forget child is **not** cancelled when its parent is
-  (the explicit product decision, and the single most important assertion in
-  this phase); a child already terminal is skipped without failing the cascade;
+- **Failure** — a child already terminal is skipped without failing the cascade;
   a parent in a state that cannot be cancelled returns `ErrCannotCancel` and
   cascades to nothing.
 - **Error** — a storage failure cancelling one child leaves the parent
@@ -285,8 +299,9 @@ required.
   guard, asserted end-to-end across Phase 4 and Phase 5); a run with no
   children renders no expander; a parent whose children are all invisible to
   the caller reports a zero count and no expander, so no existence is leaked; a
-  mixed parent with both awaited and fire-and-forget children cancels exactly
-  the awaited ones; an instance predating this feature carries null links and
+  mixed parent with both awaited and fire-and-forget children cancels all of
+  them; a cancelled fire-and-forget child does **not** wake its cancelled
+  parent, because the Phase 4 wake requires `mode = wait_for_child`; an instance predating this feature carries null links and
   appears as a root; a hierarchy several levels deep expands correctly at each
   level; a corrupt self-referential link halts traversal instead of recursing
   without bound.

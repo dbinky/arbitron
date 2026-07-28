@@ -70,14 +70,31 @@ id, the spawning node id, and the spawn mode; it returns the new child
 instance's id, or an error.
 
 Implemented as a thin method on `Engine` that delegates to the existing trigger
-path and then stamps the link. Two implementation constraints are architectural,
-not incidental:
+path. Two implementation constraints are architectural, not incidental:
 
 - **The link must be persisted before the child can reach a terminal state.**
   If the child could complete before its link row is written, Phase 4's wake
-  hook would find no parent to notify and the parent would wait forever. The
-  link is therefore established as part of instance creation, not as a
-  follow-up write after enqueue.
+  hook would find no parent to notify and the parent would wait forever. A
+  post-trigger stamp cannot satisfy this: `TriggerWithDepartment` creates *and*
+  enqueues (`engine.go:454-466`), so control returns to the caller only after
+  the child may already be running. The link is therefore established as part
+  of instance construction, not as a follow-up write after enqueue.
+
+  The seam for that already exists and is used for exactly this shape of
+  creation-time provenance: `instance.Origin` is carried **on the context**
+  (`instance.WithOrigin` / `OriginFromContext`, `domain/instance/origin.go:26-43`)
+  and read by the trigger path at `engine.go:417-421`, which stamps
+  `TriggerSource` and `ScheduleID` onto the `Instance` literal at
+  `engine.go:435` before `instances.Create`. `ScheduleID` is the precise
+  precedent — a nullable, FK-free link to the thing that caused the run, set
+  without widening the trigger signature. The spawn link (parent instance id,
+  parent node id, spawn mode) rides the same context-carried mechanism and is
+  stamped at the same place. `ChildSpawner.Spawn` therefore derives a context
+  carrying both the owner's identity and the spawn link, then calls
+  `TriggerWithDepartment`; the engine does the stamping. Whether the link
+  extends the existing `Origin` struct or rides a sibling context value is a
+  plan-level decision; the requirement is that the child instance is created
+  with its link already set.
 - **Priority is inherited from the parent.** A child of a high-priority run
   competes on equal footing with its parent's siblings. Nothing in the spec
   requires an independent priority axis, and inventing one is YAGNI.
@@ -175,6 +192,7 @@ SpawnWorkflowExecutor.Execute(ctx, node, vars, workflowName)
 | Guidance prose | `engine.FileReader.ReadFile` (`domain/engine/ports.go:17`) |
 | Prepared startup values | `ChildInputPreparer` — **Phase 2 of this design** |
 | Child instance creation + enqueue | `Engine.TriggerWithDepartment` (`engine.go:274`) → `instance.InstanceRepository.Create` → `QueueManager.Enqueue` (`domain/engine/ports.go:166-169`) |
+| Link stamped at instance construction | `instance.WithOrigin` / `instance.OriginFromContext` (`domain/instance/origin.go:37,43`), read at `engine.go:417-421` and stamped onto the `Instance` literal at `engine.go:435` — the same context-carried creation-time path `ScheduleID` uses |
 | Link field storage | The columns added in **Phase 1 of this design** |
 | Node output persistence | `instance.NodeExecutionRepository.Create`, written by the engine's `executeWithRetry` (`engine.go:997`) |
 
@@ -190,6 +208,8 @@ this design; both are named as such. There are no unresolved dependencies.
   schedule evaluator (lines 867, 880) and the spawn executor.
 - Injecting the `IdentityResolver` and `ChildSpawner` (`*Engine`) into the
   executor.
+- Whether the spawn link extends `instance.Origin` or rides a sibling
+  context value, and the corresponding stamp lines in the trigger path.
 - Exact shape of the spawn node's output object.
 - Whether `local` auth mode — which `identity.BuildIdentity`'s comment notes
   bypasses the builder for its hardcoded admin (`domain/identity/builder.go:34-37`)
@@ -201,7 +221,9 @@ this design; both are named as such. There are no unresolved dependencies.
 - `domain/engine/ports.go` — `IdentityResolver` and `ChildSpawner` declarations.
 - New file in `domain/engine` for `SpawnWorkflowExecutor`.
 - `domain/engine/engine.go` — the `Spawn` method satisfying `ChildSpawner`,
-  delegating to the existing trigger path.
+  delegating to the existing trigger path; and the link stamp beside the
+  existing `TriggerSource`/`ScheduleID` stamp (`engine.go:417-421`, `:435`).
+- `domain/instance/origin.go` — the context-carried spawn link.
 - `cmd/arbitron/main.go` — construction, wiring, post-construction executor
   registration, and the resolver rename.
 - No change to the engine run loop.
@@ -259,8 +281,11 @@ are required.
   *different* identity in context (this is the spec's owner-inheritance
   requirement and the whole reason for the resolver); the reconstructed
   identity carries the owner's departments so a department-scoped child
-  workflow resolves; the child inherits the parent's priority; the node output
-  records the child instance id; a spawn from a run that itself has a parent
+  workflow resolves; the child's link fields are already set on the row
+  observed by `Create` — asserted at the repository seam, not merely after
+  `Spawn` returns, because a link written after enqueue is the failure Phase 4's
+  wake hook cannot recover from; the child inherits the parent's priority; the
+  node output records the child instance id; a spawn from a run that itself has a parent
   produces a correctly linked grandchild.
 - **Failure** — preparation reports unsatisfied required inputs → node fails
   and **no child is created** (asserted, because a child created from an

@@ -149,7 +149,7 @@ than the optional guidance template.
 | Input | Producer that exists today |
 | --- | --- |
 | Child workflow's declared inputs | `workflow.LoadVisibleFiltered` (`domain/workflow/resolve.go:33`) → `workflow.Workflow.Inputs` (`[]workflow.InputField`, `domain/workflow/workflow.go:76-82`). **Called by the executor in Phase 3, which passes the result in** — the preparer never loads a workflow itself. |
-| Parent context map | `variable.VariableStore.Snapshot()` — already handed to every executor's `Execute` as its `vars` argument. Contains the run's inputs and all prior node outputs. |
+| Parent context map | `variable.VariableStore.Snapshot()`. The store itself is the `vars` argument of `NodeExecutor.Execute` (`domain/engine/executor.go:13`); **Phase 3's executor calls `Snapshot()` and passes the resulting map in** — the preparer takes a flat map, not the store. Contains the run's inputs and all prior node outputs. |
 | Optional guidance prose | `engine.FileReader.ReadFile(owner, workflowName, relativePath)` (`domain/engine/ports.go:17-21`), the same call `LLMCallExecutor` makes at `executor_llm.go:42`. Owner comes from the run context, seeded at `engine.go:711-713`. |
 | Chat model + backend | `provider.ProfileResolver.Resolve` and `engine.ChatProviderSelector.ChatProviderFor` (`domain/engine/ports.go:60-62`) — the identical pair `LLMCallExecutor` holds (`executor_llm.go:24-26`), wired in `cmd/arbitron/main.go` |
 | Structured-output instruction | `structuredOutputInstruction` in `domain/engine`, used at `executor_llm.go:56` |
