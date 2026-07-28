@@ -3,8 +3,8 @@
 -- createInstanceSQL in instance_repo.go) so the column set can evolve without a
 -- sqlc regeneration step, the same way CountActiveByWorkflowID does. This
 -- definition is kept in lockstep as the readable source of truth.
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
@@ -19,9 +19,10 @@ SELECT * FROM instances WHERE id = ?;
 --
 -- Disjunctive RBAC visibility filter: a caller sees a row when it is owned by
 -- them, OR public (when include_public), OR a department run in one of their
--- departments. An admin passes owner_id=NULL, include_public=0, and an empty
--- departments array, in which case the guarded `unconstrained` arm admits every
--- row.
+-- departments. It FAILS CLOSED: admitting every row requires the EXPLICIT
+-- `unconstrained` assertion, which the engine service sets only for an admin.
+-- A filter set with no owner, no departments, no public and no assertion is a
+-- caller with no computed scope and matches nothing.
 --
 -- The parent narrowing (parent_instance_id IS NULL for roots-only, or
 -- parent_instance_id = ? for a specific parent) is appended as a further AND by

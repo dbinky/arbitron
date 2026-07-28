@@ -553,7 +553,7 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
 		case NodeTypeSpawnWorkflow:
-			errs = append(errs, validateSpawnWorkflowNode(n, wf.Edges)...)
+			errs = append(errs, validateSpawnWorkflowNode(n, wf.Edges, wf.Name)...)
 		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
@@ -657,7 +657,7 @@ func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 // rules are mode-specific, so reporting them against an undefined mode would
 // bury the one finding the author can act on. An empty mode is an authoring
 // error, NOT an inheritance request (see IsValidSpawnMode).
-func validateSpawnWorkflowNode(node Node, edges []Edge) []ValidationError {
+func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []ValidationError {
 	var errs []ValidationError
 
 	if node.Entrypoint {
@@ -673,6 +673,26 @@ func validateSpawnWorkflowNode(node Node, edges []Edge) []ValidationError {
 			Code:    "MISSING_REQUIRED_CONFIG",
 			Message: "spawn_workflow node " + node.ID + " must have a childWorkflow",
 			NodeID:  node.ID,
+		})
+	}
+
+	// DIRECT self-spawn: the one cycle visible in a single definition, and the
+	// one an author is most likely to write by accident. It is caught here, at
+	// publish time, where the fix is obvious.
+	//
+	// This is NOT the cycle defence — it cannot be. The spawn graph is a graph of
+	// workflow NAMES resolved at run time, so an INDIRECT cycle (A spawns B
+	// spawns A) is invisible from inside either definition, and a workflow may be
+	// renamed after publication. The runtime bound (instance.MaxSpawnDepth,
+	// enforced in Engine.Spawn against the child's persisted spawn_depth) is what
+	// actually contains recursion; this check just turns the obvious mistake into
+	// an author-time error instead of ten wasted generations.
+	if workflowName != "" && node.Config.ChildWorkflow == workflowName {
+		errs = append(errs, ValidationError{
+			Code: "INVALID_SPAWN_WORKFLOW",
+			Message: "spawn_workflow node " + node.ID + " spawns its own workflow " +
+				strconv.Quote(workflowName) + "; a run that spawns itself recurses until it hits the runtime spawn-depth limit",
+			NodeID: node.ID,
 		})
 	}
 

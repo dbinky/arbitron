@@ -21,7 +21,7 @@ const instanceColumnsWithLink = `id, owner_id, workflow_name, workflow_snapshot,
 	`variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, ` +
 	`completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, ` +
 	`webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, ` +
-	`parent_instance_id, parent_node_id, spawn_mode`
+	`parent_instance_id, parent_node_id, spawn_mode, spawn_depth`
 
 // instanceSummaryColumns is the explicit column list for the LEAN list
 // projection. It is the column set the generated ListInstances query selected,
@@ -41,6 +41,7 @@ type rowScanner interface {
 func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 	var row generated.Instance
 	var parentID, parentNode, spawnMode sql.NullString
+	var spawnDepth int
 	if err := s.Scan(
 		&row.ID,
 		&row.OwnerID,
@@ -68,6 +69,7 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 		&parentID,
 		&parentNode,
 		&spawnMode,
+		&spawnDepth,
 	); err != nil {
 		return nil, err
 	}
@@ -84,5 +86,6 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 	inst.ParentInstanceID = pid
 	inst.ParentNodeID = nullStringToPtr(parentNode)
 	inst.SpawnMode = instance.SpawnMode(nullStringToString(spawnMode))
+	inst.SpawnDepth = spawnDepth
 	return inst, nil
 }

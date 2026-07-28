@@ -454,12 +454,15 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	var parentInstanceID *uuid.UUID
 	var parentNodeID *string
 	var spawnMode instance.SpawnMode
+	// spawnDepth stays 0 for a root run, which is exactly what a root's depth is.
+	spawnDepth := 0
 	if l, ok := instance.SpawnLinkFromContext(ctx); ok && l.Valid() {
 		p := l.ParentInstanceID
 		n := l.ParentNodeID
 		parentInstanceID = &p
 		parentNodeID = &n
 		spawnMode = l.Mode
+		spawnDepth = l.SpawnDepth
 	}
 
 	// Resolve the stable workflow id (name->id) so the run carries an identity
@@ -488,6 +491,7 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		ParentInstanceID:  parentInstanceID,
 		ParentNodeID:      parentNodeID,
 		SpawnMode:         spawnMode,
+		SpawnDepth:        spawnDepth,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,

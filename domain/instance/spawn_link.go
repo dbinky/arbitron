@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -49,11 +50,43 @@ type SpawnLink struct {
 	ParentInstanceID uuid.UUID
 	ParentNodeID     string
 	Mode             SpawnMode
+
+	// SpawnDepth is how many spawn hops separate the CHILD from its root run: a
+	// root is 0, its child 1, and so on. It is DERIVED, never caller-supplied —
+	// Engine.Spawn reads the parent's stored depth and adds one, so no executor
+	// can forget to set it and no request can inflate it.
+	SpawnDepth int
 }
+
+// MaxSpawnDepth is the runtime ceiling on spawn recursion: the deepest
+// generation a run tree may reach before Engine.Spawn refuses to create another
+// child.
+//
+// A BOUND IS REQUIRED, and author-time analysis cannot supply it. The spawn
+// graph is a graph of workflow NAMES resolved at run time, so a cycle can be
+// indirect (A spawns B spawns A) and need not be visible in any single
+// definition. Unbounded, each generation costs a database row, a workspace, and
+// a billed provider call — and because a shared or published workflow runs in
+// the TRIGGERING user's queue under their ownership, the bill lands on the
+// tenant who ran it, not the author who wrote the recursion.
+//
+// The value is deliberately generous: real nesting (a pipeline that fans out to
+// per-task children which fan out again) is a handful of levels deep, so this
+// is a runaway guard, not a design constraint an author should feel.
+const MaxSpawnDepth = 10
+
+// ErrSpawnDepthExceeded is returned when a spawn would create a child deeper
+// than MaxSpawnDepth. It is a sentinel so the node's error behaviour can be
+// distinguished from a transient spawn failure: retrying it can never succeed.
+var ErrSpawnDepthExceeded = errors.New("maximum spawn depth exceeded")
 
 // Valid reports whether the link is fully populated. A partial link is never
 // written: a child with a parent id but no node id could not be matched by the
 // wake and would strand its parent forever.
+//
+// SpawnDepth is deliberately NOT checked: 0 is meaningful (it is what a link
+// carries before Engine.Spawn derives the real depth), and validity here is
+// about matchability by the wake.
 func (l SpawnLink) Valid() bool {
 	return l.ParentInstanceID != uuid.Nil && l.ParentNodeID != "" && l.Mode.Valid()
 }

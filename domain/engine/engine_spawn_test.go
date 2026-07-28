@@ -36,6 +36,21 @@ func spawnerFixture(t *testing.T) *testFixtures {
 	return f
 }
 
+// spawnParent creates a real parent ROW at the given spawn depth. Spawn derives
+// the child's depth from the parent's PERSISTED value, so a synthetic parent id
+// with no row behind it is no longer a valid stand-in: an unverifiable depth
+// fails closed rather than defaulting to zero.
+func spawnParent(t *testing.T, f *testFixtures, depth int) uuid.UUID {
+	t.Helper()
+	inst := &instance.Instance{
+		ID: uuid.New(), OwnerID: uuid.New(), WorkflowName: "parent",
+		State: instance.StateRunning, Priority: instance.PriorityNormal,
+		SpawnDepth: depth,
+	}
+	require.NoError(t, f.instanceRepo.Create(context.Background(), inst))
+	return inst.ID
+}
+
 // ---------- ChildInputs ----------
 
 func TestEngineChildInputs_ReturnsDeclaredContract(t *testing.T) {
@@ -170,7 +185,7 @@ func TestEngineChildInputs_PublicationLookupError_FailsClosed(t *testing.T) {
 func TestEngineSpawn_CreatesLinkedChildUnderRequestedOwner(t *testing.T) {
 	f := spawnerFixture(t)
 	owner := uuid.New()
-	parentID := uuid.New()
+	parentID := spawnParent(t, f, 0)
 
 	ctx := identity.WithIdentity(context.Background(), identity.Identity{
 		UserID: owner, Role: "user", Departments: []string{"default"},
@@ -209,7 +224,7 @@ func TestEngineSpawn_PropagatesMissingRequiredInput(t *testing.T) {
 		Variables:     map[string]any{}, // "repo" is required
 		Priority:      string(instance.PriorityNormal),
 		Link: instance.SpawnLink{
-			ParentInstanceID: uuid.New(), ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+			ParentInstanceID: spawnParent(t, f, 0), ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
 		},
 	})
 	require.Error(t, err)
@@ -269,6 +284,7 @@ func TestEngineSpawn_ArchivedChildWorkflow_Refused(t *testing.T) {
 	res.register("child", uuid.New())
 	res.markArchived("child")
 	f.engine.SetWorkflowResolver(res)
+	parentID := spawnParent(t, f, 0)
 	before := len(f.instanceRepo.all())
 
 	_, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
@@ -276,7 +292,7 @@ func TestEngineSpawn_ArchivedChildWorkflow_Refused(t *testing.T) {
 		Variables:     map[string]any{"repo": "r"},
 		Priority:      string(instance.PriorityNormal),
 		Link: instance.SpawnLink{
-			ParentInstanceID: uuid.New(), ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+			ParentInstanceID: parentID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
 		},
 	})
 	require.ErrorIs(t, err, workflow.ErrArchived)
@@ -286,7 +302,7 @@ func TestEngineSpawn_ArchivedChildWorkflow_Refused(t *testing.T) {
 // A grandchild is linked to ITS parent, not to the root.
 func TestEngineSpawn_GrandchildLinksToItsOwnParent(t *testing.T) {
 	f := spawnerFixture(t)
-	root := uuid.New()
+	root := spawnParent(t, f, 0)
 
 	childID, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
 		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
@@ -311,4 +327,117 @@ func TestEngineSpawn_GrandchildLinksToItsOwnParent(t *testing.T) {
 	require.NotNil(t, grand.ParentInstanceID)
 	assert.Equal(t, childID, *grand.ParentInstanceID)
 	assert.NotEqual(t, root, *grand.ParentInstanceID)
+}
+
+// ---------- spawn depth bound ----------
+
+// The depth counter is DERIVED from the parent's persisted value and stamped
+// onto the child in the SAME insert as the link, so a grandchild reading it can
+// never see a zero that has not yet been written.
+func TestEngineSpawn_DerivesChildDepthFromTheParentsPersistedValue(t *testing.T) {
+	f := spawnerFixture(t)
+	parentID := spawnParent(t, f, 3)
+
+	childID, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: parentID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.NoError(t, err)
+
+	got := f.instanceRepo.get(childID)
+	require.NotNil(t, got)
+	assert.Equal(t, 4, got.SpawnDepth)
+}
+
+// A root run is depth 0, so its child is depth 1.
+func TestEngineSpawn_ChildOfARootIsDepthOne(t *testing.T) {
+	f := spawnerFixture(t)
+
+	childID, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: spawnParent(t, f, 0), ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.instanceRepo.get(childID).SpawnDepth)
+}
+
+// THE RESOURCE-EXHAUSTION GUARD. Without it, a cycle (direct or indirect)
+// spends a row, a workspace, and a billed provider call per generation,
+// forever — and a shared workflow bills the triggering tenant, not the author.
+func TestEngineSpawn_RefusesToExceedTheDepthCeiling(t *testing.T) {
+	f := spawnerFixture(t)
+	parentID := spawnParent(t, f, instance.MaxSpawnDepth)
+	before := len(f.instanceRepo.all())
+
+	_, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: parentID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.ErrorIs(t, err, instance.ErrSpawnDepthExceeded)
+	assert.Equal(t, before, len(f.instanceRepo.all()),
+		"the refusal must land BEFORE the row, the workspace, and the billed call")
+}
+
+// The LAST allowed generation still succeeds: the ceiling is a bound on the
+// tree, not an off-by-one that costs an author a level.
+func TestEngineSpawn_AllowsTheDeepestPermittedGeneration(t *testing.T) {
+	f := spawnerFixture(t)
+	parentID := spawnParent(t, f, instance.MaxSpawnDepth-1)
+
+	childID, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: parentID, ParentNodeID: "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, instance.MaxSpawnDepth, f.instanceRepo.get(childID).SpawnDepth)
+}
+
+// A caller-supplied depth is OVERWRITTEN, never trusted: the parent's stored
+// value is the only authority, so no request can inflate its own budget and no
+// executor can forget to set one.
+func TestEngineSpawn_IgnoresACallerSuppliedDepth(t *testing.T) {
+	f := spawnerFixture(t)
+	parentID := spawnParent(t, f, 5)
+
+	childID, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: parentID, ParentNodeID: "spawn-1",
+			Mode: instance.SpawnModeFireAndForget, SpawnDepth: 0,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 6, f.instanceRepo.get(childID).SpawnDepth)
+}
+
+// An unreadable parent fails the spawn: the bound cannot be verified, and
+// defaulting to zero would reset the budget on every hop, which is exactly the
+// unbounded recursion the counter exists to stop.
+func TestEngineSpawn_FailsClosedWhenTheParentCannotBeRead(t *testing.T) {
+	f := spawnerFixture(t)
+	before := len(f.instanceRepo.all())
+
+	_, err := f.engine.Spawn(context.Background(), engine.SpawnRequest{
+		ChildWorkflow: "child", Variables: map[string]any{"repo": "r"},
+		Priority: string(instance.PriorityNormal),
+		Link: instance.SpawnLink{
+			ParentInstanceID: uuid.New(), // no row behind it
+			ParentNodeID:     "spawn-1", Mode: instance.SpawnModeFireAndForget,
+		},
+	})
+	require.Error(t, err)
+	assert.Equal(t, before, len(f.instanceRepo.all()))
 }

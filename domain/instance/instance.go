@@ -134,9 +134,15 @@ type Instance struct {
 	// deliberate choice recorded for ScheduleID above: a referenced row may be
 	// removed while historical runs remain, and a purged parent must not
 	// cascade-delete a child's execution history.
-	ParentInstanceID  *uuid.UUID
-	ParentNodeID      *string
-	SpawnMode         SpawnMode
+	ParentInstanceID *uuid.UUID
+	ParentNodeID     *string
+	SpawnMode        SpawnMode
+	// SpawnDepth is how many spawn hops separate this run from its root: 0 for a
+	// root run, 1 for its child, and so on. It is the persisted counter behind
+	// the MaxSpawnDepth runtime ceiling — see MaxSpawnDepth for why the bound
+	// cannot be computed at author time. Derived by Engine.Spawn from the
+	// parent's stored value; never caller-supplied.
+	SpawnDepth        int
 	State             State
 	Priority          Priority
 	Variables         map[string]any

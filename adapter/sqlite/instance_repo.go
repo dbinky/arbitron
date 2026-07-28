@@ -44,8 +44,8 @@ const createInstanceSQL = `INSERT INTO instances (
 	id, owner_id, workflow_name, workflow_snapshot, state, priority,
 	variables, original_variables, queued_at, department, visibility,
 	trigger_source, schedule_id, workflow_id,
-	parent_instance_id, parent_node_id, spawn_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	parent_instance_id, parent_node_id, spawn_mode, spawn_depth
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING created_at, updated_at`
 
 func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) error {
@@ -111,6 +111,10 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		parentID,
 		parentNode,
 		spawnMode,
+		// Rides the SAME insert as the link: the depth counter is the runtime
+		// bound on spawn recursion, so there must be no window in which a child
+		// row exists with a depth of 0 that a grandchild could read.
+		inst.SpawnDepth,
 	).Scan(&createdAtRaw, &updatedAtRaw)
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)

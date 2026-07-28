@@ -36,3 +36,18 @@ ALTER TABLE instances ADD COLUMN spawn_mode         TEXT
 -- (parent_instance_id IS NULL) index-eligible. Portable to Postgres.
 CREATE INDEX IF NOT EXISTS idx_instances_parent
     ON instances (parent_instance_id, parent_node_id, spawn_mode);
+
+-- spawn_depth: how many spawn hops separate this run from its ROOT. A root run
+-- is 0; its child is 1, and so on. It is the RUNTIME BOUND on spawn recursion.
+--
+-- WHY A PERSISTED COUNTER. Depth cannot be derived at author time: the spawn
+-- graph is a graph of workflow NAMES resolved at run time, and a cycle can be
+-- indirect (A spawns B spawns A) or dynamic. Without a bound, each generation
+-- costs a row, a workspace, and a billed provider call — and for a shared or
+-- published workflow the bill lands on the TRIGGERING tenant, not the author.
+-- The alternative, walking the ancestry chain on every spawn, is N queries per
+-- spawn to recompute a value that never changes once written.
+--
+-- NOT NULL DEFAULT 0 keeps the column additive: every pre-existing row reads
+-- back as a root, which is what it is.
+ALTER TABLE instances ADD COLUMN spawn_depth INTEGER NOT NULL DEFAULT 0;

@@ -60,7 +60,35 @@ func (e *Engine) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 		return uuid.Nil, fmt.Errorf("spawn child workflow %q: incomplete spawn link %+v", req.ChildWorkflow, req.Link)
 	}
 
-	ctx = instance.WithSpawnLink(ctx, req.Link)
+	// DERIVE the child's depth here, from the PARENT'S PERSISTED value, and
+	// refuse to exceed the ceiling.
+	//
+	// This is the single choke point through which every child is created, which
+	// is why the bound lives here rather than in the executor: no future caller
+	// can forget it, and no caller can supply a depth of its own — whatever
+	// req.Link.SpawnDepth held is overwritten below.
+	//
+	// The check must be RUN-TIME. The spawn graph is a graph of workflow NAMES
+	// resolved at run time, so a cycle can be indirect (A spawns B spawns A) and
+	// invisible in any single definition; the author-time self-reference check
+	// in workflow validation closes only the direct case. Unbounded, each
+	// generation costs a row, a workspace, and a billed provider call — and a
+	// shared or published workflow bills the TRIGGERING tenant, not the author.
+	parent, perr := e.instances.Get(ctx, req.Link.ParentInstanceID)
+	if perr != nil {
+		return uuid.Nil, fmt.Errorf("spawn child workflow %q: load parent instance: %w", req.ChildWorkflow, perr)
+	}
+	depth := parent.SpawnDepth + 1
+	if depth > instance.MaxSpawnDepth {
+		return uuid.Nil, fmt.Errorf(
+			"spawn child workflow %q: %w (depth %d, limit %d); the run tree is %d generations deep, "+
+				"which usually means a spawn cycle",
+			req.ChildWorkflow, instance.ErrSpawnDepthExceeded, depth, instance.MaxSpawnDepth, parent.SpawnDepth)
+	}
+
+	link := req.Link
+	link.SpawnDepth = depth
+	ctx = instance.WithSpawnLink(ctx, link)
 	childID, _, err := e.TriggerWithDepartment(ctx, req.ChildWorkflow, req.Variables, req.Priority, "")
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("spawn child workflow %q: %w", req.ChildWorkflow, err)
