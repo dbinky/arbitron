@@ -606,9 +606,10 @@ func (m *mockQueueManager) notifyCount() int {
 
 // mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)
 type mockQueueRepo struct {
-	mu           sync.Mutex
-	instRepo     *mockInstanceRepo
-	setQueuedErr error
+	mu              sync.Mutex
+	instRepo        *mockInstanceRepo
+	setQueuedErr    error
+	setQueuedErrFor map[uuid.UUID]error
 }
 
 func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
@@ -623,6 +624,9 @@ func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
 	r.mu.Lock()
 	err := r.setQueuedErr
+	if perID, ok := r.setQueuedErrFor[id]; ok {
+		err = perID
+	}
 	r.mu.Unlock()
 	if err != nil {
 		return err

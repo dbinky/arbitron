@@ -77,6 +77,57 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`SpawnWaitReconciler.Reconcile`'s "one failure doesn't abandon the rest"
+  guarantee was proven only for a `Get` failure, never for the sibling
+  `SetQueued` failure.** Focus area 21 (startup spawn-wait reconciler),
+  review 2. `domain/engine/spawn_reconciler.go:83-87` documents and
+  implements a best-effort posture: log a `SetQueued` failure and `continue`
+  to the next candidate rather than aborting the sweep — but the only
+  existing test that exercises this branch,
+  `TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal`, drives exactly
+  ONE candidate through it, so it cannot distinguish `continue` from a
+  regression that aborted the whole loop the moment any one write failed
+  (e.g. an early `return nil`). The sibling
+  `TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest` proves the
+  loop-continues shape, but only for the OTHER failure mode one line above
+  (`instances.Get` on a missing parent) — the same shape of gap this loop has
+  fixed repeatedly elsewhere (areas 19, 20): a shared best-effort contract
+  proven at one call site/failure-mode and silently assumed at a sibling one.
+  A regression here would silently strand every candidate queued after the
+  first uncooperative one on a real restart, each waiting until the NEXT
+  reconcile pass instead of being requeued immediately. Added a
+  `setQueuedErrFor map[uuid.UUID]error` field to `mockQueueRepo`
+  (`domain/engine/engine_test.go`, checked before the existing global
+  `setQueuedErr`) so a test can fail `SetQueued` for one specific candidate
+  while leaving a later one free to succeed, and added
+  `TestSpawnWaitReconciler_SetQueuedFailureForOneCandidateDoesNotAbandonTheRest`
+  (`domain/engine/spawn_reconciler_test.go`), asserting the failing
+  candidate's parent stays `waiting`, a later candidate is still `queued`,
+  and `NotifyCapacityFreed` still fires once for the one that succeeded;
+  confirmed it fails for the right reason (later candidate stuck `waiting`,
+  zero notifies) when the `continue` after the `SetQueued` error check is
+  temporarily replaced with `return nil`, then confirmed it passes against
+  the real code. Independently re-verified the rest of area 21's checklist
+  from source rather than trusting review 1's write-up: re-read
+  `cmd/arbitron/main.go:1032-1059` and confirmed the reconciler is still
+  constructed only at the real composition root, still run after
+  `RecoverCrashedInstances`, and its own error is still logged, not fatal;
+  confirmed `SpawnWaitCandidate.ChildState` is populated by
+  `ListWaitingOnTerminalChild`'s SQL (`adapter/sqlite/instance_repo.go:725-733`,
+  `WHERE ... c.state IN ('completed','failed','cancelled')`) but genuinely
+  unused inside `Reconcile` itself — not a gap, since the terminal-filtering
+  already happens at the query layer and terminal states never revert;
+  `go tool cover` over the `TestSpawnWaitReconciler`-prefixed suite shows
+  `Reconcile` at 95.7% (the sole remaining gap, the defensive `ctx == nil`
+  guard, has no known production caller and was already logged/left as a
+  residual, lower-priority item when review 1 closed — the identical shape
+  already accepted for `OnChildTerminal`'s own such guard in area 19). Ran
+  the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run` suites:
+  no new failures beyond the recorded baseline (`domain/engine` passes; the
+  one pre-existing `adapter/config` failure is unchanged; dashboard
+  typecheck and vitest are both clean). This closes review 2 approval for
+  area 21 — both approvals for area 21 are now recorded.
+
 - [x] **`SpawnWaitReconciler.Reconcile`'s own `SetQueued` re-queue failure
   branch was untested.** Focus area 21 (startup spawn-wait reconciler),
   review 1. `domain/engine/spawn_reconciler.go:83-87` documents a best-effort

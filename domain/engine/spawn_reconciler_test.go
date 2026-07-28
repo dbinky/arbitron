@@ -234,3 +234,36 @@ func TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest(t *testing.T) {
 		"one uncooperative candidate must not fail the whole sweep")
 	assert.Equal(t, instance.StateQueued, r.stateOf(t, good))
 }
+
+// A SetQueued write failure for one candidate must not abandon the REST of the
+// sweep, distinct from the Get-failure case above: TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal
+// only ever drives a single candidate through the failing write, so it cannot
+// tell an early `continue` apart from a regression that aborted the whole loop
+// (e.g. an early `return nil`) the moment any one write failed. This proves a
+// later candidate still gets re-queued, and that the sweep still reports
+// capacity freed for the one candidate that DID succeed.
+func TestSpawnWaitReconciler_SetQueuedFailureForOneCandidateDoesNotAbandonTheRest(t *testing.T) {
+	r := newReconcilerFixture(t)
+	failing := r.seedWaitingParent(t, "spawn-1")
+	good := r.seedWaitingParent(t, "spawn-2")
+
+	failingChild := uuid.New()
+	r.queueRepo.mu.Lock()
+	r.queueRepo.setQueuedErrFor = map[uuid.UUID]error{failing: assert.AnError}
+	r.queueRepo.mu.Unlock()
+
+	r.spawnWaits.candidates = []instance.SpawnWaitCandidate{
+		{ParentID: failing, ParentNodeID: "spawn-1", ChildID: failingChild, ChildState: instance.StateCompleted},
+		{ParentID: good, ParentNodeID: "spawn-2", ChildID: uuid.New(), ChildState: instance.StateCompleted},
+	}
+
+	err := r.rec.Reconcile(context.Background())
+	require.NoError(t, err, "a re-queue write failure for one candidate must not fail the whole sweep")
+
+	assert.Equal(t, instance.StateWaiting, r.stateOf(t, failing),
+		"the candidate whose write failed must stay waiting, not desync into queued")
+	assert.Equal(t, instance.StateQueued, r.stateOf(t, good),
+		"a later candidate must still be re-queued despite an earlier candidate's write failure")
+	assert.Equal(t, 1, r.f.queueManager.notifyCount(),
+		"capacity-freed must still be reported once for the candidate that did succeed")
+}
