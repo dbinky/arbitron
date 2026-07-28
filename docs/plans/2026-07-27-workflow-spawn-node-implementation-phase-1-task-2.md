@@ -1,6 +1,6 @@
 # Phase 1 — Task 2: spawn node author-time validation
 
-**Goal:** Reject an unauthorable `spawn_workflow` node at workflow load — missing child workflow name, unknown/empty mode, missing `success`/`failure` edges in wait-for-child mode, branch ports wired in fire-and-forget mode, and a spawn node marked as entrypoint.
+**Goal:** Reject an unauthorable `spawn_workflow` node at workflow load — missing child workflow name, unknown/empty mode, missing `success`/`failure` edges in wait-for-child mode, branch ports wired in fire-and-forget mode, a spawn node marked as entrypoint, and a `model_profile` that resolves to the wrong posture.
 
 **Architecture:** Adds a `validateSpawnWorkflowNode` arm to the existing per-type switch in `validateNodeConfigs` (`domain/workflow/validation.go`). Port presence reuses the `(source, output)` edge-set technique from `validateConditionalEdges`; the entrypoint and edge-count checks mirror `validateWebhookWaitNode`. Errors are batched `ValidationError{Code, Message, NodeID}` values so an author sees every problem at once.
 
@@ -12,6 +12,7 @@
 
 **Files:**
 - Modify: `domain/workflow/validation.go:494-544` (the `validateNodeConfigs` switch), and append the new function after `validateWebhookWaitNode` (~line 625)
+- Modify: `domain/workflow/validation.go:157-181` (`validateModelProfiles` — add the spawn arm)
 - Test:   `domain/workflow/validation_spawn_test.go`
 
 ---
@@ -273,6 +274,81 @@ func TestValidateSpawn_WaitForChildExtraUnnamedEdge_Rejected(t *testing.T) {
 	}
 }
 
+// ---------- model_profile posture, at AUTHOR time ----------
+
+// fixedProfileChecker resolves exactly the aliases it is given. It HONOURS the
+// alias argument: a checker that answered "chat" for everything would make the
+// mismatch test unfailable.
+type fixedProfileChecker map[string]string
+
+func (c fixedProfileChecker) ProfileKind(alias string) (string, bool) {
+	k, ok := c[alias]
+	return k, ok
+}
+
+// A spawn node's input-preparation call is tool-SUPPRESSED, so an agent-kind
+// profile is a config-driven escalation from a reasoning call to an RCE-capable
+// one. The engine's kind guard fails closed at run time; this is its author-time
+// counterpart, which every other LLM-calling node type already has.
+func TestValidateSpawn_AgentProfile_RejectedAtAuthorTime(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeFireAndForget, ModelProfile: "agenty",
+		}},
+		[]Edge{{Source: "spawn", Target: "ok"}},
+	)
+	errs := Validate(wf, nil, fixedProfileChecker{"agenty": "agent"}, nil)
+	if !hasError(errs, "PROFILE_KIND_MISMATCH", "spawn") {
+		t.Fatalf("expected PROFILE_KIND_MISMATCH on spawn, got %v", codesFor(errs, "spawn"))
+	}
+}
+
+func TestValidateSpawn_ChatProfile_Accepted(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeFireAndForget, ModelProfile: "chatty",
+		}},
+		[]Edge{{Source: "spawn", Target: "ok"}},
+	)
+	errs := Validate(wf, nil, fixedProfileChecker{"chatty": "chat"}, nil)
+	if got := codesFor(errs, "spawn"); len(got) != 0 {
+		t.Fatalf("expected no findings on spawn node, got %v", got)
+	}
+}
+
+func TestValidateSpawn_UnknownProfile_Rejected(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeFireAndForget, ModelProfile: "ghost",
+		}},
+		[]Edge{{Source: "spawn", Target: "ok"}},
+	)
+	errs := Validate(wf, nil, fixedProfileChecker{}, nil)
+	if !hasError(errs, "UNKNOWN_PROFILE", "spawn") {
+		t.Fatalf("expected UNKNOWN_PROFILE on spawn, got %v", codesFor(errs, "spawn"))
+	}
+}
+
+// An ABSENT model_profile is NOT an author error on a spawn node, unlike
+// llm_call/agent_call. A child workflow that declares zero inputs needs no
+// preparation call at all, and validation cannot load the child to find out —
+// so requiring the alias here would reject a legitimate workflow. The empty
+// alias fails closed at run time only if a preparation call is actually made.
+func TestValidateSpawn_NoModelProfile_IsNotAnAuthorError(t *testing.T) {
+	wf := spawnWF(
+		Node{ID: "spawn", Type: NodeTypeSpawnWorkflow, Config: NodeConfig{
+			ChildWorkflow: "child", SpawnMode: SpawnModeFireAndForget,
+		}},
+		[]Edge{{Source: "spawn", Target: "ok"}},
+	)
+	errs := Validate(wf, nil, fixedProfileChecker{"chatty": "chat"}, nil)
+	for _, e := range errs {
+		if e.NodeID == "spawn" && (e.Code == "MISSING_REQUIRED_CONFIG" || e.Code == "UNKNOWN_PROFILE") {
+			t.Fatalf("an absent model_profile must not be reported on a spawn node: %+v", e)
+		}
+	}
+}
+
 // ---------- non-spawn nodes are untouched ----------
 
 func TestValidateSpawn_OtherNodeTypesUnaffected(t *testing.T) {
@@ -420,6 +496,62 @@ import (
 )
 ```
 
+- [ ] **Step 3b: Give the spawn node an author-time model_profile posture check**
+
+`validateModelProfiles` (`domain/workflow/validation.go:157`) is the author-time
+counterpart of `domain/engine`'s binding-kind guard. Every other LLM-calling node
+type is in its switch; `spawn_workflow` performs a tool-suppressed preparation
+chat call and must be too, or an agent-kind alias is only caught at run time.
+
+Its one asymmetry: an **absent** alias is not an author error on a spawn node.
+A child workflow declaring zero inputs needs no preparation call at all, and
+validation cannot load the child to find out — so requiring the alias would
+reject a legitimate workflow. Only a *set* alias is checked.
+
+Change the switch head (line 160-172) and the empty-alias arm (line 174-181):
+
+```go
+	for _, n := range wf.Nodes {
+		var wantKind string
+		switch n.Type {
+		case NodeTypeLLMCall:
+			wantKind = "chat"
+		case NodeTypeAgentCall:
+			wantKind = "agent"
+		case NodeTypeInteractiveLLM:
+			wantKind = "chat"
+		case NodeTypeInteractiveAgent:
+			wantKind = "agent"
+		case NodeTypeSpawnWorkflow:
+			// The input-preparation call is tool-SUPPRESSED, so an agent-kind
+			// binding here is a config-driven escalation from a reasoning call to
+			// an RCE-capable one. This is the author-time half of the guard
+			// domain/engine's expectedKindForNodeType enforces at run time.
+			wantKind = "chat"
+		default:
+			continue
+		}
+
+		if n.Config.ModelProfile == "" {
+			// A spawn node's alias is OPTIONAL: a child that declares zero inputs
+			// never makes a preparation call, and validation cannot load the child
+			// to know. An empty alias fails closed at run time only if a call is
+			// actually made. Every other type here REQUIRES it.
+			if n.Type == NodeTypeSpawnWorkflow {
+				continue
+			}
+			errs = append(errs, ValidationError{
+				Code:    "MISSING_REQUIRED_CONFIG",
+				Message: string(n.Type) + " node " + n.ID + " must have a model_profile",
+				NodeID:  n.ID,
+			})
+			continue
+		}
+```
+
+Everything below that (the `Model` conflict check, the unknown-alias check, and
+the kind comparison) is unchanged and now covers the spawn node too.
+
 - [ ] **Step 4: Run it, confirm it passes**
 
 ```bash
@@ -444,6 +576,10 @@ Expected output:
 --- PASS: TestValidateSpawn_UnknownModeSkipsPortChecks (0.00s)
 --- PASS: TestValidateSpawn_FireAndForgetWithTwoUnnamedEdges_Rejected (0.00s)
 --- PASS: TestValidateSpawn_WaitForChildExtraUnnamedEdge_Rejected (0.00s)
+--- PASS: TestValidateSpawn_AgentProfile_RejectedAtAuthorTime (0.00s)
+--- PASS: TestValidateSpawn_ChatProfile_Accepted (0.00s)
+--- PASS: TestValidateSpawn_UnknownProfile_Rejected (0.00s)
+--- PASS: TestValidateSpawn_NoModelProfile_IsNotAnAuthorError (0.00s)
 --- PASS: TestValidateSpawn_OtherNodeTypesUnaffected (0.00s)
 PASS
 ok  	github.com/arbitron/arbitron/domain/workflow	0.2s

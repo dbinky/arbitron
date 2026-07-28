@@ -30,11 +30,18 @@ It is deliberately **not** merged into the executor. Keeping it separate means:
   without any consumer changing, which is the isolation test this design is
   held to.
 
-The component mirrors the dependency set of `LLMCallExecutor`
-(`domain/engine/executor_llm.go:23-27`): a profile resolver, a chat provider
-selector, and a file reader. It reuses that executor's proven call sequence
-(resolve profile → assert binding kind → select provider → chat → parse) rather
-than inventing a second way to make a structured LLM call.
+The component takes the LLM-facing half of `LLMCallExecutor`'s dependency set
+(`domain/engine/executor_llm.go:23-27`): a profile resolver and a chat provider
+selector. It reuses that executor's proven call sequence (resolve profile →
+assert binding kind → select provider → chat → parse) rather than inventing a
+second way to make a structured LLM call.
+
+It deliberately does **not** hold a `FileReader`. The optional guidance template
+is read — and its `{{substitutions}}` resolved against the parent's variable
+store — by the caller (Phase 3's executor), which already holds both the
+`FileReader` and the store; the preparer receives the resulting prose as a plain
+string. That is what makes the isolation claim above literally true: its tests
+need a fake chat provider and nothing else.
 
 ## Components
 
@@ -150,7 +157,7 @@ than the optional guidance template.
 | --- | --- |
 | Child workflow's declared inputs | `workflow.LoadVisibleFiltered` (`domain/workflow/resolve.go:33`) → `workflow.Workflow.Inputs` (`[]workflow.InputField`, `domain/workflow/workflow.go:76-82`). **Called by the executor in Phase 3, which passes the result in** — the preparer never loads a workflow itself. |
 | Parent context map | `variable.VariableStore.Snapshot()`. The store itself is the `vars` argument of `NodeExecutor.Execute` (`domain/engine/executor.go:13`); **Phase 3's executor calls `Snapshot()` and passes the resulting map in** — the preparer takes a flat map, not the store. Contains the run's inputs and all prior node outputs. |
-| Optional guidance prose | `engine.FileReader.ReadFile(owner, workflowName, relativePath)` (`domain/engine/ports.go:17-21`), the same call `LLMCallExecutor` makes at `executor_llm.go:42`. Owner comes from the run context, seeded at `engine.go:711-713`. |
+| Optional guidance prose | `engine.FileReader.ReadFile(owner, workflowName, relativePath)` (`domain/engine/ports.go:17-21`), the same call `LLMCallExecutor` makes at `executor_llm.go:42`. Owner comes from the run context, seeded at `engine.go:711-713`. **Called by the executor in Phase 3, which resolves the template's variables and passes the resulting prose in** — the preparer never reads a file. |
 | Chat model + backend | `provider.ProfileResolver.Resolve` and `engine.ChatProviderSelector.ChatProviderFor` (`domain/engine/ports.go:60-62`) — the identical pair `LLMCallExecutor` holds (`executor_llm.go:24-26`), wired in `cmd/arbitron/main.go` |
 | Structured-output instruction | `structuredOutputInstruction` in `domain/engine`, used at `executor_llm.go:56` |
 | Binding-kind assertion | `assertBindingKind` (`domain/engine/kind_guard.go:41`), made effective for the spawn type by Phase 1 |
@@ -174,7 +181,7 @@ dependencies in this phase.
   the existing provider-selector ports.
 - New file in `domain/engine` for the default implementation, following the
   one-concern-per-file layout the package already uses.
-- Reuses `structuredOutputInstruction`, `assertBindingKind`, `FileReader`,
+- Reuses `structuredOutputInstruction`, `assertBindingKind`,
   `ChatProviderSelector`, `provider.ProfileResolver` — all existing.
 - Consumed by `SpawnWorkflowExecutor` in Phase 3. Nothing else consumes it.
 
@@ -182,9 +189,11 @@ dependencies in this phase.
 
 Every failure returns an error; none returns partial values.
 
-- **Guidance file unreadable** — error, naming the node and the path. A
-  configured template that cannot be read is a misconfiguration, not an
-  optional extra. An *unconfigured* guidance file is not an error.
+- **Guidance file unreadable** — owned by the **caller** (Phase 3's executor),
+  which errors naming the node and the path before the preparer is invoked. A
+  configured template that cannot be read is a misconfiguration, not an optional
+  extra. An *unconfigured* guidance file is not an error, and reaches the
+  preparer as empty prose.
 - **Profile resolution failure / binding-kind mismatch** — error before any
   provider is selected. Mismatch is wrapped `ErrBindingKindMismatch` so it
   stays `errors.Is`-checkable.
@@ -208,15 +217,17 @@ of workflow control flow.
 
 ## Testing Strategy — STRICT TDD
 
-Tests precede implementation, driven by a fake `ChatProvider` and a fake
-`FileReader`. All five categories are required.
+Tests precede implementation, driven by a fake `ChatProvider` and nothing else.
+All five categories are required. (The guidance *file* — its read, its
+substitution, and its unreadable-file error — is covered by Phase 3's executor
+tests, since Phase 3 owns that read.)
 
 - **Happy path** — a child declaring two required and one optional input, a
   parent context containing plausible values, and a cooperative fake provider
   yields a map satisfying the contract, and the call is made against the
   resolved binding's model.
-- **Success** — the guidance file's content reaches the prompt when configured;
-  the structured-output instruction is appended; the parent's node outputs (not
+- **Success** — supplied guidance prose reaches the prompt, and omitting it is
+  not an error; the structured-output instruction is appended; the parent's node outputs (not
   just its inputs) are visible in the prompt; a child with zero declared inputs
   succeeds with an empty map without calling the provider at all; extra keys in
   the response are passed through rather than stripped.
@@ -224,8 +235,8 @@ Tests precede implementation, driven by a fake `ChatProvider` and a fake
   a required input is present but null → same treatment as missing; the
   response is a JSON array or a bare string rather than an object → error. Each
   asserts no partial map is returned alongside the error.
-- **Error** — provider returns an error → wrapped and surfaced; guidance file
-  read fails → error; profile resolution fails → error; resolved binding is
+- **Error** — provider returns an error → wrapped and surfaced; profile
+  resolution fails → error; provider selection fails → error; resolved binding is
   agent-kind → `ErrBindingKindMismatch` under `errors.Is`, asserted to occur
   **before** any provider selection so no tool-enabled provider is ever
   constructed.

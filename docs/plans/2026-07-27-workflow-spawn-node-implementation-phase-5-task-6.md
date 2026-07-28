@@ -2,7 +2,11 @@
 
 **Goal:** Render the run list as an expandable tree — roots at the top level, an expander on rows with children, nested child rows to arbitrary depth, each retaining the full per-row action set — and give `spawn_workflow` an accent colour in the graph view.
 
-**Architecture:** A new `HierarchyRows` component owns the recursive rendering so `QueueSection` stays a table-shell component and does not grow unwieldy. Child rows are the SAME `QueueTableRow`, so the per-row actions (inspect, retry, resume, cancel) that deliver the spec's operator outcome need no per-level special-casing. `QueueView` switches its top-level fetches to `parent: 'roots'`. The graph editor needs no new node component: `nodeTypes.ts` maps every Arbitron node kind onto the single `ArbitronNode`, so `spawn_workflow` only needs an accent entry.
+**Architecture:** A new `HierarchyRows` component owns the recursive rendering so `QueueSection` stays a table-shell component and does not grow unwieldy. Child rows are the SAME `QueueTableRow`, so the per-row actions (inspect, retry, resume, cancel) that deliver the spec's operator outcome need no per-level special-casing.
+
+**Top-level nesting is SECTION-AWARE, not a blanket `parent=roots` fetch.** `QueueView` renders one section PER STATE. A blanket roots-only narrowing would hide every child whose parent is not in the same section — and that is the *normal* fire-and-forget shape: the parent completes while the child keeps running, so the child would vanish from the Running section and only be reachable by expanding a completed parent inside the `since`-windowed Completed section. That defeats the spec's own outcome ("without losing visibility", "cancel at the child workflow level"). So the section fetches stay unnarrowed, and `QueueSection` suppresses a row at top level ONLY when its parent is present in the same section — where it is genuinely reachable by expanding that parent. The REST/MCP `parent=roots` selector remains part of the API contract (Phase 5 Tasks 3–4) for unsegmented consumers; the dashboard simply does not use it.
+
+The graph view needs no new node component: `nodeTypes.ts` maps every Arbitron node kind onto the single read-only `ArbitronNode`, so `spawn_workflow` only needs an accent entry.
 
 **Tech Stack:** React 19, TypeScript, CSS modules, Vitest + `@testing-library/react`, Vite.
 
@@ -13,13 +17,13 @@
 **Files:**
 - Create: `dashboard/src/components/HierarchyRows.tsx`
 - Create: `dashboard/src/components/HierarchyRows.module.css`
+- Create: `dashboard/src/components/topLevelRows.ts` (section-aware nesting rule)
 - Modify: `dashboard/src/components/QueueTableRow.tsx` (indent + hierarchy expander)
 - Modify: `dashboard/src/components/QueueTableRow.module.css`
 - Modify: `dashboard/src/components/QueueSection.tsx` (delegate row rendering)
-- Modify: `dashboard/src/routes/QueueView.tsx:56-70` (roots-only fetch)
 - Modify: `dashboard/src/graph/nodes/ArbitronNode.tsx:8-16` (accent colour)
 - Test:   `dashboard/src/components/HierarchyRows.test.tsx`
-- Test:   `dashboard/src/routes/QueueView.hierarchy.test.tsx`
+- Test:   `dashboard/src/components/topLevelRows.test.ts`
 
 ---
 
@@ -144,9 +148,19 @@ it('a child row exposes the same actions as a root row', async () => {
 
   const parentRow = document.querySelector('tr[data-row-id="p1"]') as HTMLElement
   const childRow = document.querySelector('tr[data-row-id="c1"]') as HTMLElement
-  const buttonLabels = (el: HTMLElement) =>
-    Array.from(el.querySelectorAll('button')).map((b) => b.getAttribute('aria-label')).sort()
-  expect(buttonLabels(childRow)).toEqual(buttonLabels(parentRow))
+  // Compare the ACTIONS cell only (the trailing <td>). The whole row is not
+  // comparable: the parent also renders the hierarchy toggle in its first cell,
+  // and the child — reporting no children — renders the aligning spacer
+  // instead, so a row-wide button comparison could never be equal.
+  const actionLabels = (el: HTMLElement) => {
+    const cells = el.querySelectorAll('td')
+    const actions = cells[cells.length - 1]
+    return Array.from(actions.querySelectorAll('button'))
+      .map((b) => b.getAttribute('aria-label'))
+      .sort()
+  }
+  expect(actionLabels(childRow)).toEqual(actionLabels(parentRow))
+  expect(actionLabels(childRow).length).toBeGreaterThan(0)
 })
 
 it('collapsing hides the children again', async () => {
@@ -200,46 +214,74 @@ it('an expander whose level comes back empty renders no child rows and no error'
 })
 ```
 
-Create `dashboard/src/routes/QueueView.hierarchy.test.tsx`:
+Create `dashboard/src/components/topLevelRows.test.ts`:
 
-```tsx
-import { render, waitFor } from '@testing-library/react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MemoryRouter } from 'react-router-dom'
+```ts
+import { describe, it, expect } from 'vitest'
+import type { EnrichedInstanceSummary } from '../api/types'
+import { topLevelRows } from './topLevelRows'
 
-const listMock = vi.fn()
-const meMock = vi.fn()
-vi.mock('../api/client', () => ({
-  api: {
-    instances: { list: (...a: unknown[]) => listMock(...a), getNodeTrace: vi.fn() },
-    me: () => meMock(),
-  },
-}))
-vi.mock('../hooks/useSystemWebSocket', () => ({ useSystemWebSocket: () => ({ connected: true }) }))
-vi.mock('../hooks/useRefetchOnReconnect', () => ({ useRefetchOnReconnect: () => {} }))
+function r(id: string, parentInstanceId?: string): EnrichedInstanceSummary {
+  return {
+    id,
+    ownerId: 'u1',
+    workflowName: `wf-${id}`,
+    state: 'running',
+    priority: 'normal',
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    runName: `run — ${id}`,
+    retryCount: 0,
+    parentInstanceId,
+  }
+}
 
-import QueueView from './QueueView'
+// ---------- happy path ----------
 
-beforeEach(() => {
-  listMock.mockReset().mockResolvedValue([])
-  meMock.mockReset().mockResolvedValue({ userId: 'u1', authMode: 'local' })
+it('suppresses a child whose parent is in the same section', () => {
+  const rows = [r('p1'), r('c1', 'p1')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['p1'])
 })
 
-// The top-level list returns ROOTS ONLY: child runs must appear nested under
-// their parent, never as separate top-level rows.
-it('requests roots only for every top-level section', async () => {
-  render(
-    <MemoryRouter>
-      <QueueView />
-    </MemoryRouter>,
-  )
+// ---------- success ----------
 
-  await waitFor(() => expect(listMock).toHaveBeenCalled())
-  const calls = listMock.mock.calls.map((c) => c[0] as Record<string, unknown>)
-  expect(calls.length).toBeGreaterThanOrEqual(6)
-  for (const c of calls) {
-    expect(c.parent).toBe('roots')
-  }
+// THE VISIBILITY GUARD, and the single most important assertion in this file.
+// A fire-and-forget parent normally COMPLETES while its child keeps running, so
+// the two land in different state sections. Suppressing the child here would
+// erase it from the Running section entirely — it would only be reachable by
+// expanding a completed parent inside the `since`-windowed Completed section,
+// which is exactly the "losing visibility" the spec rules out.
+it('keeps a child whose parent is NOT in the same section', () => {
+  const rows = [r('c1', 'p-elsewhere'), r('c2', 'p-also-elsewhere')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['c1', 'c2'])
+})
+
+it('keeps every root', () => {
+  const rows = [r('a'), r('b'), r('c')]
+  expect(topLevelRows(rows)).toHaveLength(3)
+})
+
+it('preserves the incoming order', () => {
+  const rows = [r('z'), r('y', 'absent'), r('x')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['z', 'y', 'x'])
+})
+
+it('suppresses a grandchild only when its OWN parent is present', () => {
+  // g's parent c is absent from this section, so g stays visible even though its
+  // grandparent p is present. Nesting is one level; the rule must not walk up.
+  const rows = [r('p'), r('g', 'c')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['p', 'g'])
+})
+
+// ---------- edge cases ----------
+
+it('an empty section is empty', () => {
+  expect(topLevelRows([])).toEqual([])
+})
+
+it('a self-referential link does not erase the row', () => {
+  const rows = [r('self', 'self')]
+  expect(topLevelRows(rows).map((x) => x.id)).toEqual(['self'],)
 })
 ```
 
@@ -247,7 +289,7 @@ it('requests roots only for every top-level section', async () => {
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
-npx vitest run src/components/HierarchyRows.test.tsx src/routes/QueueView.hierarchy.test.tsx
+npx vitest run src/components/HierarchyRows.test.tsx src/components/topLevelRows.test.ts
 ```
 
 Expected output:
@@ -255,8 +297,8 @@ Expected output:
 ```
 Error: Failed to load url ./HierarchyRows (resolved id: .../src/components/HierarchyRows)
  FAIL  src/components/HierarchyRows.test.tsx
- FAIL  src/routes/QueueView.hierarchy.test.tsx
-   → expected undefined to be 'roots'
+Error: Failed to load url ./topLevelRows (resolved id: .../src/components/topLevelRows)
+ FAIL  src/components/topLevelRows.test.ts
 Test Files  2 failed (2)
 ```
 
@@ -396,6 +438,10 @@ interface HierarchyRowsProps {
   onDismiss?: (id: string) => void
   onRestore?: (id: string) => void
   renderDetail?: (row: EnrichedInstanceSummary) => React.ReactNode
+  /** QueueSection's detail-row class names, passed through so the existing
+   *  framing survives the move out of QueueSection. */
+  detailRowClassName?: string
+  detailCellClassName?: string
 }
 
 /**
@@ -424,6 +470,8 @@ export default function HierarchyRows({
   onDismiss,
   onRestore,
   renderDetail,
+  detailRowClassName,
+  detailCellClassName,
 }: HierarchyRowsProps) {
   return (
     <>
@@ -454,8 +502,14 @@ export default function HierarchyRows({
             />
 
             {detailExpandedId === inst.id && renderDetail && (
-              <tr>
-                <td colSpan={columns.length + 1}>{renderDetail(inst)}</td>
+              // Keep QueueSection's existing detail-row styling: pass its
+              // styles.detailRow / styles.detailCell class names through as
+              // detailRowClassName / detailCellClassName props rather than
+              // dropping them, or the detail panel loses its framing.
+              <tr className={detailRowClassName}>
+                <td colSpan={columns.length + 1} className={detailCellClassName}>
+                  {renderDetail(inst)}
+                </td>
               </tr>
             )}
 
@@ -490,6 +544,8 @@ export default function HierarchyRows({
                 onDismiss={onDismiss}
                 onRestore={onRestore}
                 renderDetail={renderDetail}
+                detailRowClassName={detailRowClassName}
+                detailCellClassName={detailCellClassName}
               />
             )}
           </tbody>
@@ -516,7 +572,40 @@ Create `dashboard/src/components/HierarchyRows.module.css`:
 }
 ```
 
-- [ ] **Step 5: Delegate row rendering from `QueueSection`**
+- [ ] **Step 5: Add the section-aware nesting rule**
+
+Create `dashboard/src/components/topLevelRows.ts`:
+
+```ts
+import type { EnrichedInstanceSummary } from '../api/types'
+
+/**
+ * topLevelRows decides which rows of ONE queue section render at the top level.
+ *
+ * A row is suppressed at top level ONLY when its parent is present in the SAME
+ * section — because that is the only case where the row is genuinely reachable
+ * by expanding its parent's row.
+ *
+ * A blanket roots-only rule would be wrong here. QueueView renders one section
+ * PER STATE, and the normal fire-and-forget shape is a parent that COMPLETES
+ * while its child keeps running: parent and child land in different sections. A
+ * roots-only Running section would drop that child entirely, leaving it
+ * reachable only by expanding a completed parent inside the `since`-windowed
+ * Completed section — the "losing visibility" the spec rules out, and the
+ * opposite of the operator outcome (inspect/retry/resume/cancel at the child
+ * level) the hierarchy exists to serve.
+ *
+ * A self-referential link (corrupt data) never erases its own row.
+ */
+export function topLevelRows(rows: EnrichedInstanceSummary[]): EnrichedInstanceSummary[] {
+  const present = new Set(rows.map((r) => r.id))
+  return rows.filter(
+    (r) => !r.parentInstanceId || r.parentInstanceId === r.id || !present.has(r.parentInstanceId),
+  )
+}
+```
+
+- [ ] **Step 6: Delegate row rendering from `QueueSection`**
 
 In `dashboard/src/components/QueueSection.tsx`:
 
@@ -524,6 +613,7 @@ In `dashboard/src/components/QueueSection.tsx`:
 
 ```tsx
 import HierarchyRows from './HierarchyRows'
+import { topLevelRows } from './topLevelRows'
 import { useRunHierarchy } from '../hooks/useRunHierarchy'
 ```
 
@@ -534,12 +624,20 @@ import { useRunHierarchy } from '../hooks/useRunHierarchy'
   const hierarchy = useRunHierarchy()
 ```
 
-3. Replace the whole `{sorted.map((inst) => ( <tbody key={inst.id}> ... </tbody> ))}`
+3. Derive the top-level rows from the sorted page, beside the existing `sorted` memo:
+
+```tsx
+  // Rows whose parent is ALSO in this section render nested under it instead of
+  // at the top level; everything else stays visible where it is.
+  const roots = useMemo(() => topLevelRows(sorted), [sorted])
+```
+
+4. Replace the whole `{sorted.map((inst) => ( <tbody key={inst.id}> ... </tbody> ))}`
    block with:
 
 ```tsx
               <HierarchyRows
-                rows={sorted}
+                rows={roots}
                 columns={columns}
                 depth={0}
                 timeMode={timeMode}
@@ -549,6 +647,8 @@ import { useRunHierarchy } from '../hooks/useRunHierarchy'
                 onDetailExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
                 onDismiss={onDismiss}
                 onRestore={onRestore}
+                detailRowClassName={styles.detailRow}
+                detailCellClassName={styles.detailCell}
                 renderDetail={(inst) => (
                   <RowDetailPanel
                     row={inst}
@@ -560,28 +660,20 @@ import { useRunHierarchy } from '../hooks/useRunHierarchy'
               />
 ```
 
-- [ ] **Step 6: Fetch roots only in `QueueView`**
+- [ ] **Step 7: Leave `QueueView`'s fetches unchanged — deliberately**
 
-In `dashboard/src/routes/QueueView.tsx`, add `parent: 'roots'` to every
-`api.instances.list` call in `fetchAll`:
+`dashboard/src/routes/QueueView.tsx` is **not** modified. Its per-state
+`api.instances.list` calls stay unnarrowed, and `QueueSection` applies
+`topLevelRows` to whatever page it is given.
 
-```tsx
-      const [running, waiting, queued, paused, failedRes, completedRes, meResp] =
-        await Promise.all([
-          // The top-level list returns ROOTS ONLY; child runs appear nested under
-          // their parent via the per-row expander, never as separate top-level
-          // rows.
-          api.instances.list({ state: 'running', parent: 'roots' }),
-          api.instances.list({ state: 'waiting', parent: 'roots' }),
-          api.instances.list({ state: 'queued', parent: 'roots' }),
-          api.instances.list({ state: 'paused', parent: 'roots' }),
-          api.instances.list({ state: 'failed', since, includeDismissed: showDismissed, parent: 'roots' }),
-          api.instances.list({ state: 'completed', since, includeDismissed: showDismissed, parent: 'roots' }),
-          api.me(),
-        ])
-```
+Do **not** "finish the job" by adding `parent: 'roots'` here. Each section is
+already filtered by state, so a roots-only fetch would erase every child whose
+parent sits in a different section — most importantly the running child of a
+completed fire-and-forget parent, which is the ordinary case. The `parent=roots`
+selector still exists on REST and MCP (Phase 5 Tasks 3–4) for consumers that
+list runs without a state segmentation; the dashboard simply is not one.
 
-- [ ] **Step 7: Give the spawn node an accent colour**
+- [ ] **Step 8: Give the spawn node an accent colour**
 
 In `dashboard/src/graph/nodes/ArbitronNode.tsx`, add to `typeColors`:
 
@@ -602,7 +694,15 @@ No new node component is needed: `nodeTypes.ts` maps every Arbitron node kind
 onto the single `ArbitronNode`, which already renders the type label from
 `data.nodeType` (`spawn workflow`) and a source/target handle.
 
-- [ ] **Step 8: Run the dashboard gate, confirm it passes**
+> `GraphView` is a **read-only visualization**, not an editor: there is no node
+> palette and no per-type port rendering anywhere in `dashboard/src/graph`
+> (`conditional`, which has had named output ports since long before this
+> feature, renders through the same single source handle). So the accent entry
+> is the whole of the graph-side work — there is no palette entry or port-count
+> rendering to add. Workflows carrying a spawn node are authored in
+> `workflow.json` and validated by `domain/workflow/validation.go`.
+
+- [ ] **Step 9: Run the dashboard gate, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work/dashboard
@@ -613,7 +713,7 @@ Expected output (the new files plus every pre-existing suite):
 
 ```
  ✓ src/components/HierarchyRows.test.tsx (10)
- ✓ src/routes/QueueView.hierarchy.test.tsx (1)
+ ✓ src/components/topLevelRows.test.ts (7)
  ✓ src/components/QueueSection.test.tsx (...)
  ✓ src/components/QueueTableRow.test.tsx (...)
  ✓ src/routes/QueueView.test.tsx (...)
@@ -621,12 +721,13 @@ Expected output (the new files plus every pre-existing suite):
 Test Files  N passed (N)
 ```
 
-> If `QueueSection.test.tsx` / `QueueView.test.tsx` fail because they assert the
-> old flat row structure or the old `list()` arguments, update those assertions
-> to the new shape (rows now carry `data-depth`; list calls now carry
-> `parent: 'roots'`). Do NOT weaken the new tests to accommodate them.
+> If `QueueSection.test.tsx` / `QueueTableRow.test.tsx` fail because they assert
+> the old flat row structure, update those assertions to the new shape (rows now
+> carry `data-depth`, and the first cell wraps its text in a tree span). Do NOT
+> weaken the new tests to accommodate them. `QueueView.test.tsx` should be
+> untouched: this task changes no `list()` arguments.
 
-- [ ] **Step 9: Rebuild the embedded SPA**
+- [ ] **Step 10: Rebuild the embedded SPA**
 
 `adapter/dashboard/dist` is embedded by the Go binary via `//go:embed`, so it
 must be rebuilt and committed whenever dashboard source changes.
@@ -644,7 +745,7 @@ vite v8.x.x building for production...
 ✓ built in ...
 ```
 
-- [ ] **Step 10: Full gate**
+- [ ] **Step 11: Full gate**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -654,9 +755,9 @@ make test-all
 Expected: the Go suite prints `ok` for every package and the dashboard suite
 reports all files passed.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add dashboard/src/components/HierarchyRows.tsx dashboard/src/components/HierarchyRows.module.css dashboard/src/components/HierarchyRows.test.tsx dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueSection.tsx dashboard/src/routes/QueueView.tsx dashboard/src/routes/QueueView.hierarchy.test.tsx dashboard/src/graph/nodes/ArbitronNode.tsx adapter/dashboard/dist
+git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add dashboard/src/components/HierarchyRows.tsx dashboard/src/components/HierarchyRows.module.css dashboard/src/components/HierarchyRows.test.tsx dashboard/src/components/topLevelRows.ts dashboard/src/components/topLevelRows.test.ts dashboard/src/components/QueueTableRow.tsx dashboard/src/components/QueueTableRow.module.css dashboard/src/components/QueueSection.tsx dashboard/src/graph/nodes/ArbitronNode.tsx adapter/dashboard/dist
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work commit -m "feat(dashboard): expandable run hierarchy and spawn_workflow node accent"
 ```

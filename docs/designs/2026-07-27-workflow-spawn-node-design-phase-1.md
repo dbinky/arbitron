@@ -22,6 +22,7 @@ Three existing seams are extended. No new package is introduced.
 | Node type vocabulary | `domain/workflow/workflow.go` (`NodeType` constants, lines 9–20) | Add `NodeTypeSpawnWorkflow` |
 | Node configuration | `domain/workflow/workflow.go` (`NodeConfig`) | Add spawn-specific optional fields |
 | Author-time validation | `domain/workflow/validation.go` (per-type switch, ~line 515) | Add a `validateSpawnWorkflowNode` arm |
+| Author-time profile posture | `domain/workflow/validation.go` (`validateModelProfiles`, ~line 157) | Add the spawn type to the chat arm |
 | Tool-posture guard | `domain/engine/kind_guard.go` (`expectedKindForNodeType`) | Map the new type to the chat profile kind |
 | Instance aggregate | `domain/instance/instance.go` (`Instance`, `InstanceSummary`, `ListFilters`) | Add link fields |
 | Instance persistence port | `domain/instance/ports.go` (`InstanceRepository`, `QueueRepository`) | Add link-addressed queries |
@@ -78,6 +79,14 @@ Rules enforced:
   fire-and-forget mode has misunderstood the mode, and silently ignoring the
   ports would strand half the graph.
 - A spawn node cannot be an entrypoint.
+- **A configured `model_profile` must resolve to a chat-kind profile.** This is
+  the author-time half of the tool-posture guard below, added to the existing
+  `validateModelProfiles` switch alongside every other LLM-calling node type; an
+  agent-kind alias here is a config-driven escalation from a tool-suppressed
+  reasoning call to an RCE-capable one. It differs from those types in one
+  respect: an *absent* alias is **not** an authoring error, because a child
+  workflow that declares zero inputs never makes a preparation call and
+  validation cannot load the child to find out.
 
 The port-presence check reuses the technique in `validateConditionalEdges`
 (`domain/workflow/validation.go:297-330`): build a `(source, output)` set from
@@ -268,13 +277,17 @@ required in this phase.
 - **Failure** — a wait-for-child node missing the `failure` edge is rejected; a
   node missing the `success` edge is rejected; a node with no child workflow
   name is rejected; a fire-and-forget node carrying branch ports is rejected; a
-  spawn node marked as entrypoint is rejected. Each asserts the specific error
-  code and the offending node id, not merely that *some* error occurred.
+  spawn node marked as entrypoint is rejected; a spawn node whose configured
+  `model_profile` resolves to an agent-kind profile is rejected at author time,
+  and an unknown alias is rejected. Each asserts the specific error code and the
+  offending node id, not merely that *some* error occurred.
 - **Error** — a repository failure on each new query surfaces as a wrapped
   error rather than an empty result silently indistinguishable from "no
   children"; a spawn node whose resolved binding is agent-kind fails with
   `ErrBindingKindMismatch` under `errors.Is`.
 - **Edge case** — an empty mode is rejected (not treated as inherit); a
+  spawn node with NO `model_profile` validates clean, because a zero-input child
+  needs no preparation call; a
   wrong-case mode (`Wait_For_Child`) is rejected, matching the exact-match
   discipline `IsValidAgentBackend` establishes; batch child counts with an
   empty id slice returns an empty result without touching storage; a parent id

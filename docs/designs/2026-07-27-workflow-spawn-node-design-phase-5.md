@@ -94,10 +94,28 @@ terminal state is the common case and returns the existing `ErrCannotCancel`
 Built from three pieces added in Phase 1: the parent filter on `ListFilters`,
 the parent field on `InstanceSummary`, and the batched child-count query.
 
-- **The top-level list returns roots only** — instances with no parent link.
+- **The list query offers a roots-only narrowing** — instances with no parent
+  link — as one of the parent filter's three states.
 - **Expanding a row fetches that row's children** in one request.
 - **Recursive expansion is recursive fetching.** Depth is bounded by what the
   user opens.
+
+**Roots-only is a capability, not a blanket rule for every caller.** A consumer
+that lists runs as one undifferentiated set (the REST/MCP API, a future single
+"all runs" view) wants roots-only at the top level. The dashboard queue view
+does not: it renders one section PER STATE, and the ordinary fire-and-forget
+shape is a parent that completes while its child keeps running, so parent and
+child land in *different* sections. A roots-only Running section would therefore
+drop that child entirely — reachable only by expanding a completed parent inside
+the `since`-windowed Completed section. That is precisely the "losing
+visibility" this spec rules out, and it defeats the operator outcome
+(inspect/retry/resume/cancel at the child level) the hierarchy exists to serve.
+
+So a state-segmented view suppresses a row at top level **only when its parent is
+present in the same section** — the only case where the row is genuinely
+reachable by expanding its parent. Everything else stays visible where it is.
+The rule is one pure function over the page, unit-tested independently of
+rendering.
 
 The alternative — a recursive query returning the whole tree flat, assembled
 client-side — was rejected because it breaks pagination: a child can land on a
@@ -141,22 +159,27 @@ parent filter is covered by the same discipline.
 
 **One job:** render the run list as an expandable tree.
 
-Extends `dashboard/src/routes/QueueView.tsx`, which today renders a flat list
-with no expansion concept. The changes are: roots-only for the top-level
-fetch, an expander control on rows reporting a non-zero child count, per-row
-lazy fetch on expand, and nested rendering that recurses to arbitrary depth.
+Extends the queue list (`dashboard/src/components/QueueSection.tsx`, rendered
+per state by `dashboard/src/routes/QueueView.tsx`), which today renders a flat
+list with no expansion concept. The changes are: the section-aware top-level
+rule above, an expander control on rows reporting a non-zero child count,
+per-row lazy fetch on expand, and nested rendering that recurses to arbitrary
+depth. The per-state fetches themselves are unchanged.
 
 Child rows retain the full existing per-row action set, which is what delivers
 the spec's outcome that operators can retry, inspect, resume, or cancel at the
 child level rather than restarting a larger process — those actions already
 exist per instance and need no per-level special-casing.
 
-The workflow graph editor also needs the new node type available in the
-palette, with two output ports shown in wait-for-child mode and one in
-fire-and-forget mode, rendered through the existing `ArbitronNode`
-(`dashboard/src/graph/nodes/ArbitronNode.tsx`) rather than a new node
-component — the node-type registry (`dashboard/src/graph/nodes/nodeTypes.ts`)
-maps every Arbitron node kind onto that single component today.
+**The graph surface is a read-only visualization, so it needs an accent colour
+and nothing else.** `dashboard/src/graph` has no editor: no node palette, no
+per-type port rendering, and no editor-side configuration form exists for any
+node type (`conditional` has had named output ports far longer than this feature
+and still renders through `ArbitronNode`'s single source handle). The node-type
+registry (`dashboard/src/graph/nodes/nodeTypes.ts`) maps every Arbitron node kind
+onto that one component, so `spawn_workflow` needs only a `typeColors` entry.
+Spawn nodes are authored in `workflow.json` and policed by Phase 1's validation,
+which is where the two-port contract is actually enforced.
 
 ## Data Flow
 
@@ -180,10 +203,11 @@ Cancel(parent)
 **Hierarchy read:**
 
 ```
-GET instances (roots only)
+GET instances (per-state page; parent filter optional)
    └─ Engine.ListInstances  ── service-set owner/department constraints
         └─ InstanceEnricher ── batched child counts (post-authorization)
-             └─ rows with childCount > 0 render an expander
+             └─ top-level rule: hide a row whose parent is on this same page
+                  └─ rows with childCount > 0 render an expander
 
 user expands row R
    └─ GET instances (parent = R)
@@ -221,8 +245,7 @@ are no unresolved dependencies.
   SQL or by intersecting with the already-authorized page.
 - Dashboard component decomposition for nested rows, expansion state
   management, and CSS-module additions.
-- Palette entry, port labels, and any editor-side configuration form for the
-  spawn node.
+- The exact predicate and placement of the section-aware top-level rule.
 - Running `make ui` so `adapter/dashboard/dist` stays in sync with the embedded
   SPA, per `AGENTS.md:28`.
 - Whether the hierarchy is also surfaced on the single-instance detail view;
@@ -235,9 +258,9 @@ are no unresolved dependencies.
 - `adapter/http/instance_handler.go` — parent selector on the list endpoint.
 - `adapter/mcp` — parent selector on `instance_list`, at REST parity.
 - `adapter/sqlite` — the two query implementations.
-- `dashboard/src/routes/QueueView.tsx` — expandable hierarchy.
-- `dashboard/src/graph/nodes/nodeTypes.ts` + `ArbitronNode.tsx` — palette and
-  port rendering.
+- `dashboard/src/components/QueueSection.tsx` — expandable hierarchy and the
+  section-aware top-level rule.
+- `dashboard/src/graph/nodes/ArbitronNode.tsx` — accent colour only.
 - **Unchanged:** the authorization model. No new authorization path is
   introduced at any level.
 
@@ -277,9 +300,9 @@ required.
   cancelling a parent with one fire-and-forget child cancels both (the spec's
   unqualified recursive-cancel requirement, and the single most important
   assertion in this phase — it is the one a mode-filtered cascade would fail);
-  the
-  top-level list returns roots only; expanding a root returns its children;
-  expanding a child returns grandchildren.
+  a `parent=roots` list returns roots only; a row whose parent is on the same
+  page renders nested instead of at the top level; expanding a root returns its
+  children; expanding a child returns grandchildren.
 - **Success** — the cascade reaches grandchildren and deeper; the parent
   transitions to cancelled **before** any child does, asserted as an ordered
   sequence because the ordering is what prevents resurrection; an intervention
@@ -299,6 +322,8 @@ required.
   guard, asserted end-to-end across Phase 4 and Phase 5); a run with no
   children renders no expander; a parent whose children are all invisible to
   the caller reports a zero count and no expander, so no existence is leaked; a
+  still-running child whose parent has already completed stays visible in the
+  running section rather than being hidden under a finished parent; a
   mixed parent with both awaited and fire-and-forget children cancels all of
   them; a cancelled fire-and-forget child does **not** wake its cancelled
   parent, because the Phase 4 wake requires `mode = wait_for_child`; an instance predating this feature carries null links and

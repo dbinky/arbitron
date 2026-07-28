@@ -103,10 +103,11 @@ var _ instance.SpawnLinkRepository = (*fakeSpawnLinks)(nil)
 // ---------------------------------------------------------------------------
 
 type cascadeFixture struct {
-	f     *testFixtures
-	links *fakeSpawnLinks
-	owner uuid.UUID
-	ctx   context.Context
+	f             *testFixtures
+	links         *fakeSpawnLinks
+	interventions *mockInterventionRepo
+	owner         uuid.UUID
+	ctx           context.Context
 }
 
 func newCascadeFixture(t *testing.T) *cascadeFixture {
@@ -121,12 +122,18 @@ func newCascadeFixture(t *testing.T) *cascadeFixture {
 		return inst.State
 	})
 	f.engine.SetSpawnLinks(links)
-	f.engine.SetInterventions(newMockInterventionRepo())
+	// The test HOLDS the intervention mock so it can assert the audit trail
+	// directly. Do NOT add a test-only accessor to *Engine for this: an
+	// unexported method name is qualified by its defining package, so an
+	// `interface{ count() int }` assertion written in package `engine` can never
+	// be satisfied by a mock whose count() lives in package `engine_test`.
+	interventions := newMockInterventionRepo()
+	f.engine.SetInterventions(interventions)
 
 	ctx := identity.WithIdentity(context.Background(), identity.Identity{
 		UserID: owner, Role: identity.RoleAdmin, Departments: []string{"default"},
 	})
-	return &cascadeFixture{f: f, links: links, owner: owner, ctx: ctx}
+	return &cascadeFixture{f: f, links: links, interventions: interventions, owner: owner, ctx: ctx}
 }
 
 // run creates an instance in the given state owned by the fixture owner.
@@ -233,8 +240,7 @@ func TestCancelCascade_RecordsAnInterventionForEveryCancelledRun(t *testing.T) {
 
 	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
 
-	interventions := c.f.engine.InterventionCountForTest()
-	assert.Equal(t, 3, interventions,
+	assert.Equal(t, 3, c.interventions.count(),
 		"the cascade routes through the AUTHORIZED cancellation path, so every "+
 			"cancelled run produces an audit record")
 }
@@ -422,33 +428,19 @@ func (r *mockInterventionRepo) count() int {
 }
 ```
 
-> Match the method set to the real `instance.InterventionRepository` interface;
-> run `go doc github.com/arbitron/arbitron/domain/instance.InterventionRepository`
-> and add any method the interface declares that is missing above, returning
+> `instance.InterventionRepository` declares exactly `Create` and
+> `ListByInstance` (`domain/instance/intervention.go:36-39`), so the mock above
+> is complete. Confirm with
+> `go doc github.com/arbitron/arbitron/domain/instance.InterventionRepository`
+> before writing it, and add any method that has since been added, returning
 > zero values.
 
-Add the test-only accessor to `domain/engine/cancel_cascade.go` (production
-file, guarded as test-only by its name and comment):
-
-```go
-// InterventionCountForTest reports how many intervention records the wired
-// repository holds. It exists so a cascade test can assert "one audit record
-// per cancelled run" without reaching into the engine's private field. It
-// returns -1 when no repository is wired or the wired one does not expose a
-// count.
-func (e *Engine) InterventionCountForTest() int {
-	c, ok := e.interventions.(interface{ count() int })
-	if !ok {
-		return -1
-	}
-	return c.count()
-}
-```
-
-> `count()` is unexported, so this type assertion only ever succeeds for the
-> in-package test mock — production repositories are unaffected.
-> If the linter objects to a test-only method on a production type, move this
-> helper into `domain/engine/export_test.go` instead (same body, `package engine`).
+No test-only accessor is added to `*Engine`. The fixture holds the mock and
+asserts on it directly, which keeps the production type clean and — more
+importantly — actually works: an unexported method name is qualified by the
+package that declares it, so an `interface{ count() int }` assertion written
+inside `package engine` can never match a `count()` defined in
+`package engine_test`.
 
 - [ ] **Step 2: Run it, confirm it fails**
 
@@ -595,19 +587,6 @@ func (e *Engine) cascadeCancel(ctx context.Context, parentID uuid.UUID, visited 
 		}
 		e.cascadeCancel(ctx, childID, visited)
 	}
-}
-
-// InterventionCountForTest reports how many intervention records the wired
-// repository holds. It exists so a cascade test can assert "one audit record per
-// cancelled run" without reaching into the engine's private field. It returns -1
-// when no repository is wired or the wired one does not expose an unexported
-// count() — which is every production repository.
-func (e *Engine) InterventionCountForTest() int {
-	c, ok := e.interventions.(interface{ count() int })
-	if !ok {
-		return -1
-	}
-	return c.count()
 }
 ```
 
