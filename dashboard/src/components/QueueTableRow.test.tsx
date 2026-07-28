@@ -1,9 +1,15 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import QueueTableRow from './QueueTableRow'
 import { visibleColumns } from './queueColumns'
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
+
+const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }))
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return { ...actual, useNavigate: () => navigateMock }
+})
 
 function row(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -34,6 +40,10 @@ function renderRow(props: Partial<React.ComponentProps<typeof QueueTableRow>> = 
     </MemoryRouter>,
   )
 }
+
+beforeEach(() => {
+  navigateMock.mockClear()
+})
 
 describe('QueueTableRow', () => {
   it('renders a cell for each visible column', () => {
@@ -75,6 +85,7 @@ describe('QueueTableRow', () => {
     const onExpand = vi.fn()
     renderRow({ row: row({ id: 'abc-123' }), onExpand })
     fireEvent.click(screen.getByRole('row'))
+    expect(navigateMock).toHaveBeenCalledWith('/instances/abc-123')
   })
 
   it('calls onExpand when the expand affordance is clicked, not navigation', () => {
@@ -88,5 +99,38 @@ describe('QueueTableRow', () => {
   it('renders a dimmed class when dimmed', () => {
     renderRow({ dimmed: true })
     expect(screen.getByRole('row').className).toMatch(/dimmed/i)
+  })
+})
+
+// The hierarchy toggle sits inside the row's <tr onClick={navigate}> — its own
+// onClick calls stopPropagation specifically so expanding/collapsing children
+// never also navigates away from the queue view.
+describe('QueueTableRow — hierarchy toggle', () => {
+  it('clicking the hierarchy toggle expands children without navigating (stopPropagation)', () => {
+    const onToggleHierarchy = vi.fn()
+    renderRow({ onToggleHierarchy, hierarchyExpanded: false })
+    fireEvent.click(screen.getByLabelText('Show child runs of run — wf'))
+    expect(onToggleHierarchy).toHaveBeenCalledWith('i1')
+    expect(navigateMock).not.toHaveBeenCalled()
+  })
+
+  it('reflects hierarchyExpanded in the toggle label and aria-expanded', () => {
+    renderRow({ onToggleHierarchy: vi.fn(), hierarchyExpanded: true })
+    const toggle = screen.getByLabelText('Hide child runs of run — wf')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('renders an aligning spacer, not a toggle, when the row has no children', () => {
+    renderRow()
+    expect(screen.queryByLabelText(/child runs of run — wf/)).toBeNull()
+    const firstCell = screen.getAllByRole('cell')[0]
+    expect(firstCell.querySelector('span[aria-hidden="true"]')).not.toBeNull()
+  })
+
+  it('indents the row proportionally to depth', () => {
+    renderRow({ depth: 2 })
+    const firstCell = screen.getAllByRole('cell')[0]
+    const treeCell = firstCell.firstElementChild as HTMLElement
+    expect(treeCell.style.paddingLeft).toBe('32px')
   })
 })

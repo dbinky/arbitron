@@ -126,6 +126,58 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`QueueTableRow`'s hierarchy-toggle `e.stopPropagation()` — the exact
+  mechanism that keeps expanding/collapsing a row's children from ALSO
+  navigating away to that row's detail view — was completely untested.**
+  Focus area 29 (dashboard hierarchy rendering), review 1.
+  `dashboard/src/components/QueueTableRow.tsx`'s `<tr onClick={() =>
+  navigate(...)}>` wraps the whole row, so the toggle button added by this
+  feature (`git diff` against the branch point shows the entire tree-cell
+  block — toggle, spacer, `depth`/`hierarchyExpanded`/`onToggleHierarchy`
+  props — was newly added, while `QueueTableRow.test.tsx` was left
+  byte-for-byte unchanged) needs its own `stopPropagation()` or every
+  expand/collapse click would also fire the row's navigate. Confirmed by
+  grep that NO test file in the whole dashboard suite ever mocks
+  `useNavigate` — the existing `'navigates to /instances/{id} on row click'`
+  test called `fireEvent.click` but asserted nothing, so a regression
+  deleting the `stopPropagation()` call, or one that broke any of
+  `aria-expanded`, the toggle/spacer split, or the `depth`-driven indent, would
+  ship undetected; none of those items had a *direct* `QueueTableRow`-level
+  test, only indirect coverage through `HierarchyRows.test.tsx`'s
+  real-hook harness (which never checks navigation was suppressed either).
+  Added a `useNavigate` mock (`vi.hoisted` + `vi.mock('react-router-dom', ...)`)
+  to `QueueTableRow.test.tsx` and four new tests: clicking the toggle calls
+  `onToggleHierarchy` and never `navigate` (the stopPropagation proof),
+  `aria-expanded`/label track `hierarchyExpanded`, a childless row renders the
+  aligning spacer (`aria-hidden` span) instead of a toggle, and `depth`
+  scales the tree-cell's `paddingLeft` (`depth * 16px`); also strengthened the
+  pre-existing empty "navigates on row click" test to assert
+  `navigateMock` was actually called with the right path, since the new
+  stopPropagation test's contrast depends on row-click navigation being a
+  proven, not assumed, baseline behaviour. Confirmed the stopPropagation
+  test fails for the right reason (`navigateMock` called with
+  `/instances/i1`) when the `e.stopPropagation()` line is temporarily
+  removed, then confirmed it passes with the line restored (`git diff --stat`
+  on `QueueTableRow.tsx` is empty — no production change needed).
+  Independently verified the rest of area 29's checklist from source:
+  `HierarchyRows`'s recursion/depth passthrough and `QueueSection`'s
+  delegation to it for the detail row it used to render inline
+  (`git diff` against the branch point shows the `sorted.map` +
+  inline `<QueueTableRow>`/detail-`<tr>` block replaced by a single
+  `<HierarchyRows rows={roots} ... renderDetail={...} />` call) are both
+  already covered by existing tests (`HierarchyRows.test.tsx`'s nesting/depth
+  cases, `QueueSection.test.tsx`'s detail-panel expand/collapse and
+  refresh-signal invalidation cases); grepped all non-test JSX call sites and
+  confirmed `HierarchyRows` is constructed only by itself (recursion) and
+  `QueueSection`, `QueueTableRow` only by `HierarchyRows`, and `QueueSection`
+  only by the real `QueueView.tsx` route (four call sites, each fed a real
+  `refreshedAt` counter and real API-derived `instances`, not hardcoded data).
+  Ran the full `go test ./...`, `npx tsc --noEmit`, and `npx vitest run`: no
+  new failures beyond the recorded baseline (the one pre-existing
+  `adapter/config` failure is unchanged; dashboard typecheck at 0 errors;
+  vitest 475 passed, 0 failed, up from 471 with this pass's four new tests).
+  This closes review 1 approval for area 29; review 2 remains open.
+
 - [x] **`isOnCycle`'s "detects a cycle of any length" claim was proven only up
   to length 2.** Focus area 28 (dashboard section-aware top-level rule),
   review 2. `dashboard/src/components/topLevelRows.ts`'s `isOnCycle` walks the
