@@ -16,6 +16,7 @@ import (
 type reconcilerFixture struct {
 	f          *testFixtures
 	spawnWaits *fakeSpawnWaits
+	queueRepo  *mockQueueRepo
 	rec        *engine.SpawnWaitReconciler
 }
 
@@ -23,10 +24,12 @@ func newReconcilerFixture(t *testing.T) *reconcilerFixture {
 	t.Helper()
 	f := newTestFixtures()
 	sw := newFakeSpawnWaits()
+	qr := &mockQueueRepo{instRepo: f.instanceRepo}
 	return &reconcilerFixture{
 		f:          f,
 		spawnWaits: sw,
-		rec:        engine.NewSpawnWaitReconciler(sw, f.instanceRepo, &mockQueueRepo{instRepo: f.instanceRepo}, f.queueManager),
+		queueRepo:  qr,
+		rec:        engine.NewSpawnWaitReconciler(sw, f.instanceRepo, qr, f.queueManager),
 	}
 }
 
@@ -190,6 +193,31 @@ func TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce(t *t
 
 	assert.Equal(t, instance.StateQueued, r.stateOf(t, parent))
 	assert.Equal(t, 1, r.f.queueManager.notifyCount(), "one notify per Reconcile call, not one per duplicate candidate")
+}
+
+// A SetQueued write failure must be logged, not fatal — the same best-effort
+// posture as the in-process wake (Engine.OnChildTerminal). It must not desync
+// the parent into StateQueued on a failed write, and must not tell the queue
+// manager capacity freed up for a parent that was never actually re-queued: a
+// missed candidate here is simply retried on the next reconcile pass.
+func TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal(t *testing.T) {
+	r := newReconcilerFixture(t)
+	parent := r.seedWaitingParent(t, "spawn-1")
+	r.queueRepo.mu.Lock()
+	r.queueRepo.setQueuedErr = assert.AnError
+	r.queueRepo.mu.Unlock()
+
+	r.spawnWaits.candidates = []instance.SpawnWaitCandidate{{
+		ParentID: parent, ParentNodeID: "spawn-1", ChildID: uuid.New(), ChildState: instance.StateCompleted,
+	}}
+
+	err := r.rec.Reconcile(context.Background())
+	require.NoError(t, err, "a re-queue write failure must not fail the whole sweep")
+
+	assert.Equal(t, instance.StateWaiting, r.stateOf(t, parent),
+		"a parent must stay waiting (not desync into queued) when the re-queue write itself failed")
+	assert.Equal(t, 0, r.f.queueManager.notifyCount(),
+		"must not tell the queue manager capacity freed up for a parent that was never actually re-queued")
 }
 
 // A re-queue failure for one candidate must not abandon the rest.

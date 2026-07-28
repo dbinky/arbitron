@@ -77,6 +77,62 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **`SpawnWaitReconciler.Reconcile`'s own `SetQueued` re-queue failure
+  branch was untested.** Focus area 21 (startup spawn-wait reconciler),
+  review 1. `domain/engine/spawn_reconciler.go:83-87` documents a best-effort
+  posture for each candidate — matching `Engine.OnChildTerminal`'s own
+  "best-effort/void" contract (area 19) — logging a `SetQueued` failure and
+  continuing to the next candidate rather than aborting the sweep. `go tool
+  cover` over the full `TestSpawnWaitReconciler`-prefixed suite showed this
+  branch (lines 83-86) at 0 hits: the existing
+  `TestSpawnWaitReconciler_OneFailureDoesNotAbandonTheRest` exercises a
+  *different* failure mode (an unreadable parent via `instances.Get`), never a
+  `SetQueued` write failure. The same shape of gap fixed repeatedly elsewhere
+  in this loop (areas 19, 20): a shared best-effort contract proven at one
+  call site (`OnChildTerminal`'s own `SetQueued` failure test,
+  `spawn_wake_test.go`) and silently assumed at a sibling one one file away. A
+  regression that let a `SetQueued` error propagate up through `Reconcile`
+  (turning a per-candidate best-effort failure into a sweep-aborting one,
+  stranding every subsequent candidate) or that called `NotifyCapacityFreed`
+  regardless of the error (misleading the queue into thinking a parent that
+  was never actually re-queued had capacity freed) would have shipped
+  undetected. Added a `queueRepo *mockQueueRepo` field to `reconcilerFixture`
+  (`domain/engine/spawn_reconciler_test.go`) so the test can reach the same
+  `setQueuedErr` injection point `spawn_wake_test.go` already uses, and added
+  `TestSpawnWaitReconciler_SetQueuedFailureIsLoggedNotFatal`, asserting
+  `Reconcile` returns no error, the parent stays `StateWaiting` (not desynced
+  into `StateQueued` on a failed write), and `NotifyCapacityFreed` is never
+  called; confirmed it fails for the right reason (`NotifyCapacityFreed`
+  called once despite the injected error) when the error check is temporarily
+  replaced with a discarded `_ =`, then confirmed it passes against the real
+  code. `go tool cover` afterward shows `Reconcile` at 95.7% (the one
+  remaining uncovered branch, the defensive `ctx == nil` guard at lines
+  57-59, has no known production caller — `main.go:1057` always passes a live
+  `context.Background()` — the same low-priority, unreachable-by-production
+  shape already logged and left unfixed for `OnChildTerminal`'s identical
+  guard when area 19 was closed). Independently re-verified the rest of area
+  21's checklist from source: `NewSpawnWaitReconciler` is constructed only at
+  the real composition root (`cmd/arbitron/main.go:1056`, grepped for all
+  non-test call sites) with all four collaborators real, non-nil values (the
+  same `instanceRepo` value satisfies both the `SpawnWaitRepository` and
+  `InstanceRepository` parameters); `SetQueued` is called once per candidate
+  while `NotifyCapacityFreed` is called at most once per `Reconcile` call
+  (only when `requeued > 0`), confirmed intentional by
+  `TestSpawnWaitReconciler_DuplicateCandidatesForSameParentAreHandledOnce`'s
+  own assertion ("one notify per Reconcile call, not one per duplicate
+  candidate"); the query error is *returned* (not swallowed) so
+  `main.go:1057-1058` can log it without failing startup
+  (`TestSpawnWaitReconciler_QueryFailureIsReturnedNotPanicked`); and the
+  must-run-after-`RecoverCrashedInstances` ordering is proven both against
+  fakes (`TestSpawnWaitReconciler_ResumesParentOfACrashedChildAfterRecovery`)
+  and end-to-end through the real composition root at a real restart
+  (`cmd/arbitron/spawn_wait_e2e_test.go`'s
+  `TestSpawnWaitE2E_RestartReconcilesParentAfterCrash`, added when area 16
+  review 1 closed). The five scenario categories (happy, success, failure,
+  error, edge) are all present and now include a genuine best-effort-write
+  failure rather than only a load failure. This closes review 1 approval for
+  area 21; review 2 remains open.
+
 - [x] **`OnTimerFired`'s own webhook-timeout `notifyChildTerminal` call had no
   test that proves the wired hook actually fires.** Focus area 20
   (queue-manager child-terminal hook), review 2. Found while closing area 20
