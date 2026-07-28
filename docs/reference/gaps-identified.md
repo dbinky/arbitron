@@ -88,6 +88,24 @@ escalate** — never a tolerated no-op.
 
 ## Fixed
 
+- [x] **The partial-link guard in `InstanceRepo.Create` was undocumented by any
+  test.** Focus area 7 review 1. `adapter/sqlite/instance_repo.go:80-88`
+  documents and implements a load-bearing guard — a caller supplying only SOME
+  of `ParentInstanceID`/`ParentNodeID`/`SpawnMode` must have all three written
+  as NULL, never a half-written link with a dangling `parent_instance_id` and
+  no `parent_node_id` (which the wake and resumption short-circuit could never
+  match, stranding the parent forever) — but no test exercised any of the three
+  partial-input shapes. Added
+  `TestInstanceRepo_PartialSpawnLinkNeverWritten`
+  (`adapter/sqlite/instance_spawn_link_test.go`), table-driven over "parent id
+  without node id", "node id without parent id", and "parent+node id without a
+  valid mode"; confirmed by hand that removing the guard (writing each
+  NullString unconditionally) makes two of the three subtests fail, proving the
+  test is load-bearing rather than vacuous. This is the "failure" category the
+  area was missing — happy/success/error/edge were already covered by the
+  round-trip, same-statement, not-found, and root/pre-existing-row tests. This
+  closes review 1 approval for area 7.
+
 - [x] **`ListWaitingOnTerminalChild`'s retry-produces-duplicate-candidates case
   was untested.** Focus area 5 review 2. The reconciler's query JOINs every
   terminal child of a waiting parent's current node

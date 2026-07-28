@@ -161,6 +161,65 @@ func TestInstanceRepo_PreExistingRowReadsAsRoot(t *testing.T) {
 	assert.True(t, got.IsRoot())
 }
 
+// ---------- failure: partial link never written ----------
+
+// TestInstanceRepo_PartialSpawnLinkNeverWritten pins the guard documented at
+// instance_repo.go's Create: a caller that supplies only SOME of the three
+// link fields must read back as a full root (all three columns NULL), never
+// as a row with a dangling parent_instance_id and no parent_node_id. A
+// half-written link could not be matched by the wake or the resumption
+// short-circuit and would strand its parent forever.
+func TestInstanceRepo_PartialSpawnLinkNeverWritten(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewInstanceRepo(db.DB)
+	ctx := context.Background()
+
+	parent := newLinkedInstance(instance.SpawnLink{})
+	require.NoError(t, repo.Create(ctx, parent))
+
+	cases := map[string]*instance.Instance{
+		"parent id without node id": func() *instance.Instance {
+			inst := newLinkedInstance(instance.SpawnLink{})
+			inst.ID = uuid.New()
+			inst.ParentInstanceID = &parent.ID
+			return inst
+		}(),
+		"node id without parent id": func() *instance.Instance {
+			inst := newLinkedInstance(instance.SpawnLink{})
+			inst.ID = uuid.New()
+			node := "spawn-1"
+			inst.ParentNodeID = &node
+			return inst
+		}(),
+		"parent and node id without a valid mode": func() *instance.Instance {
+			inst := newLinkedInstance(instance.SpawnLink{})
+			inst.ID = uuid.New()
+			node := "spawn-1"
+			inst.ParentInstanceID = &parent.ID
+			inst.ParentNodeID = &node
+			return inst
+		}(),
+	}
+
+	for name, inst := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, repo.Create(ctx, inst))
+
+			var pid, pnode, mode any
+			require.NoError(t, db.DB.QueryRow(
+				`SELECT parent_instance_id, parent_node_id, spawn_mode FROM instances WHERE id = ?`,
+				inst.ID.String()).Scan(&pid, &pnode, &mode))
+			assert.Nil(t, pid, "a partial link must not leave a dangling parent_instance_id")
+			assert.Nil(t, pnode, "a partial link must not leave a dangling parent_node_id")
+			assert.Nil(t, mode, "a partial link must not leave a dangling spawn_mode")
+
+			got, err := repo.Get(ctx, inst.ID)
+			require.NoError(t, err)
+			assert.True(t, got.IsRoot(), "a partially-linked row must read back as a root")
+		})
+	}
+}
+
 // ---------- error ----------
 
 func TestInstanceRepo_GetMissingInstanceIsNotFound(t *testing.T) {
