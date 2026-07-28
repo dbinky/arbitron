@@ -40,6 +40,13 @@ Core workflow node type constants live in `domain/workflow/workflow.go`. The cod
 - `webhook_wait`
 - `interactive_llm`
 - `interactive_agent`
+- `spawn_workflow`
+
+`spawn_workflow` starts a CHILD workflow instance from within a parent workflow.
+It is ONE node type with two modes (`spawnMode`): `fire_and_forget` (the parent
+continues along a single unnamed edge) and `wait_for_child` (the parent suspends
+and resumes through its required `success` / `failure` ports). Do not add a
+separate node type per mode.
 
 Use the code vocabulary above when editing manifests, validation, dashboard behavior, or tests. Older docs may refer generically to `interactive`.
 

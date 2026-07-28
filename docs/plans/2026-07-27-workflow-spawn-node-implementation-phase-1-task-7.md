@@ -18,7 +18,7 @@
 
 ---
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `adapter/sqlite/instance_spawn_queries_test.go`:
 
@@ -287,7 +287,7 @@ func TestSpawnQueries_StorageFailureSurfacesAsError(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it, confirm it fails**
+- [x] **Step 2: Run it, confirm it fails**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -302,7 +302,7 @@ adapter/sqlite/instance_spawn_queries_test.go:14:31: cannot use (*InstanceRepo)(
 FAIL	github.com/arbitron/arbitron/adapter/sqlite [build failed]
 ```
 
-- [ ] **Step 3: Minimal implementation**
+- [x] **Step 3: Minimal implementation**
 
 Append to `adapter/sqlite/instance_repo.go`, after `CountActiveByWorkflowID`:
 
@@ -440,7 +440,7 @@ func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUI
 }
 ```
 
-- [ ] **Step 4: Record the queries in the source-of-truth SQL file**
+- [x] **Step 4: Record the queries in the source-of-truth SQL file**
 
 Append to `adapter/sqlite/queries/instances.sql`:
 
@@ -464,7 +464,7 @@ WHERE parent_instance_id = ?
 ORDER BY created_at ASC;
 ```
 
-- [ ] **Step 5: Add `spawn_workflow` to the node vocabulary in `AGENTS.md`**
+- [x] **Step 5: Add `spawn_workflow` to the node vocabulary in `AGENTS.md`**
 
 In `AGENTS.md`, in the "Core workflow node type constants" list, add after `interactive_agent`:
 
@@ -484,7 +484,7 @@ and resumes through its required `success` / `failure` ports). Do not add a
 separate node type per mode.
 ```
 
-- [ ] **Step 6: Run it, confirm it passes**
+- [x] **Step 6: Run it, confirm it passes**
 
 ```bash
 cd ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work
@@ -510,7 +510,7 @@ PASS
 ok  	github.com/arbitron/arbitron/adapter/sqlite	0.7s
 ```
 
-- [ ] **Step 7: Full Go gate**
+- [x] **Step 7: Full Go gate**
 
 ```bash
 go test ./...
@@ -518,7 +518,7 @@ go test ./...
 
 Expected: `ok` for every package, no `FAIL` lines.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git -C ~/.arbitron/workspaces/instances/c0c76804-f600-4662-887e-cb3a37d10874/work add adapter/sqlite/instance_repo.go adapter/sqlite/queries/instances.sql adapter/sqlite/instance_spawn_queries_test.go AGENTS.md

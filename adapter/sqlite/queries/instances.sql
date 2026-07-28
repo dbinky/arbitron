@@ -76,3 +76,21 @@ UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = ? 
 
 -- name: SetWebhookReceived :exec
 UPDATE instances SET webhook_received_at = ?, updated_at = ? WHERE id = ?;
+
+-- name: ChildCountsByParents :many
+-- NOTE: executed hand-written by InstanceRepo.ChildCountsByParents (the IN list
+-- and the caller's visibility disjunction are both variable-arity). Kept here as
+-- the readable source of truth. Parents with no visible children simply do not
+-- appear in the result — absence means zero.
+SELECT parent_instance_id, COUNT(*) AS child_count
+FROM instances
+WHERE parent_instance_id IN (sqlc.slice('parent_ids'))
+GROUP BY parent_instance_id;
+
+-- name: ListActiveChildren :many
+-- Every active child of a parent, REGARDLESS of spawn mode: the cancel cascade
+-- covers awaited and fire-and-forget children alike.
+SELECT id FROM instances
+WHERE parent_instance_id = ?
+  AND state IN ('queued','running','waiting','paused')
+ORDER BY created_at ASC;

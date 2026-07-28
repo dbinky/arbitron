@@ -544,6 +544,138 @@ func (r *InstanceRepo) CountActiveByWorkflowID(ctx context.Context, workflowID u
 	return n, nil
 }
 
+// childVisibilityClause renders the caller's service-set visibility scope as a
+// SQL predicate over the CHILD row, plus its bound arguments.
+//
+// It is the same disjunction List applies. Reusing the caller's already-computed
+// scope (rather than re-deriving one) is what makes the child count
+// post-authorization: a count that included children the caller cannot see
+// would render an expander whose expansion yields an empty list, leaking the
+// existence of runs the caller may not view.
+//
+// An admin (Unconstrained) yields "1=1". A non-admin with NO scope at all
+// yields "0=1" — fail closed, count nothing — rather than admitting every row.
+func childVisibilityClause(vis instance.ChildVisibility) (string, []any, error) {
+	if vis.Unconstrained {
+		return "1=1", nil, nil
+	}
+	var ors []string
+	var args []any
+	if vis.OwnerID != nil {
+		ors = append(ors, "c.owner_id = ?")
+		args = append(args, uuidToString(*vis.OwnerID))
+	}
+	if vis.IncludePublic {
+		ors = append(ors, "c.visibility = 'public'")
+	}
+	if len(vis.Departments) > 0 {
+		b, err := json.Marshal(vis.Departments)
+		if err != nil {
+			return "", nil, fmt.Errorf("marshalling child visibility departments: %w", err)
+		}
+		ors = append(ors, "(c.visibility = 'department' AND c.department IN (SELECT value FROM json_each(?)))")
+		args = append(args, string(b))
+	}
+	if len(ors) == 0 {
+		return "0=1", nil, nil
+	}
+	return "(" + strings.Join(ors, " OR ") + ")", args, nil
+}
+
+// ChildCountsByParents implements instance.SpawnLinkRepository.
+//
+// Contract (mirrors AggregateByInstances): parents with no VISIBLE children are
+// absent from the map — absence means zero, not an error — and an empty
+// parentIDs slice returns an empty map without touching storage. It exists so a
+// page of the run list resolves every expander in one round trip rather than
+// issuing N+1 queries.
+func (r *InstanceRepo) ChildCountsByParents(ctx context.Context, parentIDs []uuid.UUID, vis instance.ChildVisibility) (map[uuid.UUID]int, error) {
+	out := map[uuid.UUID]int{}
+	if len(parentIDs) == 0 {
+		return out, nil
+	}
+
+	visClause, visArgs, err := childVisibilityClause(vis)
+	if err != nil {
+		return nil, err
+	}
+
+	placeholders := make([]string, len(parentIDs))
+	args := make([]any, 0, len(parentIDs)+len(visArgs))
+	for i, id := range parentIDs {
+		placeholders[i] = "?"
+		args = append(args, uuidToString(id))
+	}
+	args = append(args, visArgs...)
+
+	q := `SELECT c.parent_instance_id, COUNT(*) FROM instances c
+  WHERE c.parent_instance_id IN (` + strings.Join(placeholders, ",") + `)
+    AND ` + visClause + `
+  GROUP BY c.parent_instance_id`
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("counting children by parent: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var parentRaw string
+		var n int
+		if err := rows.Scan(&parentRaw, &n); err != nil {
+			return nil, fmt.Errorf("counting children by parent: %w", err)
+		}
+		id, err := parseUUID(parentRaw)
+		if err != nil {
+			return nil, fmt.Errorf("counting children by parent: %w", err)
+		}
+		out[id] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("counting children by parent: %w", err)
+	}
+	return out, nil
+}
+
+// ListActiveChildren implements instance.SpawnLinkRepository.
+//
+// Spawn mode is deliberately NOT a filter here: the cancel cascade covers every
+// active child, both awaited and fire-and-forget. A fire-and-forget child left
+// running after its parent is cancelled burns queue capacity and a workspace on
+// work whose requester is gone.
+//
+// It returns ONE level. Recursion belongs in the domain cascade, which carries
+// a visited set.
+func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUID) ([]uuid.UUID, error) {
+	const q = `SELECT id FROM instances
+  WHERE parent_instance_id = ?
+    AND state IN ('queued','running','waiting','paused')
+  ORDER BY created_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, q, uuidToString(parentID))
+	if err != nil {
+		return nil, fmt.Errorf("listing active children of %s: %w", parentID, err)
+	}
+	defer rows.Close()
+
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("listing active children of %s: %w", parentID, err)
+		}
+		id, err := parseUUID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("listing active children of %s: %w", parentID, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing active children of %s: %w", parentID, err)
+	}
+	return out, nil
+}
+
 // rowToInstance converts a sqlc-generated Instance row into a domain Instance.
 // This is a package-level function so both InstanceRepo and QueueRepo can use
 // it without hidden coupling between the two repos.
