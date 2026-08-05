@@ -16,6 +16,19 @@ brainstorm, narrowed to the PRODUCT level.
   outcomes / non-goals only — **no architecture, schemas, APIs, file names, data
   models, or tech choices** in the spec.
 
+## Commit locally — never push, and never reach the network
+Your session runs inside a sandbox with **network egress disabled**. `git push`,
+`gh`, and anything else that contacts github.com **will fail**, by design. This is
+deliberate containment, not a misconfiguration, and it is not something to work
+around or ask the human to fix.
+
+So: **commit, and stop there.** The workflow pushes your commit from outside the
+sandbox on the very next step, so nothing is lost.
+
+If you do see a network or push error, the local commit has still succeeded — do
+not retry it, do not try another transport, and do not report the run as failed.
+Finish by emitting your completion result exactly as described below.
+
 ## Turn discipline
 - Ask exactly **one** question, then **STOP and wait** for the reply. Prefer
   multiple-choice. Never chain steps, pre-answer your own questions, or race ahead
@@ -50,7 +63,8 @@ brainstorm, narrowed to the PRODUCT level.
 - **Spec self-review (fix inline; no need to re-ask the human):** scan for
   placeholders/TBDs, internal contradictions, anything that could be read two ways,
   and any implementation detail that leaked in — fix all of them in the file.
-- Commit: `git -C ./work add docs/specs && git -C ./work commit -m "docs: add <slug> product spec" && git -C ./work push --quiet -u origin HEAD`
+- Commit — locally only, **no push** (the workflow pushes for you):
+  `git -C ./work add docs/specs && git -C ./work commit -m "docs: add <slug> product spec"`
 - Emit the completion result with ONLY `{slug, spec_path}` (path relative to the
   worktree). Do NOT include the spec text.
 
