@@ -39,8 +39,8 @@
     {
       "name": "max_ralph_iterations",
       "type": "number",
-      "description": "Backstop cap on the ralph refinement loop.",
-      "default": 200,
+      "description": "Backstop cap on the ralph refinement loop. A seam-based plan of N single-system areas and P paired reviews needs 2N+P passes MINIMUM with zero rework (one observed plan: 26 areas + 112 pairs = 164), and most areas need several passes, so 200 left almost no headroom.",
+      "default": 500,
       "required": false
     },
     {
@@ -566,6 +566,22 @@
       }
     },
     {
+      "id": "count-review-plan",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/count-review-plan.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Count review plan",
+      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own <promise>FINIT</promise> claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched \u2014 114 of 164 approvals outstanding \u2014 and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 3320
+      }
+    },
+    {
       "id": "refine-assess",
       "type": "llm_call",
       "config": {
@@ -600,7 +616,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3320
+        "y": 3460
       }
     },
     {
@@ -625,7 +641,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 3480
+        "y": 3620
       }
     },
     {
@@ -633,12 +649,6 @@
       "type": "conditional",
       "config": {
         "conditions": [
-          {
-            "field": "refine-assess.done",
-            "operator": "eq",
-            "value": true,
-            "output": "exit"
-          },
           {
             "field": "refine-assess.consecutive_no_progress",
             "operator": "gte",
@@ -650,16 +660,28 @@
             "operator": "gte",
             "value": "{{max_ralph_iterations}}",
             "output": "exit"
+          },
+          {
+            "field": "count-review-plan.plan_complete",
+            "operator": "eq",
+            "value": false,
+            "output": "loop"
+          },
+          {
+            "field": "refine-assess.done",
+            "operator": "eq",
+            "value": true,
+            "output": "exit"
           }
         ],
         "defaultOutput": "loop"
       },
       "label": "Refine loop or exit",
-      "description": "Exit when done, OR stagnated (2 consecutive no-progress passes), OR ralph cap reached; else loop.",
+      "description": "Exit ONLY on stagnation (2 consecutive no-progress passes), the iteration cap, or a review plan that is arithmetically complete AND assessed done. Order matters: stagnation and the cap are evaluated first so they always win; then plan_complete=false forces another pass, so no verdict \u2014 however confident \u2014 can end the loop while approval boxes remain unticked. The assessor still decides what a counter cannot see (new-vs-baseline failures, wiring, open gaps), so both must agree before the loop may exit.",
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3640
+        "y": 3780
       }
     },
     {
@@ -675,7 +697,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3800
+        "y": 3940
       }
     },
     {
@@ -694,7 +716,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 3960
+        "y": 4100
       }
     },
     {
@@ -734,7 +756,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 4120
+        "y": 4260
       }
     },
     {
@@ -760,7 +782,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 4040
+        "y": 4180
       }
     },
     {
@@ -1295,7 +1317,7 @@
       "errorBehavior": {},
       "position": {
         "x": 250,
-        "y": 4080
+        "y": 4220
       }
     },
     {
@@ -1396,6 +1418,10 @@
     },
     {
       "source": "record-pass-commit",
+      "target": "count-review-plan"
+    },
+    {
+      "source": "count-review-plan",
       "target": "refine-assess"
     },
     {

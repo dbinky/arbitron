@@ -25,7 +25,7 @@ check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else
   echo "FAIL - $1"; echo "        expected: $3"; echo "        actual:   $2"; fails=$((fails+1)); fi; }
 
 # --- Scripts copied verbatim from feature-pipeline --------------------------
-SHARED="init-workspace.sh checkpoint-push.sh push-and-pr.sh notify.sh notify-teams.sh record-baseline.sh verify-ralph-seed.sh record-pass-commit.sh"
+SHARED="init-workspace.sh checkpoint-push.sh push-and-pr.sh notify.sh notify-teams.sh record-baseline.sh verify-ralph-seed.sh record-pass-commit.sh count-review-plan.sh"
 for s in $SHARED; do
   if [ ! -f "$RL/scripts/$s" ]; then
     check "shared script present: $s" "missing" "present"
