@@ -33,8 +33,10 @@ func newAnthropicProbe(d Deps) *anthropicProbe {
 		hc = &http.Client{}
 	}
 	return &anthropicProbe{
-		httpClient:       hc,
-		timeout:          func(ctx context.Context) (context.Context, context.CancelFunc) { return procenv.WithTimeout(ctx, d.Timeout) },
+		httpClient: hc,
+		timeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return procenv.WithTimeout(ctx, d.Timeout)
+		},
 		maxResponseBytes: d.MaxResponseBytes,
 	}
 }

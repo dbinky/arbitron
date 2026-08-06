@@ -15,8 +15,8 @@ import (
 
 // fakeInterventionRepo records created rows and can be made to fail Create.
 type fakeInterventionRepo struct {
-	mu       sync.Mutex
-	created  []instance.Intervention
+	mu        sync.Mutex
+	created   []instance.Intervention
 	createErr error
 }
 

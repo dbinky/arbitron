@@ -1,6 +1,10 @@
 package workflow
 
-import "strings"
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
 
 // FileChecker is a minimal subset of the engine.FileReader port used for
 // validating file references within a workflow definition. Keeping this as a
@@ -27,6 +31,37 @@ type ConnectionChecker interface {
 	ProfileConnectionRef(alias string) (connectionRef string, aliasKnown bool)
 	// ConnectionExists reports whether a connection with the given name exists.
 	ConnectionExists(name string) bool
+}
+
+// WorkflowChecker reports whether a workflow NAME resolves to a workflow the
+// author can see. It is the spawn-node analogue of ProfileChecker: an injected
+// domain capability, not an adapter import.
+//
+// It is nil-skippable like every other checker, and it is deliberately
+// name-only — resolution at run time is by name too, through the run owner's
+// visibility filter, so an existence answer given here for a different identity
+// is advisory about the shape of the graph, not a substitute for the run-time
+// fail-closed load.
+type WorkflowChecker interface {
+	// WorkflowExists reports whether a workflow with the given name resolves.
+	// A workflow the author cannot see is indistinguishable from one that does
+	// not exist — existence is never leaked.
+	WorkflowExists(name string) bool
+}
+
+// ValidateOption is an additive knob on Validate. It exists so a new checker
+// can be introduced without a positional-parameter change at more than a
+// hundred call sites; the four original checkers stay positional.
+type ValidateOption func(*validateOptions)
+
+type validateOptions struct {
+	workflows WorkflowChecker
+}
+
+// WithWorkflowChecker enables author-time existence validation of every
+// spawn_workflow node's childWorkflow.
+func WithWorkflowChecker(wc WorkflowChecker) ValidateOption {
+	return func(o *validateOptions) { o.workflows = wc }
 }
 
 // ValidationError describes a single validation problem found in a workflow.
@@ -76,7 +111,12 @@ var validErrorBehaviorTypes = map[string]bool{
 // Pass a non-nil ConnectionChecker to validate that a profile's non-empty
 // ConnectionRef names an existing connection; pass nil to skip that pass. Each
 // checker is independently nil-skippable.
-func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker) []ValidationError {
+func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker, opts ...ValidateOption) []ValidationError {
+	var o validateOptions
+	for _, apply := range opts {
+		apply(&o)
+	}
+
 	var errs []ValidationError
 
 	errs = append(errs, validateEntryNodes(wf)...)
@@ -105,27 +145,67 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 		errs = append(errs, validateConnectionReferences(wf, connChecker)...)
 	}
 
+	if o.workflows != nil {
+		errs = append(errs, validateChildWorkflowReferences(wf, o.workflows)...)
+	}
+
 	return errs
 }
 
-// validateConnectionReferences checks that every llm_call/agent_call node whose
-// model_profile resolves to a non-empty ConnectionRef names a connection that
-// actually exists. An empty ConnectionRef is the claude-cli no-key subscription
-// path and is valid with no existence check. An unknown alias is skipped here
-// because validateModelProfiles (Phase 1) already reports it; double-reporting
-// is avoided.
+// validateChildWorkflowReferences checks that every spawn_workflow node names a
+// child workflow that actually resolves.
+//
+// It runs in the SAME spawn-node traversal shape as the connection check above
+// and closes the same class of gap: a bad reference that passes publish and
+// fails only at run time, after the parent has already burned a queue slot and
+// reached the spawn node. An empty childWorkflow is skipped — validateNodeConfigs
+// owns that error and double-reporting helps nobody.
+func validateChildWorkflowReferences(wf *Workflow, workflows WorkflowChecker) []ValidationError {
+	var errs []ValidationError
+	for _, n := range wf.Nodes {
+		if n.Type != NodeTypeSpawnWorkflow || n.Config.ChildWorkflow == "" {
+			continue
+		}
+		if !workflows.WorkflowExists(n.Config.ChildWorkflow) {
+			errs = append(errs, ValidationError{
+				Code: "UNKNOWN_CHILD_WORKFLOW",
+				Message: "spawn_workflow node " + n.ID + " references unknown workflow " +
+					strconv.Quote(n.Config.ChildWorkflow),
+				NodeID: n.ID,
+			})
+		}
+	}
+	return errs
+}
+
+// validateConnectionReferences checks that every node whose model_profile
+// resolves to a non-empty ConnectionRef names a connection that actually
+// exists. An empty ConnectionRef is the claude-cli no-key subscription path and
+// is valid with no existence check. An unknown alias is skipped here because
+// validateModelProfiles (Phase 1) already reports it; double-reporting is
+// avoided.
+//
+// spawn_workflow is INCLUDED. Its model_profile drives a real provider call —
+// the child-input preparation — so a profile naming a deleted connection is
+// exactly as broken here as on an llm_call, and omitting the type meant such a
+// workflow passed publish and failed only at run time, after the parent had
+// already reached the spawn node.
 func validateConnectionReferences(wf *Workflow, connChecker ConnectionChecker) []ValidationError {
 	var errs []ValidationError
 	for _, n := range wf.Nodes {
 		switch n.Type {
-		case NodeTypeLLMCall, NodeTypeAgentCall:
+		case NodeTypeLLMCall, NodeTypeAgentCall, NodeTypeSpawnWorkflow:
 		default:
 			continue
 		}
 
 		alias := n.Config.ModelProfile
 		if alias == "" {
-			// Phase 1 reports the missing model_profile; nothing to check here.
+			// Phase 1 reports the missing model_profile for the types that require
+			// it. A spawn node's alias is legitimately OPTIONAL — a child declaring
+			// zero inputs never makes a preparation call — so an empty alias here is
+			// not an error at all; it becomes a node-named runtime error out of
+			// ChildInputPreparer.Prepare only if a call is actually attempted.
 			continue
 		}
 
@@ -167,11 +247,24 @@ func validateModelProfiles(wf *Workflow, profiles ProfileChecker) []ValidationEr
 			wantKind = "chat"
 		case NodeTypeInteractiveAgent:
 			wantKind = "agent"
+		case NodeTypeSpawnWorkflow:
+			// The input-preparation call is tool-SUPPRESSED, so an agent-kind
+			// binding here is a config-driven escalation from a reasoning call to
+			// an RCE-capable one. This is the author-time half of the guard
+			// domain/engine's expectedKindForNodeType enforces at run time.
+			wantKind = "chat"
 		default:
 			continue
 		}
 
 		if n.Config.ModelProfile == "" {
+			// A spawn node's alias is OPTIONAL: a child that declares zero inputs
+			// never makes a preparation call, and validation cannot load the child
+			// to know. An empty alias fails closed at run time only if a call is
+			// actually made. Every other type here REQUIRES it.
+			if n.Type == NodeTypeSpawnWorkflow {
+				continue
+			}
 			errs = append(errs, ValidationError{
 				Code:    "MISSING_REQUIRED_CONFIG",
 				Message: string(n.Type) + " node " + n.ID + " must have a model_profile",
@@ -536,6 +629,8 @@ func validateNodeConfigs(wf *Workflow) []ValidationError {
 			errs = append(errs, validateTimerDelayNode(n, wf.Edges)...)
 		case NodeTypeWebhookWait:
 			errs = append(errs, validateWebhookWaitNode(n, wf.Edges)...)
+		case NodeTypeSpawnWorkflow:
+			errs = append(errs, validateSpawnWorkflowNode(n, wf.Edges, wf.Name)...)
 		case NodeTypeInteractiveLLM, NodeTypeInteractiveAgent:
 			errs = append(errs, validateInteractiveNode(n)...)
 		}
@@ -631,6 +726,141 @@ func validateWebhookWaitNode(node Node, edges []Edge) []ValidationError {
 	}
 
 	return errs
+}
+
+// validateSpawnWorkflowNode checks spawn_workflow-specific validation rules.
+//
+// The mode is checked FIRST and, when unrecognized, short-circuits: the port
+// rules are mode-specific, so reporting them against an undefined mode would
+// bury the one finding the author can act on. An empty mode is an authoring
+// error, NOT an inheritance request (see IsValidSpawnMode).
+func validateSpawnWorkflowNode(node Node, edges []Edge, workflowName string) []ValidationError {
+	var errs []ValidationError
+
+	if node.Entrypoint {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_SPAWN_WORKFLOW",
+			Message: "spawn_workflow node " + node.ID + " cannot be an entrypoint",
+			NodeID:  node.ID,
+		})
+	}
+
+	// ONE set of contract checks, shared with the executor's defensive re-check
+	// (ParseSpawnConfig). The executor cannot simply trust that this ran — an
+	// instance executes from a WorkflowSnapshot that may PREDATE this validation
+	// — so both sides must check, and must check identically.
+	_, cfgErr := ParseSpawnConfig(node.Config)
+	if errors.Is(cfgErr, ErrSpawnChildWorkflowMissing) {
+		errs = append(errs, ValidationError{
+			Code:    "MISSING_REQUIRED_CONFIG",
+			Message: "spawn_workflow node " + node.ID + " must have a childWorkflow",
+			NodeID:  node.ID,
+		})
+	}
+
+	// DIRECT self-spawn: the one cycle visible in a single definition, and the
+	// one an author is most likely to write by accident. It is caught here, at
+	// publish time, where the fix is obvious.
+	//
+	// This is NOT the cycle defence — it cannot be. The spawn graph is a graph of
+	// workflow NAMES resolved at run time, so an INDIRECT cycle (A spawns B
+	// spawns A) is invisible from inside either definition, and a workflow may be
+	// renamed after publication. The runtime bound (instance.MaxSpawnDepth,
+	// enforced in Engine.Spawn against the child's persisted spawn_depth) is what
+	// actually contains recursion; this check just turns the obvious mistake into
+	// an author-time error instead of ten wasted generations.
+	if workflowName != "" && node.Config.ChildWorkflow == workflowName {
+		errs = append(errs, ValidationError{
+			Code: "INVALID_SPAWN_WORKFLOW",
+			Message: "spawn_workflow node " + node.ID + " spawns its own workflow " +
+				strconv.Quote(workflowName) + "; a run that spawns itself recurses until it hits the runtime spawn-depth limit",
+			NodeID: node.ID,
+		})
+	}
+
+	if errors.Is(cfgErr, ErrSpawnModeInvalid) {
+		errs = append(errs, ValidationError{
+			Code:    "INVALID_SPAWN_MODE",
+			Message: "spawn_workflow node " + node.ID + " has an " + spawnModeProblem(cfgErr),
+			NodeID:  node.ID,
+		})
+		return errs
+	}
+
+	// Collect this node's outgoing ports. Mirrors validateConditionalEdges'
+	// (source, output) set technique.
+	ports := map[string]int{}
+	for _, e := range edges {
+		if e.Source == node.ID {
+			ports[e.Output]++
+		}
+	}
+
+	switch node.Config.SpawnMode {
+	case SpawnModeWaitForChild:
+		// Exactly one edge per port, not merely "at least one": findNextNode
+		// (domain/engine/engine.go) follows only the FIRST edge matching a
+		// port and never fans out, so a second edge on success/failure would
+		// silently become dead code rather than erroring at run time.
+		for _, want := range []string{SpawnPortSuccess, SpawnPortFailure} {
+			switch ports[want] {
+			case 0:
+				errs = append(errs, ValidationError{
+					Code:    "MISSING_SPAWN_EDGE",
+					Message: "spawn_workflow node " + node.ID + " (wait_for_child) missing edge for output: " + want,
+					NodeID:  node.ID,
+				})
+			case 1:
+				// exactly one; valid.
+			default:
+				errs = append(errs, ValidationError{
+					Code: "INVALID_SPAWN_WORKFLOW",
+					Message: "spawn_workflow node " + node.ID +
+						" (wait_for_child) must have exactly one edge for output: " + want,
+					NodeID: node.ID,
+				})
+			}
+		}
+		if ports[""] > 0 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (wait_for_child) must not have an unnamed outgoing edge; route through the success and failure ports",
+				NodeID: node.ID,
+			})
+		}
+	case SpawnModeFireAndForget:
+		if ports[SpawnPortSuccess] > 0 || ports[SpawnPortFailure] > 0 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (fire_and_forget) must not wire the success or failure ports; those exist only in wait_for_child mode",
+				NodeID: node.ID,
+			})
+		}
+		if ports[""] != 1 {
+			errs = append(errs, ValidationError{
+				Code: "INVALID_SPAWN_WORKFLOW",
+				Message: "spawn_workflow node " + node.ID +
+					" (fire_and_forget) must have exactly one unnamed outgoing edge",
+				NodeID: node.ID,
+			})
+		}
+	}
+
+	return errs
+}
+
+// spawnModeProblem extracts the mode sentence from a ParseSpawnConfig error so
+// the ValidationError message stays the single-sentence form authors already
+// see, without this file re-deriving the wording ParseSpawnConfig owns.
+func spawnModeProblem(joined error) string {
+	for _, part := range strings.Split(joined.Error(), "\n") {
+		if strings.Contains(part, ErrSpawnModeInvalid.Error()) {
+			return part
+		}
+	}
+	return ErrSpawnModeInvalid.Error()
 }
 
 // validateInteractiveNode checks interactive-node-specific validation rules.

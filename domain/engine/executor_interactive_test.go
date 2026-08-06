@@ -22,9 +22,9 @@ import (
 // ---------------------------------------------------------------------------
 
 type mockStreamingChatProvider struct {
-	mu            sync.Mutex
-	streamCallFn  func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error)
-	capturedReqs  []engine.ChatRequest
+	mu           sync.Mutex
+	streamCallFn func(ctx context.Context, req engine.ChatRequest) (<-chan engine.ChatChunk, error)
+	capturedReqs []engine.ChatRequest
 }
 
 func newMockStreamingChatProvider() *mockStreamingChatProvider {

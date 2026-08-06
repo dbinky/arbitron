@@ -204,7 +204,7 @@ func TestSeedProfiles_EmptyBackendWithConnectionSkipped(t *testing.T) {
 	store := newSeedFakeStore()
 	in := []provider.Profile{
 		{Alias: "cloud", Kind: provider.ProfileKindAgent, ConnectionRef: "my-conn"}, // backend="" conn!=""
-		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},       // valid
+		{Alias: "ok", Kind: provider.ProfileKindAgent, Backend: "claude-code"},      // valid
 	}
 	n, skipped, err := SeedProfiles(context.Background(), store, testRules(), in)
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestPaired_ConfigToSeedToStore(t *testing.T) {
 		alias, kind, backend string
 		valid                bool
 	}{
-		{"chat-one", "chat", "", true},            // empty backend → substituted to claude-cli
+		{"chat-one", "chat", "", true}, // empty backend → substituted to claude-cli
 		{"agent-one", "agent", "claude-code", true},
 		{"invalid-backend", "agent", "notabackend", false}, // unknown backend → skipped
 	}

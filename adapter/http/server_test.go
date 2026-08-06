@@ -198,6 +198,10 @@ func (r *mockQueueRepoForRouter) CountWaiting(_ context.Context) (int, error) { 
 func (r *mockQueueRepoForRouter) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	return nil, nil
 }
+func (r *mockQueueRepoForRouter) SetQueuedIfWaiting(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (r *mockQueueRepoForRouter) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error {
 	return nil
 }

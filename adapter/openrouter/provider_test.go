@@ -606,7 +606,9 @@ func TestSecurity_KeyNeverLogged(t *testing.T) {
 	}
 
 	responders := map[string]func() *fakeTransport{
-		"chat_success":   func() *fakeTransport { return &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"ok"}}]}`)} },
+		"chat_success": func() *fakeTransport {
+			return &fakeTransport{resp: jsonResponse(200, `{"choices":[{"message":{"content":"ok"}}]}`)}
+		},
 		"chat_non2xx":    func() *fakeTransport { return &fakeTransport{resp: jsonResponse(401, `{"error":"`+secretKey+`-ish"}`)} },
 		"chat_malformed": func() *fakeTransport { return &fakeTransport{resp: jsonResponse(200, `{bad`)} },
 		"stream": func() *fakeTransport {

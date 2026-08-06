@@ -40,13 +40,23 @@ type Engine struct {
 	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
 	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
 	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
+	// spawnLinks is the link-addressed read surface. It is NEVER nil: NewEngine
+	// installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so the cancel
+	// cascade can never be silently downgraded to a no-op by a missed wiring
+	// step. Opting out is possible but must be spelled NoopSpawnLinks{}, whose
+	// doc comment states that it disables descendant cancellation.
+	spawnLinks instance.SpawnLinkRepository
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
 	defaultAgentBackend string
-	mu                  sync.Mutex
-	contexts            map[uuid.UUID]context.CancelFunc
-	wg                  sync.WaitGroup
+	// executorsFrozen seals the executor map. Registration and lookup both go
+	// through mu, and freezing makes a post-startup registration a loud panic
+	// rather than a data race — see RegisterExecutor.
+	executorsFrozen bool
+	mu              sync.Mutex
+	contexts        map[uuid.UUID]context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 // NewEngine constructs a new Engine with all required dependencies.
@@ -74,7 +84,57 @@ func NewEngine(
 		queueRepo:           queueRepo,
 		defaultAgentBackend: defaultAgentBackend,
 		contexts:            make(map[uuid.UUID]context.CancelFunc),
+		// Non-nil from birth so cascadeCancel never has to nil-check a
+		// containment control. The composition root overwrites this with the real
+		// repository via SetSpawnLinks.
+		spawnLinks: NoopSpawnLinks{},
 	}
+}
+
+// RegisterExecutor registers a node executor AFTER construction.
+//
+// Several executors cannot be built before the engine exists — timer_delay and
+// webhook_wait need the scheduler and webhook registry, spawn_workflow needs
+// the engine itself as its ChildSpawner — so the composition root has always
+// mutated the executor map post-construction. That worked only because the map
+// header is shared, and it was a plain unsynchronized write to a map the run
+// loop reads from other goroutines: a data race the moment any recovery or
+// queue goroutine starts before wiring finishes.
+//
+// Registration now takes the engine's mutex, and FreezeExecutors seals the set
+// before those goroutines start, so a late registration is a loud panic instead
+// of silent memory corruption. A nil executor is rejected for the same reason:
+// it would surface much later as "no executor registered for node type".
+func (e *Engine) RegisterExecutor(t workflow.NodeType, ex NodeExecutor) {
+	if ex == nil {
+		panic("engine: RegisterExecutor requires a non-nil NodeExecutor for node type " + string(t))
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.executorsFrozen {
+		panic("engine: RegisterExecutor called after FreezeExecutors for node type " + string(t) +
+			"; every executor must be registered before recovery and queue goroutines start")
+	}
+	e.executors[t] = ex
+}
+
+// FreezeExecutors seals the executor set. The composition root MUST call it
+// after the last RegisterExecutor and BEFORE starting any goroutine that can
+// execute a node (crash recovery, the queue evaluator, the schedule evaluator).
+// It is idempotent.
+func (e *Engine) FreezeExecutors() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.executorsFrozen = true
+}
+
+// executorFor looks up a node type's executor under the same lock registration
+// takes, so a read can never observe a half-written map.
+func (e *Engine) executorFor(t workflow.NodeType) (NodeExecutor, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ex, ok := e.executors[t]
+	return ex, ok
 }
 
 // SetScheduler sets the timer scheduler on the engine.
@@ -266,6 +326,33 @@ func (e *Engine) triggerAdminOverrode(ctx context.Context, scope workflow.Scope,
 	return workflow.AdminOverrode(callerID, pub)
 }
 
+// sharedVisibilityFilter builds the shared-scope gate for a workflow read.
+//
+// It is shared by TriggerWithDepartment and ChildInputs so a spawn node's
+// child-workflow lookup can NEVER resolve a workflow the same caller could not
+// trigger directly. Gating keys on the CONTEXT identity (a REST/MCP caller, or
+// the reconstructed owner identity a spawn injects). A system trigger (no
+// context identity) skips gating — a scheduler/webhook trigger already passed
+// authorization at registration time. A nil filter disables shared-scope gating
+// for callers with no publication lookup.
+func (e *Engine) sharedVisibilityFilter(ctx context.Context) workflow.SharedVisibilityFilter {
+	id, ok := identity.FromContext(ctx)
+	if !ok || e.publishers == nil {
+		return nil
+	}
+	pubs := e.publishers
+	return func(ctx context.Context, name string) (bool, error) {
+		pub, found, err := pubs.PublicationOf(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if !found {
+			return true, nil // unpublished shared folder ⇒ open
+		}
+		return workflow.CanSeePublication(id, pub), nil
+	}
+}
+
 // TriggerWithDepartment loads a workflow, validates inputs, stamps the run's
 // visibility+department (applying the optional validated per-trigger department
 // override), creates the instance, and enqueues it. departmentOverride is "" for
@@ -290,20 +377,7 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	// system user; gating keys on the CONTEXT identity (a REST/MCP caller). A
 	// system trigger (no context identity) skips gating — a scheduler/webhook
 	// trigger already passed authorization at registration time.
-	var filter workflow.SharedVisibilityFilter
-	if id, ok := identity.FromContext(ctx); ok && e.publishers != nil {
-		pubs := e.publishers
-		filter = func(ctx context.Context, name string) (bool, error) {
-			pub, found, err := pubs.PublicationOf(ctx, name)
-			if err != nil {
-				return false, err
-			}
-			if !found {
-				return true, nil // unpublished shared folder ⇒ open
-			}
-			return workflow.CanSeePublication(id, pub), nil
-		}
-	}
+	filter := e.sharedVisibilityFilter(ctx)
 	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
@@ -420,6 +494,27 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		scheduleID = o.ScheduleID
 	}
 
+	// Stamp the parent/child spawn link from the trigger context. It rides the
+	// SAME context-carried creation-time mechanism as Origin above, and is
+	// stamped into the SAME Instance literal below — never as a follow-up write.
+	// This trigger path creates AND enqueues, so a link written after enqueue
+	// could lose a race with a fast child reaching a terminal state, leaving its
+	// waiting parent with nothing to match. An INCOMPLETE link is ignored
+	// entirely rather than partially persisted.
+	var parentInstanceID *uuid.UUID
+	var parentNodeID *string
+	var spawnMode instance.SpawnMode
+	// spawnDepth stays 0 for a root run, which is exactly what a root's depth is.
+	spawnDepth := 0
+	if l, ok := instance.SpawnLinkFromContext(ctx); ok && l.Valid() {
+		p := l.ParentInstanceID
+		n := l.ParentNodeID
+		parentInstanceID = &p
+		parentNodeID = &n
+		spawnMode = l.Mode
+		spawnDepth = l.SpawnDepth
+	}
+
 	// Resolve the stable workflow id (name->id) so the run carries an identity
 	// reference that survives a later rename/edit. The registry is authoritative;
 	// when it is unwired or has no row for this name, fall back to the id carried
@@ -443,6 +538,10 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		Visibility:        st.Visibility,
 		TriggerSource:     triggerSource,
 		ScheduleID:        scheduleID,
+		ParentInstanceID:  parentInstanceID,
+		ParentNodeID:      parentNodeID,
+		SpawnMode:         spawnMode,
+		SpawnDepth:        spawnDepth,
 		State:             instance.StateQueued,
 		Priority:          instance.Priority(priority),
 		Variables:         snap,
@@ -481,18 +580,31 @@ func (e *Engine) ListInstances(ctx context.Context, filters instance.ListFilters
 	if !ok {
 		return nil, instance.ErrNotFound // no identity: reveal nothing
 	}
+	return e.instances.List(ctx, applyListConstraint(filters, lc))
+}
+
+// applyListConstraint overwrites every visibility field on filters from the
+// service-derived scope, discarding whatever the caller supplied.
+//
+// The admin arm sets Unconstrained EXPLICITLY rather than clearing the
+// narrowing and letting the repository infer "no filters means admin". That
+// inference was the divergence: the repository's List read a scope-less filter
+// set as an admin list and returned the full table, while the identical input
+// to childVisibilityClause was read as "no scope" and returned nothing. One of
+// those two is a data leak, and it is not the fail-closed one.
+func applyListConstraint(filters instance.ListFilters, lc listFilter) instance.ListFilters {
 	if lc.Unconstrained {
-		// Admin: clear any visibility narrowing so the repo returns all rows.
+		filters.Unconstrained = true
 		filters.OwnerID = nil
 		filters.Departments = nil
 		filters.IncludePublic = false
-		return e.instances.List(ctx, filters)
+		return filters
 	}
-	// Non-admin: service-set the disjunction; ignore any caller-supplied values.
+	filters.Unconstrained = false
 	filters.OwnerID = lc.OwnerID
 	filters.Departments = lc.Departments
 	filters.IncludePublic = lc.IncludePublic
-	return e.instances.List(ctx, filters)
+	return filters
 }
 
 // ListEnriched returns the instances visible to the caller with the additive
@@ -507,16 +619,7 @@ func (e *Engine) ListEnriched(ctx context.Context, filters instance.ListFilters)
 	if !ok {
 		return nil, instance.ErrNotFound
 	}
-	if lc.Unconstrained {
-		filters.OwnerID = nil
-		filters.Departments = nil
-		filters.IncludePublic = false
-	} else {
-		filters.OwnerID = lc.OwnerID
-		filters.Departments = lc.Departments
-		filters.IncludePublic = lc.IncludePublic
-	}
-	summaries, err := e.instances.List(ctx, filters)
+	summaries, err := e.instances.List(ctx, applyListConstraint(filters, lc))
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +785,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		if r := recover(); r != nil {
 			// A panic in the run loop should not crash the process.
 			// Mark the instance as failed and log via event bus.
-			if err := e.instances.SetFailed(ctx, instanceID, ""); err == nil {
+			if e.failInstance(ctx, instanceID, "") {
 				e.emitNotification(context.Background(), instanceID, workflowName, notification.TypeFailed)
 			}
 			e.eventBus.Publish(instanceID, Event{
@@ -716,7 +819,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	// Parse the workflow from the snapshot.
 	wf, nodeMap, adj, parseErr := parseWorkflowGraph(inst.WorkflowSnapshot)
 	if parseErr != nil {
-		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.failInstance(ctx, instanceID, "")
 		return
 	}
 
@@ -736,7 +839,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 	}
 
 	if currentNodeID == "" {
-		_ = e.instances.SetFailed(ctx, instanceID, "")
+		e.failInstance(ctx, instanceID, "")
 		return
 	}
 
@@ -843,6 +946,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
 		// Workspace is removed only after SetCompleted succeeds.
 		e.cleanupWorkspace(instanceID)
+		// A completed run may be somebody's awaited child.
+		e.OnChildTerminal(context.Background(), instanceID)
 	}
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeInstanceCompleted,
@@ -864,6 +969,9 @@ func (e *Engine) failInstance(ctx context.Context, instanceID uuid.UUID, nodeID 
 		return false
 	}
 	e.warnWorkspaceRetained(instanceID, "instance_failed")
+	// A failed run may be somebody's awaited child. Use a background context: the
+	// run context is often already cancelled at this point.
+	e.OnChildTerminal(context.Background(), instanceID)
 	return true
 }
 
@@ -995,7 +1103,7 @@ func (e *Engine) handleNodeSuccess(
 // A NodeExecution record is created for each attempt. The final record is returned
 // so the caller can update it (e.g., marking it skipped).
 func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, node workflow.Node, vars *variable.VariableStore, wf workflow.Workflow) (*NodeResult, *instance.NodeExecution, error) {
-	executor, ok := e.executors[node.Type]
+	executor, ok := e.executorFor(node.Type)
 	if !ok {
 		return nil, nil, fmt.Errorf("no executor registered for node type: %s", node.Type)
 	}
@@ -1319,6 +1427,8 @@ func (e *Engine) resumeFromWebhookWait(ctx context.Context, instanceID uuid.UUID
 			Timestamp: time.Now(),
 			Data:      map[string]any{"reason": "webhook timeout expired while paused"},
 		})
+		// A failed run may be somebody's awaited child.
+		e.OnChildTerminal(context.Background(), instanceID)
 		return nil
 	}
 
@@ -1381,8 +1491,41 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 }
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
-// cancels its context/timer as appropriate.
+// cancels its context/timer as appropriate, then cancels every active child it
+// spawned, recursively.
+//
+// ORDER IS A CORRECTNESS REQUIREMENT, NOT A STYLE PREFERENCE. The child-terminal
+// wake only re-queues a parent that is STILL in the waiting state. Cancelling
+// the parent FIRST means it is already cancelled by the time its children reach
+// their terminal state, so the wake is a no-op and the parent cannot be
+// resurrected through its own failure port by the very children being torn
+// down. Reversing the order produces a parent that flips from cancelled back to
+// queued.
 func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
+	if err := e.cancelAuthorized(ctx, instanceID); err != nil {
+		return err
+	}
+	// DETACH the cascade from the caller's request. The parent is already
+	// cancelled at this point, so the walk MUST run to completion: on the
+	// request context, a client disconnect or a write timeout part-way through
+	// would silently strand the rest of the subtree — active descendants running
+	// with the parent's inherited credentials and nobody watching. This is the
+	// same posture OnChildTerminal already takes at its call sites.
+	//
+	// context.WithoutCancel (not context.Background) because cancelAuthorized
+	// re-authorizes every descendant from the identity carried on ctx: dropping
+	// the values would turn the cascade into an unauthenticated walk. Only
+	// cancellation and the deadline are shed.
+	e.cascadeCancel(context.WithoutCancel(ctx), instanceID, map[uuid.UUID]bool{instanceID: true})
+	return nil
+}
+
+// cancelAuthorized authorizes and performs the cancellation of ONE instance:
+// the state transition, wait-resource deactivation, the cancelled event, and
+// the intervention audit record. It performs NO cascade — Cancel owns that, so
+// the cascade can reuse this authorized path for every descendant and produce
+// an audit record for each one.
+func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) error {
 	inst, err := e.authorizeIntervention(ctx, instanceID)
 	if err != nil {
 		return err
@@ -1420,6 +1563,10 @@ func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
 		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", instanceID, inst.State, instance.ErrCannotCancel)
 	}
 	e.recordIntervention(ctx, inst, instance.ActionCancel, nil)
+	// A cancelled run may be somebody's awaited child; a cancelled child routes
+	// its parent through the failure port (there is no separate cancellation
+	// path).
+	e.OnChildTerminal(context.Background(), instanceID)
 	return nil
 }
 

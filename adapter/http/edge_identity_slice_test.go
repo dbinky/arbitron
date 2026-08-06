@@ -61,8 +61,8 @@ func newSliceJWKS(t *testing.T) *sliceJWKS {
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":   h.issuer,
-			"jwks_uri": h.issuer + "/cdn-cgi/access/certs",
+			"issuer":                                h.issuer,
+			"jwks_uri":                              h.issuer + "/cdn-cgi/access/certs",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})

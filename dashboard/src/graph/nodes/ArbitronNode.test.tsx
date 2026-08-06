@@ -37,3 +37,32 @@ describe('ArbitronNode — handles', () => {
     expect(sides).toHaveLength(0)
   })
 })
+
+describe('ArbitronNode — type accent color', () => {
+  it('renders the spawn_workflow accent (#2ecc71) on the type bar and label', () => {
+    const spawnProps = {
+      data: { label: 'Spawn child', nodeType: 'spawn_workflow', executionState: 'pending' },
+      selected: false,
+    } as unknown as Parameters<typeof ArbitronNode>[0]
+    const { container } = render(<ArbitronNode {...spawnProps} />)
+
+    const bar = container.querySelector('[class*="typeBar"]') as HTMLElement
+    const label = container.querySelector('[class*="typeLabel"]') as HTMLElement
+    expect(bar.style.background).toBe('rgb(46, 204, 113)')
+    expect(label.style.color).toBe('rgb(46, 204, 113)')
+    expect(label.textContent).toBe('spawn workflow')
+  })
+
+  it('falls back to the default grey accent for an unmapped node type', () => {
+    // Guards the `?? '#888888'` fallback: a typo'd or removed typeColors entry
+    // must degrade to the default, not crash or render an empty style.
+    const unknownProps = {
+      data: { label: 'Mystery', nodeType: 'totally_unknown_type', executionState: 'pending' },
+      selected: false,
+    } as unknown as Parameters<typeof ArbitronNode>[0]
+    const { container } = render(<ArbitronNode {...unknownProps} />)
+
+    const bar = container.querySelector('[class*="typeBar"]') as HTMLElement
+    expect(bar.style.background).toBe('rgb(136, 136, 136)')
+  })
+})

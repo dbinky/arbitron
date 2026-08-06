@@ -42,6 +42,12 @@ export default function QueueView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showDismissed, setShowDismissed] = useState(false)
+  // Bumped on every successful top-level refetch so each QueueSection can
+  // invalidate its (independent) run-hierarchy cache — an expanded row's
+  // children are fetched once and never refreshed on their own, so without
+  // this a completed/failed child keeps rendering its stale state under an
+  // already-open parent.
+  const [refreshedAt, setRefreshedAt] = useState(0)
 
   const { density, cycle: cycleDensity } = useDensityPreference(me?.userId ?? null)
   const authMode = me?.authMode ?? 'local'
@@ -71,6 +77,7 @@ export default function QueueView() {
       setCompleted(completedRes)
       setMe(meResp)
       setError(null)
+      setRefreshedAt((n) => n + 1)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       setError(msg)
@@ -213,6 +220,7 @@ export default function QueueView() {
         timeMode="elapsed"
         density={density}
         authMode={authMode}
+        refreshSignal={refreshedAt}
       />
       <QueueSection
         title="Pending"
@@ -223,6 +231,7 @@ export default function QueueView() {
         timeMode="elapsed"
         density={density}
         authMode={authMode}
+        refreshSignal={refreshedAt}
       />
       <QueueSection
         title="Failed"
@@ -234,6 +243,7 @@ export default function QueueView() {
         timeMode="relative"
         density={density}
         authMode={authMode}
+        refreshSignal={refreshedAt}
         onDismissAll={() => handleDismissAll('failed')}
         onDismiss={handleDismiss}
         onRestore={handleRestore}
@@ -248,6 +258,7 @@ export default function QueueView() {
         timeMode="relative"
         density={density}
         authMode={authMode}
+        refreshSignal={refreshedAt}
         defaultCollapsed
         onDismissAll={() => handleDismissAll('completed')}
         onDismiss={handleDismiss}

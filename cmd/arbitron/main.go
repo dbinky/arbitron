@@ -61,7 +61,42 @@ const (
 	deviceCodePollInterval = 5
 	// deviceCodeSweepInterval is how often expired device codes are purged.
 	deviceCodeSweepInterval = 5 * time.Minute
+	// spawnSweepInterval is how often the two spawn reconcilers re-run after the
+	// startup pass: parents stuck waiting on an already-finished child, and runs
+	// stranded active under a cancelled parent. Both holes open in a HEALTHY
+	// process (a lost wake, a partially-failed cascade), so neither is a
+	// startup-only concern. Both sweeps are indexed single queries that usually
+	// match nothing, so a minute is cheap; the cost of a longer interval is a
+	// user staring at a run that looks hung.
+	spawnSweepInterval = 1 * time.Minute
 )
+
+// sweepSpawnReconcilers re-runs the two spawn reconcilers on a ticker until ctx
+// is cancelled. Errors are logged, not fatal — a transient DB error on one tick
+// must not kill the loop. Mirrors sweepExpiredDeviceCodes.
+func sweepSpawnReconcilers(
+	ctx context.Context,
+	waits *engine.SpawnWaitReconciler,
+	orphans *engine.OrphanedChildReconciler,
+	interval time.Duration,
+	log *slog.Logger,
+) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := waits.Reconcile(ctx); err != nil {
+				log.Error("spawn-wait reconciliation incomplete", "error", err)
+			}
+			if err := orphans.Reconcile(ctx); err != nil {
+				log.Error("orphaned-child reconciliation incomplete", "error", err)
+			}
+		}
+	}
+}
 
 // sweepExpiredDeviceCodes purges expired device-authorization rows on a ticker
 // until ctx is cancelled. Errors are logged, not fatal — a transient DB error on
@@ -190,6 +225,9 @@ type domainStack struct {
 	authMW       *adapthttp.AuthMiddleware
 	authHandler  *adapthttp.AuthHandler
 	sweepCancel  context.CancelFunc
+	// spawnSweepCancel stops the spawn-wait / orphaned-child reconciliation
+	// ticker. It is stopped BEFORE the DB closes, like sweepCancel.
+	spawnSweepCancel context.CancelFunc
 	// backendHealth is the shared, TTL-cached backend-health component (codex
 	// install/login readiness). Constructed ONCE here and injected into BOTH the
 	// HTTP SystemHandler and the MCP server so the probe forks at most once per
@@ -226,6 +264,11 @@ func (ds *domainStack) Close(ctx context.Context) {
 	// Stop the org-mode session sweep before closing the DB it writes to.
 	if ds.sweepCancel != nil {
 		ds.sweepCancel()
+	}
+	// Same for the spawn reconciliation ticker: it queries and re-queues through
+	// the DB, so it must not outlive it.
+	if ds.spawnSweepCancel != nil {
+		ds.spawnSweepCancel()
 	}
 	// Stop the bearer last-used flusher's owned goroutine, draining any pending
 	// touches synchronously before the DB closes.
@@ -792,6 +835,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// is the single ordering authority; the enricher only stamps the value.
 	instanceEnricher.SetQueuePositionProvider(queueMgr)
 
+	// 12-count. Wire the link-addressed read surface as the enricher's child-count
+	// source, so a page of the run list resolves every hierarchy expander in ONE
+	// batched, post-authorization query.
+	instanceEnricher.SetSpawnLinks(instanceRepo)
+
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)
 	queueMgr.SetScheduler(scheduler)
@@ -802,18 +850,26 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	queueMgr.SetWebhookRegistry(webhookRegistry)
 	eng.SetWebhookRegistry(webhookRegistry)
 
+	// 12-wh-spawn. The webhook-timeout path fails an instance from inside
+	// domain/queue, which cannot import domain/engine. Wire the engine's spawn
+	// wake as the optional child-terminal hook so a parent awaiting a
+	// webhook-timed-out child is re-queued immediately instead of waiting for the
+	// next startup reconciliation.
+	queueMgr.SetChildTerminalHook(eng.OnChildTerminal)
+
 	// 12-exec. Wire timer_delay and webhook_wait executors now that all deps are
-	// available. These executors are added after engine construction because they
-	// depend on the scheduler and webhook registry, which in turn depend on the
-	// queue manager, creating a circular dependency. This works because the
-	// engine stores a reference to the executors map (not a copy), so mutations
-	// here are visible to the engine at execution time.
-	executors[workflow.NodeTypeTimerDelay] = engine.NewTimerDelayExecutor(
+	// available. These executors are registered after engine construction because
+	// they depend on the scheduler and webhook registry, which in turn depend on
+	// the queue manager, creating a circular dependency. Registration goes
+	// through the engine's own mutex (RegisterExecutor) rather than by mutating
+	// the shared map header, which was an unsynchronized write to a map the run
+	// loop reads from other goroutines.
+	eng.RegisterExecutor(workflow.NodeTypeTimerDelay, engine.NewTimerDelayExecutor(
 		instanceRepo, nodeExecRepo, scheduler, queueMgr,
-	)
-	executors[workflow.NodeTypeWebhookWait] = engine.NewWebhookWaitExecutor(
+	))
+	eng.RegisterExecutor(workflow.NodeTypeWebhookWait, engine.NewWebhookWaitExecutor(
 		instanceRepo, nodeExecRepo, webhookRegistry, scheduler, queueMgr,
-	)
+	))
 
 	// 12a. Create notification repo and wire it to the engine.
 	notifRepo := adaptsqlite.NewNotificationRepo(db)
@@ -823,6 +879,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// admin actions on other users' instances are attributed.
 	interventionRepo := adaptsqlite.NewInterventionRepo(db)
 	eng.SetInterventions(interventionRepo)
+	// 12a-bis-3. Wire the link-addressed read surface so cancelling a run tears
+	// down its spawned children recursively, and so the list enricher can resolve
+	// a page's child counts in one batched call.
+	eng.SetSpawnLinks(instanceRepo)
 	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
 	// run they do not own emits a domain audit event (instance.lead_intervention /
 	// admin.override). *audit.Service.Record has exactly the void
@@ -858,13 +918,41 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// the engine), and the management service (shared by REST + MCP). The
 	// evaluator's collision check is the concrete instance repo's HasActiveRun;
 	// the can-trigger gate reuses the engine's publication/visibility predicate.
+	// ONE identity resolver serves the schedule evaluator, the schedule run-now
+	// runner, AND the spawn executor, so a scheduled fire and a spawned child
+	// can never resolve the same user differently.
+	identityResolver := userIdentityResolver{users: userRepo, groups: groupCfg}
+
+	// 12c-spawn. Wire the spawn_workflow executor.
+	//
+	// It is registered AFTER engine construction, exactly as timer_delay and
+	// webhook_wait are, because it depends on the engine itself (*Engine
+	// satisfies engine.ChildSpawner) — through RegisterExecutor, so the write is
+	// synchronized with the run loop's lookup and rejected once the set is
+	// frozen.
+	//
+	// The preparer's call is tool-SUPPRESSED: it routes through the same
+	// providerFactory chat arm llm_call uses, and the Phase-1 kind guard fails
+	// closed if the node's model_profile resolves to an agent binding.
+	childInputPreparer := engine.NewChildInputPreparer(providerFactory, profileResolver)
+	eng.RegisterExecutor(workflow.NodeTypeSpawnWorkflow, engine.NewSpawnWorkflowExecutor(
+		instanceRepo,
+		nodeExecRepo,
+		instanceRepo, // *adaptsqlite.InstanceRepo also satisfies instance.SpawnWaitRepository
+		childInputPreparer,
+		eng,
+		identityResolver,
+		fileReader,
+		queueMgr,
+	))
+
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
 	scheduleAlerter := schedule.NewScheduleAlerter(notifRepo, externalNotifier, logger)
 	scheduleEval := schedule.NewEvaluator(
 		scheduleRepo,
 		eng,
 		instanceRepo, // *adaptsqlite.InstanceRepo satisfies ActiveRunChecker
-		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		identityResolver,
 		scheduleAlerter,
 		schedule.WithLogger(logger),
 		// Resolve the schedule's stable WorkflowID to the workflow's CURRENT name at
@@ -877,7 +965,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// run-now. The Runner never advances LastFiredAt (run-now is out of cadence).
 	scheduleRunner := schedule.NewRunner(
 		eng,
-		scheduleIdentityResolver{users: userRepo, groups: groupCfg},
+		identityResolver,
 		instanceRepo,
 	)
 	scheduleSvc := schedule.NewService(
@@ -947,8 +1035,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	interactiveExec := engine.NewInteractiveExecutor(
 		instanceRepo, nodeExecRepo, interactiveStreamSel, profileResolver, fileReader, bus, queueMgr,
 	)
-	executors[workflow.NodeTypeInteractiveLLM] = interactiveExec
-	executors[workflow.NodeTypeInteractiveAgent] = interactiveExec
+	eng.RegisterExecutor(workflow.NodeTypeInteractiveLLM, interactiveExec)
+	eng.RegisterExecutor(workflow.NodeTypeInteractiveAgent, interactiveExec)
 
 	// 12d. Create the conversation handler for interactive sessions.
 	conversationHandler := engine.NewConversationHandler(
@@ -971,6 +1059,14 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}); ok {
 		s.SetAuditRecorder(auditSvc)
 	}
+
+	// 12e. SEAL the executor set.
+	//
+	// Every executor is registered by this point, and from here on goroutines
+	// that can EXECUTE a node start: the timer scheduler, crash recovery, the
+	// queue evaluator, the schedule evaluator. Registration after this panics
+	// rather than racing the run loop's lookup.
+	eng.FreezeExecutors()
 
 	// 13. Set up OpenTelemetry tracing before crash recovery so that any spans
 	// emitted during recovery are captured by the real provider.
@@ -998,9 +1094,49 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		return nil, fmt.Errorf("recovering crashed instances: %w", err)
 	}
 
+	// 14-spawn. Reconcile parents stuck waiting on a child that already finished.
+	//
+	// ORDERING IS SIGNIFICANT: this runs AFTER RecoverCrashedInstances, which
+	// marks crashed CHILDREN as failed — so their parents resume through the
+	// failure port in this same startup pass instead of hanging until the next
+	// restart. A waiting parent is itself untouched by that sweep, since it is not
+	// in the running state.
+	//
+	// A failure here is logged, NOT fatal: the same posture as the timer/webhook
+	// recovery sweeps. A parent missed on this boot is picked up on the next one.
+	logger.Info("reconciling parents waiting on spawned children")
+	spawnReconciler := engine.NewSpawnWaitReconciler(instanceRepo, instanceRepo, queueRepo, queueMgr)
+	if err := spawnReconciler.Reconcile(context.Background()); err != nil {
+		logger.Error("spawn-wait reconciliation incomplete", "error", err)
+	}
+
+	// 14-spawn-sweep. Both spawn reconcilers then run CONTINUOUSLY on a ticker.
+	//
+	// A startup-only pass is not sufficient for either of them, because neither
+	// hole is crash-specific:
+	//
+	//   * A lost wake happens in a HEALTHY process whenever a child reaches a
+	//     terminal state before its parent's `waiting` transition is durable —
+	//     routine at the shipped per-user cap, where parent and child run
+	//     concurrently. Reconciling only at startup would leave that parent hung
+	//     until the next restart.
+	//   * The cancel cascade is a best-effort in-process walk that tolerates
+	//     partial failure by design, so a storage error on one branch strands an
+	//     active descendant under a cancelled parent, again with no restart in
+	//     sight.
+	//
+	// Errors are logged, never fatal: a transient DB error on one tick must not
+	// kill the loop. The orphan sweep cancels under the ORPHAN OWNER's
+	// reconstructed identity, through the SAME identityResolver the spawn
+	// executor and the schedule evaluator use.
+	orphanReconciler := engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng)
+	spawnSweepCtx, spawnSweepCancel := context.WithCancel(context.Background())
+	go sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
+
 	// 14a. Recover pending timers and webhook endpoints from the database.
 	logger.Info("recovering pending timers")
 	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
+		spawnSweepCancel()
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1012,6 +1148,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	logger.Info("recovering webhook endpoints")
 	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
+		spawnSweepCancel()
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1070,6 +1207,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		queueRepo:           queueRepo,
 		scheduler:           scheduler,
 		schedulerCancel:     schedulerCancel,
+		spawnSweepCancel:    spawnSweepCancel,
 		scheduleEval:        scheduleEval,
 		scheduleEvalCancel:  scheduleEvalCancel,
 		scheduleSvc:         scheduleSvc,
@@ -1294,18 +1432,25 @@ func (c scheduleCanTrigger) CanTrigger(ctx context.Context, id identity.Identity
 	return workflow.CanSeePublication(id, pub), nil
 }
 
-// scheduleIdentityResolver builds the creator's identity for context injection
-// at fire time, so resolveStamp's InDepartment(override) check passes for a
-// department-stamped scheduled run. It constructs the Identity via the SAME
-// shared domain builder as AuthMiddleware.enrich (fed by the same UserRepository
-// + GroupConfig ports), so a scheduled fire and the same user's interactive
-// request resolve to identical identities — LedDepartments included.
-type scheduleIdentityResolver struct {
+// userIdentityResolver builds a user's full runtime identity from a bare user
+// id, for injection into a background context.
+//
+// It constructs the Identity via the SAME shared domain builder as
+// AuthMiddleware.enrich (fed by the same UserRepository + GroupConfig ports),
+// so a scheduled fire, a spawned child run, and the same user's interactive
+// request all resolve to identical identities — LedDepartments included.
+//
+// The name is deliberately NOT schedule-specific: ONE value of this type is
+// constructed at the composition root and passed to the schedule evaluator, the
+// schedule run-now runner, AND the spawn executor. It satisfies both
+// schedule.IdentityResolver and engine.IdentityResolver, which are structurally
+// identical twins redeclared across a domain edge.
+type userIdentityResolver struct {
 	users  instance.UserRepository
 	groups identity.GroupConfig
 }
 
-func (r scheduleIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
+func (r userIdentityResolver) IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error) {
 	u, err := r.users.GetByID(ctx, userID)
 	if err != nil {
 		return identity.Identity{}, err

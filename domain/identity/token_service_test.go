@@ -226,7 +226,7 @@ type errListRepo struct {
 	err error
 }
 
-func (e *errListRepo) Create(_ context.Context, t *Token) error           { return nil }
+func (e *errListRepo) Create(_ context.Context, t *Token) error { return nil }
 func (e *errListRepo) ListByUser(_ context.Context, _ uuid.UUID) ([]Token, error) {
 	return nil, e.err
 }

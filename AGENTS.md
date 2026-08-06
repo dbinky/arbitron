@@ -40,6 +40,13 @@ Core workflow node type constants live in `domain/workflow/workflow.go`. The cod
 - `webhook_wait`
 - `interactive_llm`
 - `interactive_agent`
+- `spawn_workflow`
+
+`spawn_workflow` starts a CHILD workflow instance from within a parent workflow.
+It is ONE node type with two modes (`spawnMode`): `fire_and_forget` (the parent
+continues along a single unnamed edge) and `wait_for_child` (the parent suspends
+and resumes through its required `success` / `failure` ports). Do not add a
+separate node type per mode.
 
 Use the code vocabulary above when editing manifests, validation, dashboard behavior, or tests. Older docs may refer generically to `interactive`.
 
@@ -77,6 +84,10 @@ Treat service-layer authorization as a boundary. Recent commits explicitly note 
 The engine permits cyclic graphs. There is no general engine-level runaway guard; loop termination depends on workflow conditionals. The native ralph loop idiom is a back-edge through `agent_call -> llm_call -> transform -> conditional`.
 
 Do not put interactive nodes in loop bodies. The interactive executor has reuse/session behavior that is not appropriate for repeated loop passes.
+
+Do not put an **awaited** `spawn_workflow` node (`spawnMode: wait_for_child`) in a loop body, for the same underlying reason. Its resumption short-circuit cannot distinguish a re-entry-after-wait from a back-edge revisit: both arrive at the node with a terminal link already recorded for (parent, node), so a revisit reads the PREVIOUS child's outcome and routes immediately instead of spawning a new child.
+
+A **fire-and-forget** `spawn_workflow` node is loop-safe and carries no such restriction: it has no short-circuit, so each revisit spawns a new child, consistent with the documented re-execution semantics of loop revisits.
 
 Instance workspaces are managed through the `WorkspaceManager` port. Agent nodes should mutate only the instance workspace, exposed to templates as `{{workspace}}`.
 

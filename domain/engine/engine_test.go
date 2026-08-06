@@ -98,6 +98,9 @@ type mockInstanceRepo struct {
 	getErr              error
 	setWaitingErr       error
 	setWebhookFieldsErr error
+	// updateStateErr, when set, makes UpdateState fail. Used to exercise the
+	// half-suspended failure path.
+	updateStateErr error
 	// onUpdateState, when set, is invoked from UpdateState AFTER the state
 	// mutation is applied. It is a test-only hook (not part of the production
 	// InstanceRepository port) used to snapshot cross-mock ordering — e.g. the
@@ -206,6 +209,10 @@ func listVisible(inst *instance.Instance, f instance.ListFilters) bool {
 
 func (r *mockInstanceRepo) UpdateState(_ context.Context, id uuid.UUID, state instance.State) error {
 	r.mu.Lock()
+	if r.updateStateErr != nil {
+		r.mu.Unlock()
+		return r.updateStateErr
+	}
 	inst, ok := r.instances[id]
 	if !ok {
 		r.mu.Unlock()
@@ -354,11 +361,25 @@ func (r *mockInstanceRepo) get(id uuid.UUID) *instance.Instance {
 	return r.instances[id]
 }
 
+// all returns every instance the repo holds. Test-only.
+func (r *mockInstanceRepo) all() []*instance.Instance {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*instance.Instance, 0, len(r.instances))
+	for _, inst := range r.instances {
+		out = append(out, inst)
+	}
+	return out
+}
+
 // mockNodeExecutionRepo implements instance.NodeExecutionRepository
 type mockNodeExecutionRepo struct {
 	mu         sync.Mutex
 	executions []*instance.NodeExecution
 	createErr  error
+	// onCreate, when set, is invoked from Create AFTER the record is stored.
+	// Test-only ordering probe.
+	onCreate func(*instance.NodeExecution)
 }
 
 func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
@@ -367,11 +388,16 @@ func newMockNodeExecutionRepo() *mockNodeExecutionRepo {
 
 func (r *mockNodeExecutionRepo) Create(_ context.Context, exec *instance.NodeExecution) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.createErr != nil {
+		r.mu.Unlock()
 		return r.createErr
 	}
 	r.executions = append(r.executions, exec)
+	hook := r.onCreate
+	r.mu.Unlock()
+	if hook != nil {
+		hook(exec)
+	}
 	return nil
 }
 
@@ -533,6 +559,11 @@ type mockQueueManager struct {
 	mu                    sync.Mutex
 	enqueueFn             func(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (bool, error)
 	notifyCapacityFreedCh chan struct{}
+	// onNotify, when set, is invoked from NotifyCapacityFreed. Test-only
+	// ordering probe.
+	onNotify func()
+	// notifyCalls counts NotifyCapacityFreed invocations. Test-only.
+	notifyCalls int
 }
 
 func newMockQueueManager() *mockQueueManager {
@@ -553,16 +584,32 @@ func (m *mockQueueManager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uu
 }
 
 func (m *mockQueueManager) NotifyCapacityFreed(_ context.Context) {
+	m.mu.Lock()
+	m.notifyCalls++
+	hook := m.onNotify
+	m.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	select {
 	case m.notifyCapacityFreedCh <- struct{}{}:
 	default:
 	}
 }
 
+// notifyCount reports how many times NotifyCapacityFreed was called. Test-only.
+func (m *mockQueueManager) notifyCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.notifyCalls
+}
+
 // mockQueueRepo implements instance.QueueRepository (minimal mock for engine tests)
 type mockQueueRepo struct {
-	mu       sync.Mutex
-	instRepo *mockInstanceRepo
+	mu              sync.Mutex
+	instRepo        *mockInstanceRepo
+	setQueuedErr    error
+	setQueuedErrFor map[uuid.UUID]error
 }
 
 func (r *mockQueueRepo) CountRunning(_ context.Context) (int, error) { return 0, nil }
@@ -574,7 +621,36 @@ func (r *mockQueueRepo) CountWaiting(_ context.Context) (int, error) { return 0,
 func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	return nil, nil
 }
+
+// SetQueuedIfWaiting mirrors the real conditional UPDATE: it re-queues ONLY a
+// parent still in the waiting state, which is what makes the wake and the
+// executor's in-process claim mutually exclusive.
+func (r *mockQueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, queuedAt time.Time) (bool, error) {
+	if r.instRepo != nil {
+		r.instRepo.mu.Lock()
+		inst, ok := r.instRepo.instances[id]
+		waiting := ok && inst.State == instance.StateWaiting
+		r.instRepo.mu.Unlock()
+		if !waiting {
+			return false, nil
+		}
+	}
+	if err := r.SetQueued(ctx, id, queuedAt); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, queuedAt time.Time) error {
+	r.mu.Lock()
+	err := r.setQueuedErr
+	if perID, ok := r.setQueuedErrFor[id]; ok {
+		err = perID
+	}
+	r.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	if r.instRepo != nil {
 		r.instRepo.mu.Lock()
 		if inst, ok := r.instRepo.instances[id]; ok {
@@ -721,6 +797,7 @@ type testFixtures struct {
 	eventBus     *mockEventBus
 	executor     *mockExecutor
 	queueManager *mockQueueManager
+	queueRepo    *mockQueueRepo
 	engine       *engine.Engine
 }
 
@@ -744,9 +821,11 @@ func newTestFixtures() *testFixtures {
 		workflow.NodeTypeInteractiveAgent: exec,
 	}
 
+	queueRepo := &mockQueueRepo{instRepo: instRepo}
+
 	// The mock queue manager's default Enqueue calls StartInstance directly,
 	// which simulates the old behavior of immediately starting.
-	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, &mockQueueRepo{instRepo: instRepo}, "")
+	eng := engine.NewEngine(wfRepo, instRepo, nodeExecRepo, snapRepo, userRepo, executors, eventBus, qm, queueRepo, "")
 
 	// Wire the mock queue manager to call StartInstance on the engine.
 	qm.mu.Lock()
@@ -767,6 +846,7 @@ func newTestFixtures() *testFixtures {
 		eventBus:     eventBus,
 		executor:     exec,
 		queueManager: qm,
+		queueRepo:    queueRepo,
 		engine:       eng,
 	}
 }
@@ -3221,4 +3301,39 @@ func TestEngine_WorkspacePersistedBeforeNodes(t *testing.T) {
 
 	assert.Equal(t, "/tmp/arbitron-test-ws/"+id.String(), persistedWorkspace,
 		"workspace must be persisted to inst.Variables before the first node runs")
+}
+
+// mockInterventionRepo implements instance.InterventionRepository for tests.
+type mockInterventionRepo struct {
+	mu      sync.Mutex
+	records []instance.Intervention
+}
+
+func newMockInterventionRepo() *mockInterventionRepo {
+	return &mockInterventionRepo{}
+}
+
+func (r *mockInterventionRepo) Create(_ context.Context, iv *instance.Intervention) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, *iv)
+	return nil
+}
+
+func (r *mockInterventionRepo) ListByInstance(_ context.Context, id uuid.UUID) ([]instance.Intervention, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []instance.Intervention
+	for _, iv := range r.records {
+		if iv.InstanceID == id {
+			out = append(out, iv)
+		}
+	}
+	return out, nil
+}
+
+func (r *mockInterventionRepo) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.records)
 }

@@ -83,6 +83,13 @@ func (r *mockQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance
 	return inst, nil
 }
 
+func (r *mockQueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	if err := r.SetQueued(ctx, id, at); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *mockQueueRepo) SetQueued(_ context.Context, id uuid.UUID, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -505,6 +512,43 @@ func TestOnTimerFired_WebhookTimeout_DeactivatesAndFails(t *testing.T) {
 	inst := instRepo.instances[id]
 	assert.Equal(t, instance.StateFailed, inst.State)
 	instRepo.mu.Unlock()
+}
+
+func TestOnTimerFired_WebhookTimeout_InvokesChildTerminalHook(t *testing.T) {
+	id := uuid.New()
+	token := "webhook-token-hook"
+	nodeID := "webhook-node"
+
+	instRepo := newMockInstanceRepo()
+	instRepo.mu.Lock()
+	instRepo.instances[id] = &instance.Instance{
+		ID:            id,
+		State:         instance.StateWaiting,
+		WebhookToken:  &token,
+		CurrentNodeID: &nodeID,
+	}
+	instRepo.mu.Unlock()
+
+	qr := newMockQueueRepo()
+	starter := newMockStarter()
+	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
+	registry := &mockWebhookRegistry{}
+
+	m := queue.NewManager(qr, instRepo, cfg, starter)
+	m.SetWebhookRegistry(registry)
+
+	var hookCalls int
+	var hookID uuid.UUID
+	m.SetChildTerminalHook(func(_ context.Context, instanceID uuid.UUID) {
+		hookCalls++
+		hookID = instanceID
+	})
+
+	err := m.OnTimerFired(context.Background(), id, queue.TimerTypeWebhook)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, hookCalls, "the LIVE webhook-timeout path must wake the wired child-terminal hook")
+	assert.Equal(t, id, hookID, "the hook must receive the timed-out instance's own ID")
 }
 
 func TestOnTimerFired_WebhookTimeout_InstanceNotWaiting_NoOp(t *testing.T) {

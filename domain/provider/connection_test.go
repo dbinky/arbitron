@@ -133,17 +133,17 @@ func TestValidateConnection_AmazonBedrockAlias_AlsoRequiresCredentials(t *testin
 // never be redirected to an attacker host. (PR #23 security MEDIUM.)
 func TestValidateConnection_BedrockRejectsMalformedRegion(t *testing.T) {
 	bad := []string{
-		"us-east-1.evil.com",            // host smuggling via a trailing label
-		"us-east-1/../../foo",           // path traversal
-		"us-east-1.attacker.com/v1",     // path + alternate host
-		"US-EAST-1",                     // uppercase (regions are lowercase)
-		"us_east_1",                     // underscores
-		"us east 1",                     // spaces
-		"useast1",                       // no separators / no trailing digits
-		"us-east",                       // missing the numeric suffix
-		"-us-east-1",                    // leading dash
-		"us-east-1\n169.254.169.254",    // newline injection
-		"http://evil",                   // scheme injection
+		"us-east-1.evil.com",         // host smuggling via a trailing label
+		"us-east-1/../../foo",        // path traversal
+		"us-east-1.attacker.com/v1",  // path + alternate host
+		"US-EAST-1",                  // uppercase (regions are lowercase)
+		"us_east_1",                  // underscores
+		"us east 1",                  // spaces
+		"useast1",                    // no separators / no trailing digits
+		"us-east",                    // missing the numeric suffix
+		"-us-east-1",                 // leading dash
+		"us-east-1\n169.254.169.254", // newline injection
+		"http://evil",                // scheme injection
 	}
 	for _, region := range bad {
 		c := provider.Connection{

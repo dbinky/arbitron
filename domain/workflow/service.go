@@ -424,6 +424,34 @@ func (s *Service) ListFiles(ctx context.Context, name string) ([]string, error) 
 	return files, err
 }
 
+// NameSetChecker is a WorkflowChecker over a fixed set of names. It is a set
+// rather than a per-name lookup so validating a workflow with many spawn nodes
+// costs ONE listing, not one query per node.
+type NameSetChecker map[string]bool
+
+// WorkflowExists implements WorkflowChecker.
+func (c NameSetChecker) WorkflowExists(name string) bool { return c[name] }
+
+// VisibleNames returns the set of workflow names the caller can resolve, for
+// author-time validation of spawn_workflow references.
+//
+// It is built from List, which applies the SAME private-then-shared resolution
+// and publication gate the spawn path's ChildInputs uses — so a name this
+// reports as unknown is a name the spawn would fail to load, and a workflow the
+// caller cannot see is reported as absent rather than as forbidden (existence
+// is never leaked).
+func (s *Service) VisibleNames(ctx context.Context) (NameSetChecker, error) {
+	sums, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(NameSetChecker, len(sums))
+	for _, sum := range sums {
+		out[sum.Name] = true
+	}
+	return out, nil
+}
+
 // List returns the caller's private workflows (scope=private) concatenated with
 // all shared workflows (scope=shared, publisher filled when a lookup is set).
 // A private and shared workflow sharing a name both appear, distinguished by scope.

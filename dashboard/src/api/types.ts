@@ -62,6 +62,10 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
   queuePosition?: number
   /** Failed node id, for the detail panel's lazy last-error load. Absent for non-failed rows. */
   failedNodeId?: string
+  /** The spawning parent run. Absent on a root run — presence means "this row nests". */
+  parentInstanceId?: string
+  /** Number of spawned children the CALLER may see. Absent/0 renders no expander. */
+  childCount?: number
 }
 
 /** Full instance representation returned by the get endpoint. */

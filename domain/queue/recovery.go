@@ -73,7 +73,13 @@ func (m *Manager) RecoverWebhooks(ctx context.Context) error {
 			}
 			if err := m.instances.SetFailed(ctx, inst.ID, nodeID); err != nil {
 				slog.Error("queue recovery: failed to fail timed-out webhook instance", "instanceID", inst.ID, "error", err)
+				continue
 			}
+			// This instance may be somebody's awaited child; mirror the live
+			// OnTimerFired(TimerTypeWebhook) path so a wait_for_child parent
+			// resumes in this same startup pass instead of hanging until the
+			// next restart.
+			m.notifyChildTerminal(ctx, inst.ID)
 			continue
 		}
 
@@ -90,4 +96,3 @@ func (m *Manager) RecoverWebhooks(ctx context.Context) error {
 
 	return m.Evaluate(ctx)
 }
-

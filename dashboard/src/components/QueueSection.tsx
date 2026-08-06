@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect } from 'react'
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
 import { api } from '../api/client'
 import { visibleColumns, type ColumnDef } from './queueColumns'
-import QueueTableRow from './QueueTableRow'
+import HierarchyRows from './HierarchyRows'
+import { topLevelRows } from './topLevelRows'
+import { useRunHierarchy } from '../hooks/useRunHierarchy'
 import RowDetailPanel from './RowDetailPanel'
 import styles from './QueueSection.module.css'
 
@@ -20,6 +22,10 @@ interface QueueSectionProps {
   onDismissAll?: () => void
   onDismiss?: (id: string) => void
   onRestore?: (id: string) => void
+  /** Bumped by the caller on every top-level refetch; invalidates the run
+   *  hierarchy's cached child levels so an already-open row doesn't keep
+   *  showing a stale child state (or miss a newly spawned one). */
+  refreshSignal?: number
 }
 
 /** defaultSortKey picks the initial sort column from the section's state mix. */
@@ -58,6 +64,7 @@ export default function QueueSection({
   onDismissAll,
   onDismiss,
   onRestore,
+  refreshSignal,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [sortKey, setSortKey] = useState<string | null>(null)
@@ -65,6 +72,16 @@ export default function QueueSection({
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [errorLoading, setErrorLoading] = useState(false)
+  const hierarchy = useRunHierarchy()
+
+  // A top-level refetch replaces `instances` wholesale but leaves any
+  // already-expanded hierarchy level's cache untouched, so it would otherwise
+  // keep showing a child's pre-refetch state (or hide one that just
+  // appeared) until the user collapses and re-expands it by hand.
+  const { invalidate } = hierarchy
+  useEffect(() => {
+    invalidate()
+  }, [refreshSignal, invalidate])
 
   // Lazy-load the last error for the expanded row via the trace endpoint. The
   // fetch lives here (not in RowDetailPanel) so the detail panel stays a pure
@@ -136,6 +153,10 @@ export default function QueueSection({
     return sortedCopy
   }, [instances, sortKey, sortDir, columns])
 
+  // Rows whose parent is ALSO in this section render nested under it instead of
+  // at the top level; everything else stays visible where it is.
+  const roots = useMemo(() => topLevelRows(sorted), [sorted])
+
   function handleHeaderClick(col: ColumnDef) {
     if (!col.sortable) return
     if (sortKey === col.key) {
@@ -202,33 +223,30 @@ export default function QueueSection({
                   <th className={styles.th} aria-label="expand" />
                 </tr>
               </thead>
-              {sorted.map((inst) => (
-                <tbody key={inst.id}>
-                  <QueueTableRow
-                    row={inst}
-                    columns={columns}
-                    timeMode={timeMode}
-                    authMode={authMode}
-                    dimmed={inst.dismissed === true}
-                    expanded={expandedId === inst.id}
-                    onExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
-                    onDismiss={onDismiss}
-                    onRestore={onRestore}
-                  />
-                  {expandedId === inst.id && (
-                    <tr className={styles.detailRow}>
-                      <td colSpan={columns.length + 1} className={styles.detailCell}>
-                        <RowDetailPanel
-                        row={inst}
-                        authMode={authMode}
-                        errorText={errorText}
-                        errorLoading={errorLoading}
-                      />
-                      </td>
-                    </tr>
+              <tbody>
+                <HierarchyRows
+                  rows={roots}
+                  columns={columns}
+                  depth={0}
+                  timeMode={timeMode}
+                  authMode={authMode}
+                  hierarchy={hierarchy}
+                  detailExpandedId={expandedId}
+                  onDetailExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
+                  onDismiss={onDismiss}
+                  onRestore={onRestore}
+                  detailRowClassName={styles.detailRow}
+                  detailCellClassName={styles.detailCell}
+                  renderDetail={(inst) => (
+                    <RowDetailPanel
+                      row={inst}
+                      authMode={authMode}
+                      errorText={errorText}
+                      errorLoading={errorLoading}
+                    />
                   )}
-                </tbody>
-              ))}
+                />
+              </tbody>
             </table>
           )}
         </div>

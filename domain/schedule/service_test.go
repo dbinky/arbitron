@@ -457,4 +457,3 @@ func TestService_Update_IntervalFloor_RejectsTooFrequent(t *testing.T) {
 	_, err := svc.Update(ctxAs(caller), s.ID, schedule.UpdateInput{CronExpr: &tooFrequent})
 	assert.ErrorIs(t, err, schedule.ErrIntervalTooFrequent)
 }
-

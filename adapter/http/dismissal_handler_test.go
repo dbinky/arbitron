@@ -636,10 +636,16 @@ func TestRestore_RepoError_500(t *testing.T) {
 }
 
 func TestDismissAll_ListError_500(t *testing.T) {
-	// Use errInstanceRepo so List fails; wire a working dismissal repo.
-	// Construct the server manually since newDismissalTestServer uses mockInstanceRepo.
+	// DismissAll lists through the authorized SERVICE (not the raw repository),
+	// so the failure is injected there. Reading the repository directly would
+	// depend on the repository inferring an admin scope from an unscoped filter
+	// set — the fail-open inference the shared visibility predicate removed.
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
-		Service:        &routerMockService{},
+		Service: &routerMockService{
+			listWithFiltersFn: func(context.Context, instance.ListFilters) ([]instance.InstanceSummary, error) {
+				return nil, fmt.Errorf("db down")
+			},
+		},
 		Workflows:      newMockWorkflowRepo(),
 		Instances:      &errInstanceRepo{err: fmt.Errorf("db down")},
 		NodeExecs:      newMockNodeExecRepo(),

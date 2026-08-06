@@ -50,12 +50,12 @@ func TestValidateTeamsWebhookURL_RejectsSSRFTargets(t *testing.T) {
 		"https://127.0.0.1:8443/hook",
 		"https://[::1]/hook",
 		"https://169.254.169.254/latest/meta-data", // cloud metadata
-		"https://[fe80::1]/hook",                    // link-local IPv6
-		"https://0.0.0.0/hook",                      // unspecified
-		"https://10.0.0.5/hook",                     // RFC1918
-		"https://172.16.0.1/hook",                   // RFC1918
-		"https://192.168.1.1/hook",                  // RFC1918
-		"https://[fc00::1]/hook",                    // ULA
+		"https://[fe80::1]/hook",                   // link-local IPv6
+		"https://0.0.0.0/hook",                     // unspecified
+		"https://10.0.0.5/hook",                    // RFC1918
+		"https://172.16.0.1/hook",                  // RFC1918
+		"https://192.168.1.1/hook",                 // RFC1918
+		"https://[fc00::1]/hook",                   // ULA
 	} {
 		assert.Error(t, config.ValidateTeamsWebhookURL(raw), "expected SSRF target %q to be rejected", raw)
 	}

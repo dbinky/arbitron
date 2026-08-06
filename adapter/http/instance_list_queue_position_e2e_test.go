@@ -158,6 +158,10 @@ func (r *probeQueueRepo) CountWaiting(context.Context) (int, error) { return 0, 
 func (r *probeQueueRepo) NextEligible(context.Context, int, int) (*instance.Instance, error) {
 	return nil, nil
 }
+func (r *probeQueueRepo) SetQueuedIfWaiting(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (r *probeQueueRepo) SetQueued(context.Context, uuid.UUID, time.Time) error { return nil }
 func (r *probeQueueRepo) ListWaitingWithTimer(context.Context) ([]instance.Instance, error) {
 	return nil, nil

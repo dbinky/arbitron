@@ -1,22 +1,33 @@
 -- name: CreateInstance :one
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-- NOTE: InstanceRepo.Create executes this statement HAND-WRITTEN (see
+-- createInstanceSQL in instance_repo.go) so the column set can evolve without a
+-- sqlc regeneration step, the same way CountActiveByWorkflowID does. This
+-- definition is kept in lockstep as the readable source of truth.
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
+-- NOTE: executed hand-written by InstanceRepo.Get (instanceColumnsWithLink) so
+-- the spawn-link columns are read in the same statement.
 SELECT * FROM instances WHERE id = ?;
 
 -- name: ListInstances :many
--- Disjunctive RBAC visibility filter (Phase 3): a caller sees a row when it is
--- owned by them, OR public (when include_public), OR a department run in one of
--- their departments. An admin passes owner_id=NULL, include_public=0 (false),
--- and an empty departments array, in which case the guarded `unconstrained` arm
--- admits every row.
+-- NOTE: InstanceRepo.List assembles this statement in Go so the optional parent
+-- narrowing can be appended without a sqlc regeneration step. This definition
+-- is kept in lockstep as the readable source of truth for the RBAC clause.
 --
--- departments is a JSON array string (e.g. '["engineering","platform"]'); the
--- json_each subquery turns it into a membership test. Portable to Postgres as
--- `instances.department = ANY($departments)`.
-SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id
+-- Disjunctive RBAC visibility filter: a caller sees a row when it is owned by
+-- them, OR public (when include_public), OR a department run in one of their
+-- departments. It FAILS CLOSED: admitting every row requires the EXPLICIT
+-- `unconstrained` assertion, which the engine service sets only for an admin.
+-- A filter set with no owner, no departments, no public and no assertion is a
+-- caller with no computed scope and matches nothing.
+--
+-- The parent narrowing (parent_instance_id IS NULL for roots-only, or
+-- parent_instance_id = ? for a specific parent) is appended as a further AND by
+-- the Go builder, so it can only NARROW the authorized set, never widen it.
+SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
 AND (sqlc.narg('workflow_name') IS NULL OR workflow_name = sqlc.narg('workflow_name'))
@@ -66,3 +77,52 @@ UPDATE instances SET webhook_token = ?, webhook_secret_hash = ?, updated_at = ? 
 
 -- name: SetWebhookReceived :exec
 UPDATE instances SET webhook_received_at = ?, updated_at = ? WHERE id = ?;
+
+-- name: ChildCountsByParents :many
+-- NOTE: executed hand-written by InstanceRepo.ChildCountsByParents (the IN list
+-- and the caller's visibility disjunction are both variable-arity). Kept here as
+-- the readable source of truth. Parents with no visible children simply do not
+-- appear in the result — absence means zero.
+SELECT parent_instance_id, COUNT(*) AS child_count
+FROM instances
+WHERE parent_instance_id IN (sqlc.slice('parent_ids'))
+GROUP BY parent_instance_id;
+
+-- name: ListActiveChildren :many
+-- Every active child of a parent, REGARDLESS of spawn mode: the cancel cascade
+-- covers awaited and fire-and-forget children alike.
+SELECT id FROM instances
+WHERE parent_instance_id = ?
+  AND state IN ('queued','running','waiting','paused')
+ORDER BY created_at ASC;
+
+-- name: ListOrphanedActiveChildren :many
+-- The residue of an interrupted cancel cascade: every still-active run whose
+-- parent is already cancelled. One level deep — a grandchild under a still-
+-- active parent is reached by cancelling that parent, not by this query.
+SELECT c.id FROM instances c
+JOIN instances p ON p.id = c.parent_instance_id
+WHERE c.state IN ('queued','running','waiting','paused')
+  AND p.state = 'cancelled'
+ORDER BY c.created_at ASC;
+
+-- name: FindChildBySpawnNode :one
+-- The awaited child of ONE (parent, spawn node, mode) triple. All three key
+-- parts are load-bearing: without the node id a child of a different spawn node
+-- would answer; without the mode a fire-and-forget child would.
+SELECT id, state FROM instances
+WHERE parent_instance_id = ? AND parent_node_id = ? AND spawn_mode = ?
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1;
+
+-- name: ListWaitingOnTerminalChild :many
+-- Startup reconciliation: parents stuck in the waiting state whose awaited
+-- child is already terminal (the in-process wake was lost to a crash).
+SELECT p.id, p.current_node_id, c.id, c.state
+FROM instances p
+JOIN instances c ON c.parent_instance_id = p.id
+WHERE p.state = 'waiting'
+  AND p.current_node_id IS NOT NULL
+  AND c.parent_node_id = p.current_node_id
+  AND c.spawn_mode = 'wait_for_child'
+  AND c.state IN ('completed','failed','cancelled');

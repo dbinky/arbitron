@@ -326,7 +326,7 @@ func (m *AuthMiddleware) enrich(ctx context.Context, u *instance.User) identity.
 		stored = nil
 	}
 	// Build the runtime Identity via the single shared domain builder so the
-	// request path and the scheduler path (scheduleIdentityResolver) can never
+	// request path and the scheduler and spawn paths (userIdentityResolver) can never
 	// diverge on the field set — in particular LedDepartments, an authz input.
 	return identity.BuildIdentity(identity.UserIdentityInput{
 		UserID:            u.ID,

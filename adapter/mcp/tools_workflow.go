@@ -393,7 +393,13 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		checker := ownerBoundChecker{fr: srv.deps.FileReader, owner: callerOwner(ctx)}
-		validationErrors := workflow.Validate(wf, checker, srv.deps.ProfileChecker, srv.deps.ConnChecker)
+		// Same author-time spawn-reference check the REST validate endpoint runs,
+		// so the two surfaces cannot drift. A listing failure skips the pass.
+		var opts []workflow.ValidateOption
+		if names, nerr := workflowSvc(srv).VisibleNames(ctx); nerr == nil {
+			opts = append(opts, workflow.WithWorkflowChecker(names))
+		}
+		validationErrors := workflow.Validate(wf, checker, srv.deps.ProfileChecker, srv.deps.ConnChecker, opts...)
 		if validationErrors == nil {
 			validationErrors = []workflow.ValidationError{}
 		}

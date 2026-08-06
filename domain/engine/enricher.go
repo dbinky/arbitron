@@ -37,11 +37,15 @@ func (NoopQueuePositionProvider) QueuePositions(context.Context) (map[uuid.UUID]
 // only: each producer call is isolated, and a failure for one field degrades
 // only that field — the row still renders. It never fails the list.
 type InstanceEnricher struct {
-	instances          instance.InstanceRepository
-	nodeExecs          instance.NodeExecutionRepository
-	users              instance.UserRepository
-	queuePos           QueuePositionProvider // nil -> no position (Phase 2 wires this)
-	defaultAgentBackend string               // deployment-wide fallback for BackendUnset nodes
+	instances instance.InstanceRepository
+	nodeExecs instance.NodeExecutionRepository
+	users     instance.UserRepository
+	queuePos  QueuePositionProvider // nil -> no position (Phase 2 wires this)
+	// spawnLinks is the link-addressed read surface. It is NEVER nil: the
+	// constructor installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so a
+	// missed wiring step cannot silently blank every row's child count.
+	spawnLinks          instance.SpawnLinkRepository
+	defaultAgentBackend string // deployment-wide fallback for BackendUnset nodes
 }
 
 // NewInstanceEnricher constructs the enricher with its collaborators. queuePos
@@ -61,11 +65,14 @@ func NewInstanceEnricher(
 		panic("engine: NewInstanceEnricher requires a non-nil QueuePositionProvider (use NoopQueuePositionProvider{})")
 	}
 	return &InstanceEnricher{
-		instances:          instances,
-		nodeExecs:          nodeExecs,
-		users:              users,
-		queuePos:           queuePos,
+		instances:           instances,
+		nodeExecs:           nodeExecs,
+		users:               users,
+		queuePos:            queuePos,
 		defaultAgentBackend: defaultAgentBackend,
+		// Non-nil from birth, like queuePos above; the composition root swaps in
+		// the real repository via SetSpawnLinks.
+		spawnLinks: NoopSpawnLinks{},
 	}
 }
 
@@ -77,6 +84,53 @@ func (e *InstanceEnricher) SetQueuePositionProvider(p QueuePositionProvider) {
 		panic("engine: SetQueuePositionProvider requires a non-nil QueuePositionProvider (use NoopQueuePositionProvider{})")
 	}
 	e.queuePos = p
+}
+
+// SetSpawnLinks wires the link-addressed read surface used for batched child
+// counts. Kept as a setter (like SetQueuePositionProvider) so the composition
+// root can construct the enricher before deciding whether the capability is
+// available.
+//
+// repo MUST be non-nil — pass NoopSpawnLinks{} to opt out deliberately. The nil
+// case is rejected for the same reason it is on Engine.SetSpawnLinks: a missed
+// wiring step must fail loudly at startup, not degrade a feature in silence.
+func (e *InstanceEnricher) SetSpawnLinks(repo instance.SpawnLinkRepository) {
+	if repo == nil {
+		panic("engine: SetSpawnLinks requires a non-nil SpawnLinkRepository (use NoopSpawnLinks{})")
+	}
+	e.spawnLinks = repo
+}
+
+// batchChildCounts resolves the whole page's child counts in ONE round trip,
+// restricted to what the CALLER may see.
+//
+// The visibility is taken from the SAME listConstraint that authorized the page,
+// so the count is post-authorization by construction. A count that included
+// children the caller cannot see would render an expander whose expansion yields
+// an empty list — leaking the existence of runs the caller may not view.
+//
+// A failure degrades only this field (an empty map => no expanders); the page
+// still renders. With no identity on the context there is no authorized scope,
+// so counting is skipped entirely rather than defaulting to unconstrained.
+func (e *InstanceEnricher) batchChildCounts(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]int {
+	if len(ids) == 0 {
+		return map[uuid.UUID]int{}
+	}
+	lc, ok := listConstraint(ctx)
+	if !ok {
+		return map[uuid.UUID]int{}
+	}
+	counts, err := e.spawnLinks.ChildCountsByParents(ctx, ids, instance.ChildVisibility{
+		Unconstrained: lc.Unconstrained,
+		OwnerID:       lc.OwnerID,
+		Departments:   lc.Departments,
+		IncludePublic: lc.IncludePublic,
+	})
+	if err != nil {
+		slog.Warn("enricher: child-count lookup failed; hierarchy expanders degraded", "error", err)
+		return map[uuid.UUID]int{}
+	}
+	return counts
 }
 
 // Enrich composes the additive fields for the given authorized page. The
@@ -118,6 +172,9 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 		posMap = map[uuid.UUID]int{}
 	}
 
+	// One batched child-count call for the whole page (never N+1).
+	childCounts := e.batchChildCounts(ctx, ids)
+
 	out := make([]instance.EnrichedInstanceSummary, len(summaries))
 	for i, s := range summaries {
 		row := instance.EnrichedInstanceSummary{InstanceSummary: s}
@@ -151,6 +208,11 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 		// Queue position (queued rows only; 0 for non-queued).
 		if pos, ok := posMap[s.ID]; ok {
 			row.QueuePosition = pos
+		}
+
+		// Spawned-children count (0 => no expander).
+		if n, ok := childCounts[s.ID]; ok {
+			row.ChildCount = n
 		}
 
 		out[i] = row

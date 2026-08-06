@@ -1,7 +1,13 @@
 // Package workflow defines the domain types for workflow definitions.
 package workflow
 
-import "github.com/google/uuid"
+import (
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/google/uuid"
+)
 
 // NodeType identifies the kind of processing a workflow node performs.
 type NodeType string
@@ -17,6 +23,10 @@ const (
 	NodeTypeInteractiveLLM   NodeType = "interactive_llm"
 	NodeTypeInteractiveAgent NodeType = "interactive_agent"
 	NodeTypeAgentCall        NodeType = "agent_call"
+	// NodeTypeSpawnWorkflow starts a CHILD workflow instance from within a
+	// parent workflow. It is ONE node type with two modes (see SpawnMode*);
+	// there is deliberately no separate node type per mode.
+	NodeTypeSpawnWorkflow NodeType = "spawn_workflow"
 )
 
 // IsInteractive reports whether t is one of the human-in-the-loop node types.
@@ -50,6 +60,90 @@ const (
 func IsValidAgentBackend(b string) bool {
 	switch b {
 	case BackendUnset, BackendClaudeCode, BackendOpencode, BackendCodex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Spawn mode axis. A spawn_workflow node either starts the child and continues
+// (fire-and-forget) or suspends the parent until the child finishes
+// (wait-for-child). These constants are the single source of truth for the
+// allowed vocabulary, shared by validation (this package), the spawn executor,
+// and the persisted link on the child instance. The allowed set is exact-match
+// lowercase.
+const (
+	// SpawnModeFireAndForget starts the child and continues the parent along a
+	// single unnamed outgoing edge. Child outcomes never affect the parent.
+	SpawnModeFireAndForget = "fire_and_forget"
+	// SpawnModeWaitForChild suspends the parent until the child reaches a
+	// terminal state, then resumes it through the success or failure port.
+	SpawnModeWaitForChild = "wait_for_child"
+)
+
+// Spawn output ports. Both are REQUIRED on a wait-for-child node and both are
+// REJECTED on a fire-and-forget node (see validateSpawnWorkflowNode).
+const (
+	SpawnPortSuccess = "success"
+	SpawnPortFailure = "failure"
+)
+
+// SpawnConfig is the VALIDATED spawn contract of one spawn_workflow node: the
+// two fields every consumer needs, already checked.
+type SpawnConfig struct {
+	ChildWorkflow string
+	Mode          string
+}
+
+// Errors ParseSpawnConfig reports. They are sentinels so the validator can map
+// each to its own ValidationError code while the executor can wrap them
+// verbatim — one set of checks, two presentations.
+var (
+	// ErrSpawnChildWorkflowMissing: no child workflow was configured.
+	ErrSpawnChildWorkflowMissing = errors.New("childWorkflow is not configured")
+	// ErrSpawnModeInvalid: the spawnMode is empty or unrecognized.
+	ErrSpawnModeInvalid = errors.New("unrecognized spawnMode")
+)
+
+// ParseSpawnConfig extracts and checks a spawn node's contract.
+//
+// It is the ONE place the two string checks live. They were duplicated between
+// author-time validation and the executor's defensive re-check — which is not
+// redundant belt-and-braces but a real divergence risk, because an instance
+// executes from a WorkflowSnapshot that may PREDATE the validation that would
+// have caught the problem, so the executor genuinely must re-check and must
+// re-check the SAME way.
+//
+// EVERY problem is reported, joined, rather than the first: an author fixing a
+// spawn node should see both a missing childWorkflow and a bad mode in one
+// pass. Callers that need per-problem handling use errors.Is on the sentinels.
+func ParseSpawnConfig(cfg NodeConfig) (SpawnConfig, error) {
+	var problems []error
+	if cfg.ChildWorkflow == "" {
+		problems = append(problems, ErrSpawnChildWorkflowMissing)
+	}
+	if !IsValidSpawnMode(cfg.SpawnMode) {
+		problems = append(problems, fmt.Errorf("%w %s (must be exactly %s or %s)",
+			ErrSpawnModeInvalid, strconv.Quote(cfg.SpawnMode),
+			strconv.Quote(SpawnModeFireAndForget), strconv.Quote(SpawnModeWaitForChild)))
+	}
+	if len(problems) > 0 {
+		return SpawnConfig{}, errors.Join(problems...)
+	}
+	return SpawnConfig{ChildWorkflow: cfg.ChildWorkflow, Mode: cfg.SpawnMode}, nil
+}
+
+// IsValidSpawnMode reports whether m is a recognized spawn mode.
+//
+// Unlike IsValidAgentBackend, the EMPTY value is INVALID. There is no sensible
+// inherited default: the two modes have opposite control-flow consequences (the
+// parent continues vs. the parent suspends and requires two connected ports),
+// so an unset mode is an authoring error, not an inheritance request. An
+// unrecognized value must fail closed at workflow load rather than mis-route or
+// silently fall back at run time.
+func IsValidSpawnMode(m string) bool {
+	switch m {
+	case SpawnModeFireAndForget, SpawnModeWaitForChild:
 		return true
 	default:
 		return false
@@ -106,6 +200,8 @@ type NodeConfig struct {
 	ModelProfile       string            `json:"model_profile,omitempty"` // alias of a profile (chat for llm_call, agent for agent_call)
 	Backend            string            `json:"backend,omitempty"`       // agent backend axis: "" | "claude-code" | "opencode" | "codex" (agent_call/interactive_agent only)
 	ToolScope          []string          `json:"toolScope,omitempty"`     // agent_call: allowed-tools list (default: full agent scope)
+	ChildWorkflow      string            `json:"childWorkflow,omitempty"` // spawn_workflow: the child workflow's name
+	SpawnMode          string            `json:"spawnMode,omitempty"`     // spawn_workflow: "fire_and_forget" | "wait_for_child"
 	OutputSchema       any               `json:"outputSchema,omitempty"`
 	MaxTokens          int               `json:"maxTokens,omitempty"`
 	Temperature        float64           `json:"temperature,omitempty"`

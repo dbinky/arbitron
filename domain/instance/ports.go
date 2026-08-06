@@ -36,6 +36,15 @@ type QueueRepository interface {
 	CountWaiting(ctx context.Context) (int, error)
 	NextEligible(ctx context.Context, globalCap int, perUserCap int) (*Instance, error)
 	SetQueued(ctx context.Context, id uuid.UUID, queuedAt time.Time) error
+	// SetQueuedIfWaiting re-queues id ONLY IF it is still in the waiting state,
+	// reporting whether the transition happened.
+	//
+	// It is the wake path's half of the same mutual exclusion
+	// SpawnWaitRepository.ClaimWaitingParent provides: an unconditional
+	// SetQueued can overtake an executor that has already taken the parent back
+	// to `running`, leaving one run both queued and executing. A false return is
+	// the normal "somebody else already moved it" outcome, not an error.
+	SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, queuedAt time.Time) (bool, error)
 	ListWaitingWithTimer(ctx context.Context) ([]Instance, error)
 	ListWaitingWithWebhook(ctx context.Context) ([]Instance, error)
 	// ListQueued returns all currently-queued instances ordered by priority
@@ -80,8 +89,8 @@ type VariableSnapshotRepository interface {
 // (it is a genuine prerequisite there, and reshaping the package twice is churn).
 // Tracked via PR #20 review (thread r3358274543). Do not relocate piecemeal.
 type UserRepository interface {
-	GetDefaultUser(ctx context.Context) (uuid.UUID, error)           // existing, unchanged
-	GetByID(ctx context.Context, id uuid.UUID) (*User, error)        // ErrNotFound if absent
+	GetDefaultUser(ctx context.Context) (uuid.UUID, error)    // existing, unchanged
+	GetByID(ctx context.Context, id uuid.UUID) (*User, error) // ErrNotFound if absent
 	// UsersByID batch-resolves the given user IDs in a single query, returning a
 	// map keyed by user ID. IDs with no row are simply absent from the map (no
 	// error). An empty ids slice returns an empty map without touching the DB.

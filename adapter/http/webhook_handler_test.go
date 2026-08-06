@@ -178,6 +178,10 @@ func (r *mockWebhookQueueRepo) CountWaiting(_ context.Context) (int, error) { re
 func (r *mockWebhookQueueRepo) NextEligible(_ context.Context, _ int, _ int) (*instance.Instance, error) {
 	return nil, nil
 }
+func (r *mockWebhookQueueRepo) SetQueuedIfWaiting(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	return true, r.SetQueued(ctx, id, at)
+}
+
 func (r *mockWebhookQueueRepo) SetQueued(_ context.Context, id uuid.UUID, _ time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -763,6 +767,10 @@ func TestWebhookHandler_SetQueuedError_LogsButReturns200(t *testing.T) {
 
 // mockFailingQueueRepo fails on SetQueued.
 type mockFailingQueueRepo struct{ mockWebhookQueueRepo }
+
+func (r *mockFailingQueueRepo) SetQueuedIfWaiting(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return false, fmt.Errorf("db write failed")
+}
 
 func (r *mockFailingQueueRepo) SetQueued(_ context.Context, _ uuid.UUID, _ time.Time) error {
 	return fmt.Errorf("db write failed")

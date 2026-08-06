@@ -27,8 +27,10 @@ func newOpenAICompatProbe(d Deps) *openAICompatProbe {
 		hc = &http.Client{}
 	}
 	return &openAICompatProbe{
-		httpClient:       hc,
-		timeout:          func(ctx context.Context) (context.Context, context.CancelFunc) { return procenv.WithTimeout(ctx, d.Timeout) },
+		httpClient: hc,
+		timeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
+			return procenv.WithTimeout(ctx, d.Timeout)
+		},
 		maxResponseBytes: d.MaxResponseBytes,
 	}
 }

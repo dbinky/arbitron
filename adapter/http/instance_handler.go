@@ -183,6 +183,9 @@ type summaryDTO struct {
 	QueuedAt      *string `json:"queuedAt,omitempty"`
 	TriggerSource string  `json:"triggerSource"`
 	ScheduleID    *string `json:"scheduleId,omitempty"`
+	// ParentInstanceID is the spawning parent run; omitted entirely for a root
+	// run so the dashboard can treat presence as "this row nests under something".
+	ParentInstanceID *string `json:"parentInstanceId,omitempty"`
 }
 
 func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
@@ -210,6 +213,10 @@ func toSummaryDTO(s instance.InstanceSummary) summaryDTO {
 	if s.ScheduleID != nil {
 		v := s.ScheduleID.String()
 		dto.ScheduleID = &v
+	}
+	if s.ParentInstanceID != nil {
+		v := s.ParentInstanceID.String()
+		dto.ParentInstanceID = &v
 	}
 	return dto
 }
@@ -246,6 +253,9 @@ type enrichedSummaryDTO struct {
 	SubmitterName     string  `json:"submitterName,omitempty"`
 	SubmitterIdentity string  `json:"submitterIdentity,omitempty"`
 	FailedNodeID      *string `json:"failedNodeId,omitempty"`
+	// ChildCount is the number of spawned children the CALLER may see. Omitted
+	// when zero so a childless row renders no expander.
+	ChildCount int `json:"childCount,omitempty"`
 }
 
 // toEnrichedSummaryDTO projects an enriched summary to its JSON DTO. The
@@ -264,6 +274,7 @@ func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary, revealIdentity boo
 		QueuePosition: e.QueuePosition,
 		SubmitterName: e.Submitter.Name,
 		FailedNodeID:  e.FailedNodeID,
+		ChildCount:    e.ChildCount,
 	}
 	if revealIdentity {
 		dto.SubmitterIdentity = e.Submitter.AccountIdentity
@@ -389,6 +400,21 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 			filters.Offset = parsed
 		}
 	}
+
+	// The parent selector is the ONE caller-supplied narrowing on this endpoint.
+	// It composes with — and can never replace — the owner/department constraints
+	// ListEnriched service-sets from the request identity. Decoding goes through
+	// the shared domain parser so REST and the MCP tool cannot drift.
+	//
+	// A MALFORMED selector is rejected rather than silently degrading to an
+	// unfiltered list, which would show the caller far more than they asked for.
+	scope, parentID, perr := instance.ParseParentScope(r.URL.Query().Get("parent"))
+	if perr != nil {
+		WriteError(w, http.StatusBadRequest, "INVALID_PARENT", perr.Error())
+		return
+	}
+	filters.ParentScope = scope
+	filters.ParentInstanceID = parentID
 
 	enriched, err := h.service.ListEnriched(r.Context(), filters)
 	if err != nil {
@@ -640,7 +666,13 @@ func (h *InstanceHandler) DismissAll(w http.ResponseWriter, r *http.Request) {
 	// dashboard lists. DismissAll deliberately omits List's includeDismissed
 	// filtering and dismissed-set subtraction: it dismisses everything in the
 	// window regardless of current per-user dismissed state.
-	summaries, err := h.instances.List(r.Context(), baseWindowFilters(&state, since))
+	//
+	// It routes through the SERVICE, not the raw repository: the repository's
+	// visibility predicate fails closed, and the service is what derives the
+	// caller's scope from the request identity. Reading the repository directly
+	// relied on the repository inferring "admin" from an unscoped filter set —
+	// the exact inference that made an unscoped list return the full table.
+	summaries, err := h.service.ListInstances(r.Context(), baseWindowFilters(&state, since))
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list instances")
 		return

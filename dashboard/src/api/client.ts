@@ -24,6 +24,13 @@ export interface ListInstancesParams {
   limit?: number
   offset?: number
   includeDismissed?: boolean
+  /**
+   * Narrow by position in the spawn hierarchy: omit for all runs, 'roots' for
+   * top-level runs only, or an instance UUID for that run's children. The
+   * server treats this as a NARROWING that composes with — and can never
+   * replace — the visibility scope it derives from the request identity.
+   */
+  parent?: string
 }
 
 /** Throws on non-2xx responses with a descriptive message. */
@@ -89,6 +96,7 @@ export const api = {
       if (params?.limit != null) q.set('limit', String(params.limit))
       if (params?.offset != null) q.set('offset', String(params.offset))
       if (params?.includeDismissed) q.set('includeDismissed', 'true')
+      if (params?.parent) q.set('parent', params.parent)
       const qs = q.toString()
       return request(`/api/v1/instances${qs ? `?${qs}` : ''}`)
     },

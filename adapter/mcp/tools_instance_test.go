@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -326,6 +327,28 @@ func TestInstanceList(t *testing.T) {
 			},
 		}
 		srv := newInstanceServer(repo, &stubEngine{})
+		result := callTool(t, srv, "instance_list", nil)
+
+		assert.False(t, result.IsError)
+		text := extractText(t, result)
+		assert.Equal(t, "[]", text)
+	})
+
+	t.Run("nil Engine.ListEnriched result produces JSON array not null", func(t *testing.T) {
+		// The previous subtest exercises stubEngine's own default ListEnriched,
+		// which delegates through ListInstances and always rebuilds the result
+		// with make([]T, len(summaries)) — a non-nil empty slice even when the
+		// repo returns nil. That never reaches instanceListHandler's own
+		// `enriched == nil` normalisation at all: deleting that normalisation
+		// entirely still leaves every other test in this file green. Drive
+		// ListEnriched itself to return a literal nil slice so the handler's own
+		// guard is what turns it into "[]", not the stub's reconstruction.
+		eng := &stubEngine{
+			listEnrichedFn: func(_ context.Context, _ instance.ListFilters) ([]instance.EnrichedInstanceSummary, error) {
+				return nil, nil
+			},
+		}
+		srv := newInstanceServer(&stubInstanceRepo{}, eng)
 		result := callTool(t, srv, "instance_list", nil)
 
 		assert.False(t, result.IsError)
@@ -970,6 +993,7 @@ func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
 				Model:           "gpt-4o",
 				Backend:         "claude-code",
 				RetryCount:      2,
+				ChildCount:      3,
 			}}, nil
 		},
 	}
@@ -984,6 +1008,18 @@ func TestInstanceList_ReturnsEnrichedFields(t *testing.T) {
 	assert.Contains(t, body, "claude-code", "backend reaches the MCP result")
 	assert.Contains(t, body, "alice", "submitter name reaches the MCP result")
 	assert.Contains(t, body, "2", "retry count reaches the MCP result")
+
+	// EnrichedInstanceSummary.ChildCount carries no JSON tag — the same
+	// untagged convention already used by its siblings RetryCount/QueuePosition/
+	// FailedNodeID — so MCP marshals it under its bare Go field name
+	// "ChildCount" rather than REST's DTO-mapped "childCount". Decode (not
+	// substring-match) so a tag added only on one side, or the count silently
+	// dropping to 0, fails this test instead of slipping through.
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &rows))
+	require.Len(t, rows, 1)
+	assert.Equal(t, float64(3), rows[0]["ChildCount"],
+		"ChildCount must reach the MCP result under its Go field name")
 }
 
 // ---------------------------------------------------------------------------

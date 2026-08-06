@@ -254,19 +254,19 @@ func TestInstanceRepo_List(t *testing.T) {
 	require.NoError(t, repo.Create(context.Background(), inst2))
 	require.NoError(t, repo.UpdateState(context.Background(), inst2.ID, instance.StateCompleted))
 
-	all, err := repo.List(context.Background(), instance.ListFilters{Limit: 100})
+	all, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(all), 2)
 
 	running := instance.StateRunning
-	filtered, err := repo.List(context.Background(), instance.ListFilters{State: &running, Limit: 100})
+	filtered, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, State: &running, Limit: 100})
 	require.NoError(t, err)
 	for _, s := range filtered {
 		assert.Equal(t, instance.StateRunning, s.State)
 	}
 
 	wfName := "test-workflow"
-	byName, err := repo.List(context.Background(), instance.ListFilters{WorkflowName: &wfName, Limit: 100})
+	byName, err := repo.List(context.Background(), instance.ListFilters{Unconstrained: true, WorkflowName: &wfName, Limit: 100})
 	require.NoError(t, err)
 	for _, s := range byName {
 		assert.Equal(t, "test-workflow", s.WorkflowName)
@@ -304,7 +304,7 @@ func TestInstanceRepo_List_OwnerFilter(t *testing.T) {
 	assert.NotContains(t, ids, instB.ID, "owner filter must hide another owner's instances")
 
 	// OwnerID = nil -> both rows (admin/unconstrained).
-	all, err := repo.List(ctx, instance.ListFilters{Limit: 100})
+	all, err := repo.List(ctx, instance.ListFilters{Unconstrained: true, Limit: 100})
 	require.NoError(t, err)
 	allIDs := summaryIDs(all)
 	assert.Contains(t, allIDs, instA.ID)

@@ -5,8 +5,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/arbitron/arbitron/domain/identity"
+	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/queue"
+	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
 
@@ -74,6 +77,51 @@ type AgentProviderSelector interface {
 // chat stream; agent bindings get the tool-enabled (YOLO) stream.
 type InteractiveStreamSelector interface {
 	StreamProviderFor(b provider.ResolvedBinding) (ChatProvider, error)
+}
+
+// ChildInputRequest is everything the preparer needs to turn a parent's
+// available context into startup values for a child workflow. It is a struct
+// rather than a positional signature because the field set is the contract and
+// is expected to grow (e.g. a per-node token budget) without breaking callers.
+type ChildInputRequest struct {
+	// NodeID is the spawn node being executed. It is used to attribute errors
+	// and to assert the binding kind against the node type.
+	NodeID string
+	// ChildWorkflow is the child's name, used only for error messages and prompt
+	// framing. The preparer never loads a workflow itself.
+	ChildWorkflow string
+	// Inputs is the CHILD's declared input contract, loaded by the caller. The
+	// child's declaration is the authority; the parent never names the fields.
+	Inputs []workflow.InputField
+	// ParentContext is the parent run's flat variable snapshot (its inputs and
+	// all prior node outputs).
+	ParentContext map[string]any
+	// Guidance is the optional author-supplied prose, already read by the
+	// caller. Empty means no guidance was configured.
+	Guidance string
+	// ProfileAlias is the chat profile alias to resolve for the preparation call.
+	ProfileAlias string
+	// WorkDir is the parent instance's workspace directory, forwarded onto the
+	// preparation ChatRequest exactly as LLMCallExecutor forwards it
+	// (executor_llm.go). Subprocess-backed chat providers (claude-cli) reject an
+	// empty WorkDir outright (ErrWorkDirRequired) rather than inheriting the
+	// engine process's own cwd, so an empty value here is not a safe default —
+	// it makes every claude-cli-backed spawn node fail at the preparation call.
+	WorkDir string
+}
+
+// ChildInputPreparer turns a parent's available context into startup values
+// that satisfy a child workflow's declared input contract.
+//
+// GUARANTEES: on success, every REQUIRED input of the child is present and
+// non-null. On failure, NO partial result is returned — the caller cannot
+// accidentally spawn with half a payload.
+//
+// Because the return value is "values that satisfy the contract", the caller
+// needs no knowledge of how they were obtained; a future non-LLM implementation
+// (static mapping, cached result) satisfies the same port.
+type ChildInputPreparer interface {
+	Prepare(ctx context.Context, req ChildInputRequest) (map[string]any, error)
 }
 
 // AgentMission describes a single agentic mission to run inside the instance
@@ -234,4 +282,76 @@ type EventBus interface {
 	// SubscribeAll yields ScopedEvent so consumers can authorize each event by
 	// the instance it belongs to.
 	SubscribeAll() (<-chan ScopedEvent, func())
+}
+
+// IdentityResolver turns a user id into that user's full runtime identity
+// (role, departments, led departments).
+//
+// It is a structurally identical twin of schedule.IdentityResolver, REDECLARED
+// rather than imported because domain/engine must not depend on
+// domain/schedule. This mirrors the codebase's established practice of
+// redeclaring a type across a domain edge to keep the dependency
+// one-directional (instance.Claims vs identity.Claims; instance.Visibility vs
+// workflow.Visibility).
+//
+// The composition root passes the SAME concrete value to both the schedule
+// evaluator and the spawn executor, so a scheduled fire and a spawned run can
+// never resolve a user differently.
+type IdentityResolver interface {
+	IdentityForUser(ctx context.Context, userID uuid.UUID) (identity.Identity, error)
+}
+
+// SpawnRequest is everything ChildSpawner needs to create one linked child.
+type SpawnRequest struct {
+	// ChildWorkflow is the child workflow's name.
+	ChildWorkflow string
+	// Variables are the prepared startup values.
+	Variables map[string]any
+	// Priority is inherited from the parent run: a child of a high-priority run
+	// competes on equal footing with its parent's siblings. Nothing requires an
+	// independent priority axis.
+	Priority string
+	// Link is the child's back-reference to the spawning node. It MUST be valid;
+	// an incomplete link is rejected before any instance is created, because a
+	// child that cannot be matched by the wake would strand its parent forever.
+	Link instance.SpawnLink
+}
+
+// ChildWorkflowReader answers what a child workflow DECLARES. It is a pure
+// read, and the only capability a caller that merely inspects a child's
+// contract — a validator, a dry-run, an editor preview — needs.
+type ChildWorkflowReader interface {
+	// ChildInputs returns the child workflow's declared input contract, resolved
+	// through the SAME owner-scoped visibility filter the trigger path uses. A
+	// workflow the caller cannot see returns ErrNotFound — indistinguishable
+	// from "does not exist", so existence is never leaked.
+	ChildInputs(ctx context.Context, workflowName string) ([]workflow.InputField, error)
+}
+
+// ChildRunStarter CREATES a child run. It is the write half, and the one with
+// real consequences: a row, a workspace, a billed provider call, and a
+// descendant that inherits the parent's credentials.
+type ChildRunStarter interface {
+	// Spawn creates the child under the identity carried on ctx, with the link
+	// already set, and enqueues it. It returns the new child instance's id.
+	Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
+}
+
+// ChildSpawner is the pair, and is what the spawn executor depends on because
+// it genuinely does both: it reads the contract, prepares values against it,
+// then starts the run.
+//
+// The halves are declared SEPARATELY so that read-only callers can depend on
+// the read alone. Bundling them meant any future consumer that only wanted to
+// inspect a child's declared inputs would take a dependency that can also start
+// a billed run — the interface would grant more authority than the caller
+// needs, and a reader of that call site could not tell from the type that it
+// does not spawn.
+//
+// It stays a COMPOSITION rather than two constructor parameters: the executor
+// needs both, production supplies both from one value (*Engine), and splitting
+// the parameter would add a second argument that is always the same object.
+type ChildSpawner interface {
+	ChildWorkflowReader
+	ChildRunStarter
 }

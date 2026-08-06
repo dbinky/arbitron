@@ -279,7 +279,6 @@ func TestTransformExecutor_MultipleOpsSequential(t *testing.T) {
 	assert.Equal(t, float64(12), val)
 }
 
-
 func TestTransformExecutor_EmptyVariableNameReturnsError(t *testing.T) {
 	vars := variable.NewStore()
 	node := transformNode([]workflow.Operation{

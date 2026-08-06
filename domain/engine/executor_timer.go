@@ -36,10 +36,10 @@ const maxTimerDelay = 7 * 24 * time.Hour
 // TimerDelayExecutor handles timer_delay nodes by transitioning instances to
 // the waiting state and scheduling a timer for re-queueing.
 type TimerDelayExecutor struct {
-	instances  instance.InstanceRepository
-	nodeExecs  instance.NodeExecutionRepository
-	scheduler  TimerScheduler
-	queueMgr   QueueManager
+	instances instance.InstanceRepository
+	nodeExecs instance.NodeExecutionRepository
+	scheduler TimerScheduler
+	queueMgr  QueueManager
 }
 
 // NewTimerDelayExecutor constructs a new TimerDelayExecutor.
@@ -98,13 +98,13 @@ func (e *TimerDelayExecutor) Execute(ctx context.Context, node workflow.Node, va
 	// 5. Write node execution record with succeeded status.
 	now := time.Now()
 	nodeExec := &instance.NodeExecution{
-		ID:         uuid.New(),
-		InstanceID: instanceID,
-		NodeID:     node.ID,
-		Attempt:    1,
-		Status:     instance.NodeStatusSucceeded,
-		Output:     map[string]any{"waitingUntil": waitingUntil.Format(time.RFC3339)},
-		StartedAt:  startTime,
+		ID:          uuid.New(),
+		InstanceID:  instanceID,
+		NodeID:      node.ID,
+		Attempt:     1,
+		Status:      instance.NodeStatusSucceeded,
+		Output:      map[string]any{"waitingUntil": waitingUntil.Format(time.RFC3339)},
+		StartedAt:   startTime,
 		CompletedAt: &now,
 	}
 	if err := e.nodeExecs.Create(ctx, nodeExec); err != nil {
