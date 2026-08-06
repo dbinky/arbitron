@@ -97,7 +97,22 @@ record anything newly discovered in `docs/reference/gaps-identified.md`.
 **Step C** — Commit and push. **Your work is valuable regardless of review status:**
 `git -C ./work add -A && git -C ./work commit -m "refine({{slug}}): <what you changed>" && git -C ./work push --quiet -u origin HEAD`
 
-**Step D** — Check both files:
+**Step D** — State what this pass advanced, as a single line:
+
+`Progress: <what advanced>`
+
+Name the concrete thing — the area and review number whose box you ticked, the
+gap you closed, the component you wired, or the NEW failure you removed. If
+nothing advanced, say so outright and why:
+`Progress: no box ticked — area 14 needs a fixture the plan does not define, logged as a gap.`
+
+**This line is the only place your report says what you ACCOMPLISHED.** Step E
+below reports what REMAINS, and the progress assessor has no tools — it sees only
+your response. Without this line it is scoring "did this pass progress?" against a
+narrative that structurally describes unfinished work, so it guesses. Two unlucky
+guesses in a row end the entire run with the work still outstanding.
+
+**Step E** — Check both files:
 1. Does every single-system review have BOTH approvals, and every paired review its one approval?
 2. Are there ANY unchecked `[ ]` items in `docs/reference/gaps-identified.md`?
 

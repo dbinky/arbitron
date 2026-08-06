@@ -168,7 +168,9 @@ to finish everything in one pass, and never record an approval to end the loop s
 
 **Step C** — Commit and push. Your work is valuable regardless of review status.
 
-**Step D** — Check both files:
+**Step D** — State what this pass advanced, as a single line: `Progress: <what advanced>` — the area and review number whose box you ticked, the gap you closed, the component you wired, or explicitly "no box ticked" and why. The progress assessor has no tools and sees only your response; Step E reports what REMAINS, so without this line progress is indistinguishable from churn.
+
+**Step E** — Check both files:
 1. Does every single-system review have BOTH approvals, and every paired review its one approval?
 2. Are there ANY unchecked `[ ]` items in `docs/reference/gaps-identified.md`?
 

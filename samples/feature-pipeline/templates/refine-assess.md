@@ -7,8 +7,21 @@ read files and must not claim to.
 ## Context
 - Tracking files live at `./work/RALPH.md`, `./work/docs/reference/focus-areas.md`, `./work/docs/reference/gaps-identified.md`.
 - The most recent refinement pass reported: {{refine.response}}
+- **What that pass actually committed** — read from git, not from the pass's prose:
+  - new commits this pass: `{{record-pass-commit.new_commit_count}}`
+  - tracking files (focus-areas / gaps-identified) touched: `{{record-pass-commit.tracking_touched}}`
+  - **hard progress signal** (`progress_evidence`): `{{record-pass-commit.progress_evidence}}`
+  - what changed: {{record-pass-commit.summary}}
+  - commit log:
+    {{record-pass-commit.commit_stat}}
 - **Branch-point test baseline** (failures that existed BEFORE this branch — these do NOT block): `{{record-baseline.test_baseline}}`
 - Consecutive prior passes that made no progress: {{no_progress_streak}}
+- **Review plan state** — counted directly from `focus-areas.md`, not from the pass's prose:
+  - single-system reviews still awaiting approval: `{{count-review-plan.singles_unapproved}}` of `{{count-review-plan.singles_total}}`
+  - paired integration reviews still awaiting approval: `{{count-review-plan.paired_unapproved}}` of `{{count-review-plan.paired_total}}`
+  - **total unticked approval boxes: `{{count-review-plan.unchecked_boxes}}`**
+  - open gap items (excluding Won't Fix): `{{count-review-plan.open_gaps}}`
+  - counter status: {{count-review-plan.summary}}
 
 ## The pass emits a promise tag — read it first
 
@@ -25,6 +38,13 @@ Use it as **strong evidence, not as the verdict**:
   particular the NEW-failures-vs-baseline check, which the pass agent may not have
   evaluated. A `FINIT` alongside a new failure, an unapproved review, or an
   unwired component is wrong; emit `done: false` and say so in `notes`.
+  **FINIT is the pass asserting completion about its own work.** Check it against
+  the counted plan state above before you accept it: if `unchecked_boxes` is
+  greater than zero, the claim is provably false and `done` MUST be `false`,
+  however confident the report sounds. A run once exited on a FINIT that was
+  accepted because nothing in the narrative contradicted it — while all 112 of its
+  paired integration reviews sat untouched. Absence of contradicting prose is not
+  evidence of completion; the counter is.
 - **Neither tag present** → the pass violated the loop protocol. Treat as
   `done: false` and `progressed: false`, and say so in `notes` — a pass that does
   not follow its instructions has not demonstrably finished anything, and the
@@ -62,12 +82,27 @@ coexist with an unwired component, so weigh the wiring evidence too.
 
 ## Emit
 
-- `done`: boolean per the rule above. Be conservative: if any review lacks its
-  required approvals, any gap is open, or any component is unwired, `done = false`.
+- `done`: boolean per the rule above, and **gated on the counter**: if
+  `unchecked_boxes` above is anything other than `0`, emit `done: false` — that is
+  arithmetic, not judgement. If it is `0`, `done` is still yours to decide on what
+  the counter cannot see: NEW failures vs the baseline, wiring, and open gaps. Be
+  conservative: if any review lacks its required approvals, any gap is open, or any
+  component is unwired, `done = false`. (The loop gate enforces the same rule
+  independently, so a mistaken `done: true` no longer ends the run on its own — but
+  emit it correctly regardless, because `notes` is what a human reads.)
 - `notes`: one sentence on the remaining blocker, or "done".
-- `progressed`: boolean — did THIS pass make real forward progress (advanced or
-  approved a review, fixed a real gap, wired a component, removed a NEW failure)?
-  A pass that only re-ran tests, churned, or got blocked counts as `false`.
+- `progressed`: boolean — **decide this from the commit evidence above, not from
+  the tone of the report.**
+  - If `progress_evidence` is `true`, emit `progressed: true`. A pass that produced
+    a new commit did real work. This is not a judgement call, and you must not
+    overrule it because the response dwells on what is left: the pass is REQUIRED
+    to report remaining work, so a report full of open items is the normal shape of
+    a productive pass, not evidence of churn. Judging progress from that narrative
+    is how two near-identical reports previously scored opposite verdicts and
+    killed a healthy run.
+  - If `progress_evidence` is `false`, nothing was committed. Judge from the pass's
+    `Progress:` line and the rest of its report — a pass that only re-ran tests,
+    churned, or got blocked counts as `false`.
 - `consecutive_no_progress`: integer. If `progressed` is true, emit `0`. Otherwise
   emit {{no_progress_streak}} + 1. This lets the loop bail out when it is stuck
   rather than spinning to the iteration cap.
