@@ -79,7 +79,7 @@
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 0
       }
     },
@@ -114,7 +114,7 @@
       "description": "Lift init-workspace outputs to top-level vars.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 140
       }
     },
@@ -133,7 +133,7 @@
       "description": "In-app notification that the loop has started.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 280
       }
     },
@@ -149,7 +149,7 @@
       "description": "Fetch the default branch and compute what this branch changed vs its merge base. init-workspace shallow-clones ONLY the base ref, so origin/main is absent and this must fetch it before any merge-base is possible; falls back to a two-dot diff when the history is too shallow.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 420
       }
     },
@@ -165,7 +165,7 @@
       "description": "Copy any existing RALPH.md, docs/reference/focus-areas.md and docs/reference/gaps-identified.md into docs/reference/historical/ with a dated, intra-day-numbered name before they are overwritten.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 560
       }
     },
@@ -181,7 +181,7 @@
       "description": "Detect and run the project's test suite(s), writing {{workspace}}/test-baseline.json so the loop gates on NEW failures rather than a green suite.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 700
       }
     },
@@ -197,7 +197,7 @@
       "description": "Lift the baseline into test_baseline / test_commands / baseline_summary vars.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 840
       }
     },
@@ -213,7 +213,7 @@
       "description": "Write RALPH.md at the repo root plus docs/reference/focus-areas.md and docs/reference/gaps-identified.md, using the single-system + paired-integration review structure populated with wired-and-fed provenance criteria.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 980
       }
     },
@@ -231,7 +231,7 @@
         "type": "halt"
       },
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 1120
       }
     },
@@ -247,7 +247,7 @@
       "description": "Push the archived docs and the freshly seeded review plan before any refinement starts, so the planning work survives a later crash or cancel.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 1260
       }
     },
@@ -256,14 +256,14 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/refine.md",
-        "model_profile": "coder-sonnet5-high",
+        "model_profile": "refine-flash",
         "timeoutSeconds": 3600
       },
       "label": "Refine (ralph pass)",
-      "description": "One review area per pass: fix the most important issue, update tracking, commit, push, emit a promise tag, stop.",
+      "description": "One review area per pass: fix the most important issue, update gaps, commit, push, emit a recommendation, stop. Runs on a cheap high-volume model; it does NOT tick approval boxes \u2014 approve-area does, on a different model family, so no agent certifies its own change.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
+        "x": 0,
         "y": 1400
       }
     },
@@ -280,7 +280,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1540
+        "y": 1820
       }
     },
     {
@@ -296,7 +296,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1680
+        "y": 1960
       }
     },
     {
@@ -334,7 +334,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1820
+        "y": 2100
       }
     },
     {
@@ -359,7 +359,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1960
+        "y": 2240
       }
     },
     {
@@ -368,21 +368,33 @@
       "config": {
         "conditions": [
           {
-            "field": "refine-assess.consecutive_no_progress",
-            "operator": "gte",
-            "value": 2,
-            "output": "exit"
-          },
-          {
             "field": "ralph_iteration",
             "operator": "gte",
             "value": "{{max_ralph_iterations}}",
             "output": "exit"
           },
           {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 3,
+            "output": "exit"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 2,
+            "output": "rescue"
+          },
+          {
             "field": "count-review-plan.plan_complete",
             "operator": "eq",
             "value": false,
+            "output": "loop"
+          },
+          {
+            "field": "verify-tests.new_failures",
+            "operator": "gte",
+            "value": 1,
             "output": "loop"
           },
           {
@@ -395,11 +407,11 @@
         "defaultOutput": "loop"
       },
       "label": "Refine loop or exit",
-      "description": "Exit ONLY on stagnation (2 consecutive no-progress passes), the iteration cap, or a review plan that is arithmetically complete AND assessed done. Order matters: stagnation and the cap are evaluated first so they always win; then plan_complete=false forces another pass, so no verdict \u2014 however confident \u2014 can end the loop while approval boxes remain unticked. The assessor still decides what a counter cannot see (new-vs-baseline failures, wiring, open gaps), so both must agree before the loop may exit.",
+      "description": "Exit ONLY on the iteration cap, a stagnation that survived its rescue pass (streak 3), or a review plan that is arithmetically complete AND regression-free AND assessed done. Order matters: the cap wins outright; then a streak of 2 buys exactly ONE stronger rescue pass per stagnation event (if the rescue also fails the streak reaches 3 and the loop ends); then plan_complete=false and new_failures>=1 each independently force another pass, so no verdict \u2014 however confident \u2014 can end the loop while approval boxes are unticked or a regression is live. The assessor still decides what counters cannot see (wiring, open gaps), so all of them must agree before exit.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 2100
+        "x": 0,
+        "y": 2380
       }
     },
     {
@@ -414,8 +426,8 @@
       "description": "Push the work branch and open a PR targeting base_branch, so refinement lands back on the branch being refined.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 2240
+        "x": 0,
+        "y": 2520
       }
     },
     {
@@ -433,8 +445,8 @@
       "description": "In-app notification that the PR is open.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 2380
+        "x": 0,
+        "y": 2660
       }
     },
     {
@@ -459,8 +471,8 @@
       "description": "Rich completion alert (no-op when teams_webhook_url is unset).",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 2520
+        "x": 0,
+        "y": 2800
       }
     },
     {
@@ -479,8 +491,56 @@
       "description": "Terminal node.",
       "errorBehavior": {},
       "position": {
-        "x": 250,
-        "y": 2660
+        "x": 0,
+        "y": 2940
+      }
+    },
+    {
+      "id": "verify-tests",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests vs baseline",
+      "description": "Deterministic regression gate: runs the pre-detected suite(s) and diffs failures against the branch-point baseline, emitting new_failures/build_broken/confidence. Nothing previously verified a pass's test claims \u2014 the agent that made the change also narrated the result, and refine-assess is toolless \u2014 so a regression introduced in pass N could be re-narrated as pre-existing in pass N+40 while every later pass built on it. Fails OPEN but LOUD (confidence=low) rather than blocking on unmeasurable evidence.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1540
+      }
+    },
+    {
+      "id": "approve-area",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/approve-area.md",
+        "model_profile": "approver-sonnet5-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Approve area (independent)",
+      "description": "The ONLY node permitted to tick an approval box. Re-derives the wired-and-fed evidence itself and is hard-blocked from approving while verify-tests reports any new failure or build break. The 2-approval redundancy assumed two independent judgements; with one profile doing both the fix and the approval it was the same model grading itself twice, which is how hollow approvals ship.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1680
+      }
+    },
+    {
+      "id": "refine-rescue",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine.md",
+        "model_profile": "refine-deep",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine (Opus rescue pass)",
+      "description": "One stronger pass per stagnation event. Stagnation used to exit the loop and ship the PR with the review plan unfinished; with a cheaper worker that triggers more often. Same mission template, stronger model. If the rescue also makes no progress the streak reaches 3 and the loop exits for real, so this cannot spin.",
+      "errorBehavior": {},
+      "position": {
+        "x": 840,
+        "y": 1400
       }
     }
   ],
@@ -526,10 +586,6 @@
       "target": "refine"
     },
     {
-      "source": "refine",
-      "target": "record-pass-commit"
-    },
-    {
       "source": "record-pass-commit",
       "target": "count-review-plan"
     },
@@ -567,6 +623,28 @@
     {
       "source": "notify-teams",
       "target": "done"
+    },
+    {
+      "source": "refine",
+      "target": "verify-tests"
+    },
+    {
+      "source": "refine-rescue",
+      "target": "verify-tests"
+    },
+    {
+      "source": "verify-tests",
+      "target": "approve-area"
+    },
+    {
+      "source": "approve-area",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "refine-gate",
+      "target": "refine-rescue",
+      "output": "rescue",
+      "label": "stagnation: one Opus rescue"
     }
   ]
 }

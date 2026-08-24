@@ -35,7 +35,7 @@ func loadSample(t *testing.T, name string) *workflow.Workflow {
 }
 
 func TestSamplesParse(t *testing.T) {
-	for _, name := range []string{"pr-review", "feature-pipeline"} {
+	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			if wf.Name != name {

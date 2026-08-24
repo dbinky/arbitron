@@ -114,6 +114,38 @@ EOF
 check "edge: tags without a stop rule are rejected" "$(runs)" "fail"
 
 echo
+
+# --- Budget gate: a plan that cannot finish must fail the run ----------------
+# seed-ralph has always REPORTED the implied pass count and nothing checked it.
+# Two runs shipped plans of 248 and 202 against a 500 cap whose real throughput
+# is ~0.38 boxes/pass; both ran for days and capped out mid-review.
+mkplan() { # dir singles paired
+  mkdir -p "$1/docs/reference"
+  { echo "## Single-System Reviews"
+    echo "| # | Area | Risk | R1 | R2 |"; echo "|---|---|---|---|---|"
+    i=1; while [ $i -le $2 ]; do echo "| $i | a$i | high | [ ] | [ ] |"; i=$((i+1)); done
+    echo; echo "## Paired Integration Reviews"
+    echo "| # | Pair | Seam | Risk | Status |"; echo "|---|---|---|---|---|"
+    i=1; while [ $i -le $3 ]; do echo "| $i | a as b | s | high | [ ] |"; i=$((i+1)); done
+  } > "$1/docs/reference/focus-areas.md"
+}
+BT="$TMP/budget"; mkdir -p "$BT"
+cp "$TMP/ok/RALPH.md" "$BT/RALPH.md" 2>/dev/null || awk '/---8<--- copy from here/{f=1;next} /---8<--- copy to here/{f=0} f' \
+  "$SCRIPT_DIR/../templates/seed-ralph.md" > "$BT/RALPH.md"
+
+mkplan "$BT" 44 160     # the plan that actually shipped: 248 implied vs 175 budget
+if printf '{"work_dir":"%s","max_ralph_iterations":500}' "$BT" | sh "$SCRIPT" >/dev/null 2>&1; then
+  echo "FAIL - budget gate: an unfinishable 248-pass plan was ACCEPTED"; fails=$((fails + 1))
+else
+  echo "ok   - budget gate rejects a plan that cannot finish in its cap"
+fi
+
+mkplan "$BT" 28 58      # the re-scoped shape: 114 implied vs 175 budget
+OUT="$(printf '{"work_dir":"%s","max_ralph_iterations":500}' "$BT" | sh "$SCRIPT" 2>/dev/null)" && rc=0 || rc=1
+check "budget gate accepts a plan that fits" "$rc" "0"
+check "...and reports the arithmetic" "$(printf '%s' "$OUT" | jq -r '.implied_passes')" "114"
+check "...against the computed budget" "$(printf '%s' "$OUT" | jq -r '.budget')" "175"
+
 if [ "$fails" -eq 0 ]; then
   echo "all verify-ralph-seed tests passed"
 else

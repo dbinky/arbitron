@@ -25,7 +25,7 @@ check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else
   echo "FAIL - $1"; echo "        expected: $3"; echo "        actual:   $2"; fails=$((fails+1)); fi; }
 
 # --- Scripts copied verbatim from feature-pipeline --------------------------
-SHARED="init-workspace.sh checkpoint-push.sh push-and-pr.sh notify.sh notify-teams.sh record-baseline.sh verify-ralph-seed.sh record-pass-commit.sh count-review-plan.sh"
+SHARED="init-workspace.sh checkpoint-push.sh push-and-pr.sh notify.sh notify-teams.sh record-baseline.sh verify-ralph-seed.sh record-pass-commit.sh count-review-plan.sh verify-tests.sh"
 for s in $SHARED; do
   if [ ! -f "$RL/scripts/$s" ]; then
     check "shared script present: $s" "missing" "present"
@@ -39,7 +39,7 @@ for s in $SHARED; do
 done
 
 # --- Loop templates are shared too ------------------------------------------
-for t in refine.md refine-assess.md; do
+for t in refine.md refine-assess.md approve-area.md; do
   if diff -q "$RL/templates/$t" "$FP/templates/$t" >/dev/null 2>&1; then
     check "identical loop template: $t" "same" "same"
   else

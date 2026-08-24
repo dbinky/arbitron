@@ -11,6 +11,12 @@ read files and must not claim to.
   - new commits this pass: `{{record-pass-commit.new_commit_count}}`
   - tracking files (focus-areas / gaps-identified) touched: `{{record-pass-commit.tracking_touched}}`
   - **hard progress signal** (`progress_evidence`): `{{record-pass-commit.progress_evidence}}`
+  - approval boxes newly ticked this pass: `{{record-pass-commit.boxes_ticked}}`
+  - consecutive passes with NO approval: `{{record-pass-commit.passes_since_approval}}`
+    (context for your `notes` ONLY — it is **not** a decision input. The threshold
+    lives in the script; a run once ended at a count of 3 because this number was
+    read as a verdict rather than as background.)
+  - **approval stall** (`approval_stalled`): `{{record-pass-commit.approval_stalled}}`
   - what changed: {{record-pass-commit.summary}}
   - commit log:
     {{record-pass-commit.commit_stat}}
@@ -94,15 +100,29 @@ coexist with an unwired component, so weigh the wiring evidence too.
 - `progressed`: boolean — **decide this from the commit evidence above, not from
   the tone of the report.**
   - If `progress_evidence` is `true`, emit `progressed: true`. A pass that produced
-    a new commit did real work. This is not a judgement call, and you must not
+    a new commit did real work. **This holds even when `passes_since_approval` is
+    high but `approval_stalled` is still `false`** — the script owns that threshold,
+    and second-guessing it from the raw count is how a healthy run was killed at a
+    count of 3. This is not a judgement call, and you must not
     overrule it because the response dwells on what is left: the pass is REQUIRED
     to report remaining work, so a report full of open items is the normal shape of
     a productive pass, not evidence of churn. Judging progress from that narrative
     is how two near-identical reports previously scored opposite verdicts and
     killed a healthy run.
-  - If `progress_evidence` is `false`, nothing was committed. Judge from the pass's
-    `Progress:` line and the rest of its report — a pass that only re-ran tests,
-    churned, or got blocked counts as `false`.
+  - If `progress_evidence` is `false` **because `approval_stalled` is `true`**,
+    emit `progressed: false` — even though the pass committed real work, and even
+    though its report reads like genuine engineering. **Do not overrule this from
+    the narrative.** It means the approval count has not moved in
+    `{{record-pass-commit.passes_since_approval}}` consecutive passes: the loop is
+    fixing a receding target rather than converging on the review plan. One run
+    spent 15 straight passes repairing real defects in a single family, each fix
+    uncovering the next, and ticked nothing; because every pass looked productive
+    the streak never climbed and the escalation never fired. Busy is not
+    converging. Say so plainly in `notes` — name the stall and what the loop keeps
+    circling — because that sentence is what tells a human where it is stuck.
+  - Otherwise `progress_evidence` being `false` means nothing was committed. Judge
+    from the pass's `Progress:` line and the rest of its report — a pass that only
+    re-ran tests, churned, or got blocked counts as `false`.
 - `consecutive_no_progress`: integer. If `progressed` is true, emit `0`. Otherwise
   emit {{no_progress_streak}} + 1. This lets the loop bail out when it is stuck
   rather than spinning to the iteration cap.
