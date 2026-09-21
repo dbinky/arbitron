@@ -216,6 +216,17 @@ func (p *Provider) RunAgent(ctx context.Context, mission engine.AgentMission) (*
 		if ctxErr := runCtx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("codex: mission timed out (model %q): %w (%v)", model, ctxErr, waitErr)
 		}
+		// A non-zero exit usually states its REAL cause on the --json stdout
+		// stream (an `error`/`turn.failed` event — e.g. a quota refusal,
+		// "You've hit your usage limit"), while stderr carries only incidental
+		// noise that the redacted summary then presents as if it were the
+		// reason. Recover that cause so a refusal is distinguishable from a
+		// crash instead of collapsing to a bare "exit status 1". Best-effort:
+		// when the stream states no cause the exit error stands alone, and
+		// waitErr stays wrapped either way so callers keep unwrapping it.
+		if cause := failureCause(collected); cause != "" {
+			return nil, fmt.Errorf("codex: mission failed (model %q): %s: %w", model, cause, waitErr)
+		}
 		return nil, fmt.Errorf("codex: mission failed (model %q): %w", model, waitErr)
 	}
 

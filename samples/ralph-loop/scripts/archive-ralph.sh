@@ -3,7 +3,8 @@
 #
 # Layout (all paths relative to the worktree root):
 #   RALPH.md                            <- charter, lives at the repo root
-#   docs/reference/focus-areas.md       <- the review plan
+#   docs/reference/focus-areas.md       <- single-system review plan
+#   docs/reference/paired-reviews.md    <- paired integration review plan
 #   docs/reference/gaps-identified.md   <- known gaps
 #   docs/reference/historical/          <- dated copies of all three
 #
@@ -27,7 +28,7 @@ DATE="$(date +%Y-%m-%d)"
 HIST="$WORK/docs/reference/historical"
 
 # label:relative-path — label is what appears in the archived filename.
-SET="RALPH:RALPH.md focus-areas:docs/reference/focus-areas.md gaps-identified:docs/reference/gaps-identified.md"
+SET="RALPH:RALPH.md focus-areas:docs/reference/focus-areas.md paired-reviews:docs/reference/paired-reviews.md gaps-identified:docs/reference/gaps-identified.md"
 
 # Nothing to archive is a normal first-run state, not an error.
 any=0

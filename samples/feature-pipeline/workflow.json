@@ -65,6 +65,13 @@
       "required": false
     },
     {
+      "name": "max_no_progress_streak",
+      "type": "number",
+      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged \u2014 a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
+      "default": 12,
+      "required": false
+    },
+    {
       "name": "teams_webhook_url",
       "type": "string",
       "description": "Power Automate / Teams webhook URL for completion alerts. Leave empty in the committed sample (the notify-teams steps are no-ops when unset, or read ARBITRON_TEAMS_WEBHOOK_URL from the server env). The runtime workflow stores the real URL as this default.",
@@ -658,8 +665,14 @@
           {
             "field": "refine-assess.consecutive_no_progress",
             "operator": "gte",
-            "value": 3,
+            "value": "{{max_no_progress_streak}}",
             "output": "exit"
+          },
+          {
+            "field": "refine-assess.consecutive_no_progress",
+            "operator": "gte",
+            "value": 5,
+            "output": "loop"
           },
           {
             "field": "refine-assess.consecutive_no_progress",
@@ -689,7 +702,7 @@
         "defaultOutput": "loop"
       },
       "label": "Refine loop or exit",
-      "description": "Exit ONLY on the iteration cap, a stagnation that survived its rescue pass (streak 3), or a review plan that is arithmetically complete AND regression-free AND assessed done. The cap wins outright; a streak of 2 buys exactly ONE stronger rescue pass per stagnation event; then plan_complete=false and new_failures>=1 each independently force another pass, so no verdict can end the loop while approval boxes are unticked or a regression is live.",
+      "description": "Conditions are first-match, so a listed-but-later condition is not a guard. This gate DID read count-review-plan.plan_complete, but at index 4, behind an unconditional `consecutive_no_progress >= 3 -> exit` at index 2 \u2014 the counter was shadowed and could never veto a stagnation exit. That is the same defect that ended ralph-loop run a1aab074 with 98 approval boxes outstanding, and the reason count-review-plan was written in the first place. The stagnation exit is now the declared hard-wedge threshold (max_no_progress_streak, 12) rather than a bare 3. Widening the runway that far would have fired the Opus rescue on every pass from 2 to 11, so the rescue band is bounded to streaks 2-4 (three attempts, was one) and 5-11 loop normally until the wedge threshold. Below that, an incomplete plan or a new-vs-baseline failure keeps the loop running, and only then may the assessor's `done` end it.",
       "errorBehavior": {},
       "position": {
         "x": 0,

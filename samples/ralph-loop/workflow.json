@@ -1,7 +1,7 @@
 {
   "id": "00000000-0000-0000-0000-000000000000",
   "name": "ralph-loop",
-  "description": "Standalone ralph refinement loop: check out an existing branch, archive prior tracking docs, record a test baseline, seed a structured focus-area review plan (single-system + paired integration reviews), run the refinement loop until the reviews are satisfied, then open a PR back into the branch being refined.",
+  "description": "Ralph refinement loop with role-routed models. Phase 1 works single-system areas interleaved by risk \u2014 review 1 refined by Sonnet 5 and assessed by GPT-5.6-sol, review 2 refined by Sol and assessed by Opus 5 \u2014 so an area's two approvals always come from different model families. Phase 2 works the paired integration table with Opus refining and Sol assessing, batching up to four seams per pass. Seeded plans must fit their pass budget, test runs are scoped to the diff, and a run interrupted by a quota wall resumes on the same branch with every earned approval intact.",
   "author": "arbitron",
   "defaultErrorBehavior": {
     "type": "retry",
@@ -53,8 +53,15 @@
     {
       "name": "no_progress_streak",
       "type": "number",
-      "description": "Consecutive passes with no forward progress; the loop exits at 2.",
+      "description": "Consecutive passes with no forward progress, carried between passes. Read by the refine template; the loop's wedge exit is max_no_progress_streak.",
       "default": 0,
+      "required": false
+    },
+    {
+      "name": "max_no_progress_streak",
+      "type": "number",
+      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged \u2014 a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
+      "default": 12,
       "required": false
     },
     {
@@ -138,6 +145,28 @@
       }
     },
     {
+      "id": "resumed?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "init-workspace.resumed",
+            "operator": "eq",
+            "value": true,
+            "output": "resume"
+          }
+        ],
+        "defaultOutput": "fresh"
+      },
+      "label": "Resuming?",
+      "description": "init-workspace sets resumed=true when base_branch already carries docs/reference/focus-areas.md. A resumed run continues ON that branch and skips seeding entirely, so approvals already earned survive. Detected rather than declared, so a normal run needs no extra input and cannot resume by accident.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 420
+      }
+    },
+    {
       "id": "derive-scope",
       "type": "script",
       "config": {
@@ -149,8 +178,8 @@
       "description": "Fetch the default branch and compute what this branch changed vs its merge base. init-workspace shallow-clones ONLY the base ref, so origin/main is absent and this must fetch it before any merge-base is possible; falls back to a two-dot diff when the history is too shallow.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 420
+        "x": -420,
+        "y": 560
       }
     },
     {
@@ -165,8 +194,8 @@
       "description": "Copy any existing RALPH.md, docs/reference/focus-areas.md and docs/reference/gaps-identified.md into docs/reference/historical/ with a dated, intra-day-numbered name before they are overwritten.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 560
+        "x": -420,
+        "y": 700
       }
     },
     {
@@ -181,8 +210,74 @@
       "description": "Detect and run the project's test suite(s), writing {{workspace}}/test-baseline.json so the loop gates on NEW failures rather than a green suite.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 700
+        "x": -420,
+        "y": 840
+      }
+    },
+    {
+      "id": "seed-ralph",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/seed-ralph.md",
+        "model_profile": "planner-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Seed review plan",
+      "description": "Writes RALPH.md (all three role protocols), the single-system plan, the paired plan and gaps-identified.md, sized to fit the pass budget.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 1120
+      }
+    },
+    {
+      "id": "verify-ralph-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify ralph seed",
+      "description": "Fails the run unless RALPH.md carries a Wrap Up, self-assessment and promise tags for EACH of the three roles, and unless 2*singles + ceil(paired/3) fits the pass budget. A file can otherwise carry a perfect protocol for one role and silently omit the stop rule for another.",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": -420,
+        "y": 1260
+      }
+    },
+    {
+      "id": "checkpoint-push-seed",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push seed",
+      "description": "Push the archived docs and the freshly seeded review plan before any refinement starts, so the planning work survives a later crash or cancel.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 1400
+      }
+    },
+    {
+      "id": "restore-state",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/restore-state.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
+      },
+      "label": "Restore loop state",
+      "description": "Resume path: restores the COMMITTED branch-point baseline and rebuilds the per-workspace counters from what the branch already carries. The plan is not re-seeded. Re-measuring the baseline on a partly-refined branch would record the previous run's own fixes as pre-existing and blind the regression gate.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 560
       }
     },
     {
@@ -198,73 +293,225 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 840
+        "y": 1540
       }
     },
     {
-      "id": "seed-ralph",
-      "type": "agent_call",
+      "id": "select-work",
+      "type": "script",
       "config": {
-        "templateFile": "templates/seed-ralph.md",
-        "model_profile": "planner-opus-medium",
-        "timeoutSeconds": 3600
+        "scriptFile": "scripts/select-work.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 300
       },
-      "label": "Seed ralph tracking docs",
-      "description": "Write RALPH.md at the repo root plus docs/reference/focus-areas.md and docs/reference/gaps-identified.md, using the single-system + paired-integration review structure populated with wired-and-fed provenance criteria.",
+      "label": "Select next work",
+      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1: Sonnet refines / Sol assesses; review 2: Sol refines / Opus assesses); phase 2 begins only when every single box is ticked.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 980
+        "y": 1680
       }
     },
     {
-      "id": "verify-ralph-seed",
-      "type": "script",
+      "id": "work-router",
+      "type": "conditional",
       "config": {
-        "scriptFile": "scripts/verify-ralph-seed.sh",
-        "interpreter": "/bin/sh",
-        "timeoutSeconds": 60
+        "conditions": [
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "single_1",
+            "output": "single1"
+          },
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "single_2",
+            "output": "single2"
+          },
+          {
+            "field": "select-work.next_kind",
+            "operator": "eq",
+            "value": "paired",
+            "output": "paired"
+          }
+        ],
+        "defaultOutput": "done"
       },
-      "label": "Verify ralph seed",
-      "description": "Grep the seeded RALPH.md for the loop terminators before the loop consumes it. Halts rather than retrying: a deterministic grep will not pass on a second attempt.",
+      "label": "Route by work kind",
+      "description": "Every pair is cross-family on purpose: two passes by the same family share blind spots, which is the same opinion twice rather than redundancy. next_kind=none means nothing is outstanding and the loop exits.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 1820
+      }
+    },
+    {
+      "id": "refine-single-1",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-single.md",
+        "model_profile": "coder-sonnet5-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine Single 1",
+      "description": "Review 1 refiner: Sonnet 5 high.",
       "errorBehavior": {
-        "type": "halt"
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
       },
       "position": {
-        "x": 0,
-        "y": 1120
+        "x": -700,
+        "y": 1960
       }
     },
     {
-      "id": "checkpoint-push-seed",
+      "id": "verify-tests-single1",
       "type": "script",
       "config": {
-        "scriptFile": "scripts/checkpoint-push.sh",
+        "scriptFile": "scripts/verify-tests.sh",
         "interpreter": "/bin/sh",
-        "timeoutSeconds": 120
+        "timeoutSeconds": 5400
       },
-      "label": "Checkpoint: push seed",
-      "description": "Push the archived docs and the freshly seeded review plan before any refinement starts, so the planning work survives a later crash or cancel.",
+      "label": "Verify tests (single1)",
+      "description": "Runs only the suites the pass's diff touched; skips entirely on an inspection-only pass; full sweep every 10th pass or on an unmapped path.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 1260
+        "x": -700,
+        "y": 2100
       }
     },
     {
-      "id": "refine",
+      "id": "assess-single-1",
       "type": "agent_call",
       "config": {
-        "templateFile": "templates/refine.md",
-        "model_profile": "refine-flash",
+        "templateFile": "templates/assess-single.md",
+        "model_profile": "approver-codex-high",
         "timeoutSeconds": 3600
       },
-      "label": "Refine (ralph pass)",
-      "description": "One review area per pass: fix the most important issue, update gaps, commit, push, emit a recommendation, stop. Runs on a cheap high-volume model; it does NOT tick approval boxes \u2014 approve-area does, on a different model family, so no agent certifies its own change.",
+      "label": "Assess Single 1",
+      "description": "Review 1 approver: GPT-5.6-sol \u2014 opposite family to the refiner.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "position": {
+        "x": -700,
+        "y": 2240
+      }
+    },
+    {
+      "id": "refine-single-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-single.md",
+        "model_profile": "coder-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine Single 2",
+      "description": "Review 2 refiner: GPT-5.6-sol high. Exists to find what review 1 missed.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "position": {
+        "x": 0,
+        "y": 1960
+      }
+    },
+    {
+      "id": "verify-tests-single2",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (single2)",
+      "description": "Runs only the suites the pass's diff touched; skips entirely on an inspection-only pass; full sweep every 10th pass or on an unmapped path.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1400
+        "y": 2100
+      }
+    },
+    {
+      "id": "assess-single-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/assess-single.md",
+        "model_profile": "approver-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Assess Single 2",
+      "description": "Review 2 approver: Opus 5 medium \u2014 the strong model checking the weaker refiner.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "position": {
+        "x": 0,
+        "y": 2240
+      }
+    },
+    {
+      "id": "refine-paired",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/refine-paired.md",
+        "model_profile": "coder-opus-medium",
+        "timeoutSeconds": 3600
+      },
+      "label": "Refine Paired",
+      "description": "Paired refiner: Opus 5 medium, 1M context for cross-component tracing. Batches up to four seams.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "position": {
+        "x": 700,
+        "y": 1960
+      }
+    },
+    {
+      "id": "verify-tests-paired",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-tests.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 5400
+      },
+      "label": "Verify tests (paired)",
+      "description": "Runs only the suites the pass's diff touched; skips entirely on an inspection-only pass; full sweep every 10th pass or on an unmapped path.",
+      "errorBehavior": {},
+      "position": {
+        "x": 700,
+        "y": 2100
+      }
+    },
+    {
+      "id": "assess-paired",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/assess-paired.md",
+        "model_profile": "approver-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Assess Paired",
+      "description": "Paired approver: GPT-5.6-sol.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "position": {
+        "x": 700,
+        "y": 2240
       }
     },
     {
@@ -280,7 +527,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1820
+        "y": 2380
       }
     },
     {
@@ -296,7 +543,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1960
+        "y": 2520
       }
     },
     {
@@ -334,7 +581,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2100
+        "y": 2660
       }
     },
     {
@@ -359,7 +606,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2240
+        "y": 2800
       }
     },
     {
@@ -374,44 +621,26 @@
             "output": "exit"
           },
           {
-            "field": "refine-assess.consecutive_no_progress",
-            "operator": "gte",
-            "value": 3,
+            "field": "count-review-plan.plan_complete",
+            "operator": "eq",
+            "value": true,
             "output": "exit"
           },
           {
             "field": "refine-assess.consecutive_no_progress",
             "operator": "gte",
-            "value": 2,
-            "output": "rescue"
-          },
-          {
-            "field": "count-review-plan.plan_complete",
-            "operator": "eq",
-            "value": false,
-            "output": "loop"
-          },
-          {
-            "field": "verify-tests.new_failures",
-            "operator": "gte",
-            "value": 1,
-            "output": "loop"
-          },
-          {
-            "field": "refine-assess.done",
-            "operator": "eq",
-            "value": true,
+            "value": "{{max_no_progress_streak}}",
             "output": "exit"
           }
         ],
         "defaultOutput": "loop"
       },
-      "label": "Refine loop or exit",
-      "description": "Exit ONLY on the iteration cap, a stagnation that survived its rescue pass (streak 3), or a review plan that is arithmetically complete AND regression-free AND assessed done. Order matters: the cap wins outright; then a streak of 2 buys exactly ONE stronger rescue pass per stagnation event (if the rescue also fails the streak reaches 3 and the loop ends); then plan_complete=false and new_failures>=1 each independently force another pass, so no verdict \u2014 however confident \u2014 can end the loop while approval boxes are unticked or a regression is live. The assessor still decides what counters cannot see (wiring, open gaps), so all of them must agree before exit.",
+      "label": "Loop or exit",
+      "description": "Exits on the pass budget, on an ARITHMETICALLY complete review plan, or on a wedge. The order is the point. count-review-plan exists to make termination arithmetic rather than narrative, but this gate used to read only ralph_iteration and refine-assess.consecutive_no_progress \u2014 the counter informed the toolless assessor and nothing else, so the guard could not reach the path it guarded. Run a1aab074 exited here at pass 161 of 500 on a bare 3-strike stagnation rule while count-review-plan.plan_complete was false and unchecked_boxes was 98, then opened a PR presenting that as a finished review. A withheld approval is the normal outcome of a review pass, so three in a row is not a wedged loop. plan_complete is now a first-class exit and the stagnation exit is the declared hard-wedge threshold (max_no_progress_streak, 12), which sits above record-pass-commit's sticky approval-stall limit of 8 so a genuine wedge is still caught within a few passes of stalling. Otherwise loops back to the ROUTER, not to a fixed refiner, so the next pass is re-routed by what the plan now needs. A quota failure is NOT handled here: the agent node fails the run, which is cleanly resumable.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2380
+        "y": 2940
       }
     },
     {
@@ -427,7 +656,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2520
+        "y": 3080
       }
     },
     {
@@ -437,16 +666,16 @@
         "scriptFile": "scripts/notify.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "Ralph loop complete for {{branch}}: PR {{push-and-pr.pr_url}} opened against {{base_branch}}."
+          "Ralph loop finished on {{branch}} (PR {{push-and-pr.pr_url}}, against {{base_branch}}). {{count-review-plan.summary}}"
         ],
         "timeoutSeconds": 30
       },
       "label": "Notify: PR opened",
-      "description": "In-app notification that the PR is open.",
+      "description": "In-app notification that the loop finished. Carries the COUNTED plan state, not just the PR link: a run that exits on the wedge backstop with approval boxes outstanding must say so where someone will see it.",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2660
+        "y": 3220
       }
     },
     {
@@ -457,12 +686,14 @@
         "interpreter": "/bin/sh",
         "args": [
           "ralph-loop complete \u2014 {{slug}}",
-          "The refinement loop finished and opened a PR ({{push-and-pr.pr_url}}) against {{base_branch}}.",
+          "The refinement loop finished and opened a PR ({{push-and-pr.pr_url}}) against {{base_branch}}. {{count-review-plan.summary}}",
           "good",
           "Repo={{repo_url}}",
           "Refined={{base_branch}}",
           "Branch={{branch}}",
           "PR={{push-and-pr.pr_url}}",
+          "Plan={{count-review-plan.summary}}",
+          "UnapprovedBoxes={{count-review-plan.unchecked_boxes}}",
           "Passes={{ralph_iteration}}"
         ],
         "timeoutSeconds": 60
@@ -472,7 +703,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2800
+        "y": 3360
       }
     },
     {
@@ -492,55 +723,7 @@
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 2940
-      }
-    },
-    {
-      "id": "verify-tests",
-      "type": "script",
-      "config": {
-        "scriptFile": "scripts/verify-tests.sh",
-        "interpreter": "/bin/sh",
-        "timeoutSeconds": 5400
-      },
-      "label": "Verify tests vs baseline",
-      "description": "Deterministic regression gate: runs the pre-detected suite(s) and diffs failures against the branch-point baseline, emitting new_failures/build_broken/confidence. Nothing previously verified a pass's test claims \u2014 the agent that made the change also narrated the result, and refine-assess is toolless \u2014 so a regression introduced in pass N could be re-narrated as pre-existing in pass N+40 while every later pass built on it. Fails OPEN but LOUD (confidence=low) rather than blocking on unmeasurable evidence.",
-      "errorBehavior": {},
-      "position": {
-        "x": 0,
-        "y": 1540
-      }
-    },
-    {
-      "id": "approve-area",
-      "type": "agent_call",
-      "config": {
-        "templateFile": "templates/approve-area.md",
-        "model_profile": "approver-sonnet5-high",
-        "timeoutSeconds": 3600
-      },
-      "label": "Approve area (independent)",
-      "description": "The ONLY node permitted to tick an approval box. Re-derives the wired-and-fed evidence itself and is hard-blocked from approving while verify-tests reports any new failure or build break. The 2-approval redundancy assumed two independent judgements; with one profile doing both the fix and the approval it was the same model grading itself twice, which is how hollow approvals ship.",
-      "errorBehavior": {},
-      "position": {
-        "x": 0,
-        "y": 1680
-      }
-    },
-    {
-      "id": "refine-rescue",
-      "type": "agent_call",
-      "config": {
-        "templateFile": "templates/refine.md",
-        "model_profile": "refine-deep",
-        "timeoutSeconds": 3600
-      },
-      "label": "Refine (Opus rescue pass)",
-      "description": "One stronger pass per stagnation event. Stagnation used to exit the loop and ship the PR with the review plan unfinished; with a cheaper worker that triggers more often. Same mission template, stronger model. If the rescue also makes no progress the streak reaches 3 and the loop exits for real, so this cannot spin.",
-      "errorBehavior": {},
-      "position": {
-        "x": 840,
-        "y": 1400
+        "y": 3500
       }
     }
   ],
@@ -555,7 +738,17 @@
     },
     {
       "source": "notify-start",
-      "target": "derive-scope"
+      "target": "resumed?"
+    },
+    {
+      "source": "resumed?",
+      "target": "derive-scope",
+      "output": "fresh"
+    },
+    {
+      "source": "resumed?",
+      "target": "restore-state",
+      "output": "resume"
     },
     {
       "source": "derive-scope",
@@ -567,10 +760,6 @@
     },
     {
       "source": "baseline-tests",
-      "target": "record-baseline"
-    },
-    {
-      "source": "record-baseline",
       "target": "seed-ralph"
     },
     {
@@ -583,7 +772,76 @@
     },
     {
       "source": "checkpoint-push-seed",
-      "target": "refine"
+      "target": "record-baseline"
+    },
+    {
+      "source": "restore-state",
+      "target": "record-baseline"
+    },
+    {
+      "source": "record-baseline",
+      "target": "select-work"
+    },
+    {
+      "source": "select-work",
+      "target": "work-router"
+    },
+    {
+      "source": "work-router",
+      "target": "push-and-pr",
+      "output": "done",
+      "label": "nothing outstanding"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-single-1",
+      "output": "single1"
+    },
+    {
+      "source": "refine-single-1",
+      "target": "verify-tests-single1"
+    },
+    {
+      "source": "verify-tests-single1",
+      "target": "assess-single-1"
+    },
+    {
+      "source": "assess-single-1",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-single-2",
+      "output": "single2"
+    },
+    {
+      "source": "refine-single-2",
+      "target": "verify-tests-single2"
+    },
+    {
+      "source": "verify-tests-single2",
+      "target": "assess-single-2"
+    },
+    {
+      "source": "assess-single-2",
+      "target": "record-pass-commit"
+    },
+    {
+      "source": "work-router",
+      "target": "refine-paired",
+      "output": "paired"
+    },
+    {
+      "source": "refine-paired",
+      "target": "verify-tests-paired"
+    },
+    {
+      "source": "verify-tests-paired",
+      "target": "assess-paired"
+    },
+    {
+      "source": "assess-paired",
+      "target": "record-pass-commit"
     },
     {
       "source": "record-pass-commit",
@@ -603,9 +861,9 @@
     },
     {
       "source": "refine-gate",
-      "target": "refine",
+      "target": "select-work",
       "output": "loop",
-      "label": "back-edge: another pass"
+      "label": "back-edge: re-route"
     },
     {
       "source": "refine-gate",
@@ -623,28 +881,6 @@
     {
       "source": "notify-teams",
       "target": "done"
-    },
-    {
-      "source": "refine",
-      "target": "verify-tests"
-    },
-    {
-      "source": "refine-rescue",
-      "target": "verify-tests"
-    },
-    {
-      "source": "verify-tests",
-      "target": "approve-area"
-    },
-    {
-      "source": "approve-area",
-      "target": "record-pass-commit"
-    },
-    {
-      "source": "refine-gate",
-      "target": "refine-rescue",
-      "output": "rescue",
-      "label": "stagnation: one Opus rescue"
     }
   ]
 }

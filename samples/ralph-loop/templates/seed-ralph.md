@@ -23,8 +23,9 @@ commit them. The user is unavailable — do not ask questions, make the calls yo
 
 | Path | What it is |
 |---|---|
-| `./work/RALPH.md` | the charter: goal, scope, test commands, definition of done, **and the loop protocol** |
-| `./work/docs/reference/focus-areas.md` | the review plan — two tables, described below |
+| `./work/RALPH.md` | the charter: goal, scope, test commands, definition of done, **and the loop protocol for all three roles** |
+| `./work/docs/reference/focus-areas.md` | the **single-system** review plan (two approvals per area) |
+| `./work/docs/reference/paired-reviews.md` | the **paired integration** review plan (one approval per row) |
 | `./work/docs/reference/gaps-identified.md` | concrete known gaps, with a `Won't Fix` section |
 
 Create `./work/docs/reference/` if it does not exist.
@@ -97,7 +98,11 @@ nobody can audit.
 **This is a hard constraint, not advice.** Compute the implied minimum pass count
 as `2 × singles + paired`, then require:
 
-> `2 × singles + paired` **≤ `{{max_ralph_iterations}}` × 0.35**
+> `2 × singles + ceil(paired ÷ 3)` **≤ `{{max_ralph_iterations}}` × 0.35**
+
+Paired rows are charged at a third of a pass because up to four sharing an
+area are reviewed together; singles are charged two passes each because their
+two approvals are deliberately independent and cannot be batched.
 
 The 0.35 is measured, not guessed: observed runs advance about **0.38 approval
 boxes per pass**, because passes are also spent closing gaps, fixing regressions
@@ -155,19 +160,32 @@ generic reminders.
 
 ## Table format
 
+`./work/docs/reference/focus-areas.md`:
+
 ```markdown
 ## Single-System Reviews
 
 | # | Focus Area | Risk | Review 1 Status | Review 2 Status |
 |---|---|---|---|---|
 | 1 | <area> | high | [ ] | [ ] |
+```
 
+`./work/docs/reference/paired-reviews.md`:
+
+```markdown
 ## Paired Integration Reviews
 
 | # | Paired Review | Seam | Risk | Status |
 |---|---|---|---|---|
 | 1 | <A> as impacted by <B> | <the shared symbol/table/flag> | high | [ ] |
+
+## No seam
+
+- `DEFERRED (budget)` — <pair> — <why it is lower risk for this branch>
 ```
+
+Rows in BOTH files are ordered **highest risk first**. The `## No seam` list
+lives at the end of `paired-reviews.md`.
 
 Rows in both tables are ordered **highest risk first**.
 
@@ -176,7 +194,12 @@ Rows in both tables are ordered **highest risk first**.
 **Transcribe the block below exactly — do not paraphrase, summarise, renumber or
 invent your own.** Substitute only the bracketed placeholder.
 
-Without it the refinement agent has no rule for what *ends* a pass: it will
+**All three role blocks are mandatory.** `verify-ralph-seed` greps each one
+separately for its Wrap Up, its self-assessment and its promise tags, and FAILS
+THE RUN if any role is missing them — a file can otherwise carry a perfect
+protocol for one role and silently omit the stop rule for another, which
+surfaces sixty passes later as a timeout. Without them the refinement agent has
+no rule for what *ends* a pass: it will
 improvise a protocol that says what to do and never says when to stop, sprawl
 across several review areas in one pass, and leave the loop unable to tell
 progress from churn. It also carries the separation between the agent that fixes
@@ -185,72 +208,110 @@ by the same model that made it.
 
 ---8<--- copy from here ---8<---
 
-## Roles
+## Role: single-review-1
 
-Each iteration runs TWO agents, deliberately on different models:
+*Refined by Sonnet 5, assessed by GPT-5.6-sol. The first independent look at an area.*
 
-- The **refinement pass** reviews one area, fixes the most important issue, records findings, and commits. It **never** ticks an approval box.
-- The **approver** runs immediately afterwards, re-derives the evidence independently, and is the ONLY agent permitted to tick a box in `docs/reference/focus-areas.md`.
-
-An agent that certifies its own change has performed no review. A mistake approved by its own author stops being visible and compounds into every later pass.
-
-A script also runs `[TEST COMMANDS]` after each pass and diffs the failures against the recorded baseline. Any NEW failure, or a target that built at baseline and no longer builds, blocks every approval until it is fixed.
-
-## Constraints
-
-- **Do NOT use sub-agents.** Review and fix by hand, one component at a time.
+### Constraints
+- **Do NOT use sub-agents.** Work by hand, one component at a time.
 - **Read before you write.** Read a file before modifying it; verify before declaring anything fine.
-- **One single-system area per iteration. Fix the most important issue, then stop.**
-- **Paired integration reviews may be batched**: up to FOUR unchecked seams that share an already-loaded area may be reviewed in one pass. They carry one approval each and are usually inspection, not repair. Each seam must be examined and reported separately.
-- **Do NOT invent new functionality.** Log perceived gaps in `docs/reference/gaps-identified.md`. Clearly out-of-scope items go under `Won't Fix`.
-- **Approvals are independent.** Never record two approvals for a single-system area in one pass — the second approval exists to catch what the first missed.
-- **Never tick a box for work you performed yourself.**
+- **One single-system area per iteration.** Fix the most important issue, then stop.
+- **Do NOT invent new functionality.** Log gaps in `docs/reference/gaps-identified.md`; out-of-scope items go under `Won't Fix`.
+- **The refiner never ticks a box; the approver never writes production code.** They run on different model families on purpose.
 
-## Iteration Structure (refinement pass)
+### Iteration Structure
+1. **Read tracking** — `RALPH.md`, and the control file for this role.
+2. **Read the code** — every file the assigned item covers.
+3. **Cross-reference** — apply the wired-and-fed criteria below; record findings in `docs/reference/gaps-identified.md`.
+4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
+5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
+6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
 
-1. **Read tracking** — Read `docs/reference/focus-areas.md`. Pick the HIGHEST-RISK review with an unchecked status, reading the Risk column across BOTH tables; break ties by table (single-system first), then number. The loop may be stopped by its cap before the plan is finished, so risk order is what makes a truncated run useful.
-2. **Read the code** — Read every file the review covers.
-3. **Cross-reference** — Apply the wired-and-fed criteria in RALPH.md. Record findings in `docs/reference/gaps-identified.md`.
-4. **Fix the most important issue** — ONE issue per iteration, fixed well across all affected files.
-5. **Write/verify tests** — happy path, success, failure, error, edge. Strict TDD when adding behaviour.
-6. **Run tests** — Run `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
-7. **Assess the review**, then proceed to Wrap Up regardless of the outcome. **Do not go back to step 4.**
+### Wrap Up
+**Step A** — Did the item meet every criterion?
 
-Most review areas need multiple passes. That is normal and expected — do not try
-to finish everything in one pass, and never inflate a recommendation to end the loop sooner.
-
-## Wrap Up (refinement pass)
-
-**Step A** — Did the review area meet every criterion for approval?
-
-**Step B** — Record a **recommendation**; do NOT tick any box. One line, exactly one of: `Recommend: approve area <N> review <1|2> — <the evidence>` or `Recommend: no approval for area <N> — <what is still missing>`.
+**Step B** — Record a recommendation; tick NOTHING. The approver ticks Review 1 Status in `docs/reference/focus-areas.md`.
 
 **Step C** — Commit and push. Your work is valuable regardless of review status.
 
-**Step D** — State what this pass advanced, as a single line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly "no fix landed" and why. The progress assessor has no tools and sees only your response; Step E reports what REMAINS, so without this line progress is indistinguishable from churn.
+**Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
 
-**Step E** — Check both files:
-1. Does every single-system review have BOTH approvals, and every paired review its one approval?
-2. Are there ANY unchecked `[ ]` items in `docs/reference/gaps-identified.md`?
-
-Then output exactly one tag:
+**Step E** — Check the tracking files, then output exactly one tag:
 - All reviews approved AND no open gaps: `<promise>FINIT</promise>`
 - Otherwise: `<promise>CLOSER</promise>`
 
 **Stop after the tag every time.**
 
-## Approval (approver only)
+## Role: single-review-2
 
-**Step A** — Re-derive the evidence yourself: read `docs/reference/focus-areas.md`, then `git log --oneline -5` and `git show --stat HEAD`, then the diff. Run the wired-and-fed greps yourself. Do not accept the pass's claims as evidence.
+*Refined by GPT-5.6-sol, assessed by Opus 5. Review 1 already passed — this pass exists to find what the first reviewer MISSED, from a different model family.*
 
-**Step B** — If the deterministic test check reported ANY new failure versus the baseline, or a new build break, tick NOTHING and log it as an unchecked gap. Otherwise tick **at most ONE** box for a single-system area, or up to FOUR paired rows that this pass genuinely reviewed — each cited separately.
+### Constraints
+- **Do NOT use sub-agents.** Work by hand, one component at a time.
+- **Read before you write.** Read a file before modifying it; verify before declaring anything fine.
+- **One single-system area per iteration.** Fix the most important issue, then stop.
+- **Do NOT invent new functionality.** Log gaps in `docs/reference/gaps-identified.md`; out-of-scope items go under `Won't Fix`.
+- **The refiner never ticks a box; the approver never writes production code.** They run on different model families on purpose.
 
-**Step C** — Commit and push, whether or not you approved.
+### Iteration Structure
+1. **Read tracking** — `RALPH.md`, and the control file for this role.
+2. **Read the code** — every file the assigned item covers.
+3. **Cross-reference** — apply the wired-and-fed criteria below; record findings in `docs/reference/gaps-identified.md`.
+4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
+5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
+6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
 
-**Step D** — State the outcome as a single line: `Approved: area <N> review <1|2> — <the evidence>` or `Withheld: area <N> — <what is missing>`.
+### Wrap Up
+**Step A** — Did the item meet every criterion?
 
-Withholding approval is a successful outcome. The loop has its own backstops for
-forward motion; the approver exists so that a ticked box means something.
+**Step B** — Record a recommendation; tick NOTHING. The approver ticks Review 2 Status in `docs/reference/focus-areas.md`.
+
+**Step C** — Commit and push. Your work is valuable regardless of review status.
+
+**Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
+
+**Step E** — Check the tracking files, then output exactly one tag:
+- All reviews approved AND no open gaps: `<promise>FINIT</promise>`
+- Otherwise: `<promise>CLOSER</promise>`
+
+**Stop after the tag every time.**
+
+## Role: paired-review
+
+*Refined by Opus 5, assessed by GPT-5.6-sol. Phase 2: runs only once every single-system box is ticked.*
+
+### Constraints
+- **Do NOT use sub-agents.** Work by hand, one component at a time.
+- **Read before you write.** Read a file before modifying it; verify before declaring anything fine.
+- **Up to FOUR paired rows sharing an already-loaded area per iteration.** Fix the most important issue, then stop.
+- **Do NOT invent new functionality.** Log gaps in `docs/reference/gaps-identified.md`; out-of-scope items go under `Won't Fix`.
+- **The refiner never ticks a box; the approver never writes production code.** They run on different model families on purpose.
+
+### Iteration Structure
+1. **Read tracking** — `RALPH.md`, and the control file for this role.
+2. **Read the code** — every file the assigned item covers.
+3. **Cross-reference** — apply the wired-and-fed criteria below; record findings in `docs/reference/gaps-identified.md`.
+4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
+5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
+6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
+
+### Wrap Up
+**Step A** — Did the item meet every criterion?
+
+**Step B** — Record a recommendation per row; tick NOTHING. The approver ticks up to four rows in `docs/reference/paired-reviews.md`, each cited separately.
+
+**Step C** — Commit and push. Your work is valuable regardless of review status.
+
+**Step D** — One line: `Progress: <what advanced>` — the fix you landed, the gap you closed, the component you wired, or explicitly what did not advance and why. The progress assessor has no tools and sees only your response.
+
+**Step E** — Check the tracking files, then output exactly one tag:
+- All reviews approved AND no open gaps: `<promise>FINIT</promise>`
+- Otherwise: `<promise>CLOSER</promise>`
+
+**Stop after the tag every time.**
 
 ---8<--- copy to here ---8<---
 

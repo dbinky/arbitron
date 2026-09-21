@@ -124,14 +124,14 @@ if [ "$(printf '%s' "$STAT" | wc -c)" -gt "$MAXLEN" ]; then
 … (truncated)"
 fi
 
-if printf '%s' "$CHANGED" | grep -qE '(focus-areas|gaps-identified)\.md$'; then
+if printf '%s' "$CHANGED" | grep -qE '(focus-areas|paired-reviews|gaps-identified)\.md$'; then
   TRACKING=true
 else
   TRACKING=false
 fi
 
 # Did anything OUTSIDE the tracking files change? That is real work.
-if printf '%s' "$CHANGED" | grep -qvE '^(RALPH\.md|docs/reference/(focus-areas|gaps-identified)\.md)$'; then
+if printf '%s' "$CHANGED" | grep -qvE '^(RALPH\.md|docs/reference/(focus-areas|paired-reviews|gaps-identified)\.md)$'; then
   CODE_CHANGED=true
 else
   CODE_CHANGED=false
@@ -139,9 +139,11 @@ fi
 [ -n "$CHANGED" ] || CODE_CHANGED=false
 
 PLAN="$WORK/docs/reference/focus-areas.md"
+PAIRPLAN="$WORK/docs/reference/paired-reviews.md"
 GAPS="$WORK/docs/reference/gaps-identified.md"
 BOXSTATE="$WS/last-box-counts"
-NOW_BOXES="$(count_ticked "$PLAN")"; NOW_GAPS="$(count_ticked "$GAPS")"
+NOW_BOXES=$(( $(count_ticked "$PLAN") + $(count_ticked "$PAIRPLAN") ))
+NOW_GAPS="$(count_ticked "$GAPS")"
 PREV_BOXES=0; PREV_GAPS=0
 if [ -f "$BOXSTATE" ]; then
   PREV_BOXES="$(cut -d' ' -f1 "$BOXSTATE" 2>/dev/null || echo 0)"

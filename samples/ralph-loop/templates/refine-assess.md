@@ -6,7 +6,9 @@ read files and must not claim to.
 
 ## Context
 - Tracking files live at `./work/RALPH.md`, `./work/docs/reference/focus-areas.md`, `./work/docs/reference/gaps-identified.md`.
-- The most recent refinement pass reported: {{refine.response}}
+- Router: {{select-work.summary}}
+- The most recent refinement pass reported (only one of these ran):
+  {{refine-single.response}}{{refine-paired.response}}
 - **What that pass actually committed** — read from git, not from the pass's prose:
   - new commits this pass: `{{record-pass-commit.new_commit_count}}`
   - tracking files (focus-areas / gaps-identified) touched: `{{record-pass-commit.tracking_touched}}`
@@ -124,5 +126,10 @@ coexist with an unwired component, so weigh the wiring evidence too.
     from the pass's `Progress:` line and the rest of its report — a pass that only
     re-ran tests, churned, or got blocked counts as `false`.
 - `consecutive_no_progress`: integer. If `progressed` is true, emit `0`. Otherwise
-  emit {{no_progress_streak}} + 1. This lets the loop bail out when it is stuck
-  rather than spinning to the iteration cap.
+  emit {{no_progress_streak}} + 1. Nothing else: it is a counter, not a verdict.
+  This number no longer decides whether the review is finished — `plan_complete`
+  does, and the gate reads it directly. The streak now only ends a run at the
+  hard-wedge threshold, well above the count at which a normal review withholds
+  an approval, so report it honestly and let the gate weigh it. Inflating it to
+  signal frustration, or holding it at zero to protect the run, both corrupt the
+  only wedge signal the loop has.

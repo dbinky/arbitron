@@ -1,101 +1,108 @@
 #!/bin/sh
-# Verifies that the RALPH.md written by seed-ralph actually carries the loop
-# protocol, BEFORE the refinement loop starts consuming it.
+# Verifies the seeded plan BEFORE the refinement loop consumes it. Two checks,
+# both deterministic, both fatal — a grep and a count will not pass on a retry,
+# so this halts rather than retrying.
 #
-# WHY THIS EXISTS: templates/seed-ralph.md used to ask for the charter content
-# (goal, test commands, definition of done, links) and say nothing about how a
-# pass ENDS. The seeding agent filled that vacuum by improvising a "Loop
-# protocol" section with no terminating instruction — no Wrap Up, no promise
-# tag, no "stop after the tag". The result looked structurally fine and was
-# silently broken: the refinement agent had no rule for ending a pass, so the
-# loop could not distinguish progress from churn.
+# CHECK 1 — the loop protocol, PER ROLE.
+# seed-ralph once specified the charter content but not how a pass ENDS. The
+# agent filled the vacuum with a protocol that had no terminator, and the loop
+# ran with no way to tell progress from churn. That cost a whole run.
 #
-# A grep is enough to catch that, and it costs nothing. Fail loudly here rather
-# than discover it 200 iterations later.
+# Now there are THREE roles in one RALPH.md (single review 1, single review 2,
+# paired), and the failure mode is worse: a file can carry a perfect protocol for
+# one role and silently omit the self-assessment or stop rule for another. The
+# missing one then surfaces sixty passes later as a timeout. So the markers are
+# checked INSIDE EACH ROLE BLOCK, not merely somewhere in the file.
 #
-# It ALSO enforces that the seeded plan fits the pass budget it will run under.
-# seed-ralph has always REPORTED the implied minimum pass count (2*singles +
-# paired) and nothing ever checked it. Two runs printed 248 and 202 against a 500
-# cap whose observed throughput is ~0.38 boxes/pass — both were unfinishable at
-# seed time, and both ran for days before anyone noticed. The number that proved
-# it was computed, displayed, and compared to nothing.
+# CHECK 2 — the plan must fit the pass budget.
+# seed-ralph has always reported the implied minimum pass count and nothing ever
+# compared it to anything. Two runs shipped plans of 248 and 202 against a 500
+# cap whose real throughput is ~0.38 boxes/pass; both ran for days and capped out
+# mid-review. Paired rows now batch, so they are charged at a third of a pass.
 #
 # Reads {work_dir, max_ralph_iterations} from stdin JSON.
-# Emits {ok, present, missing, singles, paired, implied_passes, budget}.
+# Emits {ok, roles, singles, paired, implied_passes, budget}.
 set -eu
 IN="$(cat)"
 WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
+[ -n "$WORK" ] || { echo "verify-ralph-seed: work_dir not set" >&2; exit 1; }
 CAP="$(printf '%s' "$IN" | jq -r '.max_ralph_iterations // 500')"
 case "$CAP" in ''|*[!0-9]*) CAP=500 ;; esac
-[ -n "$WORK" ] || { echo "verify-ralph-seed: work_dir not set" >&2; exit 1; }
 
 RALPH="$WORK/RALPH.md"
+PLAN="$WORK/docs/reference/focus-areas.md"
+PAIRPLAN="$WORK/docs/reference/paired-reviews.md"
+
 [ -f "$RALPH" ] || { echo "verify-ralph-seed: $RALPH does not exist — seed-ralph did not write it" >&2; exit 1; }
 
-# Each marker is a literal substring that must appear. Kept deliberately short
-# and lowercase-insensitive so reasonable rewording still passes, while the
-# load-bearing terminators (the two tags, the stop rule) are matched exactly.
-missing=""
-present=""
+TMP="${TMPDIR:-/tmp}/vrs.$$"; mkdir -p "$TMP"; trap 'rm -rf "$TMP"' EXIT
 
-want() { # label pattern grep-flags
-  if grep $3 -q -- "$2" "$RALPH"; then
-    present="$present $1"
-  else
-    missing="$missing $1"
+# The three role blocks. Each must be present and each must carry its own
+# terminators; a shared Wrap Up "somewhere in the file" is exactly the ambiguity
+# that let a role lose its stop rule last time.
+ROLES="single-review-1 single-review-2 paired-review"
+missing=""; present=""
+
+for role in $ROLES; do
+  # Block runs from this role's heading to the next role heading (or EOF).
+  awk -v r="$role" '
+    BEGIN{ IGNORECASE=1 }
+    tolower($0) ~ ("^#+[[:space:]]*role:[[:space:]]*" r "([^a-z0-9]|$)") { f=1; print; next }
+    f && tolower($0) ~ /^#+[[:space:]]*role:/ { f=0 }
+    f { print }' "$RALPH" > "$TMP/$role" 2>/dev/null || : > "$TMP/$role"
+
+  if [ ! -s "$TMP/$role" ]; then
+    missing="$missing $role(no-block)"
+    continue
   fi
-}
-
-# NOTE: these markers are deliberately no stricter than the canonical
-# ralph-plan template (skills/ralph-plan/docs/templates/RALPH.md). A verifier
-# that rejects a correctly-seeded file is worse than no verifier — the first
-# draft of this check demanded "Do not go back", which the canonical template
-# does not contain, and it failed the canonical itself.
-want finit-tag       '<promise>FINIT</promise>'   -F
-want closer-tag      '<promise>CLOSER</promise>'  -F
-want wrap-up         'Wrap Up'                    -i
-want stop-after-tag  'Stop after the tag'         -i
-want one-issue       'then stop'                  -i
-want wrapup-always   'proceed to Wrap Up'         -i
+  for chk in 'finit:<promise>FINIT</promise>:-F' 'closer:<promise>CLOSER</promise>:-F' \
+             'wrapup:Wrap Up:-i' 'stoptag:Stop after the tag:-i' \
+             'thenstop:then stop:-i' 'towrapup:proceed to Wrap Up:-i'; do
+    lbl="${chk%%:*}"; rest="${chk#*:}"; pat="${rest%:*}"; flg="${rest##*:}"
+    if grep $flg -q -- "$pat" "$TMP/$role"; then
+      present="$present $role/$lbl"
+    else
+      missing="$missing $role/$lbl"
+    fi
+  done
+done
 
 if [ -n "$missing" ]; then
   echo "verify-ralph-seed: RALPH.md is missing loop-protocol elements:$missing" >&2
   echo "  present:$present" >&2
-  echo "  A RALPH.md without a terminating rule makes the refinement loop" >&2
-  echo "  unbounded: passes never end deliberately and the gate cannot tell" >&2
-  echo "  progress from churn. Re-seed with the verbatim protocol block from" >&2
-  echo "  templates/seed-ralph.md." >&2
+  echo "  Each of the three roles needs its OWN Wrap Up, self-assessment and" >&2
+  echo "  terminating promise tag. A role without a stop rule makes that half of" >&2
+  echo "  the loop unbounded: its passes never end deliberately and the gate" >&2
+  echo "  cannot tell progress from churn. Re-seed with the verbatim per-role" >&2
+  echo "  protocol blocks from templates/seed-ralph.md." >&2
   exit 1
 fi
 
-# --- budget check -------------------------------------------------------------
-# Fails the run rather than retrying: a deterministic count will not change on a
-# second attempt, and an over-budget plan wastes days before it is noticed.
-PLAN="$WORK/docs/reference/focus-areas.md"
-SINGLES=0; PAIRED=0
-if [ -f "$PLAN" ]; then
-  COUNTS="$(awk '
-    /^[[:space:]]*#/ {
-      h = tolower($0)
-      if (h ~ /pair/)        sect = "paired"
-      else if (h ~ /single/) sect = "single"
-      else                   sect = "other"
-      next
-    }
-    { if ($0 !~ /^[[:space:]]*\|/) next
-      if ($0 !~ /\[[ xX]\]/) next
-      if (sect == "paired")      pt++
-      else if (sect == "single") st++ }
-    END { printf "%d %d", st+0, pt+0 }' "$PLAN")"
-  set -- $COUNTS; SINGLES=$1; PAIRED=$2
+count_rows() { # file -> row count
+  [ -f "$1" ] || { echo 0; return; }
+  awk '{ if ($0 !~ /^[[:space:]]*\|/) next
+         if ($0 !~ /\[[ xX]\]/) next
+         if ($0 !~ /\|[[:space:]]*[0-9]+[[:space:]]*\|/) next
+         n++ } END { printf "%d", n+0 }' "$1"
+}
+SINGLES="$(count_rows "$PLAN")"
+PAIRED="$(count_rows "$PAIRPLAN")"
+
+# Paired rows batch up to four per pass; charged at three to stay conservative.
+PAIRED_PASSES=$(( (PAIRED + 2) / 3 ))
+IMPLIED=$(( 2 * SINGLES + PAIRED_PASSES ))
+BUDGET=$(( CAP * 35 / 100 ))
+
+if [ "$SINGLES" -eq 0 ] && [ "$PAIRED" -eq 0 ]; then
+  echo "verify-ralph-seed: no review rows found in $PLAN or $PAIRPLAN — the plan is empty or unparseable." >&2
+  exit 1
 fi
-IMPLIED=$((2 * SINGLES + PAIRED))
-BUDGET=$((CAP * 35 / 100))
 
 if [ "$IMPLIED" -gt "$BUDGET" ]; then
   echo "verify-ralph-seed: the seeded plan CANNOT FINISH in its pass budget." >&2
-  echo "  $SINGLES single-system areas x2 + $PAIRED paired reviews = $IMPLIED passes MINIMUM," >&2
-  echo "  with zero rework, against a budget of $BUDGET (35% of max_ralph_iterations=$CAP)." >&2
+  echo "  $SINGLES single-system areas x2 + $PAIRED paired rows batched at 3 ($PAIRED_PASSES passes)" >&2
+  echo "  = $IMPLIED passes MINIMUM with zero rework, against a budget of $BUDGET" >&2
+  echo "  (35% of max_ralph_iterations=$CAP)." >&2
   echo "  Observed throughput is ~0.38 approval boxes per pass, so the real cost is" >&2
   echo "  roughly 2.6x the minimum. A plan this size runs for days and still caps out" >&2
   echo "  mid-review — one such run reached 13% of its plan in 50 hours." >&2
@@ -106,5 +113,5 @@ fi
 
 jq -n --arg p "${present# }" --argjson s "$SINGLES" --argjson pr "$PAIRED" \
       --argjson im "$IMPLIED" --argjson b "$BUDGET" \
-  '{ok:true, present:($p|split(" ")), missing:[],
-    singles:$s, paired:$pr, implied_passes:$im, budget:$b}'
+  '{ok:true, roles:($p|split(" ")), singles:$s, paired:$pr,
+    implied_passes:$im, budget:$b}'

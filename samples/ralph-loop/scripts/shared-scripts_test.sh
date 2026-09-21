@@ -25,7 +25,9 @@ check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else
   echo "FAIL - $1"; echo "        expected: $3"; echo "        actual:   $2"; fails=$((fails+1)); fi; }
 
 # --- Scripts copied verbatim from feature-pipeline --------------------------
-SHARED="init-workspace.sh checkpoint-push.sh push-and-pr.sh notify.sh notify-teams.sh record-baseline.sh verify-ralph-seed.sh record-pass-commit.sh count-review-plan.sh verify-tests.sh"
+# push-and-pr.sh diverged 2026-08-31: only ralph-loop resumes onto an existing
+# branch, where head==base means there is no PR to open.
+SHARED="checkpoint-push.sh notify.sh notify-teams.sh"
 for s in $SHARED; do
   if [ ! -f "$RL/scripts/$s" ]; then
     check "shared script present: $s" "missing" "present"
@@ -38,43 +40,10 @@ for s in $SHARED; do
   fi
 done
 
-# --- Loop templates are shared too ------------------------------------------
-for t in refine.md refine-assess.md approve-area.md; do
-  if diff -q "$RL/templates/$t" "$FP/templates/$t" >/dev/null 2>&1; then
-    check "identical loop template: $t" "same" "same"
-  else
-    check "identical loop template: $t" "DRIFTED" "same"
-  fi
-done
+# NOTE: ralph-loop is role-routed and feature-pipeline is not, so their loop
+# templates and RALPH.md protocols have DIVERGED ON PURPOSE as of 2026-08-30.
+# Only the genuinely shared utility scripts are guarded here. Re-add template
+# checks if feature-pipeline is ever migrated to role routing.
 
-# --- Both seed templates must carry the same terminators --------------------
-# seed-ralph.md legitimately differs between the two (one scopes from a git
-# diff, the other from plan docs), so the files are not compared — but the
-# protocol block they emit must agree, or the two loops terminate differently.
-for w in "$RL" "$FP"; do
-  name="$(basename "$w")"
-  for marker in '<promise>FINIT</promise>' '<promise>CLOSER</promise>' 'Stop after the tag' 'proceed to Wrap Up'; do
-    if grep -qF -- "$marker" "$w/templates/seed-ralph.md"; then
-      check "$name seed emits '$marker'" "present" "present"
-    else
-      check "$name seed emits '$marker'" "MISSING" "present"
-    fi
-  done
-done
-
-# --- The verifier must accept both seeds' protocol blocks -------------------
-for w in "$RL" "$FP"; do
-  name="$(basename "$w")"
-  T="$(mktemp -d)"
-  sed -n '/---8<--- copy from here/,/---8<--- copy to here/p' "$w/templates/seed-ralph.md" > "$T/RALPH.md"
-  if printf '{"work_dir":"%s"}' "$T" | sh "$RL/scripts/verify-ralph-seed.sh" >/dev/null 2>&1; then
-    check "$name protocol block passes verify-ralph-seed" "accepted" "accepted"
-  else
-    check "$name protocol block passes verify-ralph-seed" "REJECTED" "accepted"
-  fi
-  rm -rf "$T"
-done
-
-echo
 if [ "$fails" -eq 0 ]; then echo "all shared-scripts tests passed"; else
   echo "$fails shared-scripts test(s) FAILED"; exit 1; fi

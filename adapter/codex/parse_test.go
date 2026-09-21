@@ -190,3 +190,96 @@ func TestParseOutput_FailedFlagSetOnTerminalError(t *testing.T) {
 		})
 	}
 }
+
+// failureCause is the best-effort scan the non-zero-exit path uses to recover
+// the real cause from a `codex exec --json` stdout stream. Unlike parseOutput it
+// must NEVER fail closed: on the exit path the process error is already the
+// headline, so a garbled stream may only mean "no cause found".
+
+// HAPPY — a turn.failed event's message is the cause.
+func TestFailureCause_TurnFailedMessage(t *testing.T) {
+	got := failureCause([]string{
+		`{"type":"thread.started","thread_id":"t"}`,
+		`{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+	})
+	assert.Equal(t, "You've hit your usage limit.", got)
+}
+
+// HAPPY — a bare `error` event carries its message in `message`, not `error`.
+func TestFailureCause_ErrorEventMessage(t *testing.T) {
+	got := failureCause([]string{`{"type":"error","message":"stream disconnected"}`})
+	assert.Equal(t, "stream disconnected", got)
+}
+
+// SUCCESS — a stream with no failure event yields no cause, even when it carries
+// assistant text. Ordinary output must never be reported as a failure cause.
+func TestFailureCause_NoFailureEventYieldsNoCause(t *testing.T) {
+	got := failureCause([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"Done."}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}`,
+	})
+	assert.Empty(t, got, "assistant text is not a failure cause")
+}
+
+// FAILURE — the LAST failure message wins when codex reports more than one
+// distinct failure, so the cause reflects how the turn actually ended.
+func TestFailureCause_LastDistinctFailureWins(t *testing.T) {
+	got := failureCause([]string{
+		`{"type":"error","message":"transient stream hiccup"}`,
+		`{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+	})
+	assert.Equal(t, "You've hit your usage limit.", got)
+}
+
+// ERROR — a malformed line is skipped, not fatal: a failure event after it is
+// still recovered. Tolerance is the whole point on the exit path.
+func TestFailureCause_MalformedLineDoesNotHideLaterCause(t *testing.T) {
+	got := failureCause([]string{
+		`{"type":"item.completed", BROKEN`,
+		`{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+	})
+	assert.Equal(t, "You've hit your usage limit.", got,
+		"a garbled line must not mask a recoverable cause")
+}
+
+// ERROR — a stream that is entirely garbled simply yields no cause (never a
+// panic, never a parse error).
+func TestFailureCause_FullyGarbledStreamYieldsNoCause(t *testing.T) {
+	assert.Empty(t, failureCause([]string{`NOT JSON`, `{"broken`}))
+}
+
+// EDGE — a failure event with an EMPTY message yields no cause, so the caller
+// never appends a dangling separator to its error string.
+func TestFailureCause_FailureWithEmptyMessageYieldsNoCause(t *testing.T) {
+	assert.Empty(t, failureCause([]string{`{"type":"turn.failed","error":{"message":""}}`}))
+	assert.Empty(t, failureCause([]string{`{"type":"turn.failed"}`}))
+}
+
+// EDGE — codex emits BOTH `error` and `turn.failed` with the SAME message; the
+// cause is that message, reported once.
+func TestFailureCause_DuplicatePairReportsMessageOnce(t *testing.T) {
+	msg := "You've hit your usage limit."
+	got := failureCause([]string{
+		`{"type":"error","message":"` + msg + `"}`,
+		`{"type":"turn.failed","error":{"message":"` + msg + `"}}`,
+	})
+	assert.Equal(t, msg, got)
+}
+
+// EDGE — empty and blank-only streams yield no cause.
+func TestFailureCause_EmptyStreamYieldsNoCause(t *testing.T) {
+	assert.Empty(t, failureCause(nil))
+	assert.Empty(t, failureCause([]string{"", "   "}))
+}
+
+// EDGE — a messageless failure event must NOT promote preceding assistant text
+// into the cause. The cause is the failure message itself, never the running
+// summary, so a turn that printed output and then failed silently reports no
+// cause rather than a misleading one.
+func TestFailureCause_MessagelessFailureDoesNotPromoteAssistantText(t *testing.T) {
+	got := failureCause([]string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"Done: edited the workspace."}}`,
+		`{"type":"turn.failed"}`,
+	})
+	assert.Empty(t, got, "assistant text must never be reported as the failure cause")
+}

@@ -428,3 +428,103 @@ func TestEventStream_Edge_CloseReportsStreamDone(t *testing.T) {
 	_, err := s.Next(context.Background())
 	assert.ErrorIs(t, err, errStreamDone)
 }
+
+// runFold drives foldExecStream over a canned stdout stream and returns the
+// terminal event it emitted (the last one on the channel).
+func runFold(t *testing.T, ctx context.Context, lines []string, waitErr error) turnEvent {
+	t.Helper()
+	in := make(chan string)
+	go func() {
+		defer close(in)
+		for _, l := range lines {
+			in <- l
+		}
+	}()
+	events := make(chan turnEvent, len(lines)+4)
+	foldExecStream(ctx, in, func() error { return waitErr }, events, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	var last turnEvent
+	got := false
+	for ev := range events {
+		last, got = ev, true
+	}
+	require.True(t, got, "foldExecStream must emit a terminal event")
+	return last
+}
+
+// HAPPY (the bug, interactive path) — a non-zero exit whose stdout carried a
+// `turn.failed` must surface that message. The interactive path had the SAME
+// inverted precedence as the batch path: the exit branch returned first, so the
+// folded cause was never reported.
+func TestFoldExecStream_NonZeroExitSurfacesFoldedCause(t *testing.T) {
+	last := runFold(t, context.Background(), []string{
+		`{"type":"thread.started","thread_id":"thr-limited"}`,
+		`{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+	}, errors.New("exit status 1"))
+
+	require.Equal(t, turnFailed, last.Kind)
+	require.Error(t, last.Err)
+	assert.Contains(t, last.Err.Error(), "You've hit your usage limit.",
+		"the folded turn.failed cause must reach the consumer, not just the exit status")
+	assert.Contains(t, last.Err.Error(), "exit status 1", "the process exit must stay visible")
+}
+
+// FAILURE — a non-zero exit with no folded cause still reports the bare exit
+// error (unchanged behaviour).
+func TestFoldExecStream_NonZeroExitWithoutCauseStaysBare(t *testing.T) {
+	last := runFold(t, context.Background(), []string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"Done."}}`,
+	}, errors.New("exit status 1"))
+
+	require.Equal(t, turnFailed, last.Kind)
+	require.Error(t, last.Err)
+	assert.Contains(t, last.Err.Error(), "exit status 1")
+	assert.NotContains(t, last.Err.Error(), "Done.", "assistant text is not a failure cause")
+}
+
+// SUCCESS — a clean exit with a folded failure still reports the folded cause
+// (unchanged behaviour), and a clean exit with no failure is a clean turnDone.
+func TestFoldExecStream_CleanExitKeepsExistingOutcomes(t *testing.T) {
+	failedTurn := runFold(t, context.Background(), []string{
+		`{"type":"turn.failed","error":{"message":"model refused"}}`,
+	}, nil)
+	require.Equal(t, turnFailed, failedTurn.Kind)
+	assert.Contains(t, failedTurn.Err.Error(), "model refused")
+
+	okTurn := runFold(t, context.Background(), []string{
+		`{"type":"thread.started","thread_id":"thr-1"}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"Done."}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":3}}`,
+	}, nil)
+	require.Equal(t, turnDone, okTurn.Kind)
+	assert.Equal(t, "thr-1", okTurn.SessionID)
+	assert.Equal(t, 7, okTurn.TokensIn)
+}
+
+// ERROR — a malformed line still yields exactly one terminal parse failure and
+// the exit error does not add a second (unchanged fail-closed behaviour).
+func TestFoldExecStream_MalformedLineStillFailsClosed(t *testing.T) {
+	last := runFold(t, context.Background(), []string{`{"type":"item.completed", BROKEN`}, errors.New("exit status 1"))
+	require.Equal(t, turnFailed, last.Kind)
+	assert.ErrorIs(t, last.Err, ErrParse)
+}
+
+// EDGE — a cancelled ctx must NOT emit a spurious turnFailed for the process the
+// deadline just killed, even when stdout carried a cause. The consumer learns of
+// the cancel via ctx.Done, so surfacing the cause here would report the kill as
+// the turn's own failure. Recovering the cause on the exit path must not breach
+// this guard.
+// The guard covers the EXIT branch only: a turn that genuinely folded a
+// turn.failed before the cancel still reports it (that is the turn's own
+// failure, not an artifact of the kill).
+func TestFoldExecStream_CancelledCtxEmitsNoTurnFailedForTheExitCode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// No failure event on stdout — the ONLY failure signal is the killed
+	// process's exit code, which the guard must not report as a turn failure.
+	last := runFold(t, ctx, []string{
+		`{"type":"item.completed","item":{"type":"agent_message","text":"Done."}}`,
+	}, errors.New("signal: killed"))
+
+	assert.NotEqual(t, turnFailed, last.Kind,
+		"a cancelled ctx must not report the killed process's exit code as the turn's failure")
+}

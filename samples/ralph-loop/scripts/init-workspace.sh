@@ -112,6 +112,13 @@ fi
 # option even for an unusual ref. Otherwise we clone the remote HEAD (the repo's
 # default branch), exactly as before. `--` ends option parsing for the
 # positional repo/dir args (defence in depth).
+# A previous attempt may have left a partial clone or worktree behind. git
+# clone refuses a non-empty destination and `worktree add` refuses an existing
+# path, which turned one recoverable failure into three dead retries. Both are
+# per-instance scratch, so clearing them is safe: the real work lives on the
+# remote branch, which is exactly what a resume re-fetches.
+rm -rf "$SRC" "$WORK"
+
 if [ -n "$BASE_BRANCH" ]; then
   git clone --depth 1 --quiet "--branch=$BASE_BRANCH" -- "$REPO_URL" "$SRC" 1>&2
   BASE_REF="$BASE_BRANCH"
@@ -119,8 +126,27 @@ else
   git clone --depth 1 --quiet -- "$REPO_URL" "$SRC" 1>&2
   BASE_REF="$(git -C "$SRC" symbolic-ref --short HEAD)"
 fi
-BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
-git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
+# RESUME: when base_branch already carries a ralph review plan, do NOT cut a new
+# branch. A resumed run continues ON that branch so the earned approvals, the
+# committed baseline and the whole history stay in one place; cutting a fresh
+# branch would strand them behind a second PR. Detected rather than declared, so
+# a normal run needs no new input and cannot resume by accident.
+RESUMED=false
+if [ -n "$BASE_BRANCH" ] && git -C "$SRC" cat-file -e "origin/$BASE_BRANCH:docs/reference/focus-areas.md" 2>/dev/null; then
+  RESUMED=true
+fi
 
-jq -n --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
-  '{slug:$slug, run_date:$rd, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'
+if [ "$RESUMED" = true ]; then
+  BRANCH="$BASE_BRANCH"
+  # `git clone --branch=X` leaves X checked out in $SRC, and a branch cannot be
+  # checked out in two worktrees at once. Detach the clone so the ref is free.
+  git -C "$SRC" checkout --detach --quiet 1>&2
+  git -C "$SRC" worktree add --quiet "$WORK" "$BRANCH" 1>&2
+  echo "init-workspace: RESUMING on $BRANCH (it already carries a review plan)" >&2
+else
+  BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
+  git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
+fi
+
+jq -n --argjson resumed "$RESUMED" --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
+  '{slug:$slug, run_date:$rd, resumed:$resumed, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'

@@ -44,7 +44,8 @@ WS="$(printf '%s' "$IN" | jq -r '.workspace // empty')"
 WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
 [ -n "$WORK" ] || WORK="$WS/work"
 
-PLAN="$WORK/docs/reference/focus-areas.md"
+PLAN="$WORK/docs/reference/focus-areas.md"      # single-system reviews
+PAIRPLAN="$WORK/docs/reference/paired-reviews.md"  # paired integration reviews
 GAPS="$WORK/docs/reference/gaps-identified.md"
 
 emit() { # parse_ok plan_complete st su pt pu unchecked gaps summary
@@ -54,37 +55,34 @@ emit() { # parse_ok plan_complete st su pt pu unchecked gaps summary
       paired_total:$pt, paired_unapproved:$pu, unchecked_boxes:$ub, open_gaps:$og, summary:$s}'
 }
 
-if [ ! -f "$PLAN" ]; then
-  echo "count-review-plan: $PLAN not found" >&2
+if [ ! -f "$PLAN" ] && [ ! -f "$PAIRPLAN" ]; then
+  echo "count-review-plan: neither $PLAN nor $PAIRPLAN found" >&2
   emit false false 0 0 0 0 0 0 \
-    "PLAN NOT READABLE: $PLAN does not exist, so completion cannot be verified. Treating the plan as INCOMPLETE — do not emit done:true on this evidence."
+    "PLAN NOT READABLE: neither $PLAN nor $PAIRPLAN exists, so completion cannot be verified. Treating the plan as INCOMPLETE — do not emit done:true on this evidence."
   exit 0
 fi
 
 # Section-aware count. A row counts only if it is a table row carrying at least
 # one [ ] / [x] box, which skips prose, headers and the format example.
-COUNTS="$(awk '
-  /^[[:space:]]*#/ {
-    h = tolower($0)
-    if (h ~ /pair/)        sect = "paired"
-    else if (h ~ /single/) sect = "single"
-    else                   sect = "other"
-    next
-  }
-  {
-    line = $0
-    if (line !~ /^[[:space:]]*\|/) next
-    if (line !~ /\[[ xX]\]/) next
-    open = gsub(/\[ \]/, "[ ]", line)
-    if (sect == "paired")      { pt++; ub += open; if (open > 0) pu++ }
-    else if (sect == "single") { st++; ub += open; if (open > 0) su++ }
-    else                       { ot++; ub += open; if (open > 0) ou++ }
-  }
-  END { printf "%d %d %d %d %d %d %d", st+0, su+0, pt+0, pu+0, ot+0, ou+0, ub+0 }
-' "$PLAN")"
-
-set -- $COUNTS
-ST=$1; SU=$2; PT=$3; PU=$4; OT=$5; OU=$6; UB=$7
+# Two files now, so the count is per-file rather than section-aware. A row counts
+# only if it is a table row carrying at least one [ ] / [x] box, which skips
+# prose, headers and the format example.
+count_file() { # file -> "rows unapproved openboxes"
+  [ -f "$1" ] || { printf '0 0 0'; return; }
+  awk '
+    { line = $0
+      if (line !~ /^[[:space:]]*\|/) next
+      if (line !~ /\[[ xX]\]/) next
+      if (line !~ /\|[[:space:]]*[0-9]+[[:space:]]*\|/) next
+      total++
+      open = gsub(/\[ \]/, "[ ]", line)
+      ub += open
+      if (open > 0) un++ }
+    END { printf "%d %d %d", total+0, un+0, ub+0 }' "$1"
+}
+set -- $(count_file "$PLAN");     ST=$1; SU=$2; SB=$3
+set -- $(count_file "$PAIRPLAN"); PT=$1; PU=$2; PB=$3
+UB=$((SB + PB)); OT=0; OU=0
 
 # Gap items, excluding the Won't Fix section (never expected to close).
 OG=0

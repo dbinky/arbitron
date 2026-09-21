@@ -431,3 +431,115 @@ func TestRunAgent_NoSecretInLogsOrEnv(t *testing.T) {
 	_, hasKey := envValue(mr.calls[1].Env, "OPENAI_API_KEY")
 	assert.False(t, hasKey)
 }
+
+// usageLimitMission is the canned stream of a real quota refusal: codex emits a
+// `turn.failed` carrying the cause on --json STDOUT and exits non-zero, while
+// stderr holds only incidental noise (a shell-snapshot warning). Reproduced from
+// the 2026-09-12 ralph-loop failures, where the surfaced error was a bare
+// "exit status 1" and the real cause never reached the trace.
+func usageLimitMission() runScript {
+	return runScript{
+		lines: []string{
+			`{"type":"thread.started","thread_id":"thr-limited"}`,
+			`{"type":"turn.started"}`,
+			`{"type":"turn.failed","error":{"message":"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 14th, 2026 8:05 PM."}}`,
+		},
+		waitErr: errors.New("exit status 1"),
+	}
+}
+
+// HAPPY (the bug) — a non-zero exit whose stdout carried a `turn.failed` event
+// must surface that event's message as the cause. Without it a quota refusal is
+// indistinguishable from a crash.
+func TestRunAgent_NonZeroExitSurfacesStdoutFailureCause(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), usageLimitMission()}}
+	p := New(Config{Binding: codexBinding("gpt-5.6-sol", nil), BinaryPath: "codex", Runner: mr})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "approve", WorkDir: "/tmp/ws", Model: "gpt-5.6-sol",
+	})
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Contains(t, err.Error(), "You've hit your usage limit",
+		"the stdout turn.failed message is the real cause and must reach the surfaced error")
+	// The exit status and model must survive alongside the cause.
+	assert.Contains(t, err.Error(), "exit status 1", "the process exit must stay visible")
+	assert.Contains(t, err.Error(), "gpt-5.6-sol", "error still names the model that ran")
+}
+
+// SUCCESS (no regression) — a CLEAN exit carrying an error event keeps its
+// existing contract: the message folds into Summary and RunAgent returns a
+// result, not an error. Surfacing the cause on the failure path must not change
+// the clean path.
+func TestRunAgent_CleanExitWithErrorEventStillReturnsResult(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {lines: []string{
+		`{"type":"thread.started","thread_id":"thr-1"}`,
+		`{"type":"turn.failed","error":{"message":"model refused"}}`,
+	}}}}
+	p := New(Config{Binding: codexBinding("gpt-5.6-sol", nil), BinaryPath: "codex", Runner: mr})
+
+	res, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5.6-sol",
+	})
+	require.NoError(t, err, "a zero exit stays a success even when the turn failed")
+	require.NotNil(t, res)
+	assert.Equal(t, "model refused", res.Summary)
+}
+
+// FAILURE — a non-zero exit with NO failure event on stdout must report the bare
+// exit status. The fix must not invent a cause from ordinary assistant text.
+func TestRunAgent_NonZeroExitWithoutFailureEventStaysBare(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {
+		lines: []string{
+			`{"type":"thread.started","thread_id":"thr-1"}`,
+			`{"type":"item.completed","item":{"type":"agent_message","text":"Done: edited the workspace."}}`,
+		},
+		waitErr: errors.New("exit status 1"),
+	}}}
+	p := New(Config{Binding: codexBinding("gpt-5.6-sol", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5.6-sol",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit status 1")
+	assert.NotContains(t, err.Error(), "Done: edited the workspace.",
+		"assistant text is not a failure cause and must never be reported as one")
+}
+
+// ERROR — a non-zero exit whose stdout is garbled must still report the exit
+// error. The best-effort cause scan must never mask the real failure with a
+// parse error (the exit path does not fail closed on unreadable stdout).
+func TestRunAgent_NonZeroExitWithMalformedStdoutStillReportsExit(t *testing.T) {
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {
+		lines:   []string{`{"type":"item.completed", BROKEN`},
+		waitErr: errors.New("exit status 1"),
+	}}}
+	p := New(Config{Binding: codexBinding("gpt-5.6-sol", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5.6-sol",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit status 1", "the exit error must survive garbled stdout")
+	assert.NotErrorIs(t, err, ErrParse, "a parse error must not displace the process exit error")
+}
+
+// EDGE — the underlying exit error stays unwrappable through the added cause, so
+// errors.Is against an exec.ExitError (or any sentinel) keeps working for callers.
+func TestRunAgent_NonZeroExitCauseKeepsWaitErrUnwrappable(t *testing.T) {
+	sentinel := errors.New("exit status 1")
+	mr := &multiRunner{scripts: []runScript{compatibleProbe(), {
+		lines: []string{
+			`{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}`,
+		},
+		waitErr: sentinel,
+	}}}
+	p := New(Config{Binding: codexBinding("gpt-5.6-sol", nil), BinaryPath: "codex", Runner: mr})
+
+	_, err := p.RunAgent(context.Background(), engine.AgentMission{
+		Prompt: "go", WorkDir: "/tmp/ws", Model: "gpt-5.6-sol",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sentinel, "the wait error must remain in the chain via %w")
+}

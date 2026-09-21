@@ -121,10 +121,7 @@ func foldEvent(out *parsed, ev codexEvent) (newText string) {
 			out.tokensOut = ev.Usage.OutputTokens
 		}
 	case "error", "turn.failed":
-		msg := ev.Message
-		if msg == "" && ev.Error != nil {
-			msg = ev.Error.Message
-		}
+		msg := failureMessage(ev)
 		// A failed turn must surface its cause, not a silent empty result.
 		// codex emits BOTH an `error` and a `turn.failed` event carrying the
 		// SAME message, so dedupe an identical consecutive message into one
@@ -141,6 +138,61 @@ func foldEvent(out *parsed, ev codexEvent) (newText string) {
 		// event): ignored for forward-compat.
 	}
 	return ""
+}
+
+// failureMessage extracts the message an `error` / `turn.failed` event carries.
+// codex spells it `message` on `error` and `error.message` on `turn.failed`, so
+// both are read here — the ONE place that mapping lives, shared by foldEvent and
+// failureCause so the two can never disagree on what a failure event says.
+func failureMessage(ev codexEvent) string {
+	if ev.Message != "" {
+		return ev.Message
+	}
+	if ev.Error != nil {
+		return ev.Error.Message
+	}
+	return ""
+}
+
+// eventFailureCause returns the failure message ONE event states, or "" when the
+// event is not a failure event. It is the per-event form of failureCause, for the
+// streaming path (foldExecStream) that sees one event at a time — so batch and
+// stream recover a cause through the SAME vocabulary and can never diverge.
+func eventFailureCause(ev codexEvent) string {
+	switch ev.Type {
+	case "error", "turn.failed":
+		return failureMessage(ev)
+	}
+	return ""
+}
+
+// failureCause scans a `codex exec --json` stdout stream for the message of a
+// failure event and returns it ("" when the stream reports no failure cause).
+// The LAST distinct message wins, so the cause reflects how the turn ended.
+//
+// It is the recovery path for a NON-ZERO EXIT, where codex puts the real reason
+// on stdout (e.g. `turn.failed` with "You've hit your usage limit") while stderr
+// carries only incidental noise. It therefore differs from parseOutput in two
+// deliberate ways:
+//
+//   - BEST-EFFORT, never fail-closed: an unreadable line is skipped rather than
+//     returned as ErrParse. The process exit error is already the headline on
+//     this path, so a garbled stream may only mean "no cause found" — it must
+//     never mask the failure it is trying to explain.
+//   - Reads the failure MESSAGE only, never the running summary: a messageless
+//     failure event must not promote preceding assistant text into the cause.
+func failureCause(lines []string) string {
+	cause := ""
+	for _, l := range lines {
+		ev, ok, err := decodeLine(l)
+		if err != nil || !ok {
+			continue
+		}
+		if msg := eventFailureCause(ev); msg != "" {
+			cause = msg
+		}
+	}
+	return cause
 }
 
 // parseOutput folds a `codex exec --json` JSONL event stream into a parsed

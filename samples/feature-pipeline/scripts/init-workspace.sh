@@ -112,6 +112,10 @@ fi
 # option even for an unusual ref. Otherwise we clone the remote HEAD (the repo's
 # default branch), exactly as before. `--` ends option parsing for the
 # positional repo/dir args (defence in depth).
+# A previous attempt may have left a partial clone or worktree behind; git
+# refuses both, turning one recoverable failure into three dead retries.
+rm -rf "$SRC" "$WORK"
+
 if [ -n "$BASE_BRANCH" ]; then
   git clone --depth 1 --quiet "--branch=$BASE_BRANCH" -- "$REPO_URL" "$SRC" 1>&2
   BASE_REF="$BASE_BRANCH"

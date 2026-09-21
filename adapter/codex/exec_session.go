@@ -219,6 +219,10 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 
 	acc := &parsed{}
 	var failed bool
+	// cause is the last failure message the stream STATED (never the running
+	// summary, so a messageless failure cannot promote assistant text into it).
+	// It explains a non-zero exit, which on its own says only "exit status 1".
+	var cause string
 	for line := range lines {
 		if failed {
 			continue // keep draining so the subprocess can be reaped
@@ -232,6 +236,9 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 		if !ok {
 			continue
 		}
+		if msg := eventFailureCause(ev); msg != "" {
+			cause = msg
+		}
 		if newText := foldEvent(acc, ev); newText != "" {
 			sendTurnEvent(ctx, events, turnEvent{Kind: turnText, Text: newText}, logger)
 		}
@@ -244,7 +251,14 @@ func foldExecStream(ctx context.Context, lines <-chan string, wait func() error,
 	// A ctx cancel/timeout surfaces to the consumer via the stream's Next (ctx.Done);
 	// don't also emit a spurious turnFailed for the process the deadline just killed.
 	if waitErr != nil && ctx.Err() == nil {
-		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: fmt.Errorf("codex exec: exited with error: %w", waitErr)}, logger)
+		// The exit code alone says only "exit status 1"; when the stream stated a
+		// cause (e.g. a quota refusal), report BOTH so a refusal is
+		// distinguishable from a crash.
+		err := fmt.Errorf("codex exec: exited with error: %w", waitErr)
+		if cause != "" {
+			err = fmt.Errorf("codex exec: %s: exited with error: %w", cause, waitErr)
+		}
+		sendTurnEvent(ctx, events, turnEvent{Kind: turnFailed, Err: err}, logger)
 		return
 	}
 	if acc.failed {

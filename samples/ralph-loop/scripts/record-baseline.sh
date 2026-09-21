@@ -31,6 +31,8 @@
 set -eu
 IN="$(cat)"
 WS="$(printf '%s' "$IN" | jq -r '.workspace')"
+WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
+[ -n "$WORK" ] || WORK="$WS/work"
 F="$WS/test-baseline.json"
 
 emit_empty() {
@@ -47,6 +49,15 @@ fi
 if ! jq -e 'type=="object" and (.suites|type=="array")' "$F" >/dev/null 2>&1; then
   emit_empty "baseline file malformed (need an object with a .suites array) at $F"
   exit 0
+fi
+
+# Persist the baseline INTO the repo. It measures the BRANCH POINT, and a
+# resumed run must reuse this exact file rather than re-measuring: re-running
+# baseline-tests on a partly-refined branch would record the previous run's own
+# fixes as "pre-existing", permanently blinding the regression gate to anything
+# it had already broken.
+if [ -n "${WORK:-}" ] && [ -d "$WORK/docs/reference" ]; then
+  cp "$F" "$WORK/docs/reference/test-baseline.json" 2>/dev/null || true
 fi
 
 BASELINE="$(jq -c '.' "$F")"
