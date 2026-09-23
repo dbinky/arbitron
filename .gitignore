@@ -20,3 +20,5 @@ arbitron.log
 testResults.xml
 # Per-instance runtime workspaces (clones/worktrees created at execution)
 workspaces/instances/
+# macOS Finder metadata
+.DS_Store

@@ -14,11 +14,23 @@ Working **unattended** in the worktree at `./work`.
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
 - **Which box:** `{{select-work.next_kind}}`
-  - `single_1` → you may tick **Review 1 Status** only.
-  - `single_2` → you may tick **Review 2 Status** only. Review 1 already passed;
-    you are the independent second opinion and should be looking for what the
-    first reviewer missed rather than confirming it.
+  - `single_1` → you may tick **Review 1 Status** only. This is the **WIRING
+    lens**: the box means "the path exists and is fed": constructed at the
+    composition root, fed by a real producer, happy and success paths reaching
+    the sink.
+  - `single_2` → you may tick **Review 2 Status** only. This is the **FAILURE
+    lens**: the box means "we know how it fails": nil and empty inputs, timeouts,
+    partial failure and rollback, concurrency, ordering, each with a test that
+    goes red. Review 1 already passed on wiring; do not re-litigate it.
 - Never tick both boxes of an area. Never tick a box for a different area.
+
+The area's `### Area N — <name>` block in `focus-areas.md` lists the numbered
+checks for your lens. **Those checks are the approval criteria.** The box is ticked
+when every check of your lens is demonstrated with `file:symbol` evidence, and
+withheld when one is not; a finding that belongs to the other lens is recorded as
+a gap for that review and is **not** grounds to withhold this one. If the plan has
+no block for this area (plans seeded before 2026-09-11), judge against the
+wired-and-fed criteria below through your lens.
 
 ## First: is there anything new to judge?
 
@@ -76,6 +88,9 @@ Treat this as a **claim to be checked**, never as evidence:
 6. **Never withhold indefinitely on something no pass can resolve.** A gap that
    needs a human ruling or is out of scope gets marked `[ESCALATION]` in
    `gaps-identified.md` with the question stated plainly, then set aside.
+7. **Judge your lens only.** A wiring-lens box is not withheld for a missing
+   timeout test, and a failure-lens box is not withheld because you would have
+   wired it differently. Record the other lens's finding as a gap and move on.
 
 Rules 1–3 are the only automatic blocks. Past those, the decision is yours on the
 merits — and "the advisory list looks alarming" is not a merit.
@@ -84,14 +99,17 @@ merits — and "the advisory list looks alarming" is not a merit.
 
 Do not take the pass's word for anything. Re-derive it:
 
-1. Read `docs/reference/focus-areas.md` and find the assigned row.
+1. Read `docs/reference/focus-areas.md`: the assigned row and its `### Area N`
+   block, then the checks for your lens.
 2. Read what changed: `git -C ./work show --stat HEAD`, then the diff.
-3. Run the **wired-and-fed** checks yourself: `grep -rn <Symbol>` for
-   construction outside `*_test.go`; confirm composition-root wiring and name the
-   site; look for `nil`/empty/hardcoded production inputs; check that no test
-   passes only because a fake ignores a load-bearing argument; confirm all five
-   scenario categories and that at least one test fails if its production input
-   were nil/empty.
+3. Read the area's **Files**, entry to sink, and verify each check of your lens
+   yourself with real commands. The **wired-and-fed** criteria behind them:
+   `grep -rn <Symbol>` for construction outside `*_test.go`; confirm
+   composition-root wiring and name the site; look for `nil`/empty/hardcoded
+   production inputs; check that no test passes only because a fake ignores a
+   load-bearing argument; confirm all five scenario categories and that at least
+   one test fails if its production input were nil/empty. Cover the **Folded in**
+   items too.
 
 Cite `file:symbol` for what you verified. A conclusion with no citation is the
 hollow approval you exist to prevent.
@@ -103,14 +121,22 @@ for this box ever to be ticked?* If the honest answer is "a defect family would
 have to be exhausted" or "a human must decide," that is rule 5 or 6 — judge the
 code in front of you and record the remainder.
 
+## Read the ledger selectively
+
+Do not read `gaps-identified.md` end to end. Read the OPEN items
+(`grep -n '\[ \]'`) and any section naming this area. When you record, write at
+most ten lines per entry with `file:symbol`; the open list is what the next pass
+reads, and a record it cannot fit in context is a record nobody reads.
+
 ## Wrap Up
 
 **Step A** — Tick the assigned box, or do not. If you tick, change exactly one
 `[ ]` to `[x]` in `docs/reference/focus-areas.md`.
 
 **Step B** — Record findings in `gaps-identified.md`: what you discovered, and if
-you withheld, exactly what would have to be true next time. Be specific enough
-that the next pass can act without rediscovering it.
+you withheld, exactly which check of your lens failed and what would have to be
+true next time. Be specific enough that the next pass can act without
+rediscovering it, and short enough that it will actually be read.
 
 **Step C** — Commit and push **only if you changed something on disk**:
 `git -C ./work add -A && git -C ./work commit -m "approve({{slug}}): {{select-work.target_id}} — <ticked | withheld: why>" && git -C ./work push --quiet -u origin HEAD`
@@ -120,4 +146,4 @@ bookkeeping commit is counted as churn and buys nothing.
 **Step D** — State the outcome as a single line, exactly one of:
 
 `Approved: {{select-work.target_id}} — <the evidence that justified it>`
-`Withheld: {{select-work.target_id}} — <what is missing, concretely>`
+`Withheld: {{select-work.target_id}} — <which check is missing, concretely>`

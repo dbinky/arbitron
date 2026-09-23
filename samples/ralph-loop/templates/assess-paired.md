@@ -13,11 +13,17 @@ Working **unattended** in the worktree at `./work`.
 ## What you are judging
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
-- Paired rows carry **one approval each**. The pass may have reviewed several
-  seams that share an area; you may tick **up to four** rows — but only rows it
-  actually examined, and you must cite the seam and a `file:symbol` for **each
-  row separately**. A batch justified by one shared sentence is a hollow approval
-  wearing a bigger hat.
+- A paired row is **one seam**, `A ↔ B`, with a Seam cell stating **SHARED**,
+  **TRACE** and **BREAK**. Its single approval covers **both directions**: the
+  box means "what A assumes about B holds, what B assumes about A holds, and
+  BREAK has been shown impossible or caught." A row that is sound in one
+  direction only is withheld.
+- If the row is directional (plans seeded before 2026-09-11 read `A as impacted
+  by B`), judge the direction it names.
+- The pass may have batched several rows that share loaded context. You may tick
+  **up to four** rows — but only rows it actually examined, and you must cite the
+  seam and a `file:symbol` for **each row separately**. A batch justified by one
+  shared sentence is a hollow approval wearing a bigger hat.
 
 ## First: is there anything new to judge?
 
@@ -75,6 +81,9 @@ Treat this as a **claim to be checked**, never as evidence:
 6. **Never withhold indefinitely on something no pass can resolve.** A gap that
    needs a human ruling or is out of scope gets marked `[ESCALATION]` in
    `gaps-identified.md` with the question stated plainly, then set aside.
+7. **A defect inside one behaviour is not a seam defect.** If what you found lives
+   entirely on one side and both single-system approvals missed it, record it as
+   a gap against that area; withhold the seam only when the seam itself is wrong.
 
 Rules 1–3 are the only automatic blocks. Past those, the decision is yours on the
 merits — and "the advisory list looks alarming" is not a merit.
@@ -83,14 +92,16 @@ merits — and "the advisory list looks alarming" is not a merit.
 
 Do not take the pass's word for anything. Re-derive it:
 
-1. Read `docs/reference/paired-reviews.md` and find the assigned row.
+1. Read `docs/reference/paired-reviews.md` and find the assigned row; read the
+   `### Area` blocks of both behaviours it joins in `docs/reference/focus-areas.md`.
 2. Read what changed: `git -C ./work show --stat HEAD`, then the diff.
-3. For **each row** you intend to tick, verify the named seam actually exists and
-   behaves: `grep -rn` the shared symbol/table/flag on both sides, confirm the
-   producer really feeds the consumer in production (not just in tests), and
-   confirm the direction under review is the one you assessed. A pair whose seam
-   you cannot locate in the code is not approvable — move it to `## No seam` with
-   a reason instead.
+3. For **each row** you intend to tick, follow its TRACE yourself: `grep -rn` the
+   SHARED symbol, table, topic or flag on both sides; confirm the producer really
+   feeds the consumer in production, not only in tests; confirm the ordering is
+   enforced, not merely checked afterwards; and confirm BREAK is impossible or
+   caught, by the test that goes red or the guard at `file:symbol`. Do it in both
+   directions. A row whose SHARED thing you cannot locate in the code is not
+   approvable — move it to `## No seam` with a reason instead.
 
 Cite `file:symbol` for what you verified. A conclusion with no citation is the
 hollow approval you exist to prevent.
@@ -102,21 +113,28 @@ for this box ever to be ticked?* If the honest answer is "a defect family would
 have to be exhausted" or "a human must decide," that is rule 5 or 6 — judge the
 code in front of you and record the remainder.
 
+## Read the ledger selectively
+
+Do not read `gaps-identified.md` end to end. Read the OPEN items
+(`grep -n '\[ \]'`) and any section naming either behaviour of the seam. When
+you record, write at most ten lines per entry with `file:symbol`.
+
 ## Wrap Up
 
-**Step A** — Tick the assigned box, or do not. If you tick, change exactly one
-`[ ]` to `[x]` in `docs/reference/paired-reviews.md`.
+**Step A** — Tick the assigned row, or do not. For each row you tick, change
+exactly one `[ ]` to `[x]` in `docs/reference/paired-reviews.md`.
 
 **Step B** — Record findings in `gaps-identified.md`: what you discovered, and if
-you withheld, exactly what would have to be true next time. Be specific enough
-that the next pass can act without rediscovering it.
+you withheld, exactly which direction or which BREAK evidence is missing and what
+would have to be true next time. Be specific enough that the next pass can act
+without rediscovering it, and short enough that it will actually be read.
 
 **Step C** — Commit and push **only if you changed something on disk**:
 `git -C ./work add -A && git -C ./work commit -m "approve({{slug}}): {{select-work.target_id}} — <ticked | withheld: why>" && git -C ./work push --quiet -u origin HEAD`
 If you ticked nothing and recorded nothing, **do not commit** — an empty
 bookkeeping commit is counted as churn and buys nothing.
 
-**Step D** — State the outcome as a single line, exactly one of:
+**Step D** — State the outcome as a single line per row, exactly one of:
 
-`Approved: {{select-work.target_id}} — <the evidence that justified it>`
+`Approved: {{select-work.target_id}} — <the evidence, both directions>`
 `Withheld: {{select-work.target_id}} — <what is missing, concretely>`

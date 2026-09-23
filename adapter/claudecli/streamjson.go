@@ -73,9 +73,35 @@ type rawContentBlock struct {
 	Text string `json:"text"`
 }
 
+// rawUsage is the usage block on a stream-json result event.
+//
+// Anthropic splits INPUT across three additive buckets and `input_tokens`
+// carries only the uncached remainder — which on a warm turn is nearly nothing.
+// A real Claude Code 2.1.278 result reads input_tokens:2 alongside
+// cache_creation_input_tokens:27208 and cache_read_input_tokens:26579, so
+// reading input_tokens alone reports 2 of 53,789 actual input tokens.
+//
+// This differs from the codex convention, where `input_tokens` is already the
+// TOTAL and `cached_input_tokens` is a subset of it. Summing here is what makes
+// the two backends' recorded TokensIn mean the same thing and therefore be
+// comparable in a trace.
 type rawUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// CacheCreationInputTokens are input tokens written INTO the cache on this
+	// turn. Billed (at a premium) and genuinely processed, so they count.
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// CacheReadInputTokens are input tokens served FROM the cache. Billed at a
+	// discount, but they are still input the model processed — and on an agent
+	// turn they are the bulk of it, including the whole harness prompt.
+	CacheReadInputTokens int `json:"cache_read_input_tokens"`
+}
+
+// totalInput returns every input bucket summed. A usage block from an older CLI
+// (or a provider that does not cache) carries no cache fields, so they decode
+// as zero and the total degrades to input_tokens unchanged.
+func (u rawUsage) totalInput() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 // parseEvent parses a single stream-json line. ok is false for blank lines and
@@ -111,7 +137,7 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 			IsError:   env.IsError,
 		}
 		if env.Usage != nil {
-			ev.TokensIn = env.Usage.InputTokens
+			ev.TokensIn = env.Usage.totalInput()
 			ev.TokensOut = env.Usage.OutputTokens
 		}
 		return ev, true, nil

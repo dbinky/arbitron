@@ -1,7 +1,7 @@
 {
-  "id": "00000000-0000-0000-0000-000000000000",
+  "id": "71fce817-b51f-4c46-b77f-353d34295c7a",
   "name": "ralph-loop",
-  "description": "Ralph refinement loop with role-routed models. Phase 1 works single-system areas interleaved by risk \u2014 review 1 refined by Sonnet 5 and assessed by GPT-5.6-sol, review 2 refined by Sol and assessed by Opus 5 \u2014 so an area's two approvals always come from different model families. Phase 2 works the paired integration table with Opus refining and Sol assessing, batching up to four seams per pass. Seeded plans must fit their pass budget, test runs are scoped to the diff, and a run interrupted by a quota wall resumes on the same branch with every earned approval intact.",
+  "description": "Ralph refinement loop with role-routed, cross-family model pairs. A seeder writes a behaviour-sliced review plan (an area is one promise traced from entry point to sink; a seam is one row reviewed in both directions) and a critic on another model family applies the merge test and the seam test before the loop starts. Phase 1 works single-system areas interleaved by risk: review 1 is the wiring lens (does the path exist and is it fed?), review 2 the failure lens (how does it fail?), each refined by one family and assessed by another. Phase 2 works the paired seam table. Seeded plans must fit their pass budget, test runs are scoped to the diff, every in-loop commit carries [skip ci] with exactly one CI run on the finished branch, and a run interrupted by a quota wall resumes on the same branch with every earned approval intact.",
   "author": "arbitron",
   "defaultErrorBehavior": {
     "type": "retry",
@@ -26,6 +26,27 @@
       "name": "slug",
       "type": "string",
       "description": "Short kebab-case label for the work branch and doc naming. Empty derives a neutral placeholder.",
+      "default": "",
+      "required": false
+    },
+    {
+      "name": "force_fresh",
+      "type": "boolean",
+      "description": "Start a new body-of-work review even when base_branch carries an inherited Ralph plan. Creates a new refinement branch and runs existing archival, baseline capture, and plan seeding. False preserves automatic resume.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "replan",
+      "type": "boolean",
+      "description": "On a RESUMED run only: re-plan the review before continuing. The cross-family critic (critique-replan) applies the merge test and the seam test to the plan the branch already carries, converting layer-sliced areas into behaviours and directional mirror rows into one row per seam, then the verifier and a checkpoint push run before the first new pass. Earned approvals are kept under the in-flight rule (a merged row keeps a tick only if every constituent had it; an unreviewed folded-in part needs another review path or the box reopens), and every decision is recorded under '## Plan critique' in RALPH.md. Ignored on a fresh run, which is critiqued anyway.",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "pr_base",
+      "type": "string",
+      "description": "Branch the final PR targets when it is not base_branch. A resumed run continues ON base_branch, so head and base are the same ref and push-and-pr can open no PR; name the feature's real base here (e.g. feat/age-filtering) so a resumed run still opens its PR. Empty keeps the previous behaviour (PR against base_branch, or none when resumed).",
       "default": "",
       "required": false
     },
@@ -60,7 +81,7 @@
     {
       "name": "max_no_progress_streak",
       "type": "number",
-      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged \u2014 a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
+      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged — a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
       "default": 12,
       "required": false
     },
@@ -82,7 +103,7 @@
         "timeoutSeconds": 600
       },
       "label": "Init workspace",
-      "description": "Clone repo_url at base_branch and create the work branch worktree at {{workspace}}/work.",
+      "description": "Clone repo_url at base_branch. force_fresh=true creates an isolated refinement branch even when a prior review plan exists; default preserves automatic resume.",
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
@@ -159,7 +180,7 @@
         "defaultOutput": "fresh"
       },
       "label": "Resuming?",
-      "description": "init-workspace sets resumed=true when base_branch already carries docs/reference/focus-areas.md. A resumed run continues ON that branch and skips seeding entirely, so approvals already earned survive. Detected rather than declared, so a normal run needs no extra input and cannot resume by accident.",
+      "description": "Resume only when base_branch carries docs/reference/focus-areas.md AND force_fresh is false. Explicit fresh runs follow derive-scope, archival, baseline, and seeding; the resume path optionally re-plans (replan=true) before restoring counters, so a run seeded under older rules can be tightened without losing earned approvals.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -219,11 +240,27 @@
       "type": "agent_call",
       "config": {
         "templateFile": "templates/seed-ralph.md",
-        "model_profile": "planner-opus-medium",
+        "model_profile": "planner-opus-high",
         "timeoutSeconds": 3600
       },
       "label": "Seed review plan",
-      "description": "Writes RALPH.md (all three role protocols), the single-system plan, the paired plan and gaps-identified.md, sized to fit the pass budget.",
+      "description": "Writes RALPH.md (all three role protocols), the single-system plan (behaviour areas with entry, sink, files and a checklist per lens), the paired seam plan (one row per seam, SHARED/TRACE/BREAK) and gaps-identified.md, sized to fit the pass budget. Runs at high effort with the full context window: it runs once and its output sets the cost of every pass after it.",
+      "errorBehavior": {},
+      "position": {
+        "x": -420,
+        "y": 980
+      }
+    },
+    {
+      "id": "critique-seed",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/critique-seed.md",
+        "model_profile": "critic-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Critique review plan",
+      "description": "Cross-family plan critic. Applies the merge test (areas are behaviours, not layers or files), the block test (entry, sink, files, a checklist per lens), the seam test (shared state, contract, flag or ordering; different authors; silent failure) and the budget to the seeded plan, merging and striking in place and recording every decision under '## Plan critique' in RALPH.md. The seeder's own slicing is the thing under review, so this runs on a different model family from the seeder. Fresh path only; a resumed run keeps its plan.",
       "errorBehavior": {},
       "position": {
         "x": -420,
@@ -239,7 +276,7 @@
         "timeoutSeconds": 60
       },
       "label": "Verify ralph seed",
-      "description": "Fails the run unless RALPH.md carries a Wrap Up, self-assessment and promise tags for EACH of the three roles, and unless 2*singles + ceil(paired/3) fits the pass budget. A file can otherwise carry a perfect protocol for one role and silently omit the stop rule for another.",
+      "description": "Fails the run unless RALPH.md carries a Wrap Up, self-assessment and promise tags for EACH of the three roles; unless 2*singles + paired fits the pass budget (a paired row costs a whole pass: 96 rows took 66 passes); unless every paired row is one seam (no directional mirror rows) and checkbox syntax lives only in the two tables; and, when the critic ran, unless RALPH.md carries its '## Plan critique' record.",
       "errorBehavior": {
         "type": "halt"
       },
@@ -265,6 +302,78 @@
       }
     },
     {
+      "id": "replan?",
+      "type": "conditional",
+      "config": {
+        "conditions": [
+          {
+            "field": "replan",
+            "operator": "eq",
+            "value": true,
+            "output": "replan"
+          }
+        ],
+        "defaultOutput": "continue"
+      },
+      "label": "Re-plan first?",
+      "description": "Resume path only. replan=true sends the resumed plan through the cross-family critic, the verifier and a checkpoint push BEFORE restore-state rebuilds the counters, so the counters reflect the tightened plan. Default continues straight to restore-state.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 560
+      }
+    },
+    {
+      "id": "critique-replan",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "templates/critique-replan.md",
+        "model_profile": "critic-codex-high",
+        "timeoutSeconds": 3600
+      },
+      "label": "Critique plan in flight",
+      "description": "Cross-family critic for a resumed run: rebuilds the single table as behaviours and the paired table as one row per seam, keeps every earned approval the in-flight rule allows (a merged row keeps a tick only if every constituent had it; an unreviewed folded-in part needs another review path or the box reopens), maps old area numbers to new ones for the gap ledger, and records everything under '## Plan critique'. Two runs seeded under the old rules had 54 and 131 passes ahead of them; the same work under the new shape is about 22 and 18.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 700
+      }
+    },
+    {
+      "id": "verify-replan",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/verify-ralph-seed.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Verify re-planned seed",
+      "description": "Same verifier as the fresh path, run on the re-planned files: per-role protocol markers, 2*singles + paired within budget, one row per seam, boxes only in tables, and the critic's '## Plan critique' record (the script accepts critique-replan as the critic).",
+      "errorBehavior": {
+        "type": "halt"
+      },
+      "position": {
+        "x": 420,
+        "y": 840
+      }
+    },
+    {
+      "id": "checkpoint-push-replan",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/checkpoint-push.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 120
+      },
+      "label": "Checkpoint: push re-plan",
+      "description": "Push the tightened plan before restore-state and the first new pass, so the re-plan survives a later crash or cancel.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 980
+      }
+    },
+    {
       "id": "restore-state",
       "type": "script",
       "config": {
@@ -277,7 +386,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 560
+        "y": 1120
       }
     },
     {
@@ -305,7 +414,7 @@
         "timeoutSeconds": 300
       },
       "label": "Select next work",
-      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1: Sonnet refines / Sol assesses; review 2: Sol refines / Opus assesses); phase 2 begins only when every single box is ticked.",
+      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1 = the wiring lens, review 2 = the failure lens, each refined by one family and assessed by another); phase 2 begins only when every single box is ticked. Models are named only in the node profiles.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -355,7 +464,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Refine Single 1",
-      "description": "Review 1 refiner: Sonnet 5 high.",
+      "description": "Review 1 refiner: the WIRING lens (does the path exist and is it fed?). The approver runs on another model family.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -391,7 +500,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Assess Single 1",
-      "description": "Review 1 approver: GPT-5.6-sol \u2014 opposite family to the refiner.",
+      "description": "Review 1 approver, opposite family to the refiner. Ticks the Review 1 box when every wiring-lens check in the area block is demonstrated.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -411,7 +520,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Refine Single 2",
-      "description": "Review 2 refiner: GPT-5.6-sol high. Exists to find what review 1 missed.",
+      "description": "Review 2 refiner: the FAILURE lens (how does it fail?), on a different family from review 1 and asking a different question.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -447,7 +556,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Assess Single 2",
-      "description": "Review 2 approver: Opus 5 medium \u2014 the strong model checking the weaker refiner.",
+      "description": "Review 2 approver, opposite family to the refiner. Ticks the Review 2 box when every failure-lens check in the area block is demonstrated.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -467,7 +576,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Refine Paired",
-      "description": "Paired refiner: Opus 5 medium, 1M context for cross-component tracing. Batches up to four seams.",
+      "description": "Paired refiner: one seam per pass, both directions, BREAK shown impossible or caught; batches further rows only when they share loaded context.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -503,7 +612,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Assess Paired",
-      "description": "Paired approver: GPT-5.6-sol.",
+      "description": "Paired approver, opposite family to the refiner. Ticks a row when both directions hold and its BREAK is demonstrated; up to four rows, each cited separately.",
       "errorBehavior": {
         "type": "retry",
         "retries": 1,
@@ -523,7 +632,7 @@
         "timeoutSeconds": 120
       },
       "label": "Record pass commit",
-      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone \u2014 but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
+      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone — but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -539,7 +648,7 @@
         "timeoutSeconds": 120
       },
       "label": "Count review plan",
-      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own <promise>FINIT</promise> claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched \u2014 114 of 164 approvals outstanding \u2014 and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
+      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own \u003cpromise\u003eFINIT\u003c/promise\u003e claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched — 114 of 164 approvals outstanding — and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -636,7 +745,7 @@
         "defaultOutput": "loop"
       },
       "label": "Loop or exit",
-      "description": "Exits on the pass budget, on an ARITHMETICALLY complete review plan, or on a wedge. The order is the point. count-review-plan exists to make termination arithmetic rather than narrative, but this gate used to read only ralph_iteration and refine-assess.consecutive_no_progress \u2014 the counter informed the toolless assessor and nothing else, so the guard could not reach the path it guarded. Run a1aab074 exited here at pass 161 of 500 on a bare 3-strike stagnation rule while count-review-plan.plan_complete was false and unchecked_boxes was 98, then opened a PR presenting that as a finished review. A withheld approval is the normal outcome of a review pass, so three in a row is not a wedged loop. plan_complete is now a first-class exit and the stagnation exit is the declared hard-wedge threshold (max_no_progress_streak, 12), which sits above record-pass-commit's sticky approval-stall limit of 8 so a genuine wedge is still caught within a few passes of stalling. Otherwise loops back to the ROUTER, not to a fixed refiner, so the next pass is re-routed by what the plan now needs. A quota failure is NOT handled here: the agent node fails the run, which is cleanly resumable.",
+      "description": "Exits on the pass budget, on an ARITHMETICALLY complete review plan, or on a wedge. The order is the point. count-review-plan exists to make termination arithmetic rather than narrative, but this gate used to read only ralph_iteration and refine-assess.consecutive_no_progress — the counter informed the toolless assessor and nothing else, so the guard could not reach the path it guarded. Run a1aab074 exited here at pass 161 of 500 on a bare 3-strike stagnation rule while count-review-plan.plan_complete was false and unchecked_boxes was 98, then opened a PR presenting that as a finished review. A withheld approval is the normal outcome of a review pass, so three in a row is not a wedged loop. plan_complete is now a first-class exit and the stagnation exit is the declared hard-wedge threshold (max_no_progress_streak, 12), which sits above record-pass-commit's sticky approval-stall limit of 8 so a genuine wedge is still caught within a few passes of stalling. Otherwise loops back to the ROUTER, not to a fixed refiner, so the next pass is re-routed by what the plan now needs. A quota failure is NOT handled here: the agent node fails the run, which is cleanly resumable.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -651,7 +760,7 @@
         "interpreter": "/bin/sh",
         "timeoutSeconds": 300
       },
-      "label": "Push & open PR",
+      "label": "Push \u0026 open PR",
       "description": "Push the work branch and open a PR targeting base_branch, so refinement lands back on the branch being refined.",
       "errorBehavior": {},
       "position": {
@@ -685,7 +794,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "ralph-loop complete \u2014 {{slug}}",
+          "ralph-loop complete — {{slug}}",
           "The refinement loop finished and opened a PR ({{push-and-pr.pr_url}}) against {{base_branch}}. {{count-review-plan.summary}}",
           "good",
           "Repo={{repo_url}}",
@@ -747,8 +856,31 @@
     },
     {
       "source": "resumed?",
-      "target": "restore-state",
+      "target": "replan?",
       "output": "resume"
+    },
+    {
+      "source": "replan?",
+      "target": "restore-state",
+      "output": "continue"
+    },
+    {
+      "source": "replan?",
+      "target": "critique-replan",
+      "output": "replan",
+      "label": "re-plan in flight"
+    },
+    {
+      "source": "critique-replan",
+      "target": "verify-replan"
+    },
+    {
+      "source": "verify-replan",
+      "target": "checkpoint-push-replan"
+    },
+    {
+      "source": "checkpoint-push-replan",
+      "target": "restore-state"
     },
     {
       "source": "derive-scope",
@@ -764,6 +896,10 @@
     },
     {
       "source": "seed-ralph",
+      "target": "critique-seed"
+    },
+    {
+      "source": "critique-seed",
       "target": "verify-ralph-seed"
     },
     {

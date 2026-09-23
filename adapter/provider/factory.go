@@ -14,6 +14,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/codex"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	"github.com/arbitron/arbitron/adapter/openrouter"
+	"github.com/arbitron/arbitron/adapter/pi"
 	"github.com/arbitron/arbitron/domain/engine"
 	domprovider "github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
@@ -99,6 +100,11 @@ type Deps struct {
 	CodexBinaryPath string
 	// CodexTimeout is the default per-mission codex timeout; <=0 means no default.
 	CodexTimeout time.Duration
+	// PiBinaryPath overrides PATH lookup for the pi binary; "" lets the adapter
+	// resolve it from PATH and the standard install dirs.
+	PiBinaryPath string
+	// PiTimeout is the default per-mission pi timeout; <=0 means no default.
+	PiTimeout time.Duration
 	// MaxResponseBytes caps the per-request response/stdout read across ALL the
 	// credential-bearing backends: the HTTP adapters (openrouter, azurefoundry,
 	// anthropicapi, bedrock) bound their response-body read, and the subprocess
@@ -297,6 +303,20 @@ func (f *Factory) AgentProviderFor(b domprovider.ResolvedBinding) (engine.AgentP
 			// `-c model_reasoning_effort=<v>` via these rules. A default/empty effort
 			// or an Empty ruleset emits nothing.
 			CapabilityRules: f.deps.CapabilityRules,
+		}), nil
+	case workflow.BackendPi:
+		// Key-authenticated and multi-provider (unlike codex): the binding's
+		// provider selects which credential env var carries the revealed key, and
+		// an unknown provider fails the mission closed rather than letting pi fall
+		// back to a key from its own config or the ambient shell. Effort rides
+		// argv as --thinking; pi has no context knob, so CapabilityRules is not
+		// threaded here (see args.go on the follow-up).
+		return pi.New(pi.Config{
+			Binding:          b,
+			BinaryPath:       f.deps.PiBinaryPath,
+			Runner:           f.deps.Runner,
+			Timeout:          f.deps.PiTimeout,
+			MaxResponseBytes: f.deps.MaxResponseBytes,
 		}), nil
 	default:
 		// Fail-closed: an unrecognized (or empty-with-empty-default) backend never

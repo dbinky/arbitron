@@ -121,3 +121,60 @@ func TestParseEvent(t *testing.T) {
 			"the per-request backstop must stay comfortably (>=256x) above the per-block cap")
 	})
 }
+
+// --- cache-aware input accounting ------------------------------------------
+//
+// Anthropic splits input tokens across THREE buckets and `input_tokens` holds
+// only the uncached remainder. A real result event from Claude Code 2.1.278
+// reads input_tokens:2, cache_creation_input_tokens:27208,
+// cache_read_input_tokens:26579 — so reading input_tokens alone reports 2 of
+// 53,789 actual input tokens. That under-reporting is what made the claude-code
+// backend unmeasurable against codex, whose `input_tokens` is already a total.
+
+// HAPPY — all three input buckets sum into TokensIn.
+func TestParseEvent_ResultSumsAllInputTokenBuckets(t *testing.T) {
+	line := []byte(`{"type":"result","session_id":"s1","result":"done","usage":{"input_tokens":2,"cache_creation_input_tokens":27208,"cache_read_input_tokens":26579,"output_tokens":707}}`)
+	ev, ok, err := parseEvent(line)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 2+27208+26579, ev.TokensIn, "every input bucket must be counted")
+	assert.Equal(t, 707, ev.TokensOut)
+}
+
+// SUCCESS — a fully cached turn (input_tokens 0) still reports its real input
+// volume rather than zero.
+func TestParseEvent_FullyCachedTurnIsNotZeroInput(t *testing.T) {
+	line := []byte(`{"type":"result","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":98765,"output_tokens":12}}`)
+	ev, ok, err := parseEvent(line)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 98765, ev.TokensIn, "a cache hit is still an input token")
+}
+
+// EDGE (back-compat) — a usage block with no cache fields at all (an older CLI,
+// or a provider that does not cache) still reports input_tokens unchanged.
+func TestParseEvent_UsageWithoutCacheFieldsIsUnchanged(t *testing.T) {
+	line := []byte(`{"type":"result","usage":{"input_tokens":41,"output_tokens":9}}`)
+	ev, ok, err := parseEvent(line)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 41, ev.TokensIn)
+	assert.Equal(t, 9, ev.TokensOut)
+}
+
+// EDGE — a result event with no usage block at all yields zero counts and no
+// panic.
+func TestParseEvent_ResultWithoutUsageIsZero(t *testing.T) {
+	ev, ok, err := parseEvent([]byte(`{"type":"result","result":"done"}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Zero(t, ev.TokensIn)
+	assert.Zero(t, ev.TokensOut)
+}
+
+// ERROR — a malformed usage block fails the whole line closed rather than
+// silently reporting zero tokens for a real turn.
+func TestParseEvent_MalformedUsageFailsClosed(t *testing.T) {
+	_, _, err := parseEvent([]byte(`{"type":"result","usage":{"input_tokens":"not-a-number"}}`))
+	require.Error(t, err)
+}

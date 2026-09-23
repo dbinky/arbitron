@@ -7,11 +7,14 @@ make the calls yourself.
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
 - **Which review:** `{{select-work.next_kind}}`
-  - `single_1` → you are performing **Review 1**, the first independent look.
-  - `single_2` → you are performing **Review 2**. Review 1 already passed. Your
-    job is explicitly to find **what the first reviewer missed**, on a different
-    model from the one that did Review 1 — that difference is the entire reason
-    two approvals exist. Agreeing by default wastes the pass.
+  - `single_1` → you are performing **Review 1, the WIRING lens**: does the path
+    exist and is it fed? Composition root, real producer, happy and success paths
+    reaching the sink.
+  - `single_2` → you are performing **Review 2, the FAILURE lens**: how does it
+    fail? Nil and empty inputs, timeouts, partial failure and rollback,
+    concurrency, ordering. Review 1 already passed on the wiring lens; you are on
+    a different model family asking a **different question** — that is the entire
+    reason two approvals exist. Re-checking the wiring wastes the pass.
 - **Router status:** {{select-work.summary}}
 
 Work **only** this area. Do not sweep others; the loop cannot tell progress from
@@ -26,6 +29,18 @@ churn if you do.
 > stop. Do not spend another pass rediscovering the same wall.
 {{/select-work.escalate}}
 
+## The area is a behaviour, and its block tells you where it lives
+
+`docs/reference/focus-areas.md` carries a `### Area N — <name>` block under the
+table for your row: **Promise**, **Entry**, **Sink**, **Files**, **Folded in**, the
+numbered checks for **your lens**, and **Seed evidence**. Load every file in
+**Files**, entry to sink, and work your lens's checks in order. The other lens's
+checks are not your job this pass.
+
+If the plan has no block for this area (plans seeded before 2026-09-11 have only
+the table row), derive entry, sink and files yourself from the row and the code
+before you start, and apply the wired-and-fed criteria below through your lens.
+
 ## You fix; someone else approves
 
 A separate approver on a **different model family** runs immediately after you
@@ -38,6 +53,15 @@ later pass. Your recommendation carries weight — but the approver may withhold
 and that is the system working.
 
 You do own `docs/reference/gaps-identified.md`: record what you find there.
+
+## Read the ledger selectively
+
+`docs/reference/gaps-identified.md` grows every pass. Do **not** read it end to
+end: one ledger reached 1.4 MB and no longer fit in any context. Read the OPEN
+items (`grep -n '\[ \]' docs/reference/gaps-identified.md`) and any section that
+names your area, and nothing else. When you record, write at most ten lines per
+entry with `file:symbol`; move an item you close under `## Closed` with a one-line
+note rather than leaving its history in the open list.
 
 ## Test command(s)
 
@@ -74,10 +98,12 @@ disagree, RALPH.md wins.
 
 ## Each pass
 
-1. Read `./work/RALPH.md`, `docs/reference/focus-areas.md`, `docs/reference/gaps-identified.md`.
+1. Read `./work/RALPH.md`, your row and its `### Area N` block in
+   `docs/reference/focus-areas.md`, and the open items in `docs/reference/gaps-identified.md`.
 2. Run the test command(s) and compare failures against the baseline.
-3. Read every file the assigned area covers.
-4. Apply the **wired-and-fed** criteria, with real commands:
+3. Read every file in the area's **Files** list, entry to sink.
+4. Work your lens's numbered checks with real commands. The **wired-and-fed**
+   criteria behind them:
    - `grep -rn <Symbol>` each new exported field / collaborator / config — is it
      constructed or populated **outside `*_test.go`**? Only ever set in tests → the area fails.
    - Is each new component assembled into the real composition root so the live
@@ -88,21 +114,24 @@ disagree, RALPH.md wins.
      "integration" test asserts an intermediate hop instead of the sink?
    - All five scenario categories covered (happy, success, failure, error, edge),
      and would at least one test **fail** if its production input were nil/empty?
+   Cover the area's **Folded in** items too; they are part of this review.
 5. Make the smallest correct change that advances the area — strict TDD when
    adding behaviour.
 6. Re-run the affected tests.
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back
    to step 5 to squeeze in another fix.
 
-Most areas need several passes. That is normal — never inflate a recommendation
-to end the loop sooner.
+A finding that belongs to the **other** lens is recorded as a gap for that review,
+not fixed now and not a reason to recommend against this one. Most areas need
+more than one pass. That is normal — never inflate a recommendation to end the
+loop sooner.
 
 ## Wrap Up (every pass, without exception)
 
 Nothing defers Wrap Up — not a running test, not an inconclusive result, not an
 unfinished fix. If you did anything at all, you reach Step C and commit it.
 
-**Step A** — Did the area meet every approval criterion for *your* review?
+**Step A** — Did the area meet every check of *your* lens?
 
 **Step B** — Record your **recommendation**; tick nothing. One line, exactly one of:
 

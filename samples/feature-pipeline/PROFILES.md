@@ -9,50 +9,73 @@ axes (MCP `profile_create` / `arbitron` admin API).
 
 ## The rule the lineup encodes
 
-**The family that writes never certifies.** Opus plans → GPT implements →
-Claude approves → a cheap model refines under a Claude approver. Every seam has a
-cross-family check, which is what makes the `approve-area` node meaningful: if the
-approver shared a family with the author, the review plan's two independent
-approvals would be one model grading itself twice.
+**The family that writes never certifies.** The refinement loop routes each
+review to its own cross-family pair, so an area's two independent approvals can
+never be one model grading itself twice:
+
+| lane | refines | approves |
+|------|---------|----------|
+| single review 1 (wiring lens) | `coder-sonnet5-high` — Sonnet 5 | `approver-codex-high` — gpt-5.6-sol |
+| single review 2 (failure lens) | `coder-codex-high` — gpt-5.6-sol | `approver-opus-medium` — Opus 5.5 |
+| paired integration seam | `coder-opus-medium` — Opus 5.5 | `approver-codex-high` — gpt-5.6-sol |
+
+`refine-rescue` (`refine-deep`, Opus 5.5) is the stagnation escape hatch. It
+records its commit directly rather than routing through a lane approver — it
+breaks a stall rather than working a numbered review row, and the next iteration
+re-routes through `select-work` and is assessed normally.
 
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
+| approver-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
+| approver-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | assess-single-2 |
+| assessor-opus-high | chat | (inherit) | claude-opus-5-5 | high | (chat: tool-suppressed) | deps-assess, impl-assess |
+| assessor-sonnet5-high | chat | (inherit) | claude-sonnet-5 | high | (chat: tool-suppressed) | disambiguate-docs, refine-assess |
+| coder-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
+| coder-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | produce-plans |
+| coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | refine-paired |
+| coder-pi-sol-high | agent | pi | openai-codex/gpt-5.6-sol | high | — | impl-task |
+| coder-sonnet5-high | agent | claude-code | claude-sonnet-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-1 |
+| coder-sonnet5-medium | agent | claude-code | claude-sonnet-5 | medium | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |
+| critic-codex-high | agent | codex | gpt-6-astra | high | Read,Write,Edit,Grep,Glob,Bash | critique-seed |
 | interviewer-codex | agent | codex | gpt-5.6-sol | default | Read,Write,Grep,Glob,Bash | brainstorm-spec |
-| interviewer-opus-high | agent | claude-code | claude-opus-5 | high | Read,Write,Grep,Glob,Bash | brainstorm-design, resolve-deps |
+| interviewer-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Grep,Glob,Bash | brainstorm-design, resolve-deps |
+| planner-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | seed-ralph |
+| refine-deep | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-rescue |
 | reviewer-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | align-designs, align-plans |
-| coder-opus-high | agent | claude-code | claude-opus-5 | high | Read,Write,Edit,Grep,Glob,Bash | produce-plans |
-| planner-opus-medium | agent | claude-code | claude-opus-5 | medium | Read,Write,Grep,Glob,Bash | seed-ralph |
-| coder-sonnet5-medium | agent | claude-code | claude-sonnet-5 | medium (ctx 200k) | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |
-| coder-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | impl-task |
-| assessor-opus-high | chat | claude-code | claude-opus-5 | high | (chat: tool-suppressed) | impl-assess, deps-assess |
-| refine-flash | agent | opencode | deepseek/deepseek-v4-flash | default | Read,Write,Edit,Grep,Glob,Bash | refine |
-| approver-sonnet5-high | agent | claude-code | claude-sonnet-5 | high (ctx 200k) | Read,Write,Edit,Grep,Glob,Bash | approve-area |
-| refine-deep | agent | claude-code | claude-opus-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-rescue |
-| assessor-sonnet5-high | chat | claude-code | claude-sonnet-5 | high (ctx 200k) | (chat: tool-suppressed) | refine-assess, disambiguate-docs |
 
-## Prerequisite: the `refine-flash` connection
+## Prerequisite: none
 
-`refine-flash` is the only profile needing a connection. Create it first or the
-profile cannot be created:
+Every profile here runs on a subscription or on pi's own OAuth store, so none
+needs a `connection_create` first. `coder-pi-sol-high` is the one to understand:
+it names **no connection**, because a connection requires an `api_key` and a
+`base_url` and a ChatGPT subscription has neither. The pi adapter resolves the
+provider from the model's own prefix (`openai-codex/…`) instead, and that
+fallback is restricted to OAuth providers — a key-based provider named only by a
+prefix fails closed rather than borrowing whatever credential pi has on hand.
+
+`coder-pi-sol-high` therefore requires a one-time interactive login on the host:
 
 ```
-connection_create  name=openrouter  provider=openrouter
-                   base_url=https://openrouter.ai/api/v1  api_key=<your key>
+pi              # launches the TUI
+/login          # select "ChatGPT Plus/Pro (Codex)"
 ```
 
-Note the model id keeps its org prefix (`deepseek/deepseek-v4-flash`); the
-opencode adapter preserves a leading segment that is not the provider id, so it
-resolves as `openrouter/deepseek/deepseek-v4-flash`. This differs from the
-ollama-cloud convention, where the BARE model name is required.
+Verify with `pi auth check --provider openai-codex --json` — it must report
+`{"status":"ready","authType":"oauth"}`. pi keeps its own credential store at
+`~/.pi/agent/auth.json` and does **not** read `~/.codex/auth.json`, so a working
+codex CLI login does nothing for pi.
 
 ## Axis constraints worth knowing
 
-- **opencode-backed profiles accept only `default` context and `default` effort.**
-  There is no effort dial on `refine-flash`; do not try to add one.
+- **pi accepts the full graded effort range** (its thinking levels are
+  off/minimal/low/medium/high/xhigh/max, so nothing is floored) but only
+  `default` context — the window is the model's own, and pi has no dial for it.
 - **codex accepts effort up to `xhigh` but only `default` context.**
-- The Sonnet 5 profiles pin `context_window: 200k`. Unlike Sonnet 4.6 (whose
-  claude-code capability rule floored `xhigh → high` and disallowed some tiers),
-  Sonnet 5 accepts the full claude-code effort range, so `medium`/`high` apply
-  as-is with no flooring.
-- `refine-deep` deliberately leaves `context_window: default` so it inherits
-  Opus 5's native 1M window rather than being pinned to the 200k tier.
+- **opencode-backed profiles accept only `default` context and `default` effort.**
+  No profile here uses opencode any more — `refine` was retired when the single
+  refine node became the three-lane structure — but the constraint still applies
+  if one is added back.
+- The Sonnet 5 and Opus 5.5 profiles leave `context_window: default` so each
+  inherits its model's native 1M window rather than being pinned to a tier.
+- Opus 5.5's own API default effort is `medium`, so the `high` profiles here are
+  a deliberate step up, not a restatement of the default.

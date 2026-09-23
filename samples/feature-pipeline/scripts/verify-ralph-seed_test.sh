@@ -1,154 +1,94 @@
 #!/bin/sh
-# Tests for verify-ralph-seed.sh — the guard that stops a RALPH.md without loop
-# semantics from reaching the refinement loop.
+# Tests for ralph-loop's PER-ROLE verify-ralph-seed.sh.
 #
-# Covers all five scenario categories:
-#   happy-path : the canonical ralph-plan template passes
-#   success    : each required marker is individually load-bearing
-#   failure    : the improvised no-terminator protocol is rejected
-#   error      : missing RALPH.md / missing work_dir exit non-zero
-#   edge-case  : reworded-but-complete passes; partial protocol is rejected
+# The loop has three roles in one RALPH.md, and the failure mode this guards is
+# specific: a file can carry a perfect protocol for one role and silently omit
+# the self-assessment or stop rule for another. The missing one then surfaces
+# sixty passes later as a timeout, which is exactly how a run was lost before.
+#
+# It also guards the plan SHAPE the 2026-09-11 redesign depends on:
+#   - paired rows are charged at one pass each (96 rows took 66 passes; the old
+#     "a third of a pass" charge let a 116-row plan through as 39 passes);
+#   - a paired row is one seam, A <-> B, never a directional "A as impacted by B"
+#     row with its mirror listed separately;
+#   - checkbox syntax lives only in the two tables, because record-pass-commit
+#     counts [x] file-wide and a checklist in a detail block would corrupt the
+#     approval arithmetic;
+#   - when the plan critic ran, RALPH.md must carry its "## Plan critique" record,
+#     so a critic that silently did nothing cannot pass a plan into the loop.
 set -eu
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$SCRIPT_DIR/verify-ralph-seed.sh"
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0
-check() { # desc actual expected
-  if [ "$2" = "$3" ]; then echo "ok   - $1"; else
-    echo "FAIL - $1"; echo "        expected: $3"; echo "        actual:   $2"; fails=$((fails + 1))
-  fi
-}
+check() { if [ "$2" = "$3" ]; then echo "ok   - $1"; else echo "FAIL - $1 (want $3, got $2)"; fails=$((fails+1)); fi; }
+rejects() { # label json-extra
+  if printf '{"work_dir":"%s","max_ralph_iterations":500%s}' "$TMP" "$2" | sh "$SCRIPT" >/dev/null 2>&1; then
+    echo "FAIL - $1 was accepted"; fails=$((fails+1)); else echo "ok   - $1 is rejected"; fi; }
 
-W="$TMP/work"; mkdir -p "$W"
-run() { printf '{"work_dir":"%s"}' "$W" | sh "$SCRIPT" 2>/dev/null; }
-runs() { if printf '{"work_dir":"%s"}' "$W" | sh "$SCRIPT" >/dev/null 2>&1; then echo pass; else echo fail; fi; }
+# The protocol the seeder actually tells the agent to transcribe.
+awk '/---8<--- copy from here/{f=1;next} /---8<--- copy to here/{f=0} f' \
+  "$SCRIPT_DIR/../templates/seed-ralph.md" > "$TMP/PROTO"
+mkdir -p "$TMP/docs/reference"
+plan() { # singles paired [paired-label]
+  lab="${3:-a ↔ b}"
+  { echo "## Single-System Reviews"; echo "| # | Focus Area | Risk | R1 | R2 |"; echo "|---|---|---|---|---|"
+    i=1; while [ $i -le $1 ]; do echo "| $i | behaviour $i | high | [ ] | [ ] |"; i=$((i+1)); done
+    echo; echo "## Area details"; echo "### Area 1 — behaviour 1"; echo "- **Entry:** x.go:Run"
+    echo "- **Review 1 — wiring lens:**"; echo "  1. constructed at main.go:new"
+  } > "$TMP/docs/reference/focus-areas.md"
+  { echo "## Paired Integration Reviews"; echo "| # | Paired Review | Seam | Risk | Status |"; echo "|---|---|---|---|---|"
+    i=1; while [ $i -le $2 ]; do echo "| $i | $lab | SHARED: t · TRACE: e to s · BREAK: f | high | [ ] |"; i=$((i+1)); done
+    echo; echo "## No seam"; echo "- c and d: inside one behaviour (area 1)"
+  } > "$TMP/docs/reference/paired-reviews.md"; }
+run() { printf '{"work_dir":"%s","max_ralph_iterations":%s}' "$TMP" "$1" | sh "$SCRIPT" 2>/dev/null; }
 
-# A minimal but complete protocol — everything the loop needs to terminate.
-complete_protocol() {
-  cat > "$W/RALPH.md" <<'EOF'
-# Loop Instructions
-## Constraints
-- One focus area per iteration. Fix the most important issue, then stop.
-## Iteration Structure
-7. Assess the checklist, then proceed to Wrap Up regardless of checklist state.
-## Wrap Up
-Step C - Commit and push.
-Then output exactly one tag:
-- `<promise>FINIT</promise>`
-- `<promise>CLOSER</promise>`
-Stop after the tag every time.
-EOF
-}
+# --- 1. the seeder's own protocol, a well-formed plan --------------------------
+cp "$TMP/PROTO" "$TMP/RALPH.md"; plan 15 12
+OUT="$(run 500)" && rc=0 || rc=1
+check "the seeder's own protocol passes its verifier" "$rc" "0"
+check "all three roles are recognised" "$(printf '%s' "$OUT" | jq -r '.roles|length')" "18"
+check "paired rows are charged at ONE pass each (2*15 + 12)" "$(printf '%s' "$OUT" | jq -r '.implied_passes')" "42"
+check "singles and paired counted" "$(printf '%s' "$OUT" | jq -r '"\(.singles)/\(.paired)"')" "15/12"
+check "not critiqued when the critic did not run" "$(printf '%s' "$OUT" | jq -r '.critiqued')" "false"
 
-# ---------------------------------------------------------------- happy path
-CANON="$HOME/.claude/skills/ralph-plan/docs/templates/RALPH.md"
-if [ -f "$CANON" ]; then
-  cp "$CANON" "$W/RALPH.md"
-  check "happy: canonical ralph-plan template passes" "$(runs)" "pass"
-  check "happy: reports ok:true"                      "$(run | jq -r .ok)" "true"
-else
-  echo "skip - canonical template not installed at $CANON"
-fi
+# --- 2. the per-role protocol checks -----------------------------------------
+sed '/Stop after the tag/d' "$TMP/PROTO" > "$TMP/RALPH.md"
+rejects "a role missing its stop rule" ""
+awk '/^## Role: single-review-2/{skip=1} /^## Role: paired-review/{skip=0} !skip' "$TMP/PROTO" > "$TMP/RALPH.md"
+rejects "an entirely absent role block" ""
 
-# ------------------------------------------------------------------- success
-# Every marker must be load-bearing: drop one at a time, expect rejection.
-for marker in '<promise>FINIT</promise>' '<promise>CLOSER</promise>' 'Wrap Up' \
-              'Stop after the tag' 'then stop' 'proceed to Wrap Up'; do
-  complete_protocol
-  grep -vF -- "$marker" "$W/RALPH.md" > "$W/tmp" && mv "$W/tmp" "$W/RALPH.md"
-  check "success: removing '$marker' is detected" "$(runs)" "fail"
-done
+# --- 3. the budget -----------------------------------------------------------
+cp "$TMP/PROTO" "$TMP/RALPH.md"; plan 60 80
+rejects "a plan that cannot finish in its budget (2*60 + 80 = 200 > 175)" ""
+plan 30 116
+rejects "the old 116-row directional plan, which the third-of-a-pass charge let through" ""
 
-complete_protocol
-check "success: intact protocol passes" "$(runs)" "pass"
+# --- 4. plan shape -----------------------------------------------------------
+plan 15 12 "a as impacted by b"
+rejects "a directional paired row (the reverse-row format)" ""
+plan 15 12
+printf -- '- [ ] a stray checkbox in a detail block\n' >> "$TMP/docs/reference/focus-areas.md"
+rejects "checkbox syntax outside a table" ""
+plan 15 12
+printf -- '- [x] a stray ticked box\n' >> "$TMP/docs/reference/paired-reviews.md"
+rejects "a ticked box outside a table" ""
 
-# ------------------------------------------------------------------- failure
-# The real-world defect: a protocol that says what to do and never how to stop.
-cat > "$W/RALPH.md" <<'EOF'
-# RALPH
-## Loop protocol
-1. Read tracking files.
-2. Pick a focus area.
-3. Make the change.
-4. Run tests.
-5. Update tracking.
-6. Commit and push.
-EOF
-check "failure: improvised protocol with no terminator is rejected" "$(runs)" "fail"
+# --- 5. the critic's record ---------------------------------------------------
+plan 15 12
+rejects "a critiqued run whose RALPH.md carries no '## Plan critique' record" ',"critique-seed":{"response":"done"}'
+printf '\n## Plan critique\n\n- areas 20 → 15, seams 30 → 12, implied passes 70 → 42, budget 175\n' >> "$TMP/RALPH.md"
+OUT="$(printf '{"work_dir":"%s","max_ralph_iterations":500,"critique-seed":{"response":"done"}}' "$TMP" | sh "$SCRIPT" 2>/dev/null)" && rc=0 || rc=1
+check "a critiqued run with the record passes" "$rc" "0"
+check "and reports critiqued:true" "$(printf '%s' "$OUT" | jq -r '.critiqued')" "true"
 
-# --------------------------------------------------------------------- error
-rm -f "$W/RALPH.md"
-check "error: missing RALPH.md exits non-zero" "$(runs)" "fail"
+# --- 6. the in-flight critic (replan=true on a resumed run) -------------------
+plan 15 12; cp "$TMP/PROTO" "$TMP/RALPH.md"
+rejects "a re-planned run whose RALPH.md carries no '## Plan critique' record" ',"critique-replan":{"response":"done"}'
+printf '\n## Plan critique\n\n- replan 2026-09-11: areas 30 → 7, seams 20 → 10, ticked boxes 26 → 6\n' >> "$TMP/RALPH.md"
+OUT="$(printf '{"work_dir":"%s","max_ralph_iterations":500,"critique-replan":{"response":"done"}}' "$TMP" | sh "$SCRIPT" 2>/dev/null)" && rc=0 || rc=1
+check "a re-planned run with the record passes" "$rc" "0"
+check "and reports critiqued:true for the replan critic" "$(printf '%s' "$OUT" | jq -r '.critiqued')" "true"
 
-if printf '{}' | sh "$SCRIPT" >/dev/null 2>&1; then
-  check "error: missing work_dir exits non-zero" "pass" "fail"
-else
-  check "error: missing work_dir exits non-zero" "fail" "fail"
-fi
-
-# ----------------------------------------------------------------- edge case
-# Reworded prose around the load-bearing markers must still pass — the guard
-# checks for terminators, not for a byte-identical document.
-cat > "$W/RALPH.md" <<'EOF'
-# Refinement charter for the widgets feature
-Goal: finish the widgets work.
-## Constraints
-Handle exactly one focus area per pass; fix the single most important issue, then stop.
-## Iteration Structure
-Finally, assess the checklist and proceed to Wrap Up no matter what it says.
-## Wrap Up
-Commit and push, then emit `<promise>FINIT</promise>` if everything is complete,
-otherwise `<promise>CLOSER</promise>`. Stop after the tag every time.
-EOF
-check "edge: reworded but complete protocol passes" "$(runs)" "pass"
-
-# Half a protocol — tags present, no stop rule — is the subtlest failure.
-cat > "$W/RALPH.md" <<'EOF'
-## Wrap Up
-Emit `<promise>FINIT</promise>` or `<promise>CLOSER</promise>`.
-EOF
-check "edge: tags without a stop rule are rejected" "$(runs)" "fail"
-
-echo
-
-# --- Budget gate: a plan that cannot finish must fail the run ----------------
-# seed-ralph has always REPORTED the implied pass count and nothing checked it.
-# Two runs shipped plans of 248 and 202 against a 500 cap whose real throughput
-# is ~0.38 boxes/pass; both ran for days and capped out mid-review.
-mkplan() { # dir singles paired
-  mkdir -p "$1/docs/reference"
-  { echo "## Single-System Reviews"
-    echo "| # | Area | Risk | R1 | R2 |"; echo "|---|---|---|---|---|"
-    i=1; while [ $i -le $2 ]; do echo "| $i | a$i | high | [ ] | [ ] |"; i=$((i+1)); done
-    echo; echo "## Paired Integration Reviews"
-    echo "| # | Pair | Seam | Risk | Status |"; echo "|---|---|---|---|---|"
-    i=1; while [ $i -le $3 ]; do echo "| $i | a as b | s | high | [ ] |"; i=$((i+1)); done
-  } > "$1/docs/reference/focus-areas.md"
-}
-BT="$TMP/budget"; mkdir -p "$BT"
-cp "$TMP/ok/RALPH.md" "$BT/RALPH.md" 2>/dev/null || awk '/---8<--- copy from here/{f=1;next} /---8<--- copy to here/{f=0} f' \
-  "$SCRIPT_DIR/../templates/seed-ralph.md" > "$BT/RALPH.md"
-
-mkplan "$BT" 44 160     # the plan that actually shipped: 248 implied vs 175 budget
-if printf '{"work_dir":"%s","max_ralph_iterations":500}' "$BT" | sh "$SCRIPT" >/dev/null 2>&1; then
-  echo "FAIL - budget gate: an unfinishable 248-pass plan was ACCEPTED"; fails=$((fails + 1))
-else
-  echo "ok   - budget gate rejects a plan that cannot finish in its cap"
-fi
-
-mkplan "$BT" 28 58      # the re-scoped shape: 114 implied vs 175 budget
-OUT="$(printf '{"work_dir":"%s","max_ralph_iterations":500}' "$BT" | sh "$SCRIPT" 2>/dev/null)" && rc=0 || rc=1
-check "budget gate accepts a plan that fits" "$rc" "0"
-check "...and reports the arithmetic" "$(printf '%s' "$OUT" | jq -r '.implied_passes')" "114"
-check "...against the computed budget" "$(printf '%s' "$OUT" | jq -r '.budget')" "175"
-
-if [ "$fails" -eq 0 ]; then
-  echo "all verify-ralph-seed tests passed"
-else
-  echo "$fails verify-ralph-seed test(s) FAILED"
-  exit 1
-fi
+[ "$fails" -eq 0 ] || { echo "$fails check(s) failed"; exit 1; }
+echo "all checks passed"

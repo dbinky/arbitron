@@ -126,5 +126,30 @@ fi
 BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
 git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
 
+# CI COST: every commit the loop makes carries "[skip ci]", so pushing after
+# every pass (which is what protects the work) does not run the repository's CI
+# on each intermediate commit. A ralph review once pushed ~100 commits into an
+# open PR and triggered over 1,000 GitHub Actions runs in two days, 431 of them
+# failing on states nobody would merge. GitHub skips push- and
+# pull_request-triggered workflows when the head commit message carries the
+# marker. It is applied by a commit-msg hook rather than by the agents' commit
+# commands so it cannot be forgotten; push-and-pr.sh makes the final commit with
+# --no-verify so CI runs exactly once, on the finished state. --git-path resolves
+# the shared hooks dir of a linked worktree; it may come back relative to the
+# worktree, hence the case.
+HOOK_DIR="$(git -C "$WORK" rev-parse --git-path hooks)"
+case "$HOOK_DIR" in /*) ;; *) HOOK_DIR="$WORK/$HOOK_DIR" ;; esac
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/commit-msg" <<'HOOK'
+#!/bin/sh
+# Installed by arbitron init-workspace.sh: every in-loop commit is marked so the
+# repository's CI skips it. push-and-pr.sh bypasses this hook (--no-verify) for
+# the one final commit CI should run on.
+MSG="$1"
+grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]' "$MSG" && exit 0
+printf '\n[skip ci]\n' >> "$MSG"
+HOOK
+chmod +x "$HOOK_DIR/commit-msg"
+
 jq -n --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
   '{slug:$slug, run_date:$rd, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'

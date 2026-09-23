@@ -210,3 +210,16 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// The pi backend joins the recognized agent vocabulary. Near-misses stay
+// rejected so a mis-routed agent still fails closed at workflow load.
+func TestIsValidAgentBackend_Pi(t *testing.T) {
+	if !IsValidAgentBackend(BackendPi) {
+		t.Fatalf("pi must be a valid agent backend")
+	}
+	for _, bad := range []string{"PI", "Pi", "pi-agent", " pi"} {
+		if IsValidAgentBackend(bad) {
+			t.Fatalf("near-miss %q must be rejected", bad)
+		}
+	}
+}

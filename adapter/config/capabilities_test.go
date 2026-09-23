@@ -248,3 +248,26 @@ func TestLoadCapabilityRules_NilInherit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, provider.EffortHigh, eff, "sonnet-4.6 effort_floor xhigh -> high must still apply")
 }
+
+// The pi backend must be in the embedded default ruleset, or a profile naming
+// it is rejected at create time with "unknown backend in capability rules".
+// pi exposes off/minimal/low/medium/high/xhigh/max thinking levels, so every
+// graded effort maps straight through; it has no context-window knob, so it is
+// default-tier only (like codex and opencode).
+func TestLoadCapabilityRules_PiBackend(t *testing.T) {
+	r, err := adapterconfig.LoadCapabilityRules("")
+	require.NoError(t, err)
+
+	for _, e := range []provider.Effort{
+		provider.EffortLow, provider.EffortMedium, provider.EffortHigh,
+		provider.EffortXHigh, provider.EffortMax,
+	} {
+		_, gotEffort, verr := r.Validate("pi", "openai-codex/gpt-5.6-sol", provider.ContextDefault, e)
+		require.NoError(t, verr, "effort %q must be valid on pi", e)
+		assert.Equal(t, e, gotEffort, "effort %q must not be floored on pi", e)
+	}
+
+	// No context knob: a non-default tier is rejected rather than silently kept.
+	_, _, verr := r.Validate("pi", "openai-codex/gpt-5.6-sol", provider.Context1M, provider.EffortHigh)
+	assert.Error(t, verr, "pi has no context-window axis; a 1m tier must be rejected")
+}

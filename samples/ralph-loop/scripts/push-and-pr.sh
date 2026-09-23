@@ -14,6 +14,13 @@ BRANCH="$(printf '%s' "$IN" | jq -r '.branch')"
 # origin/<default-branch>...HEAD, and origin/main is absent here) — title and body
 # are supplied explicitly below instead.
 BASE="$(printf '%s' "$IN" | jq -r '((.base_branch | select(. != "")) // (.["init-workspace"].base_ref) // "") | select(. != null)')"
+# pr_base: the branch the PR should target when it is not base_branch. A RESUMED
+# run continues ON base_branch, so head and base are the same ref and no PR can
+# be opened at the end (see the resume block below); the original run would have
+# targeted the feature's real base. pr_base names that base so a resumed run can
+# still open the PR. Empty keeps the previous behaviour.
+PR_BASE="$(printf '%s' "$IN" | jq -r '.pr_base // ""')"
+if [ -n "$PR_BASE" ] && [ "$PR_BASE" != "null" ]; then BASE="$PR_BASE"; fi
 # Branch-point test baseline summary (recorded before implementation), surfaced
 # in the PR body so a reviewer knows which failures pre-date this work. Absent on
 # older runs -> empty, and the note is omitted.
@@ -46,6 +53,17 @@ Review plan: $PLAN_SUMMARY"
 fi
 
 gh auth status 1>&2 || { echo "gh not authenticated" >&2; exit 1; }
+
+# CI runs once, on the finished branch. Every in-loop commit carried [skip ci]
+# via the commit-msg hook init-workspace.sh installed, so nothing pushed during
+# the loop has been checked by CI (which is the point: one review triggered over
+# 1,000 workflow runs on intermediate commits). This empty commit is made with
+# --no-verify so it lacks the marker; GitHub runs the workflows on it when it
+# becomes the PR head, or the resumed branch's new tip. --allow-empty because the
+# finished state is already committed: this commit exists only to be the head
+# that CI evaluates. Harmless on a worktree with no hook.
+git -C "$WORK" commit --quiet --allow-empty --no-verify \
+  -m "chore(ralph): review loop finished, run CI on the finished branch" 1>&2
 git -C "$WORK" push --quiet -u origin "$BRANCH" 1>&2
 
 # RESUME: a resumed run continues ON the branch it was told to refine, so head

@@ -7,19 +7,24 @@ make the calls yourself.
 
 - **Work item:** `{{select-work.target_id}}` — {{select-work.target_label}}
 - **Phase 2.** Every single-system area is approved; this is the integration
-  sweep. A paired row reads *"A as impacted by B"* and names the **seam** the two
-  share — the symbol, table, topic, endpoint or flag. Review the completeness,
-  correctness and spec alignment of **A** as it is affected by **B**, focusing on
-  that named seam and that direction.
-- **You may batch.** If up to **three other** unchecked rows share an area you
-  have already loaded, review them in this same pass — they are one approval each
-  and are usually inspection rather than repair, so paying a whole pass per seam
-  is waste. Examine each seam properly and report each separately. A batch is
-  several reviews done in one sitting, never one review stretched over rows.
-- **If you find a real seam listed under `## No seam`, promote it**: add the pair
-  in both directions with the seam named and remove it from that list. Deferred
-  is a decision, not a closed door. Conversely, move a listed pair there (with a
-  reason) if it turns out to share no seam.
+  sweep. A paired row is **one seam**, named `A ↔ B`, and its Seam cell is a trace
+  recipe: **SHARED** (the state, contract, flag or ordering the two behaviours
+  share), **TRACE** (the path from entry, through the seam, to the observable
+  result) and **BREAK** (the failure that must be shown impossible or caught).
+  Review it in **both directions in this pass**: what A assumes about B, and what
+  B assumes about A. One approval covers both; there is no reverse row.
+- If the row is directional (plans seeded before 2026-09-11 read `A as impacted
+  by B` and carry the reverse as its own row), review the direction it names and
+  do not add rows for it.
+- **Batching.** If other unchecked rows share the context you have **already
+  loaded**, you may review them in this same pass, up to four rows in total. Each
+  seam is examined properly and reported separately; a batch is several reviews
+  done in one sitting, never one review stretched over rows. Do not assume rows
+  will batch: the last plan's rows batched in 7 of 66 passes.
+- **If you find a real seam listed under `## No seam`, promote it**: add one row
+  with SHARED, TRACE and BREAK stated and remove it from that list. Deferred is a
+  decision, not a closed door. Conversely, move a row there (with a reason) if it
+  turns out to be an internal hop of one behaviour or to share nothing.
 - **Router status:** {{select-work.summary}}
 
 Work only the assigned row and any rows you legitimately batch with it.
@@ -45,6 +50,14 @@ later pass. Your recommendation carries weight — but the approver may withhold
 and that is the system working.
 
 You do own `docs/reference/gaps-identified.md`: record what you find there.
+
+## Read the ledger selectively
+
+Do not read `gaps-identified.md` end to end: one ledger reached 1.4 MB and no
+longer fit in any context. Read the OPEN items (`grep -n '\[ \]'`) and any section
+naming either behaviour of your seam. When you record, write at most ten lines
+per entry with `file:symbol`; move an item you close under `## Closed` with a
+one-line note.
 
 ## Test command(s)
 
@@ -81,43 +94,49 @@ disagree, RALPH.md wins.
 
 ## Each pass
 
-1. Read `./work/RALPH.md`, `docs/reference/paired-reviews.md`, `docs/reference/gaps-identified.md`.
+1. Read `./work/RALPH.md`, your row in `docs/reference/paired-reviews.md`, the
+   `### Area` blocks of both behaviours it joins in `docs/reference/focus-areas.md`,
+   and the open items in `docs/reference/gaps-identified.md`.
 2. Run the test command(s) and compare failures against the baseline.
-3. Read every file on BOTH sides of the seam, and the seam itself.
-4. Apply the **wired-and-fed** criteria, with real commands:
-   - `grep -rn <Symbol>` each new exported field / collaborator / config — is it
-     constructed or populated **outside `*_test.go`**? Only ever set in tests → the area fails.
-   - Is each new component assembled into the real composition root so the live
-     path reaches it? Name the wiring site or fail it.
-   - Does any production call site pass `nil`/empty/hardcoded where a real
-     producer should feed it?
-   - Do any tests pass only because a fake ignores a load-bearing argument, or an
-     "integration" test asserts an intermediate hop instead of the sink?
-   - All five scenario categories covered (happy, success, failure, error, edge),
-     and would at least one test **fail** if its production input were nil/empty?
-5. Make the smallest correct change that advances the area — strict TDD when
+3. Read every file on BOTH sides of the seam and the seam itself, following the
+   row's TRACE from entry to observable result.
+4. Demonstrate that BREAK cannot happen, in both directions: a test that goes red
+   when the seam is broken, or a cited guard at `file:symbol`. Then apply the
+   **wired-and-fed** criteria to the seam:
+   - `grep -rn` the SHARED symbol, table, topic or flag on both sides — is the
+     producer really feeding the consumer in production, not only in tests?
+   - Is each side's dependency on the other assembled at the real composition
+     root? Name the wiring site or fail it.
+   - Does any production call site pass `nil`/empty/hardcoded across the seam?
+   - Do any tests pass only because a fake on one side ignores what the other
+     side sends?
+   - If SHARED is an ordering, what enforces it? A check that runs afterwards
+     does not.
+5. Make the smallest correct change that advances the seam — strict TDD when
    adding behaviour.
 6. Re-run the affected tests.
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back
    to step 5 to squeeze in another fix.
 
-Most seams resolve in one pass; some need several. That is normal — never inflate a recommendation
-to end the loop sooner.
+Most seams resolve in one pass; some need several. That is normal — never inflate
+a recommendation to end the loop sooner.
 
 ## Wrap Up (every pass, without exception)
 
 Nothing defers Wrap Up — not a running test, not an inconclusive result, not an
 unfinished fix. If you did anything at all, you reach Step C and commit it.
 
-**Step A** — Did the area meet every approval criterion for *your* review?
+**Step A** — Is the seam sound in both directions, with BREAK demonstrated
+impossible or caught?
 
-**Step B** — Record your **recommendation**; tick nothing. One line, exactly one of:
+**Step B** — Record your **recommendation** per row; tick nothing. One line per
+row, exactly one of:
 
-`Recommend: approve {{select-work.target_id}} — <the evidence>`
+`Recommend: approve {{select-work.target_id}} — <the evidence, both directions>`
 `Recommend: no approval for {{select-work.target_id}} — <what is still missing>`
 
 Cite what you verified (`file:symbol`, the grep you ran, the test that fails
-without the production input). Record anything newly discovered in
+when the seam is broken). Record anything newly discovered in
 `gaps-identified.md`.
 
 **Step C** — Commit and push. Your work is valuable regardless of review status:

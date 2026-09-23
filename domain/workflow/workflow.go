@@ -51,6 +51,12 @@ const (
 	// BackendCodex selects the codex agent backend (`codex exec`, run on the
 	// ChatGPT subscription with no API key).
 	BackendCodex = "codex"
+	// BackendPi selects the pi agent backend (`pi --print --mode json`), a
+	// minimal harness whose small system prompt and four-tool surface cost a
+	// fraction of a vendor CLI's per-request context. Unlike codex it is
+	// multi-provider and key-authenticated, so a binding's provider selects the
+	// credential.
+	BackendPi = "pi"
 )
 
 // IsValidAgentBackend reports whether b is a recognized agent backend value.
@@ -59,7 +65,7 @@ const (
 // rejected so a mis-routed agent fails closed at workflow load.
 func IsValidAgentBackend(b string) bool {
 	switch b {
-	case BackendUnset, BackendClaudeCode, BackendOpencode, BackendCodex:
+	case BackendUnset, BackendClaudeCode, BackendOpencode, BackendCodex, BackendPi:
 		return true
 	default:
 		return false

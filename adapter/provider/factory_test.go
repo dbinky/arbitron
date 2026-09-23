@@ -16,6 +16,7 @@ import (
 	"github.com/arbitron/arbitron/adapter/claudecli"
 	"github.com/arbitron/arbitron/adapter/opencode"
 	"github.com/arbitron/arbitron/adapter/openrouter"
+	"github.com/arbitron/arbitron/adapter/pi"
 	adapterprovider "github.com/arbitron/arbitron/adapter/provider"
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/provider"
@@ -647,4 +648,12 @@ func envValueSlice(env []string, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// A pi backend selects the pi adapter.
+func TestFactory_AgentProviderFor_PiBackend(t *testing.T) {
+	f := newTestFactory(t)
+	ap, err := f.AgentProviderFor(agentBindingBackend("anthropic-api", "pi"))
+	require.NoError(t, err)
+	assert.IsType(t, (*pi.Provider)(nil), ap)
 }

@@ -60,7 +60,10 @@ than a pass that ends with nothing committed.
 
 ## RALPH.md is the authority
 
-`./work/RALPH.md` carries the loop protocol — Roles, Constraints, Iteration
+`./work/RALPH.md` carries the loop protocol as three role blocks
+(`## Role: single-review-1`, `## Role: single-review-2`, `## Role: paired-review`).
+This is a RESCUE pass: read the block for whichever role owns the stuck item and
+follow it. The rest of the protocol — Constraints, Iteration
 Structure and Wrap Up. **Read it first and follow it.** The summary below must
 agree with it; if they ever disagree, RALPH.md wins.
 
@@ -75,7 +78,8 @@ agree with it; if they ever disagree, RALPH.md wins.
 
 ## Each pass
 
-1. Read `./work/RALPH.md`, `./work/docs/reference/focus-areas.md`, `./work/docs/reference/gaps-identified.md`.
+1. Read `./work/RALPH.md`, `./work/docs/reference/focus-areas.md`,
+   `./work/docs/reference/paired-reviews.md` and `./work/docs/reference/gaps-identified.md`.
 2. Run the test command(s) above (and build) to see current status; compare
    failures against the baseline to distinguish NEW failures from pre-existing.
 3. Pick the **highest-risk review with an unchecked status**, reading the Risk

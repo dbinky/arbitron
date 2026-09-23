@@ -3,10 +3,13 @@
 # handles it. This is the router that makes per-role models possible.
 #
 # The loop runs two phases. Phase 1 works single-system areas, interleaved by
-# risk: for the highest-risk area with an outstanding box, review 1 is refined by
-# Sonnet and assessed by Sol; review 2 is refined by Sol and assessed by Opus.
-# Only when every single-system box is ticked does phase 2 begin, working the
-# paired integration table with Opus refining and Sol assessing.
+# risk: for the highest-risk area with an outstanding box, review 1 is the WIRING
+# lens (does the path exist and is it fed?) and review 2 is the FAILURE lens (how
+# does it fail?). Each review is refined by one model family and assessed by
+# another, and the two reviews use different pairs. Only when every single-system
+# box is ticked does phase 2 begin, working the paired seam table, one row per
+# seam in both directions. Which model fills which role is the manifest's
+# business (the node profiles); this script never names one.
 #
 # Every pair is cross-family ON PURPOSE. A single-system area needs two
 # INDEPENDENT approvals, and two passes by the same model family share blind
@@ -121,9 +124,9 @@ if [ -n "$ID" ] && [ "$ID" = "$PREV_ID" ]; then STREAK=$((PREV_N + 1)); else STR
 ESC=false; [ "$STREAK" -ge 3 ] && ESC=true
 
 case "$KIND" in
-  single_1) SUM="PHASE 1 (single-system), review 1 of area $NUM — refined by Sonnet, assessed by Sol. $SL single-system area(s) and $PL paired review(s) outstanding." ;;
-  single_2) SUM="PHASE 1 (single-system), review 2 of area $NUM — refined by Sol, assessed by Opus. Review 1 already passed, so this is the INDEPENDENT second look. $SL single-system area(s) and $PL paired review(s) outstanding." ;;
-  paired)   SUM="PHASE 2 (paired integration), review $NUM — refined by Opus, assessed by Sol. All single-system areas are approved. $PL paired review(s) outstanding." ;;
+  single_1) SUM="PHASE 1 (single-system), review 1 of area $NUM — the WIRING lens: does the path exist and is it fed? Refiner and approver are on different model families. $SL single-system area(s) and $PL paired review(s) outstanding." ;;
+  single_2) SUM="PHASE 1 (single-system), review 2 of area $NUM — the FAILURE lens: how does it fail? Review 1 already passed on wiring; this is the independent second look, on a different model family, asking a different question. $SL single-system area(s) and $PL paired review(s) outstanding." ;;
+  paired)   SUM="PHASE 2 (paired integration), seam $NUM — both directions in one pass, one approval. Refiner and approver are on different model families. All single-system areas are approved. $PL paired review(s) outstanding." ;;
   *)        SUM="NOTHING OUTSTANDING: every single-system box and every paired review carries its approval. The loop may exit." ;;
 esac
 [ "$ESC" = true ] && SUM="$SUM ESCALATE: this is pass $((STREAK + 1)) in a row on $ID — record an [ESCALATION] gap naming what would have to change for it to pass."

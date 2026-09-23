@@ -10,6 +10,8 @@ WS="$(printf '%s' "$IN" | jq -r '.workspace')"
 REPO_URL="$(printf '%s' "$IN" | jq -r '.repo_url')"
 SLUG_IN="$(printf '%s' "$IN" | jq -r '.slug // ""')"
 BASE_BRANCH_IN="$(printf '%s' "$IN" | jq -r '.base_branch // ""')"
+# Explicit opt-in only: reject malformed flags before any filesystem/git work.
+FORCE_FRESH="$(printf '%s' "$IN" | jq -r 'if has("force_fresh") then if (.force_fresh | type) == "boolean" then .force_fresh else error("force_fresh must be a boolean") end else false end')"
 
 [ -n "$WS" ] && [ "$WS" != "null" ] || { echo "workspace not set" >&2; exit 1; }
 [ -n "$REPO_URL" ] && [ "$REPO_URL" != "null" ] || { echo "repo_url not set" >&2; exit 1; }
@@ -130,9 +132,10 @@ fi
 # branch. A resumed run continues ON that branch so the earned approvals, the
 # committed baseline and the whole history stay in one place; cutting a fresh
 # branch would strand them behind a second PR. Detected rather than declared, so
-# a normal run needs no new input and cannot resume by accident.
+# a normal run needs no new input. force_fresh=true instead takes the fresh
+# branch through the existing archive/baseline/seed path, preserving old docs.
 RESUMED=false
-if [ -n "$BASE_BRANCH" ] && git -C "$SRC" cat-file -e "origin/$BASE_BRANCH:docs/reference/focus-areas.md" 2>/dev/null; then
+if [ "$FORCE_FRESH" = false ] && [ -n "$BASE_BRANCH" ] && git -C "$SRC" cat-file -e "origin/$BASE_BRANCH:docs/reference/focus-areas.md" 2>/dev/null; then
   RESUMED=true
 fi
 
@@ -147,6 +150,32 @@ else
   BRANCH="dev-$SLUG-$RUN_DATE-$SHORT_ID"
   git -C "$SRC" worktree add --quiet -b "$BRANCH" "$WORK" "$BASE_REF" 1>&2
 fi
+
+# CI COST: every commit the loop makes carries "[skip ci]", so pushing after
+# every pass (which is what protects the work and makes resume possible) does
+# not run the repository's CI on each intermediate commit. The resumed z-image
+# run pushed ~100 commits into an open PR and triggered over 1,000 GitHub
+# Actions runs in two days, 431 of them failing on states nobody would merge.
+# GitHub skips push- and pull_request-triggered workflows when the head commit
+# message carries the marker. It is applied by a commit-msg hook rather than by
+# the agents' commit commands so it cannot be forgotten; push-and-pr.sh makes
+# the final commit with --no-verify so CI runs exactly once, on the finished
+# state. Installed on the fresh AND the resume path: the resumed run is the case
+# that burned the budget. --git-path resolves the shared hooks dir of a linked
+# worktree; it may come back relative to the worktree, hence the case.
+HOOK_DIR="$(git -C "$WORK" rev-parse --git-path hooks)"
+case "$HOOK_DIR" in /*) ;; *) HOOK_DIR="$WORK/$HOOK_DIR" ;; esac
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/commit-msg" <<'HOOK'
+#!/bin/sh
+# Installed by arbitron init-workspace.sh: every in-loop commit is marked so the
+# repository's CI skips it. push-and-pr.sh bypasses this hook (--no-verify) for
+# the one final commit CI should run on.
+MSG="$1"
+grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]' "$MSG" && exit 0
+printf '\n[skip ci]\n' >> "$MSG"
+HOOK
+chmod +x "$HOOK_DIR/commit-msg"
 
 jq -n --argjson resumed "$RESUMED" --arg slug "$SLUG" --arg rd "$RUN_DATE" --arg work "$WORK" --arg src "$SRC" --arg br "$BRANCH" --arg base "$BASE_REF" \
   '{slug:$slug, run_date:$rd, resumed:$resumed, work_dir:$work, src_dir:$src, branch:$br, base_ref:$base}'
