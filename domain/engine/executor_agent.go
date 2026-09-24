@@ -61,13 +61,13 @@ func firstNonEmpty(vals ...string) string {
 // records the steps/summary/tokens on the result.
 func (e *AgentCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
 	// Read mission template file.
-	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+	templateText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("agent_call %q: read template: %w", node.ID, err)
 	}
 
 	// Resolve substitutions in template.
-	prompt := variable.Resolve(string(templateBytes), vars)
+	prompt := variable.Resolve(templateText, vars)
 
 	// Resolve the agent profile alias to a concrete model.
 	binding, err := e.resolver.Resolve(ctx, node.Config.ModelProfile)

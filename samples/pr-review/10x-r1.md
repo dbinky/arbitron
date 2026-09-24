@@ -9,11 +9,10 @@ cd {{work_dir}}                 # isolated shallow clone of {{repo}}, already on
 export PR_HEAD="{{pr_head}}"     # PR head SHA (inline-comment commit_id)
 export PR_BRANCH="{{pr_branch}}"
 ```
-This pipeline never uses `~/Repos` — do not look for the repo there. For the
-shared gh read/post patterns, the **wired-and-fed verification mandate**, and
-attribution rules see `_common.md`, or use the equivalent `gh api
-repos/{{repo}}/...` commands (they take an explicit repo, so they work from any
-directory).
+This pipeline never uses `~/Repos`. The shared setup, gh read/post recipes and
+attribution rules are included below.
+
+{{include:_common.md}}
 
 ## Your perspective
 

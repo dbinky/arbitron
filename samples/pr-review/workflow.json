@@ -1,7 +1,8 @@
 {
+  "id": "58d91180-e4c0-4e5b-b667-6efbe09ebc06",
   "name": "pr-review",
-  "author": "arbitron",
   "description": "Multi-persona PR review pipeline. Clones the PR into an isolated per-instance workspace (never a local ~/Repos checkout), runs Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security, verifies every required persona actually posted (fail-loud on dropout), then Manager decides. Optionally a senior engineer auto-implements the selected fix tier; verify-fix runs build/tests + a wired-and-fed provenance check and writes a verdict file that record-verdict lifts into the gate. EITHER way the committed fixes are pushed to the PR branch (the per-instance workspace is GC'd after the run, so never pushing = lost work); the gate only decides whether the PR comment reads 'verified clean' or 'pushed but flagged for review'. Reviewers run a mandatory wired-and-fed provenance trace, not just a diff read.",
+  "author": "arbitron",
   "defaultErrorBehavior": {
     "type": "retry",
     "retries": 2,
@@ -49,8 +50,8 @@
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
-        "x": 130,
-        "y": -320
+        "x": 0,
+        "y": 0
       }
     },
     {
@@ -84,8 +85,8 @@
       "description": "Lift init-pr-workspace outputs (work_dir, pr_branch, pr_head, base) to top-level vars for the persona templates and commit-push.",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": -160
+        "x": 0,
+        "y": 140
       }
     },
     {
@@ -93,14 +94,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "architect-r1.md",
-        "model_profile": "reviewer-codex-medium"
+        "model_profile": "reviewer-codex-medium",
+        "timeoutSeconds": 3600
       },
       "label": "Architect R1",
       "description": "Ivory Tower Architect first pass; posts inline + general comments; traces provenance/wiring of new structural pieces",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 0
+        "x": 0,
+        "y": 280
       }
     },
     {
@@ -108,14 +110,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "10x-r1.md",
-        "model_profile": "reviewer-opus-high"
+        "model_profile": "reviewer-opus-high",
+        "timeoutSeconds": 3600
       },
       "label": "10x R1",
       "description": "10x GSD Engineer first pass; runs the wired-and-fed provenance trace, replies to architect threads, adds practical findings",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 160
+        "x": 0,
+        "y": 420
       }
     },
     {
@@ -123,14 +126,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "architect-r2.md",
-        "model_profile": "reviewer-codex-medium"
+        "model_profile": "reviewer-codex-medium",
+        "timeoutSeconds": 3600
       },
       "label": "Architect R2",
       "description": "Architect second pass; concedes or doubles down in existing threads only",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 320
+        "x": 0,
+        "y": 560
       }
     },
     {
@@ -138,14 +142,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "10x-r2.md",
-        "model_profile": "reviewer-opus-medium"
+        "model_profile": "reviewer-opus-medium",
+        "timeoutSeconds": 3600
       },
       "label": "10x R2",
       "description": "10x second pass; final positions in existing threads",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 480
+        "x": 0,
+        "y": 700
       }
     },
     {
@@ -153,14 +158,31 @@
       "type": "agent_call",
       "config": {
         "templateFile": "security.md",
-        "model_profile": "reviewer-opus-high"
+        "model_profile": "security-opus-high",
+        "timeoutSeconds": 5400
       },
-      "label": "Security",
-      "description": "Security expert; weighs in on existing debates and posts severity-tagged findings",
+      "label": "Security 1 (code lens)",
+      "description": "Security reviewer 1: vulnerabilities in the logic itself. Ranges beyond the commented files \u2014 every file in the PR, then a bounded reachability walk (3 hops, in-repo only). Findings outside the diff but reachable from it block; unrelated pre-existing ones are tagged [PRE-EXISTING] and routed, not blocked on.",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 640
+        "x": 0,
+        "y": 840
+      }
+    },
+    {
+      "id": "security-2",
+      "type": "agent_call",
+      "config": {
+        "templateFile": "security2.md",
+        "model_profile": "security-astra-high",
+        "timeoutSeconds": 5400
+      },
+      "label": "Security 2 (supply chain)",
+      "description": "Security reviewer 2 on a different model family: dependencies, secrets, config defaults, CI/build/release and sandbox posture. Posts under its own security2: prefix so the completeness gate counts it separately and either reviewer dropping out stays detectable.",
+      "errorBehavior": {},
+      "position": {
+        "x": 0,
+        "y": 980
       }
     },
     {
@@ -172,11 +194,11 @@
         "timeoutSeconds": 60
       },
       "label": "Verify personas posted",
-      "description": "Deterministic fail-loud gate: count comments per required persona prefix (architect/10x/security); abort the run if any posted nothing, so the manager never synthesizes a partial panel.",
+      "description": "Deterministic fail-loud gate: count comments per required persona prefix (architect/10x/security/security2 — security and security2 counted separately); abort the run if any posted nothing, so the manager never synthesizes a partial panel.",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 720
+        "x": 0,
+        "y": 1120
       }
     },
     {
@@ -184,14 +206,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "manager.md",
-        "model_profile": "reviewer-sonnet5-high"
+        "model_profile": "reviewer-sonnet5-high",
+        "timeoutSeconds": 3600
       },
       "label": "Manager",
       "description": "Engineering manager; per-thread decisions + Decision Summary with verdict",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 800
+        "x": 0,
+        "y": 1260
       }
     },
     {
@@ -212,8 +235,8 @@
       "description": "Skip senior-engineer when fix_scope == 'none'",
       "errorBehavior": {},
       "position": {
-        "x": 130,
-        "y": 960
+        "x": 0,
+        "y": 1400
       }
     },
     {
@@ -221,14 +244,15 @@
       "type": "agent_call",
       "config": {
         "templateFile": "senior-engineer.md",
-        "model_profile": "coder-opus-medium"
+        "model_profile": "coder-opus-medium",
+        "timeoutSeconds": 5400
       },
       "label": "Senior Engineer",
       "description": "Implements the selected fix tier in the isolated worktree and commits (wired-and-fed, no self-certified half-fixes); the verify-fix gate decides the comment, but the fixes are pushed either way",
       "errorBehavior": {},
       "position": {
         "x": 0,
-        "y": 1120
+        "y": 1540
       }
     },
     {
@@ -236,37 +260,37 @@
       "type": "agent_call",
       "config": {
         "templateFile": "verify-fix.md",
-        "model_profile": "coder-opus-medium",
-        "timeoutSeconds": 2400,
+        "model_profile": "approver-codex-high",
         "outputSchema": {
-          "type": "object",
           "properties": {
-            "push_ok": {
-              "type": "boolean"
-            },
             "blockers": {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             "notes": {
               "type": "string"
+            },
+            "push_ok": {
+              "type": "boolean"
             }
           },
           "required": [
             "push_ok",
             "blockers",
             "notes"
-          ]
-        }
+          ],
+          "type": "object"
+        },
+        "timeoutSeconds": 2400
       },
       "label": "Verify fix (wired-and-fed gate)",
-      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits and WRITES its verdict to {{workspace}}/verify-verdict.json. agent_call does not enforce outputSchema, so the verdict flows via that file (lifted by record-verdict), not via prose.",
+      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits and WRITES its verdict to {{workspace}}/verify-verdict.json. agent_call does not enforce outputSchema, so the verdict flows via that file (lifted by record-verdict), not via prose. CROSS-FAMILY BY DESIGN: the senior engineer writes on Opus 5.5 and this node verifies on gpt-6-sol, so the only node that mutates the repository is never certified by its own model family.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 1280
+        "x": 420,
+        "y": 0
       }
     },
     {
@@ -278,11 +302,11 @@
         "timeoutSeconds": 60
       },
       "label": "Record verify verdict",
-      "description": "Lift the verify-fix verdict from {{workspace}}/verify-verdict.json into structured outputs {push_ok, blockers} so the fix-gate keys off a reliably-parsed value (agent_call does NOT enforce outputSchema). Defaults push_ok=false (concerns path) if the file is missing — and both fix paths push, so no committed work is ever lost.",
+      "description": "Lift the verify-fix verdict from {{workspace}}/verify-verdict.json into structured outputs {push_ok, blockers} so the fix-gate keys off a reliably-parsed value (agent_call does NOT enforce outputSchema). Defaults push_ok=false (concerns path) if the file is missing \u2014 and both fix paths push, so no committed work is ever lost.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 1400
+        "x": 420,
+        "y": 140
       }
     },
     {
@@ -303,8 +327,8 @@
       "description": "Both outputs push the senior engineer's commits to the PR branch (work is never lost). This gate only decides the PR comment: 'push' => verified-clean comment, 'block' => pushed-but-flagged comment listing the verify-fix blockers.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 1560
+        "x": 420,
+        "y": 280
       }
     },
     {
@@ -319,8 +343,8 @@
       "description": "Commit any uncommitted senior-engineer fixes, push to the PR branch, and post a 'verified clean' comment. Reached when verify-fix passed.",
       "errorBehavior": {},
       "position": {
-        "x": 0,
-        "y": 1720
+        "x": 420,
+        "y": 420
       }
     },
     {
@@ -335,8 +359,8 @@
       "description": "Reached when verify-fix flagged concerns: STILL commit + push the fixes (workspace is GC'd, so not pushing = lost work), then post a comment with the blockers asking for human review before merge.",
       "errorBehavior": {},
       "position": {
-        "x": 240,
-        "y": 1720
+        "x": 420,
+        "y": 560
       }
     },
     {
@@ -347,8 +371,8 @@
       "description": "No-op terminal node reached when fix_scope == 'none'",
       "errorBehavior": {},
       "position": {
-        "x": 260,
-        "y": 1120
+        "x": 420,
+        "y": 700
       }
     },
     {
@@ -357,9 +381,8 @@
       "config": {
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
-        "timeoutSeconds": 60,
         "args": [
-          "pr-review complete — {{repo}} PR #{{pr_number}}",
+          "pr-review complete \u2014 {{repo}} PR #{{pr_number}}",
           "Multi-persona review finished and the senior-engineer {{fix_scope}} fixes were pushed to the PR branch. See the PR for the manager Decision Summary and the verify-fix verdict.",
           "info",
           "Repo={{repo}}",
@@ -368,14 +391,15 @@
           "Fix scope={{fix_scope}}",
           "Verified clean={{record-verdict.push_ok}}",
           "PR URL=https://github.com/{{repo}}/pull/{{pr_number}}"
-        ]
+        ],
+        "timeoutSeconds": 60
       },
       "label": "Notify Teams",
       "description": "Post a rich completion alert to the Teams webhook (no-op if teams_webhook_url unset). Reached from BOTH push paths, so every finished review pings Teams regardless of the verdict.",
       "errorBehavior": {},
       "position": {
-        "x": 120,
-        "y": 1880
+        "x": 420,
+        "y": 840
       }
     }
   ],
@@ -403,10 +427,6 @@
     {
       "source": "10x-r2",
       "target": "security"
-    },
-    {
-      "source": "security",
-      "target": "verify-personas"
     },
     {
       "source": "verify-personas",
@@ -455,6 +475,14 @@
     {
       "source": "fix-blocked",
       "target": "notify-teams"
+    },
+    {
+      "source": "security",
+      "target": "security-2"
+    },
+    {
+      "source": "security-2",
+      "target": "verify-personas"
     }
   ]
 }

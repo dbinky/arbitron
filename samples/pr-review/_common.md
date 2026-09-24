@@ -74,5 +74,10 @@ source reads/greps resolve correctly.)
 ## Attribution
 
 Prefix every comment body with your persona tag — `architect:`, `10x:`,
-`security:`, `manager:`, `senior:` — so later rounds (and the automated
-persona-completeness check) can identify authors.
+`security:`, `security2:`, `manager:`, `senior:` — so later rounds (and the
+automated persona-completeness check) can identify authors.
+
+The two security reviewers are separate personas with separate tags:
+`security:` is the code lens, `security2:` the supply-chain and configuration
+lens. The completeness gate counts them independently, so neither may post under
+the other's prefix.

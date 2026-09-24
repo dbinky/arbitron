@@ -15,9 +15,9 @@ never be one model grading itself twice:
 
 | lane | refines | approves |
 |------|---------|----------|
-| single review 1 (wiring lens) | `coder-sonnet5-high` — Sonnet 5 | `approver-codex-high` — gpt-5.6-sol |
-| single review 2 (failure lens) | `coder-codex-high` — gpt-5.6-sol | `approver-opus-medium` — Opus 5.5 |
-| paired integration seam | `coder-opus-medium` — Opus 5.5 | `approver-codex-high` — gpt-5.6-sol |
+| single review 1 (wiring lens) | `coder-sonnet5-high` — Sonnet 5 | `approver-codex-high` — gpt-6-sol |
+| single review 2 (failure lens) | `coder-codex-high` — gpt-6-sol | `approver-opus-medium` — Opus 5.5 |
+| paired integration seam | `coder-opus-medium` — Opus 5.5 | `approver-codex-high` — gpt-6-sol |
 
 `refine-rescue` (`refine-deep`, Opus 5.5) is the stagnation escape hatch. It
 records its commit directly rather than routing through a lane approver — it
@@ -26,22 +26,22 @@ re-routes through `select-work` and is assessed normally.
 
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
-| approver-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
+| approver-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
 | approver-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | assess-single-2 |
 | assessor-opus-high | chat | (inherit) | claude-opus-5-5 | high | (chat: tool-suppressed) | deps-assess, impl-assess |
 | assessor-sonnet5-high | chat | (inherit) | claude-sonnet-5 | high | (chat: tool-suppressed) | disambiguate-docs, refine-assess |
-| coder-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
+| coder-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
 | coder-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | produce-plans |
 | coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | refine-paired |
-| coder-pi-sol-high | agent | pi | openai-codex/gpt-5.6-sol | high | — | impl-task |
+| coder-pi-sol-high | agent | pi | openai-codex/gpt-6-sol | high | — | impl-task |
 | coder-sonnet5-high | agent | claude-code | claude-sonnet-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-1 |
 | coder-sonnet5-medium | agent | claude-code | claude-sonnet-5 | medium | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |
 | critic-codex-high | agent | codex | gpt-6-astra | high | Read,Write,Edit,Grep,Glob,Bash | critique-seed |
-| interviewer-codex | agent | codex | gpt-5.6-sol | default | Read,Write,Grep,Glob,Bash | brainstorm-spec |
+| interviewer-codex | agent | codex | gpt-6-sol | default | Read,Write,Grep,Glob,Bash | brainstorm-spec |
 | interviewer-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Grep,Glob,Bash | brainstorm-design, resolve-deps |
 | planner-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | seed-ralph |
 | refine-deep | agent | claude-code | claude-opus-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-rescue |
-| reviewer-codex-high | agent | codex | gpt-5.6-sol | high | Read,Write,Edit,Grep,Glob,Bash | align-designs, align-plans |
+| reviewer-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | align-designs, align-plans |
 
 ## Prerequisite: none
 

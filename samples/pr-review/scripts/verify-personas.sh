@@ -20,8 +20,14 @@ ALL="$INLINE
 $GENERAL"
 
 # Required reviewers that MUST have posted before the manager synthesizes.
+# security and security2 are COUNTED SEPARATELY on purpose: they are two
+# different reviewers on different model families with different briefs, and
+# they post under distinct prefixes. Counting them as one "security" persona
+# would let either drop out silently — the survivor's comments would satisfy
+# the gate and the manager would synthesize on a partial panel, which is the
+# exact failure this gate exists to prevent.
 missing=""
-for p in architect 10x security; do
+for p in architect 10x security security2; do
   n="$(printf '%s\n' "$ALL" | grep -c "^$p:" || true)"
   echo "persona $p: $n comment(s)" >&2
   [ "$n" -gt 0 ] || missing="$missing $p"

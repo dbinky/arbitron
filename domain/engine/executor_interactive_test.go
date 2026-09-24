@@ -194,6 +194,67 @@ func TestInteractiveExecutor_ReadsOrchestrationFile(t *testing.T) {
 	assert.Contains(t, reqs[0].Prompt, "Orchestration content here")
 }
 
+// Both prompt files the interactive executor composes go through loadTemplate,
+// so an include in either reaches the model expanded, never as a literal
+// directive, and a missing include fails the node instead of being sent.
+func TestInteractiveExecutor_ExpandsIncludesInPromptFiles(t *testing.T) {
+	tests := []struct {
+		name      string
+		orch      string
+		tmpl      string
+		files     map[string]string
+		wantInMsg string
+		wantErr   bool
+	}{
+		{
+			name:      "include in orchestration file",
+			orch:      "Orch {{include:_common.md}}",
+			tmpl:      "Template",
+			files:     map[string]string{"_common.md": "SHARED ORCH PREAMBLE"},
+			wantInMsg: "Orch SHARED ORCH PREAMBLE",
+		},
+		{
+			name:      "include in template file",
+			orch:      "Orch",
+			tmpl:      "Tmpl {{include:_common.md}}",
+			files:     map[string]string{"_common.md": "SHARED TMPL PREAMBLE"},
+			wantInMsg: "Tmpl SHARED TMPL PREAMBLE",
+		},
+		{
+			name:    "missing include in orchestration file fails closed",
+			orch:    "Orch {{include:missing.md}}",
+			tmpl:    "Template",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
+			fileReader.files["test-wf/orchestration.md"] = []byte(tc.orch)
+			fileReader.files["test-wf/template.md"] = []byte(tc.tmpl)
+			for p, body := range tc.files {
+				fileReader.files["test-wf/"+p] = []byte(body)
+			}
+			llmProvider.streamCallFn = cannedStream([]string{"ok"}, 1, 1)
+
+			executor := buildInteractiveExecutor(instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr)
+			ctx := engine.ContextWithInstanceID(context.Background(), instanceID)
+			_, err := executor.Execute(ctx, interactiveNode(), variable.NewStore(), "test-wf")
+
+			if tc.wantErr {
+				require.ErrorIs(t, err, engine.ErrTemplateInclude)
+				assert.Empty(t, llmProvider.getCapturedReqs(), "no prompt may be sent with an unresolved include")
+				return
+			}
+			require.NoError(t, err)
+			reqs := llmProvider.getCapturedReqs()
+			require.Len(t, reqs, 1)
+			assert.Contains(t, reqs[0].Prompt, tc.wantInMsg)
+			assert.NotContains(t, reqs[0].Prompt, "{{include:", "no directive may reach the model literally")
+		})
+	}
+}
+
 func TestInteractiveExecutor_ReadsTemplateFile(t *testing.T) {
 	instRepo, nodeExecRepo, llmProvider, fileReader, eventBus, queueMgr, instanceID := interactiveTestSetup()
 

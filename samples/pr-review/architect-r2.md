@@ -9,8 +9,10 @@ cd {{work_dir}}                 # isolated shallow clone of {{repo}}, already on
 export PR_HEAD="{{pr_head}}"     # PR head SHA (inline-comment commit_id)
 export PR_BRANCH="{{pr_branch}}"
 ```
-This pipeline never uses `~/Repos`. For the shared gh read/post patterns see
-`_common.md`, or use `gh api repos/{{repo}}/...` (explicit repo; works anywhere).
+This pipeline never uses `~/Repos`. The shared setup, gh read/post recipes and
+attribution rules are included below.
+
+{{include:_common.md}}
 
 ## Round 2 rules — read carefully
 
@@ -36,4 +38,6 @@ Prefix every reply body with `architect:`.
 
 At the end of your own output: `replied N threads — X conceded, Y doubled down`.
 
-Read-only.
+Read-only means **no commits and no working-tree changes** — you never edit the
+repository. It does NOT mean staying silent: posting PR comments is the entire
+job.

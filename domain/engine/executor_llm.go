@@ -40,13 +40,13 @@ func NewLLMCallExecutor(fr FileReader, selector ChatProviderSelector, resolver p
 // LLM provider, and processes the response.
 func (e *LLMCallExecutor) Execute(ctx context.Context, node workflow.Node, vars *variable.VariableStore, workflowName string) (*NodeResult, error) {
 	// Read template file.
-	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+	templateText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("llm_call %q: read template: %w", node.ID, err)
 	}
 
 	// Resolve substitutions in template.
-	prompt := variable.Resolve(string(templateBytes), vars)
+	prompt := variable.Resolve(templateText, vars)
 
 	// When the node declares an OutputSchema, instruct the model to emit ONLY
 	// JSON conforming to it. The claude-cli adapter does not pass OutputSchema

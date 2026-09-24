@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -43,6 +44,34 @@ func TestSamplesParse(t *testing.T) {
 			}
 			if len(wf.Nodes) == 0 {
 				t.Errorf("sample %q: expected nodes, got 0", name)
+			}
+		})
+	}
+}
+
+// TestSampleInputsCarryNoSecrets guards the bundled samples, which ship in the
+// Docker image and the release tarball: a credential-bearing input (webhook,
+// token, secret, key) must have an empty committed default. A live workflow
+// export copied back over a sample once carried a signed Teams webhook URL;
+// the runtime default is where the secret belongs, never the sample.
+func TestSampleInputsCarryNoSecrets(t *testing.T) {
+	sensitive := []string{"webhook", "token", "secret", "password", "api_key"}
+	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+		t.Run(name, func(t *testing.T) {
+			wf := loadSample(t, name)
+			for _, in := range wf.Inputs {
+				lname := strings.ToLower(in.Name)
+				for _, word := range sensitive {
+					if !strings.Contains(lname, word) {
+						continue
+					}
+					if in.Default != nil && in.Default != "" {
+						t.Errorf("sample %q input %q: committed default must be empty (credential-bearing)", name, in.Name)
+					}
+				}
+				if s, ok := in.Default.(string); ok && strings.Contains(s, "sig=") {
+					t.Errorf("sample %q input %q: default carries a signed URL", name, in.Name)
+				}
 			}
 		})
 	}

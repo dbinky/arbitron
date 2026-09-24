@@ -76,20 +76,22 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 
 	startTime := time.Now()
 
-	// 3. Read the orchestration file.
-	orchBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.OrchestrationFile)
+	// 3. Read the orchestration file. It is composed into the same prompt as the
+	// template, so it goes through loadTemplate too: an include in it must
+	// expand (and be budgeted) exactly like one in the template.
+	orchText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.OrchestrationFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read orchestration: %w", node.ID, err)
 	}
 
 	// 4. Read the template file.
-	templateBytes, err := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+	templateText, err := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 	if err != nil {
 		return nil, fmt.Errorf("interactive %q: read template: %w", node.ID, err)
 	}
 
 	// 5. Resolve {{variable}} substitutions in the template content.
-	resolvedTemplate := variable.Resolve(string(templateBytes), vars)
+	resolvedTemplate := variable.Resolve(templateText, vars)
 
 	// 6. Compose the LLM request. The completion-sentinel instruction is
 	// appended to the prompt instead of injecting a complete_session tool, and
@@ -102,7 +104,7 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	nonce := uuid.NewString()
 	workDirStr, _ := WorkDirFromVars(vars)
 
-	userMessage := string(orchBytes) + "\n\n" + resolvedTemplate +
+	userMessage := orchText + "\n\n" + resolvedTemplate +
 		sentinelInstruction(nonce, node.Config.OutputSchema)
 
 	// 6a. Resolve the node's model_profile to a binding, then select the

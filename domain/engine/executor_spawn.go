@@ -296,12 +296,12 @@ func (e *SpawnWorkflowExecutor) prepareAndSpawn(ctx context.Context, node workfl
 
 	guidance := ""
 	if node.Config.TemplateFile != "" {
-		b, rerr := e.fileReader.ReadFile(ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
+		text, rerr := loadTemplate(e.fileReader, ownerFromContext(ctx), workflowName, node.Config.TemplateFile)
 		if rerr != nil {
 			return uuid.Nil, fmt.Errorf("spawn_workflow %q: read guidance %q: %w",
 				node.ID, node.Config.TemplateFile, rerr)
 		}
-		guidance = variable.Resolve(string(b), vars)
+		guidance = variable.Resolve(text, vars)
 	}
 
 	workDir, _ := WorkDirFromVars(vars)

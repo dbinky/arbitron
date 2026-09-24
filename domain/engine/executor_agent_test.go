@@ -429,3 +429,66 @@ func TestAgentCallExecutor_NodeToolScopeFallbackWhenBindingEmpty(t *testing.T) {
 	assert.Equal(t, []string{"Read", "Edit"}, captured.ToolScope,
 		"node toolScope remains the fallback when the profile carries no AllowedTools")
 }
+
+// A node receives only its OWN templateFile, so a template that referred the
+// agent to a sibling file ("use the patterns in _common.md") named a file the
+// agent never got — the brief silently arrived half-complete. The engine now
+// expands {{include:...}} before substitution, so the agent gets one whole
+// prompt, and an included file's own variables still resolve.
+func TestAgentCallExecutor_ExpandsTemplateIncludes(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("Review {{component}}.\n{{include:_common.md}}")
+	fr.files["test-wf/_common.md"] = []byte("Shared rules for {{component}}.")
+
+	var captured engine.AgentMission
+	ap := &fakeAgent{
+		runFn: func(_ context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
+			captured = m
+			return &engine.AgentResult{Summary: "done", Model: m.Model}, nil
+		},
+	}
+
+	vars := storeWithWorkspace("/workspace/inst-1")
+	vars.SetInput("component", "parser")
+
+	node := workflow.Node{
+		ID:     "agent1",
+		Type:   workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{TemplateFile: "mission.txt", ModelProfile: "agent-default"},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
+	_, err := exec.Execute(context.Background(), node, vars, "test-wf")
+	require.NoError(t, err)
+
+	assert.Equal(t, "Review parser.\nShared rules for parser.", captured.Prompt,
+		"the include is inlined and the included file's variables resolve too")
+	assert.NotContains(t, captured.Prompt, "{{include:",
+		"no directive may reach the agent unexpanded")
+}
+
+// A missing include FAILS the node. Silently dropping it would reproduce the
+// defect this closes: an agent running on half its brief with nothing to show
+// that anything went missing.
+func TestAgentCallExecutor_MissingIncludeFailsClosed(t *testing.T) {
+	fr := newMockFileReader()
+	fr.files["test-wf/mission.txt"] = []byte("do work\n{{include:gone.md}}")
+
+	ap := &fakeAgent{
+		runFn: func(_ context.Context, m engine.AgentMission) (*engine.AgentResult, error) {
+			t.Fatal("the agent must never launch on a half-expanded brief")
+			return nil, nil
+		},
+	}
+
+	node := workflow.Node{
+		ID:     "agent1",
+		Type:   workflow.NodeTypeAgentCall,
+		Config: workflow.NodeConfig{TemplateFile: "mission.txt", ModelProfile: "agent-default"},
+	}
+
+	exec := engine.NewAgentCallExecutor(fr, agentSelector(ap), agentResolver("claude-opus-4-8"), "claude-code")
+	_, err := exec.Execute(context.Background(), node, storeWithWorkspace("/workspace/inst-1"), "test-wf")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gone.md")
+}
