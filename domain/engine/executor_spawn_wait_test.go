@@ -424,7 +424,19 @@ func TestSpawnWait_UnparseableSnapshot_Errors(t *testing.T) {
 // default. In it, OnChildTerminal fires while the parent is still `running`,
 // finds a non-waiting parent, and correctly does nothing. The wake is gone.
 func terminalDuringSuspend(f *spawnWaitFixture, state instance.State) {
+	terminalDuringSuspendWithVars(f, state, map[string]any{})
+}
+
+// terminalDuringSuspendWithVars stores the child with the given final variables
+// (nil vars means the child is NOT stored, so reading it fails).
+func terminalDuringSuspendWithVars(f *spawnWaitFixture, state instance.State, vars map[string]any) {
 	childID := uuid.New()
+	if vars != nil {
+		_ = f.instances.Create(context.Background(), &instance.Instance{
+			ID: childID, OwnerID: f.ownerID, WorkflowName: "child",
+			State: state, Priority: instance.PriorityNormal, Variables: vars,
+		})
+	}
 	f.spawnWaits.onFind = func(call int) {
 		if call == 1 {
 			return // first execution: no child exists yet
@@ -534,6 +546,38 @@ func TestSpawnWait_ClaimFailureDegradesToWaiting(t *testing.T) {
 	res, err := f.run(t)
 	require.NoError(t, err)
 	assert.True(t, res.IsWait)
+
+	got, err := f.instances.Get(context.Background(), f.parentID)
+	require.NoError(t, err)
+	assert.Equal(t, instance.StateWaiting, got.State)
+}
+
+// The lost-wake recovery routes the parent in-process, so it must carry the
+// child's output exactly like an ordinary wake does.
+func TestSpawnWait_ChildTerminalDuringSuspend_CarriesChildOutput(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspendWithVars(f, instance.StateCompleted, map[string]any{"answer": float64(42)})
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, workflow.SpawnPortSuccess, res.OutputPort)
+	out := res.Output.(map[string]any)
+	assert.Equal(t, map[string]any{"answer": float64(42)}, out["childOutput"])
+}
+
+// If the finished child cannot be read during the lost-wake recovery, the parent
+// must NOT be claimed back to running: a claimed parent with no routed result
+// would hang. It stays waiting, and the wake or the reconciler re-enters it.
+func TestSpawnWait_ChildLoadFailureDuringRecovery_LeavesParentWaiting(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	terminalDuringSuspendWithVars(f, instance.StateCompleted, nil) // child not stored
+
+	res, err := f.run(t)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.IsWait, "an unreadable child degrades to an ordinary wait")
+	assert.Empty(t, f.spawnWaits.claimed, "the parent must not be claimed when the result cannot be built")
 
 	got, err := f.instances.Get(context.Background(), f.parentID)
 	require.NoError(t, err)

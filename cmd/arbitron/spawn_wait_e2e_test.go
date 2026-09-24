@@ -92,14 +92,21 @@ func bootWaitStackWith(t *testing.T, childOutcome string, perUserCap int, holdSe
      "config": {"operations": [{"variable": "started", "operation": "set", "value": true}]}},
     {"id": "spawn-1", "type": "spawn_workflow",
      "config": {"childWorkflow": "wait-child", "spawnMode": "wait_for_child"}},
+    {"id": "checkOutput", "type": "conditional",
+     "config": {"conditions": [{"field": "spawn-1.childOutput.done", "operator": "eq", "value": true, "output": "got"}],
+                "defaultOutput": "missing"}},
     {"id": "onSuccess", "type": "transform",
      "config": {"operations": [{"variable": "branch", "operation": "set", "value": "success"}]}},
+    {"id": "onNoChildOutput", "type": "transform",
+     "config": {"operations": [{"variable": "branch", "operation": "set", "value": "success-without-child-output"}]}},
     {"id": "onFailure", "type": "transform",
      "config": {"operations": [{"variable": "branch", "operation": "set", "value": "failure"}]}}
   ],
   "edges": [
     {"source": "p1", "target": "spawn-1"},
-    {"source": "spawn-1", "target": "onSuccess", "output": "success"},
+    {"source": "spawn-1", "target": "checkOutput", "output": "success"},
+    {"source": "checkOutput", "target": "onSuccess", "output": "got"},
+    {"source": "checkOutput", "target": "onNoChildOutput", "output": "missing"},
     {"source": "spawn-1", "target": "onFailure", "output": "failure"}
   ]
 }`)
@@ -166,7 +173,8 @@ func TestSpawnWaitE2E_CompletedChildRoutesParentThroughSuccess(t *testing.T) {
 	waitForState(t, ds, parentID, instance.StateCompleted)
 
 	assert.Equal(t, "success", branchVariable(t, ds, parentID),
-		"the parent must resume through the SUCCESS branch — the sink, not an intermediate hop")
+		"the parent must resume through the SUCCESS branch and read the child's output "+
+			"({{spawn-1.childOutput.done}}) set by the child's own transform")
 }
 
 // A FAILED child routes the parent through the failure branch.

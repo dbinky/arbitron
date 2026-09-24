@@ -17,8 +17,16 @@ import (
 // re-enters the node, exactly as the queue does after a wake.
 func resumeWith(t *testing.T, childState instance.State) (*spawnWaitFixture, *engine.NodeResult, error) {
 	t.Helper()
+	return resumeWithChildVars(t, childState, map[string]any{})
+}
+
+// resumeWithChildVars is resumeWith with the child's persisted final variables
+// under the test's control. The child instance is seeded in the repository
+// because a terminal resume reads those variables back as childOutput.
+func resumeWithChildVars(t *testing.T, childState instance.State, childVars map[string]any) (*spawnWaitFixture, *engine.NodeResult, error) {
+	t.Helper()
 	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
-	childID := uuid.New()
+	childID := seedChild(t, f, childState, childVars)
 	f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
 		&instance.ChildLink{ChildID: childID, ChildState: childState})
 
@@ -175,4 +183,99 @@ func TestSpawnResume_FireAndForgetLinkDoesNotSatisfyAwaitedLookup(t *testing.T) 
 	require.NoError(t, err)
 	assert.True(t, res.IsWait, "the mode is part of the link key")
 	assert.Len(t, f.spawner.spawned, 1)
+}
+
+// seedChild stores a child instance with the given final variables and returns
+// its id.
+func seedChild(t *testing.T, f *spawnWaitFixture, st instance.State, vars map[string]any) uuid.UUID {
+	t.Helper()
+	child := &instance.Instance{
+		ID: uuid.New(), OwnerID: f.ownerID, WorkflowName: "child",
+		State: st, Priority: instance.PriorityNormal, Variables: vars,
+	}
+	require.NoError(t, f.instances.Create(context.Background(), child))
+	return child.ID
+}
+
+// ---------- child output reintegration ----------
+
+func childOutputOf(t *testing.T, res *engine.NodeResult) map[string]any {
+	t.Helper()
+	require.NotNil(t, res)
+	out, ok := res.Output.(map[string]any)
+	require.True(t, ok)
+	co, ok := out["childOutput"].(map[string]any)
+	require.True(t, ok, "a terminal resume must carry the child's final variables as childOutput, got %#v", out["childOutput"])
+	return co
+}
+
+func TestSpawnResume_CompletedChildOutputReturnsToParent(t *testing.T) {
+	vars := map[string]any{
+		"ticket": "ARB-1",
+		"review": map[string]any{"verdict": "approve"},
+	}
+	_, res, err := resumeWithChildVars(t, instance.StateCompleted, vars)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.SpawnPortSuccess, res.OutputPort)
+	assert.Equal(t, vars, childOutputOf(t, res))
+}
+
+// The failure path carries whatever the child produced before it stopped, so
+// the parent can decide how to recover from it.
+func TestSpawnResume_FailedAndCancelledChildOutputReturnsToParent(t *testing.T) {
+	for _, st := range []instance.State{instance.StateFailed, instance.StateCancelled} {
+		vars := map[string]any{"partial": map[string]any{"step": float64(2)}}
+		_, res, err := resumeWithChildVars(t, st, vars)
+		require.NoError(t, err, "state %s", st)
+		assert.Equal(t, workflow.SpawnPortFailure, res.OutputPort, "state %s", st)
+		assert.Equal(t, vars, childOutputOf(t, res), "state %s", st)
+	}
+}
+
+// The child's {{workspace}} is ITS sandbox path. Handing it to the parent
+// invites a parent template to confuse it with the parent's own workspace.
+func TestSpawnResume_ChildWorkspaceIsNotReturned(t *testing.T) {
+	_, res, err := resumeWithChildVars(t, instance.StateCompleted, map[string]any{
+		"workspace": "/child/sandbox",
+		"kept":      "yes",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"kept": "yes"}, childOutputOf(t, res))
+}
+
+// A child that recorded no variables still yields a MAP, so parent paths into
+// childOutput resolve as "missing" rather than failing on a nil.
+func TestSpawnResume_ChildWithNoVariablesYieldsEmptyOutput(t *testing.T) {
+	_, res, err := resumeWithChildVars(t, instance.StateCompleted, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{}, childOutputOf(t, res))
+}
+
+// A child that cannot be read must NOT route as though it returned nothing: the
+// node errors and the ordinary retry/error-behaviour machinery takes over.
+func TestSpawnResume_ChildLoadFailureErrorsInsteadOfRouting(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+		&instance.ChildLink{ChildID: uuid.New(), ChildState: instance.StateCompleted}) // never stored
+
+	ctx := engine.ContextWithInstanceID(context.Background(), f.parentID)
+	res, err := f.exec.Execute(ctx, waitNode(), variable.NewStore(), "parent")
+	require.Error(t, err)
+	assert.Nil(t, res)
+	assert.Empty(t, f.spawner.spawned)
+}
+
+// A still-active child has no final variables yet, so the wait result carries
+// no childOutput — and must not even try to read the child.
+func TestSpawnResume_ActiveChildCarriesNoChildOutput(t *testing.T) {
+	f := newSpawnWaitFixture(t, waitParentSnapshot(t, "ok", "bad"))
+	f.spawnWaits.set(f.parentID, "spawn-1", instance.SpawnModeWaitForChild,
+		&instance.ChildLink{ChildID: uuid.New(), ChildState: instance.StateRunning}) // never stored
+
+	ctx := engine.ContextWithInstanceID(context.Background(), f.parentID)
+	res, err := f.exec.Execute(ctx, waitNode(), variable.NewStore(), "parent")
+	require.NoError(t, err)
+	assert.True(t, res.IsWait)
+	out := res.Output.(map[string]any)
+	assert.NotContains(t, out, "childOutput")
 }

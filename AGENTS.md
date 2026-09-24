@@ -48,6 +48,11 @@ continues along a single unnamed edge) and `wait_for_child` (the parent suspends
 and resumes through its required `success` / `failure` ports). Do not add a
 separate node type per mode.
 
+When an awaited child finishes, its final variables (inputs plus node outputs,
+minus the reserved `workspace`) come back as the spawn node's `childOutput` on
+BOTH ports, e.g. `{{spawn-1.childOutput.review.verdict}}`. The node output also
+carries `childInstanceId`, `childWorkflow`, `spawnMode`, and `childState`.
+
 Use the code vocabulary above when editing manifests, validation, dashboard behavior, or tests. Older docs may refer generically to `interactive`.
 
 Provider abstraction is centered on:

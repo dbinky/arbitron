@@ -106,7 +106,7 @@ func (e *SpawnWorkflowExecutor) executeWait(ctx context.Context, node workflow.N
 		return nil, fmt.Errorf("spawn_workflow %q: look up awaited child: %w", node.ID, err)
 	}
 	if link != nil {
-		return e.resumeFromLink(node, link)
+		return e.resumeFromLink(ctx, node, link)
 	}
 
 	// FIRST EXECUTION. Verify both branch ports are present in the SNAPSHOT
@@ -220,6 +220,17 @@ func (e *SpawnWorkflowExecutor) recoverLostWake(ctx context.Context, node workfl
 		return nil, false // the child is still running: a real wait, and the wake will arrive
 	}
 
+	// Build the routed result BEFORE claiming: it reads the child's final
+	// variables, and a parent claimed back to running with no result to route
+	// would hang. Unclaimed, it stays waiting for the wake or the reconciler.
+	res, rerr := e.resumeFromLink(ctx, node, link)
+	if rerr != nil {
+		slog.Error("spawn_workflow: routing an already-terminal child failed; "+
+			"relying on the spawn-wait reconciler",
+			"nodeID", node.ID, "instanceID", instanceID, "error", rerr)
+		return nil, false
+	}
+
 	claimed, err := e.spawnWaits.ClaimWaitingParent(ctx, instanceID, node.ID)
 	if err != nil {
 		slog.Error("spawn_workflow: claiming the parent back from waiting failed; "+
@@ -229,13 +240,6 @@ func (e *SpawnWorkflowExecutor) recoverLostWake(ctx context.Context, node workfl
 	}
 	if !claimed {
 		return nil, false // the wake won the race and re-queued the parent
-	}
-
-	res, rerr := e.resumeFromLink(node, link)
-	if rerr != nil {
-		slog.Error("spawn_workflow: routing an already-terminal child failed",
-			"nodeID", node.ID, "instanceID", instanceID, "error", rerr)
-		return nil, false
 	}
 	return res, true
 }
@@ -247,7 +251,11 @@ func (e *SpawnWorkflowExecutor) recoverLostWake(ctx context.Context, node workfl
 // node needs to know HOW the child ended in order to choose a port. The child's
 // persisted state is the single authority for that; a second copy in the node
 // record could disagree with it after a retry or a late cancellation.
-func (e *SpawnWorkflowExecutor) resumeFromLink(node workflow.Node, link *instance.ChildLink) (*NodeResult, error) {
+//
+// A terminal child's final variables are returned as output["childOutput"], on
+// the failure port as well as success: what a failed child produced before it
+// stopped is often exactly what the parent needs in order to recover.
+func (e *SpawnWorkflowExecutor) resumeFromLink(ctx context.Context, node workflow.Node, link *instance.ChildLink) (*NodeResult, error) {
 	output := spawnOutput(link.ChildID, node.Config.ChildWorkflow, node.Config.SpawnMode)
 	output["childState"] = string(link.ChildState)
 
@@ -257,6 +265,13 @@ func (e *SpawnWorkflowExecutor) resumeFromLink(node workflow.Node, link *instanc
 		// spurious re-entry — a duplicate wake, a node-level retry — harmless.
 		return &NodeResult{IsWait: true, Output: output}, nil
 	}
+
+	// A child that cannot be read must not route as though it returned nothing.
+	child, err := e.instances.Get(ctx, link.ChildID)
+	if err != nil {
+		return nil, fmt.Errorf("spawn_workflow %q: load finished child %s: %w", node.ID, link.ChildID, err)
+	}
+	output["childOutput"] = childOutput(child.Variables)
 
 	// Terminal: route by outcome. A CANCELLED child routes through failure, the
 	// same port as a failed one — the spec is explicit that there is no separate
@@ -343,6 +358,21 @@ func spawnOutput(childID uuid.UUID, childWorkflow string, mode string) map[strin
 		"childWorkflow":   childWorkflow,
 		"spawnMode":       mode,
 	}
+}
+
+// childOutput copies a finished child's final variables for the parent, minus
+// the reserved keys. The child's {{workspace}} is its own sandbox path; handing
+// it back invites a parent template to mistake it for the parent's workspace.
+// Always a map, so parent paths into it resolve as missing rather than nil.
+func childOutput(vars map[string]any) map[string]any {
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		if variable.ReservedInputNames[k] {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // assertSpawnBranchPorts verifies that BOTH the success and failure ports have
