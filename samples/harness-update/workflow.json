@@ -1,0 +1,34 @@
+{
+  "id": "cdf02e33-bd97-4dff-8104-0911f42d3e7d",
+  "name": "harness-update",
+  "description": "Updates the agent harnesses arbitron drives (claude, codex, pi, opencode) to their latest release, each through its own updater. Every harness is attempted; the run fails if any update failed. pi and opencode are deferred while running, since npm replaces them in place under a live agent. Scheduled daily at 05:00 local.",
+  "author": "arbitron",
+  "defaultErrorBehavior": {
+    "type": "halt"
+  },
+  "inputs": [],
+  "nodes": [
+    {
+      "id": "update-harnesses",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/update-harnesses.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 1200
+      },
+      "label": "Update harnesses",
+      "description": "claude update, codex update, pi update --self, opencode upgrade; reports before/after versions per harness.",
+      "errorBehavior": {
+        "type": "retry",
+        "retries": 1,
+        "retryDelaySeconds": 600
+      },
+      "entrypoint": true,
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "edges": []
+}

@@ -36,7 +36,7 @@ func loadSample(t *testing.T, name string) *workflow.Workflow {
 }
 
 func TestSamplesParse(t *testing.T) {
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			if wf.Name != name {
@@ -56,7 +56,7 @@ func TestSamplesParse(t *testing.T) {
 // the runtime default is where the secret belongs, never the sample.
 func TestSampleInputsCarryNoSecrets(t *testing.T) {
 	sensitive := []string{"webhook", "token", "secret", "password", "api_key"}
-	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop"} {
+	for _, name := range []string{"pr-review", "feature-pipeline", "ralph-loop", "harness-update"} {
 		t.Run(name, func(t *testing.T) {
 			wf := loadSample(t, name)
 			for _, in := range wf.Inputs {
