@@ -65,8 +65,16 @@ note rather than leaving its history in the open list.
 
 ## Test command(s)
 
-Use these exact, pre-detected command(s) — do NOT guess a different one:
+The project's suites, pre-detected — do NOT guess a different toolchain:
 `{{record-baseline.test_commands}}`
+
+**Run targeted tests, not whole suites.** Run the tests for the code you
+changed — the package, directory or name filter that covers it (`go test
+./shared/core/foo/ -run TestBar`, `dotnet test --filter`, a single spec file).
+Do not re-run entire suites to prove nothing else broke: after you commit, the
+`verify-tests` script re-runs every suite your change touched and diffs it
+against the baseline. A whole-suite run from you repeats that work and is the
+single largest time cost in a pass.
 
 ## Pre-existing failures are not your job
 
@@ -94,13 +102,15 @@ evidence is what would have justified approval, recommend no approval.
 
 `./work/RALPH.md` carries the loop protocol for all three roles. **Read the
 section for your role first and follow it.** If this summary and RALPH.md ever
-disagree, RALPH.md wins.
+disagree, RALPH.md wins, with one exception: **test scope**. Where RALPH.md
+says to run the test commands, run targeted tests as described above.
 
 ## Each pass
 
 1. Read `./work/RALPH.md`, your row and its `### Area N` block in
    `docs/reference/focus-areas.md`, and the open items in `docs/reference/gaps-identified.md`.
-2. Run the test command(s) and compare failures against the baseline.
+2. If the area's code does not build or its targeted tests already fail, note it
+   against the baseline before changing anything.
 3. Read every file in the area's **Files** list, entry to sink.
 4. Work your lens's numbered checks with real commands. The **wired-and-fed**
    criteria behind them:
@@ -117,7 +127,7 @@ disagree, RALPH.md wins.
    Cover the area's **Folded in** items too; they are part of this review.
 5. Make the smallest correct change that advances the area — strict TDD when
    adding behaviour.
-6. Re-run the affected tests.
+6. Run the targeted tests for what you changed (see Test command(s)).
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back
    to step 5 to squeeze in another fix.
 

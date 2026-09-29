@@ -92,6 +92,23 @@ fi
 check "valid baseline is not flagged as fallback" \
   "$(printf '%s' "$out" | jq -r '.baseline_source // "unset"')" "measured"
 
+# --- Case E: the measured commit is saved as baseline-head ---
+# verify-tests diffs pass 1 against it; without it pass 1 re-ran every suite.
+WS5="$TMP/ws-git"
+mkdir -p "$WS5/work"
+cp "$WS/test-baseline.json" "$WS5/test-baseline.json"
+git -C "$WS5/work" init -q
+echo x > "$WS5/work/f"
+git -C "$WS5/work" -c user.email=t@t -c user.name=t add -A
+git -C "$WS5/work" -c user.email=t@t -c user.name=t commit -qm base
+printf '{"workspace":"%s","work_dir":"%s/work"}' "$WS5" "$WS5" | sh "$SCRIPT" >/dev/null 2>&1
+check "baseline-head records the measured HEAD" \
+  "$(cat "$WS5/baseline-head" 2>/dev/null || echo missing)" "$(git -C "$WS5/work" rev-parse HEAD)"
+
+# E2: no git repo -> no baseline-head, and no failure.
+check "no git repo writes no baseline-head" \
+  "$( [ -f "$WS/baseline-head" ] && echo present || echo absent)" "absent"
+
 echo "---"
 if [ "$fails" -eq 0 ]; then
   echo "PASS"

@@ -32,6 +32,17 @@
 #             the diff cannot be determined. Failure mode is always "test too
 #             much", never "test too little".
 #
+# WHAT A SUITE OWNS: a suite's optional `paths` array in the baseline (repo-
+# relative dirs/files, recorded by baseline-tests) is authoritative. Without it
+# the owned prefixes are parsed from the command (`./dir/...`, `cd dir`), which
+# cannot see `dotnet test Api/App.sln` or `bash deploy/x.sh` — every change to
+# such a suite used to widen the pass to a FULL sweep.
+#
+# PASS 1 has no last-pass-head yet (record-pass-commit writes it after this
+# node). It diffs against baseline-head instead: the commit record-baseline
+# measured. Without that, pass 1 always ran every suite, minutes after the
+# baseline had just measured them all.
+#
 # Reads {workspace, work_dir} from stdin JSON. Emits:
 #   tests_ran / scope / suites_run / suites_skipped
 #   new_failures        number — BLOCKING: green-at-baseline suites now failing
@@ -71,6 +82,11 @@ fi
 # previous pass's HEAD — exactly the diff base we want.
 PREV=""
 [ -f "$WS/last-pass-head" ] && PREV="$(cat "$WS/last-pass-head" 2>/dev/null || true)"
+if [ -z "$PREV" ] || ! git -C "$WORK" cat-file -e "${PREV}^{commit}" 2>/dev/null; then
+  # Pass 1: no previous pass, so diff against the commit the baseline measured.
+  PREV=""
+  [ -f "$WS/baseline-head" ] && PREV="$(cat "$WS/baseline-head" 2>/dev/null || true)"
+fi
 CHANGED="$TMP/changed"; : > "$CHANGED"
 DIFF_OK=false
 if [ -n "$PREV" ] && git -C "$WORK" cat-file -e "${PREV}^{commit}" 2>/dev/null; then
@@ -114,6 +130,14 @@ prefixes_for() { # command -> newline-separated path prefixes
   printf '%s\n' "$1" | sed -n 's|.*cd \([A-Za-z0-9_.-][A-Za-z0-9_./-]*\).*|\1|p' | sed 's|/*$||'
 }
 
+suite_prefixes() { # suite index -> newline-separated path prefixes
+  if jq -e ".suites[$1].paths | type==\"array\" and length>0" "$BASE" >/dev/null 2>&1; then
+    jq -r ".suites[$1].paths[] | strings" "$BASE" | sed -e 's|^\./||' -e 's|/*$||' | grep -v '^$'
+  else
+    prefixes_for "$(jq -r ".suites[$1].command // empty" "$BASE")"
+  fi
+}
+
 REG="$TMP/regressed"; : > "$REG"
 SUS="$TMP/suspected"; : > "$SUS"
 RAN_L="$TMP/ran"; : > "$RAN_L"
@@ -141,8 +165,7 @@ if [ "$SCOPE" = scoped ]; then
   ALLPFX="$TMP/allpfx"; : > "$ALLPFX"
   i=0
   while [ "$i" -lt "$NS" ]; do
-    CMD="$(jq -r ".suites[$i].command // empty" "$BASE")"; i=$((i + 1))
-    [ -n "$CMD" ] && prefixes_for "$CMD" >> "$ALLPFX"
+    suite_prefixes "$i" >> "$ALLPFX"; i=$((i + 1))
   done
   sort -u "$ALLPFX" -o "$ALLPFX"
   while IFS= read -r f; do
@@ -166,6 +189,7 @@ while [ "$i" -lt "$NS" ]; do
   # turns a non-building suite into a green one. That single operator branded
   # pg-integration a fresh regression on every pass of run b61b4f48.
   BBUILD="$(jq -r ".suites[$i] | if has(\"build_ok\") then (.build_ok|tostring) else \"true\" end" "$BASE")"
+  IDX=$i
   i=$((i + 1))
   [ -n "$CMD" ] || continue
 
@@ -174,7 +198,7 @@ while [ "$i" -lt "$NS" ]; do
     WANT=false
   elif [ "$SCOPE" = scoped ]; then
     WANT=false
-    PFX="$(prefixes_for "$CMD")"
+    PFX="$(suite_prefixes "$IDX")"
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       while IFS= read -r p; do

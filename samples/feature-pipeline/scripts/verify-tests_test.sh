@@ -127,6 +127,88 @@ check "F: a missing baseline blocks nothing" \
 check "F: ...but reports low confidence" \
   "$(printf '%s' "$OUT5" | jq -r '.confidence')" "low"
 
+# --- Scoping cases: these need a real git history to diff ---
+# git_ws <dir> <baseline-json>: a workspace whose work/ is a git repo with one
+# commit holding the suites' scripts and a few owned directories.
+git_ws() {
+  WS="$1"; rm -rf "$WS"; mkdir -p "$WS/work/shared" "$WS/work/Pretinder.API" "$WS/work/docs" "$WS/work/unmapped"
+  printf '%s\n' "$2" > "$WS/test-baseline.json"
+  printf 'exit 0\n' > "$WS/work/go.sh"
+  printf 'exit 0\n' > "$WS/work/dn.sh"
+  echo a > "$WS/work/shared/a.go"; echo b > "$WS/work/Pretinder.API/b.cs"
+  echo c > "$WS/work/docs/c.md"; echo d > "$WS/work/unmapped/d.txt"
+  git -C "$WS/work" init -q
+  git -C "$WS/work" -c user.email=t@t -c user.name=t add -A
+  git -C "$WS/work" -c user.email=t@t -c user.name=t commit -qm base
+}
+commit_change() { # ws file
+  echo change >> "$1/work/$2"
+  git -C "$1/work" -c user.email=t@t -c user.name=t commit -qam change
+}
+PATHS_BASELINE='{"suites":[
+ {"name":"go-unit","command":"sh go.sh","paths":["shared","go.sh"],"build_ok":true,"failed_count":0,"failing_tests":[]},
+ {"name":"dotnet-api","command":"sh dn.sh","paths":["Pretinder.API/","dn.sh"],"build_ok":true,"failed_count":0,"failing_tests":[]}
+]}'
+LEGACY_BASELINE='{"suites":[
+ {"name":"go-unit","command":"sh ./shared/...","build_ok":true,"failed_count":0,"failing_tests":[]},
+ {"name":"dotnet-api","command":"sh dn.sh","build_ok":true,"failed_count":0,"failing_tests":[]}
+]}'
+
+# --- Case G: pass 1 (no last-pass-head) diffs against the baseline commit ---
+# record-baseline stores the HEAD it measured as baseline-head. Without it, pass
+# 1 could not tell what it changed and re-ran EVERY suite minutes after the
+# baseline had just measured them all (~30 min on a 23-suite repo).
+git_ws "$TMP/g" "$PATHS_BASELINE"
+git -C "$TMP/g/work" rev-parse HEAD > "$TMP/g/baseline-head"
+commit_change "$TMP/g" docs/c.md
+OUTG="$(run "$TMP/g")"
+check "G: pass 1 with a docs-only change is skipped, not a full sweep" \
+  "$(printf '%s' "$OUTG" | jq -r '.scope')" "skipped"
+check "G: ...and runs no suite" \
+  "$(printf '%s' "$OUTG" | jq -r '.tests_ran')" "false"
+
+# G2: with NEITHER state file, it still fails safe to a full run.
+git_ws "$TMP/g2" "$PATHS_BASELINE"
+commit_change "$TMP/g2" docs/c.md
+check "G2: no last-pass-head and no baseline-head still runs everything" \
+  "$(run "$TMP/g2" | jq -r '.scope')" "full"
+
+# G3: last-pass-head, when present, wins over baseline-head.
+git_ws "$TMP/g3" "$PATHS_BASELINE"
+git -C "$TMP/g3/work" rev-parse HEAD > "$TMP/g3/baseline-head"
+commit_change "$TMP/g3" shared/a.go
+git -C "$TMP/g3/work" rev-parse HEAD > "$TMP/g3/last-pass-head"
+commit_change "$TMP/g3" docs/c.md
+check "G3: last-pass-head takes precedence over baseline-head" \
+  "$(run "$TMP/g3" | jq -r '.scope')" "skipped"
+
+# --- Case H: explicit per-suite paths scope suites the command cannot name ---
+# `dotnet test Pretinder.API/Pretinder.sln` names no ./dir or `cd dir`, so the
+# command parser could not map a .NET change to its suite and forced a FULL
+# sweep for every such pass.
+git_ws "$TMP/h" "$PATHS_BASELINE"
+git -C "$TMP/h/work" rev-parse HEAD > "$TMP/h/last-pass-head"
+commit_change "$TMP/h" Pretinder.API/b.cs
+OUTH="$(run "$TMP/h")"
+check "H: a change under a suite's declared paths is scoped" \
+  "$(printf '%s' "$OUTH" | jq -r '.scope')" "scoped"
+check "H: ...and runs only that suite" \
+  "$(printf '%s' "$OUTH" | jq -c '.suites_run')" '["dotnet-api"]'
+
+# H2: legacy baselines (no paths) keep the old command-parsing behaviour.
+git_ws "$TMP/h2" "$LEGACY_BASELINE"
+git -C "$TMP/h2/work" rev-parse HEAD > "$TMP/h2/last-pass-head"
+commit_change "$TMP/h2" Pretinder.API/b.cs
+check "H2: without paths, an unparseable command still forces a full sweep" \
+  "$(run "$TMP/h2" | jq -r '.scope')" "full"
+
+# --- Case I: a change no suite claims still widens to full ---
+git_ws "$TMP/i" "$PATHS_BASELINE"
+git -C "$TMP/i/work" rev-parse HEAD > "$TMP/i/last-pass-head"
+commit_change "$TMP/i" unmapped/d.txt
+check "I: a path no suite declares still forces a full sweep" \
+  "$(run "$TMP/i" | jq -r '.scope')" "full"
+
 if [ "$fails" -gt 0 ]; then
   echo "$fails check(s) failed"
   exit 1

@@ -53,6 +53,7 @@ feature.
     {
       "name": "<short suite label>",
       "command": "<exact command you ran>",
+      "paths": ["<repo-relative dir or file this suite covers>", "..."],
       "build_ok": true,
       "failed_count": 0,
       "passed_count": 0,
@@ -62,6 +63,14 @@ feature.
 }
 ```
 
+- `paths` lists every repo-relative directory or file whose changes can change
+  this suite's outcome: its source and test directories, plus the build files it
+  depends on (e.g. `["shared", "go.mod", "go.sum"]` for a Go suite over
+  `./shared/...`, `["src/Api"]` for `dotnet test src/Api/App.sln`,
+  `["deploy/publish.sh", "deploy/publish_test.sh"]` for a script test). After each refine pass a script re-runs only the suites
+  whose `paths` the pass touched; a changed file that no suite claims forces
+  every suite to run. So err toward including a path, but do not list the repo
+  root: that makes every change run every suite.
 - One array entry per suite you ran. If a suite **fails to build/compile**, set
   `build_ok: false`, `failed_count: 0`, and list the build error summary as a
   single entry in `failing_tests` (prefix it `BUILD: `).

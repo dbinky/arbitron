@@ -24,14 +24,28 @@
 # Expected file shape:
 #   {
 #     "suites": [
-#       {"name","command","build_ok":true,
+#       {"name","command","paths":[...],"build_ok":true,
 #        "failed_count":N,"passed_count":M,"failing_tests":[...]}
 #     ]
 #   }
+# `paths` (optional) is what verify-tests uses to scope a pass to the suites it
+# touched; this script passes it through untouched.
 set -eu
 IN="$(cat)"
 WS="$(printf '%s' "$IN" | jq -r '.workspace')"
+WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
+[ -n "$WORK" ] || WORK="$WS/work"
 F="$WS/test-baseline.json"
+
+# Record the commit this baseline measured. verify-tests diffs pass 1 against it
+# (there is no last-pass-head until record-pass-commit runs), so pass 1 re-runs
+# only the suites its changes touch instead of all of them. A separate file, not
+# last-pass-head: that one drives record-pass-commit's progress counting, and in
+# feature-pipeline this runs BEFORE implementation, whose commits must not count
+# as the first refine pass's progress.
+if BH="$(git -C "$WORK" rev-parse HEAD 2>/dev/null)"; then
+  printf '%s' "$BH" > "$WS/baseline-head"
+fi
 
 emit_empty() {
   reason="$1"

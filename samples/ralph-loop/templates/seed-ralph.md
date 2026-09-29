@@ -273,7 +273,7 @@ different model families. The first independent look at an area.*
 3. **Cross-reference** — work the area's **Review 1 — wiring lens** checks with real greps; record findings in `docs/reference/gaps-identified.md`.
 4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
 5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
-6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+6. **Run targeted tests** — the tests covering what you changed, using `[TEST COMMANDS]`'s toolchains narrowed to the package or name filter. Do not re-run whole suites: the verify-tests script re-runs every touched suite against the recorded baseline after you commit. Fix NEW failures only.
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
 
 ### Wrap Up
@@ -310,7 +310,7 @@ difference is the entire reason two approvals exist.*
 3. **Cross-reference** — work the area's **Review 2 — failure lens** checks: nil and empty inputs, timeouts, partial failure and rollback, concurrency, ordering; record findings in `docs/reference/gaps-identified.md`.
 4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
 5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
-6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+6. **Run targeted tests** — the tests covering what you changed, using `[TEST COMMANDS]`'s toolchains narrowed to the package or name filter. Do not re-run whole suites: the verify-tests script re-runs every touched suite against the recorded baseline after you commit. Fix NEW failures only.
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
 
 ### Wrap Up
@@ -347,7 +347,7 @@ different model families.*
 3. **Cross-reference** — demonstrate that the row's BREAK cannot happen: a test that goes red, or a cited guard at `file:symbol`; check what each side assumes about the other; record findings in `docs/reference/gaps-identified.md`.
 4. **Fix the most important issue** — ONE issue, fixed well across all affected files.
 5. **Write/verify tests** — happy, success, failure, error, edge. Strict TDD when adding behaviour.
-6. **Run tests** — `[TEST COMMANDS]`. Compare against the recorded baseline; fix NEW failures only.
+6. **Run targeted tests** — the tests covering what you changed, using `[TEST COMMANDS]`'s toolchains narrowed to the package or name filter. Do not re-run whole suites: the verify-tests script re-runs every touched suite against the recorded baseline after you commit. Fix NEW failures only.
 7. **Assess, then proceed to Wrap Up regardless of the outcome.** Do not go back to step 4.
 
 ### Wrap Up
