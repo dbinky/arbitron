@@ -16,19 +16,19 @@ blind spots, which is the same opinion twice rather than redundancy.
 
 | lane | refines | approves |
 |------|---------|----------|
-| single review 1 (wiring lens) | `coder-sonnet5-high` — Sonnet 5.5 | `approver-codex-high` — gpt-6-sol |
-| single review 2 (failure lens) | `coder-codex-high` — gpt-6-sol | `approver-opus-medium` — Opus 5.5 |
-| paired integration seam | `coder-opus-medium` — Opus 5.5 | `approver-codex-high` — gpt-6-sol |
+| single review 1 (wiring lens) | `coder-sonnet5-high` — Sonnet 5.5 | `approver-codex-high` — gpt-6.1-sol |
+| single review 2 (failure lens) | `coder-codex-high` — gpt-6.1-sol | `approver-opus-medium` — Opus 5.5 |
+| paired integration seam | `coder-opus-medium` — Opus 5.5 | `approver-codex-high` — gpt-6.1-sol |
 
 Routing by which box is outstanding also means a withheld approval naturally
 sends the same row back to the same refiner next pass, with no extra bookkeeping.
 
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
-| approver-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
+| approver-codex-high | agent | codex | gpt-6.1-sol | high | Read,Write,Edit,Grep,Glob,Bash | assess-single-1, assess-paired |
 | approver-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | assess-single-2 |
 | assessor-sonnet5-high | chat | (inherit) | claude-sonnet-5-5 | high | (chat: tool-suppressed) | refine-assess |
-| coder-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
+| coder-codex-high | agent | codex | gpt-6.1-sol | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-2 |
 | coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | refine-paired |
 | coder-sonnet5-high | agent | claude-code | claude-sonnet-5-5 | high | Read,Write,Edit,Grep,Glob,Bash | refine-single-1 |
 | coder-sonnet5-medium | agent | claude-code | claude-sonnet-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | baseline-tests |

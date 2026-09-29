@@ -14,9 +14,9 @@ different model family from the stage it judges:
 
 | stage | writes / decides | checked by |
 |---|---|---|
-| review panel | `architect-*` gpt-6-sol, `10x-*` Opus 5.5 | each other, across rounds |
+| review panel | `architect-*` gpt-6.1-sol, `10x-*` Opus 5.5 | each other, across rounds |
 | security | `security` Opus 5.5 (code lens) | `security-2` gpt-6-astra (supply-chain lens) |
-| **the fix** | **`senior-engineer` Opus 5.5 — the ONLY node that mutates the repo** | **`verify-fix` gpt-6-sol** |
+| **the fix** | **`senior-engineer` Opus 5.5 — the ONLY node that mutates the repo** | **`verify-fix` gpt-6.1-sol** |
 
 The fix row is the one that matters most and was the last to be fixed. Until
 2026-09-23 `senior-engineer` and `verify-fix` shared `coder-opus-medium` — the
@@ -34,9 +34,9 @@ to look closely.
 
 | alias | kind | backend | model | effort | tools | used by |
 |-------|------|---------|-------|--------|-------|---------|
-| approver-codex-high | agent | codex | gpt-6-sol | high | Read,Write,Edit,Grep,Glob,Bash | verify-fix |
+| approver-codex-high | agent | codex | gpt-6.1-sol | high | Read,Write,Edit,Grep,Glob,Bash | verify-fix |
 | coder-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Write,Edit,Grep,Glob,Bash | senior-engineer |
-| reviewer-codex-medium | agent | codex | gpt-6-sol | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | architect-r1, architect-r2 |
+| reviewer-codex-medium | agent | codex | gpt-6.1-sol | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | architect-r1, architect-r2 |
 | reviewer-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r1 |
 | reviewer-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r2 |
 | reviewer-sonnet5-high | agent | claude-code | claude-sonnet-5-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |

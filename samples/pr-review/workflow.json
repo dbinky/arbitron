@@ -286,7 +286,7 @@
         "timeoutSeconds": 2400
       },
       "label": "Verify fix (wired-and-fed gate)",
-      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits and WRITES its verdict to {{workspace}}/verify-verdict.json. agent_call does not enforce outputSchema, so the verdict flows via that file (lifted by record-verdict), not via prose. CROSS-FAMILY BY DESIGN: the senior engineer writes on Opus 5.5 and this node verifies on gpt-6-sol, so the only node that mutates the repository is never certified by its own model family.",
+      "description": "Runs build/tests + a wired-and-fed provenance check on the senior engineer's unpushed commits and WRITES its verdict to {{workspace}}/verify-verdict.json. agent_call does not enforce outputSchema, so the verdict flows via that file (lifted by record-verdict), not via prose. CROSS-FAMILY BY DESIGN: the senior engineer writes on Opus 5.5 and this node verifies on gpt-6.1-sol, so the only node that mutates the repository is never certified by its own model family.",
       "errorBehavior": {},
       "position": {
         "x": 420,
