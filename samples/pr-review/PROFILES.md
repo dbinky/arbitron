@@ -39,7 +39,7 @@ to look closely.
 | reviewer-codex-medium | agent | codex | gpt-6-sol | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | architect-r1, architect-r2 |
 | reviewer-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r1 |
 | reviewer-opus-medium | agent | claude-code | claude-opus-5-5 | medium | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | 10x-r2 |
-| reviewer-sonnet5-high | agent | claude-code | claude-sonnet-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |
+| reviewer-sonnet5-high | agent | claude-code | claude-sonnet-5-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | manager |
 | security-astra-high | agent | codex | gpt-6-astra | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | security-2 |
 | security-opus-high | agent | claude-code | claude-opus-5-5 | high | Read,Grep,Glob,Bash(gh:*),Bash(git:*) | security |
 
@@ -59,5 +59,7 @@ profile, remember the opencode tool map (`adapter/opencode/toolmap.go`) does NOT
 parse scoped `Bash(...)` tokens and silently drops them — such profiles must use
 plain `Bash` or the agent gets no shell at all.
 
-NOTE: `reviewer-sonnet5-high` pins `context_window: 200k`; Sonnet 5 accepts the
-full claude-code effort range (no `xhigh → high` flooring that Sonnet 4.6 had).
+NOTE: `reviewer-sonnet5-high` sets `context_window: 1m` and runs Sonnet 5.5, which
+accepts the full claude-code effort range (no `xhigh → high` flooring that Sonnet
+4.6 had). The `*-sonnet5-*` aliases keep their names for compatibility (workflows reference
+them by alias); since 2026-09-28 they run Sonnet 5.5 (`claude-sonnet-5-5`).
