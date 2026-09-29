@@ -68,6 +68,17 @@ Finish by emitting your completion result exactly as described below.
 - Emit the completion result with ONLY `{slug, spec_path}` (path relative to the
   worktree). Do NOT include the spec text.
 
+## If the write or commit fails
+An approved spec must never be lost. If writing the file or committing it fails
+(a sandbox, permission or disk error), do NOT emit the completion result and do
+NOT stop at reporting the failure. Reply with:
+1. the exact error you got, and
+2. the COMPLETE approved spec, verbatim, in a single markdown code block, so it
+   can be written out by hand if needed.
+
+Then wait. The human will tell you when the problem is fixed; retry the write,
+self-review and commit, and only then emit the completion result.
+
 ## Topic
 Repo: {{repo_url}}. The human will describe the feature — after a quick read-only
 ground-check, begin by asking your **first** clarifying question, then WAIT for the

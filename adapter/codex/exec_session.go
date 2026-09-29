@@ -34,6 +34,9 @@ const (
 	// BOTH `codex exec` AND `codex exec resume` (unlike -s, which resume rejects),
 	// so it is the one mechanism that can re-assert the sandbox posture on resume.
 	execConfigFlag = "-c"
+	// execSandboxModeKey sets the sandbox mode through -c on RESUME, which rejects
+	// -s. Without it a resumed turn runs in codex's default read-only sandbox.
+	execSandboxModeKey = "sandbox_mode"
 	// execWritableRootsKeyPrefix pins codex's workspace-write writable roots to a
 	// single root (the WorkDir). SECURITY: a bare `-s workspace-write` was VERIFIED
 	// against codex-cli 0.139 to also permit writes to the cwd PARENT chain and
@@ -134,7 +137,7 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 // the prompt from stdin.
 //
 //	fresh:  codex exec --json --skip-git-repo-check -s workspace-write -c writable_roots=["<wd>"] -c network_access=false -m <model> --cd <workdir> [-c model_reasoning_effort=<e>]
-//	resume: codex exec resume <id> --json --skip-git-repo-check -c writable_roots=["<wd>"] -c network_access=false -
+//	resume: codex exec resume <id> --json --skip-git-repo-check -c sandbox_mode="workspace-write" -c writable_roots=["<wd>"] -c network_access=false -m <model> [-c model_reasoning_effort=<e>] -
 //
 // SECURITY (Must Fix #1): the approval subsystem is deleted, so the sandbox is the
 // SOLE containment. A bare `-s workspace-write` was VERIFIED against codex-cli 0.139
@@ -151,17 +154,20 @@ func (s *execSession) Start(ctx context.Context, cfg turnConfig) (turnStream, er
 // engine round-trips the same WorkDir per instance, so this holds; Start passes
 // cfg.WorkDir as RunSpec.Dir on every turn (tested), making the invariant explicit.
 //
-// Resume carries the model from the persisted on-disk session, so it re-sends none
-// (`codex exec resume` needs no -m). A fresh turn with an empty model fails closed
-// (ErrModelRequired) — never a default-model run. Effort is emitted only on the
-// FRESH path: it is immutable across a conversation (codex carries it from the
-// persisted session on resume), so a resume turn that sets Effort intentionally
-// drops it.
+// A resume turn re-sends EVERYTHING a fresh turn sets: the sandbox mode (via -c,
+// since resume rejects -s), the model and the effort. codex does NOT inherit them
+// from the persisted session — verified 2026-09-29 on codex-cli 0.159.0, a resumed
+// turn falls back to ~/.codex/config.toml (its model and effort, and the default
+// READ-ONLY sandbox). A brainstorm-spec session started on gpt-6.1-sol ran all 27
+// resumed turns on the config's gpt-6-sol, read-only, and could not write the spec
+// its human had approved. Any turn with an empty model fails closed
+// (ErrModelRequired) — never a default-model run.
 func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 	posture := []string{
 		execConfigFlag, execWritableRootsKeyPrefix + writableRootsValue(cfg.WorkDir),
 		execConfigFlag, execNetworkOff,
 	}
+	model := strings.TrimSpace(cfg.Model)
 	if cfg.ResumeID != "" {
 		// Hygiene guard (Consider #3): ResumeID is a codex-issued conversation id
 		// round-tripped through the engine/DB (not user free-text) and there is no
@@ -172,14 +178,21 @@ func buildInteractiveExecArgs(cfg turnConfig) ([]string, error) {
 		if resumeID == "" {
 			return nil, ErrMalformedResumeID
 		}
+		if model == "" {
+			return nil, ErrModelRequired
+		}
 		args := []string{
 			execSubcommand, execResumeSubcommand, resumeID,
 			jsonFlag, execSkipGitRepoCheckFlag,
+			execConfigFlag, execSandboxModeKey + `="` + execSandboxWorkspaceWrite + `"`,
 		}
 		args = append(args, posture...)
+		args = append(args, modelFlag, model)
+		if cfg.Effort != "" {
+			args = append(args, execConfigFlag, codexEffortConfigKey+"="+cfg.Effort)
+		}
 		return append(args, execStdinPromptArg), nil
 	}
-	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
 		return nil, ErrModelRequired
 	}

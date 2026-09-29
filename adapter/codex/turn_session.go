@@ -50,10 +50,9 @@ type turnConfig struct {
 	// ResumeID is the codex conversation id to resume; "" starts a new
 	// conversation.
 	ResumeID string
-	// Effort is an optional reasoning-effort hint emitted on a FRESH turn as
+	// Effort is an optional reasoning-effort hint emitted on EVERY turn as
 	// `-c model_reasoning_effort=<e>` (buildInteractiveExecArgs); "" emits nothing.
-	// It is immutable across a conversation: a resume turn drops it, since codex
-	// carries the effort from the persisted on-disk session.
+	// Resume turns re-send it: codex does not carry it from the persisted session.
 	Effort string
 }
 
