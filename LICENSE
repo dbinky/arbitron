@@ -1,21 +1,39 @@
-MIT License
+Arbitron Commercial License
 
-Copyright (c) 2026 dbinky
+Copyright (c) 2026 Lets All Play Together, LLC. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software and its associated source code, documentation, workflows, prompt
+templates, and other materials (the "Software") are proprietary to Lets All
+Play Together, LLC (the "Licensor") and are protected by copyright and other
+intellectual property laws.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. No license without agreement. No right, title, or license to use, copy,
+   modify, merge, publish, distribute, sublicense, sell, or create derivative
+   works of the Software is granted to anyone except under a separate written
+   license or purchase agreement signed by the Licensor (a "Commercial
+   Agreement"). Any use of the Software is governed solely by the terms of that
+   Commercial Agreement.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. Restrictions. Unless expressly permitted by a Commercial Agreement, you may
+   not (a) use, copy, or modify the Software; (b) distribute, disclose, or make
+   the Software available to any third party; (c) reverse engineer or
+   decompile any part of the Software; or (d) remove or alter this notice or
+   any proprietary notices in the Software.
+
+3. Confidentiality. The Software's source code is confidential information of
+   the Licensor. Anyone who has access to it without a Commercial Agreement
+   must not use or disclose it, and must return or destroy all copies upon
+   request.
+
+4. Third-party components. The Software uses third-party open-source
+   components that remain subject to their own licenses. Nothing in this
+   license restricts rights granted by those licenses in those components.
+
+5. No warranty. Except as stated in a Commercial Agreement, the Software is
+   provided "AS IS", without warranty of any kind, express or implied,
+   including the warranties of merchantability, fitness for a particular
+   purpose, and non-infringement. In no event shall the Licensor be liable for
+   any claim, damages, or other liability arising from, out of, or in
+   connection with the Software or its use.
+
+Licensing inquiries: dbinky@letsallplaytogether.com
