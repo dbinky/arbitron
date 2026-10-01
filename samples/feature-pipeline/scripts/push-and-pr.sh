@@ -23,6 +23,26 @@ BASELINE_NOTE=""
 
 Test baseline: $BASELINE_SUMMARY. The refinement loop gates on introducing no new test failures vs this branch-point baseline (pre-existing failures excluded)."
 
+# A blocked implementation (impl_blocked, set when every remaining plan task was
+# blocked) still reaches here so its finished work is reviewable, but the PR must
+# not read as the whole feature: run 5e86d796 opened a ready-for-review
+# "feat: <slug>" PR with 14 of 17 tasks blocked and no mention of it. Blocked runs
+# open a DRAFT whose title and body say so.
+TITLE="feat: $SLUG"
+DRAFT_ARG=""
+BLOCKED_NOTE=""
+if [ "$(printf '%s' "$IN" | jq -r '.impl_blocked // false')" = "true" ]; then
+  TITLE="[BLOCKED] feat: $SLUG"
+  DRAFT_ARG="--draft"
+  REMAINING="$(printf '%s' "$IN" | jq -r '.["impl-assess"].tasks_remaining // "unknown"')"
+  WHY="$(printf '%s' "$IN" | jq -r '.["impl-assess"].notes // "No assessor notes were recorded."')"
+  BLOCKED_NOTE="
+
+IMPLEMENTATION BLOCKED: $REMAINING plan task(s) remain unimplemented. This PR contains only the work that could be done; it is not the complete feature.
+Why: $WHY
+Each blocked plan file under docs/plans/ carries a BLOCKED note naming what it is waiting on."
+fi
+
 gh auth status 1>&2 || { echo "gh not authenticated" >&2; exit 1; }
 
 # CI runs once, on the finished branch. Every in-loop commit carried [skip ci]
@@ -41,7 +61,7 @@ git -C "$WORK" push --quiet -u origin "$BRANCH" 1>&2
 # title/body are explicit, and --fill would fail on the shallow clone (see above).
 BASE_ARG=""
 [ -n "$BASE" ] && BASE_ARG="--base $BASE"
-PR_URL="$(cd "$WORK" && gh pr create $BASE_ARG --head "$BRANCH" --title "feat: $SLUG" \
-  --body "Automated feature pipeline for $SLUG. Spec/designs/plans under docs/. Ready for multi-persona PR review.$BASELINE_NOTE")"
+PR_URL="$(cd "$WORK" && gh pr create $BASE_ARG $DRAFT_ARG --head "$BRANCH" --title "$TITLE" \
+  --body "Automated feature pipeline for $SLUG. Spec/designs/plans under docs/. Ready for multi-persona PR review.$BLOCKED_NOTE$BASELINE_NOTE")"
 PR_NUMBER="$(printf '%s' "$PR_URL" | sed 's:.*/::')"
 jq -n --arg u "$PR_URL" --arg n "$PR_NUMBER" --arg b "$BRANCH" '{pr_url:$u, pr_number:$n, branch:$b}'

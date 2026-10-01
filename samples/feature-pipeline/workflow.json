@@ -25,7 +25,7 @@
     {
       "name": "spec_only",
       "type": "boolean",
-      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed \u2014 before implementation begins. The plans are checkpoint-pushed on both paths.",
+      "description": "Stop after the planning package (spec + designs + plans) is produced, committed, and pushed — before implementation begins. The plans are checkpoint-pushed on both paths.",
       "default": false,
       "required": false
     },
@@ -67,7 +67,7 @@
     {
       "name": "max_no_progress_streak",
       "type": "number",
-      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged \u2014 a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
+      "description": "Consecutive no-progress passes that count as a WEDGED loop rather than a hard review. This is the hard-wedge backstop, not a completion signal: the plan counter decides when the loop is DONE, and this decides only when it has stopped being able to make progress at all. It was an inlined 3, which ended run a1aab074 at pass 161 of a 500 cap with 98 approval boxes still unticked (3 of 52 single-system reviews, all 92 paired). That run was not wedged — a withheld approval is the NORMAL outcome of a review pass, and two of its three strikes were a refiner burning its hour waiting on a slow integration suite. 12 sits above record-pass-commit's sticky approval-stall limit of 8, so a real wedge still trips the stall flag first and then exits within a few more passes, while ordinary withholds no longer end a healthy run.",
       "default": 12,
       "required": false
     },
@@ -131,7 +131,7 @@
         "timeoutSeconds": 600
       },
       "label": "Init workspace",
-      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-<slug>-<run_date>-<instance-short-id> worktree at {{workspace}}/work. The instance-id suffix keeps branches unique across concurrent runs of the same repo/feature.",
+      "description": "Clone repo_url into {{workspace}}/src, derive slug + run_date, create the dev-\u003cslug\u003e-\u003crun_date\u003e-\u003cinstance-short-id\u003e worktree at {{workspace}}/work. The instance-id suffix keeps branches unique across concurrent runs of the same repo/feature.",
       "errorBehavior": {},
       "entrypoint": true,
       "position": {
@@ -341,7 +341,7 @@
         ]
       },
       "label": "Promote detected docs",
-      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug \u2014 matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
+      "description": "Unambiguous path: adopt the detector results. slug comes from safe_slug, not matched_slug — matched_slug is empty when nothing matched, and adopting that would blank the slug and produce a placeholder branch with misnamed docs.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -405,7 +405,7 @@
         "defaultOutput": "spec"
       },
       "label": "Resume at which stage?",
-      "description": "The ladder: plans present -> re-align and re-validate them, then implement; spec+designs -> write plans; spec only -> design brainstorm; nothing found -> full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
+      "description": "The ladder: plans present -\u003e re-align and re-validate them, then implement; spec+designs -\u003e write plans; spec only -\u003e design brainstorm; nothing found -\u003e full pipeline. The implementation rung deliberately enters at align-plans rather than baseline-tests so a resumed run still passes the dependency gate (plans written by an earlier run were validated against an earlier repo state) and so spec_only remains meaningful on every resume path. Default is the full pipeline, so an unrecognised value costs time rather than skipping work.",
       "errorBehavior": {},
       "position": {
         "x": 0,
@@ -477,7 +477,7 @@
         "timeoutSeconds": 120
       },
       "label": "Checkpoint: push spec",
-      "description": "Pushes the approved product spec commit. The spec brainstorm runs on a codex interactive_agent, whose sandbox pins sandbox_workspace_write.network_access=false \u2014 with codex's approval subsystem deleted that sandbox is the sole containment against a prompt-injected turn exfiltrating the worktree, so it must stay off. A git push from inside that turn therefore cannot work by design. The turn commits locally and this node, which runs outside the sandbox with the engine's auth env passthrough, does the push \u2014 also making the expensive interview survive a later crash instead of living only in the instance worktree. Note the codex agent_call path uses --dangerously-bypass-approvals-and-sandbox and is NOT affected; this is specific to codex interactive_agent nodes.",
+      "description": "Pushes the approved product spec commit. The spec brainstorm runs on a codex interactive_agent, whose sandbox pins sandbox_workspace_write.network_access=false — with codex's approval subsystem deleted that sandbox is the sole containment against a prompt-injected turn exfiltrating the worktree, so it must stay off. A git push from inside that turn therefore cannot work by design. The turn commits locally and this node, which runs outside the sandbox with the engine's auth env passthrough, does the push — also making the expensive interview survive a later crash instead of living only in the instance worktree. Note the codex agent_call path uses --dangerously-bypass-approvals-and-sandbox and is NOT affected; this is specific to codex interactive_agent nodes.",
       "errorBehavior": {},
       "position": {
         "x": 420,
@@ -630,32 +630,30 @@
       }
     },
     {
+      "id": "deps-count",
+      "type": "script",
+      "config": {
+        "scriptFile": "scripts/deps-count.sh",
+        "interpreter": "/bin/sh",
+        "timeoutSeconds": 60
+      },
+      "label": "Count gaps needing a person",
+      "description": "Counts deps-assess's BLOCKING: and DECISION: gap lines (needs_resolution) so deps-gate routes on arithmetic, not on LLM-emitted fields. Fails closed: unreadable gaps report needs_resolution=1. Added after run 5e86d796 proceeded past 7 human decisions because the gate was first-match on blocking_count == 0.",
+      "errorBehavior": {},
+      "position": {
+        "x": 420,
+        "y": 1260
+      }
+    },
+    {
       "id": "deps-gate",
       "type": "conditional",
       "config": {
         "conditions": [
           {
-            "field": "deps-assess.blocking_count",
+            "field": "deps-count.needs_resolution",
             "operator": "eq",
             "value": 0,
-            "output": "proceed"
-          },
-          {
-            "field": "deps-assess.has_blocking",
-            "operator": "eq",
-            "value": false,
-            "output": "proceed"
-          },
-          {
-            "field": "deps-assess.unresolved_count",
-            "operator": "eq",
-            "value": 0,
-            "output": "proceed"
-          },
-          {
-            "field": "deps-assess.has_unresolved",
-            "operator": "eq",
-            "value": false,
             "output": "proceed"
           },
           {
@@ -668,11 +666,11 @@
         "defaultOutput": "resolve"
       },
       "label": "Deps blocking?",
-      "description": "Proceed when nothing BLOCKS implementation (blocking_count 0 / has_blocking false) \u2014 non-blocking items such as externally-provisioned secrets no longer veto a run. Otherwise take exactly ONE interactive resolve pass; if a blocker survives it, stop. Two proceed conditions are checked because llm_call outputSchema is not enforced, so either field arriving well-formed is enough.",
+      "description": "Proceed only when deps-count.needs_resolution is 0, i.e. no BLOCKING: and no DECISION: gaps. Otherwise take exactly ONE interactive resolve pass with the human; if anything still needs resolution after it, stop. Routes on deps-count (a script) rather than on deps-assess fields, because llm_call outputSchema is not enforced and because conditions are first-match: the old first condition `blocking_count == 0 -\u003e proceed` sent run 5e86d796 past 7 unresolved decisions.",
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 1260
+        "y": 1400
       }
     },
     {
@@ -688,7 +686,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 1400
+        "y": 1540
       }
     },
     {
@@ -710,7 +708,7 @@
       "errorBehavior": {},
       "position": {
         "x": 420,
-        "y": 1540
+        "y": 1680
       }
     },
     {
@@ -722,7 +720,7 @@
         "timeoutSeconds": 3600
       },
       "label": "Capture test baseline",
-      "description": "Before any implementation, detect and run the project's test suite(s) (mixed languages -> possibly several) and write {{workspace}}/test-baseline.json recording which tests already fail at the branch point.",
+      "description": "Before any implementation, detect and run the project's test suite(s) (mixed languages -\u003e possibly several) and write {{workspace}}/test-baseline.json recording which tests already fail at the branch point.",
       "errorBehavior": {},
       "position": {
         "x": 840,
@@ -859,7 +857,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline (spec-only) complete \u2014 {{slug}}",
+          "feature-pipeline (spec-only) complete — {{slug}}",
           "Spec, phased designs and TDD task plans were produced, aligned and checkpoint-pushed. Stopped before implementation (spec_only).",
           "info",
           "Repo={{repo_url}}",
@@ -958,7 +956,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline BLOCKED (planning) \u2014 {{slug}}",
+          "feature-pipeline BLOCKED (planning) — {{slug}}",
           "The planning phase could not close the dependency graph after {{max_deps_iterations}} interactive resolution passes. Implementation was NOT started, to avoid a livelock. Unresolved: {{deps-assess.notes}}",
           "warning",
           "Repo={{repo_url}}",
@@ -1019,8 +1017,8 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline BLOCKED (implementation) \u2014 {{slug}}",
-          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope \u2014 a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
+          "feature-pipeline BLOCKED (implementation) — {{slug}}",
+          "The implementation loop stopped because every remaining task is blocked on a producer that does not exist and is outside its scope — a plan gap that slipped past the planning gate. Stopped rather than spinning to the iteration cap. Blocker: {{impl-assess.notes}}",
           "warning",
           "Repo={{repo_url}}",
           "Slug={{slug}}",
@@ -1090,14 +1088,14 @@
     {
       "id": "select-work",
       "type": "script",
-      "label": "Select next work",
-      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1 = the wiring lens, review 2 = the failure lens); phase 2 begins only when every single box is ticked. Models are named only in the node profiles.",
-      "errorBehavior": {},
       "config": {
         "scriptFile": "scripts/select-work.sh",
         "interpreter": "/bin/sh",
         "timeoutSeconds": 5400
       },
+      "label": "Select next work",
+      "description": "The router. Picks the highest-risk outstanding item and emits next_kind, which decides BOTH what gets reviewed and which model pair handles it. Phase 1 works single-system areas (review 1 = the wiring lens, review 2 = the failure lens); phase 2 begins only when every single box is ticked. Models are named only in the node profiles.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 700
@@ -1106,9 +1104,6 @@
     {
       "id": "work-router",
       "type": "conditional",
-      "label": "Route by work kind",
-      "errorBehavior": {},
-      "description": "Sends the pass down the lane select-work chose. Conditions are FIRST-MATCH, so the three kinds are listed before the default exit.",
       "config": {
         "conditions": [
           {
@@ -1132,6 +1127,9 @@
         ],
         "defaultOutput": "done"
       },
+      "label": "Route by work kind",
+      "description": "Sends the pass down the lane select-work chose. Conditions are FIRST-MATCH, so the three kinds are listed before the default exit.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 840
@@ -1140,14 +1138,14 @@
     {
       "id": "refine-single-1",
       "type": "agent_call",
-      "label": "Refine single (review 1)",
-      "description": "Review 1 of a single-system area: the WIRING lens. Refined by one model family and assessed by another, so an area never gets two opinions from the same blind spot.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/refine-single.md",
         "model_profile": "coder-sonnet5-high",
         "timeoutSeconds": 3600
       },
+      "label": "Refine single (review 1)",
+      "description": "Review 1 of a single-system area: the WIRING lens. Refined by one model family and assessed by another, so an area never gets two opinions from the same blind spot.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 980
@@ -1156,14 +1154,14 @@
     {
       "id": "verify-tests-single1",
       "type": "script",
-      "label": "Verify tests (single 1)",
-      "description": "Baseline-relative test gate for review 1. Blocks approval on NEW failures only.",
-      "errorBehavior": {},
       "config": {
         "scriptFile": "scripts/verify-tests.sh",
         "interpreter": "/bin/sh",
         "timeoutSeconds": 5400
       },
+      "label": "Verify tests (single 1)",
+      "description": "Baseline-relative test gate for review 1. Blocks approval on NEW failures only.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 1120
@@ -1172,14 +1170,14 @@
     {
       "id": "assess-single-1",
       "type": "agent_call",
-      "label": "Assess single (review 1)",
-      "description": "Independent approver for review 1, on a different model family from its refiner. The only agent permitted to tick this box.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/assess-single.md",
         "model_profile": "approver-codex-high",
         "timeoutSeconds": 3600
       },
+      "label": "Assess single (review 1)",
+      "description": "Independent approver for review 1, on a different model family from its refiner. The only agent permitted to tick this box.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 1260
@@ -1188,14 +1186,14 @@
     {
       "id": "refine-single-2",
       "type": "agent_call",
-      "label": "Refine single (review 2)",
-      "description": "Review 2 of a single-system area: the FAILURE lens. Uses the opposite model pair from review 1.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/refine-single.md",
         "model_profile": "coder-codex-high",
         "timeoutSeconds": 3600
       },
+      "label": "Refine single (review 2)",
+      "description": "Review 2 of a single-system area: the FAILURE lens. Uses the opposite model pair from review 1.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 1400
@@ -1204,14 +1202,14 @@
     {
       "id": "verify-tests-single2",
       "type": "script",
-      "label": "Verify tests (single 2)",
-      "description": "Baseline-relative test gate for review 2.",
-      "errorBehavior": {},
       "config": {
         "scriptFile": "scripts/verify-tests.sh",
         "interpreter": "/bin/sh",
         "timeoutSeconds": 5400
       },
+      "label": "Verify tests (single 2)",
+      "description": "Baseline-relative test gate for review 2.",
+      "errorBehavior": {},
       "position": {
         "x": 1260,
         "y": 1540
@@ -1220,14 +1218,14 @@
     {
       "id": "assess-single-2",
       "type": "agent_call",
-      "label": "Assess single (review 2)",
-      "description": "Independent approver for review 2, cross-family against its refiner.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/assess-single.md",
         "model_profile": "approver-opus-medium",
         "timeoutSeconds": 3600
       },
+      "label": "Assess single (review 2)",
+      "description": "Independent approver for review 2, cross-family against its refiner.",
+      "errorBehavior": {},
       "position": {
         "x": 1680,
         "y": 0
@@ -1236,14 +1234,14 @@
     {
       "id": "refine-paired",
       "type": "agent_call",
-      "label": "Refine paired seam",
-      "description": "Phase 2: one paired integration seam, both directions in a single pass. Begins only once every single-system box is ticked.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/refine-paired.md",
         "model_profile": "coder-opus-medium",
         "timeoutSeconds": 3600
       },
+      "label": "Refine paired seam",
+      "description": "Phase 2: one paired integration seam, both directions in a single pass. Begins only once every single-system box is ticked.",
+      "errorBehavior": {},
       "position": {
         "x": 1680,
         "y": 140
@@ -1252,14 +1250,14 @@
     {
       "id": "verify-tests-paired",
       "type": "script",
-      "label": "Verify tests (paired)",
-      "description": "Baseline-relative test gate for the paired seam pass.",
-      "errorBehavior": {},
       "config": {
         "scriptFile": "scripts/verify-tests.sh",
         "interpreter": "/bin/sh",
         "timeoutSeconds": 5400
       },
+      "label": "Verify tests (paired)",
+      "description": "Baseline-relative test gate for the paired seam pass.",
+      "errorBehavior": {},
       "position": {
         "x": 1680,
         "y": 280
@@ -1268,14 +1266,14 @@
     {
       "id": "assess-paired",
       "type": "agent_call",
-      "label": "Assess paired seam",
-      "description": "Independent approver for the paired seam, cross-family against its refiner.",
-      "errorBehavior": {},
       "config": {
         "templateFile": "templates/assess-paired.md",
         "model_profile": "approver-codex-high",
         "timeoutSeconds": 3600
       },
+      "label": "Assess paired seam",
+      "description": "Independent approver for the paired seam, cross-family against its refiner.",
+      "errorBehavior": {},
       "position": {
         "x": 1680,
         "y": 420
@@ -1290,7 +1288,7 @@
         "timeoutSeconds": 120
       },
       "label": "Record pass commit",
-      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone \u2014 but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
+      "description": "Reads what the refinement pass actually committed (new commits since the previous pass, whether focus-areas.md / gaps-identified.md were touched) and emits progress_evidence. The assessor is toolless and used to score progress from {{refine.response}} alone — but the pass's Wrap Up asks it what REMAINS, so a compliant report structurally omits what it accomplished and the verdict became a coin flip that tripped the stagnation backstop on healthy runs. A commit is not a narrative. Never fails the run: no git evidence emits a conservative false and the assessor falls back to the pass's Progress: line.",
       "errorBehavior": {},
       "position": {
         "x": 1680,
@@ -1306,7 +1304,7 @@
         "timeoutSeconds": 120
       },
       "label": "Count review plan",
-      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own <promise>FINIT</promise> claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched \u2014 114 of 164 approvals outstanding \u2014 and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
+      "description": "Counts outstanding approval boxes in focus-areas.md and emits plan_complete, so loop termination is arithmetic rather than narrative. refine-assess is toolless: it could only read the pass's own \u003cpromise\u003eFINIT\u003c/promise\u003e claim and had no way to contradict it. Run ae3ec85f exited that way at pass 56 of a 200 cap with all 112 paired integration reviews untouched — 114 of 164 approvals outstanding — and shipped a PR whose review plan was 70% unexecuted. Fails closed: an unreadable plan emits plan_complete=false, and the stagnation backstop plus the cap still bound the run.",
       "errorBehavior": {},
       "position": {
         "x": 1680,
@@ -1427,7 +1425,7 @@
         "defaultOutput": "loop"
       },
       "label": "Refine loop or exit",
-      "description": "Conditions are first-match, so a listed-but-later condition is not a guard. This gate DID read count-review-plan.plan_complete, but at index 4, behind an unconditional `consecutive_no_progress >= 3 -> exit` at index 2 \u2014 the counter was shadowed and could never veto a stagnation exit. That is the same defect that ended ralph-loop run a1aab074 with 98 approval boxes outstanding, and the reason count-review-plan was written in the first place. The stagnation exit is now the declared hard-wedge threshold (max_no_progress_streak, 12) rather than a bare 3. Widening the runway that far would have fired the Opus rescue on every pass from 2 to 11, so the rescue band is bounded to streaks 2-4 (three attempts, was one) and 5-11 loop normally until the wedge threshold. Below that, an incomplete plan or a new-vs-baseline failure keeps the loop running, and only then may the assessor's `done` end it.",
+      "description": "Conditions are first-match, so a listed-but-later condition is not a guard. This gate DID read count-review-plan.plan_complete, but at index 4, behind an unconditional `consecutive_no_progress \u003e= 3 -\u003e exit` at index 2 — the counter was shadowed and could never veto a stagnation exit. That is the same defect that ended ralph-loop run a1aab074 with 98 approval boxes outstanding, and the reason count-review-plan was written in the first place. The stagnation exit is now the declared hard-wedge threshold (max_no_progress_streak, 12) rather than a bare 3. Widening the runway that far would have fired the Opus rescue on every pass from 2 to 11, so the rescue band is bounded to streaks 2-4 (three attempts, was one) and 5-11 loop normally until the wedge threshold. Below that, an incomplete plan or a new-vs-baseline failure keeps the loop running, and only then may the assessor's `done` end it.",
       "errorBehavior": {},
       "position": {
         "x": 1680,
@@ -1442,8 +1440,8 @@
         "interpreter": "/bin/sh",
         "timeoutSeconds": 300
       },
-      "label": "Push & open PR",
-      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open).",
+      "label": "Push \u0026 open PR",
+      "description": "Push the feature branch and open a GitHub PR (auto-triggers the pr-review workflow on PR open). When impl_blocked is set the PR is a DRAFT titled [BLOCKED] whose body names the remaining tasks and the assessor's account of what blocks them.",
       "errorBehavior": {},
       "position": {
         "x": 1680,
@@ -1476,7 +1474,7 @@
         "scriptFile": "scripts/notify-teams.sh",
         "interpreter": "/bin/sh",
         "args": [
-          "feature-pipeline complete \u2014 {{slug}}",
+          "feature-pipeline complete — {{slug}}",
           "Spec, phased designs, plans, implementation and the ralph refinement loop are done; a PR has been opened ({{push-and-pr.pr_url}}). PR review runs automatically on open.",
           "good",
           "Repo={{repo_url}}",
@@ -1582,7 +1580,7 @@
         "timeoutSeconds": 5400
       },
       "label": "Verify tests (rescue pass)",
-      "description": "Baseline-relative test gate for the Opus rescue pass. The rescue pass breaks a stagnation rather than working a numbered review row, so it records its commit directly instead of routing through a lane approver \u2014 the next iteration re-routes through select-work and is assessed normally.",
+      "description": "Baseline-relative test gate for the Opus rescue pass. The rescue pass breaks a stagnation rather than working a numbered review row, so it records its commit directly instead of routing through a lane approver — the next iteration re-routes through select-work and is assessed normally.",
       "errorBehavior": {},
       "position": {
         "x": 2100,
@@ -1711,6 +1709,10 @@
     },
     {
       "source": "deps-assess",
+      "target": "deps-count"
+    },
+    {
+      "source": "deps-count",
       "target": "deps-gate"
     },
     {
@@ -1810,7 +1812,7 @@
       "source": "resume-stage?",
       "target": "align-plans",
       "output": "impl",
-      "label": "plans exist \u2014 re-align + revalidate"
+      "label": "plans exist — re-align + revalidate"
     },
     {
       "source": "produce-plans",

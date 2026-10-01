@@ -26,10 +26,13 @@ Treat that block as the **primary** signal. Also treat any `ESCALATION:` line, a
 `UNRESOLVED DEPENDENCY` marker, or a `// NOTE` that stands in for a missing
 producer/wiring as an unresolved dependency, even if the count omitted it.
 
-## BLOCKING vs merely unresolved — read this before deciding
+## BLOCKING, DECISION, or NON-BLOCKING — read this before deciding
 
 Not every open item can stop implementation, and treating them alike has already
-killed a full run. Split them.
+killed a full run. Split them three ways. Getting it wrong in the other direction
+has killed one too: run 5e86d796 classed seven questions only a human could
+answer as non-blocking because the design named a fallback, nobody asked the
+human, and implementation stopped at 3 of 17 tasks.
 
 A gap is **BLOCKING** only when *all* of these hold:
 1. A named plan task consumes it, AND
@@ -45,28 +48,40 @@ A gap is **NOT blocking** when any of these hold:
   chain (e.g. secret → deploy step → compose → service) — treat it as **CLOSED**.
   Absence of a value inside the repo is *not* evidence of a missing producer.
 - **Nil-safe / degrades rather than breaks.** The design documents a fallback (log-only
-  alerting, a feature flag defaulting off, a conservative default). Nothing hard-blocks.
+  alerting, a feature flag defaulting off, a conservative default). Nothing hard-blocks
+  — unless the plans still say a person must choose, which makes it a DECISION (below).
 - **Behind a disabled flag** whose enablement is a separate gated step.
 - **Recorded as a Non-Goal**, or an accepted limitation with the consumer removed.
-- **A human ops/product decision** that no plan task could ever produce, where code
-  proceeds either way.
+
+A gap is a **DECISION** when a person has to choose before the work can be done as
+planned: a product, policy, ops or vendor-contract question that no plan task can
+answer by writing code. It is a DECISION **even when the design names a fallback**,
+if the plans or designs say the choice is still needed — wording such as
+"UNRESOLVED DEPENDENCY", "decision still needed", "human-selected", "choose …",
+or a release-blocking gate. The implementation agents follow the plans: a plan that
+says a human must choose is a hard stop for them, whatever fallback a design
+mentions. Only a choice the plans themselves mark as already made, or as safe to
+defer with the fallback in place, is NON-BLOCKING.
 
 Repeatedly re-deriving the same non-blocking item across passes is a failure of this
 gate, not a finding.
 
 ## Decide
-- `has_blocking`: **the field the pipeline actually routes on.** true ONLY if at least
-  one gap meets all three BLOCKING tests above. **When genuinely uncertain, prefer
-  false** — the implementation loop has its own `all_remaining_blocked` stop-exit that
-  catches a real hole cheaply and escalates, whereas a false `true` here stops a run
-  that would have succeeded. You MUST emit this field.
-- `blocking_count`: integer count of BLOCKING gaps (0 when none). You MUST emit this.
-- `has_unresolved`: true if ANY item is open at all, blocking or not. Informational —
-  it does **not** stop the pipeline.
-- `unresolved_count`: integer count of all open items (blocking + non-blocking).
-- `gaps`: one entry per open item, each a single self-contained line, **prefixed with
-  `BLOCKING:` or `NON-BLOCKING:`**:
-  `BLOCKING: <doc path> — <consumer> needs <missing producer file:symbol or field>; decision: <the question a human must answer>`.
+- `gaps`: **what the pipeline routes on.** One entry per open item, each a single
+  self-contained line, **prefixed with exactly one of `BLOCKING:`, `DECISION:` or
+  `NON-BLOCKING:`**. A script counts the `BLOCKING:` and `DECISION:` lines; any count
+  above zero sends the plans to a person (resolve-deps) before implementation starts.
+  The prefix is load-bearing — an unprefixed line is not counted.
+  `BLOCKING: <doc path> — <consumer> needs <missing producer file:symbol or field>; decision: <the question a human must answer>`
+  `DECISION: <doc path> — <what is waiting on the choice>; decision: <the question, with the options the docs offer>`
+  `NON-BLOCKING: <doc path> — <item>; why it cannot stop the work: <reason>`
   Empty array if none.
-- `notes`: one sentence covering both counts (e.g. "1 blocking: RunJob durable LoRA
-  blob-path field has no producer; 2 non-blocking: both externally provisioned").
+- **When genuinely uncertain between DECISION and NON-BLOCKING, choose DECISION.**
+  Asking a person costs one short conversation; not asking cost run 5e86d796 its
+  whole implementation phase. The implementation loop's `all_remaining_blocked` exit
+  does NOT reach a person — it ends the run.
+- `has_blocking` / `blocking_count`: true / the count when any BLOCKING gap exists.
+- `has_unresolved` / `unresolved_count`: true / the count of all open items.
+- `notes`: one sentence covering all three counts (e.g. "1 blocking: RunJob blob
+  path has no producer; 2 decisions: rollout policy, delivery guarantee; 1
+  non-blocking: externally provisioned").

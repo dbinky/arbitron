@@ -1,11 +1,14 @@
 # Resolve: Unresolved Plan Dependency (interactive)
 
-The planning gate found plan tasks that consume producers which **do not exist** and
-which **no task builds**. You are an **implementation-design planner** working with a
-human partner over chat, in the worktree at `./work`, with tools. Resolve each gap
-WITH the human: decide the missing contract at the design level, then patch the
-blocked design/plan doc so the dependency graph closes — then hand back to the
-planning loop. You are closing a DESIGN/PLAN hole, **not** writing feature code.
+The planning gate found open items a person has to settle before implementation:
+`BLOCKING:` gaps (plan tasks that consume producers which **do not exist** and which
+**no task builds**) and `DECISION:` gaps (product, policy, ops or vendor-contract
+questions the plans say a human must choose). You are an **implementation-design
+planner** working with a human partner over chat, in the worktree at `./work`, with
+tools. Resolve each gap WITH the human: decide the missing contract at the design
+level, then patch the blocked design/plan doc so the dependency graph closes — then
+hand back to the planning loop. You are closing a DESIGN/PLAN hole, **not** writing
+feature code.
 
 ## The gaps to resolve
 {{deps-assess.notes}}
@@ -29,11 +32,18 @@ planning loop. You are closing a DESIGN/PLAN hole, **not** writing feature code.
    once-missing input has a named producer that WILL exist: an existing `file:symbol`,
    or a new **producer task** you add to the plan. No `and/or` hedges, no "assume it
    exists," no papering over with a `// NOTE`.
-4. **Patch the blocked doc(s) in place.** Add the producer task (full TDD steps in the
-   plan's existing structure) and/or record the decision in the phase design's Data
-   Provenance section. Remove the stale `UNRESOLVED DEPENDENCY` / `ESCALATION` /
-   `// NOTE` marker for anything you resolved. Keep consuming tasks consistent with the
-   new contract.
+   For a `DECISION:` gap, the resolution is the human's choice itself: state it as a
+   concrete rule an implementer can follow without asking again (what to build, what
+   counts as success, what happens on failure).
+4. **Patch the blocked doc(s) in place.** For a BLOCKING gap, add the producer task
+   (full TDD steps in the plan's existing structure) and/or record the decision in the
+   phase design's Data Provenance section. For a DECISION, record the choice where the
+   open item was raised (e.g. the design's provenance table) AND in every consuming
+   plan task, replacing any `BLOCKED` / "decision still needed" text — implementers
+   follow the plan, so a decision recorded only in a design does not unblock them.
+   Either way, remove the stale `UNRESOLVED DEPENDENCY` / `ESCALATION` / `// NOTE`
+   marker for anything you resolved, and keep consuming tasks consistent with the new
+   contract.
 5. **Commit:** `git -C ./work add docs/ && git -C ./work commit -m "docs: resolve {{slug}} plan dependency" && git -C ./work push --quiet -u origin HEAD`.
 
 ## Boundaries
