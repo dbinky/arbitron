@@ -204,11 +204,19 @@ type Submitter struct {
 
 type EnrichedInstanceSummary struct {
 	InstanceSummary
-	RunName       string
-	Submitter     Submitter
-	FriendlyStep  string
-	Model         string
-	Backend       string
+	RunName      string
+	Submitter    Submitter
+	FriendlyStep string
+	// Model, Effort, Backend, Provider and NodeType describe the CONFIGURED
+	// binding of the relevant node (current node while active, failed node when
+	// failed; empty for completed/cancelled) — not the last recorded execution.
+	Model    string
+	Effort   string
+	Backend  string
+	Provider string
+	NodeType string
+	// GitRef is the branch/worktree the run is working on ("" = unknown).
+	GitRef        string
 	RetryCount    int
 	QueuePosition int
 	FailedNodeID  *string

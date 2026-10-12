@@ -168,8 +168,12 @@ type Workflow struct {
 	Author               string        `json:"author"`
 	DefaultErrorBehavior ErrorBehavior `json:"defaultErrorBehavior"`
 	Inputs               []InputField  `json:"inputs"`
-	Nodes                []Node        `json:"nodes"`
-	Edges                []Edge        `json:"edges"`
+	// GitVariable optionally names the variable (dotted path allowed) holding
+	// the run's branch/worktree for the dashboard Git column. Empty applies the
+	// conventional fallback: branch, pr_branch, then work_dir's last segment.
+	GitVariable string `json:"gitVariable,omitempty"`
+	Nodes       []Node `json:"nodes"`
+	Edges       []Edge `json:"edges"`
 }
 
 // InputField describes a required or optional input parameter for a workflow.

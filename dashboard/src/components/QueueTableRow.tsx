@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import type { EnrichedInstanceSummary } from '../api/types'
 import type { ColumnDef } from './queueColumns'
-import { elapsed, relativeTime, localDateTime } from '../utils/time'
+import { formatDuration, relativeTime, localDateTime, runDuration } from '../utils/time'
 import styles from './QueueTableRow.module.css'
 
 /** Horizontal indent applied per hierarchy level, in pixels. */
@@ -11,6 +11,8 @@ interface QueueTableRowProps {
   row: EnrichedInstanceSummary
   columns: ColumnDef[]
   timeMode: 'elapsed' | 'relative'
+  /** Page clock (ms) from useNow; drives the ticking time cells. Defaults to Date.now(). */
+  now?: number
   authMode: 'local' | 'org' | 'edge'
   dimmed?: boolean
   expanded?: boolean
@@ -28,7 +30,8 @@ interface QueueTableRowProps {
 /**
  * QueueTableRow renders one enriched row's visible cells as a <tr>. The
  * submitter renders "you" in local mode and the display name in shared mode.
- * Elapsed is computed client-side (now − createdAt). Row click navigates to
+ * Elapsed is computed client-side from the page clock: created → now while
+ * active, created → completed once terminal (frozen). Row click navigates to
  * the execution view; the expand affordance stops propagation so it does not
  * also navigate.
  */
@@ -36,6 +39,7 @@ export default function QueueTableRow({
   row: rowVal,
   columns,
   timeMode,
+  now = Date.now(),
   authMode,
   dimmed,
   expanded,
@@ -55,7 +59,7 @@ export default function QueueTableRow({
       return rowVal.submitterName ?? '—'
     }
     if (col.key === 'elapsed') {
-      return timeMode === 'elapsed' ? elapsed(rowVal.createdAt) : relativeTime(rowVal.updatedAt)
+      return timeMode === 'elapsed' ? formatDuration(runDuration(rowVal, now)) : relativeTime(rowVal.updatedAt, now)
     }
     if (col.key === 'submittedAt') {
       return localDateTime(rowVal.createdAt)
@@ -99,6 +103,12 @@ export default function QueueTableRow({
                 <span className={styles.hierarchySpacer} aria-hidden="true" />
               )}
               {cellText(col)}
+            </span>
+          ) : col.key === 'git' && rowVal.gitRef ? (
+            // gitRef is an author/run-controlled string; it is rendered as a JSX
+            // text child and a plain `title` attribute only (no HTML sink).
+            <span className={styles.gitRef} title={rowVal.gitRef}>
+              {rowVal.gitRef}
             </span>
           ) : (
             cellText(col)

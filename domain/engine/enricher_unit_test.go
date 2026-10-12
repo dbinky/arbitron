@@ -7,30 +7,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNodeLabelAndBackend(t *testing.T) {
-	t.Run("label uses Label when set", func(t *testing.T) {
-		n := workflow.Node{ID: "n1", Label: "Architect R1"}
-		label, _ := nodeLabelAndBackend(n, "claude-code")
-		assert.Equal(t, "Architect R1", label)
+func TestNodeLabel(t *testing.T) {
+	t.Run("uses Label when set", func(t *testing.T) {
+		assert.Equal(t, "Architect R1", nodeLabel(workflow.Node{ID: "n1", Label: "Architect R1"}))
 	})
-	t.Run("label falls back to node id when Label empty", func(t *testing.T) {
-		n := workflow.Node{ID: "n1"}
-		label, _ := nodeLabelAndBackend(n, "claude-code")
-		assert.Equal(t, "n1", label)
+	t.Run("falls back to node id when Label empty", func(t *testing.T) {
+		assert.Equal(t, "n1", nodeLabel(workflow.Node{ID: "n1"}))
 	})
-	t.Run("backend uses node config when set", func(t *testing.T) {
-		n := workflow.Node{ID: "n1", Config: workflow.NodeConfig{Backend: "codex"}}
-		_, backend := nodeLabelAndBackend(n, "claude-code")
-		assert.Equal(t, "codex", backend)
-	})
-	t.Run("backend falls back to default when unset", func(t *testing.T) {
-		n := workflow.Node{ID: "n1"}
-		_, backend := nodeLabelAndBackend(n, "claude-code")
-		assert.Equal(t, "claude-code", backend)
-	})
-	t.Run("backend empty when unset and no default", func(t *testing.T) {
-		n := workflow.Node{ID: "n1"}
-		_, backend := nodeLabelAndBackend(n, "")
-		assert.Equal(t, "", backend)
-	})
+}
+
+func TestSnapshotGitVariable(t *testing.T) {
+	assert.Equal(t, "pr_branch", snapshotGitVariable(map[string]any{"gitVariable": "pr_branch"}))
+	assert.Equal(t, "", snapshotGitVariable(map[string]any{"gitVariable": 3}))
+	assert.Equal(t, "", snapshotGitVariable(nil))
 }

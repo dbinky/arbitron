@@ -18,6 +18,7 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -102,7 +103,7 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 	wf := workflow.Workflow{
 		Name:   "model-wf",
 		Inputs: []workflow.InputField{{Name: "title", Type: "string", Required: true}},
-		Nodes:  []workflow.Node{{ID: nodeID, Label: "Step", Config: workflow.NodeConfig{Backend: "claude-code"}}},
+		Nodes:  []workflow.Node{{ID: nodeID, Label: "Step", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{ModelProfile: "coder"}}},
 	}
 	inst := &instance.Instance{
 		ID:               uuid.New(),
@@ -120,9 +121,11 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 	instRepo := newMockInstanceRepo()
 	instRepo.instances[inst.ID] = inst
 	nodeExecRepo := newMockNodeExecRepo()
-	model := "gpt-4o"
+	// The recorded llm_model of an earlier attempt must NOT leak into the row:
+	// the row describes the configured binding of the node running now.
+	recorded := "gpt-4o-recorded"
 	nodeExecRepo.executions = append(nodeExecRepo.executions, &instance.NodeExecution{
-		ID: uuid.New(), InstanceID: inst.ID, NodeID: nodeID, Attempt: 3, LLMModel: &model, StartedAt: now,
+		ID: uuid.New(), InstanceID: inst.ID, NodeID: nodeID, Attempt: 3, LLMModel: &recorded, StartedAt: now,
 	})
 	snapRepo := newMockSnapshotRepo()
 	userRepo := &probeUserRepo{users: map[uuid.UUID]instance.User{owner: {ID: owner, Username: "alice"}}}
@@ -133,7 +136,9 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 		&probeQueueManager{}, &mockQueueRepoForRouter{},
 		"",
 	)
-	eng.SetInstanceEnricher(engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, ""))
+	enr := engine.NewInstanceEnricher(instRepo, nodeExecRepo, userRepo, engine.NoopQueuePositionProvider{}, "claude-code")
+	enr.SetProfileResolver(probeProfileResolver{"coder": {Model: "gpt-6.1-sol", Effort: "high", Backend: "codex", Provider: "litellm"}})
+	eng.SetInstanceEnricher(enr)
 
 	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
 		Service:   eng,
@@ -152,8 +157,11 @@ func TestRouter_InstanceList_ModelRetryProvenanceProbe(t *testing.T) {
 	var resp []map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	require.Len(t, resp, 1)
-	assert.Equal(t, "gpt-4o", resp[0]["model"], "enricher must populate model from node execution aggregate")
-	assert.Equal(t, "claude-code", resp[0]["backend"], "enricher must populate backend from node config")
+	assert.Equal(t, "gpt-6.1-sol", resp[0]["model"], "enricher must populate model from the current node's profile")
+	assert.Equal(t, "high", resp[0]["effort"])
+	assert.Equal(t, "codex", resp[0]["backend"], "profile backend beats the deployment default")
+	assert.Equal(t, "litellm", resp[0]["provider"])
+	assert.Equal(t, "agent_call", resp[0]["nodeType"])
 	assert.Equal(t, float64(3), resp[0]["retryCount"], "enricher must populate retryCount from node execution aggregate")
 }
 
@@ -564,3 +572,14 @@ func (probeQueueManager) Enqueue(context.Context, uuid.UUID, uuid.UUID) (bool, e
 func (probeQueueManager) NotifyCapacityFreed(context.Context) {}
 
 var _ engine.QueueManager = (*probeQueueManager)(nil)
+
+// probeProfileResolver resolves aliases from a fixed map.
+type probeProfileResolver map[string]provider.ResolvedBinding
+
+func (p probeProfileResolver) Resolve(_ context.Context, alias string) (provider.ResolvedBinding, error) {
+	b, ok := p[alias]
+	if !ok {
+		return provider.ResolvedBinding{}, provider.ErrUnknownProfile
+	}
+	return b, nil
+}

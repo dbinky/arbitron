@@ -160,17 +160,8 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 		placeholders[i] = "?"
 		args[i] = uuidToString(id)
 	}
-	// latest_model is the model of the MOST-RECENTLY-STARTED execution that
-	// recorded one (the design's "latest model"), NOT MAX(llm_model) — an
-	// alphabetical max would pick an arbitrary model for a multi-step run.
 	inClause := strings.Join(placeholders, ",")
 	query := `SELECT ne.instance_id,
-		COALESCE((
-			SELECT x.llm_model FROM node_executions x
-			WHERE x.instance_id = ne.instance_id
-			  AND x.llm_model IS NOT NULL AND x.llm_model != ''
-			ORDER BY x.started_at DESC LIMIT 1
-		), '') AS latest_model,
 		COALESCE(MAX(ne.attempt), 0) AS max_attempt
 	FROM node_executions ne
 	WHERE ne.instance_id IN (` + inClause + `)
@@ -183,9 +174,9 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 	defer rows.Close()
 
 	for rows.Next() {
-		var instIDStr, model string
+		var instIDStr string
 		var maxAttempt int64
-		if err := rows.Scan(&instIDStr, &model, &maxAttempt); err != nil {
+		if err := rows.Scan(&instIDStr, &maxAttempt); err != nil {
 			return nil, fmt.Errorf("scanning node execution aggregate: %w", err)
 		}
 		instID, err := parseUUID(instIDStr)
@@ -193,9 +184,8 @@ func (r *NodeExecutionRepo) AggregateByInstances(ctx context.Context, ids []uuid
 			return nil, fmt.Errorf("parsing instance id in aggregate: %w", err)
 		}
 		out[instID] = instance.NodeExecutionAggregate{
-			InstanceID:  instID,
-			LatestModel: model,
-			MaxAttempt:  int(maxAttempt),
+			InstanceID: instID,
+			MaxAttempt: int(maxAttempt),
 		}
 	}
 	if err := rows.Err(); err != nil {

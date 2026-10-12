@@ -281,10 +281,6 @@ func (r *mockNodeExecRepo) GetByInstanceAndNode(_ context.Context, instanceID uu
 
 func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]instance.NodeExecutionAggregate, error) {
 	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
-	// latestModelAt tracks the StartedAt of the execution whose model is
-	// currently recorded as LatestModel, so "latest" means latest-by-time
-	// (matching the SQLite query), not last-in-slice-order.
-	latestModelAt := make(map[uuid.UUID]time.Time)
 	for _, id := range ids {
 		for _, e := range r.executions {
 			if e.InstanceID == id {
@@ -294,12 +290,6 @@ func (r *mockNodeExecRepo) AggregateByInstances(_ context.Context, ids []uuid.UU
 				}
 				if e.Attempt > agg.MaxAttempt {
 					agg.MaxAttempt = e.Attempt
-				}
-				if e.LLMModel != nil && *e.LLMModel != "" {
-					if prev, seen := latestModelAt[id]; !seen || e.StartedAt.After(prev) {
-						agg.LatestModel = *e.LLMModel
-						latestModelAt[id] = e.StartedAt
-					}
 				}
 				out[id] = agg
 			}

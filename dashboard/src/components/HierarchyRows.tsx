@@ -10,6 +10,8 @@ interface HierarchyRowsProps {
   columns: ColumnDef[]
   depth: number
   timeMode: 'elapsed' | 'relative'
+  /** Page clock (ms) from useNow, passed down to rows. */
+  now?: number
   authMode: 'local' | 'org' | 'edge'
   hierarchy: RunHierarchy
   detailExpandedId?: string | null
@@ -42,6 +44,7 @@ export default function HierarchyRows({
   columns,
   depth,
   timeMode,
+  now,
   authMode,
   hierarchy,
   detailExpandedId,
@@ -74,6 +77,7 @@ export default function HierarchyRows({
               row={inst}
               columns={columns}
               timeMode={timeMode}
+              now={now}
               authMode={authMode}
               dimmed={inst.dismissed === true}
               expanded={detailExpandedId === inst.id}
@@ -135,6 +139,7 @@ export default function HierarchyRows({
                 columns={columns}
                 depth={depth + 1}
                 timeMode={timeMode}
+                now={now}
                 authMode={authMode}
                 hierarchy={hierarchy}
                 detailExpandedId={detailExpandedId}

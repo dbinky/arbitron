@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { visibleColumns, type ColumnDef } from './queueColumns'
 import HierarchyRows from './HierarchyRows'
 import { topLevelRows } from './topLevelRows'
-import { useRunHierarchy } from '../hooks/useRunHierarchy'
+import { useRunHierarchy, type RunHierarchy } from '../hooks/useRunHierarchy'
 import RowDetailPanel from './RowDetailPanel'
 import styles from './QueueSection.module.css'
 
@@ -16,6 +16,8 @@ interface QueueSectionProps {
   countColor: string
   subtitle?: string
   timeMode: 'elapsed' | 'relative'
+  /** Page clock (ms) from useNow, passed down to rows. */
+  now?: number
   density: QueueDensity
   authMode: 'local' | 'org' | 'edge'
   defaultCollapsed?: boolean
@@ -26,6 +28,10 @@ interface QueueSectionProps {
    *  hierarchy's cached child levels so an already-open row doesn't keep
    *  showing a stale child state (or miss a newly spawned one). */
   refreshSignal?: number
+  /** Registers this section's hierarchy row patcher with the caller, which
+   *  feeds it live node events so expanded children update without a refetch.
+   *  Returns the unregister function. */
+  registerRowPatcher?: (patch: RunHierarchy['patchRow']) => () => void
 }
 
 /** defaultSortKey picks the initial sort column from the section's state mix. */
@@ -58,6 +64,7 @@ export default function QueueSection({
   countColor,
   subtitle,
   timeMode,
+  now,
   density,
   authMode,
   defaultCollapsed = false,
@@ -65,6 +72,7 @@ export default function QueueSection({
   onDismiss,
   onRestore,
   refreshSignal,
+  registerRowPatcher,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [sortKey, setSortKey] = useState<string | null>(null)
@@ -82,6 +90,9 @@ export default function QueueSection({
   useEffect(() => {
     invalidate()
   }, [refreshSignal, invalidate])
+
+  const { patchRow } = hierarchy
+  useEffect(() => registerRowPatcher?.(patchRow), [registerRowPatcher, patchRow])
 
   // Lazy-load the last error for the expanded row via the trace endpoint. The
   // fetch lives here (not in RowDetailPanel) so the detail panel stays a pure
@@ -229,6 +240,7 @@ export default function QueueSection({
                   columns={columns}
                   depth={0}
                   timeMode={timeMode}
+                  now={now}
                   authMode={authMode}
                   hierarchy={hierarchy}
                   detailExpandedId={expandedId}

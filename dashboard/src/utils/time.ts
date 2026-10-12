@@ -2,8 +2,7 @@
  * Returns a human-readable relative time string (e.g. "3m ago", "2h ago").
  * For dates in the future, returns "just now".
  */
-export function relativeTime(dateStr: string): string {
-  const now = Date.now()
+export function relativeTime(dateStr: string, now: number = Date.now()): string {
   const then = new Date(dateStr).getTime()
   const diffMs = now - then
 
@@ -24,13 +23,19 @@ export function relativeTime(dateStr: string): string {
 
 /**
  * Returns the elapsed duration since the given date as a compact string
- * (e.g. "1m 23s", "2h 5m"). Useful for showing how long an instance
- * has been running.
+ * (e.g. "1m 23s", "2h 5m"). `now` is injectable so a page-level clock
+ * (useNow) drives re-rendering and tests stay deterministic.
  */
-export function elapsed(dateStr: string): string {
-  const now = Date.now()
-  const then = new Date(dateStr).getTime()
-  const diffMs = Math.max(0, now - then)
+export function elapsed(dateStr: string, now: number = Date.now()): string {
+  return formatDuration(now - new Date(dateStr).getTime())
+}
+
+/**
+ * Formats a millisecond duration compactly ("45s", "1m 23s", "2h 5m",
+ * "1d 3h"). Negative or non-finite input formats as "0s".
+ */
+export function formatDuration(ms: number): string {
+  const diffMs = Number.isFinite(ms) ? Math.max(0, ms) : 0
 
   const totalSeconds = Math.floor(diffMs / 1000)
 
@@ -49,6 +54,34 @@ export function elapsed(dateStr: string): string {
   const days = Math.floor(hours / 24)
   const remainHours = hours % 24
   return `${days}d ${remainHours}h`
+}
+
+const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled'])
+
+/**
+ * How long a run has taken, in ms: created → end for a terminal run (frozen),
+ * created → now otherwise. A terminal run ends at completedAt, else at
+ * updatedAt — cancellation writes only state/updated_at, never completed_at, so
+ * updatedAt is the cancelled row's terminal timestamp. A terminal row with
+ * neither parseable falls back to now. Never negative; unparseable createdAt → 0.
+ */
+export function runDuration(
+  row: { state: string; createdAt: string; completedAt?: string; updatedAt?: string },
+  now: number,
+): number {
+  const start = new Date(row.createdAt).getTime()
+  if (!Number.isFinite(start)) return 0
+  let end = now
+  if (TERMINAL_STATES.has(row.state)) {
+    for (const ts of [row.completedAt, row.updatedAt]) {
+      const done = ts ? new Date(ts).getTime() : NaN
+      if (Number.isFinite(done)) {
+        end = done
+        break
+      }
+    }
+  }
+  return Math.max(0, end - start)
 }
 
 /**

@@ -134,3 +134,66 @@ describe('QueueTableRow — hierarchy toggle', () => {
     expect(treeCell.style.paddingLeft).toBe('32px')
   })
 })
+describe('QueueTableRow clock and git cell', () => {
+  const created = '2026-10-10T00:00:00Z'
+  const now = Date.parse('2026-10-10T00:10:00Z')
+
+  function cell(container: HTMLElement, key: string) {
+    return container.querySelector(`td[data-col="${key}"]`) as HTMLElement
+  }
+
+  it('running row elapsed follows the now prop', () => {
+    const { container, rerender } = renderRow({ row: row({ createdAt: created }), now })
+    expect(cell(container, 'elapsed').textContent).toBe('10m 0s')
+    rerender(
+      <MemoryRouter>
+        <QueueTableRow
+          row={row({ createdAt: created })}
+          columns={visibleColumns('balanced' as QueueDensity)}
+          timeMode="elapsed"
+          authMode="local"
+          now={now + 5000}
+        />
+      </MemoryRouter>,
+    )
+    expect(cell(container, 'elapsed').textContent).toBe('10m 5s')
+  })
+
+  it('completed row elapsed is frozen at completedAt', () => {
+    const { container } = renderRow({
+      row: row({ state: 'completed', createdAt: created, completedAt: '2026-10-10T00:03:00Z' }),
+      now: now + 3600_000,
+    })
+    expect(cell(container, 'elapsed').textContent).toBe('3m 0s')
+  })
+
+  it('cancelled row without completedAt stays frozen at updatedAt as now advances', () => {
+    const cancelled = row({ state: 'cancelled', createdAt: created, updatedAt: '2026-10-10T00:04:00Z' })
+    const { container, rerender } = renderRow({ row: cancelled, now: now + 60_000 })
+    expect(cell(container, 'elapsed').textContent).toBe('4m 0s')
+    rerender(
+      <MemoryRouter>
+        <QueueTableRow
+          row={cancelled}
+          columns={visibleColumns('balanced' as QueueDensity)}
+          timeMode="elapsed"
+          authMode="local"
+          now={now + 3600_000}
+        />
+      </MemoryRouter>,
+    )
+    expect(cell(container, 'elapsed').textContent).toBe('4m 0s')
+  })
+
+  it('git cell shows the ref with a title, or a dash', () => {
+    const { container } = renderRow({ row: row({ gitRef: 'feat/album-gaze-eye-contact' }) })
+    const git = cell(container, 'git')
+    expect(git.textContent).toBe('feat/album-gaze-eye-contact')
+    expect(git.querySelector('[title="feat/album-gaze-eye-contact"]')).not.toBeNull()
+  })
+
+  it('git cell dash when absent', () => {
+    const { container } = renderRow({ row: row({ gitRef: undefined }) })
+    expect(cell(container, 'git').textContent).toBe('—')
+  })
+})

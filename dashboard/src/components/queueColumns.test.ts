@@ -47,13 +47,41 @@ describe('COLUMNS', () => {
   })
 })
 
+describe('Git and Model columns', () => {
+  it('Git sits directly after Run', () => {
+    const keys = COLUMNS.map((c) => c.key)
+    expect(keys.slice(0, 3)).toEqual(['workflow', 'runName', 'git'])
+  })
+  it('Git column shape', () => {
+    const git = getColumn('git')!
+    expect(git.header).toBe('Git')
+    expect(git.sortable).toBe(true)
+    expect(git.densities).toEqual(['balanced', 'expanded'])
+    expect(git.accessor(row({ gitRef: 'feat/x' }))).toBe('feat/x')
+    expect(git.accessor(row({ gitRef: undefined }))).toBe('—')
+  })
+  it('model column is headed Model and formats the binding', () => {
+    const model = getColumn('modelBackend')!
+    expect(model.header).toBe('Model')
+    expect(model.accessor(row({ model: 'm', effort: 'high', backend: 'codex', provider: 'litellm' }))).toBe(
+      'm (high) · codex · litellm',
+    )
+  })
+})
+
 describe('sortAccessor', () => {
   it('date/numeric columns declare a sortAccessor returning a sortable primitive', () => {
     const elapsed = getColumn('elapsed')!
     expect(typeof elapsed.sortAccessor).toBe('function')
-    // elapsed sorts by createdAt timestamp (a number), not a display string.
-    const v = elapsed.sortAccessor!(row({ createdAt: '2024-01-01T00:00:00Z' }))
-    expect(typeof v).toBe('number')
+    // elapsed sorts by run duration (ms), so terminal rows rank by how long they took.
+    const quick = elapsed.sortAccessor!(
+      row({ state: 'completed', createdAt: '2024-01-01T00:00:00Z', completedAt: '2024-01-01T00:01:00Z' }),
+    )
+    const slow = elapsed.sortAccessor!(
+      row({ state: 'completed', createdAt: '2024-01-01T00:00:00Z', completedAt: '2024-01-01T02:00:00Z' }),
+    )
+    expect(quick).toBe(60_000)
+    expect(slow).toBe(2 * 3600_000)
 
     const queue = getColumn('queuePosition')!
     expect(queue.sortAccessor!(row({ queuePosition: 5 }))).toBe(5)

@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useSystemWebSocket } from '../hooks/useSystemWebSocket'
 import { useRefetchOnReconnect } from '../hooks/useRefetchOnReconnect'
 import { useDensityPreference } from '../hooks/useDensityPreference'
+import { useNow } from '../hooks/useNow'
 import QueueSection from '../components/QueueSection'
 import DensityToggle from '../components/DensityToggle'
 
@@ -33,6 +34,36 @@ const STATE_CHANGE_EVENTS = new Set([
 /** Node events that should patch a single row in place (no refetch). */
 const NODE_PATCH_EVENTS = new Set(['node.started', 'node.failed'])
 
+type RowPatcher = (id: string, fields: Partial<EnrichedInstanceSummary>) => void
+
+/**
+ * The row fields a node event patches. A field ABSENT from the payload (older
+ * server) is left out so the row keeps its prior value; an explicit "" (a
+ * script node has no model) is kept so it overwrites. node.started carries the
+ * same binding + git ref a refetch would compute (server-side
+ * resolveNodeBinding/deriveGitRef), so the whole row patches together.
+ * node.failed patches the step only: its legacy `backend` ignores the profile,
+ * and instance.failed refetches anyway.
+ */
+function nodeEventPatch(type: string, d: NodeEventData): Partial<EnrichedInstanceSummary> {
+  const src: Partial<EnrichedInstanceSummary> = { currentNodeId: d.nodeId, friendlyStep: d.nodeLabel }
+  if (type === 'node.started') {
+    Object.assign(src, {
+      nodeType: d.nodeType,
+      model: d.model,
+      effort: d.effort,
+      backend: d.backend,
+      provider: d.provider,
+      gitRef: d.gitRef,
+    })
+  }
+  const fields: Partial<EnrichedInstanceSummary> = {}
+  for (const [k, v] of Object.entries(src)) {
+    if (v != null) (fields as Record<string, unknown>)[k] = v
+  }
+  return fields
+}
+
 export default function QueueView() {
   const [active, setActive] = useState<EnrichedInstanceSummary[]>([])
   const [pending, setPending] = useState<EnrichedInstanceSummary[]>([])
@@ -50,6 +81,8 @@ export default function QueueView() {
   const [refreshedAt, setRefreshedAt] = useState(0)
 
   const { density, cycle: cycleDensity } = useDensityPreference(me?.userId ?? null)
+  // One page-level clock so Elapsed / "N ago" cells advance between events.
+  const now = useNow()
   const authMode = me?.authMode ?? 'local'
 
   const fetchAll = useCallback(async () => {
@@ -123,6 +156,18 @@ export default function QueueView() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Each QueueSection owns a run hierarchy whose expanded children are cached
+  // rows separate from `active` (a child may be past the list window, or sit
+  // under a completed parent), so node events are fed to every section's
+  // hierarchy as well as to `active`.
+  const rowPatchers = useRef(new Set<RowPatcher>())
+  const registerRowPatcher = useCallback((patch: RowPatcher) => {
+    rowPatchers.current.add(patch)
+    return () => {
+      rowPatchers.current.delete(patch)
+    }
+  }, [])
+
   const { connected } = useSystemWebSocket(
     useCallback(
       (event: WebSocketEvent) => {
@@ -135,22 +180,15 @@ export default function QueueView() {
           // renders through React's escaped text sink (JSX text child). Never
           // route these into a raw-HTML (dangerouslySetInnerHTML) or attribute
           // sink (e.g. `title`) without sanitizing first.
-          const d = (event.data ?? {}) as NodeEventData
+          const fields = nodeEventPatch(event.type, (event.data ?? {}) as NodeEventData)
           setActive((prev) => {
             const idx = prev.findIndex((r) => r.id === instId)
             if (idx === -1) return prev // not listed yet; instance.started refetch will surface it
             const next = [...prev]
-            // Patch only the Step column (currentNodeId + friendlyStep). Backend
-            // and model share one "Model / Backend" cell and refresh together on
-            // the lifecycle refetch — live-patching backend alone would show a
-            // mismatched modelN-1 · backendN pair for the whole run.
-            next[idx] = {
-              ...next[idx],
-              currentNodeId: d.nodeId ?? next[idx].currentNodeId,
-              friendlyStep: d.nodeLabel ?? next[idx].friendlyStep,
-            }
+            next[idx] = { ...next[idx], ...fields }
             return next
           })
+          for (const patch of rowPatchers.current) patch(instId, fields)
           return
         }
         if (!STATE_CHANGE_EVENTS.has(event.type)) return
@@ -218,9 +256,11 @@ export default function QueueView() {
         countBg="rgba(52, 152, 219, 0.2)"
         countColor="var(--state-running)"
         timeMode="elapsed"
+        now={now}
         density={density}
         authMode={authMode}
         refreshSignal={refreshedAt}
+        registerRowPatcher={registerRowPatcher}
       />
       <QueueSection
         title="Pending"
@@ -229,9 +269,11 @@ export default function QueueView() {
         countBg="rgba(241, 196, 15, 0.2)"
         countColor="var(--state-queued)"
         timeMode="elapsed"
+        now={now}
         density={density}
         authMode={authMode}
         refreshSignal={refreshedAt}
+        registerRowPatcher={registerRowPatcher}
       />
       <QueueSection
         title="Failed"
@@ -240,10 +282,12 @@ export default function QueueView() {
         countBg="rgba(231, 76, 60, 0.2)"
         countColor="var(--state-failed)"
         subtitle={`Last ${HISTORY_DAYS} days`}
-        timeMode="relative"
+        timeMode="elapsed"
+        now={now}
         density={density}
         authMode={authMode}
         refreshSignal={refreshedAt}
+        registerRowPatcher={registerRowPatcher}
         onDismissAll={() => handleDismissAll('failed')}
         onDismiss={handleDismiss}
         onRestore={handleRestore}
@@ -255,10 +299,12 @@ export default function QueueView() {
         countBg="rgba(46, 204, 113, 0.2)"
         countColor="var(--state-completed)"
         subtitle={`Last ${HISTORY_DAYS} days`}
-        timeMode="relative"
+        timeMode="elapsed"
+        now={now}
         density={density}
         authMode={authMode}
         refreshSignal={refreshedAt}
+        registerRowPatcher={registerRowPatcher}
         defaultCollapsed
         onDismissAll={() => handleDismissAll('completed')}
         onDismiss={handleDismiss}

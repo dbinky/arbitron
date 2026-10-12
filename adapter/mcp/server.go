@@ -26,6 +26,7 @@ type Server struct {
 func NewServer(name, version string) *Server {
 	s := server.NewMCPServer(name, version,
 		server.WithToolCapabilities(true),
+		server.WithInstructions(AuthoringGuidance),
 	)
 	return &Server{mcpServer: s}
 }

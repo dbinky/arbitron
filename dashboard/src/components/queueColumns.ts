@@ -1,4 +1,6 @@
 import type { EnrichedInstanceSummary, QueueDensity } from '../api/types'
+import { runDuration } from '../utils/time'
+import { formatBinding } from './formatBinding'
 
 /** A single queue-list column declaration. */
 export interface ColumnDef {
@@ -39,6 +41,13 @@ export const COLUMNS: ColumnDef[] = [
     densities: ALL_DENSITIES,
   },
   {
+    key: 'git',
+    header: 'Git',
+    accessor: (r) => r.gitRef || '—',
+    sortable: true,
+    densities: ['balanced', 'expanded'],
+  },
+  {
     key: 'submitter',
     header: 'Submitter',
     accessor: (r) => r.submitterName ?? '—',
@@ -71,7 +80,9 @@ export const COLUMNS: ColumnDef[] = [
     key: 'elapsed',
     header: 'Elapsed',
     accessor: (r) => r.createdAt,
-    sortAccessor: (r) => new Date(r.createdAt).getTime(),
+    // Sort by how long the run has taken (frozen at completion for terminal
+    // rows). The clock is read at sort time; the cell itself ticks via useNow.
+    sortAccessor: (r) => runDuration(r, Date.now()),
     sortable: true,
     densities: ALL_DENSITIES,
   },
@@ -86,13 +97,8 @@ export const COLUMNS: ColumnDef[] = [
   },
   {
     key: 'modelBackend',
-    header: 'Model / Backend',
-    accessor: (r) => {
-      const parts: string[] = []
-      if (r.model) parts.push(r.model)
-      if (r.backend) parts.push(r.backend)
-      return parts.length > 0 ? parts.join(' · ') : '—'
-    },
+    header: 'Model',
+    accessor: (r) => formatBinding(r),
     sortable: false,
     densities: ['balanced', 'expanded'],
   },

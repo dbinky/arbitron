@@ -75,8 +75,8 @@ func TestInstanceEnricher_HappyPath_AllFieldsPresent(t *testing.T) {
 	assert.Equal(t, "Refactor checkout — feature-pipeline", row.RunName)
 	assert.Equal(t, "alice", row.Submitter.Name)
 	assert.Equal(t, "Generate draft", row.FriendlyStep, "label from the current node")
-	assert.Equal(t, "gpt-4o", row.Model)
-	assert.Equal(t, "claude-code", row.Backend)
+	assert.Empty(t, row.Model, "untyped node is not a model node; the recorded llm_model no longer feeds the row")
+	assert.Empty(t, row.Backend)
 	assert.Equal(t, 2, row.RetryCount)
 	assert.Equal(t, 0, row.QueuePosition, "no queue-position provider wired -> 0 (non-queued)")
 }
@@ -279,7 +279,7 @@ func TestInstanceEnricher_BackendUnset_EmptyBackend(t *testing.T) {
 	owner := uuid.New()
 	d.userRepo.users[owner] = instance.User{ID: owner, Username: "alice"}
 	nodeID := "n1"
-	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
+	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}
@@ -295,7 +295,7 @@ func TestInstanceEnricher_BackendUnset_ResolvesToDefault(t *testing.T) {
 	owner := uuid.New()
 	d.userRepo.users[owner] = instance.User{ID: owner, Username: "alice"}
 	nodeID := "n1"
-	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
+	wf := workflow.Workflow{Name: "wf", Nodes: []workflow.Node{{ID: nodeID, Label: "step", Type: workflow.NodeTypeAgentCall, Config: workflow.NodeConfig{Backend: workflow.BackendUnset}}}}
 	inst := &instance.Instance{ID: uuid.New(), OwnerID: owner, WorkflowName: "wf", WorkflowSnapshot: snapshotMap(t, wf), State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: time.Now()}
 	d.instRepo.instances[inst.ID] = inst
 	summaries := []instance.InstanceSummary{{ID: inst.ID, OwnerID: owner, State: instance.StateRunning, CurrentNodeID: &nodeID, CreatedAt: inst.CreatedAt, Variables: inst.Variables, WorkflowSnapshot: inst.WorkflowSnapshot, FailedNodeID: inst.FailedNodeID}}

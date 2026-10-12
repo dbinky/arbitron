@@ -839,6 +839,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// source, so a page of the run list resolves every hierarchy expander in ONE
 	// batched, post-authorization query.
 	instanceEnricher.SetSpawnLinks(instanceRepo)
+	instanceEnricher.SetProfileResolver(profileResolver)
 
 	// 12-sched. Create the timer scheduler, wire it to the queue manager and engine.
 	scheduler := queue.NewScheduler(queueMgr)
@@ -883,6 +884,7 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// down its spawned children recursively, and so the list enricher can resolve
 	// a page's child counts in one batched call.
 	eng.SetSpawnLinks(instanceRepo)
+	eng.SetProfileResolver(profileResolver)
 	// 12a-bis-2. Wire the Phase-2 audit service so a lead/admin intervention on a
 	// run they do not own emits a domain audit event (instance.lead_intervention /
 	// admin.override). *audit.Service.Record has exactly the void

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
 )
@@ -44,7 +45,10 @@ type InstanceEnricher struct {
 	// spawnLinks is the link-addressed read surface. It is NEVER nil: the
 	// constructor installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so a
 	// missed wiring step cannot silently blank every row's child count.
-	spawnLinks          instance.SpawnLinkRepository
+	spawnLinks instance.SpawnLinkRepository
+	// profiles resolves a node's model_profile for the row's binding cell. NEVER
+	// nil: NoopProfileResolver{} until the composition root wires the real one.
+	profiles            provider.ProfileResolver
 	defaultAgentBackend string // deployment-wide fallback for BackendUnset nodes
 }
 
@@ -73,7 +77,19 @@ func NewInstanceEnricher(
 		// Non-nil from birth, like queuePos above; the composition root swaps in
 		// the real repository via SetSpawnLinks.
 		spawnLinks: NoopSpawnLinks{},
+		profiles:   NoopProfileResolver{},
 	}
+}
+
+// SetProfileResolver wires the profile resolver used to describe the relevant
+// node's model/effort/backend/provider. Pass the same resolver the executors
+// use so the queue shows what the node actually runs on. nil panics — pass
+// NoopProfileResolver{} to opt out deliberately.
+func (e *InstanceEnricher) SetProfileResolver(r provider.ProfileResolver) {
+	if r == nil {
+		panic("engine: SetProfileResolver requires a non-nil ProfileResolver (use NoopProfileResolver{})")
+	}
+	e.profiles = r
 }
 
 // SetQueuePositionProvider wires the queue-position provider (Phase 2). Kept
@@ -152,7 +168,7 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 	// One batched node-exec aggregate call for the whole page.
 	aggMap, aggErr := e.nodeExecs.AggregateByInstances(ctx, ids)
 	if aggErr != nil {
-		slog.Warn("enricher: node-exec aggregate failed; model/retry degraded", "error", aggErr)
+		slog.Warn("enricher: node-exec aggregate failed; retry count degraded", "error", aggErr)
 		aggMap = map[uuid.UUID]instance.NodeExecutionAggregate{}
 	}
 
@@ -175,6 +191,10 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 	// One batched child-count call for the whole page (never N+1).
 	childCounts := e.batchChildCounts(ctx, ids)
 
+	// One profile lookup per alias for the whole page (never N+1), and one log
+	// line per failing alias.
+	profiles := newPageProfileResolver(e.profiles)
+
 	out := make([]instance.EnrichedInstanceSummary, len(summaries))
 	for i, s := range summaries {
 		row := instance.EnrichedInstanceSummary{InstanceSummary: s}
@@ -186,10 +206,12 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 		inputs := readWorkflowInputs(s.WorkflowSnapshot)
 		row.RunName = instance.DeriveRunName(s.WorkflowName, s.Variables, inputs, s.ID)
 
-		// Friendly step + backend from the relevant node in the snapshot.
-		label, backend := e.resolveNodeFields(s)
-		row.FriendlyStep = label
-		row.Backend = backend
+		// Friendly step from the relevant node; binding (model/effort/backend/
+		// provider/type) from the node the run is on NOW; git ref from variables.
+		row.FriendlyStep = e.resolveStepLabel(s)
+		b := e.resolveBinding(ctx, profiles, s)
+		row.NodeType, row.Model, row.Effort, row.Backend, row.Provider = b.NodeType, b.Model, b.Effort, b.Backend, b.Provider
+		row.GitRef = deriveGitRef(snapshotGitVariable(s.WorkflowSnapshot), s.Variables)
 
 		// FailedNodeID carried for the dashboard detail panel's lazy error load.
 		row.FailedNodeID = s.FailedNodeID
@@ -199,9 +221,8 @@ func (e *InstanceEnricher) Enrich(ctx context.Context, summaries []instance.Inst
 			row.Submitter = instance.Submitter{Name: u.Username, AccountIdentity: accountIdentity(u)}
 		}
 
-		// Model + retry from the batched aggregate.
+		// Retry count from the batched aggregate.
 		if agg, ok := aggMap[s.ID]; ok {
-			row.Model = agg.LatestModel
 			row.RetryCount = agg.MaxAttempt
 		}
 
@@ -241,45 +262,57 @@ func (e *InstanceEnricher) batchUsers(ctx context.Context, ownerSet map[uuid.UUI
 	return users
 }
 
-// nodeLabelAndBackend derives the friendly step label and effective backend for
-// a node, applying the same fallbacks the enriched list uses: label falls back
-// to the node id; backend falls back to defaultBackend when the node inherits
-// (BackendUnset). Shared by the enricher and the engine's node-event emitters so
-// a live-patched queue row matches what a refetch would produce.
-func nodeLabelAndBackend(node workflow.Node, defaultBackend string) (label, backend string) {
+// nodeLabel derives the friendly step label for a node: its Label, falling
+// back to the node id. Shared by the enricher and the engine's node-event
+// emitters so a live-patched queue row matches what a refetch would produce.
+func nodeLabel(node workflow.Node) string {
 	if node.Label != "" {
-		label = node.Label
-	} else {
-		label = node.ID
+		return node.Label
 	}
-	if node.Config.Backend != workflow.BackendUnset {
-		backend = node.Config.Backend
-	} else if defaultBackend != "" {
-		backend = defaultBackend
-	}
-	return label, backend
+	return node.ID
 }
 
-// resolveNodeFields returns (label, backend) for the relevant node in the
-// summary's workflow snapshot. The relevant node is:
-//   - CurrentNodeID when the instance is active (running/waiting/paused)
-//   - FailedNodeID when failed
-//   - none otherwise (completed/cancelled have no current step) -> ("", "")
-//
-// Best-effort: any parse/lookup failure also returns ("", "").
-func (e *InstanceEnricher) resolveNodeFields(s instance.InstanceSummary) (label, backend string) {
+// resolveStepLabel returns the friendly step label for the summary's relevant
+// node (see relevantNodeID). Best-effort: any lookup failure returns "".
+func (e *InstanceEnricher) resolveStepLabel(s instance.InstanceSummary) string {
 	nodeID := relevantNodeID(s)
 	if nodeID == "" {
-		return "", ""
+		return ""
 	}
 	node, err := FindNodeByID(s.WorkflowSnapshot, nodeID)
 	if err != nil {
-		return "", ""
+		return ""
 	}
-	return nodeLabelAndBackend(*node, e.defaultAgentBackend)
+	return nodeLabel(*node)
 }
 
-// relevantNodeID picks the node whose label/backend the row should show.
+// resolveBinding describes what the run is running on NOW: the failed node for
+// a failed run, the current node for an active one. Completed and cancelled
+// runs are running on nothing, so they get an empty binding even though they
+// still carry a CurrentNodeID (the Step column keeps showing that label).
+func (e *InstanceEnricher) resolveBinding(ctx context.Context, profiles provider.ProfileResolver, s instance.InstanceSummary) NodeBinding {
+	switch s.State {
+	case instance.StateCompleted, instance.StateCancelled:
+		return NodeBinding{}
+	}
+	nodeID := relevantNodeID(s)
+	if nodeID == "" {
+		return NodeBinding{}
+	}
+	node, err := FindNodeByID(s.WorkflowSnapshot, nodeID)
+	if err != nil {
+		return NodeBinding{}
+	}
+	// The page resolver already logged any failure; the degraded binding stands.
+	b, _ := resolveNodeBinding(ctx, profiles, *node, e.defaultAgentBackend)
+	return b
+}
+
+// relevantNodeID picks the node whose label the row's Step column shows: the
+// failed node for a failed run, otherwise CurrentNodeID. Note a completed or
+// cancelled run still carries the CurrentNodeID it ended on, so its Step
+// column shows that last node's label; resolveBinding, not this function,
+// blanks the binding for those states.
 func relevantNodeID(s instance.InstanceSummary) string {
 	if s.State == instance.StateFailed && s.FailedNodeID != nil && *s.FailedNodeID != "" {
 		return *s.FailedNodeID
@@ -287,11 +320,14 @@ func relevantNodeID(s instance.InstanceSummary) string {
 	if s.CurrentNodeID != nil && *s.CurrentNodeID != "" {
 		return *s.CurrentNodeID
 	}
-	// Terminal (completed/cancelled) rows have no *current* step (per the
-	// Phase-1 design provenance and the spec's "what step it is currently on"),
-	// so the step cell intentionally degrades to a placeholder. This is not a
-	// missing producer — there is no current-step value to show.
 	return ""
+}
+
+// snapshotGitVariable reads the workflow's optional gitVariable from the
+// instance's workflow snapshot ("" when absent or not a string).
+func snapshotGitVariable(snapshot map[string]any) string {
+	v, _ := snapshot["gitVariable"].(string)
+	return v
 }
 
 // readWorkflowInputs extracts the workflow's Inputs from the snapshot so

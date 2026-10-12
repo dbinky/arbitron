@@ -52,10 +52,18 @@ export interface EnrichedInstanceSummary extends InstanceSummary {
   submitterIdentity?: string
   /** Friendly label of the current/failed node; empty when none. */
   friendlyStep?: string
-  /** Latest LLM model used; empty for queued/script-only runs. */
+  /** Configured model of the node the run is on now (failed node when failed); empty otherwise. */
   model?: string
-  /** Configured agent backend of the relevant node; empty when unset. */
+  /** Configured reasoning effort of that node; empty = default. */
+  effort?: string
+  /** Agent harness of that node (agent nodes only); empty for chat/non-model nodes. */
   backend?: string
+  /** Provider family of that node, e.g. "claude-cli", "litellm". */
+  provider?: string
+  /** Type of that node, e.g. "agent_call", "script". Empty for completed/cancelled/queued. */
+  nodeType?: string
+  /** Branch/worktree the run is working on; empty when unknown. */
+  gitRef?: string
   /** Max retry attempt across the instance's node executions. */
   retryCount: number
   /** 1-based priority-aware position for queued rows; 0/absent otherwise. */
@@ -290,6 +298,12 @@ export interface WebSocketEvent {
 export interface NodeEventData {
   nodeId?: string
   nodeLabel?: string
+  nodeType?: string
+  model?: string
+  effort?: string
+  backend?: string
+  provider?: string
+  gitRef?: string
 }
 
 // ---------------------------------------------------------------------------

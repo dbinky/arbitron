@@ -247,7 +247,11 @@ type enrichedSummaryDTO struct {
 	RunName           string  `json:"runName"`
 	FriendlyStep      string  `json:"friendlyStep,omitempty"`
 	Model             string  `json:"model,omitempty"`
+	Effort            string  `json:"effort,omitempty"`
 	Backend           string  `json:"backend,omitempty"`
+	Provider          string  `json:"provider,omitempty"`
+	NodeType          string  `json:"nodeType,omitempty"`
+	GitRef            string  `json:"gitRef,omitempty"`
 	RetryCount        int     `json:"retryCount"`
 	QueuePosition     int     `json:"queuePosition,omitempty"`
 	SubmitterName     string  `json:"submitterName,omitempty"`
@@ -269,7 +273,11 @@ func toEnrichedSummaryDTO(e instance.EnrichedInstanceSummary, revealIdentity boo
 		RunName:       e.RunName,
 		FriendlyStep:  e.FriendlyStep,
 		Model:         e.Model,
+		Effort:        e.Effort,
 		Backend:       e.Backend,
+		Provider:      e.Provider,
+		NodeType:      e.NodeType,
+		GitRef:        e.GitRef,
 		RetryCount:    e.RetryCount,
 		QueuePosition: e.QueuePosition,
 		SubmitterName: e.Submitter.Name,

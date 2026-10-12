@@ -71,15 +71,14 @@ describe('RowDetailPanel', () => {
     expect(screen.queryByText(/last error/i)).toBeNull()
   })
 
-  it('renders model/backend and retry detail', () => {
+  it('renders the formatted binding and retry detail', () => {
     render(
       <RowDetailPanel
-        row={row({ model: 'gpt-4o', backend: 'claude-code', retryCount: 3 })}
+        row={row({ model: 'gpt-4o', effort: 'high', backend: 'claude-code', provider: 'claude-cli', retryCount: 3 })}
         authMode="local"
       />,
     )
-    expect(screen.getByText('gpt-4o')).toBeInTheDocument()
-    expect(screen.getByText('claude-code')).toBeInTheDocument()
+    expect(screen.getByText('gpt-4o (high) · claude-code · claude-cli')).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
   })
 

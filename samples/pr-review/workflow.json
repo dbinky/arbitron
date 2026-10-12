@@ -1,6 +1,7 @@
 {
   "id": "58d91180-e4c0-4e5b-b667-6efbe09ebc06",
   "name": "pr-review",
+  "gitVariable": "pr_branch",
   "description": "Multi-persona PR review pipeline. Clones the PR into an isolated per-instance workspace (never a local ~/Repos checkout), runs Architect R1 -> 10x R1 -> Architect R2 -> 10x R2 -> Security, verifies every required persona actually posted (fail-loud on dropout), then Manager decides. Optionally a senior engineer auto-implements the selected fix tier; verify-fix runs build/tests + a wired-and-fed provenance check and writes a verdict file that record-verdict lifts into the gate. EITHER way the committed fixes are pushed to the PR branch (the per-instance workspace is GC'd after the run, so never pushing = lost work); the gate only decides whether the PR comment reads 'verified clean' or 'pushed but flagged for review'. Reviewers run a mandatory wired-and-fed provenance trace, not just a diff read.",
   "author": "arbitron",
   "defaultErrorBehavior": {

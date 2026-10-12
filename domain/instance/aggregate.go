@@ -5,11 +5,9 @@ import (
 )
 
 // NodeExecutionAggregate is the per-instance collapse of all NodeExecution
-// rows for a list page. It carries the latest model used and the max attempt
-// (retry count). All fields are zero-valued when the instance has no node
-// executions (a queued run).
+// rows for a list page. It carries the max attempt (retry count). All fields
+// are zero-valued when the instance has no node executions (a queued run).
 type NodeExecutionAggregate struct {
-	InstanceID  uuid.UUID
-	LatestModel string
-	MaxAttempt  int
+	InstanceID uuid.UUID
+	MaxAttempt int
 }

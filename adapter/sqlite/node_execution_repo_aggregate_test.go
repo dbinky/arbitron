@@ -28,7 +28,7 @@ func TestAggregateByInstances_HappyPath(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	modelA1 := "gpt-4o"
-	modelA2 := "gpt-4o-2024-11" // started LATER than modelA1 -> this is "latest"
+	modelA2 := "gpt-4o-2024-11"
 	modelB := "claude-3"
 	execA1 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA.ID, NodeID: "n1", Attempt: 1, Status: instance.NodeStatusSucceeded, StartedAt: now, LLMModel: &modelA1}
 	execA2 := &instance.NodeExecution{ID: uuid.New(), InstanceID: instA.ID, NodeID: "n2", Attempt: 3, Status: instance.NodeStatusFailed, StartedAt: now.Add(time.Minute), LLMModel: &modelA2}
@@ -43,11 +43,9 @@ func TestAggregateByInstances_HappyPath(t *testing.T) {
 	assert.Len(t, got, 2, "instances with no executions are absent")
 
 	a := got[instA.ID]
-	assert.Equal(t, "gpt-4o-2024-11", a.LatestModel, "latest model = most-recently-started execution's model")
 	assert.Equal(t, 3, a.MaxAttempt, "max attempt across nodes")
 
 	b := got[instB.ID]
-	assert.Equal(t, "claude-3", b.LatestModel)
 	assert.Equal(t, 2, b.MaxAttempt)
 }
 
@@ -75,7 +73,7 @@ func TestAggregateByInstances_QueuedInstanceNoExecutions(t *testing.T) {
 	assert.NotContains(t, got, inst.ID, "queued instance absent from map")
 }
 
-func TestAggregateByInstances_NoModelColumn(t *testing.T) {
+func TestAggregateByInstances_ExecutionWithoutModel(t *testing.T) {
 	td := setupTestDB(t)
 	userRepo := NewUserRepo(td.DB)
 	instRepo := NewInstanceRepo(td.DB)
@@ -92,5 +90,5 @@ func TestAggregateByInstances_NoModelColumn(t *testing.T) {
 	}))
 	got, err := repo.AggregateByInstances(context.Background(), []uuid.UUID{inst.ID})
 	require.NoError(t, err)
-	assert.Equal(t, "", got[inst.ID].LatestModel, "script-only node: model empty")
+	assert.Equal(t, 1, got[inst.ID].MaxAttempt, "script-only node still aggregates its attempt")
 }

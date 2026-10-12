@@ -12,6 +12,7 @@ import (
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
 	"github.com/arbitron/arbitron/domain/notification"
+	"github.com/arbitron/arbitron/domain/provider"
 	"github.com/arbitron/arbitron/domain/variable"
 	"github.com/arbitron/arbitron/domain/workflow"
 	"github.com/google/uuid"
@@ -46,6 +47,9 @@ type Engine struct {
 	// step. Opting out is possible but must be spelled NoopSpawnLinks{}, whose
 	// doc comment states that it disables descendant cancellation.
 	spawnLinks instance.SpawnLinkRepository
+	// profiles resolves a node's model_profile so node.started can describe the
+	// binding the node runs on. NEVER nil: NoopProfileResolver{} until wired.
+	profiles provider.ProfileResolver
 	// defaultAgentBackend is the deployment-wide fallback agent backend stamped
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
@@ -88,6 +92,7 @@ func NewEngine(
 		// containment control. The composition root overwrites this with the real
 		// repository via SetSpawnLinks.
 		spawnLinks: NoopSpawnLinks{},
+		profiles:   NoopProfileResolver{},
 	}
 }
 
@@ -223,6 +228,17 @@ type IDResolver interface {
 // and no archive check runs (local/unconfigured mode).
 func (e *Engine) SetWorkflowResolver(r IDResolver) {
 	e.resolver = r
+}
+
+// SetProfileResolver wires the resolver node.started uses to describe a node's
+// model/effort/backend/provider. Pass the same resolver the executors receive
+// so the live queue patch matches what the node runs on. nil panics — pass
+// NoopProfileResolver{} to opt out deliberately.
+func (e *Engine) SetProfileResolver(r provider.ProfileResolver) {
+	if r == nil {
+		panic("engine: SetProfileResolver requires a non-nil ProfileResolver (use NoopProfileResolver{})")
+	}
+	e.profiles = r
 }
 
 // SetInstanceEnricher wires the list-enrichment step. When set, ListEnriched
@@ -909,11 +925,21 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 			return
 		}
 
-		nlabel, nbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
+		// The queue live-patches its row from this event, so it carries the same
+		// binding and git ref a list refetch would compute (resolveNodeBinding /
+		// deriveGitRef are shared with the enricher).
+		nb, nbErr := resolveNodeBinding(ctx, e.profiles, node, e.defaultAgentBackend)
+		if nbErr != nil {
+			slog.Warn("node.started: profile resolve failed; event shows node config", "instanceID", instanceID, "nodeID", currentNodeID, "error", nbErr)
+		}
 		e.eventBus.Publish(instanceID, Event{
 			Type:      EventTypeNodeStarted,
 			Timestamp: time.Now(),
-			Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": nlabel, "backend": nbackend},
+			Data: map[string]any{
+				"nodeId": currentNodeID, "nodeType": nb.NodeType, "nodeLabel": nodeLabel(node),
+				"model": nb.Model, "effort": nb.Effort, "backend": nb.Backend, "provider": nb.Provider,
+				"gitRef": deriveGitRef(wf.GitVariable, vars.Snapshot()),
+			},
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
@@ -998,7 +1024,7 @@ func (e *Engine) handleNodeError(
 		return "", true
 	}
 
-	flabel, fbackend := nodeLabelAndBackend(node, e.defaultAgentBackend)
+	flabel, fbackend := nodeLabel(node), firstNonEmpty(node.Config.Backend, e.defaultAgentBackend)
 	e.eventBus.Publish(instanceID, Event{
 		Type:      EventTypeNodeFailed,
 		Timestamp: time.Now(),

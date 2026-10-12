@@ -36,6 +36,12 @@ export interface RunHierarchy {
    * the open ones. Used on a full refetch.
    */
   invalidate: () => void
+  /**
+   * Merge `fields` into every cached row whose id matches, at any depth. Used
+   * to live-patch an expanded child from a node event without a refetch; a
+   * row that is not cached is ignored (it fetches fresh on expand).
+   */
+  patchRow: (id: string, fields: Partial<EnrichedInstanceSummary>) => void
 }
 
 /**
@@ -139,5 +145,25 @@ export function useRunHierarchy(): RunHierarchy {
     }
   }, [setLevels, fetchLevel])
 
-  return { isExpanded, childrenOf, isLoading, errorOf, toggle, invalidate }
+  const patchRow = useCallback(
+    (id: string, fields: Partial<EnrichedInstanceSummary>) => {
+      setLevels((prev) => {
+        let changed = false
+        const next: Record<string, Level> = {}
+        for (const [parent, level] of Object.entries(prev)) {
+          if (!level.rows.some((r) => r.id === id)) {
+            next[parent] = level
+            continue
+          }
+          changed = true
+          next[parent] = { ...level, rows: level.rows.map((r) => (r.id === id ? { ...r, ...fields } : r)) }
+        }
+        // No cached row matched: keep the same object so nothing re-renders.
+        return changed ? next : prev
+      })
+    },
+    [setLevels],
+  )
+
+  return { isExpanded, childrenOf, isLoading, errorOf, toggle, invalidate, patchRow }
 }

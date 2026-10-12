@@ -240,3 +240,32 @@ it('fetches child levels with an explicit page limit', async () => {
     expect.objectContaining({ limit: CHILD_PAGE_LIMIT }),
   )
 })
+
+// ---------- patchRow ----------
+
+it('patchRow merges fields into a cached row at any depth and leaves siblings alone', async () => {
+  listMock.mockImplementation(({ parent }: { parent: string }) =>
+    Promise.resolve(parent === 'p1' ? [row('c1'), row('c2')] : [row('g1', { model: 'old' })]),
+  )
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+  await act(async () => { await result.current.toggle('c1') })
+
+  act(() => { result.current.patchRow('g1', { model: 'new', gitRef: 'feat/x' }) })
+
+  const g1 = result.current.childrenOf('c1')[0]
+  expect(g1.model).toBe('new')
+  expect(g1.gitRef).toBe('feat/x')
+  expect(result.current.childrenOf('p1').map((r) => r.model)).toEqual([undefined, undefined])
+})
+
+it('patchRow for an uncached id is a no-op that keeps the same levels', async () => {
+  listMock.mockResolvedValue([row('c1')])
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+  const before = result.current.childrenOf
+
+  act(() => { result.current.patchRow('nope', { model: 'x' }) })
+
+  expect(result.current.childrenOf).toBe(before)
+})

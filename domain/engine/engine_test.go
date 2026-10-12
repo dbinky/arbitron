@@ -444,10 +444,6 @@ func (r *mockNodeExecutionRepo) AggregateByInstances(_ context.Context, ids []uu
 		want[id] = struct{}{}
 	}
 	out := make(map[uuid.UUID]instance.NodeExecutionAggregate, len(ids))
-	// latestModel tracks the StartedAt of the execution whose model is
-	// currently recorded as LatestModel, mirroring the SQLite impl's
-	// "most-recently-started execution that recorded a model" rule.
-	latestModelAt := make(map[uuid.UUID]time.Time, len(ids))
 	for _, e := range r.executions {
 		if _, ok := want[e.InstanceID]; !ok {
 			continue
@@ -458,12 +454,6 @@ func (r *mockNodeExecutionRepo) AggregateByInstances(_ context.Context, ids []uu
 		}
 		if e.Attempt > agg.MaxAttempt {
 			agg.MaxAttempt = e.Attempt
-		}
-		if e.LLMModel != nil && *e.LLMModel != "" {
-			if prev, hasPrev := latestModelAt[e.InstanceID]; !hasPrev || e.StartedAt.After(prev) {
-				agg.LatestModel = *e.LLMModel
-				latestModelAt[e.InstanceID] = e.StartedAt
-			}
 		}
 		out[e.InstanceID] = agg
 	}

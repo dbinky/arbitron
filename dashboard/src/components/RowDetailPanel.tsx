@@ -1,6 +1,7 @@
 import type { EnrichedInstanceSummary } from '../api/types'
 import { localDateTime } from '../utils/time'
 import styles from './RowDetailPanel.module.css'
+import { formatBinding } from './formatBinding'
 
 interface RowDetailPanelProps {
   row: EnrichedInstanceSummary
@@ -36,14 +37,10 @@ export default function RowDetailPanel({
             <span className={styles.value}>{rowVal.submitterIdentity}</span>
           </div>
         )}
-        {(rowVal.model || rowVal.backend) && (
+        {formatBinding(rowVal) !== '—' && (
           <div className={styles.field}>
-            <span className={styles.label}>Model / Backend</span>
-            <span className={styles.value}>
-              {rowVal.model && <span>{rowVal.model}</span>}
-              {rowVal.model && rowVal.backend && ' · '}
-              {rowVal.backend && <span>{rowVal.backend}</span>}
-            </span>
+            <span className={styles.label}>Model</span>
+            <span className={styles.value}>{formatBinding(rowVal)}</span>
           </div>
         )}
         <div className={styles.field}>

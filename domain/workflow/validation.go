@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -132,6 +134,7 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 	errs = append(errs, validateReservedInputNames(wf)...)
 	errs = append(errs, validateNodeConfigs(wf)...)
 	errs = append(errs, validateErrorBehaviors(wf)...)
+	errs = append(errs, validateGitVariable(wf)...)
 
 	if checker != nil {
 		errs = append(errs, validateFileReferences(wf, checker)...)
@@ -914,4 +917,21 @@ func validateErrorBehaviors(wf *Workflow) []ValidationError {
 // joinIDs concatenates a slice of strings with commas.
 func joinIDs(ids []string) string {
 	return strings.Join(ids, ", ")
+}
+
+// gitVariablePathRE matches a dotted variable path: segments of letters,
+// digits, underscores or dashes (node ids use dashes), joined by single dots.
+var gitVariablePathRE = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+
+// validateGitVariable checks the optional gitVariable is a well-formed variable
+// path. It deliberately does NOT require a declared input: branch and work_dir
+// are usually runtime variables set by transforms.
+func validateGitVariable(wf *Workflow) []ValidationError {
+	if wf.GitVariable == "" || gitVariablePathRE.MatchString(wf.GitVariable) {
+		return nil
+	}
+	return []ValidationError{{
+		Code:    "invalid_git_variable",
+		Message: fmt.Sprintf("gitVariable %q is not a valid variable path (e.g. branch or node-id.field)", wf.GitVariable),
+	}}
 }

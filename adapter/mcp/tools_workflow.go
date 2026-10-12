@@ -62,7 +62,7 @@ func RegisterWorkflowTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_create",
-			gomcp.WithDescription("Create a new workflow definition from a JSON manifest"),
+			gomcp.WithDescription("Create a new workflow definition from a JSON manifest."+WorkflowManifestHint),
 			gomcp.WithString("manifest", gomcp.Required(), gomcp.Description("JSON-encoded workflow manifest")),
 		),
 		workflowCreateHandler(srv),
@@ -70,7 +70,7 @@ func RegisterWorkflowTools(srv *Server) {
 
 	srv.AddTool(
 		gomcp.NewTool("workflow_update",
-			gomcp.WithDescription("Update an existing workflow definition"),
+			gomcp.WithDescription("Update an existing workflow definition."+WorkflowManifestHint),
 			gomcp.WithString("name", gomcp.Required(), gomcp.Description("Workflow name")),
 			gomcp.WithString("manifest", gomcp.Required(), gomcp.Description("JSON-encoded workflow manifest")),
 		),
