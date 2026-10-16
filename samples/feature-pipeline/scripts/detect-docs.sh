@@ -17,13 +17,18 @@
 # app-push-notifications -> push-notifications at 1.0 without any model call.
 #
 # Reads {work_dir, slug} from stdin JSON. Emits:
-#   {resume_stage, matched_slug, spec_path, design_count, plan_count,
-#    has_spec, has_designs, has_plans, ambiguous, best_score, candidates}
+#   {resume_stage, matched_slug, safe_slug, safe_run_date, spec_path,
+#    design_count, plan_count, has_spec, has_designs, has_plans, ambiguous,
+#    best_score, candidates}
 # resume_stage is one of: spec | design | plans | implementation
 set -eu
 IN="$(cat)"
 WORK="$(printf '%s' "$IN" | jq -r '.work_dir // empty')"
 SLUG="$(printf '%s' "$IN" | jq -r '.slug // ""')"
+# Fallback for safe_run_date when no matched doc carries a date. init-workspace
+# always sets run_date, so today's date only covers a mis-wired caller.
+RUN_DATE="$(printf '%s' "$IN" | jq -r '.run_date // ""')"
+[ -n "$RUN_DATE" ] || RUN_DATE="$(date +%Y-%m-%d)"
 
 [ -n "$WORK" ] || { echo "detect-docs: work_dir not set" >&2; exit 1; }
 
@@ -45,6 +50,7 @@ PLANS="$(list_dir docs/plans)"
 
 jq -n \
   --arg slug "$SLUG" \
+  --arg run_date "$RUN_DATE" \
   --argjson specs "$SPECS" \
   --argjson designs "$DESIGNS" \
   --argjson plans "$PLANS" '
@@ -62,6 +68,11 @@ jq -n \
     | sub("-spec$"; "")
     | sub("-design$"; "")
     | sub("-plan$"; "");
+
+  # Newest leading ISO date across a file list, or null when none is dated.
+  def newest_date:
+      map(capture("^(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2})-").d? // empty)
+    | if length > 0 then max else null end;
 
   def toks:
       ascii_downcase | split("-")
@@ -123,6 +134,18 @@ jq -n \
       # misnamed docs. Fall back to the slug the caller passed, so promoting
       # this value is always safe and no conditional guard is needed downstream.
       safe_slug:    (if ($b.slug | length) > 0 then $b.slug else $slug end),
+      # safe_run_date is what callers should promote into `run_date`. Every
+      # template globs docs as {{run_date}}-{{slug}}-..., and init-workspace sets
+      # run_date to the day the run STARTS, so a resume on a later day globbed
+      # for docs that do not exist and reported "0 tasks remain". Use the date
+      # of the furthest stage already written (plans, else designs, else spec):
+      # that is the stage the resumed run continues from, and docs it writes
+      # next join the same dated family. Undated or unmatched docs keep the
+      # run_date the caller passed, the same fallback rule as safe_slug.
+      safe_run_date: (($b.plan_files | newest_date)
+                      // ($b.design_files | newest_date)
+                      // ($b.spec_files | newest_date)
+                      // $run_date),
       spec_path:    (if $has_spec then "docs/specs/" + ($b.spec_files | first) else "" end),
       design_count: ($b.design_files | length),
       plan_count:   ($b.plan_files   | length),
