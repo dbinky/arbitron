@@ -329,6 +329,11 @@
             "value": "{{detect-docs.safe_slug}}"
           },
           {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{detect-docs.safe_run_date}}"
+          },
+          {
             "variable": "spec_path",
             "operation": "set",
             "value": "{{detect-docs.spec_path}}"
@@ -357,6 +362,11 @@
             "variable": "slug",
             "operation": "set",
             "value": "{{detect-docs-final.safe_slug}}"
+          },
+          {
+            "variable": "run_date",
+            "operation": "set",
+            "value": "{{detect-docs-final.safe_run_date}}"
           },
           {
             "variable": "spec_path",

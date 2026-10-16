@@ -124,6 +124,48 @@ out="$(run "$N" widgets)"
 check "edge: nested plans are found"           "$(field "$out" .plan_count)"    "1"
 check "edge: nested plans -> implementation"   "$(field "$out" .resume_stage)"  "implementation"
 
+# ------------------------------------------------------------ safe_run_date
+# Every template globs docs by {{run_date}}, which init-workspace sets to the day
+# the run STARTS. A run resumed on a later day looked for plans dated today, found
+# none, and reported "0 tasks remain" (PR #71: plans were 2026-09-29, the resume
+# ran 2026-10-01). safe_run_date carries the existing docs' date instead.
+run_dated() { # work_dir slug run_date -> JSON on stdout
+  printf '{"work_dir":"%s","slug":"%s","run_date":"%s"}' "$1" "$2" "$3" | sh "$SCRIPT"
+}
+
+# happy: plans exist under an older date -> that date wins over today's.
+R="$TMP/rundate"; mkrepo "$R"
+: > "$R/docs/specs/2026-09-29-latest-model-profiles-spec.md"
+: > "$R/docs/designs/2026-09-29-latest-model-profiles-design-phase-1.md"
+: > "$R/docs/plans/2026-09-29-latest-model-profiles-implementation-phase-1-task-1.md"
+out="$(run_dated "$R" latest-model-profiles 2026-10-01)"
+check "run_date happy: adopts the plans' date"     "$(field "$out" .safe_run_date)" "2026-09-29"
+
+# success: no plans yet -> the designs' date; spec only -> the spec's date.
+check "run_date success: designs' date"            "$(field "$(run_dated "$H" push-notifications 2026-10-01)" .safe_run_date)" "2026-07-25"
+S="$TMP/speconly"; mkrepo "$S"
+: > "$S/docs/specs/2026-03-03-widgets-spec.md"
+check "run_date success: spec's date"              "$(field "$(run_dated "$S" widgets 2026-10-01)" .safe_run_date)" "2026-03-03"
+
+# failure: nothing matches -> keep the caller's run_date (a fresh-docs resume).
+check "run_date failure: no match keeps caller's"  "$(field "$(run_dated "$H" totally-unrelated 2026-10-01)" .safe_run_date)" "2026-10-01"
+
+# error: no match AND no caller run_date -> still a valid date, never empty
+# (promoting "" would produce docs named "-<slug>-spec.md").
+out="$(run "$H" totally-unrelated)"
+check "run_date error: never empty" \
+  "$(field "$out" '.safe_run_date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")')" "true"
+
+# edge: undated filenames carry no date -> caller's run_date.
+check "run_date edge: undated keeps caller's"      "$(field "$(run_dated "$U" swipe-match 2026-10-01)" .safe_run_date)" "2026-10-01"
+
+# edge: plans re-dated by a later run -> the newest plan date.
+: > "$R/docs/plans/2026-09-30-latest-model-profiles-implementation-phase-2-task-1.md"
+check "run_date edge: newest plan date wins"       "$(field "$(run_dated "$R" latest-model-profiles 2026-10-01)" .safe_run_date)" "2026-09-30"
+
+# edge: nested plan sets are dated too.
+check "run_date edge: nested plans' date"          "$(field "$(run_dated "$N" widgets 2026-10-01)" .safe_run_date)" "2026-01-01"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "all detect-docs tests passed"
