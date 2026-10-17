@@ -55,13 +55,18 @@ type streamEvent struct {
 }
 
 // rawEnvelope is the on-the-wire shape of a stream-json line.
+//
+// Message stays raw until the event type is known: only an assistant event's
+// message is an object carrying text, and Claude Code 2.1.300 emits other event
+// types whose `message` is a plain string. Decoding it eagerly failed the whole
+// line (and the node) on an event that never needed it.
 type rawEnvelope struct {
-	Type      string      `json:"type"`
-	SessionID string      `json:"session_id"`
-	IsError   bool        `json:"is_error"`
-	Result    string      `json:"result"`
-	Message   *rawMessage `json:"message"`
-	Usage     *rawUsage   `json:"usage"`
+	Type      string          `json:"type"`
+	SessionID string          `json:"session_id"`
+	IsError   bool            `json:"is_error"`
+	Result    string          `json:"result"`
+	Message   json.RawMessage `json:"message"`
+	Usage     *rawUsage       `json:"usage"`
 }
 
 type rawMessage struct {
@@ -124,10 +129,18 @@ func parseEvent(line []byte) (streamEvent, bool, error) {
 	case eventUser:
 		return streamEvent{Kind: eventUser, SessionID: env.SessionID}, true, nil
 	case eventAssistant:
+		// An assistant message that is not an object fails closed: its text is
+		// the agent's output, and silently dropping it would lose a turn.
+		var msg *rawMessage
+		if len(env.Message) > 0 {
+			if err := json.Unmarshal(env.Message, &msg); err != nil {
+				return streamEvent{}, false, fmt.Errorf("claudecli: parse stream-json assistant message: %w", err)
+			}
+		}
 		return streamEvent{
 			Kind:      eventAssistant,
 			SessionID: env.SessionID,
-			Text:      assistantText(env.Message),
+			Text:      assistantText(msg),
 		}, true, nil
 	case eventResult:
 		ev := streamEvent{

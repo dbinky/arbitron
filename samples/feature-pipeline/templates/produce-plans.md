@@ -2,6 +2,13 @@
 
 You are writing **detailed, code-level implementation plans** for a skilled engineer who has zero context for this codebase and questionable test taste. Work **unattended** in the worktree at `./work`. Do not ask questions.
 
+**Never launch background work.** No background subagents and no `run_in_background`
+commands. This is a headless run: once your turn ends, nothing wakes you to collect
+background results, and the run is killed at its timeout with the plans unwritten (run
+d35eab7c lost two hour-long attempts this way). Write the plans yourself, or use
+subagents only in the foreground, waiting for each to finish before you end your turn.
+Every plan file must exist on disk before you reply.
+
 ## Inputs
 - Spec: `./work/{{spec_path}}`
 - Designs: `./work/docs/designs/{{run_date}}-{{slug}}-design-phase-*.md`

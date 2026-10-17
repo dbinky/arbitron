@@ -178,3 +178,44 @@ func TestParseEvent_MalformedUsageFailsClosed(t *testing.T) {
 	_, _, err := parseEvent([]byte(`{"type":"result","usage":{"input_tokens":"not-a-number"}}`))
 	require.Error(t, err)
 }
+
+// Claude Code 2.1.300 emits non-assistant events whose `message` is a plain
+// string. Decoding `message` as an object for EVERY line crashed run d35eab7c's
+// produce-plans with "cannot unmarshal string into Go struct field
+// rawEnvelope.message", failing the node on an event it never needed to read.
+// Only an assistant event's message carries text, so only it is decoded.
+func TestParseEvent_StringMessageOnNonAssistantEvents(t *testing.T) {
+	// HAPPY — a system event with a string message still yields its session id.
+	ev, ok, err := parseEvent([]byte(`{"type":"system","subtype":"task_notification","session_id":"s1","message":"Background task finished"}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, eventSystem, ev.Kind)
+	assert.Equal(t, "s1", ev.SessionID)
+
+	// SUCCESS — a user event with a string message is still recognised.
+	ev, ok, err = parseEvent([]byte(`{"type":"user","session_id":"s2","message":"queued note"}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, eventUser, ev.Kind)
+
+	// EDGE — a result event's text and tokens are unaffected by a string message.
+	ev, ok, err = parseEvent([]byte(`{"type":"result","result":"done","message":"x","usage":{"input_tokens":3,"output_tokens":4}}`))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, "done", ev.Text)
+	assert.Equal(t, 3, ev.TokensIn)
+}
+
+// FAILURE — an unrecognised event type with a string message is skipped, not fatal.
+func TestParseEvent_UnknownEventWithStringMessageIsSkipped(t *testing.T) {
+	_, ok, err := parseEvent([]byte(`{"type":"stream_notice","message":"heads up"}`))
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// ERROR — an ASSISTANT event whose message is not an object still fails closed:
+// its text is the agent's output, and silently dropping it would lose a turn.
+func TestParseEvent_AssistantStringMessageFailsClosed(t *testing.T) {
+	_, _, err := parseEvent([]byte(`{"type":"assistant","message":"not an object"}`))
+	require.Error(t, err)
+}
