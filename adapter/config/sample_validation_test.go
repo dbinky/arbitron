@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	adapterconfig "github.com/arbitron/arbitron/adapter/config"
@@ -110,41 +112,118 @@ func TestPlannerCoderProfiles_ResolveToClaudeCodeBindings(t *testing.T) {
 	}
 }
 
-// TestSampleFeaturePipeline_ValidatesWithDefaultProfiles is the acceptance that
-// the committed samples/feature-pipeline/workflow.json passes workflow.Validate
-// against the default profile registry. The DEFAULT interviewer runs on
-// claude-code (model ""), so the bundled sample validates and runs out of the box
-// (the gpt-5.5/codex split is a commented example, not the default — PR #32 Must
-// Fix #4). The interviewer/planner/coder profiles are agent-kind while assessor
-// is chat-kind, so kind-matching holds.
-func TestSampleFeaturePipeline_ValidatesWithDefaultProfiles(t *testing.T) {
-	// Load the default registry (no deployment config.yaml → defaults).
-	tmpDir := t.TempDir()
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	cfg, err := adapterconfig.Load(filepath.Join(tmpDir, "config.yaml"))
-	require.NoError(t, err)
+// The bundled samples run on per-stage admin profiles (effort/context axes) that
+// live only in the arbitron DB and cannot be seeded from config.yaml. Each sample
+// documents them in its PROFILES.md, the recovery source after a profiles-table
+// reseed. So the acceptance is: every sample validates against the default
+// profiles PLUS the ones its PROFILES.md documents, with matching kinds. This
+// replaces "validates with the default profiles", which has been false since
+// the samples moved to per-stage profiles (1cdbe448, #64) and failed on main.
+// This test enforces only referenced profile aliases and kinds; it does not
+// verify the remaining recovery-table columns or provision runtime profiles.
 
+// documentedProfileRow matches a PROFILES.md table row: | alias | kind | ...
+var documentedProfileRow = regexp.MustCompile(`^\|\s*([a-z0-9][a-z0-9-]*)\s*\|\s*(agent|chat)\s*\|`)
+
+// documentedProfiles returns the alias→kind rows from a sample's PROFILES.md.
+// A sample without PROFILES.md documents nothing (it must run on the defaults);
+// any other read error fails the test rather than masquerading as absence.
+func documentedProfiles(t *testing.T, sample string) profileKindChecker {
+	t.Helper()
+	kinds := profileKindChecker{}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "samples", sample, "PROFILES.md"))
+	if os.IsNotExist(err) {
+		return kinds
+	}
+	require.NoError(t, err, "%s PROFILES.md must be readable", sample)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := documentedProfileRow.FindStringSubmatch(line); m != nil {
+			kinds[m[1]] = m[2]
+		}
+	}
+	require.NotEmpty(t, kinds, "%s PROFILES.md has no alias|kind table rows", sample)
+	return kinds
+}
+
+// bundledSamples discovers every sample that ships a workflow.json, so a new
+// sample enters the validation gate without editing this test.
+func bundledSamples(t *testing.T) []string {
+	t.Helper()
+	manifests, err := filepath.Glob(filepath.Join("..", "..", "samples", "*", "workflow.json"))
+	require.NoError(t, err)
+	require.NotEmpty(t, manifests, "no samples/*/workflow.json found")
+	samples := make([]string, 0, len(manifests))
+	for _, m := range manifests {
+		samples = append(samples, filepath.Base(filepath.Dir(m)))
+	}
+	return samples
+}
+
+func defaultProfileKinds(t *testing.T) profileKindChecker {
+	t.Helper()
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg, err := adapterconfig.Load(filepath.Join(t.TempDir(), "config.yaml"))
+	require.NoError(t, err)
 	kinds := profileKindChecker{}
 	for _, p := range cfg.Profiles {
 		kinds[p.Alias] = p.Kind
 	}
+	return kinds
+}
 
-	// Sanity: the profile kinds the sample relies on.
-	assert.Equal(t, "agent", kinds["interviewer"])
-	assert.Equal(t, "agent", kinds["planner"])
-	assert.Equal(t, "agent", kinds["coder"])
-	assert.Equal(t, "chat", kinds["assessor"])
-
-	// Load the committed sample workflow. The test runs in adapter/config, so the
-	// repo root is two levels up.
-	raw, err := os.ReadFile(filepath.Join("..", "..", "samples", "feature-pipeline", "workflow.json"))
-	require.NoError(t, err, "sample feature-pipeline workflow must exist")
-
+func loadSampleWorkflow(t *testing.T, sample string) workflow.Workflow {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "samples", sample, "workflow.json"))
+	require.NoError(t, err, "sample %s workflow must exist", sample)
 	var wf workflow.Workflow
 	require.NoError(t, json.Unmarshal(raw, &wf))
+	return wf
+}
 
-	// Validate with the real profile-kind pass and a permissive file checker.
-	// ConnChecker is nil (the sample's agent profiles are subscription/no-key).
+// HAPPY / SUCCESS — every bundled sample validates against the defaults plus
+// whatever profiles its PROFILES.md (if any) documents.
+func TestSampleWorkflows_ValidateWithTheirDocumentedProfiles(t *testing.T) {
+	for _, sample := range bundledSamples(t) {
+		t.Run(sample, func(t *testing.T) {
+			kinds := defaultProfileKinds(t)
+			for alias, kind := range documentedProfiles(t, sample) {
+				kinds[alias] = kind
+			}
+			wf := loadSampleWorkflow(t, sample)
+			errs := workflow.Validate(&wf, allFilesExist{}, kinds, nil)
+			assert.Empty(t, errs, "sample %s must validate with its documented profiles: %+v", sample, errs)
+		})
+	}
+}
+
+// FAILURE — a profile the sample uses but PROFILES.md does not document is
+// caught, so the recovery doc cannot silently fall behind the manifest.
+func TestSampleWorkflows_UndocumentedProfileFails(t *testing.T) {
+	kinds := defaultProfileKinds(t)
+	for alias, kind := range documentedProfiles(t, "feature-pipeline") {
+		kinds[alias] = kind
+	}
+	wf := loadSampleWorkflow(t, "feature-pipeline")
+	var used string
+	for _, n := range wf.Nodes {
+		if n.Config.ModelProfile != "" {
+			used = n.Config.ModelProfile
+			break
+		}
+	}
+	require.NotEmpty(t, used, "feature-pipeline must use at least one model_profile")
+	delete(kinds, used)
 	errs := workflow.Validate(&wf, allFilesExist{}, kinds, nil)
-	assert.Empty(t, errs, "sample feature-pipeline must validate with the mixed-model default profiles: %+v", errs)
+	require.NotEmpty(t, errs, "dropping %s from the documented profiles must fail validation", used)
+}
+
+// EDGE — the table parser reads alias/kind rows and ignores the header,
+// separator and non-profile tables (the lane table has no kind column).
+func TestDocumentedProfileRow_ParsesOnlyProfileRows(t *testing.T) {
+	assert.Nil(t, documentedProfileRow.FindStringSubmatch("| alias | kind | backend |"))
+	assert.Nil(t, documentedProfileRow.FindStringSubmatch("|-------|------|---------|"))
+	assert.Nil(t, documentedProfileRow.FindStringSubmatch("| single review 1 (wiring lens) | `coder-sonnet5-high` |"))
+	m := documentedProfileRow.FindStringSubmatch("| coder-opus-high | agent | claude-code | claude-opus-5-5 | high |")
+	require.NotNil(t, m)
+	assert.Equal(t, []string{"coder-opus-high", "agent"}, m[1:])
 }

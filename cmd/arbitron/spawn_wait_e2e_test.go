@@ -115,10 +115,10 @@ func bootWaitStackWith(t *testing.T, childOutcome string, perUserCap int, holdSe
 	cfg := "" +
 		"server:\n  host: \"127.0.0.1\"\n  port: 0\n" +
 		"auth:\n  mode: \"local\"\n" +
-		"database:\n  path: \"" + filepath.Join(root, "arbitron.db") + "\"\n" +
-		"workspace:\n  path: \"" + workspaceDir + "\"\n" +
+		"database:\n  path: " + yamlQuote(filepath.Join(root, "arbitron.db")) + "\n" +
+		"workspace:\n  path: " + yamlQuote(workspaceDir) + "\n" +
 		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
-		"logging:\n  level: \"error\"\n  file: \"" + filepath.Join(root, "arbitron.log") + "\"\n" +
+		"logging:\n  level: \"error\"\n  file: " + yamlQuote(filepath.Join(root, "arbitron.log")) + "\n" +
 		"queue:\n  globalcap: 5\n  perusercap: " + strconv.Itoa(perUserCap) + "\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
@@ -320,10 +320,10 @@ func TestSpawnWaitE2E_RestartReconcilesParentAfterCrash(t *testing.T) {
 	cfg := "" +
 		"server:\n  host: \"127.0.0.1\"\n  port: 0\n" +
 		"auth:\n  mode: \"local\"\n" +
-		"database:\n  path: \"" + filepath.Join(root, "arbitron.db") + "\"\n" +
-		"workspace:\n  path: \"" + workspaceDir + "\"\n" +
+		"database:\n  path: " + yamlQuote(filepath.Join(root, "arbitron.db")) + "\n" +
+		"workspace:\n  path: " + yamlQuote(workspaceDir) + "\n" +
 		"samples:\n  seed: false\n  sourcedir: \"\"\n" +
-		"logging:\n  level: \"error\"\n  file: \"" + filepath.Join(root, "arbitron.log") + "\"\n" +
+		"logging:\n  level: \"error\"\n  file: " + yamlQuote(filepath.Join(root, "arbitron.log")) + "\n" +
 		"queue:\n  globalcap: 5\n  perusercap: 5\n"
 	require.NoError(t, os.WriteFile(configPath, []byte(cfg), 0o600))
 
