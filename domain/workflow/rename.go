@@ -114,6 +114,9 @@ func (s *Service) Rename(ctx context.Context, name, newName string) error {
 // The mutation MUST perform any folder relabel BEFORE the durable registry commit
 // so that a relabel failure is still inside the rollback envelope (Rename step-6).
 func (s *Service) copyThenSwap(ctx context.Context, srcScope Scope, srcName string, dstScope Scope, dstName string, mutate func(context.Context) error) error {
+	if err := s.rejectCopiedGroups(ctx, srcScope, srcName, dstName); err != nil {
+		return err
+	}
 	if err := s.repo.CopyTree(ctx, srcScope, srcName, dstScope, dstName, false); err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/arbitron/arbitron/domain/instance"
@@ -28,10 +29,19 @@ func (NoopSpawnLinks) ChildCountsByParents(context.Context, []uuid.UUID, instanc
 	return map[uuid.UUID]int{}, nil
 }
 
-// ListActiveChildren always reports no active children, which is what makes the
-// cancel cascade a no-op under this Null Object.
+// ListActiveChildren always reports no active children.
 func (NoopSpawnLinks) ListActiveChildren(context.Context, uuid.UUID) ([]uuid.UUID, error) {
 	return []uuid.UUID{}, nil
+}
+
+// ListChildren always reports no children, disabling the cascade.
+func (NoopSpawnLinks) ListChildren(context.Context, uuid.UUID) ([]instance.ChildRef, error) {
+	return []instance.ChildRef{}, nil
+}
+
+// MarkSubtreeCancelRequested records nothing under this explicit Null Object.
+func (NoopSpawnLinks) MarkSubtreeCancelRequested(context.Context, uuid.UUID) error {
+	return nil
 }
 
 // ListOrphanedActiveChildren always reports no orphans.
@@ -54,70 +64,56 @@ func (e *Engine) SetSpawnLinks(repo instance.SpawnLinkRepository) {
 	e.spawnLinks = repo
 }
 
-// cascadeCancel cancels every active child of parentID, depth-first.
+// setCancelledState distinguishes a lost terminal-state race from a storage
+// failure. Group-task terminal writes are immutable: completion can win after
+// cancelAuthorized's read. Re-authorize the fresh terminal row before returning
+// ErrCannotCancel, so Cancel still stamps a terminal root and traverses its
+// descendants without publishing a cancellation event for the lost write.
+func (e *Engine) setCancelledState(ctx context.Context, id uuid.UUID) error {
+	err := e.instances.UpdateState(ctx, id, instance.StateCancelled)
+	if err == nil {
+		return nil
+	}
+	if fresh, readErr := e.authorizeIntervention(ctx, id); readErr == nil && fresh.State.IsTerminal() {
+		return fmt.Errorf("instance %s cannot be cancelled (state: %s): %w", id, fresh.State, instance.ErrCannotCancel)
+	}
+	return fmt.Errorf("failed to update state: %w", err)
+}
+
+// cascadeCancel cancels every active descendant, including those below terminal
+// intermediates, and returns how many it cancelled. Every node is re-authorized:
+// only an authorized terminal node (ErrCannotCancel) may be traversed unchanged.
+// Other errors halt that branch. Storage failures are best-effort; the orphan
+// sweep repairs residue under cancelled or subtree-cancel-stamped ancestors.
 //
-// SCOPE: EVERY active child, BOTH spawn modes. The spec states the requirement
-// without qualification. The tempting reading — that fire-and-forget children
-// should survive because the parent disclaimed the child's lifecycle — confuses
-// two directions: the spec's fire-and-forget carve-outs are all child->parent
-// ("fire-and-forget child outcomes do not affect the parent"), and nothing
-// weakens the parent->child direction. The outcome the cascade serves —
-// operators tearing down a run tree without hunting for orphans — is defeated
-// precisely by the children nobody is waiting on, since those are the ones no
-// later failure will surface.
-//
-// AUTHORIZATION needs no special-casing: children inherit the parent's owner, so
-// an identity authorized to intervene on the parent is authorized on every
-// descendant. Routing through cancelAuthorized (rather than writing states
-// directly) preserves the intervention audit trail for each cancelled run.
-//
-// PARTIAL FAILURE IS TOLERATED, NOT FATAL. The parent's own cancellation has
-// already succeeded and must not be reported as failed because a descendant was
-// uncooperative. A child already in a terminal state is the COMMON case and
-// returns ErrCannotCancel, which the cascade treats as success.
-//
-// The `visited` set makes corrupt or hand-edited link data degrade into a
-// halted traversal rather than unbounded recursion. The link graph is acyclic
-// by construction — a child is always created after its parent — so this guard
-// is unreachable in practice.
-// ctx MUST already be DETACHED from the caller's request (see Cancel): the walk
-// below issues one authorized cancellation per descendant, and a client
-// disconnect or request timeout part-way through would abandon the remainder of
-// the subtree with the parent already cancelled.
-func (e *Engine) cascadeCancel(ctx context.Context, parentID uuid.UUID, visited map[uuid.UUID]bool) {
-	children, err := e.spawnLinks.ListActiveChildren(ctx, parentID)
+// visited bounds corrupt link cycles. ctx must already be detached from request
+// cancellation (while retaining identity), so disconnects cannot strand work.
+func (e *Engine) cascadeCancel(ctx context.Context, parentID uuid.UUID, visited map[uuid.UUID]bool) int {
+	children, err := e.spawnLinks.ListChildren(ctx, parentID)
 	if err != nil {
-		// Logged, not fatal: the parent's state is the caller's contract. Any child
-		// left running remains visible in the hierarchy, so the inconsistency is
-		// observable rather than hidden.
-		slog.Error("cancel cascade: failed to list active children",
-			"parentID", parentID, "error", err)
-		return
+		slog.Error("cancel cascade: failed to list children", "parentID", parentID, "error", err)
+		return 0
 	}
 
-	for _, childID := range children {
-		if visited[childID] {
+	cancelled := 0
+	for _, child := range children {
+		if visited[child.ID] {
 			continue
 		}
-		visited[childID] = true
+		visited[child.ID] = true
 
-		if cerr := e.cancelAuthorized(ctx, childID); cerr != nil {
-			if errors.Is(cerr, instance.ErrCannotCancel) {
-				// Already terminal: still descend, since a terminal child may have
-				// active grandchildren of its own.
-				e.cascadeCancel(ctx, childID, visited)
-				continue
-			}
-			// A real failure (authorization denied, storage error, not-found): the
-			// child ITSELF is untouched, so descending into its subtree with the
-			// same identity could authorize a grandchild the actor could not
-			// authorize on the child — cancelling a descendant while the node
-			// between it and the parent stays running. Halt this branch instead of
-			// leaving that inconsistent, unannounced hole in the tree.
+		cerr := e.cancelAuthorized(ctx, child.ID)
+		switch {
+		case cerr == nil:
+			cancelled++
+		case errors.Is(cerr, instance.ErrCannotCancel):
+			// Authorized terminal node: leave its outcome untouched, but descend.
+		default:
 			slog.Warn("cancel cascade: failed to cancel child, branch not descended",
-				"parentID", parentID, "childID", childID, "error", cerr)
+				"parentID", parentID, "childID", child.ID, "listedState", child.State, "error", cerr)
 			continue
 		}
-		e.cascadeCancel(ctx, childID, visited)
+		cancelled += e.cascadeCancel(ctx, child.ID, visited)
 	}
+	return cancelled
 }

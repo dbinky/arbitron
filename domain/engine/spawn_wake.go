@@ -9,7 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// OnChildTerminal re-queues the parent that is waiting on childID's spawn node.
+// OnChildTerminal reacts to childID reaching a terminal state.
+//
+// A parallel-group task is handed only to the group terminal handler: its
+// coordinator durably decides whether the group's completion rule is satisfied
+// and owns the node-addressed wake. A legacy spawn child re-queues the parent
+// waiting on its spawn node, as follows.
 //
 // THE MATCH CONDITION IS THE CORRECTNESS CORE OF WAIT-FOR-CHILD. A terminal
 // child wakes its parent ONLY IF all three hold:
@@ -42,6 +47,12 @@ func (e *Engine) OnChildTerminal(ctx context.Context, childID uuid.UUID) {
 	}
 	if child.IsRoot() {
 		return // a root run has nobody to wake
+	}
+	if child.SpawnMode == instance.SpawnModeGroupTask {
+		// A group task must never reach the legacy wake, even if its parent
+		// is waiting at the exact node the task is linked to.
+		e.dispatchGroupTerminal(ctx, child)
+		return
 	}
 	if child.SpawnMode != instance.SpawnModeWaitForChild {
 		return // fire-and-forget child outcomes never affect the parent

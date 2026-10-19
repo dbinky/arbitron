@@ -14,6 +14,26 @@ export type Priority = 'high' | 'normal' | 'low'
 /** How a run was started. Mirrors the backend instance.TriggerSource. */
 export type TriggerSource = 'manual' | 'schedule' | 'run_now'
 
+/**
+ * Workflow node types the backend accepts (mirrors domain/workflow NodeType).
+ * Graph code keeps WorkflowNode.type a plain string so an unknown or newer type
+ * still renders through the default node; this union is for code that wants to
+ * be exhaustive over the known set.
+ */
+export type NodeType =
+  | 'llm_call'
+  | 'agent_call'
+  | 'script'
+  | 'tool_call'
+  | 'conditional'
+  | 'transform'
+  | 'timer_delay'
+  | 'webhook_wait'
+  | 'interactive_llm'
+  | 'interactive_agent'
+  | 'spawn_workflow'
+  | 'parallel_group'
+
 /** Lightweight instance representation returned by the list endpoint. */
 export interface InstanceSummary {
   id: string
@@ -287,6 +307,8 @@ export interface WebSocketEvent {
   data: unknown
   /** Present on system-WS envelopes; identifies the originating instance. */
   instanceId?: string
+  /** Originating descendant (or root) on subtree-mode instance streams. */
+  sourceInstanceId?: string
 }
 
 /**
@@ -319,7 +341,7 @@ export interface InteractiveMessage {
 /** Sent on WebSocket connect for instances in interactive-wait state. */
 export interface InteractiveHistoryEvent {
   type: 'interactive.history'
-  data: { nodeId: string; messages: InteractiveMessage[] }
+  data: { nodeId: string; messages: InteractiveMessage[]; sessionKind?: 'group_resolution' }
 }
 
 /** A complete message (user or assistant) added to the conversation. */
@@ -337,7 +359,11 @@ export interface InteractiveTokenEvent {
 /** The interactive session has ended. */
 export interface InteractiveEndedEvent {
   type: 'interactive.ended'
-  data: { reason: 'llm_completed' | 'user_ended'; output?: unknown }
+  data: {
+    reason: 'llm_completed' | 'user_ended' | 'abandoned' | 'cancelled'
+    output?: unknown
+    sessionKind?: 'group_resolution'
+  }
 }
 
 /** An error occurred during the interactive session. */
@@ -353,4 +379,259 @@ export type InteractiveEvent =
   | InteractiveTokenEvent
   | InteractiveEndedEvent
   | InteractiveErrorEvent
+
+// ---------------------------------------------------------------------------
+// Parallel groups — static ownership layout (Go workflow.GroupGraph JSON)
+// ---------------------------------------------------------------------------
+
+export type GroupForm = 'branches' | 'workflows'
+export type GroupCompletionRule = 'all_succeed' | 'first_success'
+export type GroupUnfinishedBehavior = 'wait_for_remaining' | 'cancel_unfinished' | 'finish_independently'
+export type GroupGatherMode = 'results' | 'results_and_files'
+
+/** One fixed task of a group (Go workflow.GroupTask). */
+export interface GroupTask {
+  key: string
+  /** Branches form: entry node id of the task body. */
+  entry?: string
+  /** Workflows form: child workflow name. */
+  workflow?: string
+  inputs?: Record<string, unknown>
+}
+
+export interface GroupConfig {
+  form: GroupForm
+  tasks: GroupTask[]
+  completionRule: GroupCompletionRule
+  unfinishedBehavior: GroupUnfinishedBehavior
+  gatherMode: GroupGatherMode
+  repoPath?: string
+  resolverProfile?: string
+  resolverPromptFile?: string
+}
+
+/** The immediate (group, task) owning a body node. */
+export interface BodyOwner {
+  groupNodeId: string
+  taskKey: string
+}
+
+export interface GroupScope {
+  nodeId: string
+  config: GroupConfig
+  /** Absent when the group sits on the main path. */
+  parent?: BodyOwner
+  /** taskKey -> body node ids in definition order; empty for workflows. */
+  bodies: Record<string, string[]>
+  /** Group node ids nested directly inside this group's task bodies. */
+  nested: string[]
+  successTarget: string
+  failureTarget: string
+}
+
+export interface GroupGraph {
+  /** Keyed by group node id. */
+  groups: Record<string, GroupScope>
+  /** Body node id -> its immediate owning (group, task). */
+  owner: Record<string, BodyOwner>
+  /** Every group node id in definition order. */
+  order: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Parallel groups — live/frozen run records (Go domain/instance JSON)
+// ---------------------------------------------------------------------------
+
+export type GroupTaskKind = 'branch' | 'workflow'
+export type GroupRunState =
+  | 'launching'
+  | 'running'
+  | 'decided'
+  | 'gathering'
+  | 'resolving_conflicts'
+  | 'done'
+
+export type GroupTaskStatus =
+  | 'not_started'
+  | 'queued'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'unfinished'
+
+export interface FrozenTask {
+  key: string
+  kind: GroupTaskKind
+  origin: string
+  childInstanceId: string
+  status: GroupTaskStatus
+  result?: Record<string, unknown>
+  failure?: Record<string, unknown>
+  cancelRequested: boolean
+  winner: boolean
+}
+
+/** The immutable group decision. */
+export interface GroupDecision {
+  outcome: 'success' | 'failure'
+  rule: string
+  behavior: string
+  winnerKey?: string
+  reason: string
+  decidedAt: string
+  tasks: FrozenTask[]
+}
+
+export interface GatherTaskReport {
+  key: string
+  merged: boolean
+  reason: string
+  conflictPaths?: string[]
+}
+
+export interface ResolutionAttempt {
+  mergeIndex: number
+  attempt: number
+  taskKey: string
+  conflictPaths: string[]
+  /** Empty while open or ended awaiting verification. */
+  outcome: 'resolved' | 'still_conflicted' | 'abandoned' | 'cancelled' | 'error' | ''
+  startedAt: string
+  endedAt?: string
+}
+
+/** The live resolution session's identity. */
+export interface ResolutionSessionRef {
+  groupRunId: string
+  mergeIndex: number
+  attempt: number
+  /** The instance whose interactive session resolves the conflict. */
+  instanceId: string
+  nodeId: string
+}
+
+export interface GatherReport {
+  mode: GroupGatherMode
+  state: 'pending' | 'merging' | 'resolving' | 'applied' | 'failed' | 'rolled_back' | 'not_applicable'
+  handle?: Record<string, unknown>
+  mergeIndex: number
+  tasks: GatherTaskReport[]
+  attempts: ResolutionAttempt[]
+  activeSession?: ResolutionSessionRef
+  rollbackStatus?: '' | 'rolled_back' | 'rollback_failed'
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate run visibility (Go engine.GraphState JSON)
+// ---------------------------------------------------------------------------
+
+export type LiveNodeStateValue =
+  | 'pending'
+  | 'queued'
+  | 'running'
+  | 'waiting'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+  | 'unknown'
+
+/** Identified by (instanceId, nodeId), never nodeId alone. */
+export interface LiveNodeState {
+  instanceId: string
+  nodeId: string
+  state: LiveNodeStateValue
+  reason?: string
+  attempt?: number
+}
+
+export type ExecutionContextKind = 'root' | 'branch' | 'workflow' | 'spawn'
+
+export interface ExecutionContext {
+  instanceId: string
+  parentInstanceId?: string
+  groupRunId?: string
+  taskKey?: string
+  kind: ExecutionContextKind
+  workflowName?: string
+  state: InstanceState | 'unknown'
+  /** False once a decision released the task. */
+  blocking: boolean
+  /** Hidden descendants withhold identity, definition and results. */
+  redacted: boolean
+  nodes: LiveNodeState[]
+  /** Workflow snapshot; omitted for branch contexts (same graph as parent). */
+  graph?: Record<string, unknown>
+  /** Ownership analysis of this context's own graph. */
+  layout?: GroupGraph
+}
+
+export interface GroupProgress {
+  total: number
+  completed: number
+  failed: number
+  cancelled: number
+  active: number
+  notStarted: number
+}
+
+export type GroupTaskLiveStatus = GroupTaskStatus | 'unknown'
+
+export interface GroupPanelTask {
+  key: string
+  kind: GroupTaskKind
+  origin: string
+  /** Absent/null before launch and for redacted children. */
+  childInstanceId?: string | null
+  liveStatus: GroupTaskLiveStatus
+  /** Empty while undecided. */
+  frozenStatus: GroupTaskStatus | ''
+  blocking: boolean
+  continuingIndependently: boolean
+  cancelRequested: boolean
+  launchError?: string
+  redacted: boolean
+}
+
+export type GroupPanelState = GroupRunState | 'unknown'
+
+export interface GroupPanel {
+  groupRunId: string
+  /** The instance that executes the group node. */
+  instanceId: string
+  nodeId: string
+  form: GroupForm
+  completionRule: GroupCompletionRule
+  unfinishedBehavior: GroupUnfinishedBehavior
+  gatherMode: GroupGatherMode
+  state: GroupPanelState
+  /** Author order. */
+  tasks: GroupPanelTask[]
+  progress: GroupProgress
+  waitingReasons: string[]
+  winner?: string
+  decision?: GroupDecision
+  finalOutput?: Record<string, unknown>
+  gather?: GatherReport
+  /** Only present when the session names a visible instance. */
+  activeSession?: ResolutionSessionRef
+}
+
+export interface GraphState {
+  rootInstanceId: string
+  /** Equal versions mean identical content. */
+  version: string
+  /** True while visible work is active or activity is unknown after a read failure. */
+  active: boolean
+  contexts: ExecutionContext[]
+  groups: GroupPanel[]
+  /** Root snapshot's ownership layout; absent when it has no groups. */
+  layout?: GroupGraph
+  warnings?: string[]
+}
 

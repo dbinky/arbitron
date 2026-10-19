@@ -1,7 +1,8 @@
 import { Fragment, type ReactNode } from 'react'
 import type { EnrichedInstanceSummary } from '../api/types'
+import type { HierarchyMarker } from '../graph/liveSummary'
 import type { ColumnDef } from './queueColumns'
-import { CHILD_PAGE_LIMIT, type RunHierarchy } from '../hooks/useRunHierarchy'
+import type { RunHierarchy } from '../hooks/useRunHierarchy'
 import QueueTableRow from './QueueTableRow'
 import styles from './HierarchyRows.module.css'
 
@@ -23,6 +24,42 @@ interface HierarchyRowsProps {
    *  framing survives the move out of QueueSection. */
   detailRowClassName?: string
   detailCellClassName?: string
+  /** Markers of THIS level's rows (keyed by row id), built by the parent level
+   *  from its authorized aggregate. Absent at the top level. */
+  markers?: Record<string, HierarchyMarker>
+  /** Terminal rows listed only because they still own active work (queue
+   *  ancestor discovery); passed down so an intermediate ancestor is marked too. */
+  ownsActiveWork?: ReadonlySet<string>
+}
+
+const KIND_TEXT: Partial<Record<HierarchyMarker['kind'], string>> = { branch: 'branch', workflow: 'workflow task' }
+
+/**
+ * The row's hierarchy markers. Task keys and labels are author-controlled
+ * strings and render only as escaped JSX text.
+ */
+function RowMarkers({ marker, ownsActive }: { marker: HierarchyMarker | undefined; ownsActive: boolean }) {
+  if (!marker && !ownsActive) return null
+  const kindText = marker ? KIND_TEXT[marker.kind] : undefined
+  return (
+    <span className={styles.markers} data-testid="hierarchy-markers">
+      {ownsActive && <span className={`${styles.marker} ${styles.markerOwner}`}>owns active work</span>}
+      {marker && kindText && (
+        <span className={`${styles.marker} ${marker.kind === 'branch' ? styles.markerBranch : styles.markerWorkflow}`}>
+          {kindText}
+        </span>
+      )}
+      {marker?.taskKey && (
+        <span className={styles.marker}>{`${marker.groupLabel ?? marker.groupNodeId ?? 'group'} · ${marker.taskKey}`}</span>
+      )}
+      {marker?.independent && <span className={`${styles.marker} ${styles.markerIndependent}`}>non-blocking</span>}
+      {marker?.activeSummary && (
+        <span className={styles.markerActive} data-testid="hierarchy-active-summary">
+          {marker.activeSummary}
+        </span>
+      )}
+    </span>
+  )
 }
 
 /**
@@ -37,7 +74,9 @@ interface HierarchyRowsProps {
  * Child rows are the SAME QueueTableRow as roots, so the per-row action set —
  * which is what lets operators inspect, retry, resume, or cancel at the CHILD
  * level rather than restarting a larger process — needs no per-level
- * special-casing.
+ * special-casing. A child row additionally shows what it is to its parent
+ * (branch / workflow task, group · task key, non-blocking) and what it is doing
+ * now (active-state summary), from the parent's authorized aggregate.
  */
 export default function HierarchyRows({
   rows,
@@ -54,6 +93,8 @@ export default function HierarchyRows({
   renderDetail,
   detailRowClassName,
   detailCellClassName,
+  markers,
+  ownsActiveWork,
 }: HierarchyRowsProps) {
   return (
     <>
@@ -63,15 +104,18 @@ export default function HierarchyRows({
         const expanded = hierarchy.isExpanded(inst.id)
         const error = hierarchy.errorOf(inst.id)
         const loading = hierarchy.isLoading(inst.id)
-        const shown = hierarchy.childrenOf(inst.id).length
+        const loadingMore = hierarchy.isLoadingMore(inst.id)
+        const more = hierarchy.hasMore(inst.id)
+        const children = hierarchy.childrenOf(inst.id)
+        const shown = children.length
+        const marker = markers?.[inst.id]
 
         return (
           // A plain Fragment, not a <tbody> — this block recurses into its own
           // children's rows, and nesting a <tbody> inside another <tbody> is
           // invalid HTML that real browsers do not auto-correct when the DOM
-          // is built via the JS API (only HTML-text parsing gets that fixup).
-          // The single owning <tbody> lives once, at the call site in
-          // QueueSection.
+          // is built via the JS API. The single owning <tbody> lives once, at
+          // the call site in QueueSection.
           <Fragment key={inst.id}>
             <QueueTableRow
               row={inst}
@@ -90,6 +134,8 @@ export default function HierarchyRows({
               // parent whose children are all invisible to this caller leaks no
               // existence.
               onToggleHierarchy={hasChildren ? () => void hierarchy.toggle(inst.id) : undefined}
+              badges={<RowMarkers marker={marker} ownsActive={ownsActiveWork?.has(inst.id) === true} />}
+              independent={marker?.independent === true}
             />
 
             {detailExpandedId === inst.id && renderDetail && (
@@ -100,7 +146,8 @@ export default function HierarchyRows({
               </tr>
             )}
 
-            {expanded && loading && (
+            {/* First load only: a refresh keeps the cached rows on screen. */}
+            {expanded && loading && shown === 0 && (
               <tr>
                 <td colSpan={columns.length + 1} className={styles.levelStatus}>
                   Loading child runs…
@@ -108,8 +155,8 @@ export default function HierarchyRows({
               </tr>
             )}
 
-            {/* An expansion failure is confined to THIS row: siblings and the
-                rest of the page are unaffected. */}
+            {/* A failure is confined to THIS row: siblings and the rest of the
+                page are unaffected, and the last good rows stay listed. */}
             {expanded && error && (
               <tr>
                 <td colSpan={columns.length + 1} className={styles.levelError}>
@@ -118,24 +165,9 @@ export default function HierarchyRows({
               </tr>
             )}
 
-            {/* TRUNCATION IS STATED, NOT CLAMPED. The row's childCount comes
-                from the server and counts every child the caller may see; the
-                expansion is ONE page. When they disagree, say so and say by how
-                much — clamping the badge down to the page size would make the
-                two agree by LYING about how many children exist, and the user
-                would never learn that more are there. */}
-            {expanded && !loading && !error && shown < total && (
-              <tr>
-                <td colSpan={columns.length + 1} className={styles.levelTruncated}>
-                  Showing {shown} of {total} child runs
-                  {shown >= CHILD_PAGE_LIMIT ? ' (first page)' : ''}
-                </td>
-              </tr>
-            )}
-
-            {expanded && !loading && !error && (
+            {expanded && shown > 0 && (
               <HierarchyRows
-                rows={hierarchy.childrenOf(inst.id)}
+                rows={children}
                 columns={columns}
                 depth={depth + 1}
                 timeMode={timeMode}
@@ -149,7 +181,38 @@ export default function HierarchyRows({
                 renderDetail={renderDetail}
                 detailRowClassName={detailRowClassName}
                 detailCellClassName={detailCellClassName}
+                markers={hierarchy.markersOf(inst.id)}
+                ownsActiveWork={ownsActiveWork}
               />
+            )}
+
+            {/* TRUNCATION IS STATED, NOT CLAMPED. The row's childCount comes
+                from the server and counts every child the caller may see; the
+                expansion is paged. When they disagree, say so and say by how
+                much — clamping the badge would make them agree by LYING. */}
+            {expanded && !loading && !error && shown < total && (
+              <tr>
+                <td colSpan={columns.length + 1} className={styles.levelTruncated}>
+                  Showing {shown} of {total} child runs
+                </td>
+              </tr>
+            )}
+
+            {/* Every fixed task must be inspectable: after a full page, offer
+                the next one (also after a failed page, to retry it). */}
+            {expanded && more && (
+              <tr>
+                <td colSpan={columns.length + 1} className={styles.loadMore}>
+                  <button
+                    type="button"
+                    className={styles.loadMoreButton}
+                    disabled={loading || loadingMore}
+                    onClick={() => void hierarchy.loadMore(inst.id)}
+                  >
+                    {loadingMore ? 'Loading more child runs…' : 'Load more child runs'}
+                  </button>
+                </td>
+              </tr>
             )}
           </Fragment>
         )

@@ -1,10 +1,20 @@
-import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import QueueSection from './QueueSection'
 import type { EnrichedInstanceSummary } from '../api/types'
+import { sockets, StubSocket } from '../routes/queueWorld.fixtures'
 
-vi.mock('../api/client', () => ({ api: { instances: { getNodeTrace: vi.fn(), list: vi.fn() } } }))
+// Table tests default to an unavailable aggregate; hierarchy reads still settle.
+vi.mock('../api/client', () => ({
+  api: { instances: { getNodeTrace: vi.fn(), list: vi.fn(), graphState: vi.fn(() => Promise.reject(new Error('API 404: instance not found'))) } },
+}))
+
+beforeEach(() => {
+  sockets.length = 0
+  vi.stubGlobal('WebSocket', StubSocket)
+})
+afterEach(() => vi.unstubAllGlobals())
 
 function summary(overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -272,5 +282,26 @@ describe('QueueSection — run hierarchy cache invalidation on refresh', () => {
     )
 
     expect(screen.getByText('Child Run')).toBeInTheDocument()
+  })
+})
+describe('QueueSection — live-run pane in the row detail (P4-T10)', () => {
+  afterEach(async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.instances.graphState).mockImplementation(() => Promise.reject(new Error('API 404: instance not found')))
+  })
+
+  it("expanding a row mounts the live-run pane fed with THAT row's instance id", async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.instances.graphState).mockImplementation((id: string) =>
+      Promise.reject(new Error(id === 'i1' ? 'API 404: instance not found' : `wrong id ${id}`)),
+    )
+    renderSection({ instances: [summary({ id: 'i1' })] })
+
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }))
+
+    expect(await screen.findByTestId('run-live-pane')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('run-live-error')).toHaveTextContent('API 404: instance not found'))
+    expect(vi.mocked(api.instances.graphState)).toHaveBeenCalledWith('i1', expect.any(AbortSignal))
+    expect(sockets.some((s) => s.url.endsWith('/api/v1/instances/i1/ws?subtree=1'))).toBe(true)
   })
 })

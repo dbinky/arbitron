@@ -53,6 +53,9 @@ func (e *Engine) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error)
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if req.Link.Mode == instance.SpawnModeGroupTask {
+		return uuid.Nil, fmt.Errorf("spawn child workflow %q: group_task mode requires StartGroupTask", req.ChildWorkflow)
+	}
 	if !req.Link.Valid() {
 		// Reject BEFORE creating anything: a child whose link cannot be matched
 		// by the wake would strand its parent forever, which is worse than a

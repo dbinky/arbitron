@@ -198,3 +198,23 @@
   color: var(--state-failed);
   font-size: 14px;
 }
+
+/* Parallel group details */
+.groupTaskList {
+  margin: 8px 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.groupTaskItem {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.groupTaskLink {
+  font-size: 12px;
+  color: var(--accent);
+}

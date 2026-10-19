@@ -58,6 +58,12 @@ type ValidateOption func(*validateOptions)
 
 type validateOptions struct {
 	workflows WorkflowChecker
+	// children loads child workflow contracts for workflows-form group tasks
+	// (WithChildContractReader, validation_group_children.go).
+	children ChildContractReader
+	// groupCheckersRequired turns an absent group checker into
+	// GROUP_CHECKER_UNAVAILABLE (WithGroupCheckersRequired).
+	groupCheckersRequired bool
 }
 
 // WithWorkflowChecker enables author-time existence validation of every
@@ -69,16 +75,18 @@ func WithWorkflowChecker(wc WorkflowChecker) ValidateOption {
 // ValidationError describes a single validation problem found in a workflow.
 //
 // Severity distinguishes hard validation failures from non-gating advisories.
-// An empty Severity means "error" (a hard failure) for back-compatibility: all
-// findings returned by Validate leave it empty and gate the workflow. Advisory
-// lints (see LintWorkflow) set Severity to "warning"; those are surfaced
-// informationally and never gate validation.
+// An empty Severity means "error" (a hard failure) for back-compatibility.
+// Validate and LintWorkflow may return advisories with Severity "warning";
+// those are surfaced informationally and never gate validation.
 type ValidationError struct {
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 	NodeID   string `json:"nodeId,omitempty"`
 	EdgeIdx  int    `json:"edgeIdx,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	// TaskKey identifies the parallel_group task a finding is about (set
+	// together with NodeID = the group node id); empty for every other finding.
+	TaskKey string `json:"taskKey,omitempty"`
 }
 
 // validInputTypes is the set of types allowed for workflow input fields.
@@ -112,7 +120,8 @@ var validErrorBehaviorTypes = map[string]bool{
 // model_profile of the correct capability kind; pass nil to skip that pass.
 // Pass a non-nil ConnectionChecker to validate that a profile's non-empty
 // ConnectionRef names an existing connection; pass nil to skip that pass. Each
-// checker is independently nil-skippable.
+// checker is independently nil-skippable unless WithGroupCheckersRequired is
+// supplied for a workflow containing parallel_group nodes.
 func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connChecker ConnectionChecker, opts ...ValidateOption) []ValidationError {
 	var o validateOptions
 	for _, apply := range opts {
@@ -151,6 +160,10 @@ func Validate(wf *Workflow, checker FileChecker, profiles ProfileChecker, connCh
 	if o.workflows != nil {
 		errs = append(errs, validateChildWorkflowReferences(wf, o.workflows)...)
 	}
+
+	// parallel_group checks (validation_group.go). A no-op without groups, so
+	// legacy workflows see exactly the findings they always did.
+	errs = append(errs, validateGroups(wf, checker, profiles, o)...)
 
 	return errs
 }

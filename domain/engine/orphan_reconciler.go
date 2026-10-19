@@ -22,7 +22,7 @@ type RunCanceller interface {
 }
 
 // OrphanedChildReconciler cancels runs that an interrupted cancel cascade left
-// behind: still-active children of an already-cancelled parent.
+// behind: active descendants of cancelled or subtree-cancel-stamped ancestors.
 //
 // WHY A SWEEP IS REQUIRED. Engine.cascadeCancel is a best-effort in-process
 // walk. It tolerates partial failure by design — the parent's own cancellation
@@ -44,8 +44,10 @@ type RunCanceller interface {
 // downgraded to a system identity, which would widen what the cancellation may
 // reach.
 //
-// Cancel cascades, so cancelling a top-level orphan tears down its own subtree
-// in the same pass; the query only needs to be one level deep.
+// The query climbs through terminal intermediates, since cascade residue may
+// sit below completed branches. An active intermediate is returned instead of
+// its descendants; Cancel cascades from there. An orphan already cancelled by
+// an earlier cascade yields the benign ErrCannotCancel race.
 type OrphanedChildReconciler struct {
 	spawnLinks instance.SpawnLinkRepository
 	instances  instance.InstanceRepository
@@ -68,7 +70,8 @@ func NewOrphanedChildReconciler(
 	}
 }
 
-// Reconcile cancels every active child of a cancelled parent.
+// Reconcile cancels active descendants with cancelled or subtree-cancel-stamped
+// ancestors reachable through terminal intermediates.
 //
 // The query error is RETURNED so the caller can surface it; a per-orphan
 // failure is logged and the sweep continues — one uncooperative run must not

@@ -90,6 +90,10 @@ type Service struct {
 	// unset (nil), the guard is skipped (local/unconfigured mode has no registry
 	// id to count by).
 	activeInstances ActiveInstanceCounter
+	// groupProfiles / groupFiles are the scoped checkers parallel_group writes
+	// require. When unset, group writes fail with GROUP_CHECKER_UNAVAILABLE.
+	groupProfiles ProfileChecker
+	groupFiles    OwnerFileChecker
 }
 
 // SetActiveInstanceCounter wires the non-terminal-instance counter consulted by
@@ -231,9 +235,16 @@ func (s *Service) adminSharedWrite(ctx context.Context, id identity.Identity, na
 // WITHOUT writing any folder. If the folder write then fails, the registry row is
 // rolled back so the two stores do not diverge. With no registry (local mode),
 // this is the prior pure name-addressed create.
+// A workflow containing parallel_group nodes is first checked by ValidateGroups;
+// any hard finding returns *GroupValidationError before anything is written.
 func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 	id, err := caller(ctx)
 	if err != nil {
+		return err
+	}
+	// Reject invalid groups before allocating identity or claiming the name.
+	// Non-group workflows retain the legacy write path without validation.
+	if err := s.rejectInvalidGroups(ctx, wf, id.UserID); err != nil {
 		return err
 	}
 	if s.localMode() {
@@ -269,14 +280,36 @@ func (s *Service) Create(ctx context.Context, name string, wf *Workflow) error {
 // adminSharedWrite). An in-flight instance is unaffected — it runs from its
 // snapshot — so a shared edit only changes what future triggers load.
 func (s *Service) Update(ctx context.Context, name string, wf *Workflow) error {
+	_, err := s.updateWithGroupFindings(ctx, name, wf)
+	return err
+}
+
+// updateWithGroupFindings is the shared Update path, retaining the accepted
+// pre-write findings for callers that return a group view with the receipt.
+func (s *Service) updateWithGroupFindings(ctx context.Context, name string, wf *Workflow) ([]ValidationError, error) {
 	id, err := caller(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	// Gate both private writes and admin shared-scope edits, checking files in
+	// the scope this write lands in.
+	var findings []ValidationError
+	if HasGroups(wf) {
+		fileOwner, err := s.groupWriteFileOwner(ctx, id, name)
+		if err != nil {
+			return nil, err
+		}
+		if findings, err = s.validateGroupsForWrite(ctx, wf, fileOwner); err != nil {
+			return nil, err
+		}
 	}
 	privateErr := s.repo.Update(ctx, Private(id.UserID), name, wf)
-	return s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
+	if err := s.adminSharedWrite(ctx, id, name, privateErr, func(ctx context.Context, scope Scope) error {
 		return s.repo.Update(ctx, scope, name, wf)
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return findings, nil
 }
 
 // SaveNodePositions persists node layout in the caller's private scope (an admin
@@ -609,6 +642,9 @@ func (s *Service) Publish(ctx context.Context, privateName, publishedName string
 		Visibility:    visibility,
 		Department:    department,
 		WriteTree: func(ctx context.Context, overwrite bool) error {
+			if err := s.rejectCopiedGroups(ctx, Private(id.UserID), privateName, publishedName); err != nil {
+				return err
+			}
 			return s.repo.CopyTree(ctx, Private(id.UserID), privateName, Shared(), publishedName, overwrite)
 		},
 		Rollback: func(ctx context.Context) error {
@@ -690,6 +726,9 @@ func (s *Service) Copy(ctx context.Context, sharedName, newPrivateName string) e
 				}))
 			}
 		}
+	}
+	if err := s.rejectCopiedGroups(ctx, Shared(), sharedName, newPrivateName); err != nil {
+		return err
 	}
 	return s.repo.CopyTree(ctx, Shared(), sharedName, Private(id.UserID), newPrivateName, false)
 }

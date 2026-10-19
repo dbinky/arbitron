@@ -10,6 +10,10 @@ import (
 // ErrNotFound is returned when a notification does not exist.
 var ErrNotFound = errors.New("notification not found")
 
+// ErrAlreadyExists means Create found an existing notification with this ID.
+// Callers retrying a durable notification may treat it as success.
+var ErrAlreadyExists = errors.New("notification already exists")
+
 // Type represents the kind of notification.
 type Type string
 
@@ -23,6 +27,9 @@ const (
 	// stores them with a NULL instance_id and the workflow name denormalized.
 	TypeScheduleSkipped Type = "schedule_skipped"
 	TypeScheduleMissed  Type = "schedule_missed"
+	// TypeConflictResolution indicates a group gather needs human conflict resolution.
+	// It is tied to the parent instance.
+	TypeConflictResolution Type = "conflict_resolution"
 )
 
 // Notification represents a user-facing notification tied to a workflow instance.

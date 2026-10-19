@@ -209,6 +209,23 @@ type DatabaseConfig struct {
 // WorkspaceConfig holds workspace directory settings.
 type WorkspaceConfig struct {
 	Path string
+	// GroupLaunchMaxBytes is the server-owned budget for one parallel_group
+	// launch's eager copies: the parent area's size times (tasks + 1) must not
+	// exceed it. A non-positive value falls back to DefaultGroupLaunchMaxBytes;
+	// the budget cannot be disabled and no workflow setting overrides it.
+	GroupLaunchMaxBytes int64
+}
+
+// DefaultGroupLaunchMaxBytes is the default GroupLaunchMaxBytes (16 GiB).
+const DefaultGroupLaunchMaxBytes int64 = 16 << 30
+
+// EffectiveGroupLaunchMaxBytes returns GroupLaunchMaxBytes, or the default
+// when it is not positive.
+func (w WorkspaceConfig) EffectiveGroupLaunchMaxBytes() int64 {
+	if w.GroupLaunchMaxBytes > 0 {
+		return w.GroupLaunchMaxBytes
+	}
+	return DefaultGroupLaunchMaxBytes
 }
 
 // SamplesConfig controls boot-time seeding of bundled sample workflows.

@@ -1515,3 +1515,21 @@ func TestLoad_AuthMode_FromEnv_EdgeMode(t *testing.T) {
 		assert.Contains(t, err.Error(), "auth.edge.audiences")
 	})
 }
+
+// The parallel_group launch byte budget defaults to a positive ceiling, and
+// an operator value in config.yaml reaches the composition root.
+func TestLoad_GroupLaunchMaxBytes(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg, err := adapterconfig.Load(filepath.Join(t.TempDir(), "config.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, domainconfig.DefaultGroupLaunchMaxBytes, cfg.Workspace.GroupLaunchMaxBytes)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("workspace:\n  path: ./ws\n  grouplaunchmaxbytes: 1048576\n"), 0o600))
+	cfg, err = adapterconfig.Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1048576), cfg.Workspace.EffectiveGroupLaunchMaxBytes())
+
+	assert.Equal(t, domainconfig.DefaultGroupLaunchMaxBytes, domainconfig.WorkspaceConfig{GroupLaunchMaxBytes: -1}.EffectiveGroupLaunchMaxBytes(),
+		"a non-positive budget cannot disable the ceiling")
+}

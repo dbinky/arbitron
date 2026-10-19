@@ -1,6 +1,10 @@
 import type {
   DashboardStats,
   EnrichedInstanceSummary,
+  GraphState,
+  GroupGraph,
+  GroupProgress,
+  GroupScope,
   Instance,
   InstanceState,
   Me,
@@ -31,6 +35,49 @@ export interface ListInstancesParams {
    * replace — the visibility scope it derives from the request identity.
    */
   parent?: string
+  /**
+   * Narrow to terminal ancestors of visible active descendants, including
+   * completed parents that still own independent work. Composes with parent
+   * and the server-set visibility scope.
+   */
+  activeDescendantAncestors?: boolean
+}
+
+const EMPTY_PROGRESS: GroupProgress = { total: 0, completed: 0, failed: 0, cancelled: 0, active: 0, notStarted: 0 }
+
+/** Normalizes Go nil collections once, at the API boundary. */
+export function normalizeGroupGraph(raw: GroupGraph | null | undefined): GroupGraph {
+  const groups: Record<string, GroupScope> = {}
+  for (const [id, scope] of Object.entries(raw?.groups ?? {})) {
+    if (!scope) continue
+    groups[id] = {
+      ...scope,
+      config: { ...scope.config, tasks: scope.config?.tasks ?? [] },
+      bodies: scope.bodies ?? {},
+      nested: scope.nested ?? [],
+    }
+  }
+  return { groups, owner: raw?.owner ?? {}, order: raw?.order ?? [] }
+}
+
+/** Normalizes a Go-encoded aggregate (nil slices/maps become empty). */
+export function normalizeGraphState(raw: GraphState): GraphState {
+  return {
+    ...raw,
+    contexts: (raw.contexts ?? []).map((c) => ({
+      ...c,
+      nodes: c.nodes ?? [],
+      layout: c.layout ? normalizeGroupGraph(c.layout) : undefined,
+    })),
+    groups: (raw.groups ?? []).map((g) => ({
+      ...g,
+      tasks: g.tasks ?? [],
+      waitingReasons: g.waitingReasons ?? [],
+      progress: g.progress ?? EMPTY_PROGRESS,
+    })),
+    layout: raw.layout ? normalizeGroupGraph(raw.layout) : undefined,
+    warnings: raw.warnings ?? [],
+  }
 }
 
 /** Throws on non-2xx responses with a descriptive message. */
@@ -44,7 +91,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignore parse errors
     }
-    throw new Error(`API ${res.status}: ${detail}`)
+    throw Object.assign(new Error(`API ${res.status}: ${detail}`), { status: res.status })
   }
   return res.json() as Promise<T>
 }
@@ -97,6 +144,7 @@ export const api = {
       if (params?.offset != null) q.set('offset', String(params.offset))
       if (params?.includeDismissed) q.set('includeDismissed', 'true')
       if (params?.parent) q.set('parent', params.parent)
+      if (params?.activeDescendantAncestors) q.set('activeDescendantAncestors', 'true')
       const qs = q.toString()
       return request(`/api/v1/instances${qs ? `?${qs}` : ''}`)
     },
@@ -169,6 +217,10 @@ export const api = {
       return request(`/api/v1/instances/${id}/variables`)
     },
 
+    /** Authorized aggregate of this instance and its visible descendants. */
+    graphState(id: string, signal?: AbortSignal): Promise<GraphState> {
+      return request<GraphState>(`/api/v1/instances/${id}/graph-state`, signal ? { signal } : undefined).then(normalizeGraphState)
+    },
   },
 
   workflows: {
@@ -200,6 +252,11 @@ export const api = {
       positions: Record<string, { x: number; y: number }>,
     ): Promise<void> {
       return put(`/api/v1/workflows/${name}/layout`, { positions })
+    },
+
+    /** Static group ownership analysis of a workflow definition. */
+    groupLayout(name: string, signal?: AbortSignal): Promise<GroupGraph> {
+      return request<GroupGraph>(`/api/v1/workflows/${name}/group-layout`, signal ? { signal } : undefined).then(normalizeGroupGraph)
     },
 
     /** Get usage stats for a workflow over a date range. */

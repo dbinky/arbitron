@@ -1,4 +1,15 @@
-export type NodeExecutionState = 'pending' | 'running' | 'completed' | 'failed' | 'waiting' | 'skipped'
+/** Trace-derived states plus the owning context's aggregate execution state. */
+export type NodeExecutionState =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'waiting'
+  | 'skipped'
+  | 'queued'
+  | 'paused'
+  | 'cancelled'
+  | 'unknown'
 
 export interface WorkflowNode {
   id: string

@@ -3,8 +3,8 @@
 -- createInstanceSQL in instance_repo.go) so the column set can evolve without a
 -- sqlc regeneration step, the same way CountActiveByWorkflowID does. This
 -- definition is kept in lockstep as the readable source of truth.
-INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO instances (id, owner_id, workflow_name, workflow_snapshot, state, priority, variables, original_variables, queued_at, department, visibility, trigger_source, schedule_id, workflow_id, parent_instance_id, parent_node_id, spawn_mode, spawn_depth, group_run_id, group_task_key, group_task_kind, current_node_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetInstance :one
@@ -27,6 +27,8 @@ SELECT * FROM instances WHERE id = ?;
 -- The parent narrowing (parent_instance_id IS NULL for roots-only, or
 -- parent_instance_id = ? for a specific parent) is appended as a further AND by
 -- the Go builder, so it can only NARROW the authorized set, never widen it.
+-- Active-descendant discovery additionally uses a recursive CTE and appends
+-- id DESC to the created_at order, giving its offset pages a total order.
 SELECT id, owner_id, workflow_name, state, priority, current_node_id, failed_node_id, variables, workflow_snapshot, created_at, updated_at, completed_at, queued_at, department, visibility, trigger_source, schedule_id, parent_instance_id
 FROM instances
 WHERE (sqlc.narg('state') IS NULL OR state = sqlc.narg('state'))
@@ -59,6 +61,9 @@ UPDATE instances SET state = 'failed', failed_node_id = ?, completed_at = strfti
 UPDATE instances SET state = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ'), updated_at = strftime('%Y-%m-%dT%H:%M:%SZ') WHERE id = ?;
 
 -- name: ListRunningInstances :many
+-- NOTE: executed hand-written by InstanceRepo.ListRunning
+-- (listRunningWithLinkSQL over instanceColumnsWithLink) so spawn_depth and the
+-- 019 group-task columns are read in the same statement.
 SELECT * FROM instances WHERE state = 'running';
 
 -- name: UpdateInstancePriority :exec
@@ -89,22 +94,52 @@ WHERE parent_instance_id IN (sqlc.slice('parent_ids'))
 GROUP BY parent_instance_id;
 
 -- name: ListActiveChildren :many
--- Every active child of a parent, REGARDLESS of spawn mode: the cancel cascade
--- covers awaited and fire-and-forget children alike.
+-- Every active child regardless of spawn mode. Cancellation traverses
+-- ListChildren instead, to reach descendants below terminal intermediates.
 SELECT id FROM instances
 WHERE parent_instance_id = ?
   AND state IN ('queued','running','waiting','paused')
 ORDER BY created_at ASC;
 
+-- name: ListChildren :many
+-- Hand-written in InstanceRepo: every child, terminal ones included.
+SELECT id, state FROM instances
+WHERE parent_instance_id = ?
+ORDER BY created_at ASC, rowid ASC;
+
 -- name: ListOrphanedActiveChildren :many
--- The residue of an interrupted cancel cascade: every still-active run whose
--- parent is already cancelled. One level deep — a grandchild under a still-
--- active parent is reached by cancelling that parent, not by this query.
+-- Hand-written in InstanceRepo. Climb through completed/failed intermediates;
+-- active ancestors stop the climb. The bound guards corrupt cycles.
+WITH RECURSIVE up(orphan_id, ancestor_id, hops) AS (
+  SELECT c.id, c.parent_instance_id, 1
+    FROM instances c
+   WHERE c.state IN ('queued','running','waiting','paused')
+     AND c.parent_instance_id IS NOT NULL
+  UNION ALL
+  SELECT up.orphan_id, a.parent_instance_id, up.hops + 1
+    FROM up
+    JOIN instances a ON a.id = up.ancestor_id
+   WHERE a.state IN ('completed','failed')
+     AND a.parent_instance_id IS NOT NULL
+     AND up.hops < 64
+)
 SELECT c.id FROM instances c
-JOIN instances p ON p.id = c.parent_instance_id
-WHERE c.state IN ('queued','running','waiting','paused')
-  AND p.state = 'cancelled'
-ORDER BY c.created_at ASC;
+ WHERE c.id IN (
+   SELECT up.orphan_id FROM up
+     JOIN instances a ON a.id = up.ancestor_id
+     JOIN instance_creation_order o ON o.instance_id = up.orphan_id
+     JOIN instance_creation_order boundary ON boundary.instance_id = a.id
+    WHERE a.state = 'cancelled'
+       OR (a.subtree_cancel_requested_at IS NOT NULL
+           AND o.sequence <= boundary.cancel_through_sequence))
+ ORDER BY c.created_at ASC, c.rowid ASC;
+
+-- name: MarkSubtreeCancelRequested :exec
+-- Hand-written in InstanceRepo. Durable intent without changing the outcome.
+-- Migration 021's trigger atomically records the creation-sequence boundary.
+UPDATE instances
+   SET subtree_cancel_requested_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+ WHERE id = ? AND state IN ('completed','failed','cancelled');
 
 -- name: FindChildBySpawnNode :one
 -- The awaited child of ONE (parent, spawn node, mode) triple. All three key

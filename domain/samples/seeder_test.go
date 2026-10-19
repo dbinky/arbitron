@@ -4,12 +4,16 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/adapter/filesystem"
 	"github.com/arbitron/arbitron/domain/samples"
 	"github.com/arbitron/arbitron/domain/workflow"
+	"github.com/stretchr/testify/require"
 )
 
 // --- fakes ---
@@ -323,5 +327,80 @@ func TestSeed_PublishFailureRollsBackAndAborts(t *testing.T) {
 	}
 	if len(led.recorded) != 0 {
 		t.Errorf("must not record a sample whose publication failed; recorded=%v", led.recorded)
+	}
+}
+
+// An unwired seeder must never accept a group, even when the config is valid.
+func TestSeed_GroupWithoutCheckersLeavesNoTreePublicationOrLedger(t *testing.T) {
+	root := t.TempDir()
+	repo := filesystem.NewWorkflowRepo(root)
+	pub := &fakePublished{}
+	led := &fakeLedger{}
+	w := &workflow.Workflow{Name: "group", Nodes: []workflow.Node{{ID: "g", Type: workflow.NodeTypeParallelGroup, Entrypoint: true}}}
+	src := &fakeSource{names: []string{"group"}, wf: map[string]*workflow.Workflow{"group": w}}
+	require.NoError(t, samples.NewSeeder(src, repo, pub, led, uuid.New(), discardLogger()).Seed(context.Background()))
+	exists, err := repo.Exists(context.Background(), workflow.Shared(), "group")
+	require.NoError(t, err)
+	require.False(t, exists, "group without validation capabilities must be refused before folder creation")
+	require.Empty(t, pub.calls)
+	require.Empty(t, led.recorded)
+}
+
+type seedProfiles map[string]string
+
+func (p seedProfiles) ProfileKind(alias string) (string, bool) { kind, ok := p[alias]; return kind, ok }
+
+func TestSeed_GroupImportsUseIncomingFilesAndRefuseInvalidDefinitions(t *testing.T) {
+	for _, form := range []string{workflow.GroupFormBranches, workflow.GroupFormWorkflows} {
+		for _, defect := range []string{"valid", "tasks", "profile", "prompt", "child", "child-store"} {
+			if form == workflow.GroupFormBranches && (defect == "child" || defect == "child-store") {
+				continue
+			}
+			t.Run(form+"/"+defect, func(t *testing.T) {
+				root := t.TempDir()
+				repo := filesystem.NewWorkflowRepo(root)
+				pub := &fakePublished{}
+				led := &fakeLedger{}
+				ctx := context.Background()
+				child := &workflow.Workflow{Name: "child", Inputs: []workflow.InputField{{Name: "topic", Type: "string", Required: true}}}
+				require.NoError(t, repo.Create(ctx, workflow.Shared(), "child", child))
+				g := &workflow.GroupConfig{Form: form, Tasks: []workflow.GroupTask{{Key: "a", Entry: "body"}}, CompletionRule: workflow.GroupRuleAllSucceed, UnfinishedBehavior: workflow.GroupUnfinishedCancel, GatherMode: workflow.GroupGatherResultsAndFiles, ResolverProfile: "agent", ResolverPromptFile: "prompts/resolve.md"}
+				w := &workflow.Workflow{Name: "group", Nodes: []workflow.Node{{ID: "g", Type: workflow.NodeTypeParallelGroup, Entrypoint: true, Config: workflow.NodeConfig{Group: g}}, {ID: "body", Type: workflow.NodeTypeTransform}, {ID: "done", Type: workflow.NodeTypeTransform}, {ID: "failed", Type: workflow.NodeTypeTransform}}, Edges: []workflow.Edge{{Source: "g", Target: "body", Output: workflow.GroupPortTask}, {Source: "g", Target: "done", Output: workflow.GroupPortSuccess}, {Source: "g", Target: "failed", Output: workflow.GroupPortFailure}}}
+				if form == workflow.GroupFormWorkflows {
+					g.Tasks = []workflow.GroupTask{{Key: "a", Workflow: "child"}}
+					w.Nodes = append(w.Nodes[:1], w.Nodes[2:]...)
+					w.Edges = w.Edges[1:]
+				}
+				files := map[string][]byte{"prompts/resolve.md": []byte("incoming resolver")}
+				switch defect {
+				case "tasks":
+					g.Tasks = nil
+				case "profile":
+					g.ResolverProfile = "chat"
+				case "prompt":
+					files = nil
+				case "child":
+					g.Tasks[0].Workflow = "missing"
+				case "child-store":
+					require.NoError(t, os.WriteFile(filepath.Join(root, "shared", "child", "workflow.json"), []byte("{"), 0o600))
+				}
+				src := &fakeSource{names: []string{"group"}, wf: map[string]*workflow.Workflow{"group": w}, files: map[string]map[string][]byte{"group": files}}
+				require.NoError(t, samples.NewSeeder(src, repo, pub, led, uuid.New(), discardLogger(), seedProfiles{"agent": "agent", "chat": "chat"}).Seed(ctx))
+				exists, err := repo.Exists(ctx, workflow.Shared(), "group")
+				require.NoError(t, err)
+				if defect != "valid" {
+					require.False(t, exists)
+					require.Empty(t, pub.calls)
+					require.Empty(t, led.recorded)
+					return
+				}
+				require.True(t, exists)
+				stored, err := os.ReadFile(filepath.Join(root, "shared", "group", "prompts", "resolve.md"))
+				require.NoError(t, err)
+				require.Equal(t, "incoming resolver", string(stored))
+				require.Len(t, pub.calls, 1)
+				require.Equal(t, []string{"group"}, led.recorded)
+			})
+		}
 	}
 }

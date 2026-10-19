@@ -3,9 +3,18 @@ import { it, expect, vi, beforeEach } from 'vitest'
 import type { EnrichedInstanceSummary } from '../api/types'
 
 const listMock = vi.fn()
-vi.mock('../api/client', () => ({ api: { instances: { list: (...a: unknown[]) => listMock(...a) } } }))
+const graphStateMock = vi.fn()
+vi.mock('../api/client', () => ({
+  api: {
+    instances: {
+      list: (...a: unknown[]) => listMock(...a),
+      graphState: (...a: unknown[]) => graphStateMock(...a),
+    },
+  },
+}))
 
 import { CHILD_PAGE_LIMIT, useRunHierarchy } from './useRunHierarchy'
+import { fanoutAggregate, fanoutContexts } from '../graph/liveSummary.fixtures'
 
 function row(id: string, overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -24,6 +33,8 @@ function row(id: string, overrides: Partial<EnrichedInstanceSummary> = {}): Enri
 
 beforeEach(() => {
   listMock.mockReset()
+  graphStateMock.mockReset()
+  graphStateMock.mockRejectedValue(new Error('API 404: instance not found'))
 })
 
 // ---------- happy path ----------
@@ -268,4 +279,284 @@ it('patchRow for an uncached id is a no-op that keeps the same levels', async ()
   act(() => { result.current.patchRow('nope', { model: 'x' }) })
 
   expect(result.current.childrenOf).toBe(before)
+})
+
+// ---------- pagination (P4-T10) ----------
+
+const many = (parent: string, n: number, from = 0) =>
+  Array.from({ length: n }, (_, i) => row(`${parent}-c${from + i}`, { parentInstanceId: parent }))
+
+// Fake keyed by (parent, limit, offset): a page is cut exactly where the server
+// would cut it (adapter/sqlite/instance_repo.go:216 LIMIT ? OFFSET ?).
+function pagedList(all: Record<string, EnrichedInstanceSummary[]>) {
+  return ({ parent, limit, offset }: { parent: string; limit: number; offset?: number }) => {
+    const rows = all[parent]
+    if (!rows) return Promise.reject(new Error('API 404: instance not found'))
+    const from = offset ?? 0
+    return Promise.resolve(rows.slice(from, from + limit))
+  }
+}
+
+it('a full first page reports more children, and loadMore appends the next page by offset', async () => {
+  listMock.mockImplementation(pagedList({ p1: many('p1', 150) }))
+  const { result } = renderHook(() => useRunHierarchy())
+
+  await act(async () => { await result.current.toggle('p1') })
+  expect(result.current.childrenOf('p1')).toHaveLength(CHILD_PAGE_LIMIT)
+  expect(result.current.hasMore('p1')).toBe(true)
+
+  await act(async () => { await result.current.loadMore('p1') })
+
+  expect(listMock).toHaveBeenLastCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, offset: CHILD_PAGE_LIMIT, includeDismissed: true })
+  expect(result.current.childrenOf('p1')).toHaveLength(150)
+  expect(result.current.childrenOf('p1')[100].id).toBe('p1-c100')
+  expect(result.current.hasMore('p1')).toBe(false)
+  expect(result.current.isLoadingMore('p1')).toBe(false)
+})
+
+it('a short page reports no more children, and loadMore is then a no-op (also for an unfetched row)', async () => {
+  listMock.mockResolvedValue([row('c1', { parentInstanceId: 'p1' })])
+  const { result } = renderHook(() => useRunHierarchy())
+
+  await act(async () => { await result.current.toggle('p1') })
+  expect(result.current.hasMore('p1')).toBe(false)
+
+  await act(async () => { await result.current.loadMore('p1') })
+  await act(async () => { await result.current.loadMore('never-expanded') })
+  expect(listMock).toHaveBeenCalledTimes(1)
+})
+
+// Children list newest-first, so a child created between two page requests
+// pushes the first page's last row onto the second page.
+it('loadMore de-duplicates a row that shifted across the page boundary', async () => {
+  const first = many('p1', CHILD_PAGE_LIMIT)
+  listMock
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce([first[CHILD_PAGE_LIMIT - 1], row('p1-older', { parentInstanceId: 'p1' })])
+  const { result } = renderHook(() => useRunHierarchy())
+
+  await act(async () => { await result.current.toggle('p1') })
+  await act(async () => { await result.current.loadMore('p1') })
+
+  const ids = result.current.childrenOf('p1').map((r) => r.id)
+  expect(ids).toHaveLength(CHILD_PAGE_LIMIT + 1)
+  expect(new Set(ids).size).toBe(ids.length)
+  expect(ids[ids.length - 1]).toBe('p1-older')
+  expect(result.current.hasMore('p1')).toBe(false)
+})
+
+// Edge: >100 tasks + refresh — a refresh must never shrink a level the user
+// paged through, or the 101st task disappears on the next lifecycle event.
+it('a refresh after load-more refetches EVERY loaded page', async () => {
+  listMock.mockImplementation(pagedList({ p1: many('p1', 150) }))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+  await act(async () => { await result.current.loadMore('p1') })
+  listMock.mockClear()
+
+  await act(async () => { result.current.invalidate() })
+  await waitFor(() => expect(result.current.isLoading('p1')).toBe(false))
+
+  expect(listMock).toHaveBeenCalledTimes(2)
+  expect(listMock).toHaveBeenCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, includeDismissed: true })
+  expect(listMock).toHaveBeenCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, offset: CHILD_PAGE_LIMIT, includeDismissed: true })
+  expect(result.current.childrenOf('p1')).toHaveLength(150)
+})
+
+// Failure: a failed page keeps what is already shown.
+it('a failed load-more keeps the loaded rows and reports the error on the row', async () => {
+  listMock.mockResolvedValueOnce(many('p1', CHILD_PAGE_LIMIT)).mockRejectedValueOnce(new Error('API 500: page boom'))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+
+  await act(async () => { await result.current.loadMore('p1') })
+
+  expect(result.current.errorOf('p1')).toContain('page boom')
+  expect(result.current.childrenOf('p1')).toHaveLength(CHILD_PAGE_LIMIT)
+  expect(result.current.hasMore('p1')).toBe(true)
+  expect(result.current.isLoadingMore('p1')).toBe(false)
+})
+
+it('keeps the server offset and loaded page count when pages overlap', async () => {
+  const first = many('p1', CHILD_PAGE_LIMIT)
+  const second = [first[99], ...many('p1', 99, 100)]
+  listMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second).mockResolvedValueOnce([])
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+  await act(async () => { await result.current.loadMore('p1') })
+  expect(result.current.childrenOf('p1')).toHaveLength(199)
+  await act(async () => { await result.current.loadMore('p1') })
+  expect(listMock).toHaveBeenLastCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, offset: 200, includeDismissed: true })
+
+  listMock.mockClear().mockResolvedValue([])
+  await act(async () => { result.current.invalidate() })
+  expect(listMock).toHaveBeenCalledTimes(3)
+  expect(listMock).toHaveBeenCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, offset: 200, includeDismissed: true })
+})
+
+it('two load-more calls in the same event issue only one page request', async () => {
+  listMock.mockResolvedValueOnce(many('p1', CHILD_PAGE_LIMIT))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+  let resolve!: (v: EnrichedInstanceSummary[]) => void
+  listMock.mockReturnValue(new Promise<EnrichedInstanceSummary[]>((r) => { resolve = r }))
+  act(() => {
+    void result.current.loadMore('p1')
+    void result.current.loadMore('p1')
+  })
+  expect(listMock).toHaveBeenCalledTimes(2)
+  await act(async () => { resolve([]) })
+})
+
+// ---------- stale cache (P4-T10) ----------
+
+it('keeps the cached rows visible while a refresh is in flight, then replaces them', async () => {
+  listMock.mockResolvedValueOnce([row('c1', { parentInstanceId: 'p1', state: 'running' })])
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+
+  let resolve!: (v: EnrichedInstanceSummary[]) => void
+  listMock.mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolve = r }))
+  act(() => { result.current.invalidate() })
+
+  await waitFor(() => expect(result.current.isLoading('p1')).toBe(true))
+  expect(result.current.childrenOf('p1').map((r) => r.state)).toEqual(['running'])
+
+  await act(async () => { resolve([row('c1', { parentInstanceId: 'p1', state: 'completed' })]) })
+  await waitFor(() => expect(result.current.childrenOf('p1')[0].state).toBe('completed'))
+})
+
+it('an older refresh response never overwrites a newer one', async () => {
+  listMock.mockResolvedValueOnce([row('c1', { parentInstanceId: 'p1' })])
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+
+  let resolveOld!: (v: EnrichedInstanceSummary[]) => void
+  let resolveNew!: (v: EnrichedInstanceSummary[]) => void
+  listMock
+    .mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolveOld = r }))
+    .mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolveNew = r }))
+  act(() => { result.current.invalidate() })
+  act(() => { result.current.invalidate() })
+
+  await act(async () => { resolveNew([row('c1', { parentInstanceId: 'p1', state: 'completed' })]) })
+  await act(async () => { resolveOld([row('c1', { parentInstanceId: 'p1', state: 'running' })]) })
+
+  expect(result.current.childrenOf('p1')[0].state).toBe('completed')
+  expect(result.current.isLoading('p1')).toBe(false)
+})
+
+it('a failed refresh keeps the last rows and reports the error, leaving the row expanded', async () => {
+  listMock.mockResolvedValueOnce([row('c1', { parentInstanceId: 'p1' })]).mockRejectedValueOnce(new Error('API 500: boom'))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('p1') })
+
+  await act(async () => { result.current.invalidate() })
+
+  await waitFor(() => expect(result.current.errorOf('p1')).toContain('boom'))
+  expect(result.current.childrenOf('p1').map((r) => r.id)).toEqual(['c1'])
+  expect(result.current.isExpanded('p1')).toBe(true)
+})
+
+it('a collapsed level invalidated during a fetch cannot be resurrected by its old response', async () => {
+  let resolve!: (v: EnrichedInstanceSummary[]) => void
+  listMock.mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolve = r }))
+  const { result } = renderHook(() => useRunHierarchy())
+  act(() => { void result.current.toggle('p1') })
+  await act(async () => { await result.current.toggle('p1') })
+  act(() => { result.current.invalidate() })
+  await act(async () => { resolve([row('stale', { parentInstanceId: 'p1' })]) })
+  expect(result.current.childrenOf('p1')).toEqual([])
+
+  listMock.mockResolvedValueOnce([row('fresh', { parentInstanceId: 'p1' })])
+  await act(async () => { await result.current.toggle('p1') })
+  expect(result.current.childrenOf('p1').map((r) => r.id)).toEqual(['fresh'])
+  expect(listMock).toHaveBeenCalledTimes(2)
+})
+
+// ---------- markers (P4-T10) ----------
+
+it("builds branch/task/active markers for each child from the parent's authorized graph state", async () => {
+  listMock.mockResolvedValue([row('br-a', { parentInstanceId: 'root' }), row('br-b', { parentInstanceId: 'root' })])
+  graphStateMock.mockImplementation((id: string) =>
+    id === 'root' ? Promise.resolve(fanoutAggregate()) : Promise.reject(new Error('API 404: instance not found')),
+  )
+  const { result } = renderHook(() => useRunHierarchy())
+
+  await act(async () => { await result.current.toggle('root') })
+
+  expect(graphStateMock).toHaveBeenCalledWith('root')
+  expect(result.current.markersOf('root')['br-a']).toEqual({
+    kind: 'branch',
+    groupNodeId: 'g',
+    groupLabel: 'Fan out',
+    taskKey: 'a',
+    blocking: true,
+    independent: false,
+    activeSummary: 'running: A2',
+  })
+  expect(result.current.markersOf('root')['br-b'].activeSummary).toBe('running: B1')
+})
+
+// Error: markers are an overlay on the authoritative list. An unreadable
+// aggregate (403/404 hidden parent, 5xx) leaves the rows listed and
+// unannotated — it neither fails the level nor invents a state.
+it('an unreadable graph state leaves the level listed with no markers and no error', async () => {
+  listMock.mockResolvedValue([row('c1', { parentInstanceId: 'p1' })])
+  graphStateMock.mockRejectedValue(new Error('API 403: forbidden'))
+  const { result } = renderHook(() => useRunHierarchy())
+
+  await act(async () => { await result.current.toggle('p1') })
+
+  expect(result.current.childrenOf('p1').map((r) => r.id)).toEqual(['c1'])
+  expect(result.current.markersOf('p1')).toEqual({})
+  expect(result.current.errorOf('p1')).toBeNull()
+})
+
+// Failure: a transient aggregate failure on REFRESH must not make the markers
+// vanish — the level keeps its last authorized markers (stale-while-revalidate,
+// like its rows). Losing permission (401/403/404) is authoritative and clears them.
+it('a transient graph-state failure on refresh keeps the last markers; a permission loss clears them', async () => {
+  listMock.mockResolvedValue([row('br-a', { parentInstanceId: 'root' }), row('br-b', { parentInstanceId: 'root' })])
+  graphStateMock
+    .mockResolvedValueOnce(fanoutAggregate())
+    .mockRejectedValueOnce(Object.assign(new Error('API 500: aggregate down'), { status: 500 }))
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockRejectedValueOnce(Object.assign(new Error('API 403: forbidden'), { status: 403 }))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('root') })
+  expect(result.current.markersOf('root')['br-b'].activeSummary).toBe('running: B1')
+
+  await act(async () => { result.current.invalidate() })
+  await waitFor(() => expect(graphStateMock).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(result.current.isLoading('root')).toBe(false))
+  expect(result.current.markersOf('root')['br-b'].activeSummary).toBe('running: B1')
+  expect(result.current.markersOf('root')['br-a'].taskKey).toBe('a')
+  expect(result.current.errorOf('root')).toBeNull()
+
+  await act(async () => { result.current.invalidate() })
+  await waitFor(() => expect(graphStateMock).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(result.current.isLoading('root')).toBe(false))
+  expect(result.current.markersOf('root')['br-b'].activeSummary).toBe('running: B1')
+
+  await act(async () => { result.current.invalidate() })
+  await waitFor(() => expect(graphStateMock).toHaveBeenCalledTimes(4))
+  await waitFor(() => expect(result.current.markersOf('root')).toEqual({}))
+  expect(result.current.childrenOf('root').map((r) => r.id)).toEqual(['br-a', 'br-b'])
+})
+
+it('markers refresh with their level: a branch that finished loses its active summary', async () => {
+  listMock.mockResolvedValue([row('br-a', { parentInstanceId: 'root' }), row('br-b', { parentInstanceId: 'root' })])
+  graphStateMock
+    .mockResolvedValueOnce(fanoutAggregate())
+    .mockResolvedValueOnce(fanoutAggregate({ version: 'v2', contexts: fanoutContexts('completed') }))
+  const { result } = renderHook(() => useRunHierarchy())
+  await act(async () => { await result.current.toggle('root') })
+  expect(result.current.markersOf('root')['br-b'].activeSummary).toBe('running: B1')
+
+  await act(async () => { result.current.invalidate() })
+
+  await waitFor(() => expect(result.current.markersOf('root')['br-b'].activeSummary).toBeNull())
+  expect(graphStateMock).toHaveBeenCalledTimes(2)
+  expect(result.current.markersOf('root')['br-a'].activeSummary).toBe('running: A2')
 })

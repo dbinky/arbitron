@@ -25,6 +25,7 @@ var (
 	ErrInteractiveTurnInProgress = errors.New("instance already has an interactive turn in progress")
 	ErrCannotCancel              = errors.New("instance cannot be cancelled")
 	ErrCannotRerun               = errors.New("instance cannot be rerun")
+	ErrCannotRetry               = errors.New("instance cannot be retried")
 )
 
 // State represents the lifecycle state of a workflow instance.
@@ -142,7 +143,14 @@ type Instance struct {
 	// the MaxSpawnDepth runtime ceiling — see MaxSpawnDepth for why the bound
 	// cannot be computed at author time. Derived by Engine.Spawn from the
 	// parent's stored value; never caller-supplied.
-	SpawnDepth        int
+	SpawnDepth int
+	// GroupRunID / GroupTaskKey / GroupTaskKind are the group-task half of the
+	// link, set ONLY when SpawnMode == SpawnModeGroupTask (a child created by a
+	// parallel_group node). nil/empty for roots and for legacy spawn children.
+	// Like ParentInstanceID there is no foreign key on the stored group run id.
+	GroupRunID        *uuid.UUID
+	GroupTaskKey      *string
+	GroupTaskKind     GroupTaskKind
 	State             State
 	Priority          Priority
 	Variables         map[string]any
@@ -164,6 +172,15 @@ type Instance struct {
 // re-derive it.
 func (i Instance) IsRoot() bool {
 	return i.ParentInstanceID == nil
+}
+
+// IsGroupTask reports whether this run is a task child of a parallel_group
+// node: a parent link whose mode is SpawnModeGroupTask with the group run id
+// and task key present. It is the ONE predicate the terminal dispatch and the
+// group coordinator use to tell group tasks from legacy spawn children.
+func (i Instance) IsGroupTask() bool {
+	return i.ParentInstanceID != nil && i.SpawnMode == SpawnModeGroupTask &&
+		i.GroupRunID != nil && i.GroupTaskKey != nil && *i.GroupTaskKey != ""
 }
 
 // InstanceSummary is a lightweight representation for listing instances.
@@ -314,6 +331,21 @@ type ListFilters struct {
 	// ParentInstanceID is the parent whose children to return. Read ONLY when
 	// ParentScope == ParentScopeChildren; ignored otherwise.
 	ParentInstanceID *uuid.UUID
-	Limit            int
-	Offset           int
+	// ActiveDescendantAncestors narrows the list to terminal runs that are
+	// ancestors, at any depth, of active work visible to the same caller.
+	// Both the ancestor row and active descendant obey the service-set scope.
+	ActiveDescendantAncestors bool
+	Limit                     int
+	Offset                    int
+}
+
+// CancelStatus names what a successful cancel request did to the instance it
+// was addressed to. Cancelling a terminal parent succeeds because its unfinished
+// descendants were stopped, but the parent's own outcome is never reopened, so
+// only an instance that actually ended up cancelled may be reported as such.
+func CancelStatus(state State) string {
+	if state == StateCancelled {
+		return "cancelled"
+	}
+	return "cancel_requested"
 }

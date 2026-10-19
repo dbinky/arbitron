@@ -16,22 +16,26 @@ import (
 	"github.com/arbitron/arbitron/domain/engine"
 	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/instance"
+	"github.com/arbitron/arbitron/domain/workflow"
 )
 
 // inboundMessage represents a JSON message received from the WebSocket client.
+// InstanceID is required in subtree mode; per-instance mode ignores it.
 type inboundMessage struct {
-	Type    string `json:"type"`
-	Content string `json:"content,omitempty"`
+	Type       string `json:"type"`
+	Content    string `json:"content,omitempty"`
+	InstanceID string `json:"instanceId,omitempty"`
 }
 
 // interactiveErrorEvent is sent back to the client when an interactive
-// operation fails.
+// operation fails. SourceInstanceID is set only on subtree streams.
 type interactiveErrorEvent struct {
 	Type      string    `json:"type"`
 	Timestamp time.Time `json:"timestamp"`
 	Data      struct {
 		Message string `json:"message"`
 	} `json:"data"`
+	SourceInstanceID *uuid.UUID `json:"sourceInstanceId,omitempty"`
 }
 
 // wsMaxReadMessageSize is the maximum size (in bytes) of a single inbound
@@ -53,6 +57,11 @@ type StreamHandler struct {
 	eventBus            engine.EventBus
 	conversationHandler engine.ConversationHandler
 	service             streamInstanceGetter
+
+	// Subtree mode is enabled by SetSubtreeStreaming; otherwise it returns 501.
+	subtree        SubtreeSubscriber
+	activity       GraphStateService
+	subtreeRecheck time.Duration
 }
 
 // NewStreamHandler creates a new StreamHandler with its dependencies.
@@ -125,6 +134,12 @@ func (h *StreamHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+
+	// Subtree lifetime depends on all visible descendants, not only this run.
+	if r.URL.Query().Get("subtree") == "1" {
+		h.handleSubtree(w, r, inst)
 		return
 	}
 
@@ -216,6 +231,12 @@ func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *webs
 		return
 	}
 
+	h.routeInteractive(ctx, conn, writeMu, instanceID, msg, nil)
+}
+
+// routeInteractive dispatches a control to the named session. A non-nil source
+// stamps subtree error frames; per-instance mode preserves its wire shape.
+func (h *StreamHandler) routeInteractive(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, instanceID uuid.UUID, msg inboundMessage, source *uuid.UUID) {
 	if h.conversationHandler == nil {
 		// No conversation handler wired — ignore interactive messages.
 		return
@@ -227,6 +248,8 @@ func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *webs
 		handlerErr = h.conversationHandler.HandleMessage(ctx, instanceID, msg.Content)
 	case "interactive.end":
 		_, handlerErr = h.conversationHandler.EndSession(ctx, instanceID)
+	case "interactive.abandon":
+		handlerErr = h.conversationHandler.AbandonSession(ctx, instanceID)
 	default:
 		// Unknown type — silently ignore for forward compatibility.
 		return
@@ -241,6 +264,8 @@ func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *webs
 			clientMsg = "Session not found"
 		case errors.Is(handlerErr, instance.ErrNotInteractiveWait):
 			clientMsg = "No active interactive session"
+		case errors.Is(handlerErr, engine.ErrNotResolutionSession):
+			clientMsg = "Only a gather conflict-resolution session can be abandoned."
 		case errors.Is(handlerErr, instance.ErrInteractiveTurnInProgress):
 			clientMsg = "A turn is already in progress; wait for the current response before sending again."
 			// Not a server fault — a benign double-send/retry. Log at Warn (never
@@ -256,55 +281,69 @@ func (h *StreamHandler) handleInteractiveInbound(ctx context.Context, conn *webs
 			slog.Error("interactive handler error", "instanceID", instanceID, "type", msg.Type, "error", handlerErr)
 		}
 
-		errEvt := interactiveErrorEvent{
-			Type:      engine.EventTypeInteractiveError,
-			Timestamp: time.Now().UTC(),
-		}
-		errEvt.Data.Message = clientMsg
+		h.writeInteractiveError(ctx, conn, writeMu, clientMsg, source)
+	}
+}
 
-		errData, err := json.Marshal(errEvt)
-		if err != nil {
-			slog.Error("stream: failed to marshal interactive.error", "error", err)
-			return
-		}
-
-		writeMu.Lock()
-		writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
-		writeErr := conn.Write(writeCtx, websocket.MessageText, errData)
-		cancel()
-		writeMu.Unlock()
-
-		if writeErr != nil {
-			slog.Error("stream: failed to write interactive.error", "error", writeErr)
-		}
+// writeInteractiveError sends an interactive.error frame under writeMu.
+func (h *StreamHandler) writeInteractiveError(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, clientMsg string, source *uuid.UUID) {
+	errEvt := interactiveErrorEvent{
+		Type:             engine.EventTypeInteractiveError,
+		Timestamp:        time.Now().UTC(),
+		SourceInstanceID: source,
+	}
+	errEvt.Data.Message = clientMsg
+	errData, err := json.Marshal(errEvt)
+	if err != nil {
+		slog.Error("stream: failed to marshal interactive.error", "error", err)
+		return
+	}
+	writeMu.Lock()
+	writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+	writeErr := conn.Write(writeCtx, websocket.MessageText, errData)
+	cancel()
+	writeMu.Unlock()
+	if writeErr != nil {
+		slog.Error("stream: failed to write interactive.error", "error", writeErr)
 	}
 }
 
 // sendInteractiveHistory checks if the instance is in interactive wait state
 // and, if so, sends an interactive.history event with the full conversation.
 func (h *StreamHandler) sendInteractiveHistory(ctx context.Context, conn *websocket.Conn, inst *instance.Instance) {
-	if inst.State != instance.StateWaiting {
+	historyEvt, ok := h.interactiveHistoryEvent(ctx, inst)
+	if !ok {
 		return
 	}
-	if inst.CurrentNodeID == nil || *inst.CurrentNodeID == "" {
-		return
+	if err := writeWSEvent(ctx, conn, historyEvt); err != nil {
+		slog.Warn("stream: failed to send interactive.history", "instanceId", inst.ID, "error", err)
 	}
-	if h.nodeExecs == nil {
-		return
+}
+
+// interactiveHistoryEvent builds history for an interactive wait or an open
+// group-resolution session, but not a group wait trace or an ended session.
+func (h *StreamHandler) interactiveHistoryEvent(ctx context.Context, inst *instance.Instance) (engine.Event, bool) {
+	if inst.State != instance.StateWaiting || inst.CurrentNodeID == nil || *inst.CurrentNodeID == "" || h.nodeExecs == nil {
+		return engine.Event{}, false
 	}
 
 	nodeID := *inst.CurrentNodeID
 
-	// Check if the current node is interactive by parsing the workflow snapshot.
-	if !isInteractiveNode(inst.WorkflowSnapshot, nodeID) {
-		return
+	// A group wait is interactive only when its record is an open resolution.
+	interactive := isInteractiveNode(inst.WorkflowSnapshot, nodeID)
+	if !interactive && !isGroupNode(inst.WorkflowSnapshot, nodeID) {
+		return engine.Event{}, false
 	}
 
 	// Load the node execution record.
 	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, inst.ID, nodeID)
 	if err != nil {
 		slog.Warn("stream: failed to load node execution for history hydration", "instanceId", inst.ID, "nodeId", nodeID, "error", err)
-		return
+		return engine.Event{}, false
+	}
+
+	if !interactive && !engine.IsOpenGroupResolutionSession(nodeExec.LLMConversation) {
+		return engine.Event{}, false
 	}
 
 	// Extract messages from llm_conversation.
@@ -318,15 +357,19 @@ func (h *StreamHandler) sendInteractiveHistory(ctx context.Context, conn *websoc
 		messages = []any{}
 	}
 
-	historyEvt := engine.Event{
+	data := map[string]any{"nodeId": nodeID, "messages": messages}
+	if !interactive {
+		data["sessionKind"] = engine.ConversationKindGroupResolution
+		data["groupRunId"] = nodeExec.LLMConversation[engine.ConversationKeyGroupRunID]
+	}
+	return engine.Event{
 		Type:      engine.EventTypeInteractiveHistory,
 		Timestamp: time.Now().UTC(),
-		Data: map[string]any{
-			"nodeId":   nodeID,
-			"messages": messages,
-		},
-	}
-	if err := writeWSEvent(ctx, conn, historyEvt); err != nil {
-		slog.Warn("stream: failed to send interactive.history", "instanceId", inst.ID, "error", err)
-	}
+		Data:      data,
+	}, true
+}
+
+func isGroupNode(snapshot map[string]any, nodeID string) bool {
+	node, err := engine.FindNodeByID(snapshot, nodeID)
+	return err == nil && node.Type == workflow.NodeTypeParallelGroup
 }

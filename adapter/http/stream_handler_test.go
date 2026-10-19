@@ -27,13 +27,15 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// mockConversationHandler records calls to HandleMessage and EndSession.
+// mockConversationHandler records interactive message, end and abandon calls.
 type mockConversationHandler struct {
-	mu              sync.Mutex
-	handleCalls     []handleMessageCall
-	endCalls        []uuid.UUID
-	handleMessageFn func(ctx context.Context, instanceID uuid.UUID, content string) error
-	endSessionFn    func(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
+	mu               sync.Mutex
+	handleCalls      []handleMessageCall
+	endCalls         []uuid.UUID
+	abandonCalls     []uuid.UUID
+	abandonSessionFn func(ctx context.Context, instanceID uuid.UUID) error
+	handleMessageFn  func(ctx context.Context, instanceID uuid.UUID, content string) error
+	endSessionFn     func(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
 }
 
 type handleMessageCall struct {
@@ -61,6 +63,17 @@ func (m *mockConversationHandler) EndSession(ctx context.Context, instanceID uui
 		return fn(ctx, instanceID)
 	}
 	return nil, nil
+}
+
+func (m *mockConversationHandler) AbandonSession(ctx context.Context, instanceID uuid.UUID) error {
+	m.mu.Lock()
+	m.abandonCalls = append(m.abandonCalls, instanceID)
+	fn := m.abandonSessionFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, instanceID)
+	}
+	return nil
 }
 
 func newStreamTestServer(instRepo *mockInstanceRepo, bus engine.EventBus) *httptest.Server {

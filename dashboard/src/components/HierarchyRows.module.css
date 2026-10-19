@@ -16,3 +16,67 @@
   font-style: italic;
   opacity: 0.7;
 }
+
+/* Hierarchy markers: branch / workflow task, group · task key, non-blocking
+   (finish_independently) work, the active-state summary, and "owns active
+   work" on a terminal ancestor kept discoverable. */
+.markers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.marker {
+  padding: 0 5px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--text-secondary);
+}
+
+.markerBranch {
+  border-color: var(--state-running);
+  color: var(--state-running);
+}
+
+.markerWorkflow {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.markerIndependent {
+  border-style: dashed;
+  border-color: var(--state-waiting);
+  color: var(--state-waiting);
+}
+
+.markerOwner {
+  border-color: var(--state-completed);
+  color: var(--state-completed);
+}
+
+.markerActive {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.loadMore {
+  padding: 6px 10px;
+}
+
+.loadMoreButton {
+  padding: 3px 12px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.loadMoreButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

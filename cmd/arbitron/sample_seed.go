@@ -14,10 +14,10 @@ import (
 // seedSampleWorkflows seeds bundled samples from sourceDir into the shared scope.
 // The "should I run" decision (seed enabled + a non-empty source dir) is hoisted
 // to the call site so boot wiring reads honestly; this function unconditionally
-// seeds. Once-per-name idempotency is enforced by the SeedLedger in the
-// workspace root, and seeding is re-entrant across a crash-interrupted boot.
-func seedSampleWorkflows(ctx context.Context, sourceDir, workspacePath string, repo workflow.Repository, published workflow.PublishedStore, owner uuid.UUID, logger *slog.Logger) error {
+// seeds. profiles supplies the live group resolver checker. Once-per-name
+// idempotency is enforced by the SeedLedger in the workspace root, and seeding is re-entrant across a crash-interrupted boot.
+func seedSampleWorkflows(ctx context.Context, sourceDir, workspacePath string, repo workflow.Repository, published workflow.PublishedStore, owner uuid.UUID, logger *slog.Logger, profiles ...workflow.ProfileChecker) error {
 	source := filesystem.NewSampleSource(sourceDir)
 	ledger := filesystem.NewSeedLedger(workspacePath)
-	return samples.NewSeeder(source, repo, published, ledger, owner, logger).Seed(ctx)
+	return samples.NewSeeder(source, repo, published, ledger, owner, logger, profiles...).Seed(ctx)
 }

@@ -108,6 +108,10 @@ type mockInstanceRepo struct {
 	// waiting — so a test can assert event-emission happened at-or-after the
 	// transition.
 	onUpdateState func(id uuid.UUID, state instance.State)
+	// onCreate, when set, runs after Create commits the row and releases the
+	// lock: it models an independent reader (the queue evaluator) acting on
+	// the committed row before Create's caller continues.
+	onCreate func(inst *instance.Instance)
 }
 
 func newMockInstanceRepo() *mockInstanceRepo {
@@ -116,8 +120,12 @@ func newMockInstanceRepo() *mockInstanceRepo {
 
 func (r *mockInstanceRepo) Create(_ context.Context, inst *instance.Instance) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.instances[inst.ID] = inst
+	hook := r.onCreate
+	r.mu.Unlock()
+	if hook != nil {
+		hook(inst)
+	}
 	return nil
 }
 
@@ -129,7 +137,7 @@ func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Insta
 	}
 	inst, ok := r.instances[id]
 	if !ok {
-		return nil, fmt.Errorf("instance not found: %s", id)
+		return nil, fmt.Errorf("instance not found: %s: %w", id, instance.ErrNotFound)
 	}
 	// Return a copy to avoid data races
 	cp := *inst
@@ -406,11 +414,55 @@ func (r *mockNodeExecutionRepo) Update(_ context.Context, exec *instance.NodeExe
 	defer r.mu.Unlock()
 	for i, e := range r.executions {
 		if e.ID == exec.ID {
-			r.executions[i] = exec
+			stored := *exec // like the real store: never alias the caller's record
+			r.executions[i] = &stored
 			return nil
 		}
 	}
 	return fmt.Errorf("execution not found: %s", exec.ID)
+}
+
+// UpdateIfSessionOpen mirrors the SQLite guard: write only while the stored
+// llm_conversation has no endedAt.
+func (r *mockNodeExecutionRepo) UpdateIfSessionOpen(_ context.Context, exec *instance.NodeExecution) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, e := range r.executions {
+		if e.ID == exec.ID {
+			if _, ended := e.LLMConversation["endedAt"]; ended {
+				return false, nil
+			}
+			stored := *exec
+			r.executions[i] = &stored
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// PatchSessionFields mirrors the SQLite json_patch: merge only patch's keys
+// into the stored conversation while it has no endedAt.
+func (r *mockNodeExecutionRepo) PatchSessionFields(_ context.Context, id uuid.UUID, patch map[string]any) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, e := range r.executions {
+		if e.ID == id {
+			if _, ended := e.LLMConversation["endedAt"]; ended {
+				return false, nil
+			}
+			stored := *e
+			stored.LLMConversation = make(map[string]any, len(e.LLMConversation)+len(patch))
+			for k, v := range e.LLMConversation {
+				stored.LLMConversation[k] = v
+			}
+			for k, v := range patch {
+				stored.LLMConversation[k] = v
+			}
+			r.executions[i] = &stored
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *mockNodeExecutionRepo) ListByInstance(_ context.Context, instanceID uuid.UUID) ([]instance.NodeExecution, error) {
@@ -3158,6 +3210,15 @@ func (f *fakeWorkspaceManager) EnsureInstanceDir(id uuid.UUID) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ensured = append(f.ensured, id)
+	if f.ensureErr != nil {
+		return "", f.ensureErr
+	}
+	return "/tmp/arbitron-test-ws/" + id.String(), nil
+}
+
+func (f *fakeWorkspaceManager) ExistingInstanceDir(id uuid.UUID) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.ensureErr != nil {
 		return "", f.ensureErr
 	}

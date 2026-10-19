@@ -40,12 +40,17 @@ func NewInstanceRepo(db *sql.DB) *InstanceRepo {
 // CountActiveByWorkflowID is: it lets the column set evolve without a
 // regeneration step. queries/instances.sql carries the matching source-of-truth
 // SQL.
+//
+// The group-task columns ride the SAME insert: the group launcher enqueues
+// immediately after creating the child, so even a fast terminal must already
+// be attributable to its roster row.
 const createInstanceSQL = `INSERT INTO instances (
 	id, owner_id, workflow_name, workflow_snapshot, state, priority,
 	variables, original_variables, queued_at, department, visibility,
 	trigger_source, schedule_id, workflow_id,
-	parent_instance_id, parent_node_id, spawn_mode, spawn_depth
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	parent_instance_id, parent_node_id, spawn_mode, spawn_depth,
+	group_run_id, group_task_key, group_task_kind, current_node_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING created_at, updated_at`
 
 func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) error {
@@ -80,11 +85,27 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 	// A PARTIAL link is never written: a row with a parent id but no node id
 	// could not be matched by the wake and would strand its parent forever. All
 	// three columns are written together or all three stay NULL.
+	//
+	// Group tasks store spawn_mode NULL (the 018 CHECK cannot admit
+	// 'group_task') and the complete group tuple. An incomplete tuple writes
+	// NO link, like an incomplete legacy link. Legacy modes ignore group fields.
 	var parentID, parentNode, spawnMode sql.NullString
-	if inst.ParentInstanceID != nil && inst.ParentNodeID != nil && inst.SpawnMode.Valid() {
-		parentID = parentIDToNullString(inst.ParentInstanceID)
-		parentNode = ptrToNullString(inst.ParentNodeID)
-		spawnMode = sql.NullString{String: string(inst.SpawnMode), Valid: true}
+	var groupRunID, groupTaskKey, groupTaskKind sql.NullString
+	if inst.ParentInstanceID != nil && inst.ParentNodeID != nil {
+		switch {
+		case inst.SpawnMode == instance.SpawnModeGroupTask:
+			if groupLinkComplete(inst) {
+				parentID = parentIDToNullString(inst.ParentInstanceID)
+				parentNode = ptrToNullString(inst.ParentNodeID)
+				groupRunID = sql.NullString{String: inst.GroupRunID.String(), Valid: true}
+				groupTaskKey = ptrToNullString(inst.GroupTaskKey)
+				groupTaskKind = sql.NullString{String: string(inst.GroupTaskKind), Valid: true}
+			}
+		case inst.SpawnMode.Valid():
+			parentID = parentIDToNullString(inst.ParentInstanceID)
+			parentNode = ptrToNullString(inst.ParentNodeID)
+			spawnMode = sql.NullString{String: string(inst.SpawnMode), Valid: true}
+		}
 	}
 
 	var createdAtRaw, updatedAtRaw string
@@ -115,6 +136,11 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 		// bound on spawn recursion, so there must be no window in which a child
 		// row exists with a depth of 0 that a grandchild could read.
 		inst.SpawnDepth,
+		groupRunID,
+		groupTaskKey,
+		groupTaskKind,
+		// Branch tasks must start at their own entry, not the workflow entrypoint.
+		ptrToNullString(inst.CurrentNodeID),
 	).Scan(&createdAtRaw, &updatedAtRaw)
 	if err != nil {
 		return fmt.Errorf("creating instance: %w", err)
@@ -131,6 +157,15 @@ func (r *InstanceRepo) Create(ctx context.Context, inst *instance.Instance) erro
 	inst.CreatedAt = createdAt
 	inst.UpdatedAt = updatedAt
 	return nil
+}
+
+// groupLinkComplete reports whether the group-task half of a link is complete.
+// Parent pointers are checked by Create before calling this helper.
+func groupLinkComplete(inst *instance.Instance) bool {
+	return inst.ParentNodeID != nil && *inst.ParentNodeID != "" &&
+		inst.GroupRunID != nil && *inst.GroupRunID != uuid.Nil &&
+		inst.GroupTaskKey != nil && *inst.GroupTaskKey != "" &&
+		inst.GroupTaskKind.Valid()
 }
 
 func (r *InstanceRepo) Get(ctx context.Context, id uuid.UUID) (*instance.Instance, error) {
@@ -184,12 +219,13 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 	// THE SAME predicate the child-count query applies, over the same
 	// service-set scope. Admission of every row requires filters.Unconstrained —
 	// the explicit admin assertion — never the mere absence of a narrowing.
-	visClause, visArgs, err := visibilityPredicate(instance.ChildVisibility{
+	vis := instance.ChildVisibility{
 		Unconstrained: filters.Unconstrained,
 		OwnerID:       filters.OwnerID,
 		Departments:   filters.Departments,
 		IncludePublic: filters.IncludePublic,
-	}, "")
+	}
+	visClause, visArgs, err := visibilityPredicate(vis, "")
 	if err != nil {
 		return nil, err
 	}
@@ -209,12 +245,34 @@ func (r *InstanceRepo) List(ctx context.Context, filters instance.ListFilters) (
 		args = append(args, uuidToString(*filters.ParentInstanceID))
 	}
 
-	q := "SELECT " + instanceSummaryColumns + " FROM instances"
+	// Both the ancestor row and the active descendant must be caller-visible.
+	var with string
+	var withArgs []any
+	if filters.ActiveDescendantAncestors {
+		descClause, descArgs, err := visibilityPredicate(vis, "d")
+		if err != nil {
+			return nil, err
+		}
+		with = activeDescendantAncestorsCTE(descClause)
+		withArgs = descArgs
+		where = append(where,
+			"state IN ('completed','failed','cancelled')",
+			"id IN (SELECT id FROM active_ancestors)")
+	}
+
+	q := with + "SELECT " + instanceSummaryColumns + " FROM instances"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, int64(filters.Limit), int64(filters.Offset))
+	q += " ORDER BY created_at DESC"
+	if filters.ActiveDescendantAncestors {
+		// Many ancestors share a one-second creation timestamp. Discovery pages
+		// need a total order so ties cannot move rows across page boundaries.
+		q += ", id DESC"
+	}
+	q += " LIMIT ? OFFSET ?"
+	// CTE placeholders precede the outer WHERE placeholders.
+	args = append(append(withArgs, args...), int64(filters.Limit), int64(filters.Offset))
 
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -367,19 +425,14 @@ func (r *InstanceRepo) SetCompleted(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// listRunningWithLinkSQL keeps recovery reads on the full spawn/group link
+// projection, including depth. queries/instances.sql documents the predicate.
+const listRunningWithLinkSQL = `SELECT ` + instanceColumnsWithLink + ` FROM instances WHERE state = 'running'`
+
 func (r *InstanceRepo) ListRunning(ctx context.Context) ([]instance.Instance, error) {
-	rows, err := r.queries.ListRunningInstances(ctx)
+	instances, err := queryInstancesWithLink(ctx, r.db, listRunningWithLinkSQL)
 	if err != nil {
 		return nil, fmt.Errorf("listing running instances: %w", err)
-	}
-
-	instances := make([]instance.Instance, 0, len(rows))
-	for _, row := range rows {
-		inst, err := rowToInstance(row)
-		if err != nil {
-			return nil, err
-		}
-		instances = append(instances, *inst)
 	}
 	return instances, nil
 }
@@ -592,6 +645,22 @@ func visibilityPredicate(vis instance.ChildVisibility, alias string) (string, []
 	return "(" + strings.Join(ors, " OR ") + ")", args, nil
 }
 
+// activeDescendantAncestorsCTE finds every ancestor of active work admitted by
+// descVis (visibilityPredicate over alias "d"). UNION de-duplicates IDs and
+// terminates recursion even on a corrupt parent cycle.
+func activeDescendantAncestorsCTE(descVis string) string {
+	return `WITH RECURSIVE active_ancestors(id) AS (
+  SELECT d.parent_instance_id FROM instances d
+   WHERE d.parent_instance_id IS NOT NULL
+     AND d.state IN ('queued','running','waiting','paused')
+     AND ` + descVis + `
+  UNION
+  SELECT p.parent_instance_id FROM instances p
+    JOIN active_ancestors a ON p.id = a.id
+   WHERE p.parent_instance_id IS NOT NULL
+) `
+}
+
 // ChildCountsByParents implements instance.SpawnLinkRepository.
 //
 // Contract (mirrors AggregateByInstances): parents with no VISIBLE children are
@@ -686,26 +755,87 @@ func (r *InstanceRepo) ListActiveChildren(ctx context.Context, parentID uuid.UUI
 	return out, nil
 }
 
-// ListOrphanedActiveChildren implements instance.SpawnLinkRepository.
-//
-// It is the retry surface behind the in-process cancel cascade: any active run
-// whose parent is already cancelled. The join is index-eligible on
-// idx_instances_parent's leading column, and the result is ordered oldest-first
-// so a sweep tears down the longest-stranded runs before the newest ones.
-//
-// Only the child's own parent is consulted — a grandchild whose parent is still
-// active is deliberately NOT returned, because cancelling that parent (in the
-// same sweep or on the next tick) cascades to it. That keeps this query one
-// level deep and the recursion in the domain cascade, matching
-// ListActiveChildren.
-func (r *InstanceRepo) ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error) {
-	const q = `SELECT c.id FROM instances c
-  JOIN instances p ON p.id = c.parent_instance_id
-  WHERE c.state IN ('queued','running','waiting','paused')
-    AND p.state = 'cancelled'
-  ORDER BY c.created_at ASC`
+// ListChildren returns every child, including terminal intermediates that may
+// still own active descendants. rowid breaks created_at's one-second ties.
+func (r *InstanceRepo) ListChildren(ctx context.Context, parentID uuid.UUID) ([]instance.ChildRef, error) {
+	const q = `SELECT id, state FROM instances
+  WHERE parent_instance_id = ?
+  ORDER BY created_at ASC, rowid ASC`
+	rows, err := r.db.QueryContext(ctx, q, uuidToString(parentID))
+	if err != nil {
+		return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
+	}
+	defer rows.Close()
+	out := []instance.ChildRef{}
+	for rows.Next() {
+		var raw, state string
+		if err := rows.Scan(&raw, &state); err != nil {
+			return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
+		}
+		id, err := parseUUID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
+		}
+		out = append(out, instance.ChildRef{ID: id, State: instance.State(state)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing children of %s: %w", parentID, err)
+	}
+	return out, nil
+}
 
-	rows, err := r.db.QueryContext(ctx, q)
+// MarkSubtreeCancelRequested persists cancellation intent without rewriting a
+// terminal run's outcome. A repeated request covers descendants created since
+// the previous request; active or unknown rows are left untouched. Migration
+// 021's trigger captures the creation sequence in this same atomic write, even
+// when the timestamp has not changed since the previous request.
+func (r *InstanceRepo) MarkSubtreeCancelRequested(ctx context.Context, id uuid.UUID) error {
+	const q = `UPDATE instances
+   SET subtree_cancel_requested_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+ WHERE id = ? AND state IN ('completed','failed','cancelled')`
+	if _, err := r.db.ExecContext(ctx, q, uuidToString(id)); err != nil {
+		return fmt.Errorf("recording subtree cancellation request for %s: %w", id, err)
+	}
+	return nil
+}
+
+// orphanAncestorWalkLimit exceeds MaxSpawnDepth and bounds corrupt cycles.
+const orphanAncestorWalkLimit = 64
+
+const listOrphanedActiveChildrenSQL = `WITH RECURSIVE up(orphan_id, ancestor_id, hops) AS (
+  SELECT c.id, c.parent_instance_id, 1
+    FROM instances c
+   WHERE c.state IN ('queued','running','waiting','paused')
+     AND c.parent_instance_id IS NOT NULL
+  UNION ALL
+  SELECT up.orphan_id, a.parent_instance_id, up.hops + 1
+    FROM up
+    JOIN instances a ON a.id = up.ancestor_id
+   WHERE a.state IN ('completed','failed')
+     AND a.parent_instance_id IS NOT NULL
+     AND up.hops < ?
+)
+SELECT c.id
+  FROM instances c
+ WHERE c.id IN (
+   SELECT up.orphan_id
+     FROM up
+     JOIN instances a ON a.id = up.ancestor_id
+     JOIN instance_creation_order o ON o.instance_id = up.orphan_id
+     JOIN instance_creation_order boundary ON boundary.instance_id = a.id
+    WHERE a.state = 'cancelled'
+       OR (a.subtree_cancel_requested_at IS NOT NULL
+           AND o.sequence <= boundary.cancel_through_sequence))
+ ORDER BY c.created_at ASC, c.rowid ASC`
+
+// ListOrphanedActiveChildren finds active descendants of cancelled ancestors or
+// terminal ancestors with cancellation intent covering the descendant's durable
+// creation sequence (not its wall-clock timestamp). The climb
+// crosses completed/failed intermediates but stops at active ones: cancelling
+// that topmost orphan cascades through its subtree. Unstamped completed roots
+// retain legitimate independent work. The bounded climb tolerates corrupt links.
+func (r *InstanceRepo) ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.db.QueryContext(ctx, listOrphanedActiveChildrenSQL, orphanAncestorWalkLimit)
 	if err != nil {
 		return nil, fmt.Errorf("listing orphaned active children: %w", err)
 	}
@@ -785,6 +915,22 @@ func (r *InstanceRepo) ClaimWaitingParent(ctx context.Context, parentID uuid.UUI
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("claiming waiting parent %s: %w", parentID, err)
+	}
+	return n > 0, nil
+}
+
+// SuspendRunning implements instance.SpawnWaitRepository.
+func (r *InstanceRepo) SuspendRunning(ctx context.Context, id uuid.UUID) (bool, error) {
+	const q = `UPDATE instances
+  SET state = 'waiting', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ')
+  WHERE id = ? AND state = 'running'`
+	res, err := r.db.ExecContext(ctx, q, uuidToString(id))
+	if err != nil {
+		return false, fmt.Errorf("suspending running instance %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("suspending running instance %s: %w", id, err)
 	}
 	return n > 0, nil
 }
@@ -902,11 +1048,12 @@ func rowToInstance(row generated.Instance) (*instance.Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converting instance row: %w", err)
 	}
-	// Spawn link (migration 018), read as an ALL-OR-NONE tuple. Callers that scan
-	// the link columns separately (scanInstanceWithLink) overwrite these with the
-	// same conversion right after; callers whose generated query never selected
-	// the columns get the correct root/no-link zero value here rather than
-	// silently dropping it.
+	// Spawn link (018), read as an ALL-OR-NONE tuple. scanInstanceWithLink
+	// overwrites it using the explicit projection. generated.Instance has no
+	// 019 group columns, so every link-aware full-row read (Get, ListRunning,
+	// NextEligible, ListWaitingWithTimer/Webhook) uses scanInstanceWithLink;
+	// rowToInstance is only the shared base conversion. ListQueued's consumer
+	// uses IDs/priorities only, not ancestry.
 	parentInstanceID, parentNodeID, spawnMode, err := nullStringToSpawnLink(
 		row.ParentInstanceID, row.ParentNodeID, row.SpawnMode)
 	if err != nil {

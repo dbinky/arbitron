@@ -70,7 +70,8 @@ func (e *InteractiveExecutor) Execute(ctx context.Context, node workflow.Node, v
 	// CurrentNodeID still pointing at this node. Returning the stored output here
 	// lets the engine advance to the next node without starting a new conversation.
 	if existing, err := e.nodeExecs.GetByInstanceAndNode(ctx, instanceID, node.ID); err == nil &&
-		existing.Status == instance.NodeStatusSucceeded {
+		existing.Status == instance.NodeStatusSucceeded &&
+		!isGroupResolutionConversation(existing.LLMConversation) {
 		return &NodeResult{Output: existing.Output}, nil
 	}
 

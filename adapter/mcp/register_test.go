@@ -23,7 +23,7 @@ func fullyWiredServer(t *testing.T) *adaptmcp.Server {
 // expectedTools is the complete API surface per the Phase 5 design doc.
 // Any rename, addition, or removal must update both this list and the code.
 var expectedTools = []string{
-	// Workflow management (12)
+	// Workflow management (16)
 	"workflow_list",
 	"workflow_get",
 	"workflow_create",
@@ -37,6 +37,9 @@ var expectedTools = []string{
 	"workflow_publish",
 	"workflow_set_visibility",
 	"workflow_copy",
+	"workflow_group_upsert",
+	"workflow_group_get",
+	"workflow_group_delete",
 	// Admin-gated lifecycle operations (workflow-management Phase 3 Task 4) (7)
 	"workflow_rename",
 	"workflow_unpublish",
@@ -75,10 +78,11 @@ var expectedTools = []string{
 	"instance_unsubscribe",
 	"system_subscribe",
 	"system_unsubscribe",
-	// Interactive session (3)
+	// Interactive session (4)
 	"interactive_send_message",
 	"interactive_end_session",
 	"interactive_get_history",
+	"interactive_abandon_session",
 	// Connection management (5)
 	"connection_create",
 	"connection_update",

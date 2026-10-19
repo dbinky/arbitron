@@ -39,6 +39,12 @@ type InstanceService interface {
 	SetPriority(ctx context.Context, id uuid.UUID, priority string) error
 }
 
+// GraphStateService reads the authorized aggregate state of a run and its
+// descendants under the request identity.
+type GraphStateService interface {
+	GraphState(ctx context.Context, id uuid.UUID) (*engine.GraphState, error)
+}
+
 // InstanceHandler handles REST API requests for instance operations.
 type InstanceHandler struct {
 	instances   instance.InstanceRepository
@@ -47,6 +53,7 @@ type InstanceHandler struct {
 	service     InstanceService
 	dismissals  instance.DismissalRepository
 	currentUser CurrentUserResolver
+	graphState  GraphStateService
 }
 
 // NewInstanceHandler creates a new InstanceHandler with its dependencies.
@@ -77,6 +84,11 @@ func NewInstanceHandler(
 func (h *InstanceHandler) SetDismissals(dismissals instance.DismissalRepository, currentUser CurrentUserResolver) {
 	h.dismissals = dismissals
 	h.currentUser = currentUser
+}
+
+// SetGraphState wires the aggregate read model before serving requests.
+func (h *InstanceHandler) SetGraphState(gs GraphStateService) {
+	h.graphState = gs
 }
 
 // instanceResponse is a JSON-friendly representation of an instance.
@@ -329,6 +341,7 @@ func mapEngineError(err error) int {
 		errors.Is(err, instance.ErrNotQueued) ||
 		errors.Is(err, instance.ErrNotWaiting) ||
 		errors.Is(err, instance.ErrCannotCancel) ||
+		errors.Is(err, instance.ErrCannotRetry) ||
 		errors.Is(err, instance.ErrCannotRerun) {
 		return http.StatusConflict
 	}
@@ -409,7 +422,7 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The parent selector is the ONE caller-supplied narrowing on this endpoint.
+	// The parent selector is a caller-supplied narrowing on this endpoint.
 	// It composes with — and can never replace — the owner/department constraints
 	// ListEnriched service-sets from the request identity. Decoding goes through
 	// the shared domain parser so REST and the MCP tool cannot drift.
@@ -423,6 +436,19 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	filters.ParentScope = scope
 	filters.ParentInstanceID = parentID
+
+	// This narrowing composes with the service-set visibility scope.
+	if r.URL.Query().Has("activeDescendantAncestors") {
+		switch r.URL.Query().Get("activeDescendantAncestors") {
+		case "true", "1":
+			filters.ActiveDescendantAncestors = true
+		case "false", "0":
+			filters.ActiveDescendantAncestors = false
+		default:
+			WriteError(w, http.StatusBadRequest, "INVALID_FILTER", "activeDescendantAncestors must be true, false, 1 or 0")
+			return
+		}
+	}
 
 	enriched, err := h.service.ListEnriched(r.Context(), filters)
 	if err != nil {
@@ -492,6 +518,31 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, toInstanceResponse(inst))
 }
 
+// GraphState handles GET /instances/{id}/graph-state. Error responses mirror
+// Get so an unviewable root remains indistinguishable from an absent one.
+func (h *InstanceHandler) GraphState(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInstanceID(r)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid instance ID: "+chi.URLParam(r, "id"))
+		return
+	}
+	if h.graphState == nil {
+		WriteError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "graph state is not available")
+		return
+	}
+
+	gs, err := h.graphState.GraphState(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "instance not found: "+id.String())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get instance")
+		return
+	}
+	WriteJSON(w, http.StatusOK, gs)
+}
+
 // Pause handles POST /instances/{id}/pause.
 func (h *InstanceHandler) Pause(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInstanceID(r)
@@ -540,7 +591,14 @@ func (h *InstanceHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	// The cancel may have succeeded only by stopping descendants of a terminal
+	// parent whose own state is unchanged, so report the state it ended in.
+	resp := map[string]string{"status": "cancel_requested"}
+	if inst, err := h.service.GetInstance(r.Context(), id); err == nil && inst != nil {
+		resp["status"] = instance.CancelStatus(inst.State)
+		resp["state"] = string(inst.State)
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // Retry handles POST /instances/{id}/retry with optional variable edits.

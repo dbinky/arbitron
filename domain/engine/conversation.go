@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -30,14 +31,27 @@ type ConversationHandler interface {
 	HandleMessage(ctx context.Context, instanceID uuid.UUID, content string) error
 	// EndSession ends the interactive session and returns the captured output.
 	// The output is captured before any state transition to avoid a race with
-	// the queue manager advancing the instance.
+	// the queue manager advancing the instance. For a parallel_group
+	// conflict-resolution session it means "finish and verify".
 	EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error)
+	// AbandonSession rolls back a parallel-group conflict-resolution gather
+	// and routes failure. Ordinary interactive sessions cannot be abandoned.
+	AbandonSession(ctx context.Context, instanceID uuid.UUID) error
 }
+
+// ErrNotResolutionSession distinguishes ordinary sessions from group resolution.
+var ErrNotResolutionSession = errors.New("conversation: not a group conflict-resolution session")
 
 // conversationHandler implements ConversationHandler. It is profile-aware: a
 // resumed turn resolves the waiting node's model_profile to a binding and
 // selects the streaming backend via the InteractiveStreamSelector (chat profile
 // -> tool-suppressed chat stream; agent profile -> tool-enabled stream).
+//
+// It also serves parallel_group conflict-resolution sessions (P3-T8) once
+// SetGroupResolution is called: the same transports, authorization, turn
+// guard, sentinel protection and history persistence, addressed to the
+// group's OPEN session record, with completion dispatched to a
+// GroupResolutionCompleter instead of writing node variables.
 type conversationHandler struct {
 	instances     instance.InstanceRepository
 	nodeExecs     instance.NodeExecutionRepository
@@ -48,18 +62,33 @@ type conversationHandler struct {
 	interventions instance.InterventionRepository // optional; nil-safe attribution
 	audit         AuditRecorder                   // optional; nil-safe domain audit event
 
+	// groups and groupCompleter make a parallel_group's conflict-resolution
+	// session reachable through the interactive surfaces. Both nil (the
+	// default) => a parallel_group node is never interactive.
+	groups         instance.GroupRunRepository
+	groupCompleter GroupResolutionCompleter
+	// groupSessions writes a group session record only while it is still
+	// open: recovery may close it while a turn streams outside the gather gate.
+	groupSessions instance.OpenSessionRecordUpdater
+
 	// turnInProgress enforces at most one in-flight interactive operation per
 	// instance by mutual exclusion *with rejection* — overlapping calls are
 	// refused, not queued/serialized. A turn drives a single stateful provider
 	// session (e.g. `claude --resume`), which claude-cli cannot run concurrently:
 	// a second overlapping send queues the prompt and no-ops the session,
 	// permanently wedging the node. The set holds instance IDs with an operation
-	// currently executing; both HandleMessage and EndSession acquire it (after
+	// currently executing; HandleMessage, EndSession and AbandonSession acquire it (after
 	// their auth/state gate) and a concurrent caller gets ErrInteractiveTurnInProgress
 	// rather than a second concurrent resume. Does NOT cover the wider
 	// EndSession/completeSession variable-rewrite race — see dbinky/arbitron#38.
 	// The zero value is ready to use.
 	turnInProgress sync.Map // map[uuid.UUID]struct{}
+}
+
+// groupSessionTarget holds the validated session record and its staging directory.
+type groupSessionTarget struct {
+	exec    *instance.NodeExecution
+	workDir string
 }
 
 // NewConversationHandler constructs a new ConversationHandler with all required
@@ -96,6 +125,36 @@ func (h *conversationHandler) SetInterventions(repo instance.InterventionReposit
 // is written. *audit.Service.Record satisfies AuditRecorder with no adapter.
 func (h *conversationHandler) SetAuditRecorder(r AuditRecorder) {
 	h.audit = r
+}
+
+// SetGroupResolution enables parallel_group conflict-resolution sessions:
+// groups resolves the group run (identity authority, staging dir, resolver
+// profile) and completer receives each session's end. Wired by the
+// composition root (P3-T11) with the GroupResolutionBridge.
+func (h *conversationHandler) SetGroupResolution(groups instance.GroupRunRepository, completer GroupResolutionCompleter) {
+	sessions, ok := h.nodeExecs.(instance.OpenSessionRecordUpdater)
+	if !ok {
+		panic("engine: group resolution sessions require a NodeExecutionRepository that implements OpenSessionRecordUpdater")
+	}
+	h.groups = groups
+	h.groupCompleter = completer
+	h.groupSessions = sessions
+}
+
+// persistGroupSession writes a group session record read before this
+// operation only if the STORED record is still open. A session recovery (or
+// any other writer) closed meanwhile keeps its end and reason, and the caller
+// gets ErrNotInteractiveWait so it stops before completing or publishing.
+func (h *conversationHandler) persistGroupSession(ctx context.Context, exec *instance.NodeExecution) error {
+	written, err := h.groupSessions.UpdateIfSessionOpen(ctx, exec)
+	if err != nil {
+		return err
+	}
+	if !written {
+		return fmt.Errorf("conversation: instance %s: parallel_group %q session was closed during this operation: %w",
+			exec.InstanceID, exec.NodeID, instance.ErrNotInteractiveWait)
+	}
+	return nil
 }
 
 // publishInteractiveMessage publishes a single interactive.message event for a
@@ -151,7 +210,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// unauthorized caller (or a send to a non-waiting instance) gets the same
 	// ErrNotFound/ErrForbidden/ErrNotInteractiveWait it always would — it must not
 	// learn whether a turn is in flight (the guard below would otherwise leak that).
-	inst, nodeID, nodeConfig, err := h.loadAndValidate(ctx, instanceID)
+	inst, nodeID, nodeConfig, group, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
 		return err
 	}
@@ -168,14 +227,17 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	}
 	defer h.turnInProgress.Delete(instanceID)
 
-	// 2. Load node execution record.
-	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
+	// 2. Load the session record. A group conflict-resolution session lives on
+	// its OWN record (identified by group run, merge and attempt), not on
+	// whatever record is newest for the node.
+	nodeExec, err := h.sessionExecution(ctx, instanceID, nodeID, group)
 	if err != nil {
-		return fmt.Errorf("conversation: load node execution: %w", err)
+		return err
 	}
 
 	// 3. Parse conversation history.
 	messages := parseConversation(nodeExec.LLMConversation)
+	bus := conversationEvents(h.eventBus, nodeExec.LLMConversation, nodeID)
 
 	// 4. Append user message (in memory only -- not persisted until LLM succeeds).
 	messages = append(messages, map[string]any{
@@ -186,7 +248,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	// 5. Publish interactive.message event for user message, tagging the actor
 	// when an admin (non-owner) is participating, and record an attribution row.
 	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
-		h.eventBus.Publish(instanceID, Event{
+		bus.Publish(instanceID, Event{
 			Type:      EventTypeInteractiveMessage,
 			Timestamp: time.Now(),
 			Data: map[string]any{
@@ -197,7 +259,7 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 		})
 		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveMsg, nil)
 	} else {
-		publishInteractiveMessage(h.eventBus, instanceID, "user", content)
+		publishInteractiveMessage(bus, instanceID, "user", content)
 	}
 
 	// 5a. Resolve the waiting node's model_profile to a binding and select the
@@ -208,24 +270,39 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	if err != nil {
 		return fmt.Errorf("conversation: resolve profile: %w", err)
 	}
+	// A conflict-resolution session edits files in the staging area: it must
+	// run on an AGENT binding, exactly like an interactive_agent node.
+	if group != nil {
+		if err := assertBindingKind(nodeID, workflow.NodeTypeInteractiveAgent, binding.Kind); err != nil {
+			return fmt.Errorf("conversation: group resolution %q: %w", nodeID, err)
+		}
+	}
 	streamProvider, err := h.selector.StreamProviderFor(binding)
 	if err != nil {
 		return fmt.Errorf("conversation: select stream provider: %w", err)
 	}
 
 	// 6. Build the request: resume the stored session, send only the new
-	//    user message. WorkDir comes from the instance's seeded workspace.
+	//    user message. WorkDir comes from the instance's seeded workspace —
+	//    or, for a conflict-resolution session, the gather's STAGING dir: the
+	//    agent never works in the parent's live area or a task's directory.
 	workDir, _ := inst.Variables[ReservedVarWorkspace].(string)
+	var toolScope []string
+	if group != nil {
+		workDir = group.workDir
+		toolScope = binding.AllowedTools
+	}
 	req := ChatRequest{
 		SystemPrompt: nodeConfig.SystemPrompt,
 		Prompt:       content,
 		Model:        binding.Model,
 		SessionID:    SessionID(nodeExec.LLMConversation),
 		WorkDir:      workDir,
+		ToolScope:    toolScope,
 	}
 
 	// 7. Call the provider with streaming.
-	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req)
+	fullResponse, newSessionID, err := h.streamChatResponse(ctx, instanceID, streamProvider, req, bus)
 	if err != nil {
 		// LLM failed -- the user message was never persisted, so there is no
 		// conversation corruption to roll back.
@@ -263,9 +340,9 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 	})
 
 	if completed {
-		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput)
+		return h.handleSessionCompletion(ctx, instanceID, nodeID, nodeExec, messages, persistSessionID, sentinelOutput, group)
 	}
-	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse)
+	return h.handleNormalResponse(ctx, instanceID, nodeExec, messages, persistSessionID, fullResponse, group)
 }
 
 // EndSession handles user-initiated session termination. It captures existing
@@ -273,9 +350,13 @@ func (h *conversationHandler) HandleMessage(ctx context.Context, instanceID uuid
 // the instance to queued, and publishes the interactive.ended event.
 // The output is returned to the caller so it can be sent in the HTTP response
 // before any state transition that might cause a race with the queue manager.
+//
+// For a group conflict-resolution session, ending means "finish and verify":
+// the completer records the attempt's end and wakes the parent, whose gatherer
+// then verifies the staged conflicts (it is NOT an abandon).
 func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UUID) (map[string]any, error) {
 	// 1. Load and validate instance state (auth/state gate first).
-	inst, nodeID, _, err := h.loadAndValidate(ctx, instanceID)
+	inst, nodeID, _, group, err := h.loadAndValidate(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,10 +369,10 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 	}
 	defer h.turnInProgress.Delete(instanceID)
 
-	// 2. Load node execution record.
-	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
+	// 2. Load the session record.
+	nodeExec, err := h.sessionExecution(ctx, instanceID, nodeID, group)
 	if err != nil {
-		return nil, fmt.Errorf("conversation: load node execution: %w", err)
+		return nil, err
 	}
 
 	// 3. Determine output: use existing if present, otherwise empty object.
@@ -299,17 +380,53 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 	if output == nil {
 		output = map[string]any{}
 		nodeExec.Output = output
-		if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
+		if err := h.persistTurn(ctx, nodeExec, group); err != nil {
 			return nil, fmt.Errorf("conversation: persist empty output: %w", err)
 		}
 	}
 
 	// 4. Complete the session (shared with handleSessionCompletion).
-	if err := h.completeSession(ctx, inst, instanceID, nodeID, output, "user_ended"); err != nil {
+	if err := h.completeSession(ctx, inst, instanceID, nodeID, output, "user_ended", group, false); err != nil {
 		return nil, err
 	}
 
 	return output, nil
+}
+
+// AbandonSession closes a group resolution session with durable abandon intent.
+// It shares EndSession's authorization/state gate and turn guard. The completer
+// wakes the parent, whose gatherer rolls back and routes failure on re-entry.
+func (h *conversationHandler) AbandonSession(ctx context.Context, instanceID uuid.UUID) error {
+	inst, nodeID, _, group, err := h.loadAndValidate(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if group == nil {
+		return fmt.Errorf("conversation: instance %s node %s: %w", instanceID, nodeID, ErrNotResolutionSession)
+	}
+	if _, inFlight := h.turnInProgress.LoadOrStore(instanceID, struct{}{}); inFlight {
+		return fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrInteractiveTurnInProgress)
+	}
+	defer h.turnInProgress.Delete(instanceID)
+
+	output := group.exec.Output
+	if output == nil {
+		output = map[string]any{}
+	}
+	return h.completeSession(ctx, inst, instanceID, nodeID, output, "abandoned", group, true)
+}
+
+// sessionExecution returns the record the call addresses: the open group
+// session record, or the node's (newest) record for an interactive node.
+func (h *conversationHandler) sessionExecution(ctx context.Context, instanceID uuid.UUID, nodeID string, group *groupSessionTarget) (*instance.NodeExecution, error) {
+	if group != nil {
+		return group.exec, nil
+	}
+	nodeExec, err := h.nodeExecs.GetByInstanceAndNode(ctx, instanceID, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("conversation: load node execution: %w", err)
+	}
+	return nodeExec, nil
 }
 
 // completeSession performs the shared completion steps for both LLM-initiated
@@ -318,6 +435,9 @@ func (h *conversationHandler) EndSession(ctx context.Context, instanceID uuid.UU
 //   - Transition to queued
 //   - Publish interactive.ended event
 //   - Notify capacity freed
+//
+// A group conflict-resolution session (group != nil) is dispatched to
+// completeGroupSession instead.
 func (h *conversationHandler) completeSession(
 	ctx context.Context,
 	inst *instance.Instance,
@@ -325,7 +445,13 @@ func (h *conversationHandler) completeSession(
 	nodeID string,
 	output map[string]any,
 	reason string,
+	group *groupSessionTarget,
+	abandoned bool,
 ) error {
+	if group != nil {
+		return h.completeGroupSession(ctx, inst, instanceID, nodeID, output, reason, group, abandoned)
+	}
+
 	// 1. Update instance variables with output namespaced under node ID.
 	vars := inst.Variables
 	if vars == nil {
@@ -364,6 +490,57 @@ func (h *conversationHandler) completeSession(
 	return nil
 }
 
+// completeGroupSession ends a group conflict-resolution session. It does NOT
+// write vars[nodeID] (the group's output is the gather's frozen final output)
+// and does NOT transition the instance to queued: the completer records the
+// attempt's outcome and wakes the parent only if it is still waiting at this
+// node (never a cancelled parent). The completer runs FIRST so a failure
+// leaves the session open for a retry; a repeated end then finds the attempt
+// already ended (completer no-op) or the session record closed (gate rejects).
+func (h *conversationHandler) completeGroupSession(
+	ctx context.Context,
+	inst *instance.Instance,
+	instanceID uuid.UUID,
+	nodeID string,
+	output map[string]any,
+	reason string,
+	group *groupSessionTarget,
+	abandoned bool,
+) error {
+	id, ok := GroupResolutionIdentityOf(group.exec.LLMConversation)
+	if !ok {
+		return fmt.Errorf("conversation: group resolution session at %s/%s has no valid identity", instanceID, nodeID)
+	}
+	ref := instance.ResolutionSessionRef{GroupRunID: id.GroupRunID, MergeIndex: id.MergeIndex, Attempt: id.Attempt, InstanceID: instanceID, NodeID: nodeID}
+	if err := h.groupCompleter.OnResolutionSessionEnded(ctx, ref, abandoned); err != nil {
+		return fmt.Errorf("conversation: record resolution session outcome: %w", err)
+	}
+	exec := group.exec
+	exec.LLMConversation = closeGroupSessionConversation(exec.LLMConversation, reason, time.Now())
+	if exec.Output == nil {
+		exec.Output = output
+	}
+	if err := h.persistGroupSession(ctx, exec); err != nil {
+		return fmt.Errorf("conversation: close group resolution session: %w", err)
+	}
+	endedData := map[string]any{
+		"reason":      reason,
+		"output":      output,
+		"sessionKind": ConversationKindGroupResolution,
+	}
+	if actor, isOther := h.nonOwnerActor(ctx, inst); isOther {
+		endedData["actorUserId"] = actor.String()
+		r := reason
+		h.recordInteractiveIntervention(ctx, inst, instance.ActionInteractiveEnded, &r)
+	}
+	conversationEvents(h.eventBus, exec.LLMConversation, nodeID).Publish(instanceID, Event{
+		Type:      EventTypeInteractiveEnded,
+		Timestamp: time.Now(),
+		Data:      endedData,
+	})
+	return nil
+}
+
 // streamChatResponse calls the LLM with streaming and consumes the stream,
 // publishing token events along the way. Returns the full response text and
 // the provider session id (for resumption) from the terminal chunk.
@@ -372,6 +549,7 @@ func (h *conversationHandler) streamChatResponse(
 	instanceID uuid.UUID,
 	chatProvider ChatProvider,
 	req ChatRequest,
+	bus EventBus,
 ) (response string, sessionID string, err error) {
 	stream, err := chatProvider.StreamChat(ctx, req)
 	if err != nil {
@@ -385,7 +563,7 @@ func (h *conversationHandler) streamChatResponse(
 		}
 		if chunk.Token != "" {
 			responseBuilder.WriteString(chunk.Token)
-			h.eventBus.Publish(instanceID, Event{
+			bus.Publish(instanceID, Event{
 				Type:      EventTypeInteractiveToken,
 				Timestamp: time.Now(),
 				Data:      map[string]any{"token": chunk.Token},
@@ -402,12 +580,15 @@ func (h *conversationHandler) streamChatResponse(
 }
 
 // loadAndValidate loads an instance and verifies it is in the waiting state
-// on an interactive node. It returns the instance, current node ID, and the
-// interactive node's config.
-func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uuid.UUID) (*instance.Instance, string, workflow.NodeConfig, error) {
+// on an interactive node — or, once SetGroupResolution is wired, on a
+// parallel_group node whose OPEN conflict-resolution session is the group's
+// active attempt. It returns the instance, current node ID, the node config
+// (synthesized from the group's resolverProfile for a group session) and the
+// group session target (nil for an interactive node).
+func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uuid.UUID) (*instance.Instance, string, workflow.NodeConfig, *groupSessionTarget, error) {
 	inst, err := h.instances.Get(ctx, instanceID)
 	if err != nil {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: load instance: %w", err)
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: load instance: %w", err)
 	}
 
 	// Authorization: participating in (writing to) an interactive session is a
@@ -417,44 +598,87 @@ func (h *conversationHandler) loadAndValidate(ctx context.Context, instanceID uu
 	// peer who cannot intervene gets ErrForbidden. This gate runs before the
 	// state check so a non-viewer never learns the session's state. Because both
 	// HandleMessage and EndSession funnel through here, the WS, REST, and MCP
-	// interactive surfaces all inherit it.
+	// interactive surfaces all inherit it — group sessions included.
 	if !canView(ctx, inst) {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrNotFound)
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrNotFound)
 	}
 	if !canIntervene(ctx, inst) {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrForbidden)
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: instance %s: %w", instanceID, instance.ErrForbidden)
 	}
 
 	if inst.State != instance.StateWaiting {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s (state: %s): %w", instanceID, inst.State, instance.ErrNotInteractiveWait)
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: instance %s (state: %s): %w", instanceID, inst.State, instance.ErrNotInteractiveWait)
 	}
 
 	if inst.CurrentNodeID == nil || *inst.CurrentNodeID == "" {
-		return nil, "", workflow.NodeConfig{}, fmt.Errorf("conversation: instance %s has no current node: %w", instanceID, instance.ErrNotInteractiveWait)
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: instance %s has no current node: %w", instanceID, instance.ErrNotInteractiveWait)
 	}
 	nodeID := *inst.CurrentNodeID
 
-	// Parse the workflow snapshot to get the node config.
-	nodeConfig, err := findInteractiveNodeConfig(inst.WorkflowSnapshot, nodeID)
+	node, err := FindNodeByID(inst.WorkflowSnapshot, nodeID)
 	if err != nil {
-		return nil, "", workflow.NodeConfig{}, err
+		return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: %w", err)
 	}
-
-	return inst, nodeID, nodeConfig, nil
+	if workflow.IsInteractive(node.Type) {
+		return inst, nodeID, node.Config, nil, nil
+	}
+	if node.Type == workflow.NodeTypeParallelGroup && h.groups != nil && h.groupCompleter != nil {
+		target, cfg, err := h.openGroupSession(ctx, inst, nodeID)
+		if err != nil {
+			return nil, "", workflow.NodeConfig{}, nil, err
+		}
+		return inst, nodeID, cfg, target, nil
+	}
+	return nil, "", workflow.NodeConfig{}, nil, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
 }
 
-// findInteractiveNodeConfig parses the workflow snapshot and returns the config
-// for the specified node, verifying it is an interactive node.
-func findInteractiveNodeConfig(snapshot map[string]any, nodeID string) (workflow.NodeConfig, error) {
-	node, err := FindNodeByID(snapshot, nodeID)
+// openGroupSession admits a parallel_group node ONLY when the group is
+// resolving conflicts AND the node's newest record is an open
+// group-resolution session whose identity equals the run's ActiveSession. The
+// group's wait trace, an ended session, and an earlier merge's or attempt's
+// session are all refused with ErrNotInteractiveWait.
+func (h *conversationHandler) openGroupSession(ctx context.Context, inst *instance.Instance, nodeID string) (*groupSessionTarget, workflow.NodeConfig, error) {
+	notOpen := func(why string) error {
+		return fmt.Errorf("conversation: instance %s: parallel_group %q has no open conflict-resolution session (%s): %w",
+			inst.ID, nodeID, why, instance.ErrNotInteractiveWait)
+	}
+	run, err := h.groups.GetByParentNode(ctx, inst.ID, nodeID)
 	if err != nil {
-		return workflow.NodeConfig{}, fmt.Errorf("conversation: %w", err)
+		return nil, workflow.NodeConfig{}, fmt.Errorf("conversation: load group run: %w", err)
 	}
-
-	if !workflow.IsInteractive(node.Type) {
-		return workflow.NodeConfig{}, fmt.Errorf("conversation: node %s is not interactive (type: %s)", nodeID, node.Type)
+	if run == nil {
+		return nil, workflow.NodeConfig{}, notOpen("no group run")
 	}
-	return node.Config, nil
+	if run.State != instance.GroupRunResolvingConflicts || run.Gather == nil || run.Gather.ActiveSession == nil {
+		return nil, workflow.NodeConfig{}, notOpen("the group is not resolving conflicts")
+	}
+	exec, err := latestNodeExecution(ctx, h.nodeExecs, inst.ID, nodeID)
+	if err != nil {
+		return nil, workflow.NodeConfig{}, fmt.Errorf("conversation: load node execution: %w", err)
+	}
+	if exec == nil {
+		return nil, workflow.NodeConfig{}, notOpen("no session record")
+	}
+	ident, ok := GroupResolutionIdentityOf(exec.LLMConversation)
+	if !ok || !ident.Open {
+		return nil, workflow.NodeConfig{}, notOpen("the newest record is not an open resolution session")
+	}
+	active := run.Gather.ActiveSession
+	if active.GroupRunID != run.ID || active.InstanceID != inst.ID || active.NodeID != nodeID ||
+		ident.GroupRunID != run.ID || ident.MergeIndex != active.MergeIndex || ident.Attempt != active.Attempt {
+		return nil, workflow.NodeConfig{}, notOpen(fmt.Sprintf("session for merge %d attempt %d is not the active merge %d attempt %d",
+			ident.MergeIndex, ident.Attempt, active.MergeIndex, active.Attempt))
+	}
+	handle, ok := GatherHandleFromReport(run.Gather)
+	if !ok {
+		return nil, workflow.NodeConfig{}, fmt.Errorf("conversation: group run %s has no staged gather to resolve in", run.ID)
+	}
+	profile := groupConfigString(run.Config, "resolverProfile")
+	if profile == "" {
+		return nil, workflow.NodeConfig{}, fmt.Errorf("conversation: parallel_group %q has no resolverProfile", nodeID)
+	}
+	return &groupSessionTarget{exec: exec, workDir: handle.StagingDir},
+		workflow.NodeConfig{ModelProfile: profile}, nil
 }
 
 // FindNodeByID parses a workflow snapshot and returns the node with the given ID.
@@ -523,6 +747,21 @@ func parseConversation(conv map[string]any) []map[string]any {
 	}
 }
 
+// nextConversation carries every key of prev forward — the nonce and, for a
+// group conflict-resolution session, its identity — and replaces the session
+// id and messages. For an ordinary interactive conversation (sessionId, nonce,
+// messages only) the result has exactly the keys it always had.
+func nextConversation(prev map[string]any, sessionID string, messages []map[string]any) map[string]any {
+	out := make(map[string]any, len(prev)+3)
+	for k, v := range prev {
+		out[k] = v
+	}
+	out[ConversationKeySessionID] = sessionID
+	out[ConversationKeyNonce] = conversationNonce(prev)
+	out[ConversationKeyMessages] = messages
+	return out
+}
+
 // handleSessionCompletion processes a session completion signalled by the
 // result sentinel block in the LLM response.
 func (h *conversationHandler) handleSessionCompletion(
@@ -533,22 +772,19 @@ func (h *conversationHandler) handleSessionCompletion(
 	messages []map[string]any,
 	sessionID string,
 	output map[string]any,
+	group *groupSessionTarget,
 ) error {
 	// 1. Persist the conversation (assistant message already appended by the
-	//    caller) with the refreshed session id. Carry the nonce forward so
-	//    subsequent turns continue to scope sentinel parsing.
-	nonce := conversationNonce(nodeExec.LLMConversation)
-	nodeExec.LLMConversation = map[string]any{
-		ConversationKeySessionID: sessionID,
-		ConversationKeyNonce:     nonce,
-		ConversationKeyMessages:  messages,
-	}
+	//    caller) with the refreshed session id. Carry the nonce (and any group
+	//    session identity) forward.
+	nodeExec.LLMConversation = nextConversation(nodeExec.LLMConversation, sessionID, messages)
 
 	// 2. Store structured output on node execution.
 	nodeExec.Output = output
 
-	// 3. Persist node execution.
-	if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
+	// 3. Persist node execution. A group session closed during the stream
+	//    (recovery) stays closed and is never completed by this turn.
+	if err := h.persistTurn(ctx, nodeExec, group); err != nil {
 		return fmt.Errorf("conversation: persist session completion: %w", err)
 	}
 
@@ -559,7 +795,7 @@ func (h *conversationHandler) handleSessionCompletion(
 	}
 
 	// 5. Complete the session (shared steps).
-	return h.completeSession(ctx, inst, instanceID, nodeID, output, "llm_completed")
+	return h.completeSession(ctx, inst, instanceID, nodeID, output, "llm_completed", group, false)
 }
 
 // handleNormalResponse persists the assistant's text response to the
@@ -571,23 +807,29 @@ func (h *conversationHandler) handleNormalResponse(
 	messages []map[string]any,
 	sessionID string,
 	fullResponse string,
+	group *groupSessionTarget,
 ) error {
 	// 1. Persist the conversation with the refreshed session id. Carry the
-	//    nonce forward so subsequent turns continue to scope sentinel parsing.
-	nonce := conversationNonce(nodeExec.LLMConversation)
-	nodeExec.LLMConversation = map[string]any{
-		ConversationKeySessionID: sessionID,
-		ConversationKeyNonce:     nonce,
-		ConversationKeyMessages:  messages,
-	}
+	//    nonce (and any group session identity) forward so subsequent turns
+	//    continue to scope sentinel parsing and address the same session.
+	nodeExec.LLMConversation = nextConversation(nodeExec.LLMConversation, sessionID, messages)
 
-	// 2. Persist.
-	if err := h.nodeExecs.Update(ctx, nodeExec); err != nil {
+	// 2. Persist (a group session closed during the stream stays closed).
+	if err := h.persistTurn(ctx, nodeExec, group); err != nil {
 		return fmt.Errorf("conversation: persist assistant response: %w", err)
 	}
 
 	// 3. Publish interactive.message event for assistant.
-	publishInteractiveMessage(h.eventBus, instanceID, "assistant", fullResponse)
+	publishInteractiveMessage(conversationEvents(h.eventBus, nodeExec.LLMConversation, nodeExec.NodeID), instanceID, "assistant", fullResponse)
 
 	return nil
+}
+
+// persistTurn writes a turn's record: unconditionally for an interactive
+// node, guarded by "still open" for a group resolution session.
+func (h *conversationHandler) persistTurn(ctx context.Context, exec *instance.NodeExecution, group *groupSessionTarget) error {
+	if group != nil {
+		return h.persistGroupSession(ctx, exec)
+	}
+	return h.nodeExecs.Update(ctx, exec)
 }

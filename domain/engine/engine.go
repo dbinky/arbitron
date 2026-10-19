@@ -38,15 +38,21 @@ type Engine struct {
 	interventions    instance.InterventionRepository
 	auditRecorder    AuditRecorder // optional; emits lead_intervention/admin.override audit events
 	workspaceManager WorkspaceManager
-	publishers       workflow.PublisherLookup // optional; gates the trigger read path by visibility
-	resolver         IDResolver               // optional; workflow identity (id<->name + archived) seam
-	enricher         *InstanceEnricher        // optional; when set, ListEnriched uses it
+	// groupFinalizer is the optional group-task terminal hook; nil keeps the
+	// plain completion path. Configured before starting instances.
+	groupFinalizer GroupTaskFinalizer
+	publishers     workflow.PublisherLookup // optional; gates the trigger read path by visibility
+	resolver       IDResolver               // optional; workflow identity (id<->name + archived) seam
+	enricher       *InstanceEnricher        // optional; when set, ListEnriched uses it
 	// spawnLinks is the link-addressed read surface. It is NEVER nil: NewEngine
 	// installs NoopSpawnLinks{} and SetSpawnLinks rejects nil, so the cancel
 	// cascade can never be silently downgraded to a no-op by a missed wiring
 	// step. Opting out is possible but must be spelled NoopSpawnLinks{}, whose
 	// doc comment states that it disables descendant cancellation.
 	spawnLinks instance.SpawnLinkRepository
+	// groupHandler receives terminal group-task children instead of the legacy
+	// wake. Guarded by mu; read through groupTerminalHandler.
+	groupHandler GroupTerminalHandler
 	// profiles resolves a node's model_profile so node.started can describe the
 	// binding the node runs on. NEVER nil: NoopProfileResolver{} until wired.
 	profiles provider.ProfileResolver
@@ -54,6 +60,10 @@ type Engine struct {
 	// onto node events when a node has BackendUnset. It is deployment config,
 	// injected at construction — not read through the presentation enricher.
 	defaultAgentBackend string
+	// groupSupport is the parallel_group execution level (see group_support.go).
+	// Zero value GroupSupportNone refuses every group-bearing trigger; guarded
+	// by mu and raised only by the composition root via SetGroupSupport.
+	groupSupport GroupSupport
 	// executorsFrozen seals the executor map. Registration and lookup both go
 	// through mu, and freezing makes a post-startup registration a loud panic
 	// rather than a data race — see RegisterExecutor.
@@ -379,6 +389,48 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		ctx = context.Background()
 	}
 
+	spec := triggerSpec{
+		workflowName:       workflowName,
+		variables:          variables,
+		priority:           priority,
+		departmentOverride: departmentOverride,
+	}
+	// The parent/child spawn link rides the context (Engine.Spawn sets it via
+	// instance.WithSpawnLink). An INCOMPLETE link is ignored by trigger, exactly
+	// as before.
+	if l, ok := instance.SpawnLinkFromContext(ctx); ok {
+		// Only StartGroupTask may supply the internal mode through triggerSpec:
+		// a public trigger has no reserved roster row to receive its terminal.
+		// Reject even partial group links instead of silently creating a root.
+		if l.Mode == instance.SpawnModeGroupTask {
+			return uuid.Nil, false, fmt.Errorf("trigger workflow %q: group_task mode requires StartGroupTask", workflowName)
+		}
+		spec.link = &l
+	}
+	return e.trigger(ctx, spec)
+}
+
+// triggerSpec is everything one run creation needs. TriggerWithDepartment
+// builds it from its arguments and the context-carried spawn link;
+// StartGroupTask builds it with a RESERVED instance id and a group-task link,
+// so a workflow-kind group task is created through the identical
+// owner / visibility / archive / input / stamping pipeline as any trigger.
+type triggerSpec struct {
+	workflowName       string
+	variables          map[string]any
+	priority           string
+	departmentOverride string
+	// instanceID is the id the run is created under; uuid.Nil mints a fresh one.
+	instanceID uuid.UUID
+	// link is the parent link to stamp; nil or incomplete creates a root run.
+	link *instance.SpawnLink
+}
+
+// trigger is the body TriggerWithDepartment always had, parameterized by spec.
+func (e *Engine) trigger(ctx context.Context, spec triggerSpec) (uuid.UUID, bool, error) {
+	workflowName := spec.workflowName
+	variables := spec.variables
+
 	// Resolve the triggering owner: the context identity for REST/MCP triggers,
 	// or the default user for system triggers (scheduler/webhook) that carry no
 	// identity. The workflow is resolved across the owner's visible scopes
@@ -397,6 +449,15 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	wf, scope, err := workflow.LoadVisibleFiltered(ctx, e.workflows, owner, workflowName, filter)
 	if err != nil {
 		return uuid.Nil, false, fmt.Errorf("failed to load workflow: %w", err)
+	}
+
+	// Refuse a parallel_group this server cannot execute (P1-C) BEFORE anything
+	// is built, stamped, created or enqueued. It runs AFTER the visibility-gated
+	// load so an invisible workflow still reports not-found. Every
+	// instance-creating path — REST/MCP trigger, Rerun, Spawn, schedules —
+	// funnels through this function, so this one check covers them all.
+	if err := checkGroupSupport(wf, e.GroupSupportLevel()); err != nil {
+		return uuid.Nil, false, err
 	}
 
 	// Refuse to trigger an archived workflow. IsArchived is part of the resolver
@@ -429,7 +490,7 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	// trigger before any instance is created.
 	vis, pubDept := e.resolvePublication(ctx, scope, workflowName)
 	callerID, _ := identity.FromContext(ctx)
-	st, stErr := resolveStamp(callerID, vis, pubDept, departmentOverride)
+	st, stErr := resolveStamp(callerID, vis, pubDept, spec.departmentOverride)
 	if stErr != nil {
 		return uuid.Nil, false, stErr
 	}
@@ -503,32 +564,37 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 	// (cron fireOne, run-now Runner.Fire) set it via instance.WithOrigin. The
 	// engine reads it WITHOUT importing the schedule package, the same
 	// one-directional edge identity uses.
-	triggerSource := instance.OriginManual
-	var scheduleID *uuid.UUID
-	if o, ok := instance.OriginFromContext(ctx); ok {
-		triggerSource = o.Source
-		scheduleID = o.ScheduleID
-	}
+	triggerSource, scheduleID := triggerOrigin(ctx)
 
-	// Stamp the parent/child spawn link from the trigger context. It rides the
-	// SAME context-carried creation-time mechanism as Origin above, and is
-	// stamped into the SAME Instance literal below — never as a follow-up write.
-	// This trigger path creates AND enqueues, so a link written after enqueue
-	// could lose a race with a fast child reaching a terminal state, leaving its
-	// waiting parent with nothing to match. An INCOMPLETE link is ignored
-	// entirely rather than partially persisted.
+	// Stamp the parent/child link from the spec. It is stamped into the SAME
+	// Instance literal below — never as a follow-up write. This trigger path
+	// creates AND enqueues, so a link written after enqueue could lose a race
+	// with a fast child reaching a terminal state, leaving its waiting parent
+	// with nothing to match. An INCOMPLETE link is ignored entirely rather than
+	// partially persisted. A group-task link additionally carries the group run
+	// and task key, stamped in the same literal for the same reason.
 	var parentInstanceID *uuid.UUID
 	var parentNodeID *string
 	var spawnMode instance.SpawnMode
+	var groupRunID *uuid.UUID
+	var groupTaskKey *string
+	var groupTaskKind instance.GroupTaskKind
 	// spawnDepth stays 0 for a root run, which is exactly what a root's depth is.
 	spawnDepth := 0
-	if l, ok := instance.SpawnLinkFromContext(ctx); ok && l.Valid() {
+	if l := spec.link; l != nil && l.Valid() {
 		p := l.ParentInstanceID
 		n := l.ParentNodeID
 		parentInstanceID = &p
 		parentNodeID = &n
 		spawnMode = l.Mode
 		spawnDepth = l.SpawnDepth
+		if l.Mode == instance.SpawnModeGroupTask {
+			g := l.GroupRunID
+			k := l.GroupTaskKey
+			groupRunID = &g
+			groupTaskKey = &k
+			groupTaskKind = l.GroupTaskKind
+		}
 	}
 
 	// Resolve the stable workflow id (name->id) so the run carries an identity
@@ -544,8 +610,15 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		}
 	}
 
+	// A group task is created under the id its roster RESERVED before enqueue;
+	// every other trigger mints a fresh one.
+	id := spec.instanceID
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
+
 	inst := &instance.Instance{
-		ID:                uuid.New(),
+		ID:                id,
 		OwnerID:           ownerID,
 		WorkflowID:        workflowID,
 		WorkflowName:      workflowName,
@@ -558,8 +631,11 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		ParentNodeID:      parentNodeID,
 		SpawnMode:         spawnMode,
 		SpawnDepth:        spawnDepth,
+		GroupRunID:        groupRunID,
+		GroupTaskKey:      groupTaskKey,
+		GroupTaskKind:     groupTaskKind,
 		State:             instance.StateQueued,
-		Priority:          instance.Priority(priority),
+		Priority:          instance.Priority(spec.priority),
 		Variables:         snap,
 		OriginalVariables: origVars,
 		QueuedAt:          &now,
@@ -567,22 +643,41 @@ func (e *Engine) TriggerWithDepartment(ctx context.Context, workflowName string,
 		UpdatedAt:         now,
 	}
 
+	started, err := e.createAndEnqueue(ctx, inst)
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return inst.ID, started, nil
+}
+
+// createAndEnqueue is the tail every run-creation path shares: persist the
+// row, announce it, and hand it to the queue. The error strings are the ones
+// TriggerWithDepartment has always returned.
+func (e *Engine) createAndEnqueue(ctx context.Context, inst *instance.Instance) (bool, error) {
 	if err := e.instances.Create(ctx, inst); err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to create instance: %w", err)
+		return false, fmt.Errorf("failed to create instance: %w", err)
 	}
 
 	e.eventBus.Publish(inst.ID, Event{
-		Type:      "instance.created",
-		Timestamp: now,
-		Data:      map[string]any{"workflowName": workflowName},
+		Type:      EventTypeInstanceCreated,
+		Timestamp: inst.CreatedAt,
+		Data:      map[string]any{"workflowName": inst.WorkflowName},
 	})
 
 	started, err := e.queueManager.Enqueue(ctx, inst.ID, inst.OwnerID)
 	if err != nil {
-		return uuid.Nil, false, fmt.Errorf("failed to enqueue instance: %w", err)
+		return false, fmt.Errorf("failed to enqueue instance: %w", err)
 	}
+	return started, nil
+}
 
-	return inst.ID, started, nil
+// triggerOrigin reads the run provenance carried on ctx (instance.WithOrigin),
+// defaulting to a manual trigger with no schedule.
+func triggerOrigin(ctx context.Context) (instance.TriggerSource, *uuid.UUID) {
+	if o, ok := instance.OriginFromContext(ctx); ok {
+		return o.Source, o.ScheduleID
+	}
+	return instance.OriginManual, nil
 }
 
 // ListInstances returns the instances visible to the caller. The owner filter
@@ -873,6 +968,8 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		}
 	}
 
+	// A finalization failure is recorded against the last node executed.
+	var lastNodeID string
 	for currentNodeID != "" {
 		// TODO(race): There is a TOCTOU race between Pause() writing StatePaused
 		// and this loop reading the fresh state. If the pause arrives between Get()
@@ -943,6 +1040,7 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		})
 
 		// Execute the node with retry logic. Each attempt is individually recorded.
+		lastNodeID = currentNodeID
 		execCtx := ContextWithInstanceID(ctx, instanceID)
 		result, nodeExec, execErr := e.executeWithRetry(execCtx, instanceID, node, vars, *wf)
 
@@ -961,7 +1059,10 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		}
 	}
 
-	// All nodes executed successfully.
+	// Finalize group files before publishing success or removing the workspace.
+	if !e.finalizeGroupTask(ctx, inst, workflowName, lastNodeID) {
+		return
+	}
 	if err := e.instances.SetCompleted(ctx, instanceID); err != nil {
 		slog.Error("failed to set instance completed", "instanceID", instanceID, "error", err)
 		// Persistence failed: keep the workspace for debugging/retry. Log
@@ -970,8 +1071,12 @@ func (e *Engine) run(ctx context.Context, instanceID uuid.UUID) {
 		e.warnWorkspaceRetained(instanceID, "set_completed_failed")
 	} else {
 		e.emitNotification(ctx, instanceID, workflowName, notification.TypeCompleted)
-		// Workspace is removed only after SetCompleted succeeds.
-		e.cleanupWorkspace(instanceID)
+		// Keep workspaces still needed by gathering or active descendants.
+		if e.retainGroupTaskWorkspace(ctx, inst) {
+			e.warnWorkspaceRetained(instanceID, "group_task_retained")
+		} else {
+			e.cleanupWorkspace(instanceID)
+		}
 		// A completed run may be somebody's awaited child.
 		e.OnChildTerminal(context.Background(), instanceID)
 	}
@@ -1030,6 +1135,42 @@ func (e *Engine) handleNodeError(
 		Timestamp: time.Now(),
 		Data:      map[string]any{"nodeId": currentNodeID, "nodeType": string(node.Type), "nodeLabel": flabel, "backend": fbackend, "error": execErr.Error()},
 	})
+
+	var pendingGather *pendingFileGatherError
+	if errors.As(execErr, &pendingGather) {
+		// Gathering may have changed files before a storage/verification error.
+		// Keep the cursor here and let the gather reconciler wake the parent;
+		// skip/route/retry must never continue with an unfrozen gather output.
+		// The suspension is a running->waiting CAS: Cancel commits `cancelled`
+		// before it cancels ctx, so the check above can miss it, and an
+		// unconditional write would revive the parent for the reconciler to wake.
+		// Detached: a cancellation landing now must lose the CAS, not fail it.
+		slog.Warn("file gather interrupted; suspending for reconciliation", "instanceID", instanceID, "nodeID", currentNodeID, "error", execErr)
+		suspended, err := pendingGather.suspend(context.WithoutCancel(ctx))
+		switch {
+		case err != nil:
+			slog.Error("failed to suspend interrupted file gather", "instanceID", instanceID, "error", err)
+			e.failInstance(ctx, instanceID, currentNodeID)
+		case !suspended:
+			slog.Info("interrupted file gather: the parent left running before it could be suspended; its new state stands",
+				"instanceID", instanceID, "nodeID", currentNodeID)
+		}
+		return "", true
+	}
+
+	var pendingWait *pendingGroupWaitError
+	if errors.As(execErr, &pendingWait) {
+		// The fixed roster is already running. Preserve the cursor and release
+		// capacity; terminal callbacks or the group sweep will wake this node.
+		// If storage still refuses waiting, halt as failed rather than routing
+		// past the group. The diagnostic execution retains the original error.
+		slog.Warn("parallel group wait interrupted; suspending for reconciliation", "instanceID", instanceID, "nodeID", currentNodeID, "error", execErr)
+		if err := e.instances.UpdateState(ctx, instanceID, instance.StateWaiting); err != nil {
+			slog.Error("failed to suspend interrupted parallel group", "instanceID", instanceID, "error", err)
+			e.failInstance(ctx, instanceID, currentNodeID)
+		}
+		return "", true
+	}
 
 	eb := resolveErrorBehavior(node, wf)
 
@@ -1195,6 +1336,11 @@ func (e *Engine) executeWithRetry(ctx context.Context, instanceID uuid.UUID, nod
 		if err == nil {
 			return result, nodeExec, nil
 		}
+		var pendingGather *pendingFileGatherError
+		var pendingWait *pendingGroupWaitError
+		if errors.As(err, &pendingGather) || errors.As(err, &pendingWait) {
+			return nil, nodeExec, err
+		}
 		lastErr = err
 	}
 
@@ -1257,14 +1403,18 @@ func (e *Engine) emitNotification(ctx context.Context, instanceID uuid.UUID, wor
 		slog.Error("failed to create notification", "instanceID", instanceID, "error", err)
 		return
 	}
-	e.eventBus.Publish(instanceID, Event{
+	e.publishNotification(ctx, n)
+}
+
+func (e *Engine) publishNotification(ctx context.Context, n *notification.Notification) {
+	e.eventBus.Publish(n.InstanceID, Event{
 		Type:      "notification.created",
 		Timestamp: time.Now(),
 		Data:      notificationEventData(n),
 	})
 	if e.externalNotifier != nil {
 		if err := e.externalNotifier.Notify(ctx, n); err != nil {
-			slog.Error("external notifier failed", "instanceID", instanceID, "error", err)
+			slog.Error("external notifier failed", "instanceID", n.InstanceID, "error", err)
 		}
 	}
 }
@@ -1517,8 +1667,13 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 }
 
 // Cancel sets a running, queued, paused, or waiting instance to cancelled and
-// cancels its context/timer as appropriate, then cancels every active child it
-// spawned, recursively.
+// cancels its context/timer as appropriate, then cancels every active descendant,
+// traversing terminal intermediates without changing their outcomes.
+//
+// An authorized terminal parent is left untouched, but its subtree cancellation
+// intent is durably stamped before the walk. The call succeeds if any descendant
+// was cancelled, otherwise returning the original ErrCannotCancel. Stamp failures
+// fail closed; authorization or storage failures on the parent cascade nothing.
 //
 // ORDER IS A CORRECTNESS REQUIREMENT, NOT A STYLE PREFERENCE. The child-terminal
 // wake only re-queues a parent that is STILL in the waiting state. Cancelling
@@ -1528,11 +1683,19 @@ func (e *Engine) publishResumedEvent(instanceID uuid.UUID) {
 // down. Reversing the order produces a parent that flips from cancelled back to
 // queued.
 func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
-	if err := e.cancelAuthorized(ctx, instanceID); err != nil {
-		return err
+	ownErr := e.cancelAuthorized(ctx, instanceID)
+	if ownErr != nil && !errors.Is(ownErr, instance.ErrCannotCancel) {
+		return ownErr
+	}
+	if ownErr != nil {
+		// ErrCannotCancel is returned only after authorization. A terminal
+		// parent's outcome cannot carry intent, so persist it separately first.
+		if err := e.spawnLinks.MarkSubtreeCancelRequested(context.WithoutCancel(ctx), instanceID); err != nil {
+			return fmt.Errorf("recording subtree cancellation of %s: %w", instanceID, err)
+		}
 	}
 	// DETACH the cascade from the caller's request. The parent is already
-	// cancelled at this point, so the walk MUST run to completion: on the
+	// cancelled or terminal, so the walk MUST run to completion: on the
 	// request context, a client disconnect or a write timeout part-way through
 	// would silently strand the rest of the subtree — active descendants running
 	// with the parent's inherited credentials and nobody watching. This is the
@@ -1542,7 +1705,24 @@ func (e *Engine) Cancel(ctx context.Context, instanceID uuid.UUID) error {
 	// re-authorizes every descendant from the identity carried on ctx: dropping
 	// the values would turn the cascade into an unauthenticated walk. Only
 	// cancellation and the deadline are shed.
-	e.cascadeCancel(context.WithoutCancel(ctx), instanceID, map[uuid.UUID]bool{instanceID: true})
+	stopped := e.cascadeCancel(context.WithoutCancel(ctx), instanceID, map[uuid.UUID]bool{instanceID: true})
+	if ownErr != nil && stopped == 0 {
+		return ownErr
+	}
+	return nil
+}
+
+// CancelGroupTask cancels an unfinished group task and its descendants on
+// behalf of the group's unfinished-task behaviour. Unlike Cancel, a task that
+// is already terminal (including one whose completion wins the race with this
+// call) returns ErrCannotCancel with no subtree intent stamped and nothing
+// below it touched: its own fire-and-forget work is not the group's unfinished
+// work. An operator's subtree cancel of the parent reaches it through Cancel.
+func (e *Engine) CancelGroupTask(ctx context.Context, taskID uuid.UUID) error {
+	if err := e.cancelAuthorized(ctx, taskID); err != nil {
+		return err
+	}
+	e.cascadeCancel(context.WithoutCancel(ctx), taskID, map[uuid.UUID]bool{taskID: true})
 	return nil
 }
 
@@ -1559,8 +1739,8 @@ func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) err
 
 	switch inst.State {
 	case instance.StateRunning:
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
-			return fmt.Errorf("failed to update state: %w", err)
+		if err := e.setCancelledState(ctx, instanceID); err != nil {
+			return err
 		}
 		e.mu.Lock()
 		if cancelFn, ok := e.contexts[instanceID]; ok {
@@ -1572,16 +1752,16 @@ func (e *Engine) cancelAuthorized(ctx context.Context, instanceID uuid.UUID) err
 
 	case instance.StateWaiting:
 		e.deactivateWaitResources(instanceID, inst)
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
-			return fmt.Errorf("failed to update state: %w", err)
+		if err := e.setCancelledState(ctx, instanceID); err != nil {
+			return err
 		}
 		e.publishCancelledEvent(instanceID)
 		e.queueManager.NotifyCapacityFreed(context.Background())
 
 	case instance.StatePaused, instance.StateQueued:
 		e.deactivateWaitResources(instanceID, inst)
-		if err := e.instances.UpdateState(ctx, instanceID, instance.StateCancelled); err != nil {
-			return fmt.Errorf("failed to update state: %w", err)
+		if err := e.setCancelledState(ctx, instanceID); err != nil {
+			return err
 		}
 		e.publishCancelledEvent(instanceID)
 
@@ -1624,6 +1804,12 @@ func (e *Engine) Retry(ctx context.Context, instanceID uuid.UUID, variableEdits 
 	}
 	if inst.State != instance.StateFailed {
 		return fmt.Errorf("instance %s is not failed (state: %s): %w", instanceID, inst.State, instance.ErrNotFailed)
+	}
+	// Group task terminals are immutable receipts, even before the group decides.
+	// Refuse before edits, cursor changes or dismissal clearing: the storage
+	// trigger rejects reopening too late to protect those earlier writes.
+	if inst.IsGroupTask() {
+		return fmt.Errorf("group task %s has an immutable terminal outcome: %w", instanceID, instance.ErrCannotRetry)
 	}
 
 	// Apply variable edits.
@@ -1762,6 +1948,13 @@ func (e *Engine) Shutdown() {
 
 // RecoverCrashedInstances finds instances that are in running state
 // (from a previous crash) and sets them to failed.
+//
+// It deliberately does NOT call OnChildTerminal. Startup reconcilers run by
+// the composition root immediately afterwards read persisted states:
+// SpawnWaitReconciler resumes legacy parents whose awaited children crashed;
+// GroupCoordinator.Reconcile takes in failed tasks and cancels active tasks
+// under failed parents. Dispatching here would duplicate that work and run
+// coordinator side effects before queue timers and webhooks are recovered.
 func (e *Engine) RecoverCrashedInstances() error {
 	ctx := context.Background()
 	running, err := e.instances.ListRunning(ctx)

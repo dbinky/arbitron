@@ -262,7 +262,14 @@ func instanceCancelHandler(srv *Server) server.ToolHandlerFunc {
 		if err := srv.deps.Engine.Cancel(ctx, id); err != nil {
 			return gomcp.NewToolResultError(fmt.Sprintf("failed to cancel instance: %s", err)), nil
 		}
-		return MarshalResult(map[string]string{"status": "cancelled", "id": id.String()})
+		// A terminal parent is not reopened; only its descendants are stopped, so
+		// report the state the instance actually ended in.
+		resp := map[string]string{"status": "cancel_requested", "id": id.String()}
+		if inst, err := srv.deps.Engine.GetInstance(ctx, id); err == nil && inst != nil {
+			resp["status"] = instance.CancelStatus(inst.State)
+			resp["state"] = string(inst.State)
+		}
+		return MarshalResult(resp)
 	}
 }
 

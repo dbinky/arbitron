@@ -1,0 +1,943 @@
+[
+  {
+    "name": "unknown-entry",
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "unknown-entry",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "transform",
+          "config": {},
+          "label": "START",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "g",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "a",
+                  "entry": "a1"
+                },
+                {
+                  "key": "b",
+                  "entry": "b1"
+                },
+                {
+                  "key": "missing",
+                  "entry": "missing"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "G",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a1",
+          "type": "transform",
+          "config": {},
+          "label": "A1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "transform",
+          "config": {},
+          "label": "A2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b1",
+          "type": "transform",
+          "config": {},
+          "label": "B1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "transform",
+          "config": {},
+          "label": "DONE",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "fail",
+          "type": "transform",
+          "config": {},
+          "label": "FAIL",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "g"
+        },
+        {
+          "source": "g",
+          "target": "a1",
+          "output": "task",
+          "label": "a"
+        },
+        {
+          "source": "g",
+          "target": "b1",
+          "output": "task",
+          "label": "b"
+        },
+        {
+          "source": "a1",
+          "target": "a2"
+        },
+        {
+          "source": "g",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "g",
+          "target": "fail",
+          "output": "failure"
+        },
+        {
+          "source": "g",
+          "target": "missing",
+          "output": "task",
+          "label": "missing"
+        }
+      ]
+    },
+    "layout": {
+      "groups": {
+        "g": {
+          "nodeId": "g",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "a",
+                "entry": "a1"
+              },
+              {
+                "key": "b",
+                "entry": "b1"
+              },
+              {
+                "key": "missing",
+                "entry": "missing"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "a": [
+              "a1",
+              "a2"
+            ],
+            "b": [
+              "b1"
+            ]
+          },
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "fail"
+        }
+      },
+      "owner": {
+        "a1": {
+          "groupNodeId": "g",
+          "taskKey": "a"
+        },
+        "a2": {
+          "groupNodeId": "g",
+          "taskKey": "a"
+        },
+        "b1": {
+          "groupNodeId": "g",
+          "taskKey": "b"
+        }
+      },
+      "order": [
+        "g"
+      ]
+    }
+  },
+  {
+    "name": "duplicate-workflows",
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "duplicate-workflows",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "transform",
+          "config": {},
+          "label": "START",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "g",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "workflows",
+              "tasks": [
+                {
+                  "key": "dup",
+                  "workflow": "child-a"
+                },
+                {
+                  "key": "dup",
+                  "workflow": "child-b"
+                },
+                {
+                  "key": "",
+                  "workflow": "empty-key"
+                },
+                {
+                  "key": "last",
+                  "workflow": "child-c"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "G",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a1",
+          "type": "transform",
+          "config": {},
+          "label": "A1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "transform",
+          "config": {},
+          "label": "A2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b1",
+          "type": "transform",
+          "config": {},
+          "label": "B1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "transform",
+          "config": {},
+          "label": "DONE",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "fail",
+          "type": "transform",
+          "config": {},
+          "label": "FAIL",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "g"
+        },
+        {
+          "source": "a1",
+          "target": "a2"
+        },
+        {
+          "source": "g",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "g",
+          "target": "fail",
+          "output": "failure"
+        }
+      ]
+    },
+    "layout": {
+      "groups": {
+        "g": {
+          "nodeId": "g",
+          "config": {
+            "form": "workflows",
+            "tasks": [
+              {
+                "key": "dup",
+                "workflow": "child-a"
+              },
+              {
+                "key": "dup",
+                "workflow": "child-b"
+              },
+              {
+                "key": "",
+                "workflow": "empty-key"
+              },
+              {
+                "key": "last",
+                "workflow": "child-c"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {},
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "fail"
+        }
+      },
+      "owner": {},
+      "order": [
+        "g"
+      ]
+    }
+  },
+  {
+    "name": "shared-body",
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "shared-body",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "transform",
+          "config": {},
+          "label": "START",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "g",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "a",
+                  "entry": "a1"
+                },
+                {
+                  "key": "b",
+                  "entry": "a1"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "wait_for_remaining",
+              "gatherMode": "results"
+            }
+          },
+          "label": "G",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a1",
+          "type": "transform",
+          "config": {},
+          "label": "A1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "transform",
+          "config": {},
+          "label": "A2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b1",
+          "type": "transform",
+          "config": {},
+          "label": "B1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "transform",
+          "config": {},
+          "label": "DONE",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "fail",
+          "type": "transform",
+          "config": {},
+          "label": "FAIL",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "g"
+        },
+        {
+          "source": "g",
+          "target": "a1",
+          "output": "task",
+          "label": "a"
+        },
+        {
+          "source": "g",
+          "target": "a1",
+          "output": "task",
+          "label": "b"
+        },
+        {
+          "source": "a1",
+          "target": "a2"
+        },
+        {
+          "source": "g",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "g",
+          "target": "fail",
+          "output": "failure"
+        }
+      ]
+    },
+    "layout": {
+      "groups": {
+        "g": {
+          "nodeId": "g",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "a",
+                "entry": "a1"
+              },
+              {
+                "key": "b",
+                "entry": "a1"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "wait_for_remaining",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "a": [
+              "a1",
+              "a2"
+            ]
+          },
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "fail"
+        }
+      },
+      "owner": {
+        "a1": {
+          "groupNodeId": "g",
+          "taskKey": "a"
+        },
+        "a2": {
+          "groupNodeId": "g",
+          "taskKey": "a"
+        }
+      },
+      "order": [
+        "g"
+      ]
+    }
+  },
+  {
+    "name": "missing-config",
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "missing-config",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "transform",
+          "config": {},
+          "label": "START",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "g",
+          "type": "parallel_group",
+          "config": {},
+          "label": "G",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a1",
+          "type": "transform",
+          "config": {},
+          "label": "A1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "transform",
+          "config": {},
+          "label": "A2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b1",
+          "type": "transform",
+          "config": {},
+          "label": "B1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "transform",
+          "config": {},
+          "label": "DONE",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "fail",
+          "type": "transform",
+          "config": {},
+          "label": "FAIL",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "g"
+        },
+        {
+          "source": "g",
+          "target": "a1",
+          "output": "task",
+          "label": "a"
+        },
+        {
+          "source": "g",
+          "target": "b1",
+          "output": "task",
+          "label": "b"
+        },
+        {
+          "source": "a1",
+          "target": "a2"
+        },
+        {
+          "source": "g",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "g",
+          "target": "fail",
+          "output": "failure"
+        }
+      ]
+    },
+    "layout": {
+      "groups": {
+        "g": {
+          "nodeId": "g",
+          "config": {
+            "form": "",
+            "tasks": null,
+            "completionRule": "",
+            "unfinishedBehavior": "",
+            "gatherMode": ""
+          },
+          "bodies": {},
+          "nested": [],
+          "successTarget": "done",
+          "failureTarget": "fail"
+        }
+      },
+      "owner": {},
+      "order": [
+        "g"
+      ]
+    }
+  },
+  {
+    "name": "nested-branches",
+    "definition": {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "name": "nested-branches",
+      "description": "",
+      "author": "",
+      "defaultErrorBehavior": {},
+      "inputs": null,
+      "nodes": [
+        {
+          "id": "start",
+          "type": "llm_call",
+          "config": {},
+          "label": "START",
+          "description": "",
+          "errorBehavior": {},
+          "entrypoint": true
+        },
+        {
+          "id": "g1",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "a",
+                  "entry": "a1"
+                },
+                {
+                  "key": "b",
+                  "entry": "g2"
+                }
+              ],
+              "completionRule": "all_succeed",
+              "unfinishedBehavior": "cancel_unfinished",
+              "gatherMode": "results"
+            }
+          },
+          "label": "G1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a1",
+          "type": "llm_call",
+          "config": {},
+          "label": "A1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "a2",
+          "type": "llm_call",
+          "config": {},
+          "label": "A2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "g2",
+          "type": "parallel_group",
+          "config": {
+            "group": {
+              "form": "branches",
+              "tasks": [
+                {
+                  "key": "x",
+                  "entry": "x1"
+                },
+                {
+                  "key": "y",
+                  "entry": "y1"
+                }
+              ],
+              "completionRule": "first_success",
+              "unfinishedBehavior": "finish_independently",
+              "gatherMode": "results"
+            }
+          },
+          "label": "G2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "x1",
+          "type": "llm_call",
+          "config": {},
+          "label": "X1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "y1",
+          "type": "llm_call",
+          "config": {},
+          "label": "Y1",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "y2",
+          "type": "llm_call",
+          "config": {},
+          "label": "Y2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b2",
+          "type": "llm_call",
+          "config": {},
+          "label": "B2",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "b3",
+          "type": "llm_call",
+          "config": {},
+          "label": "B3",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "done",
+          "type": "llm_call",
+          "config": {},
+          "label": "DONE",
+          "description": "",
+          "errorBehavior": {}
+        },
+        {
+          "id": "oops",
+          "type": "llm_call",
+          "config": {},
+          "label": "OOPS",
+          "description": "",
+          "errorBehavior": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "start",
+          "target": "g1"
+        },
+        {
+          "source": "g1",
+          "target": "a1",
+          "output": "task",
+          "label": "a"
+        },
+        {
+          "source": "g1",
+          "target": "g2",
+          "output": "task",
+          "label": "b"
+        },
+        {
+          "source": "a1",
+          "target": "a2"
+        },
+        {
+          "source": "g2",
+          "target": "x1",
+          "output": "task",
+          "label": "x"
+        },
+        {
+          "source": "g2",
+          "target": "y1",
+          "output": "task",
+          "label": "y"
+        },
+        {
+          "source": "y1",
+          "target": "y2"
+        },
+        {
+          "source": "g2",
+          "target": "b2",
+          "output": "success"
+        },
+        {
+          "source": "g2",
+          "target": "b3",
+          "output": "failure"
+        },
+        {
+          "source": "g1",
+          "target": "done",
+          "output": "success"
+        },
+        {
+          "source": "g1",
+          "target": "oops",
+          "output": "failure"
+        }
+      ]
+    },
+    "layout": {
+      "groups": {
+        "g1": {
+          "nodeId": "g1",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "a",
+                "entry": "a1"
+              },
+              {
+                "key": "b",
+                "entry": "g2"
+              }
+            ],
+            "completionRule": "all_succeed",
+            "unfinishedBehavior": "cancel_unfinished",
+            "gatherMode": "results"
+          },
+          "bodies": {
+            "a": [
+              "a1",
+              "a2"
+            ],
+            "b": [
+              "g2",
+              "b2",
+              "b3"
+            ]
+          },
+          "nested": [
+            "g2"
+          ],
+          "successTarget": "done",
+          "failureTarget": "oops"
+        },
+        "g2": {
+          "nodeId": "g2",
+          "config": {
+            "form": "branches",
+            "tasks": [
+              {
+                "key": "x",
+                "entry": "x1"
+              },
+              {
+                "key": "y",
+                "entry": "y1"
+              }
+            ],
+            "completionRule": "first_success",
+            "unfinishedBehavior": "finish_independently",
+            "gatherMode": "results"
+          },
+          "parent": {
+            "groupNodeId": "g1",
+            "taskKey": "b"
+          },
+          "bodies": {
+            "x": [
+              "x1"
+            ],
+            "y": [
+              "y1",
+              "y2"
+            ]
+          },
+          "nested": [],
+          "successTarget": "b2",
+          "failureTarget": "b3"
+        }
+      },
+      "owner": {
+        "a1": {
+          "groupNodeId": "g1",
+          "taskKey": "a"
+        },
+        "a2": {
+          "groupNodeId": "g1",
+          "taskKey": "a"
+        },
+        "b2": {
+          "groupNodeId": "g1",
+          "taskKey": "b"
+        },
+        "b3": {
+          "groupNodeId": "g1",
+          "taskKey": "b"
+        },
+        "g2": {
+          "groupNodeId": "g1",
+          "taskKey": "b"
+        },
+        "x1": {
+          "groupNodeId": "g2",
+          "taskKey": "x"
+        },
+        "y1": {
+          "groupNodeId": "g2",
+          "taskKey": "y"
+        },
+        "y2": {
+          "groupNodeId": "g2",
+          "taskKey": "y"
+        }
+      },
+      "order": [
+        "g1",
+        "g2"
+      ]
+    }
+  }
+]

@@ -74,9 +74,24 @@ func (w *WorkspaceManagerAdapter) EnsureInstanceDir(instanceID uuid.UUID) (strin
 	return dir, nil
 }
 
+// ExistingInstanceDir returns an existing workspace without creating or
+// chmodding anything. Finalization must fail if the task lost its directory,
+// rather than record a newly created empty directory as intentional deletions.
+func (w *WorkspaceManagerAdapter) ExistingInstanceDir(instanceID uuid.UUID) (string, error) {
+	dir := w.instanceDir(instanceID)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("filesystem: existing instance dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("filesystem: existing instance dir: %s is not a directory", dir)
+	}
+	return dir, nil
+}
+
 // RemoveInstanceDir deletes the instance directory; a missing dir is ignored.
 func (w *WorkspaceManagerAdapter) RemoveInstanceDir(instanceID uuid.UUID) error {
-	if err := os.RemoveAll(w.instanceDir(instanceID)); err != nil {
+	if err := removeTree(w.instanceDir(instanceID)); err != nil {
 		return fmt.Errorf("filesystem: remove instance dir: %w", err)
 	}
 	return nil

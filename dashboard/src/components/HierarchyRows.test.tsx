@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { it, expect, vi, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import type { EnrichedInstanceSummary } from '../api/types'
@@ -10,7 +10,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import HierarchyRows from './HierarchyRows'
-import { CHILD_PAGE_LIMIT, useRunHierarchy } from '../hooks/useRunHierarchy'
+import { CHILD_PAGE_LIMIT, useRunHierarchy, type RunHierarchy } from '../hooks/useRunHierarchy'
 
 function row(id: string, overrides: Partial<EnrichedInstanceSummary> = {}): EnrichedInstanceSummary {
   return {
@@ -232,5 +232,61 @@ it('shows no truncation row when every child is on the page', async () => {
   fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
   await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
 
+  expect(screen.queryByText(/Showing/)).toBeNull()
+})
+
+// ---------- refresh & load-more (P4-T10) ----------
+
+function ControlledHarness({ rows, onHierarchy }: { rows: EnrichedInstanceSummary[]; onHierarchy: (h: RunHierarchy) => void }) {
+  const hierarchy = useRunHierarchy()
+  onHierarchy(hierarchy)
+  return (
+    <MemoryRouter>
+      <table>
+        <tbody>
+          <HierarchyRows rows={rows} columns={COLUMNS} depth={0} timeMode="elapsed" authMode="local" hierarchy={hierarchy} />
+        </tbody>
+      </table>
+    </MemoryRouter>
+  )
+}
+
+// Stale cache fix without a flash: every queue refetch refreshes the open
+// levels, so hiding children while their level reloads made an open tree
+// blink (and lose the user's place) on every lifecycle event.
+it('keeps showing the cached children while their level refreshes', async () => {
+  listMock.mockResolvedValueOnce([row('c1', { parentInstanceId: 'p1' })])
+  let h!: RunHierarchy
+  render(<ControlledHarness rows={[row('p1', { childCount: 1 })]} onHierarchy={(x) => { h = x }} />)
+  fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
+  await waitFor(() => expect(screen.getByText('wf-c1')).toBeTruthy())
+
+  let resolve!: (v: EnrichedInstanceSummary[]) => void
+  listMock.mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolve = r }))
+  act(() => { h.invalidate() })
+
+  expect(screen.getByText('wf-c1')).toBeTruthy()
+  expect(screen.queryByText('Loading child runs…')).toBeNull()
+
+  await act(async () => { resolve([row('c1', { parentInstanceId: 'p1', workflowName: 'wf-c1-v2' })]) })
+  await waitFor(() => expect(screen.getByText('wf-c1-v2')).toBeTruthy())
+})
+
+it('renders load-more only while more children exist, disabled while its page is in flight', async () => {
+  listMock.mockResolvedValueOnce(Array.from({ length: CHILD_PAGE_LIMIT }, (_, i) => row(`c${i}`, { parentInstanceId: 'p1' })))
+  render(<Harness rows={[row('p1', { childCount: CHILD_PAGE_LIMIT + 1 })]} />)
+  fireEvent.click(screen.getByLabelText('Show child runs of run — p1'))
+  const more = await screen.findByRole('button', { name: 'Load more child runs' })
+
+  let resolve!: (v: EnrichedInstanceSummary[]) => void
+  listMock.mockReturnValueOnce(new Promise<EnrichedInstanceSummary[]>((r) => { resolve = r }))
+  fireEvent.click(more)
+
+  expect(await screen.findByRole('button', { name: 'Loading more child runs…' })).toBeDisabled()
+  expect(listMock).toHaveBeenLastCalledWith({ parent: 'p1', limit: CHILD_PAGE_LIMIT, offset: CHILD_PAGE_LIMIT, includeDismissed: true })
+
+  await act(async () => { resolve([row('c100', { parentInstanceId: 'p1', workflowName: 'wf-c100' })]) })
+  await waitFor(() => expect(screen.getByText('wf-c100')).toBeTruthy())
+  expect(screen.queryByRole('button', { name: /Load more/ })).toBeNull()
   expect(screen.queryByText(/Showing/)).toBeNull()
 })

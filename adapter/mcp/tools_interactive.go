@@ -2,7 +2,10 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/arbitron/arbitron/domain/engine"
 
 	gomcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -34,6 +37,33 @@ func RegisterInteractiveTools(srv *Server) {
 		),
 		interactiveGetHistoryHandler(srv),
 	)
+
+	srv.AddTool(
+		gomcp.NewTool("interactive_abandon_session",
+			gomcp.WithDescription("Abandon a parallel-group conflict-resolution session: roll back the gather and continue on failure. Only valid while resolving group conflicts. Use interactive_end_session for ordinary sessions; ending group resolution means finish and verify, not abandon."),
+			gomcp.WithString("instanceId", gomcp.Required(), gomcp.Description("Instance UUID of the parent waiting at the parallel_group node")),
+		),
+		interactiveAbandonSessionHandler(srv),
+	)
+}
+
+func interactiveAbandonSessionHandler(srv *Server) server.ToolHandlerFunc {
+	return func(ctx context.Context, request gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		if srv.deps.ConversationHandler == nil {
+			return gomcp.NewToolResultError("interactive sessions not available"), nil
+		}
+		id, err := ParseUUID(request, "instanceId")
+		if err != nil {
+			return gomcp.NewToolResultError(err.Error()), nil
+		}
+		if err := srv.deps.ConversationHandler.AbandonSession(ctx, id); err != nil {
+			if errors.Is(err, engine.ErrNotResolutionSession) {
+				return gomcp.NewToolResultError(fmt.Sprintf("failed to abandon session: %s (use interactive_end_session for an ordinary interactive session)", err)), nil
+			}
+			return gomcp.NewToolResultError(fmt.Sprintf("failed to abandon session: %s", err)), nil
+		}
+		return MarshalResult(map[string]string{"status": "abandoned", "instanceId": id.String()})
+	}
 }
 
 func interactiveSendMessageHandler(srv *Server) server.ToolHandlerFunc {

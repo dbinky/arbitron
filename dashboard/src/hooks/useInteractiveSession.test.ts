@@ -73,6 +73,82 @@ const errorEvent = (message: string): WebSocketEvent => ({
 })
 
 // ---------------------------------------------------------------------------
+// Group conflict resolution
+// ---------------------------------------------------------------------------
+
+const groupHistoryEvent = (): WebSocketEvent => ({
+  type: 'interactive.history',
+  timestamp: new Date().toISOString(),
+  data: { nodeId: 'gather-1', sessionKind: 'group_resolution', messages: [{ role: 'assistant', content: 'I merged shared.txt' }] },
+})
+
+describe('useInteractiveSession — group conflict resolution', () => {
+  it('starts with no kind and not abandoning', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    expect(result.current.sessionKind).toBeNull()
+    expect(result.current.isAbandoning).toBe(false)
+  })
+  it('tags history and sends abandon for that session', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(groupHistoryEvent())
+    expect(result.current.sessionKind).toBe('group_resolution')
+    expect(result.current.nodeId).toBe('gather-1')
+    expect(result.current.isActive).toBe(true)
+    act(() => result.current.abandonSession())
+    expect(mockSend).toHaveBeenCalledWith({ type: 'interactive.abandon' })
+    expect(result.current.isAbandoning).toBe(true)
+  })
+  it('treats untagged history as ordinary interactive', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(historyEvent())
+    expect(result.current.sessionKind).toBe('interactive')
+  })
+  it('closes and clears kind on abandoned end', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(groupHistoryEvent())
+    act(() => result.current.abandonSession())
+    fireEvent({ type: 'interactive.ended', timestamp: new Date().toISOString(), data: { reason: 'abandoned', sessionKind: 'group_resolution' } })
+    expect(result.current.isActive).toBe(false)
+    expect(result.current.isAbandoning).toBe(false)
+    expect(result.current.sessionKind).toBeNull()
+  })
+  it('drops an ended resolution attempt\'s transcript so the next attempt starts fresh', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(groupHistoryEvent())
+    fireEvent(assistantMessageEvent('attempt 1 reply'))
+    fireEvent({ type: 'interactive.ended', timestamp: new Date().toISOString(), data: { reason: 'user_ended', sessionKind: 'group_resolution' } })
+    expect(result.current.messages).toEqual([])
+    fireEvent(assistantMessageEvent('attempt 2 reply'))
+    act(() => result.current.seedFromInstance('grp', 'group_resolution'))
+    expect(result.current.messages.map((m) => m.content)).toEqual(['attempt 2 reply'])
+  })
+  it('clears abandoning on error for retry', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(groupHistoryEvent())
+    act(() => result.current.abandonSession())
+    fireEvent(errorEvent('Only a gather conflict-resolution session can be abandoned.'))
+    expect(result.current.isAbandoning).toBe(false)
+  })
+  it('seeds a linked group-resolution session as group_resolution so Abandon shows without a history frame', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    act(() => result.current.seedFromInstance('gather-1', 'group_resolution'))
+    expect(result.current.isActive).toBe(true)
+    expect(result.current.sessionKind).toBe('group_resolution')
+  })
+  it('does not downgrade a kind already set by history when seeded without one', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    fireEvent(groupHistoryEvent())
+    act(() => result.current.seedFromInstance('gather-1'))
+    expect(result.current.sessionKind).toBe('group_resolution')
+  })
+  it('seeds unknown kind as interactive', () => {
+    const { result } = renderHook(() => useInteractiveSession('inst-123'))
+    act(() => result.current.seedFromInstance('review-design'))
+    expect(result.current.sessionKind).toBe('interactive')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
 

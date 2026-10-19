@@ -130,6 +130,11 @@ type RouterDeps struct {
 	// outlives any single request and the probe forks at most once per TTL. Nil
 	// omits the backends list (legacy/tests).
 	BackendHealth BackendHealthChecker
+	// GraphState enables GET /instances/{id}/graph-state when non-nil.
+	GraphState GraphStateService
+	// SubtreeEvents enables ?subtree=1 only when GraphState is also set.
+	// Otherwise subtree requests return 501; per-instance mode is unchanged.
+	SubtreeEvents SubtreeSubscriber
 }
 
 // NewRouter creates the chi router with all API routes wired up.
@@ -201,6 +206,9 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		wfHandler.SetConnectionChecker(d.ConnChecker)
 	}
 	instHandler := NewInstanceHandler(d.Instances, d.NodeExecs, d.Snapshots, d.Service)
+	if d.GraphState != nil {
+		instHandler.SetGraphState(d.GraphState)
+	}
 	// One on/off decision for the whole feature. When enabled we wire the real
 	// per-user repo + acting-user resolver; when disabled we wire a named Null
 	// Object repo + resolver so the handler body never nil-checks the seam. The
@@ -217,6 +225,9 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 		instHandler.SetDismissals(noopDismissals, noopResolver)
 	}
 	streamHandler := NewStreamHandler(d.Instances, d.NodeExecs, d.EventBus, d.ConversationHandler, d.Service)
+	if d.SubtreeEvents != nil && d.GraphState != nil {
+		streamHandler.SetSubtreeStreaming(d.SubtreeEvents, d.GraphState, 0)
+	}
 	sysStreamHandler := NewSystemStreamHandler(d.EventBus, d.Instances)
 	settings := d.Settings
 	if settings == nil {
@@ -271,6 +282,7 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Get("/", wfHandler.List)
 			r.Post("/", wfHandler.Create)
 			r.Get("/{name}", wfHandler.Get)
+			r.Get("/{name}/group-layout", wfHandler.GroupLayout)
 			r.Put("/{name}", wfHandler.Update)
 			r.Delete("/{name}", wfHandler.Delete)
 			r.Post("/{name}/validate", wfHandler.Validate)
@@ -338,12 +350,16 @@ func NewRouterFromDeps(d RouterDeps) chi.Router {
 			r.Post("/{id}/priority", instHandler.SetPriority)
 			r.Get("/{id}/trace", instHandler.GetTrace)
 			r.Get("/{id}/trace/{nodeId}", instHandler.GetNodeTrace)
+			if d.GraphState != nil {
+				r.Get("/{id}/graph-state", instHandler.GraphState)
+			}
 			r.Get("/{id}/variables", instHandler.GetVariables)
 			r.Get("/{id}/variables/history", instHandler.GetVariableHistory)
 			r.Get("/{id}/interventions", instHandler.GetInterventions)
 			r.Get("/{id}/ws", streamHandler.HandleWebSocket)
 			if interactiveHandler != nil {
 				r.Post("/{id}/interact/end", interactiveHandler.EndSession)
+				r.Post("/{id}/interactive/abandon", interactiveHandler.AbandonSession)
 			}
 		})
 

@@ -48,11 +48,12 @@ Use this skill when the user wants to:
 
 ### Interactive
 
-| Tool                       | Purpose                                    |
-| -------------------------- | ------------------------------------------ |
-| `interactive_send_message` | Send user message during interactive step  |
-| `interactive_end_session`  | End an interactive session early           |
-| `interactive_get_history`  | Load conversation history for a session    |
+| Tool                          | Purpose                                                     |
+| ----------------------------- | ----------------------------------------------------------- |
+| `interactive_send_message`    | Send user message during interactive step                   |
+| `interactive_end_session`     | End an interactive session early (group resolution: verify) |
+| `interactive_get_history`     | Load conversation history for a session                     |
+| `interactive_abandon_session` | Abandon a parallel-group conflict resolution (rolls back)    |
 
 ### Management
 

@@ -12,6 +12,9 @@ export interface KeyedMessage extends InteractiveMessage {
   key: number
 }
 
+/** Group resolution sessions support explicit abandonment as well as end. */
+export type InteractiveSessionKind = 'interactive' | 'group_resolution'
+
 /** State and actions returned by the useInteractiveSession hook. */
 export interface InteractiveSessionState {
   /** Complete messages in the conversation. */
@@ -24,23 +27,31 @@ export interface InteractiveSessionState {
   isActive: boolean
   /** The node ID that initiated the interactive session. */
   nodeId: string | null
+  /** Kind of the live session; null when inactive. */
+  sessionKind: InteractiveSessionKind | null
   /** Last error message, if any. */
   error: string | null
   /** Whether the WebSocket is connected. */
   connected: boolean
   /** True while the end-session request is in flight (button should be disabled). */
   isEnding: boolean
+  /** True while an abandon request is in flight. */
+  isAbandoning: boolean
   /** Send a user message to the interactive session. */
   sendMessage: (content: string) => void
   /** End the interactive session. */
   endSession: () => void
+  /** Roll back a gather conflict resolution and route failure. */
+  abandonSession: () => void
   /**
    * Pre-warm session state from the REST instance response.
    * Activates the panel immediately on page load without waiting for
    * interactive.history — eliminates the flash of the normal side panel.
-   * Safe to call multiple times; nodeId is only set if not already known.
+   * Safe to call multiple times; nodeId and kind are only set if not already known.
+   * Callers that know the session is a group resolution pass its kind: no history
+   * frame is pushed to a socket that connected before the conflict opened.
    */
-  seedFromInstance: (nodeId: string) => void
+  seedFromInstance: (nodeId: string, kind?: InteractiveSessionKind) => void
 }
 
 /**
@@ -57,6 +68,8 @@ export function useInteractiveSession(
   const [isStreaming, setIsStreaming] = useState(false)
   const [isActive, setIsActive] = useState(false)
   const [isEnding, setIsEnding] = useState(false)
+  const [isAbandoning, setIsAbandoning] = useState(false)
+  const [sessionKind, setSessionKind] = useState<InteractiveSessionKind | null>(null)
   const [nodeId, setNodeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -77,6 +90,7 @@ export function useInteractiveSession(
         nextKeyRef.current = 0
         setMessages(e.data.messages.map((m) => ({ ...m, key: nextKeyRef.current++ })))
         setNodeId(e.data.nodeId)
+        setSessionKind(e.data.sessionKind === 'group_resolution' ? 'group_resolution' : 'interactive')
         setIsActive(true)
         setError(null)
         setStreamingContent('')
@@ -101,8 +115,13 @@ export function useInteractiveSession(
         break
 
       case 'interactive.ended':
+        // A still-conflicted end opens a fresh attempt at the same node with no
+        // history frame; the ended attempt's transcript must not carry over.
+        if (e.data?.sessionKind === 'group_resolution') setMessages([])
         setIsActive(false)
         setIsEnding(false)
+        setIsAbandoning(false)
+        setSessionKind(null)
         setNodeId(null)
         setStreamingContent('')
         setIsStreaming(false)
@@ -113,6 +132,7 @@ export function useInteractiveSession(
         setIsStreaming(false)
         setStreamingContent('')
         setIsEnding(false)
+        setIsAbandoning(false)
         break
 
       default:
@@ -136,9 +156,15 @@ export function useInteractiveSession(
     sendRef.current({ type: 'interactive.end' })
   }, [])
 
-  const seedFromInstance = useCallback((newNodeId: string) => {
+  const abandonSession = useCallback(() => {
+    setIsAbandoning(true)
+    sendRef.current({ type: 'interactive.abandon' })
+  }, [])
+
+  const seedFromInstance = useCallback((newNodeId: string, kind: InteractiveSessionKind = 'interactive') => {
     setIsActive(true)
     setNodeId((current) => current ?? newNodeId)
+    setSessionKind((current) => current ?? kind)
   }, [])
 
   return {
@@ -147,11 +173,14 @@ export function useInteractiveSession(
     isStreaming,
     isActive,
     isEnding,
+    isAbandoning,
+    sessionKind,
     nodeId,
     error,
     connected,
     sendMessage,
     endSession,
+    abandonSession,
     seedFromInstance,
   }
 }

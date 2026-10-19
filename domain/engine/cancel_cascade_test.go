@@ -31,6 +31,8 @@ type fakeSpawnLinks struct {
 	states     func(uuid.UUID) instance.State
 	listErr    map[uuid.UUID]error
 	unfiltered bool
+	marked     map[uuid.UUID]bool
+	markErr    error
 }
 
 func newFakeSpawnLinks(states func(uuid.UUID) instance.State) *fakeSpawnLinks {
@@ -74,20 +76,72 @@ func (f *fakeSpawnLinks) ChildCountsByParents(_ context.Context, ids []uuid.UUID
 	return out, nil
 }
 
-// ListOrphanedActiveChildren returns every non-terminal child whose parent is
-// itself cancelled — the same residue the real query finds.
+// MarkSubtreeCancelRequested matches the production terminal-row predicate.
+func (f *fakeSpawnLinks) MarkSubtreeCancelRequested(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.markErr != nil {
+		return f.markErr
+	}
+	if !f.states(id).IsTerminal() {
+		return nil
+	}
+	if f.marked == nil {
+		f.marked = map[uuid.UUID]bool{}
+	}
+	f.marked[id] = true
+	return nil
+}
+
+func (f *fakeSpawnLinks) isMarked(id uuid.UUID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.marked[id]
+}
+
+// ListChildren honours the parent, live state, and per-branch storage failure.
+func (f *fakeSpawnLinks) ListChildren(_ context.Context, parentID uuid.UUID) ([]instance.ChildRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.listErr[parentID]; err != nil {
+		return nil, err
+	}
+	out := []instance.ChildRef{}
+	for _, c := range f.children[parentID] {
+		out = append(out, instance.ChildRef{ID: c, State: f.states(c)})
+	}
+	return out, nil
+}
+
+// ListOrphanedActiveChildren mirrors the bounded terminal-ancestor climb.
+// Timestamp boundaries are covered by SQLite tests; this fake has no clock.
 func (f *fakeSpawnLinks) ListOrphanedActiveChildren(_ context.Context) ([]uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := []uuid.UUID{}
+	parentOf := map[uuid.UUID]uuid.UUID{}
 	for parent, kids := range f.children {
-		if f.states(parent) != instance.StateCancelled {
+		for _, c := range kids {
+			if c != parent {
+				parentOf[c] = parent
+			}
+		}
+	}
+	out := []uuid.UUID{}
+	for child := range parentOf {
+		if f.states(child).IsTerminal() {
 			continue
 		}
-		for _, c := range kids {
-			if !f.states(c).IsTerminal() {
-				out = append(out, c)
+		anc, ok := parentOf[child]
+		for hops := 0; ok && hops < 64; hops++ {
+			st := f.states(anc)
+			if st == instance.StateCancelled || f.marked[anc] {
+				out = append(out, child)
+				break
 			}
+			if st != instance.StateCompleted && st != instance.StateFailed {
+				break
+			}
+			anc, ok = parentOf[anc]
 		}
 	}
 	return out, nil
@@ -340,17 +394,15 @@ func TestCancelCascade_AlreadyTerminalChildStillDescendsIntoActiveGrandchild(t *
 		"the grandchild must get its own intervention record, not be silently orphaned")
 }
 
-func TestCancelCascade_ParentInAnUncancellableStateReturnsErrCannotCancel(t *testing.T) {
+func TestCancelCascade_TerminalParentStillCascadesToActiveChild(t *testing.T) {
 	c := newCascadeFixture(t)
 	parent := c.run(t, instance.StateCompleted)
 	child := c.run(t, instance.StateRunning)
 	c.links.link(parent, child)
 
-	err := c.f.engine.Cancel(c.ctx, parent)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, instance.ErrCannotCancel)
-	assert.Equal(t, instance.StateRunning, c.stateOf(t, child),
-		"a refused parent cancellation cascades to nothing")
+	require.NoError(t, c.f.engine.Cancel(c.ctx, parent))
+	assert.Equal(t, instance.StateCompleted, c.stateOf(t, parent))
+	assert.Equal(t, instance.StateCancelled, c.stateOf(t, child))
 }
 
 // ---------- error ----------

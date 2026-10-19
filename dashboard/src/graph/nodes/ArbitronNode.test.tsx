@@ -38,6 +38,45 @@ describe('ArbitronNode — handles', () => {
   })
 })
 
+describe('ArbitronNode — aggregate states and task styling (P4-T8)', () => {
+  const renderWith = (data: Record<string, unknown>) =>
+    render(
+      <ArbitronNode
+        {...({ data: { label: 'Step', nodeType: 'script', executionState: 'pending', ...data }, selected: false } as unknown as Parameters<typeof ArbitronNode>[0])}
+      />,
+    )
+
+  it.each([
+    ['queued', 'stateQueued'],
+    ['paused', 'statePaused'],
+    ['cancelled', 'stateCancelled'],
+    ['unknown', 'stateUnknown'],
+    ['running', 'stateRunning'],
+  ])('styles a %s node with %s and exposes data-state', (state, cls) => {
+    const { container } = renderWith({ executionState: state })
+    const root = container.firstElementChild as HTMLElement
+    expect(root.className).toContain(cls)
+    expect(root.getAttribute('data-state')).toBe(state)
+  })
+
+  it('marks work continuing independently as non-blocking', () => {
+    const { container, getByText } = renderWith({ executionState: 'running', independent: true })
+    expect((container.firstElementChild as HTMLElement).className).toContain('independent')
+    expect(getByText('non-blocking')).toBeTruthy()
+  })
+
+  it('shows a hidden dependency instead of the non-blocking note for a redacted owner', () => {
+    const { getByText, queryByText } = renderWith({ executionState: 'unknown', hiddenDependency: true, independent: true })
+    expect(getByText('hidden dependency')).toBeTruthy()
+    expect(queryByText('non-blocking')).toBeNull()
+  })
+
+  it('degrades an unrecognized state to the pending style instead of crashing', () => {
+    const { container } = renderWith({ executionState: 'bogus' })
+    expect((container.firstElementChild as HTMLElement).className).toContain('statePending')
+  })
+})
+
 describe('ArbitronNode — type accent color', () => {
   it('renders the spawn_workflow accent (#2ecc71) on the type bar and label', () => {
     const spawnProps = {

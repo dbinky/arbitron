@@ -90,6 +90,32 @@ func TestWorkspaceManager(t *testing.T) {
 		assert.True(t, os.IsNotExist(statErr))
 	})
 
+	t.Run("RemoveInstanceDir removes read-only copies without following symlinks", func(t *testing.T) {
+		wm, err := NewWorkspaceManager(t.TempDir())
+		require.NoError(t, err)
+		id := uuid.New()
+		dir, err := wm.EnsureInstanceDir(id)
+		require.NoError(t, err)
+		readonly := filepath.Join(dir, "readonly")
+		require.NoError(t, os.Mkdir(readonly, 0o700))
+		t.Cleanup(func() { _ = os.Chmod(readonly, 0o700) })
+		require.NoError(t, os.WriteFile(filepath.Join(readonly, "kept"), []byte("secret"), 0o600))
+		outside := t.TempDir()
+		require.NoError(t, os.Chmod(outside, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "kept"), []byte("outside"), 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(readonly, "link")))
+		require.NoError(t, os.Chmod(readonly, 0o555))
+
+		require.NoError(t, wm.RemoveInstanceDir(id))
+		assert.NoDirExists(t, dir)
+		info, err := os.Stat(outside)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+		got, err := os.ReadFile(filepath.Join(outside, "kept"))
+		require.NoError(t, err)
+		assert.Equal(t, "outside", string(got))
+	})
+
 	t.Run("RemoveInstanceDir on a missing directory is not an error", func(t *testing.T) {
 		wm, err := NewWorkspaceManager(t.TempDir())
 		require.NoError(t, err)

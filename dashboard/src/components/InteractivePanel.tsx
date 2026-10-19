@@ -20,23 +20,43 @@ export default function InteractivePanel({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [session.messages, session.streamingContent])
 
+  const isGroupResolution = session.sessionKind === 'group_resolution'
+
   return (
     <div className={styles.panel}>
       {/* Header */}
       <div className={styles.header}>
         <div className={styles.headerTitle}>
-          <span className={styles.headerLabel}>Interactive Session</span>
+          <span className={styles.headerLabel}>
+            {isGroupResolution ? 'Gather Conflict Resolution' : 'Interactive Session'}
+          </span>
           <span className={styles.headerSep}>&mdash;</span>
           <span className={styles.headerNode}>{nodeName}</span>
         </div>
-        <button
-          className={styles.endButton}
-          onClick={session.endSession}
-          disabled={session.isEnding || session.isStreaming || !session.connected}
-          title={session.isStreaming ? 'Wait for the assistant to finish responding' : 'End the interactive session'}
-        >
-          End Session
-        </button>
+        <div className={styles.headerActions}>
+          {isGroupResolution && (
+            <button
+              className={styles.abandonButton}
+              onClick={session.abandonSession}
+              disabled={session.isAbandoning || session.isEnding || session.isStreaming || !session.connected}
+              title="Abandon the gather: merged changes are rolled back and the group continues on its failure path"
+            >
+              Abandon gather
+            </button>
+          )}
+          <button
+            className={styles.endButton}
+            onClick={session.endSession}
+            disabled={session.isEnding || session.isAbandoning || session.isStreaming || !session.connected}
+            title={session.isStreaming
+              ? 'Wait for the assistant to finish responding'
+              : isGroupResolution
+                ? 'Finish: Arbitron verifies no conflicts remain, then continues the gather'
+                : 'End the interactive session'}
+          >
+            End Session
+          </button>
+        </div>
       </div>
 
       {/* Error banner */}

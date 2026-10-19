@@ -16,9 +16,11 @@ import (
 // --- Interactive Mocks ---
 
 type mockConversationHandler struct {
-	handleErr error
-	endOutput map[string]any
-	endErr    error
+	handleErr    error
+	endOutput    map[string]any
+	endErr       error
+	abandonErr   error
+	abandonCalls []uuid.UUID
 }
 
 func (m *mockConversationHandler) HandleMessage(_ context.Context, _ uuid.UUID, _ string) error {
@@ -27,6 +29,11 @@ func (m *mockConversationHandler) HandleMessage(_ context.Context, _ uuid.UUID, 
 
 func (m *mockConversationHandler) EndSession(_ context.Context, _ uuid.UUID) (map[string]any, error) {
 	return m.endOutput, m.endErr
+}
+
+func (m *mockConversationHandler) AbandonSession(_ context.Context, id uuid.UUID) error {
+	m.abandonCalls = append(m.abandonCalls, id)
+	return m.abandonErr
 }
 
 // --- Helpers ---

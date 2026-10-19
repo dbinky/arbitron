@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { EnrichedInstanceSummary } from '../api/types'
 import type { ColumnDef } from './queueColumns'
@@ -25,6 +26,10 @@ interface QueueTableRowProps {
   hierarchyExpanded?: boolean
   /** Toggles this row's children. Absent when the row reports no children. */
   onToggleHierarchy?: (id: string) => void
+  /** Hierarchy markers rendered after the tree cell's text (branch, group · task, non-blocking, active state). */
+  badges?: ReactNode
+  /** Work continuing independently after its group was decided: styled as non-blocking. */
+  independent?: boolean
 }
 
 /**
@@ -49,6 +54,8 @@ export default function QueueTableRow({
   depth = 0,
   hierarchyExpanded = false,
   onToggleHierarchy,
+  badges,
+  independent = false,
 }: QueueTableRowProps) {
   const navigate = useNavigate()
   const isTerminal = rowVal.state === 'failed' || rowVal.state === 'completed'
@@ -71,7 +78,8 @@ export default function QueueTableRow({
     <tr
       data-row-id={rowVal.id}
       data-depth={depth}
-      className={`${styles.row} ${dimmed ? styles.dimmed : ''}`}
+      data-independent={independent ? 'true' : undefined}
+      className={`${styles.row} ${dimmed ? styles.dimmed : ''} ${independent ? styles.independent : ''}`}
       onClick={() => navigate(`/instances/${rowVal.id}`)}
       role="row"
       tabIndex={0}
@@ -103,6 +111,7 @@ export default function QueueTableRow({
                 <span className={styles.hierarchySpacer} aria-hidden="true" />
               )}
               {cellText(col)}
+              {badges}
             </span>
           ) : col.key === 'git' && rowVal.gitRef ? (
             // gitRef is an author/run-controlled string; it is rendered as a JSX

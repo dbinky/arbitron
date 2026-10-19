@@ -20,6 +20,9 @@ import (
 // and are reconciled lazily on their first Load (see Load → ensureID).
 //
 // A nil registry makes this a no-op (local/unconfigured deployments).
+// Invalid group definitions are left untouched; their errors are collected
+// across both scopes so one bad definition cannot prevent valid neighbors from
+// being reconciled. Infrastructure failures still abort immediately.
 func (s *Service) BackfillRegistry(ctx context.Context) error {
 	if s.localMode() {
 		return nil
@@ -28,12 +31,17 @@ func (s *Service) BackfillRegistry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var rejected []error
 	for _, scope := range ReadScopes(id.UserID) {
 		if err := s.backfillScope(ctx, scope); err != nil {
+			if errors.Is(err, ErrGroupInvalid) {
+				rejected = append(rejected, err)
+				continue
+			}
 			return err
 		}
 	}
-	return nil
+	return errors.Join(rejected...)
 }
 
 // backfillScope registers every unregistered workflow in a single scope.
@@ -42,6 +50,7 @@ func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 	if err != nil {
 		return fmt.Errorf("backfill: listing %s scope: %w", scopeName(scope), err)
 	}
+	var rejected []error
 	for _, sum := range summaries {
 		// If a registry row already exists for this name, it is already reconciled.
 		if _, err := s.registry.ResolveID(ctx, sum.Name); err == nil {
@@ -53,6 +62,14 @@ func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 		wf, err := s.repo.Load(ctx, scope, sum.Name)
 		if err != nil {
 			return fmt.Errorf("backfill: loading %q: %w", sum.Name, err)
+		}
+		if err := s.rejectStoredGroupImport(ctx, wf, scope, sum.Name, sum.Name); err != nil {
+			validationErr := fmt.Errorf("backfill: validating %q: %w", sum.Name, err)
+			if errors.Is(err, ErrGroupInvalid) {
+				rejected = append(rejected, validationErr)
+				continue
+			}
+			return validationErr
 		}
 		if wf.ID == uuid.Nil {
 			wf.ID = uuid.New()
@@ -76,7 +93,7 @@ func (s *Service) backfillScope(ctx context.Context, scope Scope) error {
 			return fmt.Errorf("backfill: persisting id for %q: %w", sum.Name, err)
 		}
 	}
-	return nil
+	return errors.Join(rejected...)
 }
 
 // scopeName labels a scope for diagnostics.

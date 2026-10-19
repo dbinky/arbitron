@@ -10,9 +10,12 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
+import type { GroupGraph, GroupScope } from '../api/types'
 import type { WorkflowDefinition, WorkflowNode } from '../graph/types'
 import { api } from '../api/client'
 import { useGraphLayout } from '../graph/useGraphLayout'
+import { definitionNodeIdOf, toDefinitionPositions } from '../graph/groupLayout'
+import { gatherText, ruleText, unfinishedText } from '../graph/groupText'
 import { nodeTypes } from '../graph/nodes/nodeTypes'
 import { edgeTypes } from '../graph/edges/edgeTypes'
 import ResizablePanel from '../components/ResizablePanel'
@@ -21,24 +24,30 @@ import SchedulesPanel from '../components/SchedulesPanel'
 import TriggerModal from '../components/TriggerModal'
 import styles from './WorkflowReview.module.css'
 
-/** Collect all current node positions from React Flow nodes. */
+const GROUP_LAYOUT_TIMEOUT_MS = 15_000
+
+/** Persist definition positions, never a group's derived presentation ids. */
 function collectPositions(
   nodes: Node[],
 ): Record<string, { x: number; y: number }> {
-  const positions: Record<string, { x: number; y: number }> = {}
-  for (const n of nodes) {
-    positions[n.id] = { x: n.position.x, y: n.position.y }
-  }
-  return positions
+  return toDefinitionPositions(nodes)
+}
+
+/** Highlight every selected group part except its container box. */
+function isSelected(n: Node, selectedNodeId: string | null): boolean {
+  if (selectedNodeId == null || n.type === 'groupContainer') return false
+  return definitionNodeIdOf(n) === selectedNodeId
 }
 
 function ReviewGraph({
   workflowDef,
+  groupLayout,
   onNodeClick,
   selectedNodeId,
   workflowName,
 }: {
   workflowDef: WorkflowDefinition
+  groupLayout: GroupGraph | null
   onNodeClick: (nodeId: string) => void
   selectedNodeId: string | null
   workflowName: string
@@ -46,6 +55,7 @@ function ReviewGraph({
   const { rfNodes, rfEdges, needsAutoSave } = useGraphLayout({
     nodes: workflowDef.nodes,
     edges: workflowDef.edges,
+    groups: groupLayout,
   })
 
   const [nodes, setNodes] = useState(rfNodes)
@@ -85,10 +95,9 @@ function ReviewGraph({
     [workflowName],
   )
 
-  // Mark selected node.
   const nodesWithSelection = nodes.map((n) => ({
     ...n,
-    selected: n.id === selectedNodeId,
+    selected: isSelected(n, selectedNodeId),
   }))
 
   return (
@@ -98,7 +107,7 @@ function ReviewGraph({
         edges={rfEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onNodeClick={(_event, node) => onNodeClick(node.id)}
+        onNodeClick={(_event, node) => onNodeClick(definitionNodeIdOf(node))}
         onNodeDragStop={onNodeDragStop}
         fitView
         fitViewOptions={{ padding: 0.2 }}
@@ -114,12 +123,65 @@ function ReviewGraph({
   )
 }
 
+/** Static rule, continuation targets and author-ordered tasks. */
+function GroupDetails({ scope }: { scope: GroupScope }) {
+  const { config } = scope
+  return (
+    <div className={styles.section} data-testid="review-group-details">
+      <div className={styles.sectionTitle}>Parallel Group</div>
+      <div className={styles.nodeDetail}>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>Form</span>
+          <span className={styles.nodeDetailValue}>{config.form === 'workflows' ? 'child workflows' : 'branches'}</span>
+        </div>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>Rule</span>
+          <span className={styles.nodeDetailValue}>{ruleText(config.completionRule)}</span>
+        </div>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>Unfinished</span>
+          <span className={styles.nodeDetailValue}>{unfinishedText(config.unfinishedBehavior)}</span>
+        </div>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>Gather</span>
+          <span className={styles.nodeDetailValue}>{gatherText(config.gatherMode)}</span>
+        </div>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>On success</span>
+          <span className={styles.nodeDetailValue}>{scope.successTarget || '—'}</span>
+        </div>
+        <div className={styles.nodeDetailRow}>
+          <span className={styles.nodeDetailLabel}>On failure</span>
+          <span className={styles.nodeDetailValue}>{scope.failureTarget || '—'}</span>
+        </div>
+      </div>
+      <ol className={styles.groupTaskList} data-testid="review-group-tasks">
+        {/* Keep invalid draft tasks visible, even when their keys repeat. */}
+        {config.tasks.map((t, i) => (
+          <li key={i} className={styles.groupTaskItem}>
+            <span className={styles.inputName}>{t.key}</span>
+            {t.workflow ? (
+              <Link to={`/workflows/${t.workflow}`} className={styles.groupTaskLink}>
+                {t.workflow}
+              </Link>
+            ) : (
+              <span className={styles.inputType}>entry {t.entry}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 function ReviewSidePanel({
   workflowDef,
   selectedNode,
+  groupScope,
 }: {
   workflowDef: WorkflowDefinition
   selectedNode: WorkflowNode | null
+  groupScope: GroupScope | null
 }) {
   return (
     <div className={styles.sidePanel}>
@@ -197,6 +259,7 @@ function ReviewSidePanel({
                 </div>
               )}
             </div>
+            {groupScope && <GroupDetails scope={groupScope} />}
             {Object.keys(selectedNode.config).length > 0 && (
               <div className={styles.configBlock}>
                 <div className={styles.sectionTitle}>Config</div>
@@ -221,6 +284,8 @@ export default function WorkflowReview() {
   const [workflowDef, setWorkflowDef] = useState<WorkflowDefinition | null>(
     null,
   )
+  const [groupLayout, setGroupLayout] = useState<GroupGraph | null>(null)
+  const [groupLayoutError, setGroupLayoutError] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [showTrigger, setShowTrigger] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -229,11 +294,35 @@ export default function WorkflowReview() {
   useEffect(() => {
     if (!name) return
     let cancelled = false
+    const controller = new AbortController()
+    const aborted = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true })
+    })
+    const deadline = setTimeout(
+      () => controller.abort(new Error('Group layout request timed out')),
+      GROUP_LAYOUT_TIMEOUT_MS,
+    )
     async function load() {
       try {
-        const data = await api.workflows.get(name!)
-        if (!cancelled) setWorkflowDef(data)
+        // Layout analysis failure degrades to the plain graph, not a failed page.
+        const [data, layout] = await Promise.all([
+          api.workflows.get(name!),
+          // Race the deadline as well as passing its signal: a stalled body or
+          // transport that ignores abort must not hold the whole page open.
+          Promise.race([api.workflows.groupLayout(name!, controller.signal), aborted]).finally(
+            () => clearTimeout(deadline),
+          ).then(
+            (graph) => ({ graph, error: null as string | null }),
+            (err: unknown) => ({ graph: null, error: err instanceof Error ? err.message : 'Failed to load group layout' }),
+          ),
+        ])
+        if (!cancelled) {
+          setWorkflowDef(data)
+          setGroupLayout(layout.graph)
+          setGroupLayoutError(layout.error)
+        }
       } catch (err) {
+        controller.abort()
         if (!cancelled)
           setError(
             err instanceof Error ? err.message : 'Failed to load workflow',
@@ -245,6 +334,8 @@ export default function WorkflowReview() {
     void load()
     return () => {
       cancelled = true
+      clearTimeout(deadline)
+      controller.abort()
     }
   }, [name])
 
@@ -254,6 +345,8 @@ export default function WorkflowReview() {
 
   const selectedNode =
     workflowDef?.nodes.find((n) => n.id === selectedNodeId) ?? null
+  const selectedGroup = (selectedNodeId && groupLayout?.groups[selectedNodeId]) || null
+  const hasGroupNodes = workflowDef?.nodes.some((n) => n.type === 'parallel_group') ?? false
 
   if (loading) {
     return <div className={styles.loading}>Loading workflow...</div>
@@ -298,6 +391,12 @@ export default function WorkflowReview() {
             <span className={styles.metaValue}>{errorBehavior}</span>
           </span>
 
+          {groupLayoutError && hasGroupNodes && (
+            <span className={styles.metaItem} role="status">
+              Group layout unavailable: {groupLayoutError}
+            </span>
+          )}
+
           <div className={styles.spacer} />
 
           <button
@@ -313,6 +412,7 @@ export default function WorkflowReview() {
           left={
             <ReviewGraph
               workflowDef={workflowDef}
+              groupLayout={groupLayout}
               onNodeClick={handleNodeClick}
               selectedNodeId={selectedNodeId}
               workflowName={name}
@@ -322,6 +422,7 @@ export default function WorkflowReview() {
             <ReviewSidePanel
               workflowDef={workflowDef}
               selectedNode={selectedNode}
+              groupScope={selectedGroup}
             />
           }
         />

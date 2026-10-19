@@ -11,6 +11,8 @@ function typeIcon(type: string): string {
       return '✓'
     case 'needs_interaction':
       return '💬'
+    case 'conflict_resolution':
+      return '⇄'
     default:
       return '🔔'
   }

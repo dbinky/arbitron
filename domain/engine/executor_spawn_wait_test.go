@@ -107,6 +107,21 @@ func (f *fakeSpawnWaits) ClaimWaitingParent(ctx context.Context, parentID uuid.U
 	return true, nil
 }
 
+// SuspendRunning is unused by the spawn executor; it models the real predicate.
+func (f *fakeSpawnWaits) SuspendRunning(ctx context.Context, id uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	repo := f.instances
+	f.mu.Unlock()
+	if repo == nil {
+		return false, nil
+	}
+	inst, err := repo.Get(ctx, id)
+	if err != nil || inst.State != instance.StateRunning {
+		return false, err
+	}
+	return true, repo.UpdateState(ctx, id, instance.StateWaiting)
+}
+
 var _ instance.SpawnWaitRepository = (*fakeSpawnWaits)(nil)
 
 // ---------------------------------------------------------------------------

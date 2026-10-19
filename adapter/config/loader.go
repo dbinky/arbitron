@@ -26,6 +26,9 @@ func defaults() map[string]interface{} {
 		"server.port":    8080,
 		"database.path":  "./arbitron.db",
 		"workspace.path": "./workspaces",
+		// SECURITY: bounds one parallel_group launch's eager working-area
+		// copies (size x (tasks+1)); see PR #76 security thread 4309095005.
+		"workspace.grouplaunchmaxbytes": domainconfig.DefaultGroupLaunchMaxBytes,
 		// Optional capability-ruleset override (profile-editing Phase 2). Empty =>
 		// the composition root defaults it to ~/.arbitron/capabilities.yaml; a
 		// missing file falls back to the embedded default ruleset.
@@ -158,6 +161,10 @@ database:
   path: "./arbitron.db"
 workspace:
   path: "./workspaces"
+  # grouplaunchmaxbytes: 17179869184
+  #   Budget (bytes) for one parallel_group launch's eager copies: the parent
+  #   working area's size x (tasks + 1) must not exceed it. Default 16 GiB;
+  #   0 or negative uses the default (the budget cannot be disabled).
 llm:
   provider: "anthropic"
   apikey: ""

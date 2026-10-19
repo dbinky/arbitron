@@ -27,6 +27,11 @@ const (
 	// parent workflow. It is ONE node type with two modes (see SpawnMode*);
 	// there is deliberately no separate node type per mode.
 	NodeTypeSpawnWorkflow NodeType = "spawn_workflow"
+	// NodeTypeParallelGroup fans out a fixed, ordered set of tasks (parallel
+	// branches or awaited child workflows) and gathers them before continuing
+	// through its success or failure port. Its configuration lives in
+	// NodeConfig.Group; see group.go.
+	NodeTypeParallelGroup NodeType = "parallel_group"
 )
 
 // IsInteractive reports whether t is one of the human-in-the-loop node types.
@@ -229,6 +234,9 @@ type NodeConfig struct {
 	DurationSeconds    string            `json:"durationSeconds,omitempty"`
 	Secret             string            `json:"secret,omitempty"`
 	WaitTimeoutSeconds string            `json:"waitTimeoutSeconds,omitempty"`
+	// Group is the parallel_group configuration (parallel_group only). Read it
+	// through ParseGroupConfig, which checks it and returns a deep copy.
+	Group *GroupConfig `json:"group,omitempty"`
 }
 
 // Condition defines a branching rule in a conditional node.

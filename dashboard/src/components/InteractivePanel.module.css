@@ -64,6 +64,38 @@
   border-color: rgba(231, 76, 60, 0.6);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.abandonButton {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.abandonButton:hover {
+  background: rgba(231, 76, 60, 0.1);
+  border-color: rgba(231, 76, 60, 0.4);
+}
+
+.abandonButton:disabled,
+.endButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .errorBanner {
   padding: 6px 12px;
   font-size: 12px;

@@ -6,6 +6,7 @@ import HierarchyRows from './HierarchyRows'
 import { topLevelRows } from './topLevelRows'
 import { useRunHierarchy, type RunHierarchy } from '../hooks/useRunHierarchy'
 import RowDetailPanel from './RowDetailPanel'
+import RunLivePane from './RunLivePane'
 import styles from './QueueSection.module.css'
 
 interface QueueSectionProps {
@@ -32,6 +33,8 @@ interface QueueSectionProps {
    *  feeds it live node events so expanded children update without a refetch.
    *  Returns the unregister function. */
   registerRowPatcher?: (patch: RunHierarchy['patchRow']) => () => void
+  /** Terminal ancestors kept discoverable while they own active work. */
+  ownsActiveWork?: ReadonlySet<string>
 }
 
 /** defaultSortKey picks the initial sort column from the section's state mix. */
@@ -73,6 +76,7 @@ export default function QueueSection({
   onRestore,
   refreshSignal,
   registerRowPatcher,
+  ownsActiveWork,
 }: QueueSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const [sortKey, setSortKey] = useState<string | null>(null)
@@ -247,15 +251,19 @@ export default function QueueSection({
                   onDetailExpand={(id) => setExpandedId((prev) => (prev === id ? null : id))}
                   onDismiss={onDismiss}
                   onRestore={onRestore}
+                  ownsActiveWork={ownsActiveWork}
                   detailRowClassName={styles.detailRow}
                   detailCellClassName={styles.detailCell}
                   renderDetail={(inst) => (
-                    <RowDetailPanel
-                      row={inst}
-                      authMode={authMode}
-                      errorText={errorText}
-                      errorLoading={errorLoading}
-                    />
+                    <>
+                      <RowDetailPanel
+                        row={inst}
+                        authMode={authMode}
+                        errorText={errorText}
+                        errorLoading={errorLoading}
+                      />
+                      <RunLivePane instanceId={inst.id} />
+                    </>
                   )}
                 />
               </tbody>

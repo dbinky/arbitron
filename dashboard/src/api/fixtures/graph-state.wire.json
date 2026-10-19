@@ -1,0 +1,245 @@
+{
+  "rootInstanceId": "00000000-0000-0000-0000-000000000001",
+  "version": "v1",
+  "active": true,
+  "contexts": [
+    {
+      "instanceId": "00000000-0000-0000-0000-000000000001",
+      "kind": "root",
+      "state": "waiting",
+      "blocking": true,
+      "redacted": false,
+      "nodes": [
+        {
+          "instanceId": "00000000-0000-0000-0000-000000000001",
+          "nodeId": "g",
+          "state": "waiting",
+          "reason": "waiting_for_tasks:a"
+        }
+      ],
+      "graph": {
+        "nodes": []
+      }
+    },
+    {
+      "instanceId": "00000000-0000-0000-0000-00000000000a",
+      "parentInstanceId": "00000000-0000-0000-0000-000000000001",
+      "groupRunId": "00000000-0000-0000-0000-0000000000d1",
+      "taskKey": "a",
+      "kind": "branch",
+      "state": "running",
+      "blocking": true,
+      "redacted": false,
+      "nodes": [
+        {
+          "instanceId": "00000000-0000-0000-0000-00000000000a",
+          "nodeId": "a1",
+          "state": "running",
+          "attempt": 2
+        }
+      ]
+    },
+    {
+      "instanceId": "00000000-0000-0000-0000-00000000000c",
+      "parentInstanceId": "00000000-0000-0000-0000-000000000001",
+      "groupRunId": "00000000-0000-0000-0000-0000000000d1",
+      "taskKey": "w",
+      "kind": "workflow",
+      "workflowName": "sub",
+      "state": "running",
+      "blocking": false,
+      "redacted": false,
+      "nodes": [
+        {
+          "instanceId": "00000000-0000-0000-0000-00000000000c",
+          "nodeId": "k",
+          "state": "waiting"
+        }
+      ],
+      "graph": {
+        "nodes": []
+      },
+      "layout": {
+        "groups": {
+          "k": {
+            "nodeId": "k",
+            "config": {
+              "form": "workflows",
+              "tasks": [
+                {
+                  "key": "w",
+                  "workflow": "sub",
+                  "inputs": {
+                    "x": "1"
+                  }
+                }
+              ],
+              "completionRule": "first_success",
+              "unfinishedBehavior": "finish_independently",
+              "gatherMode": "results"
+            },
+            "bodies": {},
+            "nested": [],
+            "successTarget": "end",
+            "failureTarget": "bad"
+          }
+        },
+        "owner": {},
+        "order": [
+          "k"
+        ]
+      }
+    },
+    {
+      "instanceId": "00000000-0000-0000-0000-000000000000",
+      "kind": "workflow",
+      "state": "unknown",
+      "blocking": false,
+      "redacted": true,
+      "nodes": []
+    }
+  ],
+  "groups": [
+    {
+      "groupRunId": "00000000-0000-0000-0000-0000000000d1",
+      "instanceId": "00000000-0000-0000-0000-000000000001",
+      "nodeId": "g",
+      "form": "branches",
+      "completionRule": "all_succeed",
+      "unfinishedBehavior": "cancel_unfinished",
+      "gatherMode": "results_and_files",
+      "state": "resolving_conflicts",
+      "tasks": [
+        {
+          "key": "a",
+          "kind": "branch",
+          "origin": "a1",
+          "childInstanceId": "00000000-0000-0000-0000-00000000000a",
+          "liveStatus": "completed",
+          "frozenStatus": "unfinished",
+          "blocking": false,
+          "continuingIndependently": true,
+          "cancelRequested": true,
+          "launchError": "boom",
+          "redacted": false
+        }
+      ],
+      "progress": {
+        "total": 1,
+        "completed": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "active": 0,
+        "notStarted": 0
+      },
+      "waitingReasons": [
+        "waiting_for_tasks:a",
+        "cancelling:a"
+      ],
+      "winner": "a",
+      "decision": {
+        "outcome": "success",
+        "rule": "first_success",
+        "behavior": "finish_independently",
+        "winnerKey": "a",
+        "reason": "task a completed",
+        "decidedAt": "2026-10-17T08:00:00Z",
+        "tasks": [
+          {
+            "key": "a",
+            "kind": "branch",
+            "origin": "a1",
+            "childInstanceId": "00000000-0000-0000-0000-00000000000a",
+            "status": "completed",
+            "cancelRequested": false,
+            "winner": false
+          }
+        ]
+      },
+      "finalOutput": {
+        "winner": "a"
+      },
+      "gather": {
+        "mode": "results_and_files",
+        "state": "resolving",
+        "mergeIndex": 1,
+        "tasks": [
+          {
+            "key": "a",
+            "merged": false,
+            "reason": "conflict",
+            "conflictPaths": [
+              "f.txt"
+            ]
+          }
+        ],
+        "attempts": [
+          {
+            "mergeIndex": 1,
+            "attempt": 2,
+            "taskKey": "a",
+            "conflictPaths": [
+              "f.txt"
+            ],
+            "outcome": "resolved",
+            "startedAt": "2026-10-17T08:00:00Z",
+            "endedAt": "2026-10-17T08:01:00Z"
+          }
+        ],
+        "activeSession": {
+          "groupRunId": "00000000-0000-0000-0000-0000000000d1",
+          "mergeIndex": 1,
+          "attempt": 2,
+          "instanceId": "00000000-0000-0000-0000-000000000001",
+          "nodeId": "g"
+        }
+      },
+      "activeSession": {
+        "groupRunId": "00000000-0000-0000-0000-0000000000d1",
+        "mergeIndex": 1,
+        "attempt": 2,
+        "instanceId": "00000000-0000-0000-0000-000000000001",
+        "nodeId": "g"
+      }
+    }
+  ],
+  "layout": {
+    "groups": {
+      "g": {
+        "nodeId": "g",
+        "config": {
+          "form": "branches",
+          "tasks": [
+            {
+              "key": "a",
+              "entry": "a1"
+            }
+          ],
+          "completionRule": "all_succeed",
+          "unfinishedBehavior": "cancel_unfinished",
+          "gatherMode": "results_and_files"
+        },
+        "bodies": {
+          "a": [
+            "a1"
+          ]
+        },
+        "nested": [],
+        "successTarget": "done",
+        "failureTarget": "oops"
+      }
+    },
+    "owner": {
+      "a1": {
+        "groupNodeId": "g",
+        "taskKey": "a"
+      }
+    },
+    "order": [
+      "g"
+    ]
+  },
+  "warnings": [
+    "one descendant unreadable"
+  ]
+}

@@ -48,6 +48,14 @@ func (c *countingSpawnLinks) ListActiveChildren(context.Context, uuid.UUID) ([]u
 	return nil, nil
 }
 
+func (c *countingSpawnLinks) ListChildren(context.Context, uuid.UUID) ([]instance.ChildRef, error) {
+	return []instance.ChildRef{}, nil
+}
+
+func (c *countingSpawnLinks) MarkSubtreeCancelRequested(context.Context, uuid.UUID) error {
+	return nil
+}
+
 func (c *countingSpawnLinks) ListOrphanedActiveChildren(context.Context) ([]uuid.UUID, error) {
 	return nil, nil
 }

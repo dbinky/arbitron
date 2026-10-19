@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/arbitron/arbitron/domain/identity"
 	"github.com/arbitron/arbitron/domain/workflow"
 )
 
@@ -21,11 +22,20 @@ type Seeder struct {
 	ledger    Ledger
 	owner     uuid.UUID
 	logger    *slog.Logger
+	validator *workflow.Service
 }
 
-// NewSeeder constructs a Seeder. owner owns the seeded publications.
-func NewSeeder(source SampleSource, repo workflow.Repository, published workflow.PublishedStore, ledger Ledger, owner uuid.UUID, logger *slog.Logger) *Seeder {
-	return &Seeder{source: source, repo: repo, published: published, ledger: ledger, owner: owner, logger: logger}
+// NewSeeder constructs a Seeder. owner owns the seeded publications. Group
+// samples require the live profile checker; without it groups are skipped,
+// while legacy samples keep their existing behavior.
+func NewSeeder(source SampleSource, repo workflow.Repository, published workflow.PublishedStore, ledger Ledger, owner uuid.UUID, logger *slog.Logger, profiles ...workflow.ProfileChecker) *Seeder {
+	validator := workflow.NewWorkflowService(repo, published)
+	var checker workflow.ProfileChecker
+	if len(profiles) > 0 {
+		checker = profiles[0]
+	}
+	validator.SetGroupCheckers(checker, nil) // incoming files are supplied explicitly
+	return &Seeder{source: source, repo: repo, published: published, ledger: ledger, owner: owner, logger: logger, validator: validator}
 }
 
 // Seed seeds every not-yet-seeded sample. A malformed sample is skipped + logged
@@ -72,6 +82,14 @@ func (s *Seeder) seedOne(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		s.logger.Warn("skipping malformed sample", "name", name, "err", err)
 		return false, nil
+	}
+	validationCtx := identity.WithIdentity(ctx, identity.Identity{UserID: s.owner, Role: identity.RoleAdmin})
+	if err := s.validator.ValidateGroupImport(validationCtx, wf, seedFiles(files)); err != nil {
+		if errors.Is(err, workflow.ErrGroupInvalid) {
+			s.logger.Warn("skipping invalid group sample", "name", name, "err", err)
+			return false, nil
+		}
+		return false, err
 	}
 	shared := workflow.Shared()
 	err = workflow.WriteAndRecord(ctx, s.published, workflow.PublishRequest{
@@ -124,3 +142,8 @@ func (s *Seeder) writeTree(ctx context.Context, shared workflow.Scope, name stri
 	}
 	return nil
 }
+
+// seedFiles describes only files in the incoming sample, never a stale shared copy.
+type seedFiles map[string][]byte
+
+func (f seedFiles) FileExists(_ string, path string) bool { _, ok := f[path]; return ok }

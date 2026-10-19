@@ -53,6 +53,9 @@ func (s *Service) Duplicate(ctx context.Context, name, newName string) error {
 
 	// Copy the definition into the requester's private space.
 	dstScope := Private(id.UserID)
+	if err := s.rejectCopiedGroups(ctx, srcScope, name, newName); err != nil {
+		return err
+	}
 	if err := s.repo.CopyTree(ctx, srcScope, name, dstScope, newName, false); err != nil {
 		return err
 	}

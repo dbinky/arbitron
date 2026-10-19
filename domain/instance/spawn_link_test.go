@@ -24,7 +24,9 @@ func TestSpawnModeValid(t *testing.T) {
 	}{
 		{SpawnModeFireAndForget, true},
 		{SpawnModeWaitForChild, true},
+		{SpawnModeGroupTask, true},
 		{"", false},
+		{"Group_Task", false},
 		{"Wait_For_Child", false},
 		{"async", false},
 	}
@@ -35,13 +37,16 @@ func TestSpawnModeValid(t *testing.T) {
 	}
 }
 
-// TestSpawnModeTotality guards against a third mode landing without the
-// consumers (validation, executor short-circuit, wake match) being extended.
+// TestSpawnModeTotality guards against a fourth mode landing without the
+// consumers (validation, executor short-circuit, wake match, group dispatch,
+// SQLite link persistence) being extended. group_task is internal: it is
+// never an author-visible spawn_workflow mode.
 func TestSpawnModeTotality(t *testing.T) {
-	all := []SpawnMode{SpawnModeFireAndForget, SpawnModeWaitForChild}
-	if len(all) != 2 {
+	all := []SpawnMode{SpawnModeFireAndForget, SpawnModeWaitForChild, SpawnModeGroupTask}
+	if len(all) != 3 {
 		t.Fatalf("spawn mode vocabulary changed to %d values: extend SpawnMode.Valid, "+
-			"the executor short-circuit, and the child-terminal wake match", len(all))
+			"the executor short-circuit, the child-terminal wake match, the group "+
+			"terminal dispatch and the SQLite link read/write", len(all))
 	}
 	for _, m := range all {
 		if !m.Valid() {

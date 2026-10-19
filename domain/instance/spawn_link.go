@@ -12,7 +12,8 @@ import (
 // node. It is a self-owned type in domain/instance (the package that owns the
 // stored field) so nothing here imports domain/workflow — the same
 // one-directional domain edge Visibility and TriggerSource preserve. The
-// values MUST match workflow.SpawnModeFireAndForget / SpawnModeWaitForChild.
+// public values MUST match workflow.SpawnModeFireAndForget / SpawnModeWaitForChild;
+// SpawnModeGroupTask is internal to parallel-group execution.
 type SpawnMode string
 
 const (
@@ -22,13 +23,26 @@ const (
 	// SpawnModeWaitForChild: the parent suspended at the spawn node and resumes
 	// through its success/failure port when the child reaches a terminal state.
 	SpawnModeWaitForChild SpawnMode = "wait_for_child"
+	// SpawnModeGroupTask: the child is one task of a parallel_group node's
+	// group run (see GroupRun). It is INTERNAL — never an author-visible
+	// spawn_workflow mode (workflow.IsValidSpawnMode still admits only the two
+	// modes above). The parent is woken by the group coordinator, never by the
+	// single-child wake in Engine.OnChildTerminal.
+	//
+	// Persistence: the 018 spawn_mode CHECK cannot admit this value without
+	// rebuilding the instances table, so a group-task row stores spawn_mode
+	// NULL plus group_run_id / group_task_key / group_task_kind (migration
+	// 019); the SQLite read side maps that shape back to this mode. Legacy
+	// spawn queries keep filtering on spawn_mode and therefore never match a
+	// group task.
+	SpawnModeGroupTask SpawnMode = "group_task"
 )
 
-// Valid reports whether m is one of the two recognized modes. The empty value
-// is INVALID: an unset mode on a link would make the wake match and the
+// Valid reports whether m is one of the three recognized modes. The empty
+// value is INVALID: an unset mode on a link would make the wake match and the
 // resumption short-circuit ambiguous.
 func (m SpawnMode) Valid() bool {
-	return m == SpawnModeFireAndForget || m == SpawnModeWaitForChild
+	return m == SpawnModeFireAndForget || m == SpawnModeWaitForChild || m == SpawnModeGroupTask
 }
 
 // SpawnLink is the child's back-reference to the exact parent NODE that created
@@ -56,6 +70,14 @@ type SpawnLink struct {
 	// Engine.Spawn reads the parent's stored depth and adds one, so no executor
 	// can forget to set it and no request can inflate it.
 	SpawnDepth int
+
+	// GroupRunID / GroupTaskKey / GroupTaskKind are set ONLY for
+	// Mode == SpawnModeGroupTask: the group run that owns the child, the
+	// task's key within that run, and the task's form. All three are required
+	// for a group-task link and forbidden on every other mode (see Valid).
+	GroupRunID    uuid.UUID
+	GroupTaskKey  string
+	GroupTaskKind GroupTaskKind
 }
 
 // MaxSpawnDepth is the runtime ceiling on spawn recursion: the deepest
@@ -87,8 +109,21 @@ var ErrSpawnDepthExceeded = errors.New("maximum spawn depth exceeded")
 // SpawnDepth is deliberately NOT checked: 0 is meaningful (it is what a link
 // carries before Engine.Spawn derives the real depth), and validity here is
 // about matchability by the wake.
+//
+// A group-task link (Mode == SpawnModeGroupTask) additionally requires its
+// group run id, task key and a valid task kind: without them the coordinator
+// could not attribute the child's terminal to a roster row. Conversely a
+// legacy-mode link carrying ANY group field is invalid — persistence writes
+// the group columns only for group tasks, so such a link would silently lose
+// half of what the caller asked for.
 func (l SpawnLink) Valid() bool {
-	return l.ParentInstanceID != uuid.Nil && l.ParentNodeID != "" && l.Mode.Valid()
+	if l.ParentInstanceID == uuid.Nil || l.ParentNodeID == "" || !l.Mode.Valid() {
+		return false
+	}
+	if l.Mode == SpawnModeGroupTask {
+		return l.GroupRunID != uuid.Nil && l.GroupTaskKey != "" && l.GroupTaskKind.Valid()
+	}
+	return l.GroupRunID == uuid.Nil && l.GroupTaskKey == "" && l.GroupTaskKind == ""
 }
 
 // ParentScope is the three-state parent narrowing on a list query.
@@ -150,6 +185,13 @@ type ChildVisibility struct {
 	IncludePublic bool
 }
 
+// ChildRef is a child and its advisory current state. Cancellation re-reads
+// and re-authorizes every child before acting on it.
+type ChildRef struct {
+	ID    uuid.UUID
+	State State
+}
+
 // SpawnLinkRepository answers link-shaped questions without any caller knowing
 // how links are stored.
 //
@@ -172,20 +214,25 @@ type SpawnLinkRepository interface {
 
 	// ListActiveChildren returns the ids of parentID's children that are still
 	// in a cancellable state (queued, running, waiting, paused), REGARDLESS of
-	// spawn mode — the cancel cascade covers every active child, not only
-	// awaited ones. A parent with no active children returns an empty slice,
-	// not an error.
+	// spawn mode. No active children is an empty slice, not an error. The
+	// cancel cascade walks ListChildren to include terminal intermediates.
 	ListActiveChildren(ctx context.Context, parentID uuid.UUID) ([]uuid.UUID, error)
 
-	// ListOrphanedActiveChildren returns the ids of every still-active run whose
-	// PARENT is already cancelled — the exact residue an interrupted cancel
-	// cascade leaves behind.
-	//
-	// The cascade is a best-effort in-process walk: a storage error on one
-	// branch, a process death mid-walk, or a descendant that was still queued
-	// when its parent's link row was read all leave an active child under a
-	// cancelled parent. Without a sweep that state is permanent and invisible —
-	// the operator has already been told the tree is gone. An empty result is
-	// the normal case, not an error.
+	// ListChildren returns EVERY child, including terminal ones, with its
+	// advisory state, in creation order, one level deep, regardless of spawn
+	// mode. No children is an empty slice, not an error.
+	ListChildren(ctx context.Context, parentID uuid.UUID) ([]ChildRef, error)
+
+	// MarkSubtreeCancelRequested durably records cancellation intent for a
+	// terminal run's subtree before the best-effort cascade. Active or unknown
+	// rows are untouched; storage errors are returned.
+	MarkSubtreeCancelRequested(ctx context.Context, id uuid.UUID) error
+
+	// ListOrphanedActiveChildren returns active runs with a cancelled ancestor,
+	// or a terminal ancestor stamped at or after the run's creation. The climb
+	// crosses completed/failed intermediates but stops at active ancestors:
+	// cancelling that topmost orphan cascades through its subtree. Unmarked
+	// completed roots retain legitimate independent work. An empty result is
+	// normal, not an error. This sweep finishes interrupted cancel cascades.
 	ListOrphanedActiveChildren(ctx context.Context) ([]uuid.UUID, error)
 }

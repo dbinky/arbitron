@@ -184,6 +184,46 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, wf)
 }
 
+// GroupLayout handles GET /workflows/{name}/group-layout using the same
+// ownership analysis as run views, over the caller-visible definition.
+// Validation errors are reported by the validate endpoint, not this read.
+func (h *WorkflowHandler) GroupLayout(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if !safeWorkflowName(name) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+		return
+	}
+	wf, err := h.wfSvc.Load(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "NOT_FOUND", "workflow not found: "+name)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load workflow")
+		return
+	}
+	layout, _ := workflow.AnalyzeGroups(wf)
+	WriteJSON(w, http.StatusOK, normalizeGroupGraph(layout))
+}
+
+// normalizeGroupGraph guarantees empty collections rather than JSON null.
+func normalizeGroupGraph(g *workflow.GroupGraph) *workflow.GroupGraph {
+	out := workflow.GroupGraph{}
+	if g != nil {
+		out = *g
+	}
+	if out.Groups == nil {
+		out.Groups = map[string]*workflow.GroupScope{}
+	}
+	if out.Owner == nil {
+		out.Owner = map[string]workflow.BodyOwner{}
+	}
+	if out.Order == nil {
+		out.Order = []string{}
+	}
+	return &out
+}
+
 // Validate handles POST /workflows/{name}/validate and returns validation results.
 func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
@@ -201,17 +241,14 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	checker := ownerBoundChecker{fr: h.fileReader, owner: callerOwner(r.Context())}
-	// Author-time existence check for every spawn_workflow node's childWorkflow,
-	// over the SAME visible set the spawn path resolves against. A listing
-	// failure SKIPS the pass rather than inventing phantom UNKNOWN_CHILD_WORKFLOW
-	// findings from a transient outage.
-	var opts []workflow.ValidateOption
-	if names, nerr := h.wfSvc.VisibleNames(r.Context()); nerr == nil {
-		opts = append(opts, workflow.WithWorkflowChecker(names))
+	var checker workflow.FileChecker
+	if h.fileReader != nil {
+		checker = ownerBoundChecker{fr: h.fileReader, owner: callerOwner(r.Context())}
 	}
+	// Use the same caller-scoped group and spawn checks as MCP validation.
+	opts := h.wfSvc.GroupValidateOptions(r.Context())
 	errs := workflow.Validate(wf, checker, h.profileChecker, h.connChecker, opts...)
-	valid := len(errs) == 0
+	valid := !hasHardValidationError(errs)
 	if errs == nil {
 		errs = []workflow.ValidationError{}
 	}
@@ -220,6 +257,37 @@ func (h *WorkflowHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		"valid":  valid,
 		"errors": errs,
 	})
+}
+
+// hasHardValidationError reports whether any finding gates validity;
+// advisories (Severity "warning") never do.
+func hasHardValidationError(errs []workflow.ValidationError) bool {
+	for _, e := range errs {
+		if e.Severity != "warning" {
+			return true
+		}
+	}
+	return false
+}
+
+// writeGroupValidationError renders a rejected parallel-group write as 422 with
+// the same errors array validate returns. It reports false for other errors.
+func writeGroupValidationError(w http.ResponseWriter, err error) bool {
+	var gve *workflow.GroupValidationError
+	if !errors.As(err, &gve) {
+		return false
+	}
+	errs := gve.Errors
+	if errs == nil {
+		errs = []workflow.ValidationError{}
+	}
+	WriteJSON(w, http.StatusUnprocessableEntity, map[string]any{
+		"error":  gve.Error(),
+		"code":   "GROUP_VALIDATION_FAILED",
+		"valid":  false,
+		"errors": errs,
+	})
+	return true
 }
 
 const maxTriggerBodyBytes = 1 << 20 // 1 MiB
@@ -254,6 +322,12 @@ func (h *WorkflowHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, engine.ErrInvalidDepartmentOverride) {
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		if errors.Is(err, engine.ErrGroupExecutionUnsupported) {
+			// A capability refusal, not a server fault: the message names the
+			// parallel_group node and what the author can do.
+			WriteError(w, http.StatusUnprocessableEntity, "UNSUPPORTED_NODE_TYPE", err.Error())
 			return
 		}
 		if strings.Contains(err.Error(), "missing required input") {
@@ -322,6 +396,9 @@ func (h *WorkflowHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		vis = "public"
 	}
 	if err := h.wfSvc.Publish(r.Context(), name, req.PublishedName, workflow.Visibility(vis), req.Department); err != nil {
+		if writeGroupValidationError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, workflow.ErrInvalidVisibility):
 			WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -390,6 +467,9 @@ func (h *WorkflowHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.Copy(r.Context(), name, req.NewName); err != nil {
+		if writeGroupValidationError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, workflow.ErrAlreadyExists):
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -506,6 +586,9 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.wfSvc.Create(r.Context(), wf.Name, &wf); err != nil {
+		if writeGroupValidationError(w, err) {
+			return
+		}
 		if errors.Is(err, workflow.ErrAlreadyExists) {
 			WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 			return
@@ -535,6 +618,9 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 	wf.Name = name
 
 	if err := h.wfSvc.Update(r.Context(), name, &wf); err != nil {
+		if writeGroupValidationError(w, err) {
+			return
+		}
 		if writeSharedReadOnlyOrNotFound(w, name, err) {
 			return
 		}

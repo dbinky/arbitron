@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	adaptedge "github.com/arbitron/arbitron/adapter/edge"
 	"github.com/arbitron/arbitron/adapter/eventbus"
 	"github.com/arbitron/arbitron/adapter/filesystem"
+	gitarea "github.com/arbitron/arbitron/adapter/git"
 	adapthttp "github.com/arbitron/arbitron/adapter/http"
 	adaptmcp "github.com/arbitron/arbitron/adapter/mcp"
 	adaptnotif "github.com/arbitron/arbitron/adapter/notification"
@@ -61,15 +63,50 @@ const (
 	deviceCodePollInterval = 5
 	// deviceCodeSweepInterval is how often expired device codes are purged.
 	deviceCodeSweepInterval = 5 * time.Minute
-	// spawnSweepInterval is how often the two spawn reconcilers re-run after the
-	// startup pass: parents stuck waiting on an already-finished child, and runs
-	// stranded active under a cancelled parent. Both holes open in a HEALTHY
-	// process (a lost wake, a partially-failed cascade), so neither is a
-	// startup-only concern. Both sweeps are indexed single queries that usually
-	// match nothing, so a minute is cheap; the cost of a longer interval is a
-	// user staring at a run that looks hung.
-	spawnSweepInterval = 1 * time.Minute
 )
+
+// spawnSweepInterval is how often the two spawn reconcilers re-run after the
+// startup pass: parents stuck waiting on an already-finished child, and runs
+// stranded active under a cancelled parent. Both holes open in a HEALTHY
+// process (a lost wake, a partially-failed cascade), so neither is a
+// startup-only concern. Both sweeps are indexed single queries that usually
+// match nothing, so a minute is cheap; the cost of a longer interval is a
+// user staring at a run that looks hung. Variable so composition tests can
+// shorten the ticker.
+var spawnSweepInterval = 1 * time.Minute
+
+// groupSweepInterval is variable so composition tests can shorten the ticker.
+// Production retries missed task callbacks and partially applied group actions
+// every minute, in addition to the explicit startup reconciliation.
+var groupSweepInterval = time.Minute
+
+// recoveryShutdownTimeout bounds how long Close waits for the spawn and group
+// recovery workers (a rollback in flight runs under WithoutCancel) before it
+// closes their store anyway. Variable so composition tests can shorten it.
+var recoveryShutdownTimeout = 30 * time.Second
+
+// waitRecoveryWorkers waits for the recovery workers in wg and for the gather
+// reconciler's watch (watchDone, nil when not started) to return, up to
+// timeout. It reports whether they all returned; on timeout it logs.
+func waitRecoveryWorkers(wg *sync.WaitGroup, watchDone <-chan struct{}, timeout time.Duration, log *slog.Logger) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if wg != nil {
+			wg.Wait()
+		}
+		if watchDone != nil {
+			<-watchDone
+		}
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		log.Error("recovery workers still running at shutdown; closing the database anyway", "timeout", timeout)
+		return false
+	}
+}
 
 // sweepSpawnReconcilers re-runs the two spawn reconcilers on a ticker until ctx
 // is cancelled. Errors are logged, not fatal — a transient DB error on one tick
@@ -93,6 +130,26 @@ func sweepSpawnReconcilers(
 			}
 			if err := orphans.Reconcile(ctx); err != nil {
 				log.Error("orphaned-child reconciliation incomplete", "error", err)
+			}
+		}
+	}
+}
+
+// groupReconciler is the operation shared by startup and periodic recovery.
+type groupReconciler interface {
+	Reconcile(ctx context.Context) error
+}
+
+func sweepGroupReconciler(ctx context.Context, groups groupReconciler, interval time.Duration, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := groups.Reconcile(ctx); err != nil {
+				log.Error("parallel-group reconciliation incomplete", "error", err)
 			}
 		}
 	}
@@ -228,12 +285,25 @@ type domainStack struct {
 	// spawnSweepCancel stops the spawn-wait / orphaned-child reconciliation
 	// ticker. It is stopped BEFORE the DB closes, like sweepCancel.
 	spawnSweepCancel context.CancelFunc
+	// Stop group recovery before closing its durable store.
+	groupSweepCancel context.CancelFunc
+	// recoveryWG joins the spawn and group sweep goroutines, and
+	// groupWatchDone the gather reconciler's event watch: Close cancels them,
+	// then waits for both before closing the database, so a recovery pass in
+	// flight (a rollback runs under WithoutCancel) never outlives its store.
+	recoveryWG     *sync.WaitGroup
+	groupWatchDone <-chan struct{}
+	groupRunRepo   instance.GroupRunRepository
 	// backendHealth is the shared, TTL-cached backend-health component (codex
 	// install/login readiness). Constructed ONCE here and injected into BOTH the
 	// HTTP SystemHandler and the MCP server so the probe forks at most once per
 	// TTL across both surfaces (and the unauthenticated local GET /system/config
 	// route cannot fork a codex probe pair per request).
 	backendHealth *backendhealth.Checker
+	// Authorized aggregate run state, shared by the production HTTP router.
+	graphState *engine.GraphStateReader
+	// subtreeEvents routes authorized descendant events for live run views.
+	subtreeEvents *engine.SubtreeEventBridge
 }
 
 // Close tears down the domain stack in the correct order: engine drains first,
@@ -249,7 +319,9 @@ func (ds *domainStack) Close(ctx context.Context) {
 	if ds.scheduleEval != nil {
 		ds.scheduleEval.Stop()
 	}
-	ds.eng.Shutdown()
+	if ds.eng != nil {
+		ds.eng.Shutdown()
+	}
 	if ds.schedulerCancel != nil {
 		ds.schedulerCancel()
 	}
@@ -270,6 +342,10 @@ func (ds *domainStack) Close(ctx context.Context) {
 	if ds.spawnSweepCancel != nil {
 		ds.spawnSweepCancel()
 	}
+	if ds.groupSweepCancel != nil {
+		ds.groupSweepCancel()
+	}
+	waitRecoveryWorkers(ds.recoveryWG, ds.groupWatchDone, recoveryShutdownTimeout, ds.logger)
 	// Stop the bearer last-used flusher's owned goroutine, draining any pending
 	// touches synchronously before the DB closes.
 	if ds.authMW != nil {
@@ -332,6 +408,67 @@ func newOutboundHTTPClient(timeout time.Duration) *http.Client {
 		Timeout:   timeout,
 		Transport: transport,
 	}
+}
+
+// canonicalWorkspacePath creates the root when missing and resolves it once so
+// workspaces, Git staging paths and provider WorkDir pins use the same spelling.
+func canonicalWorkspacePath(p string) (string, error) {
+	if p == "" {
+		return "", errors.New("workspace path is empty")
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace path %q: %w", p, err)
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return "", fmt.Errorf("create workspace root %q: %w", abs, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root %q: %w", abs, err)
+	}
+	return resolved, nil
+}
+
+// routerDeps assembles the domain-backed dependencies used by runServe and
+// composition-root tests. Per-process handlers are layered on by runServe.
+func (ds *domainStack) routerDeps() adapthttp.RouterDeps {
+	deps := adapthttp.RouterDeps{
+		Service:             ds.eng,
+		Workflows:           ds.workflowRepo,
+		WorkflowSvc:         ds.workflowSvc,
+		Instances:           ds.instanceRepo,
+		NodeExecs:           ds.nodeExecRepo,
+		Snapshots:           ds.snapshotRepo,
+		Dismissals:          ds.dismissalRepo,
+		DismissalUsers:      ds.userRepo,
+		FileReader:          ds.fileReader,
+		EventBus:            ds.bus,
+		Config:              ds.cfg,
+		Settings:            ds.settings,
+		QueueManager:        ds.queueMgr,
+		QueueRepo:           ds.queueRepo,
+		ConversationHandler: ds.conversationHandler,
+		ProfileChecker:      ds.profileChecker,
+		ConnChecker:         ds.connChecker,
+		Auth:                ds.authMW,
+		AuthHandler:         ds.authHandler,
+		Tokens:              ds.tokenSvc,
+		DeviceCodes:         ds.deviceSvc,
+		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
+		Users:               ds.userSvc,
+		DashboardStats:      ds.dashboardSvc,
+		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
+		BackendHealth:       ds.backendHealth,
+	}
+	// Avoid registering a route with a typed-nil service interface.
+	if ds.graphState != nil {
+		deps.GraphState = ds.graphState
+	}
+	if ds.subtreeEvents != nil {
+		deps.SubtreeEvents = ds.subtreeEvents
+	}
+	return deps
 }
 
 // initDomain performs all shared initialisation: configuration, logging,
@@ -461,6 +598,15 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authMW = adapthttp.NewAuthMiddleware(authMode, cfg.Auth.Session.CookieName, sessionRepo, tokenRepo, userRepo, groupCfg)
 	}
 
+	// Canonicalize before constructing filesystem adapters and provider pins.
+	canonicalWS, err := canonicalWorkspacePath(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("workspace root: %w", err)
+	}
+	cfg.Workspace.Path = canonicalWS
+
 	// 6. Create filesystem-based repos.
 	workflowRepo := filesystem.NewWorkflowRepo(cfg.Workspace.Path)
 	fileReader := filesystem.NewFileReader(cfg.Workspace.Path)
@@ -484,27 +630,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// unique-name / publisher-only-overwrite rules and the PublisherLookup the
 	// Service uses to tag shared list entries with their publisher.
 	publishedRepo := adaptsqlite.NewPublishedWorkflowRepo(db)
-	// One-time, marker-guarded seeding of bundled sample workflows into the
-	// shared scope (public, owned by the default user). Runs after the published
-	// repo exists so the publication records can be written.
-	//
-	// Seeding is a non-essential convenience subsystem, so a seeding error is
-	// logged and tolerated rather than fatal — it must never wedge server boot.
-	// Combined with the seeder's re-entrancy, a crash-interrupted seed self-heals
-	// on the next boot instead of permanently failing with ErrAlreadyExists.
-	switch {
-	case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
-		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, flatMigrateUser, logger); err != nil {
-			logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
-		} else {
-			logger.Info("sample workflow seeding complete")
-		}
-	case cfg.Samples.Seed:
-		// seed=true but no source dir resolved: the stock default. Make the
-		// silent no-op observable so an operator expecting samples knows why
-		// none appeared and how to fix it (set samples.sourcedir).
-		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
-	}
 	// Service resolves storage scope/authorization from the request
 	// identity.
 	workflowSvc := workflow.NewWorkflowService(workflowRepo, publishedRepo)
@@ -528,35 +653,6 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// wiring above — a sibling repo injected via a setter).
 	identityRepo := adaptsqlite.NewWorkflowIdentityRepo(db)
 	workflowSvc.SetRegistry(identityRepo)
-	// One-time startup reconciliation: register any unregistered (legacy id-less)
-	// workflow under the default user's private scope and the shared scope. Run
-	// under an admin system identity so the scan can persist backfilled ids. It is
-	// idempotent and best-effort: a failure is logged, not fatal, since per-user
-	// private workflows are also backfilled lazily on first load.
-	backfillCtx := identity.WithIdentity(context.Background(), identity.Identity{
-		UserID: flatMigrateUser,
-		Role:   identity.RoleAdmin,
-	})
-	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
-		logger.Warn("workflow registry backfill incomplete", "error", err)
-	}
-	// One-time reference backfill: stamp each reference row's resolved workflow id
-	// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
-	// the registry rows the BackfillRegistry above just reconciled, so it runs
-	// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
-	// are Warn-logged, not fatal.
-	workflowSvc.SetReferenceBackfiller(adaptsqlite.NewReferenceBackfiller(db))
-	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
-		logger.Warn("workflow reference backfill incomplete", "error", err)
-	}
-	// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
-	// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
-	// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
-	// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
-	// stamped ids are considered.
-	if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
-		logger.Warn("workflow orphan sweep incomplete", "error", err)
-	}
 
 	// 7. Create the chat + agent providers based on config.
 	//
@@ -699,6 +795,63 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	}
 	profileResolver := providersadapter.NewDynamicProfileResolver(profileCache, connStore)
 	profileChecker := providersadapter.NewResolverChecker(profileResolver)
+
+	// Parallel-group writes require the same profile and owner-aware file
+	// checkers used by validation. Wire them here, once both are available.
+	workflowSvc.SetGroupCheckers(profileChecker, fileReader)
+
+	// Import writers need the live profile checker before touching any store.
+	// One-time, marker-guarded seeding of bundled sample workflows into the
+	// shared scope (public, owned by the default user). Runs after the published
+	// repo exists so the publication records can be written.
+	//
+	// Seeding is a non-essential convenience subsystem, so a seeding error is
+	// logged and tolerated rather than fatal — it must never wedge server boot.
+	// Combined with the seeder's re-entrancy, a crash-interrupted seed self-heals
+	// on the next boot instead of permanently failing with ErrAlreadyExists.
+	switch {
+	case cfg.Samples.Seed && cfg.Samples.SourceDir != "":
+		if err := seedSampleWorkflows(context.Background(), cfg.Samples.SourceDir, cfg.Workspace.Path, workflowRepo, publishedRepo, flatMigrateUser, logger, profileChecker); err != nil {
+			logger.Error("sample workflow seeding failed; continuing boot without samples", "err", err)
+		} else {
+			logger.Info("sample workflow seeding complete")
+		}
+	case cfg.Samples.Seed:
+		// seed=true but no source dir resolved: the stock default. Make the
+		// silent no-op observable so an operator expecting samples knows why
+		// none appeared and how to fix it (set samples.sourcedir).
+		logger.Info("sample seeding enabled but no source directory configured; nothing will be seeded (set samples.sourcedir to the install's samples/ path)")
+	}
+
+	// One-time startup reconciliation: register any unregistered (legacy id-less)
+	// workflow under the default user's private scope and the shared scope. Run
+	// under an admin system identity so the scan can persist backfilled ids. It is
+	// idempotent and best-effort: a failure is logged, not fatal. Invalid groups
+	// remain untouched; Load may assign an id in memory but never persists it.
+	backfillCtx := identity.WithIdentity(context.Background(), identity.Identity{
+		UserID: flatMigrateUser,
+		Role:   identity.RoleAdmin,
+	})
+	if err := workflowSvc.BackfillRegistry(backfillCtx); err != nil {
+		logger.Warn("workflow registry backfill incomplete", "error", err)
+	}
+	// One-time reference backfill: stamp each reference row's resolved workflow id
+	// onto instances/schedules/published_workflows (Phase 2 task 1). It depends on
+	// the registry rows the BackfillRegistry above just reconciled, so it runs
+	// AFTER it. Additive and idempotent: names that no longer resolve stay NULL and
+	// are Warn-logged, not fatal.
+	workflowSvc.SetReferenceBackfiller(adaptsqlite.NewReferenceBackfiller(db))
+	if err := workflowSvc.BackfillReferences(backfillCtx); err != nil {
+		logger.Warn("workflow reference backfill incomplete", "error", err)
+	}
+	// One-time startup orphan self-heal (PR #44 Consider #2): reconcile any
+	// dangling workflow_id reference (a non-NULL id whose identity was deleted) back
+	// to NULL, reusing the reference-backfill machinery. Idempotent and best-effort:
+	// a failure is logged, not fatal. Runs AFTER BackfillReferences so freshly
+	// stamped ids are considered.
+	if err := workflowSvc.SweepOrphans(backfillCtx); err != nil {
+		logger.Warn("workflow orphan sweep incomplete", "error", err)
+	}
 
 	// profile-editing Phase 4: the admin-facing editing services. ProfileService
 	// owns authz + capability validation + recache: the store-bound profileCache
@@ -948,6 +1101,34 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		queueMgr,
 	))
 
+	// Parallel groups share the production repositories, queue, workspace and
+	// owner identity resolver. Build before FreezeExecutors: the engine is the
+	// task starter, child-contract reader and authorized canceller.
+	groupRunRepo := adaptsqlite.NewGroupRunRepo(db)
+	groupWS, err := filesystem.NewGroupWorkspace(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("group workspace: %w", err)
+	}
+	// File groups use Git snapshots and staging; results-only groups keep the
+	// filesystem workspace so they never require a Git process.
+	workingArea, err := gitarea.NewWorkingArea(cfg.Workspace.Path)
+	if err != nil {
+		db.Close()
+		logCloser.Close()
+		return nil, fmt.Errorf("group working area: %w", err)
+	}
+	groupCoord := engine.NewGroupCoordinator(groupRunRepo, instanceRepo, queueRepo, eng, identityResolver, bus, queueMgr)
+	groupLauncher := engine.NewGroupLauncher(groupRunRepo, eng, eng, wsMgr, groupWS, identityResolver, eng, bus)
+	groupLauncher.SetFileWorkingArea(workingArea)
+	groupLauncher.SetLaunchByteBudget(cfg.Workspace.EffectiveGroupLaunchMaxBytes(), filesystem.GroupAreaMeter{})
+	groupExecutor := engine.NewParallelGroupExecutor(instanceRepo, nodeExecRepo, groupRunRepo, groupLauncher, groupCoord, instanceRepo, queueMgr)
+	eng.RegisterExecutor(workflow.NodeTypeParallelGroup, groupExecutor)
+	// Finalize immutable task refs before terminal persistence/workspace cleanup.
+	eng.SetGroupTaskFinalizer(engine.NewGroupFileFinalizer(groupRunRepo, workingArea, wsMgr))
+	eng.SetGroupTerminalHandler(groupCoord)
+
 	scheduleRepo := adaptsqlite.NewScheduleRepo(db)
 	scheduleAlerter := schedule.NewScheduleAlerter(notifRepo, externalNotifier, logger)
 	scheduleEval := schedule.NewEvaluator(
@@ -1062,6 +1243,37 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		s.SetAuditRecorder(auditSvc)
 	}
 
+	// 12d-group-files. The bridge uses the same profile selector, file reader,
+	// notifier and node-addressed queue as interactive sessions. End/abandon
+	// actions reach it through the shared HTTP/MCP/WS conversation handler.
+	groupResolution := engine.NewGroupResolutionBridge(
+		groupRunRepo, instanceRepo, nodeExecRepo, profileResolver,
+		interactiveStreamSel, fileReader, eng, bus, queueRepo, queueMgr,
+		time.Duration(cfg.LLM.TimeoutSeconds)*time.Second,
+	)
+	groupSessions, ok := conversationHandler.(interface {
+		SetGroupResolution(instance.GroupRunRepository, engine.GroupResolutionCompleter)
+	})
+	if !ok {
+		db.Close()
+		logCloser.Close()
+		return nil, errors.New("the conversation handler cannot host parallel-group conflict-resolution sessions")
+	}
+	groupSessions.SetGroupResolution(groupRunRepo, groupResolution)
+	gatherer := engine.NewGroupGatherer(groupRunRepo, workingArea, groupResolution, bus)
+	groupExecutor.SetGatherer(gatherer)
+	groupPruner := engine.NewGroupResourcePruner(
+		groupRunRepo, instanceRepo, instanceRepo, wsMgr, workingArea, workingArea,
+	)
+	groupPruner.SetResultsResources(groupWS, groupRunRepo)
+	// Executor and recovery share the single-writer gather lock and bridge.
+	gatherReconciler := engine.NewGroupGatherReconciler(
+		groupRunRepo, instanceRepo, nodeExecRepo, gatherer,
+		groupResolution, groupResolution, queueRepo, queueMgr,
+		groupExecutor, bus, groupPruner,
+	)
+	eng.SetGroupSupport(engine.GroupSupportResultsAndFiles)
+
 	// 12e. SEAL the executor set.
 	//
 	// Every executor is registered by this point, and from here on goroutines
@@ -1112,6 +1324,27 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		logger.Error("spawn-wait reconciliation incomplete", "error", err)
 	}
 
+	// Group recovery runs after crash recovery, so it sees crash-failed tasks and
+	// parents. It does NOT run before the queue admits work: the queue has no start
+	// gate, and any NotifyCapacityFreed (crash recovery, the spawn reconciler
+	// above) already spawns Evaluate, so a queued task can start while this pass
+	// runs. Every decision and wake is therefore idempotent (the run's own state
+	// and the continuation/actions flags guard it). A failed pass is retried by
+	// the ticker.
+	logger.Info("reconciling parallel groups")
+	if err := groupCoord.Reconcile(context.Background()); err != nil {
+		logger.Error("parallel-group reconciliation incomplete", "error", err)
+	}
+
+	// Recover file gathers after crash-failed tasks have been coordinated. A live
+	// executor may already be running (see above); the reconciler shares the
+	// executor's gather gate, so recovery and a live writer never touch the parent
+	// area together.
+	logger.Info("reconciling parallel-group file gathers")
+	if err := gatherReconciler.Reconcile(context.Background()); err != nil {
+		logger.Error("parallel-group file-gather reconciliation incomplete", "error", err)
+	}
+
 	// 14-spawn-sweep. Both spawn reconcilers then run CONTINUOUSLY on a ticker.
 	//
 	// A startup-only pass is not sufficient for either of them, because neither
@@ -1132,13 +1365,25 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// reconstructed identity, through the SAME identityResolver the spawn
 	// executor and the schedule evaluator use.
 	orphanReconciler := engine.NewOrphanedChildReconciler(instanceRepo, instanceRepo, identityResolver, eng)
+	recoveryWG := &sync.WaitGroup{}
 	spawnSweepCtx, spawnSweepCancel := context.WithCancel(context.Background())
-	go sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
+	recoveryWG.Go(func() {
+		sweepSpawnReconcilers(spawnSweepCtx, spawnReconciler, orphanReconciler, spawnSweepInterval, logger)
+	})
+	groupSweepCtx, groupSweepCancel := context.WithCancel(context.Background())
+	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, groupCoord, groupSweepInterval, logger) })
+	recoveryWG.Go(func() { sweepGroupReconciler(groupSweepCtx, gatherReconciler, groupSweepInterval, logger) })
+	// Subscribe before returning: terminal events promptly abort/prune instead
+	// of waiting for the periodic sweep. Close cancels both sweep and watch,
+	// then joins them before closing the database.
+	groupWatchDone := gatherReconciler.Watch(groupSweepCtx)
 
 	// 14a. Recover pending timers and webhook endpoints from the database.
 	logger.Info("recovering pending timers")
 	if err := queueMgr.RecoverTimers(context.Background()); err != nil {
 		spawnSweepCancel()
+		groupSweepCancel()
+		waitRecoveryWorkers(recoveryWG, groupWatchDone, recoveryShutdownTimeout, logger)
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1151,6 +1396,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	logger.Info("recovering webhook endpoints")
 	if err := queueMgr.RecoverWebhooks(context.Background()); err != nil {
 		spawnSweepCancel()
+		groupSweepCancel()
+		waitRecoveryWorkers(recoveryWG, groupWatchDone, recoveryShutdownTimeout, logger)
 		schedulerCancel()
 		scheduler.Stop()
 		if tracingShutdown != nil {
@@ -1189,6 +1436,11 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 	// request-spanning lifetime.
 	backendHealthChecker := backendhealth.NewChecker(nil, 0, nil)
 
+	graphState := engine.NewGraphStateReader(eng, nodeExecRepo, groupRunRepo, instanceRepo)
+	// Share a bounded ancestry cache; authorize every forwarded source anew.
+	subtreeEvents := engine.NewSubtreeEventBridge(bus, eng, instanceRepo)
+	subtreeEvents.SetGroupRuns(groupRunRepo)
+
 	return &domainStack{
 		cfg:                 cfg,
 		settings:            settings,
@@ -1210,6 +1462,10 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		scheduler:           scheduler,
 		schedulerCancel:     schedulerCancel,
 		spawnSweepCancel:    spawnSweepCancel,
+		groupSweepCancel:    groupSweepCancel,
+		recoveryWG:          recoveryWG,
+		groupWatchDone:      groupWatchDone,
+		groupRunRepo:        groupRunRepo,
 		scheduleEval:        scheduleEval,
 		scheduleEvalCancel:  scheduleEvalCancel,
 		scheduleSvc:         scheduleSvc,
@@ -1237,6 +1493,8 @@ func initDomain(_ context.Context, configPath string) (*domainStack, error) {
 		authHandler:         authHandler,
 		sweepCancel:         sweepCancel,
 		backendHealth:       backendHealthChecker,
+		graphState:          graphState,
+		subtreeEvents:       subtreeEvents,
 	}, nil
 }
 
@@ -1264,38 +1522,12 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	webhookHandler := adapthttp.NewWebhookHandler(
 		ds.webhookRegistry, ds.instanceRepo, ds.nodeExecRepo, ds.scheduler, ds.queueRepo, ds.queueMgr,
 	)
-	router := adapthttp.NewRouterFromDeps(adapthttp.RouterDeps{
-		Service:             ds.eng,
-		Workflows:           ds.workflowRepo,
-		WorkflowSvc:         ds.workflowSvc,
-		Instances:           ds.instanceRepo,
-		NodeExecs:           ds.nodeExecRepo,
-		Snapshots:           ds.snapshotRepo,
-		Dismissals:          ds.dismissalRepo,
-		DismissalUsers:      ds.userRepo,
-		FileReader:          ds.fileReader,
-		EventBus:            ds.bus,
-		Config:              ds.cfg,
-		Settings:            ds.settings,
-		QueueManager:        ds.queueMgr,
-		QueueRepo:           ds.queueRepo,
-		DashboardHandler:    dashHandler,
-		NotifHandler:        notifHandler,
-		ConversationHandler: ds.conversationHandler,
-		WebhookHandler:      webhookHandler,
-		MCPHandler:          mcpSrv.HTTPHandler(),
-		ProfileChecker:      ds.profileChecker,
-		ConnChecker:         ds.connChecker,
-		Auth:                ds.authMW,
-		AuthHandler:         ds.authHandler,
-		Tokens:              ds.tokenSvc,
-		DeviceCodes:         ds.deviceSvc,
-		PublicBaseURL:       ds.cfg.Server.PublicBaseURL,
-		Users:               ds.userSvc,
-		DashboardStats:      ds.dashboardSvc,
-		ScheduleHandler:     adapthttp.NewScheduleHandler(ds.scheduleSvc),
-		BackendHealth:       ds.backendHealth,
-	})
+	deps := ds.routerDeps()
+	deps.DashboardHandler = dashHandler
+	deps.NotifHandler = notifHandler
+	deps.WebhookHandler = webhookHandler
+	deps.MCPHandler = mcpSrv.HTTPHandler()
+	router := adapthttp.NewRouterFromDeps(deps)
 
 	// 16. Add request logging middleware (wraps the entire router).
 	handler := adapthttp.RequestLoggingMiddleware(ds.logger)(router)

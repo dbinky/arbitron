@@ -18,6 +18,8 @@ type ListFilters struct {
 // Repository defines the persistence operations for notifications.
 // ownerID parameters follow the same nil=admin convention as ListFilters.OwnerID.
 type Repository interface {
+	// Create returns ErrAlreadyExists for a duplicate ID, without changing the
+	// existing row (including its read/dismissed state).
 	Create(ctx context.Context, n *Notification) error
 	List(ctx context.Context, filters ListFilters) ([]Notification, error)
 	CountUnread(ctx context.Context, ownerID *uuid.UUID) (int, error)

@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -15,13 +16,14 @@ import (
 //
 // The first 23 columns are exactly generated.Instance's field order, so a row
 // scanned with this list can be assembled into a generated.Instance and handed
-// to the existing rowToInstance converter — the three link columns are the only
-// thing scanned separately. That keeps ONE conversion routine for instances.
+// to the existing rowToInstance converter — the 018 spawn link/depth and 019
+// group-task link are scanned separately. That keeps ONE base converter.
 const instanceColumnsWithLink = `id, owner_id, workflow_name, workflow_snapshot, state, priority, ` +
 	`variables, original_variables, current_node_id, failed_node_id, created_at, updated_at, ` +
 	`completed_at, queued_at, waiting_until, webhook_token, webhook_secret_hash, ` +
 	`webhook_received_at, department, visibility, trigger_source, schedule_id, workflow_id, ` +
-	`parent_instance_id, parent_node_id, spawn_mode, spawn_depth`
+	`parent_instance_id, parent_node_id, spawn_mode, spawn_depth, ` +
+	`group_run_id, group_task_key, group_task_kind`
 
 // instanceSummaryColumns is the explicit column list for the LEAN list
 // projection. It is the column set the generated ListInstances query selected,
@@ -37,11 +39,12 @@ type rowScanner interface {
 }
 
 // scanInstanceWithLink reads one row selected with instanceColumnsWithLink and
-// converts it to a domain Instance, including the parent/child spawn link.
+// converts it to a domain Instance, including spawn and group-task links.
 func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 	var row generated.Instance
 	var parentID, parentNode, spawnMode sql.NullString
 	var spawnDepth int
+	var groupRunID, groupTaskKey, groupTaskKind sql.NullString
 	if err := s.Scan(
 		&row.ID,
 		&row.OwnerID,
@@ -70,6 +73,9 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 		&parentNode,
 		&spawnMode,
 		&spawnDepth,
+		&groupRunID,
+		&groupTaskKey,
+		&groupTaskKind,
 	); err != nil {
 		return nil, err
 	}
@@ -90,5 +96,45 @@ func scanInstanceWithLink(s rowScanner) (*instance.Instance, error) {
 	inst.ParentNodeID = nodeID
 	inst.SpawnMode = mode
 	inst.SpawnDepth = spawnDepth
+
+	// A group task has no legacy link: spawn_mode is NULL. Decode the group
+	// tuple with the same ALL-OR-NONE discipline.
+	if mode == "" {
+		gl, err := nullStringToGroupLink(parentID, parentNode, spawnMode, groupRunID, groupTaskKey, groupTaskKind)
+		if err != nil {
+			return nil, fmt.Errorf("converting instance row: %w", err)
+		}
+		if gl != nil {
+			inst.ParentInstanceID = &gl.parentID
+			inst.ParentNodeID = &gl.parentNodeID
+			inst.SpawnMode = instance.SpawnModeGroupTask
+			inst.GroupRunID = &gl.runID
+			inst.GroupTaskKey = &gl.taskKey
+			inst.GroupTaskKind = gl.kind
+		}
+	}
 	return inst, nil
+}
+
+// queryInstancesWithLink scans a full-row query over instanceColumnsWithLink.
+// An empty result is an empty, non-nil slice.
+func queryInstancesWithLink(ctx context.Context, db *sql.DB, q string, args ...any) ([]instance.Instance, error) {
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []instance.Instance{}
+	for rows.Next() {
+		inst, err := scanInstanceWithLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *inst)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

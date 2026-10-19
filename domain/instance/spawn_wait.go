@@ -62,4 +62,12 @@ type SpawnWaitRepository interface {
 	// A losing claim is not an error. It means the other mover won, and the
 	// caller must take its no-op path.
 	ClaimWaitingParent(ctx context.Context, parentID uuid.UUID, nodeID string) (bool, error)
+
+	// SuspendRunning atomically moves id from `running` to `waiting`, reporting
+	// whether the transition happened. It is the parking half of the same
+	// exclusion: Engine.Cancel commits `cancelled` before it cancels the run's
+	// context, so an executor's unconditional waiting write in that interval
+	// would revive a cancelled run. A false return means the run already left
+	// `running` (cancelled, paused) and the executor must halt, not wait.
+	SuspendRunning(ctx context.Context, id uuid.UUID) (bool, error)
 }

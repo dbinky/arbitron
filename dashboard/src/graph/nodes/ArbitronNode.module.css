@@ -57,6 +57,37 @@
   opacity: 0.5;
 }
 
+.stateQueued {
+  border-color: var(--state-queued);
+  border-style: dashed;
+}
+
+.statePaused {
+  border-color: var(--state-paused);
+}
+
+.stateCancelled {
+  border-color: var(--state-cancelled);
+  opacity: 0.6;
+}
+
+.stateUnknown {
+  border-color: var(--border-color);
+  border-style: dotted;
+  opacity: 0.6;
+}
+
+.independent {
+  border-style: dashed;
+  background: rgba(155, 89, 182, 0.08);
+}
+
+.note {
+  font-size: 10px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 8px rgba(52, 152, 219, 0.3); }
   50% { box-shadow: 0 0 16px rgba(52, 152, 219, 0.6); }
@@ -123,6 +154,23 @@
 .indicatorSkipped {
   background: var(--text-dim);
   opacity: 0.5;
+}
+
+.indicatorQueued {
+  background: var(--state-queued);
+}
+
+.indicatorPaused {
+  background: var(--state-paused);
+}
+
+.indicatorCancelled {
+  background: var(--state-cancelled);
+}
+
+.indicatorUnknown {
+  background: transparent;
+  border: 1px dotted var(--text-dim);
 }
 
 @keyframes blink {

@@ -64,6 +64,33 @@ func TestNotificationRepo_InstanceNotification_RoundTrip(t *testing.T) {
 	assert.False(t, got.Dismissed)
 }
 
+func TestNotificationRepo_Create_DuplicateIDPreservesAcknowledgement(t *testing.T) {
+	repo, db, owner := newNotifRepo(t)
+	ctx := context.Background()
+	n := instNotif(seedInstance(t, db, owner, "waiting"))
+	n.Type = notification.TypeConflictResolution
+	require.NoError(t, repo.Create(ctx, n))
+	require.NoError(t, repo.MarkAllRead(ctx, nil))
+	require.NoError(t, repo.Dismiss(ctx, n.ID, nil))
+	require.ErrorIs(t, repo.Create(ctx, n), notification.ErrAlreadyExists)
+	rows, err := repo.List(ctx, notification.ListFilters{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].Read)
+	assert.True(t, rows[0].Dismissed)
+
+	// Only the duplicate-ID constraint may be treated as an existing delivery.
+	invalid := instNotif(uuid.New())
+	err = repo.Create(ctx, invalid)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, notification.ErrAlreadyExists)
+	invalid.InstanceID = n.InstanceID
+	invalid.Type = "invalid"
+	err = repo.Create(ctx, invalid)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, notification.ErrAlreadyExists)
+}
+
 // Schedule alert is persisted with a NULL instance_id and the workflow name
 // carried in the denormalized column. Retrievable via the admin List.
 func TestNotificationRepo_ScheduleAlert_NullInstance(t *testing.T) {

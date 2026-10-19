@@ -25,14 +25,21 @@ func (r *NotificationRepo) Create(ctx context.Context, n *notification.Notificat
 	// nil InstanceID is persisted as SQL NULL (the FK would reject the zero
 	// UUID) and the workflow name is carried in the denormalized column instead
 	// of via the instance join.
-	query := `INSERT INTO notifications (id, instance_id, type, workflow_name) VALUES (?, ?, ?, ?)`
+	query := `INSERT INTO notifications (id, instance_id, type, workflow_name) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
 	var instanceID any
 	if n.InstanceID != uuid.Nil {
 		instanceID = uuidToString(n.InstanceID)
 	}
-	_, err := r.db.ExecContext(ctx, query, uuidToString(n.ID), instanceID, string(n.Type), n.WorkflowName)
+	result, err := r.db.ExecContext(ctx, query, uuidToString(n.ID), instanceID, string(n.Type), n.WorkflowName)
 	if err != nil {
 		return fmt.Errorf("creating notification: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking created notification: %w", err)
+	}
+	if affected == 0 {
+		return notification.ErrAlreadyExists
 	}
 	return nil
 }

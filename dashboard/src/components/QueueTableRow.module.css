@@ -71,3 +71,14 @@
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* Work continuing independently after its group was decided
+   (finish_independently): non-blocking, so it reads as set apart from the
+   blocking work its parent waits on. */
+.independent > td:first-child {
+  box-shadow: inset 2px 0 0 var(--state-waiting);
+}
+
+.independent {
+  font-style: italic;
+}

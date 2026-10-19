@@ -11,6 +11,11 @@ SELECT COUNT(*) FROM instances WHERE state = 'queued';
 SELECT COUNT(*) FROM instances WHERE state = 'waiting';
 
 -- name: NextEligible :one
+-- NOTE: NextEligible, ListWaitingWithTimer and ListWaitingWithWebhook are
+-- executed hand-written by QueueRepo (nextEligibleWithLinkSQL,
+-- listWaitingWithTimerWithLinkSQL, listWaitingWithWebhookWithLinkSQL over
+-- instanceColumnsWithLink) so spawn_depth and the 019 group-task columns are
+-- read in the same statement. Keep the predicates here in lockstep.
 SELECT * FROM instances i
 WHERE i.state = 'queued'
   AND (sqlc.arg('global_cap') = 0 OR (SELECT COUNT(*) FROM instances WHERE state = 'running') < sqlc.arg('global_cap'))

@@ -146,7 +146,7 @@ func (r *mockInstanceRepo) Get(_ context.Context, id uuid.UUID) (*instance.Insta
 	defer r.mu.Unlock()
 	inst, ok := r.instances[id]
 	if !ok {
-		return nil, fmt.Errorf("instance not found: %s", id)
+		return nil, fmt.Errorf("instance %s: %w", id, instance.ErrNotFound)
 	}
 	return inst, nil
 }
@@ -398,10 +398,12 @@ func TestEnqueue_StartsImmediately(t *testing.T) {
 
 	starter := newMockStarter()
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
-	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+	ir := newMockInstanceRepo()
+	m := queue.NewManager(qr, ir, cfg, starter)
 
 	id := uuid.New()
 	ownerID := uuid.New()
+	require.NoError(t, ir.Create(context.Background(), &instance.Instance{ID: id, OwnerID: ownerID, State: instance.StateQueued}))
 	started, err := m.Enqueue(context.Background(), id, ownerID)
 	require.NoError(t, err)
 	assert.True(t, started)
@@ -417,10 +419,12 @@ func TestEnqueue_StaysQueued(t *testing.T) {
 
 	starter := newMockStarter()
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 20, PerUserCap: 5}}
-	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+	ir := newMockInstanceRepo()
+	m := queue.NewManager(qr, ir, cfg, starter)
 
 	id := uuid.New()
 	ownerID := uuid.New()
+	require.NoError(t, ir.Create(context.Background(), &instance.Instance{ID: id, OwnerID: ownerID, State: instance.StateQueued}))
 	started, err := m.Enqueue(context.Background(), id, ownerID)
 	require.NoError(t, err)
 	assert.False(t, started)
@@ -638,10 +642,13 @@ func TestEnqueue_CanStartError(t *testing.T) {
 	qr.countRunningErr = fmt.Errorf("db error")
 
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
-	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, newMockStarter())
+	ir := newMockInstanceRepo()
+	m := queue.NewManager(qr, ir, cfg, newMockStarter())
+	id, owner := uuid.New(), uuid.New()
+	require.NoError(t, ir.Create(context.Background(), &instance.Instance{ID: id, OwnerID: owner, State: instance.StateQueued}))
 
-	_, err := m.Enqueue(context.Background(), uuid.New(), uuid.New())
-	require.Error(t, err)
+	_, err := m.Enqueue(context.Background(), id, owner)
+	require.ErrorContains(t, err, "db error")
 }
 
 func TestEnqueue_StartFails(t *testing.T) {
@@ -653,10 +660,13 @@ func TestEnqueue_StartFails(t *testing.T) {
 	starter.errOnCall[id] = fmt.Errorf("start failed")
 
 	cfg := &config.Config{Queue: config.QueueConfig{GlobalCap: 10, PerUserCap: 5}}
-	m := queue.NewManager(qr, newMockInstanceRepo(), cfg, starter)
+	ir := newMockInstanceRepo()
+	m := queue.NewManager(qr, ir, cfg, starter)
+	owner := uuid.New()
+	require.NoError(t, ir.Create(context.Background(), &instance.Instance{ID: id, OwnerID: owner, State: instance.StateQueued}))
 
-	_, err := m.Enqueue(context.Background(), id, uuid.New())
-	require.Error(t, err)
+	_, err := m.Enqueue(context.Background(), id, owner)
+	require.ErrorContains(t, err, "start failed")
 }
 
 // ---------------------------------------------------------------------------

@@ -256,6 +256,47 @@ func nullStringToSpawnLink(parentRaw, nodeRaw, modeRaw sql.NullString) (*uuid.UU
 	return parentID, nodeID, mode, nil
 }
 
+// groupTaskLink is the decoded group-task half of an instance row (019).
+type groupTaskLink struct {
+	parentID     uuid.UUID
+	parentNodeID string
+	runID        uuid.UUID
+	taskKey      string
+	kind         instance.GroupTaskKind
+}
+
+// nullStringToGroupLink returns nil for incomplete group tuples. A legacy mode
+// takes precedence; missing run IDs are absence, but malformed UUIDs are errors.
+func nullStringToGroupLink(parentRaw, nodeRaw, modeRaw, runRaw, keyRaw, kindRaw sql.NullString) (*groupTaskLink, error) {
+	if modeRaw.Valid && modeRaw.String != "" {
+		return nil, nil
+	}
+	if !runRaw.Valid || runRaw.String == "" {
+		return nil, nil
+	}
+	runID, err := uuid.Parse(runRaw.String)
+	if err != nil {
+		return nil, fmt.Errorf("parsing group_run_id: %w", err)
+	}
+	parentID, err := nullStringToParentID(parentRaw)
+	if err != nil {
+		return nil, err
+	}
+	node := nullStringToString(nodeRaw)
+	key := nullStringToString(keyRaw)
+	kind := instance.GroupTaskKind(nullStringToString(kindRaw))
+	if parentID == nil || node == "" || key == "" || !kind.Valid() {
+		return nil, nil
+	}
+	return &groupTaskLink{
+		parentID:     *parentID,
+		parentNodeID: node,
+		runID:        runID,
+		taskKey:      key,
+		kind:         kind,
+	}, nil
+}
+
 // nullStringToParentID maps a nullable parent_instance_id column back to
 // *uuid.UUID: NULL or empty => nil (a root run). A deleted parent's id is still
 // a valid UUID string, so this round-trips a dangling link too — there is no FK

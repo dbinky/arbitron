@@ -4,6 +4,8 @@ package queue
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -130,7 +132,10 @@ func (m *Manager) canStartLocked(ctx context.Context, ownerID uuid.UUID) (bool, 
 func (m *Manager) Evaluate(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.evaluateLocked(ctx)
+}
 
+func (m *Manager) evaluateLocked(ctx context.Context) error {
 	for {
 		next, err := m.queue.NextEligible(ctx, m.config.Queue.GlobalCap, m.config.Queue.PerUserCap)
 		if err != nil {
@@ -148,11 +153,38 @@ func (m *Manager) Evaluate(ctx context.Context) error {
 }
 
 // Enqueue is called by Trigger to add an instance to the queue. It returns
-// started=true when the instance begins running immediately, false when it
-// stays in queued state.
+// started=true when the instance is already running or begins immediately,
+// false when it stays queued, has advanced past running, or a reload failure
+// prevents confirming its scheduling state. The caller has already persisted it.
 func (m *Manager) Enqueue(ctx context.Context, id uuid.UUID, ownerID uuid.UUID) (started bool, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Create commits a queued row before its caller reaches Enqueue. A capacity
+	// notification may already have started it through Evaluate. Check under
+	// the same lock as Evaluate so we never launch a second graph walker and
+	// overwrite the first one's cancellation context, even if it finished fast.
+	inst, err := m.instances.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, instance.ErrNotFound) {
+			return false, fmt.Errorf("queue enqueue: load instance %s: %w", id, err)
+		}
+		// Admission committed at Create. Reporting failure now would hide a
+		// runnable child from Spawn or turn an accepted group task into a launch
+		// failure. Drain via the state-filtered queue query instead of starting
+		// this unknown-state id; an evaluator may already have run it.
+		slog.Warn("queue enqueue: reload failed; preserving committed admission", "instanceID", id, "error", err)
+		if evalErr := m.evaluateLocked(ctx); evalErr != nil {
+			slog.Error("queue enqueue: evaluation deferred until capacity notification or recovery", "instanceID", id, "error", evalErr)
+		}
+		return false, nil
+	}
+	if inst == nil {
+		return false, fmt.Errorf("queue enqueue: instance %s: %w", id, instance.ErrNotFound)
+	}
+	if inst.State != instance.StateQueued {
+		return inst.State == instance.StateRunning, nil
+	}
 
 	canStart, err := m.canStartLocked(ctx, ownerID)
 	if err != nil {

@@ -1055,6 +1055,45 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	cancelBody := func(t *testing.T, state instance.State, getErr error) map[string]string {
+		t.Helper()
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.cancelFn = func(uuid.UUID) error { return nil }
+		svc.getFn = func(context.Context, uuid.UUID) (*instance.Instance, error) {
+			if getErr != nil {
+				return nil, getErr
+			}
+			return &instance.Instance{ID: id, State: state}, nil
+		}
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/cancel", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Cancel(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		var body map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		return body
+	}
+
+	t.Run("body reports an actually cancelled instance as cancelled", func(t *testing.T) {
+		body := cancelBody(t, instance.StateCancelled, nil)
+		assert.Equal(t, "cancelled", body["status"])
+		assert.Equal(t, "cancelled", body["state"])
+	})
+
+	t.Run("body does not claim a completed parent was cancelled", func(t *testing.T) {
+		body := cancelBody(t, instance.StateCompleted, nil)
+		assert.Equal(t, "cancel_requested", body["status"])
+		assert.Equal(t, "completed", body["state"])
+	})
+
+	t.Run("body stays honest when the state cannot be read back", func(t *testing.T) {
+		body := cancelBody(t, "", instance.ErrNotFound)
+		assert.Equal(t, "cancel_requested", body["status"])
+		assert.NotContains(t, body, "state")
+	})
+
 	t.Run("non-owner gets 404 (intervention gate enforced in the service)", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()
@@ -1118,6 +1157,23 @@ func TestInstanceHandler_Cancel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInstanceHandler_Retry(t *testing.T) {
+	t.Run("returns 409 when a terminal group task cannot be retried", func(t *testing.T) {
+		h, _, _, _, svc := newInstanceHandler()
+		id := uuid.New()
+		svc.retryFn = func(gotID uuid.UUID, _ map[string]any) error {
+			assert.Equal(t, id, gotID)
+			return fmt.Errorf("group task %s has an immutable terminal outcome: %w", gotID, instance.ErrCannotRetry)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/instances/"+id.String()+"/retry", nil)
+		req = withChiURLParam(req, "id", id.String())
+		w := httptest.NewRecorder()
+		h.Retry(w, req)
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var resp adapthttp.ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, "CONFLICT", resp.Code)
+	})
+
 	t.Run("retries failed instance", func(t *testing.T) {
 		h, _, _, _, svc := newInstanceHandler()
 		id := uuid.New()

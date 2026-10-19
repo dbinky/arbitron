@@ -161,3 +161,175 @@ describe('api.schedules.list', () => {
     expect(url).toBe('/api/v1/schedules')
   })
 })
+
+describe('api.instances.graphState', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  // Unknown URLs fail so a missing/wrong production endpoint cannot pass.
+  function serve(byUrl: Record<string, unknown>) {
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const key = String(url)
+      if (!(key in byUrl)) {
+        return { ok: false, status: 404, statusText: 'Not Found', json: async () => ({ message: 'no route' }) } as Response
+      }
+      return { ok: true, json: async () => byUrl[key] } as Response
+    }) as typeof fetch
+  }
+
+  it('GETs /api/v1/instances/{id}/graph-state and returns the aggregate verbatim', async () => {
+    const wire = {
+      rootInstanceId: 'r1', version: 'v1', active: true,
+      contexts: [
+        { instanceId: 'r1', kind: 'root', state: 'waiting', blocking: true, redacted: false, nodes: [{ instanceId: 'r1', nodeId: 'g', state: 'waiting' }] },
+        { instanceId: 'b1', parentInstanceId: 'r1', groupRunId: 'gr1', taskKey: 'a', kind: 'branch', state: 'running', blocking: true, redacted: false, nodes: [{ instanceId: 'b1', nodeId: 'a1', state: 'running', attempt: 1 }] },
+      ],
+      groups: [{
+        groupRunId: 'gr1', instanceId: 'r1', nodeId: 'g', form: 'branches', completionRule: 'all_succeed',
+        unfinishedBehavior: 'cancel_unfinished', gatherMode: 'results', state: 'running',
+        tasks: [{ key: 'a', kind: 'branch', origin: 'a1', childInstanceId: 'b1', liveStatus: 'running', frozenStatus: '', blocking: true, continuingIndependently: false, cancelRequested: false, redacted: false }],
+        progress: { total: 1, completed: 0, failed: 0, cancelled: 0, active: 1, notStarted: 0 },
+        waitingReasons: ['Waiting for task a'],
+      }],
+      layout: { groups: { g: { nodeId: 'g', config: { form: 'branches', tasks: [{ key: 'a', entry: 'a1' }], completionRule: 'all_succeed', unfinishedBehavior: 'cancel_unfinished', gatherMode: 'results' }, bodies: { a: ['a1'] }, nested: [], successTarget: 'done', failureTarget: 'oops' } }, owner: { a1: { groupNodeId: 'g', taskKey: 'a' } }, order: ['g'] },
+      warnings: [],
+    }
+    serve({ '/api/v1/instances/r1/graph-state': wire })
+
+    const out = await api.instances.graphState('r1')
+
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/instances/r1/graph-state', undefined)
+    expect(out).toEqual(wire)
+    expect(out.contexts[1].nodes[0]).toEqual({ instanceId: 'b1', nodeId: 'a1', state: 'running', attempt: 1 })
+    expect(out.groups[0].tasks[0].childInstanceId).toBe('b1')
+  })
+
+  it('normalizes Go nulls (contexts, nodes, groups, tasks, waitingReasons, layout collections) to empties', async () => {
+    serve({
+      '/api/v1/instances/r2/graph-state': {
+        rootInstanceId: 'r2', version: 'v0', active: false,
+        contexts: [{ instanceId: 'r2', kind: 'root', state: 'completed', blocking: true, redacted: false, nodes: null }],
+        groups: [{
+          groupRunId: 'gr', instanceId: 'r2', nodeId: 'g', form: 'workflows', completionRule: 'first_success',
+          unfinishedBehavior: 'finish_independently', gatherMode: 'results', state: 'done',
+          tasks: null, progress: null, waitingReasons: null,
+        }],
+        layout: { groups: { g: { nodeId: 'g', config: { form: 'workflows', tasks: null, completionRule: 'first_success', unfinishedBehavior: 'finish_independently', gatherMode: 'results' }, bodies: null, nested: null, successTarget: 's', failureTarget: 'f' } }, owner: null, order: null },
+        warnings: null,
+      },
+    })
+
+    const out = await api.instances.graphState('r2')
+
+    expect(out.contexts[0].nodes).toEqual([])
+    expect(out.groups[0].tasks).toEqual([])
+    expect(out.groups[0].waitingReasons).toEqual([])
+    expect(out.groups[0].progress).toEqual({ total: 0, completed: 0, failed: 0, cancelled: 0, active: 0, notStarted: 0 })
+    expect(out.layout!.groups.g.bodies).toEqual({})
+    expect(out.layout!.groups.g.nested).toEqual([])
+    expect(out.layout!.groups.g.config.tasks).toEqual([])
+    expect(out.layout!.owner).toEqual({})
+    expect(out.layout!.order).toEqual([])
+    expect(out.warnings).toEqual([])
+  })
+
+  it('normalizes a descendant workflow context layout without dropping its graph or session', async () => {
+    const session = { groupRunId: 'gr-child', instanceId: 'child', nodeId: 'inner', mergeIndex: 1, attempt: 2 }
+    const context = {
+      instanceId: 'child', kind: 'workflow', state: 'waiting', blocking: true, redacted: false,
+      nodes: [{ instanceId: 'child', nodeId: 'inner', state: 'waiting' }],
+      graph: { name: 'child-wf', nodes: [{ id: 'inner', type: 'parallel_group' }] },
+      layout: { groups: null, owner: null, order: null },
+    }
+    serve({ '/api/v1/instances/r1/graph-state': {
+      rootInstanceId: 'r1', version: 'v-child', active: true, contexts: [context],
+      groups: [{
+        groupRunId: 'gr-child', instanceId: 'child', nodeId: 'inner', form: 'branches',
+        completionRule: 'all_succeed', unfinishedBehavior: 'wait_for_remaining',
+        gatherMode: 'results_and_files', state: 'resolving_conflicts', tasks: null,
+        progress: { total: 0, completed: 0, failed: 0, cancelled: 0, active: 0, notStarted: 0 },
+        waitingReasons: ['Resolve conflict'], activeSession: session,
+      }],
+    } })
+    const out = await api.instances.graphState('r1')
+    expect(out.contexts[0].layout).toEqual({ groups: {}, owner: {}, order: [] })
+    expect(out.contexts[0].graph).toEqual(context.graph)
+    expect(out.contexts[0].nodes).toEqual(context.nodes)
+    expect(out.groups[0].activeSession).toEqual(session)
+    expect(out.groups[0].waitingReasons).toEqual(['Resolve conflict'])
+  })
+
+  it('a null contexts/groups envelope and an absent layout normalize to empties and undefined', async () => {
+    serve({ '/api/v1/instances/r3/graph-state': { rootInstanceId: 'r3', version: 'v', active: false, contexts: null, groups: null } })
+    const out = await api.instances.graphState('r3')
+    expect(out.contexts).toEqual([])
+    expect(out.groups).toEqual([])
+    expect(out.layout).toBeUndefined()
+  })
+
+  it('rejects with the server status and message on a non-2xx response', async () => {
+    serve({})
+    await expect(api.instances.graphState('hidden')).rejects.toThrow('API 404: no route')
+  })
+})
+
+describe('api.instances.list — active-descendant ancestor discovery (P4-T10)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('sends activeDescendantAncestors=true when requested', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    await api.instances.list({ activeDescendantAncestors: true, includeDismissed: true })
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/v1/instances?includeDismissed=true&activeDescendantAncestors=true',
+      undefined,
+    )
+  })
+
+  it('composes with the roots scope', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    await api.instances.list({ parent: 'roots', activeDescendantAncestors: true })
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/instances?parent=roots&activeDescendantAncestors=true', undefined)
+  })
+
+  it('omits the parameter when false or absent', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] } as Response)
+    await api.instances.list({ state: 'running', activeDescendantAncestors: false })
+    await api.instances.list({ state: 'running' })
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls[0][0]).toBe('/api/v1/instances?state=running')
+    expect(calls[1][0]).toBe('/api/v1/instances?state=running')
+  })
+})
+
+describe('api.workflows.groupLayout', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('GETs /api/v1/workflows/{name}/group-layout and returns the GroupGraph', async () => {
+    const graph = {
+      groups: {
+        g: { nodeId: 'g', config: { form: 'workflows', tasks: [{ key: 'x', workflow: 'child-a' }], completionRule: 'all_succeed', unfinishedBehavior: 'wait_for_remaining', gatherMode: 'results' }, bodies: {}, nested: [], successTarget: 's', failureTarget: 'f' },
+      },
+      owner: {}, order: ['g'],
+    }
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url) === '/api/v1/workflows/wf-a/group-layout'
+        ? ({ ok: true, json: async () => graph } as Response)
+        : ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) } as Response),
+    ) as typeof fetch
+
+    const out = await api.workflows.groupLayout('wf-a')
+
+    expect(out).toEqual(graph)
+    expect(out.groups.g.config.tasks[0].workflow).toBe('child-a')
+  })
+
+  it('normalizes an all-null GroupGraph (workflow without groups) to empties', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ groups: null, owner: null, order: null }) }) as Response) as typeof fetch
+    const out = await api.workflows.groupLayout('plain')
+    expect(out).toEqual({ groups: {}, owner: {}, order: [] })
+  })
+
+  it('rejects on a non-2xx response', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({ message: 'workflow not found' }) }) as Response) as typeof fetch
+    await expect(api.workflows.groupLayout('nope')).rejects.toThrow('API 404: workflow not found')
+  })
+})

@@ -15,15 +15,49 @@ function makeSession(overrides: Partial<InteractiveSessionState> = {}): Interact
     isStreaming: false,
     isActive: true,
     isEnding: false,
+    isAbandoning: false,
+    sessionKind: 'interactive',
     nodeId: 'review-design',
     error: null,
     connected: true,
     sendMessage: vi.fn(),
     endSession: vi.fn(),
+    abandonSession: vi.fn(),
     seedFromInstance: vi.fn(),
     ...overrides,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Group conflict resolution
+// ---------------------------------------------------------------------------
+
+describe('InteractivePanel — group conflict resolution', () => {
+  it('does not offer abandon for ordinary sessions', () => {
+    render(<InteractivePanel session={makeSession()} nodeName="review-design" />)
+    expect(screen.queryByRole('button', { name: /abandon gather/i })).not.toBeInTheDocument()
+    expect(screen.getByText('Interactive Session')).toBeInTheDocument()
+  })
+
+  it('offers abandon and labels group resolution', async () => {
+    const abandonSession = vi.fn()
+    const endSession = vi.fn()
+    render(<InteractivePanel session={makeSession({ sessionKind: 'group_resolution', abandonSession, endSession })} nodeName="gather-1" />)
+    expect(screen.getByText('Gather Conflict Resolution')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /end session/i })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /abandon gather/i }))
+    expect(abandonSession).toHaveBeenCalledOnce()
+    expect(endSession).not.toHaveBeenCalled()
+  })
+
+  it('disables abandon while streaming, abandoning, ending or disconnected', () => {
+    for (const overrides of [{ isStreaming: true }, { isAbandoning: true }, { isEnding: true }, { connected: false }]) {
+      const { unmount } = render(<InteractivePanel session={makeSession({ sessionKind: 'group_resolution', ...overrides })} nodeName="gather-1" />)
+      expect(screen.getByRole('button', { name: /abandon gather/i })).toBeDisabled()
+      unmount()
+    }
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Happy path: panel renders header and node name

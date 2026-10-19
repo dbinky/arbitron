@@ -3,9 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const setCenter = vi.fn()
 const getZoom = vi.fn(() => 1.5)
+const fitBounds = vi.fn(() => Promise.resolve(true))
 
 vi.mock('@xyflow/react', () => ({
-  useReactFlow: () => ({ setCenter, getZoom }),
+  useReactFlow: () => ({ setCenter, getZoom, fitBounds }),
 }))
 
 import { useFollowActiveNode } from './useFollowActiveNode'
@@ -13,6 +14,7 @@ import { useFollowActiveNode } from './useFollowActiveNode'
 beforeEach(() => {
   setCenter.mockClear()
   getZoom.mockClear()
+  fitBounds.mockClear()
   // Default: no reduced-motion preference, matchMedia present.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any).matchMedia = vi.fn().mockImplementation((q: string) => ({
@@ -197,6 +199,62 @@ describe('useFollowActiveNode — isRunning guard', () => {
     )
     rerender({ a: { x: 100, y: 200 }, running: true })
     expect(setCenter).toHaveBeenCalledWith(100, 200, { zoom: 1.5, duration: 400 })
+  })
+})
+
+describe('useFollowActiveNode — several concurrently active nodes (bounds)', () => {
+  type B = { x: number; y: number; width: number; height: number }
+  const a1 = { x: 100, y: 100 }
+  const b1: B = { x: 0, y: 0, width: 600, height: 200 }
+
+  it('frames the bounds of all active nodes instead of centering on one', () => {
+    const { rerender } = renderHook(
+      ({ a, b }: { a: { x: number; y: number }; b: B | null }) => useFollowActiveNode(a, true, b),
+      { initialProps: { a: a1, b: b1 } },
+    )
+    expect(fitBounds).not.toHaveBeenCalled()
+    const b2: B = { x: 0, y: 0, width: 900, height: 400 }
+    rerender({ a: { x: 450, y: 200 }, b: b2 })
+    expect(fitBounds).toHaveBeenCalledTimes(1)
+    expect(fitBounds).toHaveBeenCalledWith(b2, { padding: 0.25, duration: 400 })
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+
+  it('does not move when the bounds are unchanged (new object, same rectangle)', () => {
+    const { rerender } = renderHook(
+      ({ b }: { b: B }) => useFollowActiveNode({ x: 300, y: 100 }, true, b),
+      { initialProps: { b: b1 } },
+    )
+    rerender({ b: { ...b1 } })
+    expect(fitBounds).not.toHaveBeenCalled()
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+
+  it('does not move after the user paused following', () => {
+    const { result, rerender } = renderHook(
+      ({ b }: { b: B }) => useFollowActiveNode({ x: 300, y: 100 }, true, b),
+      { initialProps: { b: b1 } },
+    )
+    act(() => result.current.onMoveStart({ type: 'pointerdown' }))
+    rerender({ b: { x: 0, y: 0, width: 1200, height: 300 } })
+    expect(fitBounds).not.toHaveBeenCalled()
+  })
+
+  it('recenter frames the latest bounds again', () => {
+    const { result } = renderHook(() => useFollowActiveNode({ x: 300, y: 100 }, true, b1))
+    act(() => result.current.recenter())
+    expect(fitBounds).toHaveBeenCalledWith(b1, { padding: 0.25 })
+    expect(setCenter).not.toHaveBeenCalled()
+  })
+
+  it('falls back to centering once only one node is active again', () => {
+    const { rerender } = renderHook(
+      ({ a, b }: { a: { x: number; y: number }; b: B | null }) => useFollowActiveNode(a, true, b),
+      { initialProps: { a: { x: 300, y: 100 } as { x: number; y: number }, b: b1 as B | null } },
+    )
+    rerender({ a: { x: 100, y: 500 }, b: null })
+    expect(setCenter).toHaveBeenCalledWith(100, 500, { zoom: 1.5, duration: 400 })
+    expect(fitBounds).not.toHaveBeenCalled()
   })
 })
 

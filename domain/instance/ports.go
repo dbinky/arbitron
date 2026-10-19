@@ -11,6 +11,16 @@ import (
 // Implementations must wrap domain sentinel errors (e.g., ErrNotFound) via
 // fmt.Errorf %w so that the HTTP adapter's errors.Is-based error mapping works
 // correctly.
+//
+// TERMINAL RECEIPTS. Every write that moves a parallel_group task's child (an
+// instance with a GroupRunID and GroupTaskKey) to a terminal state — SetCompleted,
+// SetFailed, UpdateState to cancelled/failed/completed, and the queue-driven
+// terminal writes — MUST, in the SAME transaction, assign the task's
+// TerminalSeq from the durable allocator and record its immutable terminal
+// receipt (LiveStatus, result, failure, terminal time) on the GroupRunRepository
+// roster. GroupCoordinator's intake only reads receipts; it never invents one,
+// so a terminal write without its receipt stalls the group undecided. The
+// SQLite adapter satisfies this with the group_task_terminal_* triggers.
 type InstanceRepository interface {
 	Create(ctx context.Context, inst *Instance) error
 	Get(ctx context.Context, id uuid.UUID) (*Instance, error)
@@ -18,6 +28,8 @@ type InstanceRepository interface {
 	UpdateState(ctx context.Context, id uuid.UUID, state State) error
 	UpdateVariables(ctx context.Context, id uuid.UUID, variables map[string]any) error
 	UpdateCurrentNode(ctx context.Context, id uuid.UUID, nodeID string) error
+	// SetFailed and SetCompleted are terminal writes: for a group task child
+	// they must record its terminal receipt atomically (see TERMINAL RECEIPTS).
 	SetFailed(ctx context.Context, id uuid.UUID, failedNodeID string) error
 	SetCompleted(ctx context.Context, id uuid.UUID) error
 	ListRunning(ctx context.Context) ([]Instance, error)
@@ -66,6 +78,25 @@ type NodeExecutionRepository interface {
 	// executions are absent from the map (the caller treats absence as the
 	// zero value). An empty ids slice returns an empty map, not an error.
 	AggregateByInstances(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]NodeExecutionAggregate, error)
+}
+
+// OpenSessionRecordUpdater writes a node execution only while its STORED
+// llm_conversation has no "endedAt" key, i.e. the session it records is still
+// open. It reports whether the write applied. Writers that read a session
+// record and write it back (notification marker, recovery close) use it so a
+// concurrent end, written outside their read, is never reopened or replaced.
+//
+// Writers other than the session's conversation handler (the notification
+// marker, a recovery close) must use PatchSessionFields, never
+// UpdateIfSessionOpen: a whole-record write from a stale read would revert a
+// turn (messages, provider session ID) the handler saved meanwhile. The
+// conversation handler is the sole writer of messages and the session ID.
+type OpenSessionRecordUpdater interface {
+	UpdateIfSessionOpen(ctx context.Context, exec *NodeExecution) (bool, error)
+	// PatchSessionFields merges patch's top-level keys into the stored
+	// llm_conversation, leaving every other key as stored, while that stored
+	// conversation is still open. It reports whether the patch applied.
+	PatchSessionFields(ctx context.Context, id uuid.UUID, patch map[string]any) (bool, error)
 }
 
 // VariableSnapshotRepository defines the port for persisting and querying variable snapshots.

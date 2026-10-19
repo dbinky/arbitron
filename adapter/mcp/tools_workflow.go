@@ -219,6 +219,8 @@ func RegisterWorkflowTools(srv *Server) {
 		),
 		workflowAuditHandler(srv),
 	)
+
+	registerWorkflowGroupTools(srv)
 }
 
 // mapLifecycleError maps the admin lifecycle service sentinels to a tool error,
@@ -226,6 +228,9 @@ func RegisterWorkflowTools(srv *Server) {
 // tool-specific default. ErrForbidden/ErrUnauthorized both surface as "not
 // authorized" (the admin gate); the rest carry their own message.
 func mapLifecycleError(name string, err error) (*gomcp.CallToolResult, bool) {
+	if res, ok := groupValidationResult(err); ok {
+		return res, true
+	}
 	switch {
 	case errors.Is(err, workflow.ErrForbidden), errors.Is(err, workflow.ErrUnauthorized):
 		return gomcp.NewToolResultError(fmt.Sprintf("not authorized: %s", err)), true
@@ -300,6 +305,9 @@ func workflowCreateHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).Create(ctx, wf.Name, &wf); err != nil {
+			if res, ok := groupValidationResult(err); ok {
+				return res, nil
+			}
 			if errors.Is(err, workflow.ErrAlreadyExists) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow already exists: %s", wf.Name)), nil
 			}
@@ -335,6 +343,9 @@ func workflowUpdateHandler(srv *Server) server.ToolHandlerFunc {
 		wf.Name = name
 
 		if err := workflowSvc(srv).Update(ctx, name, &wf); err != nil {
+			if res, ok := groupValidationResult(err); ok {
+				return res, nil
+			}
 			if errors.Is(err, workflow.ErrSharedReadOnly) {
 				return gomcp.NewToolResultError(fmt.Sprintf("workflow is shared and read-only: %s", name)), nil
 			}
@@ -392,19 +403,18 @@ func workflowValidateHandler(srv *Server) server.ToolHandlerFunc {
 			return gomcp.NewToolResultError("workflow not found"), nil
 		}
 
-		checker := ownerBoundChecker{fr: srv.deps.FileReader, owner: callerOwner(ctx)}
-		// Same author-time spawn-reference check the REST validate endpoint runs,
-		// so the two surfaces cannot drift. A listing failure skips the pass.
-		var opts []workflow.ValidateOption
-		if names, nerr := workflowSvc(srv).VisibleNames(ctx); nerr == nil {
-			opts = append(opts, workflow.WithWorkflowChecker(names))
+		var checker workflow.FileChecker
+		if srv.deps.FileReader != nil {
+			checker = ownerBoundChecker{fr: srv.deps.FileReader, owner: callerOwner(ctx)}
 		}
+		// Use the same caller-scoped group and spawn checks as REST validation.
+		opts := workflowSvc(srv).GroupValidateOptions(ctx)
 		validationErrors := workflow.Validate(wf, checker, srv.deps.ProfileChecker, srv.deps.ConnChecker, opts...)
 		if validationErrors == nil {
 			validationErrors = []workflow.ValidationError{}
 		}
 		result := map[string]any{
-			"valid":  len(validationErrors) == 0,
+			"valid":  !hasHardValidationError(validationErrors),
 			"errors": validationErrors,
 		}
 		return MarshalResult(result)
@@ -565,6 +575,9 @@ func workflowPublishHandler(srv *Server) server.ToolHandlerFunc {
 		}
 		department, _ := args["department"].(string)
 		if err := workflowSvc(srv).Publish(ctx, name, publishedName, workflow.Visibility(visibility), department); err != nil {
+			if res, ok := groupValidationResult(err); ok {
+				return res, nil
+			}
 			switch {
 			case errors.Is(err, workflow.ErrInvalidVisibility):
 				return gomcp.NewToolResultError(fmt.Sprintf("invalid visibility for %q: %s", publishedName, err)), nil
@@ -629,6 +642,9 @@ func workflowCopyHandler(srv *Server) server.ToolHandlerFunc {
 		}
 
 		if err := workflowSvc(srv).Copy(ctx, name, newName); err != nil {
+			if res, ok := groupValidationResult(err); ok {
+				return res, nil
+			}
 			switch {
 			case errors.Is(err, workflow.ErrAlreadyExists):
 				return gomcp.NewToolResultError(fmt.Sprintf("private workflow already exists: %s", newName)), nil

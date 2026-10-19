@@ -7,6 +7,7 @@ import { useDensityPreference } from '../hooks/useDensityPreference'
 import { useNow } from '../hooks/useNow'
 import QueueSection from '../components/QueueSection'
 import DensityToggle from '../components/DensityToggle'
+import { QUEUE_POLL_MS, isQueueRefreshEvent } from './queueRefresh'
 
 /** Returns an ISO date string for N days ago. */
 function daysAgo(n: number): string {
@@ -17,19 +18,7 @@ function daysAgo(n: number): string {
 
 const HISTORY_DAYS = 5
 const DEBOUNCE_MS = 300
-
-/** Event types that indicate a state change worth refetching for. */
-const STATE_CHANGE_EVENTS = new Set([
-  'instance.created',
-  'instance.started',
-  'instance.completed',
-  'instance.failed',
-  'instance.cancelled',
-  'instance.paused',
-  'instance.resumed',
-  'instance.retrying',
-  'instance.recovered',
-])
+const NO_IDS: ReadonlySet<string> = new Set()
 
 /** Node events that should patch a single row in place (no refetch). */
 const NODE_PATCH_EVENTS = new Set(['node.started', 'node.failed'])
@@ -64,6 +53,36 @@ function nodeEventPatch(type: string, d: NodeEventData): Partial<EnrichedInstanc
   return fields
 }
 
+/** Ancestor rows follow the active rows they own; a row already listed keeps its place. */
+function withAncestors(active: EnrichedInstanceSummary[], ancestors: EnrichedInstanceSummary[]): EnrichedInstanceSummary[] {
+  const listed = new Set(active.map((r) => r.id))
+  return [...active, ...ancestors.filter((a) => !listed.has(a.id))]
+}
+
+interface AncestorResult {
+  rows: EnrichedInstanceSummary[]
+  error: string | null
+}
+
+// Explicitly match the REST maximum. A full page is a continuation, never a
+// complete discovery result. Keep successful pages if a later request fails.
+const ANCESTOR_PAGE_LIMIT = 500
+async function discoverAncestors(): Promise<AncestorResult> {
+  const rows = new Map<string, EnrichedInstanceSummary>()
+  try {
+    for (let offset = 0; ; offset += ANCESTOR_PAGE_LIMIT) {
+      const page = await api.instances.list({
+        activeDescendantAncestors: true, includeDismissed: true,
+        limit: ANCESTOR_PAGE_LIMIT, offset,
+      })
+      for (const row of page) rows.set(row.id, row)
+      if (page.length < ANCESTOR_PAGE_LIMIT) return { rows: [...rows.values()], error: null }
+    }
+  } catch (err) {
+    return { rows: [...rows.values()], error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+}
+
 export default function QueueView() {
   const [active, setActive] = useState<EnrichedInstanceSummary[]>([])
   const [pending, setPending] = useState<EnrichedInstanceSummary[]>([])
@@ -73,12 +92,15 @@ export default function QueueView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showDismissed, setShowDismissed] = useState(false)
-  // Bumped on every successful top-level refetch so each QueueSection can
-  // invalidate its (independent) run-hierarchy cache — an expanded row's
-  // children are fetched once and never refreshed on their own, so without
-  // this a completed/failed child keeps rendering its stale state under an
-  // already-open parent.
+  // Terminal runs listed in Active only because they still own active work.
+  const [ownsActiveWork, setOwnsActiveWork] = useState<ReadonlySet<string>>(NO_IDS)
+  const [ancestorError, setAncestorError] = useState<string | null>(null)
+  // Bumped on every successful top-level refetch so each QueueSection
+  // refreshes its (independent) run-hierarchy cache — an expanded row's
+  // children are otherwise never refreshed on their own, so a completed/failed
+  // child kept rendering its stale state under an already-open parent.
   const [refreshedAt, setRefreshedAt] = useState(0)
+  const inFlight = useRef(false)
 
   const { density, cycle: cycleDensity } = useDensityPreference(me?.userId ?? null)
   // One page-level clock so Elapsed / "N ago" cells advance between events.
@@ -86,14 +108,25 @@ export default function QueueView() {
   const authMode = me?.authMode ?? 'local'
 
   const fetchAll = useCallback(async () => {
+    inFlight.current = true
     try {
       const since = daysAgo(HISTORY_DAYS)
+
+      // Ancestor discovery: TERMINAL runs that are ancestors of still-active
+      // work the caller may see. Without it a completed fire-and-forget or
+      // finish_independently parent falls out of the queue (outside the
+      // Completed window, or dismissed) while its child keeps running.
+      // includeDismissed: true — this is structural context for live work,
+      // not the personal Completed inbox. A failure is reported but never takes
+      // the queue down: the active child still shows (topLevelRows keeps a row
+      // whose parent is not listed at top level), only its parent row is missing.
+      const ancestorsReq = discoverAncestors()
 
       // Seam: `showDismissed` drives the FETCH (includeDismissed), per-row
       // `inst.dismissed` from the server drives the RENDER (Restore vs Dismiss,
       // dimming). The server reconciles the two — do NOT re-thread showDismissed
       // down into the rows or it reintroduces the toggle/refetch flicker.
-      const [running, waiting, queued, paused, failedRes, completedRes, meResp] =
+      const [running, waiting, queued, paused, failedRes, completedRes, meResp, ancestors] =
         await Promise.all([
           api.instances.list({ state: 'running' }),
           api.instances.list({ state: 'waiting' }),
@@ -102,12 +135,22 @@ export default function QueueView() {
           api.instances.list({ state: 'failed', since, includeDismissed: showDismissed }),
           api.instances.list({ state: 'completed', since, includeDismissed: showDismissed }),
           api.me(),
+          ancestorsReq,
         ])
 
-      setActive([...running, ...waiting, ...paused])
+      // Ancestors go into the ACTIVE section: topLevelRows nests a row under
+      // its parent only within one section, so this is what makes an active
+      // branch a non-root row reached from its completed parent.
+      const ancestorIds = new Set(ancestors.rows.map((r) => r.id))
+      setActive(withAncestors([...running, ...waiting, ...paused], ancestors.rows))
+      setOwnsActiveWork(ancestorIds)
+      setAncestorError(ancestors.error)
       setPending(queued)
-      setFailed(failedRes)
-      setCompleted(completedRes)
+      // A terminal ancestor belongs to Active while it owns live work, even
+      // when it is also inside the history window. Only subtract rows actually
+      // discovered: on discovery failure the ordinary history stays available.
+      setFailed(failedRes.filter((r) => !ancestorIds.has(r.id)))
+      setCompleted(completedRes.filter((r) => !ancestorIds.has(r.id)))
       setMe(meResp)
       setError(null)
       setRefreshedAt((n) => n + 1)
@@ -115,6 +158,7 @@ export default function QueueView() {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       setError(msg)
     } finally {
+      inFlight.current = false
       setLoading(false)
     }
   }, [showDismissed])
@@ -191,7 +235,10 @@ export default function QueueView() {
           for (const patch of rowPatchers.current) patch(instId, fields)
           return
         }
-        if (!STATE_CHANGE_EVENTS.has(event.type)) return
+        // Lifecycle AND group events refetch (and so refresh open hierarchy
+        // levels): a group decision or task update changes child rows and
+        // their markers with no instance event on the expanded parent.
+        if (!isQueueRefreshEvent(event.type)) return
         if (debounceRef.current) clearTimeout(debounceRef.current)
         debounceRef.current = setTimeout(() => {
           void fetchAll()
@@ -205,6 +252,21 @@ export default function QueueView() {
   // while it was down are not replayed. Resync on reconnect so the queue
   // doesn't sit stale until the next event arrives.
   useRefetchOnReconnect(connected, fetchAll)
+
+  // Bounded periodic refetch while anything is active or pending: the bus
+  // drops events when buffers fill and some transitions have no emitter, so a
+  // lost final event must not leave a row or an open level stale forever. A
+  // tick is skipped while a refetch is still in flight; nothing polls once the
+  // queue holds only terminal runs.
+  const hasLiveWork = active.length > 0 || pending.length > 0
+  useEffect(() => {
+    if (!hasLiveWork) return
+    const timer = setInterval(() => {
+      if (inFlight.current) return
+      void fetchAll()
+    }, QUEUE_POLL_MS)
+    return () => clearInterval(timer)
+  }, [hasLiveWork, fetchAll])
 
   // Clean up debounce timer on unmount.
   useEffect(() => {
@@ -249,6 +311,26 @@ export default function QueueView() {
       <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px 8px' }}>
         <DensityToggle density={density} onCycle={cycleDensity} />
       </div>
+      {ancestorError && (
+        <div
+          role="status"
+          data-testid="ancestor-warning"
+          style={{
+            margin: '0 16px 8px',
+            padding: '6px 12px',
+            fontSize: 12,
+            color: 'var(--state-waiting)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+          }}
+        >
+          {`Couldn't load completed runs that still own active work: ${ancestorError}`}
+          {' '}
+          <button type="button" onClick={() => { void fetchAll() }}>
+            Retry ancestor discovery
+          </button>
+        </div>
+      )}
       <QueueSection
         title="Active"
         instances={active}
@@ -261,6 +343,7 @@ export default function QueueView() {
         authMode={authMode}
         refreshSignal={refreshedAt}
         registerRowPatcher={registerRowPatcher}
+        ownsActiveWork={ownsActiveWork}
       />
       <QueueSection
         title="Pending"

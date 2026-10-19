@@ -125,10 +125,12 @@ describe('QueueView show/hide dismissed toggle', () => {
     fireEvent.click(toggle)
     await screen.findByRole('button', { name: /hide dismissed/i })
 
-    // After enabling, the failed/completed fetches request includeDismissed.
+    // Only terminal-state calls count; ancestor discovery always includes dismissed runs.
     await waitFor(() => {
       const calledWithInclude = list.mock.calls.some(
-        (c) => (c[0] as { includeDismissed?: boolean } | undefined)?.includeDismissed === true,
+        (c) =>
+          ['failed', 'completed'].includes((c[0] as { state?: string } | undefined)?.state ?? '') &&
+          (c[0] as { includeDismissed?: boolean } | undefined)?.includeDismissed === true,
       )
       expect(calledWithInclude).toBe(true)
     })

@@ -1,0 +1,207 @@
+.container {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(46, 204, 113, 0.45);
+  border-radius: var(--radius-lg, 8px);
+  background: rgba(46, 204, 113, 0.04);
+  pointer-events: none;
+}
+
+.containerWorkflows {
+  border-style: dashed;
+}
+
+.containerLabel {
+  position: absolute;
+  top: -10px;
+  left: 12px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--state-completed, #2ecc71);
+  background: var(--bg-primary, #1a1a2e);
+  pointer-events: none;
+}
+
+.endpoint,
+.card {
+  width: 200px;
+  box-sizing: border-box;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 2px solid rgba(46, 204, 113, 0.6);
+  padding: 6px 10px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.endpoint {
+  min-height: 80px;
+}
+
+.card {
+  min-height: 96px;
+  border-color: var(--border-color);
+}
+
+/* Read-only viewer: handles are anchors only. */
+.endpoint :global(.react-flow__handle),
+.card :global(.react-flow__handle) {
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.footer {
+  border-style: double;
+  border-width: 3px;
+}
+
+.selected {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.typeLabel {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--state-completed, #2ecc71);
+  margin-bottom: 2px;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.liveRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.status {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+}
+
+.statusPending {
+  color: var(--text-dim);
+}
+
+.statusQueued {
+  color: var(--state-queued);
+  border: 1px dashed var(--state-queued);
+}
+
+.statusRunning {
+  color: var(--state-running);
+  border-color: var(--state-running);
+}
+
+.statusWaiting {
+  color: var(--state-waiting);
+  border-color: var(--state-waiting);
+}
+
+.statusCompleted {
+  color: var(--state-completed);
+  border-color: var(--state-completed);
+}
+
+.statusFailed {
+  color: var(--state-failed);
+  border-color: var(--state-failed);
+}
+
+.statusCancelled {
+  color: var(--state-cancelled);
+  border-color: var(--state-cancelled);
+  text-decoration: line-through;
+}
+
+.cardIndependent {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.winner {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--state-completed);
+}
+
+.activity {
+  font-size: 11px;
+  color: var(--state-waiting);
+}
+
+.activeNodes {
+  font-size: 11px;
+  color: var(--state-running);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+}
+
+.badgeWinner {
+  color: var(--state-completed);
+}
+
+.badgeIndependent {
+  color: var(--state-paused);
+}
+
+.badgeCancel {
+  color: var(--state-cancelled);
+}
+
+.hidden {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.link {
+  color: var(--accent);
+}
+
+.error {
+  font-size: 11px;
+  color: var(--state-failed);
+}

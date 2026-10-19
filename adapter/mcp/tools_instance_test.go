@@ -675,8 +675,33 @@ func TestInstanceCancel(t *testing.T) {
 
 		assert.False(t, result.IsError)
 		text := extractText(t, result)
-		assert.Contains(t, text, "cancelled")
+		assert.Contains(t, text, "cancel_requested", "state unreadable: must not claim the instance is cancelled")
 	})
+
+	for _, tc := range []struct {
+		state      instance.State
+		wantStatus string
+	}{
+		{instance.StateCancelled, "cancelled"},
+		{instance.StateCompleted, "cancel_requested"},
+	} {
+		t.Run("body reports the "+string(tc.state)+" instance truthfully", func(t *testing.T) {
+			eng := &stubEngine{
+				cancelFn: func(_ uuid.UUID) error { return nil },
+				getFn: func(_ context.Context, id uuid.UUID) (*instance.Instance, error) {
+					return &instance.Instance{ID: id, State: tc.state}, nil
+				},
+			}
+			srv := newInstanceServer(&stubInstanceRepo{}, eng)
+			result := callTool(t, srv, "instance_cancel", map[string]any{"id": uuid.New().String()})
+
+			require.False(t, result.IsError)
+			var body map[string]string
+			require.NoError(t, json.Unmarshal([]byte(extractText(t, result)), &body))
+			assert.Equal(t, tc.wantStatus, body["status"])
+			assert.Equal(t, string(tc.state), body["state"])
+		})
+	}
 
 	t.Run("engine error returned as tool error", func(t *testing.T) {
 		eng := &stubEngine{
