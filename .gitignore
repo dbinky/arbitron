@@ -22,3 +22,6 @@ testResults.xml
 workspaces/instances/
 # macOS Finder metadata
 .DS_Store
+
+# Release build output (make dist / make release)
+/dist/

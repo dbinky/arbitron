@@ -49,9 +49,15 @@ test-all: test test-ui
 
 # Package the bundled sample workflows into a release tarball alongside the
 # binaries, so the installer can fetch + verify + extract them.
+# The tarball is byte-reproducible for a given commit (its checksum is signed
+# into SHA256SUMS): git archive stamps every entry with the commit time and fixed
+# ownership (--mtime pins it: given a TREE, git archive would otherwise stamp the
+# current time), and gzip -n drops the gzip header's name and timestamp. It packs the
+# COMMITTED samples tree, which is exactly what a tagged release ships; the entry
+# layout ("./<workflow>/...", no *_test.go) matches what install.sh extracts.
 samples-tarball:
 	@mkdir -p dist
-	tar -czf dist/arbitron_samples_$(VERSION).tar.gz -C samples --exclude='*_test.go' .
+	git archive --format=tar --prefix=./ --mtime='$(DATE)' HEAD:samples -- ':(exclude)*_test.go' | gzip -n -9 > dist/arbitron_samples_$(VERSION).tar.gz
 	@echo "wrote dist/arbitron_samples_$(VERSION).tar.gz"
 
 # Copy the bundled sample workflows into a local sample source dir for a manual

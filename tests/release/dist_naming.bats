@@ -50,17 +50,19 @@ teardown() {
   [ ! -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_darwin_arm64.exe" ]
 }
 
-@test "SHA256SUMS has 6 well-formed basename-only lines" {
+@test "SHA256SUMS has 7 well-formed basename-only lines (6 binaries + samples tarball)" {
   run wc -l < "${REPO_ROOT}/dist/SHA256SUMS"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | tr -d ' ')" -eq 6 ]
+  [ "$(echo "$output" | tr -d ' ')" -eq 7 ]
 
   # Every line: 64 hex + two spaces + a basename (no dist/ path prefix).
   while IFS= read -r line; do
-    [[ "$line" =~ ^[0-9a-f]{64}\ \ arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+(\.exe)?$ ]] || {
+    [[ "$line" =~ ^[0-9a-f]{64}\ \ (arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+(\.exe)?|arbitron_samples_${TEST_VERSION}\.tar\.gz)$ ]] || {
       echo "malformed or path-prefixed line: $line"; return 1
     }
   done < "${REPO_ROOT}/dist/SHA256SUMS"
+  # Exactly one samples tarball, signed alongside the binaries.
+  [ "$(grep -c "  arbitron_samples_${TEST_VERSION}\.tar\.gz$" "${REPO_ROOT}/dist/SHA256SUMS")" -eq 1 ]
 }
 
 @test "checksums verify from inside dist/" {

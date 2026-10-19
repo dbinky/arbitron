@@ -15,13 +15,18 @@ _sandbox_system_paths() {
 
 setup() {
   install_setup_sandbox
-  # Symlink tar into the coreutils sandbox BEFORE install_isolate_path restricts
-  # PATH (tar is not in the default coreutils list in test_helper.bash).
-  local _tar_src
+  # Symlink tar (and gzip) into the coreutils sandbox BEFORE install_isolate_path
+  # restricts PATH; neither is in the default coreutils list in test_helper.bash.
+  # GNU tar (Linux CI) runs -z through an external gzip, so without it every
+  # fixture build/extract failed there with "gzip: not found". macOS bsdtar has
+  # gzip built in, which is why these passed locally.
+  local _tar_src _gzip_src
   _tar_src="$(command -v tar 2>/dev/null || true)"
+  _gzip_src="$(command -v gzip 2>/dev/null || true)"
   install_isolate_path
   local coreutils="$TEST_SANDBOX/coreutils"
   [ -n "$_tar_src" ] && ln -sf "$_tar_src" "$coreutils/tar"
+  [ -n "$_gzip_src" ] && ln -sf "$_gzip_src" "$coreutils/gzip"
   ARBITRON_INSTALL_LIB_ONLY=1 source "$INSTALL_SH"
   # Non-interactive defaults for local tests.
   export ARBITRON_PORT=8080
