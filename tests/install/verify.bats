@@ -124,11 +124,6 @@ _make_fixture() {
   [ "$output" = "arbitron_1.2.3_linux_amd64" ]
 }
 
-@test "arbitron_artifact_name appends .exe for windows" {
-  run arbitron_artifact_name "1.2.3" windows amd64
-  [ "$output" = "arbitron_1.2.3_windows_amd64.exe" ]
-}
-
 @test "arbitron_release_base targets the pinned tag download path" {
   run arbitron_release_base "1.2.3"
   [ "$output" = "https://github.com/dbinky/arbitron/releases/download/v1.2.3" ]

@@ -1,7 +1,7 @@
 .superpowers/
 /arbitron
 # Built binaries must never be committed — the only binaries users run are the
-# cosign-signed release artifacts (see install.sh/install.ps1 verification gate).
+# cosign-signed release artifacts (see install.sh verification gate).
 *.exe
 .env
 node_modules/

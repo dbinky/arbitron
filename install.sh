@@ -42,8 +42,8 @@ CLAUDE_NPM_PKG="@anthropic-ai/claude-code"
 # the agent toolchain (no longer prompt-gated/optional); set
 # ARBITRON_INSTALL_OPENCODE=no to opt out.
 #
-# OPENCODE PIN (single source of truth — keep in sync with the Dockerfile and
-# install.ps1 OpencodeNpmPackage). The package name is `opencode-ai`; the runtime
+# OPENCODE PIN (single source of truth — keep in sync with the Dockerfile).
+# The package name is `opencode-ai`; the runtime
 # gate in adapter/opencode/version.go requires >= 0.4.0. Set
 # OPENCODE_NPM_PKG=opencode-ai@<version> to pin an exact release.
 OPENCODE_NPM_PKG="${OPENCODE_NPM_PKG:-opencode-ai}"
@@ -874,12 +874,10 @@ arbitron_resolve_version() {
 }
 
 # arbitron_artifact_name <version> <os> <arch> — the release artifact basename
-# `arbitron_<version>_<os>_<arch>` (+ `.exe` on windows). Pure string in/out.
+# `arbitron_<version>_<os>_<arch>`. Pure string in/out.
 arbitron_artifact_name() {
   local version="$1" os="$2" arch="$3"
-  local name="arbitron_${version}_${os}_${arch}"
-  [ "$os" = "windows" ] && name="${name}.exe"
-  printf '%s\n' "$name"
+  printf '%s\n' "arbitron_${version}_${os}_${arch}"
 }
 
 # arbitron_release_base <version> — the release download base URL for a resolved
@@ -1153,7 +1151,7 @@ install_binary_system() {
 
 # --- Task 2: shared config Q&A + config.yaml + arbitron.env -----------------
 #
-# CANONICAL shared Q&A order (P2 ↔ P4 parity — install.ps1 mirrors this verbatim):
+# CANONICAL shared Q&A order:
 #   1. Bind host / port            (default host 0.0.0.0, port 8080)
 #   2. Auth model                  (edge+local | OIDC org)
 #   3. If OIDC: issuer -> client id -> client secret(env) -> redirect URL

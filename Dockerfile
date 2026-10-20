@@ -42,7 +42,7 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 # image; refresh npm pins with `npm view <pkg> version`.
 #
 # OPENCODE PIN (single source of truth — keep in sync with install.sh
-# OPENCODE_NPM_PKG and install.ps1 OpencodeNpmPackage). Package: opencode-ai;
+# OPENCODE_NPM_PKG). Package: opencode-ai;
 # runtime gate: >= 0.4.0 (adapter/opencode/version.go minOpencodeVersion).
 RUN apk add --no-cache \
         ca-certificates=20260413-r0 \

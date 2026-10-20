@@ -27,14 +27,12 @@ teardown() {
   make clean-dist >/dev/null 2>&1 || true
 }
 
-@test "dist produces exactly the 6 expected artifacts plus SHA256SUMS" {
+@test "dist produces exactly the 4 expected binaries plus SHA256SUMS" {
   for name in \
     "arbitron_${TEST_VERSION}_darwin_amd64" \
     "arbitron_${TEST_VERSION}_darwin_arm64" \
     "arbitron_${TEST_VERSION}_linux_amd64" \
-    "arbitron_${TEST_VERSION}_linux_arm64" \
-    "arbitron_${TEST_VERSION}_windows_amd64.exe" \
-    "arbitron_${TEST_VERSION}_windows_arm64.exe"; do
+    "arbitron_${TEST_VERSION}_linux_arm64"; do
     [ -f "${REPO_ROOT}/dist/${name}" ] || {
       echo "missing artifact: ${name}"; return 1
     }
@@ -42,22 +40,19 @@ teardown() {
   [ -f "${REPO_ROOT}/dist/SHA256SUMS" ]
 }
 
-@test "only windows artifacts carry the .exe extension" {
-  [ -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_windows_amd64.exe" ]
-  [ -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_windows_arm64.exe" ]
-  # No .exe on non-windows targets.
-  [ ! -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_linux_amd64.exe" ]
-  [ ! -f "${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_darwin_arm64.exe" ]
+@test "dist ships no Windows artifacts (support removed before v0.1.0)" {
+  run sh -c 'ls "$1"/dist | grep -E "windows|\.exe$"' _ "${REPO_ROOT}"
+  [ "$status" -ne 0 ]
 }
 
-@test "SHA256SUMS has 7 well-formed basename-only lines (6 binaries + samples tarball)" {
+@test "SHA256SUMS has 5 well-formed basename-only lines (4 binaries + samples tarball)" {
   run wc -l < "${REPO_ROOT}/dist/SHA256SUMS"
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | tr -d ' ')" -eq 7 ]
+  [ "$(echo "$output" | tr -d ' ')" -eq 5 ]
 
   # Every line: 64 hex + two spaces + a basename (no dist/ path prefix).
   while IFS= read -r line; do
-    [[ "$line" =~ ^[0-9a-f]{64}\ \ (arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+(\.exe)?|arbitron_samples_${TEST_VERSION}\.tar\.gz)$ ]] || {
+    [[ "$line" =~ ^[0-9a-f]{64}\ \ (arbitron_${TEST_VERSION}_[a-z0-9]+_[a-z0-9]+|arbitron_samples_${TEST_VERSION}\.tar\.gz)$ ]] || {
       echo "malformed or path-prefixed line: $line"; return 1
     }
   done < "${REPO_ROOT}/dist/SHA256SUMS"
@@ -74,9 +69,7 @@ teardown() {
 @test "host-native artifact reports the stamped version" {
   hostos="$(go env GOOS)"
   hostarch="$(go env GOARCH)"
-  ext=""
-  [ "$hostos" = "windows" ] && ext=".exe"
-  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}"
   [ -x "$bin" ]
   run "$bin" version
   [ "$status" -eq 0 ]
@@ -93,8 +86,7 @@ teardown() {
   # before any upgrade script silently starts extracting empty/wrong versions.
   hostos="$(go env GOOS)"
   hostarch="$(go env GOARCH)"
-  ext=""; [ "$hostos" = "windows" ] && ext=".exe"
-  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  bin="${REPO_ROOT}/dist/arbitron_${TEST_VERSION}_${hostos}_${hostarch}"
   [ -x "$bin" ] || { echo "binary not found: $bin"; return 1; }
   out="$("$bin" version)"
   extracted="$(printf '%s' "$out" | sed 's/^arbitron \([^ ]*\) .*/\1/')"
@@ -140,8 +132,7 @@ teardown() {
   [ -f "${REPO_ROOT}/dist/SHA256SUMS" ]
   for name in \
     "arbitron_${TEST_VERSION}_darwin_amd64" \
-    "arbitron_${TEST_VERSION}_linux_amd64" \
-    "arbitron_${TEST_VERSION}_windows_amd64.exe"; do
+    "arbitron_${TEST_VERSION}_linux_amd64"; do
     [ -f "${REPO_ROOT}/dist/${name}" ] || { echo "missing: $name"; return 1; }
   done
 }
@@ -155,8 +146,7 @@ teardown() {
   # variant, this test fails before anything ships.
   hostos="$(go env GOOS)"
   hostarch="$(go env GOARCH)"
-  ext=""; [ "$hostos" = "windows" ] && ext=".exe"
-  artifact="arbitron_${TEST_VERSION}_${hostos}_${hostarch}${ext}"
+  artifact="arbitron_${TEST_VERSION}_${hostos}_${hostarch}"
   sumsfile="${REPO_ROOT}/dist/SHA256SUMS"
   binfile="${REPO_ROOT}/dist/${artifact}"
   [ -f "$binfile" ]   || { echo "artifact not built: $artifact"; return 1; }
@@ -183,11 +173,10 @@ teardown() {
 @test "SHA256SUMS can be spot-checked for a single artifact via grep+sha256sum" {
   # Mirrors the verify-release CI job: only one artifact (linux_amd64) is downloaded
   # alongside SHA256SUMS, then verified. Running 'sha256sum -c SHA256SUMS' with only
-  # one of six files present exits non-zero for the absent entries — the correct
+  # one of the files present exits non-zero for the absent entries — the correct
   # pattern is to grep the relevant line and pipe it to sha256sum.
   hostos="$(go env GOOS)"
   hostarch="$(go env GOARCH)"
-  [ "$hostos" = "windows" ] && skip "windows sha256sum not exercised in this bats suite"
   bin="arbitron_${TEST_VERSION}_${hostos}_${hostarch}"
   local tmpdir
   tmpdir="$(mktemp -d)"

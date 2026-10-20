@@ -5,11 +5,10 @@ existing install (config + service present) and offers **Upgrade**,
 **Reconfigure**, or **Uninstall**.
 
 - macOS / Linux: `curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash`
-- Windows: `irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 | iex`
 
 Pick the **same install type** (Local vs Shared) you originally chose so the
 script looks in the right place. Shared re-runs need the same elevation as the
-original install (sudo / root on Linux, Administrator on Windows).
+original install (sudo / root on Linux).
 
 ## Upgrade
 
@@ -21,10 +20,6 @@ used:
 
 ```bash
 ARBITRON_VERSION=1.3.0 curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash
-```
-
-```powershell
-$env:ARBITRON_VERSION='1.3.0'; irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 | iex
 ```
 
 Check the running version any time with `arbitron version` (prints version,
@@ -46,9 +41,7 @@ commit, and build date).
 > | Scenario | Database file |
 > |---|---|
 > | macOS / Linux local | `~/.arbitron/data/arbitron.db` |
-> | Windows local | `%LOCALAPPDATA%\Arbitron\data\arbitron.db` |
 > | Linux shared | `/var/lib/arbitron/arbitron.db` |
-> | Windows shared | `%ProgramData%\Arbitron\data\arbitron.db` |
 >
 > Stop the service before copying the DB file. Always review the release notes
 > for the version you are upgrading to.
@@ -74,11 +67,9 @@ What is removed per scenario:
 | Scenario | Always removed | Prompted (default keep) |
 |---|---|---|
 | macOS / Linux local | LaunchAgent/systemd unit, `~/.arbitron/bin/arbitron`, `config.yaml` | data, workspaces, logs, **and `arbitron.env`** |
-| Windows local | Scheduled Task `Arbitron`, `bin\`, `config.yaml`, env-var/DPAPI secrets | data directory |
 | Linux shared | systemd unit, `/usr/local/bin/arbitron`, `/etc/arbitron/config.yaml` + `arbitron.env` | data (`/var/lib/arbitron`); **also** the `arbitron` service account |
-| Windows shared | Windows Service `arbitron`, `bin`, `config.yaml`, DPAPI secrets | data directory; **also** the dedicated service account (if one was created) |
 
-On Linux/Windows shared, removing the service account is a **separate prompt**
+On Linux shared, removing the service account is a **separate prompt**
 (default keep). On Linux local/macOS, choosing to remove data also removes the
 secrets env file.
 

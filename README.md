@@ -18,14 +18,11 @@ the service, and health-checks it.
 | Platform | Command |
 |---|---|
 | macOS / Linux | `curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh \| bash` |
-| Windows (PowerShell) | `irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 \| iex` |
 
-Pin a version with `ARBITRON_VERSION=1.2.3` (bash) or `$env:ARBITRON_VERSION='1.2.3'`
-(PowerShell); the default is the latest release. Check what's installed with
+Pin a version with `ARBITRON_VERSION=1.2.3`; the default is the latest release. Check what's installed with
 `arbitron version`.
 
-There are **five scenarios** — macOS local, Windows local, Linux local, Linux
-shared server, and Windows shared server. See **[docs/install/](docs/install/README.md)**
+There are **three scenarios**: macOS local, Linux local, and Linux shared server. See **[docs/install/](docs/install/README.md)**
 for the per-scenario layout matrix and config questions, plus the
 [upgrade/reconfigure/uninstall](docs/install/upgrading.md),
 [security](docs/install/security.md), and
@@ -33,7 +30,7 @@ for the per-scenario layout matrix and config questions, plus the
 
 ### Unattended (non-interactive) install
 
-Both installers support a non-interactive mode for CI / fleet provisioning.
+The installer supports a non-interactive mode for CI / fleet provisioning.
 
 **macOS / Linux** — every prompt reads a matching `ARBITRON_<VAR>` environment
 variable first, so you can script any answer; unset prompts take their default.
@@ -48,17 +45,6 @@ ARBITRON_LLM_ACCESS=api-key ARBITRON_API_KEY=sk-ant-... \
 ARBITRON_SKIP_PERMS=no \
 ARBITRON_SKIP_CLAUDE_LOGIN=1 \
   bash install.sh
-```
-
-**Windows** — pass `-Yes` (or set `$env:ARBITRON_YES=1`) to accept **all
-defaults** (local install, port 8080, subscription LLM, skip-permissions off).
-Only `-Version` and `-Config` are individually overridable; non-default
-unattended Windows installs (Shared, OIDC, etc.) are not scriptable via flags
-today and must be run interactively.
-
-```powershell
-irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 -OutFile install.ps1
-.\install.ps1 -Yes
 ```
 
 The full `ARBITRON_<VAR>` reference (every prompt, default, and the shared/OIDC/TLS

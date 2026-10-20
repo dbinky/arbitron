@@ -18,7 +18,6 @@ for the full rationale.
 | Platform | Command |
 |---|---|
 | macOS / Linux | `curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh \| bash` |
-| Windows (PowerShell) | `irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 \| iex` |
 
 The script detects your OS/arch, asks whether you want a **Local** (per-user) or
 **Shared** (system-wide) install, resolves dependencies, runs a short
@@ -33,10 +32,6 @@ with `ARBITRON_VERSION`:
 
 ```bash
 ARBITRON_VERSION=1.2.3 curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash
-```
-
-```powershell
-$env:ARBITRON_VERSION='1.2.3'; irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 | iex
 ```
 
 Check what is installed with `arbitron version` (prints version + commit + build
@@ -119,29 +114,11 @@ TTY (or set `ARBITRON_SKIP_CLAUDE_LOGIN=1` explicitly); authenticate later with
 (post-install health-check tuning), `ARBITRON_CLAUDE_PATH` (pre-resolved `claude`
 binary), `ARBITRON_PKG_SUDO`.
 
-### Windows (`install.ps1`)
-
-The PowerShell installer uses a single non-interactive switch rather than
-per-prompt env overrides. Pass **`-Yes`** (or set `$env:ARBITRON_YES=1`) and
-every prompt takes its **default** — a **Local** install on port `8080`,
-`subscription` LLM access, skip-permissions **off**:
-
-```powershell
-irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 -OutFile install.ps1
-.\install.ps1 -Yes
-```
-
-Only two values are individually overridable: `-Version` / `$env:ARBITRON_VERSION`
-(pin a release) and `-Config` / `$env:ARBITRON_CONFIG` (config path). There are
-**no** per-prompt env overrides, so a non-default unattended install on Windows
-(Shared, OIDC, a non-`8080` port, api-key mode, etc.) is **not** scriptable
-today — run those interactively.
-
 ## Codex backend (optional, user-provided)
 
 The **codex** agent backend lets agent nodes (`agent_call`, `interactive_agent`)
 run on OpenAI's Codex CLI driving your **ChatGPT subscription** instead of
-claude-cli or opencode. It is **not** installed by `install.sh` / `install.ps1`
+claude-cli or opencode. It is **not** installed by `install.sh`
 — codex is a **user-provided prerequisite** you set up once on the host. (This is
 the only backend the installer does not manage; claude-cli and opencode are
 handled by the toolchain step above.)
@@ -183,13 +160,11 @@ unusable backend is caught **before** a run rather than failing mid-mission.
 | | Scenario | OS / class | Script | Privilege |
 |---|---|---|---|---|
 | **a** | [macOS local](#a-macos-local) | macOS, single user | `install.sh` | no sudo |
-| **b** | [Windows local](#b-windows-local) | Windows, single user | `install.ps1` | no admin |
-| **c** | [Linux local](#c-linux-local) | Linux, single user | `install.sh` | no sudo |
-| **d** | [Linux shared server](#d-linux-shared-server) | Linux, multi-user | `install.sh` | **sudo / root** |
-| **e** | [Windows shared server](#e-windows-shared-server) | Windows, multi-user | `install.ps1` | **administrator** |
+| **b** | [Linux local](#b-linux-local) | Linux, single user | `install.sh` | no sudo |
+| **c** | [Linux shared server](#c-linux-shared-server) | Linux, multi-user | `install.sh` | **sudo / root** |
 
 macOS is **local-only** (there is no Shared path). On Linux the script defaults
-to Shared when run as root, Local otherwise; on Windows it defaults to Local.
+to Shared when run as root, Local otherwise.
 
 After install, see:
 
@@ -252,54 +227,7 @@ Arbitron is ready.
 
 ---
 
-## b) Windows local
-
-```powershell
-irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 | iex
-```
-
-Per-user, loopback-only, **no admin**. The service mechanism is an **at-logon
-Scheduled Task** (`Arbitron`) running as the current user.
-
-**Layout**
-
-| | Path |
-|---|---|
-| Binary | `%LOCALAPPDATA%\Arbitron\bin\arbitron.exe` |
-| Config | `%LOCALAPPDATA%\Arbitron\config.yaml` |
-| Data / DB | `%LOCALAPPDATA%\Arbitron\data\` (`arbitron.db`) |
-| Workspaces | `%LOCALAPPDATA%\Arbitron\workspaces\` |
-| Logs | `%LOCALAPPDATA%\Arbitron\logs\` |
-| Secrets | User environment variables / DPAPI (no env file) |
-| Service | Scheduled Task `Arbitron` (at-logon, runs as you) |
-| Auth | `local` / loopback bind (`127.0.0.1`) |
-
-**Config questions asked**
-
-1. **Dashboard port** (default `8080`).
-2. **LLM access** — `subscription` (runs `claude /login`) or `apikey` (paste an
-   Anthropic key).
-3. **Enable unattended agent tools (`--dangerously-skip-permissions`)?** — shown
-   with its RCE-equivalent warning. Default **No**.
-4. **Data location** (default `%LOCALAPPDATA%\Arbitron\data`).
-
-Secrets are stored as **User-scope environment variables** (`ARBITRON_MASTER_KEY`,
-and `ARBITRON_LLM_APIKEY` in api-key mode), never written into `config.yaml`.
-
-**Resulting service & summary**
-
-```text
-Arbitron installation complete.
-  Dashboard:    http://127.0.0.1:8080
-  Service task: Arbitron (at-logon Scheduled Task)
-  Config:       %LOCALAPPDATA%\Arbitron\config.yaml
-  Log file:     %LOCALAPPDATA%\Arbitron\logs\arbitron.log
-  Next step:    run `claude /login` if you have not already authenticated.
-```
-
----
-
-## c) Linux local
+## b) Linux local
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash
@@ -341,7 +269,7 @@ Arbitron is ready.
 
 ---
 
-## d) Linux shared server
+## c) Linux shared server
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dbinky/arbitron/main/install.sh | bash
@@ -406,52 +334,3 @@ Arbitron (shared) is ready.
 ```
 
 ---
-
-## e) Windows shared server
-
-```powershell
-irm https://raw.githubusercontent.com/dbinky/arbitron/main/install.ps1 | iex
-```
-
-Run from an **elevated (Administrator) PowerShell** and choose **Shared** at the
-install-type prompt. The shared path registers a **native auto-start Windows
-Service** (`arbitron`) running as **LocalSystem** or a dedicated local account.
-
-**Layout**
-
-| | Path |
-|---|---|
-| Binary | `%ProgramFiles%\Arbitron\arbitron.exe` |
-| Config | `%ProgramData%\Arbitron\config.yaml` |
-| Data / DB | `%ProgramData%\Arbitron\data\` (`arbitron.db`) |
-| Workspaces | `%ProgramData%\Arbitron\workspaces\` |
-| Logs | `%ProgramData%\Arbitron\logs\` |
-| Secrets | Windows Service registry `Environment` (injected at `Start-Service`) + **DPAPI (LocalMachine scope)** blobs — `<name>.secret` under the data dir |
-| Service | native Windows Service `arbitron` (auto-start) |
-| Run as | LocalSystem **or** dedicated local account |
-| Auth | `edge+local` **or** OIDC `org` mode |
-
-**Config questions asked**
-
-First the installer asks how the service should run — **LocalSystem** (default)
-or a dedicated **Account** (default name `arbitron`, created with a random,
-machine-managed, never-expiring password). Then the canonical shared Q&A runs in
-the same order as Linux shared: bind host/port → auth model → (OIDC sub-questions
-+ optional RBAC) → TLS model → skip-permissions (RCE warning) → service account
-name → data location → LLM access (`subscription` or `apikey`).
-
-Secrets (master key, OIDC client secret, API key) are injected into the
-Windows Service **registry `Environment`** key (read by the SCM at `Start-Service`
-into the service process environment) and also written as **DPAPI LocalMachine**
-encrypted blobs (`<name>.secret` under the data dir) for at-rest backup. They
-never enter `config.yaml`.
-
-**Resulting service & summary**
-
-```text
-Arbitron installation complete.
-  Dashboard:    https://arbitron.example.com   (scheme/host follow your TLS choice)
-  Service:      arbitron (native Windows Service, auto-start)
-  Config:       %ProgramData%\Arbitron\config.yaml
-  Log file:     %ProgramData%\Arbitron\logs\arbitron.log
-```

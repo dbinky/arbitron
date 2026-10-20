@@ -11,7 +11,7 @@ DATE    ?= $(shell git show -s --format=%cI HEAD 2>/dev/null)
 
 # The os/arch matrix for release artifacts (6 targets). Pure-Go (CGO_ENABLED=0)
 # cross-compiles every target from a single host — no per-OS runner needed.
-DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+DIST_PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 # Reproducible build flags: -trimpath strips local paths; -buildid= zeroes the
 # build id; -s -w drop symbol/debug tables; -X stamps the version vars consumed
@@ -70,7 +70,7 @@ install-samples:
 	cp -R samples/pr-review samples/feature-pipeline $(DEST)/
 	@echo "installed samples into $(DEST)"
 
-# Cross-compile the 6 release binaries named arbitron_<version>_<os>_<arch>[.exe]
+# Cross-compile the 4 release binaries named arbitron_<version>_<os>_<arch>
 # into dist/, then emit dist/SHA256SUMS with basename-only entries (so
 # `sha256sum -c SHA256SUMS` works from inside dist/). The artifact is the raw
 # binary (no tar/zip). This target builds from the CURRENT adapter/dashboard/dist
@@ -79,8 +79,7 @@ dist: clean-dist samples-tarball
 	@mkdir -p dist
 	@for platform in $(DIST_PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
-		ext=; [ "$$os" = "windows" ] && ext=.exe; \
-		out=dist/arbitron_$(VERSION)_$${os}_$${arch}$$ext; \
+		out=dist/arbitron_$(VERSION)_$${os}_$${arch}; \
 		echo "building $$out"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
 			-ldflags "$(DIST_LDFLAGS)" -o $$out ./cmd/arbitron || exit 1; \
